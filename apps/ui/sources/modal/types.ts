@@ -1,3 +1,4 @@
+import type { ComponentProps } from 'react';
 import { ReactNode, ComponentType } from 'react';
 import type { ModalCardDimensionOptions } from './components/card/useModalCardDimensions';
 
@@ -44,6 +45,19 @@ export interface PromptModalConfig extends BaseModalConfig {
 export type CustomModalInjectedProps = Readonly<{
     onClose: () => void;
     setChrome?: (chrome: CustomModalChromeConfig | null) => void;
+}>;
+
+export type CustomModalComponentType<P extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>> =
+    ComponentType<CustomModalInjectedProps & P>;
+
+type CustomModalComponentProps<C extends ComponentType<any>> = ComponentProps<C>;
+
+export type CustomModalShowConfig<C extends CustomModalComponentType<any>> = Omit<
+    CustomModalConfig<CustomModalComponentProps<C>>,
+    'id' | 'type' | 'component' | 'props'
+> & Readonly<{
+    component: C;
+    props?: Omit<CustomModalComponentProps<C>, keyof CustomModalInjectedProps>;
 }>;
 
 export type CustomModalChromeCardConfig = Readonly<{
@@ -112,7 +126,7 @@ export interface IModal {
         confirmText?: string;
         inputType?: 'default' | 'secure-text' | 'email-address' | 'numeric';
     }): Promise<string | null>;
-    show<P extends CustomModalInjectedProps>(config: Omit<CustomModalConfig<P>, 'id' | 'type'>): string;
+    show<C extends CustomModalComponentType<any>>(config: CustomModalShowConfig<C>): string;
     update<P extends CustomModalInjectedProps>(
         id: string,
         props: Partial<Omit<P, keyof CustomModalInjectedProps>>,

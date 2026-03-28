@@ -14,16 +14,18 @@ vi.mock('@/text', async () => {
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'web',
-            select: (options: any) => options.web ?? options.default,
-        },
-        Alert: {
-            alert: vi.fn(),
-            prompt: vi.fn(),
-        },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: {
+                    OS: 'web',
+                    select: (options: any) => options.web ?? options.default,
+                },
+                Alert: {
+                    alert: vi.fn(),
+                    prompt: vi.fn(),
+                },
+            }
+    );
 });
 
 vi.mock('./components/WebAlertModal', () => ({
