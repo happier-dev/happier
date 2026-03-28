@@ -1,11 +1,10 @@
 import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
-import { ActivityIndicator, Platform, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
-import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { getTempData } from '@/utils/sessions/tempDataStore';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
@@ -63,18 +62,6 @@ export default React.memo(() => {
         sessionId,
         `SessionRoute.ensureSessionVisible gen=${activeServerGeneration}`,
     );
-
-    const shouldDeferMount = Platform.OS !== 'web';
-    const [mounted, setMounted] = React.useState(!shouldDeferMount);
-    React.useEffect(() => {
-        if (!shouldDeferMount) return;
-        setMounted(false);
-        return runAfterInteractionsWithFallback(() => setMounted(true));
-    }, [sessionId, shouldDeferMount]);
-
-    if (!mounted) {
-        return <View style={{ flex: 1 }} />;
-    }
 
     if (!sessionId) {
         return <SessionInvalidLinkFallback />;

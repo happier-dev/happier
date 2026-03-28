@@ -10,6 +10,10 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 const headerActionMenuSpy = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const routerBackSpy = vi.hoisted(() => vi.fn(() => {
+  (globalThis as any).location.href = 'http://localhost/session/s1/previous';
+  (globalThis as any).location.pathname = '/session/s1/previous';
+}));
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
 const responsiveState = vi.hoisted(() => ({ deviceType: 'phone' as 'phone' | 'tablet', isLandscape: false }));
@@ -234,7 +238,7 @@ installSessionShellCommonModuleMocks({
     return createExpoRouterMock({
       router: {
         push: routerPushSpy,
-        back: vi.fn(),
+        back: routerBackSpy,
         replace: vi.fn(),
         setParams: vi.fn(),
       },
@@ -322,9 +326,15 @@ describe('SessionView header action menu visibility', () => {
     automationsSupportState.enabled = false;
     headerActionMenuSpy.mockClear();
     routerPushSpy.mockReset();
+    routerBackSpy.mockReset();
     navigateWithBlurOnWebSpy.mockClear();
     windowDimensionsState.width = 800;
     windowDimensionsState.height = 600;
+    Object.defineProperty(globalThis, 'location', {
+      value: { href: 'http://localhost/session/s1', pathname: '/session/s1' },
+      writable: true,
+      configurable: true,
+    });
   });
 
   it('hides the open runs button when execution runs are unsupported for the session', async () => {
@@ -478,8 +488,11 @@ describe('SessionView header action menu visibility', () => {
     responsiveState.isLandscape = true;
     const screen = await renderSessionView();
     const landscapeBackButton = screen.findByTestId('session-view-landscape-back-button');
+    pressTestInstance(landscapeBackButton);
 
     expect(landscapeBackButton).toBeTruthy();
     expect(landscapeBackButton?.props.hitSlop).toBe(15);
+    expect(routerPushSpy).not.toHaveBeenCalled();
+    expect(routerBackSpy).toHaveBeenCalledTimes(1);
   });
 });

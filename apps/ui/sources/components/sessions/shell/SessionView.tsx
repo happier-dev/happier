@@ -100,6 +100,7 @@ import { isVoiceConversationSystemSessionMetadata } from '@/voice/sessionBinding
 import { resolveVoiceSessionComposerRouting } from '@/voice/sessionBinding/voiceSessionComposerRouting';
 import { sendVoiceSessionComposerText } from '@/voice/sessionBinding/sendVoiceSessionComposerText';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { countEnabledAutomationsLinkedToSession } from '@/sync/domains/automations/automationSessionLink';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -150,6 +151,12 @@ export const SessionView = React.memo((props: {
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.enabled !== false;
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const handleBackPress = React.useCallback(() => {
+        safeRouterBack({
+            router,
+            fallbackHref: '/',
+        });
+    }, [router]);
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(sessionId);
     const safeArea = useSafeAreaInsets();
     const isLandscape = useIsLandscape();
@@ -358,7 +365,11 @@ export const SessionView = React.memo((props: {
             title: getSessionName(session),
             subtitle: session.metadata?.path ? formatPathRelativeToHome(session.metadata.path, session.metadata?.homeDir) : undefined,
             avatarId: getSessionAvatarId(session),
-            onAvatarPress: () => router.push(`/session/${sessionId}/info`),
+            onAvatarPress: () => router.navigate((`/session/${sessionId}/info`) as any, {
+                dangerouslySingular() {
+                    return 'session-info';
+                },
+            } as any),
 	            rightElement,
 	            badges: providerBadge ? [storageBadge, providerBadge] : [storageBadge],
 	            isConnected: isConnected,
@@ -425,7 +436,7 @@ export const SessionView = React.memo((props: {
                 }}>
                     <ChatHeaderView
                         {...headerProps}
-                        onBackPress={() => router.push('/')}
+                        onBackPress={handleBackPress}
                         constrainWidth={constrainHeaderWidth}
                     />
                 </View>
@@ -451,6 +462,7 @@ export const SessionView = React.memo((props: {
                            key={sessionId}
                            sessionId={sessionId}
                            session={session}
+                           onBackPress={handleBackPress}
                            isEncryptedSessionLocked={isEncryptedSessionLocked}
                            executionRunsEnabled={executionRunsEnabled}
                            committedMessages={committedMessages}
@@ -473,6 +485,7 @@ function SessionViewLoaded({
     committedMessages,
     sessionId,
     session,
+    onBackPress,
     isEncryptedSessionLocked,
     executionRunsEnabled,
     jumpToSeq,
@@ -486,6 +499,7 @@ function SessionViewLoaded({
     committedMessages: readonly Message[];
     sessionId: string;
     session: Session;
+    onBackPress: () => void;
     isEncryptedSessionLocked: boolean;
     executionRunsEnabled: boolean;
     jumpToSeq: number | null;
@@ -1906,7 +1920,7 @@ function SessionViewLoaded({
             {
                 isLandscape && deviceType === 'phone' && (
                     <Pressable
-                        onPress={() => router.push('/')}
+                        onPress={onBackPress}
                         testID="session-view-landscape-back-button"
                         style={{
                             position: 'absolute',
