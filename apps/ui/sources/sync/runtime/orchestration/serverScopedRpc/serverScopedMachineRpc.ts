@@ -4,6 +4,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { apiSocket } from '@/sync/api/session/apiSocket';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { recordCachedMachineRpcDirectRouteViable } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { resolveServerScopedContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedContext';
@@ -11,6 +12,10 @@ import { resolveScopedMachineDataKey } from '@/sync/runtime/orchestration/server
 import { delay } from '@/utils/timing/time';
 
 import type { ServerScopedMachineRpcParams, SocketRpcResult } from './serverScopedRpcTypes';
+
+function normalizeId(raw: unknown): string {
+    return String(raw ?? '').trim();
+}
 
 type MachineRpcTimeoutScope = 'active' | 'scoped';
 
@@ -95,8 +100,9 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
                         timeoutMs: context.timeoutMs,
                     },
                 );
+                const recordedServerId = normalizeId(params.serverId) || normalizeId(getActiveServerSnapshot().serverId);
                 recordCachedMachineRpcDirectRouteViable({
-                    serverId: context.targetServerId,
+                    serverId: recordedServerId,
                     remoteMachineId: context.machineId,
                 });
                 return result;
