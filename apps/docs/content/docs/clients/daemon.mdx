@@ -81,6 +81,32 @@ happier daemon list
 happier daemon logs
 ```
 
+## Release lanes
+
+The daemon follows the CLI/runtime lane you installed on that machine:
+
+- `stable` CLI install -> stable daemon/runtime
+- `preview` CLI install -> preview daemon/runtime
+- `dev` CLI install -> dev daemon/runtime
+
+That means the public lane commands are:
+
+```bash
+happier daemon install
+hprev daemon install
+hdev daemon install
+```
+
+Likewise, updater commands stay lane-specific:
+
+```bash
+happier self update
+hprev self update
+hdev self update
+```
+
+There is no separate public daemon installer endpoint today; the daemon rides with the matching CLI lane on that machine.
+
 ## Always-on: install as a user service
 
 Install for your current default server profile:

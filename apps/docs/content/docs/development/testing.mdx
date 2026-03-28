@@ -122,6 +122,31 @@ Notes:
 - Artifacts are written under `packages/tests/.project/logs/e2e/mobile-maestro/`.
 - Override Maestro binary (if needed): `HAPPIER_E2E_MAESTRO_BIN=/path/to/maestro`.
 
+### 4d) WSREPL Lima matrix (macOS/Linux hosts)
+
+The Lima host↔guest WSREPL matrix is exposed as an opt-in tests-owned lane.
+
+**Root command:**
+```bash
+yarn test:e2e:ui:wsrepl:lima -- happier-wsrepl-qa
+```
+
+**Package-local command:**
+```bash
+yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa
+```
+
+**Harness self-tests:**
+```bash
+yarn test:e2e:ui:wsrepl:lima:self
+```
+
+Notes:
+- This lane is intentionally not part of the default GitHub-hosted PR matrix yet. Use it locally or on a self-hosted runner with Lima available.
+- The tests workspace now owns the lane entrypoint, the raw WSREPL Lima harness, and the Lima bootstrap helper: `packages/tests/scripts/run-wsrepl-lima-matrix.mjs`, `packages/tests/scripts/wsrepl-lima-matrix.sh`, `packages/tests/scripts/lima-vm.sh`.
+- The stack copies under `apps/stack/scripts/provision/` are compatibility shims only and are excluded from the published stack package.
+- Pass VM names and existing WSREPL env overrides after `--`. The wrapper always runs the underlying harness from `apps/stack/`, so existing report paths and relative script calls remain stable.
+
 ### 5) Providers
 
 Provider contract/baseline suites in `packages/tests` (real provider CLIs).
@@ -233,6 +258,7 @@ yarn test:db-contract:docker
 - Core (full): `yarn workspace @happier-dev/tests test`
 - Core fast: `yarn workspace @happier-dev/tests test:core:fast`
 - Core slow: `yarn workspace @happier-dev/tests test:core:slow`
+- UI WSREPL Lima matrix (macOS/Linux host): `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa`
 - Providers: `yarn workspace @happier-dev/tests test:providers`
 - Stress: `yarn workspace @happier-dev/tests test:stress`
 

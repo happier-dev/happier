@@ -46,6 +46,14 @@ function displayChannel(channel) {
   return getReleaseRingCatalogEntry(normalized).publicLabel;
 }
 
+function assertPublicChannel(channel, source = '--channel') {
+  const normalized = normalizePublicReleaseRingId(channel);
+  if (!normalized) {
+    throw new Error(`[remote] invalid ${source} value: ${channel} (expected stable|preview|dev)`);
+  }
+  return normalized;
+}
+
 function parseJsonLinesBestEffort(stdout) {
   const out = String(stdout ?? '');
   const lines = out
@@ -243,10 +251,7 @@ async function runRemoteDaemonSetup(argvRaw) {
     process.exit(2);
   }
 
-  const channel = resolveChannel(argv0);
-  if (channel !== 'stable' && channel !== 'preview' && channel !== 'publicdev') {
-    throw new Error(`[remote] invalid --channel value: ${channel}`);
-  }
+  const channel = assertPublicChannel(resolveChannel(argv0));
 
   const service = resolveService(argv0);
   if (service !== 'user' && service !== 'none') {
@@ -345,10 +350,7 @@ async function runRemoteServerSetup(argvRaw) {
     process.exit(2);
   }
 
-  const channel = resolveChannel(argv0);
-  if (channel !== 'stable' && channel !== 'preview' && channel !== 'publicdev') {
-    throw new Error(`[remote] invalid --channel value: ${channel}`);
-  }
+  const channel = assertPublicChannel(resolveChannel(argv0));
 
   const mode = resolveMode(argv0);
   if (mode !== 'user' && mode !== 'system') {

@@ -18,7 +18,10 @@ Most artifacts are published into channels:
 
 - `stable` (production)
 - `preview` (pre-release / early access)
-- `dev` (rolling public nightly / newest public branch builds)
+- `dev` (rolling nightly / newest public branch builds)
+
+Only those three names are part of the public user contract.
+Internal release-ring ids are implementation details used by the pipeline/config layer and should not appear in user commands or public docs.
 
 Under the hood, channels are implemented using **rolling release tags** (for example `cli-stable`, `cli-preview`, `cli-dev`, `server-preview`, `ui-web-dev`). Those tags are updated to point at the newest version in that channel.
 
@@ -42,7 +45,7 @@ The table below covers all user-facing released assets and how updates work.
 | **Self-host installer** (`https://happier.dev/self-host`) | The installer script itself | You rerun it | No | Re-run the installer to reinstall/repair + rerun `hstack self-host install` |
 | **Server runtime installer** (`https://happier.dev/install-server`) | `curl …install-server \| bash` (Linux) | You rerun it | No | Re-run the installer to replace the `happier-server` binary (rolling tags `server-stable` / `server-preview` / `server-dev`) |
 | **CLI installer** (`https://happier.dev/install`) | `curl …install \| bash` / `irm …install.ps1` | You rerun it (or use the CLI’s self-update for installer installs) | No | Re-run the installer, or run the lane-specific command (`happier`, `hprev`, or `hdev`) with `self update` |
-| **CLI installer payload** | Installed under `~/.happier/cli/{versions,current,previous}` with lane-specific shims in `~/.happier/bin` and `~/.local/bin` (or Windows equivalent) | You run `happier self update`, `hprev self update`, `hdev self update`, or rerun the installer | No (but it can show notices) | Installer lanes are `stable` (`happier`), `preview` (`hprev`), and `dev` (`hdev`). You can still target `--channel preview|dev` or `--to <versionOrTag>` explicitly. |
+| **CLI installer payload** | Installed under `~/.happier/cli/{versions,current,previous}` with lane-specific shims in `~/.happier/bin` and `~/.local/bin` (or Windows equivalent) | You run `happier self update`, `hprev self update`, `hdev self update`, or rerun the installer | No (but it can show notices) | Installer lanes are `stable` (`happier`), `preview` (`hprev`), and `dev` (`hdev`). You can still target `--channel preview|dev` or `--to versionOrTag` explicitly. |
 | **CLI npm package** (`@happier-dev/cli`) | `npm install -g @happier-dev/cli` | You upgrade the npm package | No (but it can show notices) | `npm install -g @happier-dev/cli@latest` (or `@next` for preview) |
 | **Stack npm package** (`@happier-dev/stack`) | `npm install -g @happier-dev/stack` | You upgrade the npm package (or use `hstack self update` runtime install) | No (but it can show notices) | `hstack self update` (recommended in-stack) or `npm install -g @happier-dev/stack@latest` |
 
@@ -62,7 +65,7 @@ The desktop app uses Tauri’s updater plugin:
 - installing the update downloads a signed bundle and restarts the app
 
 Stable vs preview is determined by which desktop build you installed.
-Public dev builds use the same updater model, but point at the `dev` feed instead.
+Dev builds use the same updater model, but point at the `dev` feed instead.
 
 ## App (mobile + web)
 
@@ -118,7 +121,7 @@ Preview channel:
 happier self update --channel=preview
 ```
 
-Public dev channel:
+Dev channel:
 
 ```bash
 hdev self update

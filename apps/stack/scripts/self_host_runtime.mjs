@@ -35,6 +35,7 @@ import {
 } from '@happier-dev/cli-common/service';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
 import {
+  PUBLIC_RELEASE_RING_IDS,
   getReleaseRingCatalogEntry,
   normalizePublicReleaseRingId,
 } from '@happier-dev/release-runtime/releaseRings';
@@ -46,7 +47,7 @@ import { findExtractedExecutableByName } from './self_host/findExtractedExecutab
 import { maybeInstallCompanionCli } from './self_host/install_companion_cli.mjs';
 import { listVersionedDirectoryIdsNewestFirst, pruneVersionedDirectories } from './self_host/version_retention.mjs';
 
-const SUPPORTED_CHANNELS = new Set(['stable', 'preview', 'publicdev']);
+const SUPPORTED_CHANNELS = new Set(PUBLIC_RELEASE_RING_IDS);
 const DEFAULTS = Object.freeze({
   githubRepo: 'happier-dev/happier',
   installRoot: '/opt/happier',
