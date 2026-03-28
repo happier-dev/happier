@@ -1592,21 +1592,6 @@ export class ApiSessionClient extends EventEmitter {
         if (text.length === 0) return;
         const localId = typeof params.localId === 'string' && params.localId.length > 0 ? params.localId : randomUUID();
 
-        const message: UserMessage = {
-            role: 'user',
-            content: { type: 'text', text },
-            createdAt: Date.now(),
-            localId,
-            meta: params.meta && typeof params.meta === 'object' ? params.meta : {},
-        };
-
-        this.markAgentQueueEchoSuppressedLocalId(localId);
-        if (this.pendingMessageCallback) {
-            this.pendingMessageCallback(message);
-        } else {
-            this.pendingMessages.push(message);
-        }
-
         this.sendUserTextMessage(text, {
             localId,
             ...(params.meta && typeof params.meta === 'object' ? { meta: params.meta } : {}),

@@ -125,8 +125,11 @@ export function handleSessionNewMessageUpdate(params: {
         const source = userResult.data.meta?.source;
         const isSelfEchoSuppressedCliWrite =
             isSelfEchoSuppressedLocalId && (source === 'cli' || sentFrom === 'cli');
+        const shouldRespectAgentQueueEchoSuppression = Boolean(params.pendingMessageCallback);
+        const isEffectivelyAgentQueueEchoSuppressedLocalId =
+            shouldRespectAgentQueueEchoSuppression && isAgentQueueEchoSuppressedLocalId;
         const shouldDeliverToAgentQueue =
-            !isAgentQueueEchoSuppressedLocalId
+            !isEffectivelyAgentQueueEchoSuppressedLocalId
             && !isSelfEchoSuppressedCliWrite
             && (params.shouldDeliverUserMessageToAgentQueue?.(userResult.data, params.update) ?? true);
         if (shouldDeliverToAgentQueue) {
@@ -147,6 +150,7 @@ export function handleSessionNewMessageUpdate(params: {
                 isAgentQueueEchoSuppressedLocalId,
                 isPendingQueueMaterializedLocalId,
                 isSelfEchoSuppressedCliWrite,
+                shouldRespectAgentQueueEchoSuppression,
             });
         }
         if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {

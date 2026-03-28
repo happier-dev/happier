@@ -109,4 +109,59 @@ describe('handleSessionNewMessageUpdate', () => {
     expect(pendingMessages[0]?.content?.text).toBe('hello encrypted');
     expect(emitted.some((e: any) => e.event === 'user-message')).toBe(true);
   });
+
+  it('does not drop user prompts when agent-queue echo suppression is set but no callback is attached', () => {
+    const pendingMessages: any[] = [];
+    const emitted: any[] = [];
+
+    const update = {
+      id: 'u1',
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess_1',
+        message: {
+          id: 'm1',
+          seq: 1,
+          content: {
+            t: 'plain',
+            v: {
+              role: 'user',
+              content: { type: 'text', text: 'hello' },
+              localId: 'l1',
+              meta: { source: 'ui', sentFrom: 'ios' },
+            },
+          },
+          localId: 'l1',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      },
+    } as unknown as Update;
+
+    handleSessionNewMessageUpdate({
+      update,
+      sessionId: 'sess_1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      receivedMessageIds: new Set<string>(),
+      lastObservedMessageSeq: 0,
+      lastObservedUserMessageSeq: 0,
+      hasSelfEchoSuppressedLocalId: () => false,
+      hasAgentQueueEchoSuppressedLocalId: () => true,
+      markAgentQueueEchoSuppressedLocalId: () => void 0,
+      hasPendingQueueMaterializedLocalId: () => false,
+      deleteMaterializedLocalId: () => void 0,
+      pendingMessageCallback: null,
+      pendingMessages,
+      emit: (event, payload) => emitted.push({ event, payload }),
+      debug: () => void 0,
+      debugLargeJson: () => void 0,
+    });
+
+    expect(pendingMessages).toHaveLength(1);
+    expect(pendingMessages[0]?.content?.type).toBe('text');
+    expect(pendingMessages[0]?.content?.text).toBe('hello');
+    expect(emitted.some((e: any) => e.event === 'user-message')).toBe(true);
+  });
 });
