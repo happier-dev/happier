@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 
 export type RestartBugReportIntentV1 = Readonly<{
   v: 1;
@@ -28,7 +29,6 @@ function parseIntent(raw: string): RestartBugReportIntentV1 | null {
 
 async function readNativeFileSafe(): Promise<string | null> {
   try {
-    const FileSystem: any = await import('expo-file-system');
     const base: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
     if (!base) return null;
     const path = `${base}${INTENT_FILENAME}`;
@@ -42,7 +42,6 @@ async function readNativeFileSafe(): Promise<string | null> {
 
 async function deleteNativeFileSafe(): Promise<void> {
   try {
-    const FileSystem: any = await import('expo-file-system');
     const base: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
     if (!base) return;
     const path = `${base}${INTENT_FILENAME}`;
@@ -53,7 +52,6 @@ async function deleteNativeFileSafe(): Promise<void> {
 }
 
 async function writeNativeFileSafe(payload: string): Promise<void> {
-  const FileSystem: any = await import('expo-file-system');
   const base: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
   if (!base) return;
   const path = `${base}${INTENT_FILENAME}`;
