@@ -11,22 +11,21 @@ type InstallSessionFilesViewCommonModuleMocksOptions = Readonly<{
     storage?: SessionFilesViewStorageFactory;
 }>;
 
-const sessionFilesViewsModuleState = vi.hoisted(() => ({
-    options: {} as InstallSessionFilesViewCommonModuleMocksOptions,
-}));
-
 export function installSessionFilesViewCommonModuleMocks(
     options: InstallSessionFilesViewCommonModuleMocksOptions = {},
 ) {
-    sessionFilesViewsModuleState.options = options;
+    const activeOptions = options;
 
-    vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
+    vi.doMock('react-native', async () => {
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
 
-    vi.mock('react-native-unistyles', async () => {
-        const activeOptions = sessionFilesViewsModuleState.options;
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock();
+    });
+
+    vi.doMock('react-native-unistyles', async () => {
         if (activeOptions.unistyles) {
             return await activeOptions.unistyles();
         }
@@ -34,8 +33,7 @@ export function installSessionFilesViewCommonModuleMocks(
         return createUnistylesMock();
     });
 
-    vi.mock('@/text', async () => {
-        const activeOptions = sessionFilesViewsModuleState.options;
+    vi.doMock('@/text', async () => {
         if (activeOptions.text) {
             return await activeOptions.text();
         }
@@ -43,8 +41,7 @@ export function installSessionFilesViewCommonModuleMocks(
         return createTextModuleMock({ translate: (key) => key });
     });
 
-    vi.mock('@/modal', async () => {
-        const activeOptions = sessionFilesViewsModuleState.options;
+    vi.doMock('@/modal', async () => {
         if (activeOptions.modal) {
             return await activeOptions.modal();
         }
@@ -52,8 +49,7 @@ export function installSessionFilesViewCommonModuleMocks(
         return createModalModuleMock().module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-        const activeOptions = sessionFilesViewsModuleState.options;
+    vi.doMock('@/sync/domains/state/storage', async (importOriginal) => {
         if (activeOptions.storage) {
             return await activeOptions.storage(importOriginal);
         }
@@ -64,14 +60,14 @@ export function installSessionFilesViewCommonModuleMocks(
         });
     });
 
-    vi.mock('@/constants/Typography', () => ({
+    vi.doMock('@/constants/Typography', () => ({
         Typography: {
             default: () => ({}),
             mono: () => ({}),
         },
     }));
 
-    vi.mock('@/components/ui/layout/layout', () => ({
+    vi.doMock('@/components/ui/layout/layout', () => ({
         layout: { maxWidth: 1024 },
     }));
 }

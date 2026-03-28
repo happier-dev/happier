@@ -37,17 +37,11 @@ const {
     };
 
     const modalShowStrategy = vi.fn((config: any) => {
-        if (!renameConflictStrategy.value || !config?.component) return 'modal-1';
-
-        const element = config.component({
-            ...(config.props ?? {}),
-            onClose: vi.fn(),
-            onRequestClose: vi.fn(),
-        });
+        if (!renameConflictStrategy.value) return 'modal-1';
 
         queueMicrotask(() => {
             act(() => {
-                element.props.onResolve?.(renameConflictStrategy.value);
+                config?.props?.onResolve?.(renameConflictStrategy.value);
             });
         });
 

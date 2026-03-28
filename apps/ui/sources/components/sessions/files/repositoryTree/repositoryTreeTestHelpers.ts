@@ -15,21 +15,10 @@ type InstallRepositoryTreeCommonModuleMocksOptions = Readonly<{
     unistyles?: RepositoryTreeModuleFactory;
 }>;
 
-const repositoryTreeModuleState = vi.hoisted(() => ({
-    options: {
-        modal: undefined as RepositoryTreeModuleFactory | undefined,
-        reactNative: undefined as RepositoryTreeModuleFactory | undefined,
-        storage: undefined as RepositoryTreeStorageModuleFactory | undefined,
-        text: undefined as RepositoryTreeModuleFactory | undefined,
-        typography: undefined as RepositoryTreeModuleFactory | undefined,
-        unistyles: undefined as RepositoryTreeModuleFactory | undefined,
-    },
-}));
-
 export function installRepositoryTreeCommonModuleMocks(
     options: InstallRepositoryTreeCommonModuleMocksOptions = {},
 ) {
-    repositoryTreeModuleState.options = {
+    const activeOptions = {
         modal: options.modal,
         reactNative: options.reactNative,
         storage: options.storage,
@@ -38,13 +27,16 @@ export function installRepositoryTreeCommonModuleMocks(
         unistyles: options.unistyles,
     };
 
-    vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
+    vi.doMock('react-native', async () => {
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
 
-    vi.mock('react-native-unistyles', async () => {
-        const activeOptions = repositoryTreeModuleState.options;
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock();
+    });
+
+    vi.doMock('react-native-unistyles', async () => {
         if (activeOptions.unistyles) {
             return await activeOptions.unistyles();
         }
@@ -53,8 +45,7 @@ export function installRepositoryTreeCommonModuleMocks(
         return createUnistylesMock();
     });
 
-    vi.mock('@/text', async () => {
-        const activeOptions = repositoryTreeModuleState.options;
+    vi.doMock('@/text', async () => {
         if (activeOptions.text) {
             return await activeOptions.text();
         }
@@ -63,8 +54,7 @@ export function installRepositoryTreeCommonModuleMocks(
         return createTextModuleMock({ translate: (key: string) => key });
     });
 
-    vi.mock('@/constants/Typography', async () => {
-        const activeOptions = repositoryTreeModuleState.options;
+    vi.doMock('@/constants/Typography', async () => {
         if (activeOptions.typography) {
             return await activeOptions.typography();
         }
@@ -77,8 +67,7 @@ export function installRepositoryTreeCommonModuleMocks(
         };
     });
 
-    vi.mock('@/modal', async () => {
-        const activeOptions = repositoryTreeModuleState.options;
+    vi.doMock('@/modal', async () => {
         if (activeOptions.modal) {
             return await activeOptions.modal();
         }
@@ -87,8 +76,15 @@ export function installRepositoryTreeCommonModuleMocks(
         return createModalModuleMock().module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
-});
+    vi.doMock('@/sync/domains/state/storage', async (importOriginal) => {
+        if (activeOptions.storage) {
+            return await activeOptions.storage(importOriginal);
+        }
+
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {},
+        });
+    });
 }

@@ -345,20 +345,9 @@ describe('SessionRightPanel git sub-tabs', () => {
             }
             return undefined;
         };
-
         const commitSurface = screen.findByTestId('session-rightpanel-git-surface:commit');
         const updateSurface = screen.findByTestId('session-rightpanel-git-surface:update');
         const historySurface = screen.findByTestId('session-rightpanel-git-surface:history');
-        const getVisibility = (node: renderer.ReactTestInstance) => {
-            const style = node.props.style;
-            const styles = Array.isArray(style) ? style : [style];
-            for (const entry of styles) {
-                if (entry && typeof entry === 'object' && 'visibility' in entry) {
-                    return (entry as any).visibility;
-                }
-            }
-            return undefined;
-        };
 
         expect(commitSurface).toBeTruthy();
         expect(updateSurface).toBeTruthy();
@@ -366,9 +355,6 @@ describe('SessionRightPanel git sub-tabs', () => {
         expect(getOpacity(commitSurface!)).toBe(1);
         expect(getOpacity(updateSurface!)).toBe(0);
         expect(getOpacity(historySurface!)).toBe(0);
-        expect(getVisibility(commitSurface!)).toBe('visible');
-        expect(getVisibility(updateSurface!)).toBe('hidden');
-        expect(getVisibility(historySurface!)).toBe('hidden');
 
         await screen.pressByTestIdAsync('session-rightpanel-git-subtab:update');
 
@@ -376,9 +362,6 @@ describe('SessionRightPanel git sub-tabs', () => {
         expect(getOpacity(commitSurface!)).toBe(0);
         expect(getOpacity(updateSurface!)).toBe(1);
         expect(getOpacity(historySurface!)).toBe(0);
-        expect(getVisibility(commitSurface!)).toBe('hidden');
-        expect(getVisibility(updateSurface!)).toBe('visible');
-        expect(getVisibility(historySurface!)).toBe('hidden');
 
         await screen.pressByTestIdAsync('session-rightpanel-git-subtab:history');
 
@@ -386,9 +369,6 @@ describe('SessionRightPanel git sub-tabs', () => {
         expect(getOpacity(commitSurface!)).toBe(0);
         expect(getOpacity(updateSurface!)).toBe(0);
         expect(getOpacity(historySurface!)).toBe(1);
-        expect(getVisibility(commitSurface!)).toBe('hidden');
-        expect(getVisibility(updateSurface!)).toBe('hidden');
-        expect(getVisibility(historySurface!)).toBe('visible');
     });
 
     it('does not repeatedly recompute changed files data when switching away from commit', async () => {

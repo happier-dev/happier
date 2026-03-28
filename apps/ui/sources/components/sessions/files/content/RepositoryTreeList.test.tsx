@@ -6,6 +6,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { clearCachedRepositoryDirectoryEntries } from '@/sync/domains/input/repositoryDirectory';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 
@@ -22,7 +23,7 @@ const sessionListDirectorySpy = vi.fn<(_sessionId: string, _path: string) => Pro
     }),
 );
 
-const theme = {
+const theme = vi.hoisted(() => ({
     colors: {
         surface: '#111',
         surfaceHigh: '#222',
@@ -55,7 +56,7 @@ const theme = {
         },
     },
     dark: false,
-} as const;
+} as const));
 
 installFilesContentCommonModuleMocks({
     reactNative: async () => {
@@ -214,9 +215,11 @@ describe('RepositoryTreeList', () => {
             success: true,
             entries: [],
         });
+        clearCachedRepositoryDirectoryEntries({ sessionId: 'session-1' });
     });
 
     afterEach(() => {
+        clearCachedRepositoryDirectoryEntries({ sessionId: 'session-1' });
         standardCleanup();
     });
 

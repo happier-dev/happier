@@ -19,7 +19,7 @@ async function main() {
   // runtime dependency trees vendored (e.g. `zod` for `@happier-dev/agents`).
   const monorepoRoot = coerceHappyMonorepoRootFromPath(packageRoot);
   if (monorepoRoot) {
-    bundleWorkspaceDeps({ repoRoot: monorepoRoot, stackDir: packageRoot });
+    await bundleWorkspaceDeps({ repoRoot: monorepoRoot, stackDir: packageRoot });
   }
 
   if (testFiles.length === 0) {

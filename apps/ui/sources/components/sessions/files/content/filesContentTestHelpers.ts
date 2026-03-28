@@ -16,13 +16,6 @@ type InstallFilesContentCommonModuleMocksOptions = Readonly<{
 
 const filesContentModuleState = vi.hoisted(() => ({
     modalMockRef: { current: null as any },
-    options: {
-        modal: undefined as FilesContentModuleFactory | undefined,
-        reactNative: undefined as FilesContentModuleFactory | undefined,
-        storage: undefined as FilesContentStorageModuleFactory | undefined,
-        text: undefined as FilesContentModuleFactory | undefined,
-        unistyles: undefined as FilesContentModuleFactory | undefined,
-    },
 }));
 
 export function getFilesContentModalMockRef() {
@@ -36,7 +29,7 @@ export function resetFilesContentCommonModuleMockState() {
 export function installFilesContentCommonModuleMocks(
     options: InstallFilesContentCommonModuleMocksOptions = {},
 ) {
-    filesContentModuleState.options = {
+    const activeOptions = {
         modal: options.modal,
         reactNative: options.reactNative,
         storage: options.storage,
@@ -44,13 +37,16 @@ export function installFilesContentCommonModuleMocks(
         unistyles: options.unistyles,
     };
 
-    vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
+    vi.doMock('react-native', async () => {
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
 
-    vi.mock('react-native-unistyles', async () => {
-        const activeOptions = filesContentModuleState.options;
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock();
+    });
+
+    vi.doMock('react-native-unistyles', async () => {
         if (activeOptions.unistyles) {
             return await activeOptions.unistyles();
         }
@@ -59,8 +55,7 @@ export function installFilesContentCommonModuleMocks(
         return createUnistylesMock();
     });
 
-    vi.mock('@/text', async () => {
-        const activeOptions = filesContentModuleState.options;
+    vi.doMock('@/text', async () => {
         if (activeOptions.text) {
             return await activeOptions.text();
         }
@@ -69,8 +64,7 @@ export function installFilesContentCommonModuleMocks(
         return createTextModuleMock({ translate: (key: string) => key });
     });
 
-    vi.mock('@/modal', async () => {
-        const activeOptions = filesContentModuleState.options;
+    vi.doMock('@/modal', async () => {
         if (activeOptions.modal) {
             return await activeOptions.modal();
         }
@@ -81,8 +75,7 @@ export function installFilesContentCommonModuleMocks(
         return modalMock.module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-        const activeOptions = filesContentModuleState.options;
+    vi.doMock('@/sync/domains/state/storage', async (importOriginal) => {
         if (activeOptions.storage) {
             return await activeOptions.storage(importOriginal);
         }

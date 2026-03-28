@@ -84,7 +84,7 @@ describe('WebDropTargetView.web', () => {
                 );
             });
 
-            const element = container.querySelector('[data-testid="drop-target"]');
+            const element = container.firstElementChild;
             expect(element).not.toBeNull();
 
             element!.dispatchEvent(createFileDragEvent('dragenter'));
