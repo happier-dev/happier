@@ -122,7 +122,6 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
       sendAgentMessageCommitted: async (_provider: string, msg: any) => {
         sent.push(msg);
       },
-      sendTranscriptDraftDelta: () => {},
       sendUserTextMessageCommitted: async () => {},
       fetchRecentTranscriptTextItemsForAcpImport: async () => [],
       updateMetadata: () => {},

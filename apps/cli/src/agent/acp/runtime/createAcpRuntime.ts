@@ -263,15 +263,6 @@ export function createAcpRuntime(params: {
     }) => void;
   };
   /**
-   * Optional model-output streaming tuning for this runtime.
-   *
-   * When `deltaFlushIntervalMs` is 0, each delta is forwarded immediately (no buffering).
-   * Otherwise deltas are buffered and flushed periodically to reduce message volume.
-   */
-  modelOutputStreaming?: {
-    deltaFlushIntervalMs?: number | null;
-  };
-  /**
    * Legacy compatibility toggle for native ACP runtimes.
    *
    * Shared change-title guidance now belongs to the centralized coding prompt base.
@@ -399,7 +390,6 @@ export function createAcpRuntime(params: {
   const streamedTranscriptWriter = createStreamedTranscriptWriter({
     provider: params.provider,
     session: params.session,
-    draftFlushIntervalMs: params.modelOutputStreaming?.deltaFlushIntervalMs,
   });
 
   const clearToolCallCache = () => {

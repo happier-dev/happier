@@ -10,21 +10,15 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (transcript streaming vNext)', () => {
-  it('streams transcript drafts with a stable segment localId reused by durable checkpoints', async () => {
+  it('writes durable streaming checkpoints with a stable segment localId reused by the final commit', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
-    const draftCalls: Array<{ localId: string; deltaText: string }> = [];
     const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
     const session = createBasicSessionClientWithOverrides({
-      sendTranscriptDraftDelta: (_provider, params) => {
-        draftCalls.push({ localId: params.localId, deltaText: params.deltaText });
-      },
       sendAgentMessageCommitted: async (_provider, body, opts) => {
         durableCalls.push({ localId: opts.localId, body, meta: opts.meta });
       },
     });
 
-    vi.useFakeTimers();
-
     const runtime = createAcpRuntime({
       provider: 'claude',
       directory: '/tmp',
@@ -34,63 +28,6 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend,
-    });
-
-    try {
-      await runtime.startOrLoad({});
-      runtime.beginTurn();
-
-      backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
-      await vi.advanceTimersByTimeAsync(60);
-
-      backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
-      await vi.advanceTimersByTimeAsync(60);
-
-      expect(draftCalls).toEqual([
-        expect.objectContaining({ deltaText: 'Hello' }),
-        expect.objectContaining({ deltaText: ' world' }),
-      ]);
-      expect(typeof draftCalls[0]?.localId).toBe('string');
-      expect(draftCalls[0]?.localId).toBe(draftCalls[1]?.localId);
-
-      await runtime.flushTurn();
-
-      expect(durableCalls.length).toBeGreaterThanOrEqual(2);
-      expect(durableCalls[0]!.localId).toBe(draftCalls[0]!.localId);
-      expect(durableCalls[durableCalls.length - 1]!.localId).toBe(draftCalls[0]!.localId);
-
-      const last = durableCalls[durableCalls.length - 1]!;
-      expect(last.body).toMatchObject({ type: 'message', message: 'Hello world' });
-      expect(last.meta).toMatchObject({
-        happierStreamSegmentV1: expect.objectContaining({
-          segmentLocalId: draftCalls[0]!.localId,
-          segmentState: 'complete',
-        }),
-      });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('can disable draft buffering to emit each draft delta immediately', async () => {
-    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
-    const draftCalls: Array<{ deltaText: string }> = [];
-    const session = createBasicSessionClientWithOverrides({
-      sendTranscriptDraftDelta: (_provider, params) => {
-        draftCalls.push({ deltaText: params.deltaText });
-      },
-    });
-
-    const runtime = createAcpRuntime({
-      provider: 'claude',
-      directory: '/tmp',
-      session,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
-      modelOutputStreaming: { deltaFlushIntervalMs: 0 },
     });
 
     await runtime.startOrLoad({});
@@ -99,7 +36,79 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
     backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
 
-    expect(draftCalls).toEqual([{ deltaText: 'Hello' }, { deltaText: ' world' }]);
+    await runtime.flushTurn();
+
+    expect(durableCalls.length).toBeGreaterThanOrEqual(2);
+    expect(typeof durableCalls[0]?.localId).toBe('string');
+    expect(durableCalls[0]!.localId).toBe(durableCalls[durableCalls.length - 1]!.localId);
+    expect((durableCalls[0]!.meta as any)?.happierStreamSegmentV1?.segmentState).toBe('streaming');
+
+    const last = durableCalls[durableCalls.length - 1]!;
+    expect(last.body).toMatchObject({ type: 'message', message: 'Hello world' });
+    expect(last.meta).toMatchObject({
+      happierStreamSegmentV1: expect.objectContaining({
+        segmentLocalId: durableCalls[0]!.localId,
+        segmentState: 'complete',
+      }),
+    });
+  });
+
+  it('can emit each durable checkpoint immediately when stream checkpoint buffering is disabled', async () => {
+    const previousCheckpointMs = process.env.HAPPIER_STREAM_CHECKPOINT_MS;
+    const previousCheckpointMinChars = process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS;
+    process.env.HAPPIER_STREAM_CHECKPOINT_MS = '0';
+    process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = '1';
+
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const durableCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async (_provider, body, opts) => {
+        durableCalls.push({ body, meta: opts.meta });
+      },
+    });
+
+    try {
+      const runtime = createAcpRuntime({
+        provider: 'claude',
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {},
+        ensureBackend: async () => backend,
+      });
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
+      backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
+
+      await vi.waitFor(() => {
+        expect(durableCalls.length).toBeGreaterThanOrEqual(2);
+      });
+
+      expect(durableCalls.slice(0, 2).map((call) => (call.body as any)?.message)).toEqual([
+        'Hello',
+        'Hello world',
+      ]);
+      expect(durableCalls.slice(0, 2).map((call) => (call.meta as any)?.happierStreamSegmentV1?.segmentState)).toEqual([
+        'streaming',
+        'streaming',
+      ]);
+    } finally {
+      if (previousCheckpointMs === undefined) {
+        delete process.env.HAPPIER_STREAM_CHECKPOINT_MS;
+      } else {
+        process.env.HAPPIER_STREAM_CHECKPOINT_MS = previousCheckpointMs;
+      }
+      if (previousCheckpointMinChars === undefined) {
+        delete process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS;
+      } else {
+        process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = previousCheckpointMinChars;
+      }
+    }
   });
 
   it('waits for the final durable snapshot before flushTurn resolves', async () => {

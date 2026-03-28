@@ -34,14 +34,4 @@ export type AcpRuntimeSessionClient = AcpReplayHistorySessionClient & Readonly<{
     body: ACPMessageData,
     opts?: { localId?: string; meta?: Record<string, unknown> },
   ) => void;
-  sendTranscriptDraftDelta: (
-    provider: ACPProvider,
-    params: {
-      localId: string;
-      segmentKind: 'assistant' | 'thinking';
-      sidechainId?: string | null;
-      deltaText: string;
-      createdAtMs?: number;
-    },
-  ) => void;
 }>;
