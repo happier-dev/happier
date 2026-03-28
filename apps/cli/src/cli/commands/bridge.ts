@@ -16,7 +16,7 @@ import { ensureExperimentalSettingsFeatureToggleEnabled } from '@/features/setti
 import { readCredentials, readSettings, updateSettings } from '@/persistence';
 import { argvValue } from '@/cli/commands/server/commandUtilities';
 import { join } from 'node:path';
-import { TELEGRAM_WEBHOOK_SECRET_TOKEN_MAX_LENGTH } from '@/channels/providers/telegram/telegramWebhookSecretToken';
+import { assertTelegramWebhookSecretToken } from '@/channels/providers/telegram/telegramWebhookSecretToken';
 
 function parseBooleanInput(raw: string, flagName: string): boolean {
   const value = raw.trim().toLowerCase();
@@ -42,15 +42,6 @@ function parseCsvList(raw: string): string[] {
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
-}
-
-function validateTelegramWebhookSecretToken(raw: string, flagName: string): void {
-  if (raw.trim().length > TELEGRAM_WEBHOOK_SECRET_TOKEN_MAX_LENGTH) {
-    throw new Error('Webhook secret token is too long');
-  }
-  if (!/^[A-Za-z0-9_-]+$/.test(raw)) {
-    throw new Error(`Invalid ${flagName} value: must match [A-Za-z0-9_-] (Telegram webhook token restriction)`);
-  }
 }
 
 function maskSecret(value: string): string {
@@ -284,8 +275,11 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
     update.webhookEnabled = parseBooleanInput(webhookEnabledRaw, '--webhook-enabled');
   }
   if (webhookSecret) {
-    validateTelegramWebhookSecretToken(webhookSecret, '--webhook-secret');
-    update.webhookSecret = webhookSecret;
+    update.webhookSecret = assertTelegramWebhookSecretToken(webhookSecret, {
+      empty: 'Invalid --webhook-secret value: cannot be empty',
+      tooLong: 'Webhook secret token is too long',
+      invalid: 'Invalid --webhook-secret value: must match [A-Za-z0-9_-] (Telegram webhook token restriction)',
+    });
   }
   if (webhookHost) {
     if (!isLoopbackHostname(webhookHost)) {
