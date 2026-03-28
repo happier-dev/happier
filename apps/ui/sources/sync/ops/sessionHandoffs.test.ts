@@ -1448,6 +1448,137 @@ describe('sessionHandoffs ops', () => {
         }));
     });
 
+    it('preserves the original source workspace root in handoffV1 when the authoritative metadata callback is already rebound to the target path', async () => {
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_source_root_regression',
+                status: {
+                    handoffId: 'handoff_source_root_regression',
+                    status: 'pending',
+                    phase: 'preparing',
+                    recoveryActions: [],
+                },
+                endpointCandidates: [],
+                handoffMetadataV2: { workspaceReplicationSourceRootPath: '/home/guest/wsrepl-large-replication-2' },
+                targetPath: '/Users/leeroy/wsrepl-large-replication-3',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_source_root_regression',
+                status: {
+                    handoffId: 'handoff_source_root_regression',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'server_routed_stream',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'claude_session_source_root_regression',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/Users/leeroy/wsrepl-large-replication-3',
+                    agent: 'claude',
+                    resume: 'claude_session_source_root_regression',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_source_root_regression',
+                status: {
+                    handoffId: 'handoff_source_root_regression',
+                    status: 'completed',
+                    phase: 'finalizing',
+                    recoveryActions: [],
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_source_root_regression',
+                status: {
+                    handoffId: 'handoff_source_root_regression',
+                    status: 'completed',
+                    phase: 'finalizing',
+                    recoveryActions: [],
+                },
+            });
+
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: {
+                features: {
+                    sessions: {
+                        enabled: true,
+                        handoff: {
+                            enabled: true,
+                            serverRoutedTransfer: { enabled: true },
+                        },
+                    },
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: {
+                                enabled: true,
+                            },
+                            serverRouted: { enabled: true },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        });
+        resumeSessionMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_source_root_regression' });
+        patchSessionMetadataWithRetryMock.mockImplementationOnce(async (_sessionId: string, updater: (metadata: Record<string, unknown>) => Record<string, unknown>) => {
+            const updated = updater({
+                flavor: 'claude',
+                path: '/Users/leeroy/wsrepl-large-replication-3',
+                machineId: 'machine_target',
+                claudeSessionId: 'claude_session_source_root_regression',
+            });
+
+            expect(updated).toMatchObject({
+                machineId: 'machine_target',
+                path: '/Users/leeroy/wsrepl-large-replication-3',
+                handoffV1: {
+                    sourceMachineId: 'machine_source',
+                    targetMachineId: 'machine_target',
+                    sourceWorkspaceRootPath: '/home/guest/wsrepl-large-replication-2',
+                    targetWorkspaceRootPath: '/Users/leeroy/wsrepl-large-replication-3',
+                },
+            });
+        });
+
+        const { completeSessionHandoff } = await import('./sessionHandoffs');
+        const result = await completeSessionHandoff({
+            sessionId: 'sess_source_root_regression',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+            sourceMetadata: {
+                flavor: 'claude',
+                path: '/home/guest/wsrepl-large-replication-2',
+                host: 'source-host',
+                machineId: 'machine_source',
+                claudeSessionId: 'claude_session_source_root_regression',
+            },
+            serverId: 'server_b',
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            handoffId: 'handoff_source_root_regression',
+            status: {
+                handoffId: 'handoff_source_root_regression',
+                status: 'completed',
+                phase: 'finalizing',
+                recoveryActions: [],
+            },
+        });
+    });
+
     it('waits for the best-effort source_cleanup commit before resolving completeSessionHandoff (enables immediate handoff-back planning)', async () => {
         let resolveCleanup: ((value: unknown) => void) | undefined;
         const cleanupPromise = new Promise<unknown>((resolve) => {

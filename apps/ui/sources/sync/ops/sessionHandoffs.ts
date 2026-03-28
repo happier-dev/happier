@@ -34,6 +34,7 @@ import type { Metadata, Session } from '../domains/state/storageTypes';
 import { buildSessionHandoffRecoveryPlan, type SessionHandoffRecoveryPlan } from '../domains/sessionHandoff/recoveryPlan';
 import { waitForSessionHandoffTargetSessionActive } from '../domains/sessionHandoff/waitForSessionHandoffTargetSessionActive';
 import { readSessionHandoffSessionActivity } from '../domains/sessionHandoff/readSessionHandoffSessionActivity';
+import { resolveSessionHandoffSourceMachineId as resolveCanonicalSessionHandoffSourceMachineId } from '../domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
 import { stabilizeSessionHandoffTargetBinding } from '../domains/sessionHandoff/stabilizeSessionHandoffTargetBinding';
 import { runSessionHandoffRetryLoop } from '../domains/sessionHandoff/runSessionHandoffRetryLoop';
 import { publishSessionHandoffProgress } from '../domains/sessionHandoff/sessionHandoffProgressEvents';
@@ -338,7 +339,10 @@ function resolveSourceMachineId(options: Readonly<{
 }>): string | null {
     const sourceTarget = readMachineTargetForSession(options.sessionId);
     const explicitSourceMachineId = normalizeId(options.sourceMachineId);
-    const sourceMachineId = sourceTarget?.machineId ?? explicitSourceMachineId;
+    const sourceMachineId = resolveCanonicalSessionHandoffSourceMachineId({
+        reachableMachineId: sourceTarget?.machineId ?? null,
+        sourceMachineId: explicitSourceMachineId,
+    });
     const targetMachineId = normalizeId(options.targetMachineId);
     if (sourceMachineId && targetMachineId && sourceMachineId === targetMachineId && explicitSourceMachineId && explicitSourceMachineId !== targetMachineId) {
         return null;
@@ -1105,8 +1109,10 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     const providerId = preparedResponse.resume.agent;
     const targetSessionStorageMode = options.targetSessionStorageMode ?? options.sessionStorageMode;
     const completedAtMs = Date.now();
+    const sourceMetadataForHandoffPatch = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord;
     const buildNextMetadata = (metadata: MetadataRecord) => buildSessionHandoffMetadataPatch({
         metadata,
+        sourceMetadataForHandoff: sourceMetadataForHandoffPatch,
         providerId,
         sourceMachineId: started.sourceMachineId,
         targetMachineId: options.targetMachineId,
@@ -1119,7 +1125,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         targetDirectSource: preparedResponse.directSource as unknown as Record<string, unknown>,
         targetRuntimeDescriptor: preparedResponse.agentRuntimeDescriptorV1,
     });
-    const currentSessionMetadata = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord;
+    const currentSessionMetadata = sourceMetadataForHandoffPatch;
     const restoreOptimisticBinding = applyOptimisticSessionHandoffBinding({
         sessionId: options.sessionId,
         metadata: buildNextMetadata(currentSessionMetadata),

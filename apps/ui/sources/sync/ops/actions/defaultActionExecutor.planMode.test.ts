@@ -23,6 +23,8 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
 
 vi.mock('@/sync/ops/sessions', () => ({
   forkSession: vi.fn(),
+  rollbackSessionConversation: vi.fn(),
+  sessionRename: vi.fn(async () => ({ success: true })),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({

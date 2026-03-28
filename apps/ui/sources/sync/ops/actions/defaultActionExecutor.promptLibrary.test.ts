@@ -50,7 +50,11 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: vi.fn(),
 }));
 
-vi.mock('@/sync/ops/sessions', () => ({ forkSession: vi.fn() }));
+vi.mock('@/sync/ops/sessions', () => ({
+    forkSession: vi.fn(),
+    rollbackSessionConversation: vi.fn(),
+    sessionRename: vi.fn(async () => ({ success: true })),
+}));
 vi.mock('@/sync/ops/sessionHandoffs', () => ({ completeSessionHandoff: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({ sessionRpcWithServerScope: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage', () => ({ sendSessionMessageWithServerScope: vi.fn() }));

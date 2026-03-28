@@ -11,6 +11,7 @@ const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/ops/sessions', () => ({
   forkSession: forkSessionOpMock,
   rollbackSessionConversation: rollbackSessionConversationOpMock,
+  sessionRename: vi.fn(async () => ({ success: true })),
 }));
 
 vi.mock('@/sync/ops/sessionHandoffs', () => ({

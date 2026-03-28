@@ -148,6 +148,7 @@ function buildHandoffAgentRuntimeDescriptor(input: Readonly<{
 
 export function buildSessionHandoffMetadataPatch(input: Readonly<{
     metadata: MetadataRecord;
+    sourceMetadataForHandoff?: MetadataRecord;
     providerId: 'claude' | 'codex' | 'opencode';
     sourceMachineId: string;
     targetMachineId: string;
@@ -170,7 +171,9 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
         return `/${segments.join('/')}`;
     };
 
-    const sourceWorkspaceRootPath = normalizeWorkspaceRootPath(input.metadata.path);
+    const sourceWorkspaceRootPath = normalizeWorkspaceRootPath(
+        (input.sourceMetadataForHandoff ?? input.metadata).path,
+    );
     const targetWorkspaceRootPath = normalizeWorkspaceRootPath(input.targetPath);
 
     const next: MetadataRecord = writeAgentVendorResumeIdToMetadata({

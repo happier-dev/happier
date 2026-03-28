@@ -3,6 +3,7 @@ import {
   ActionsSettingsV1Schema,
   createActionExecutor,
   isActionEnabledByActionsSettings,
+  isApprovalRequiredByActionsSettings,
   type ActionExecutorDeps,
   type ActionId,
   type ApprovalRequestV1,
@@ -10,14 +11,18 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
-  sessionExecutionRunAction,
-  sessionExecutionRunGet,
-  sessionExecutionRunList,
+    sessionExecutionRunAction,
+    sessionExecutionRunGet,
+    sessionExecutionRunList,
   sessionExecutionRunSend,
-  sessionExecutionRunStart,
-  sessionExecutionRunStop,
+    sessionExecutionRunStart,
+    sessionExecutionRunStop,
 } from '@/sync/ops/sessionExecutionRuns';
-import { forkSession as forkSessionOp, rollbackSessionConversation as rollbackSessionConversationOp } from '@/sync/ops/sessions';
+import {
+    forkSession as forkSessionOp,
+    rollbackSessionConversation as rollbackSessionConversationOp,
+    sessionStopWithServerScope,
+} from '@/sync/ops/sessions';
 import { completeSessionHandoff as completeSessionHandoffOp } from '@/sync/ops/sessionHandoffs';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
@@ -108,6 +113,10 @@ export function createDefaultActionExecutor(opts?: Readonly<{
         const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
         return isSessionModeActionAvailable(session);
       },
+    isActionApprovalRequired: (actionId, ctx) =>
+      isApprovalRequiredByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
+        surface: ctx.surface ?? null,
+      }),
     executionRunStart: sessionExecutionRunStart,
     executionRunList: sessionExecutionRunList,
     executionRunGet: sessionExecutionRunGet,
@@ -160,9 +169,12 @@ export function createDefaultActionExecutor(opts?: Readonly<{
             resolveServerNameForSessionId: opts?.resolveServerNameForSessionId,
           });
         }
-      }
+        }
       return { ok: true, status: 'forked', parentSessionId: sid, childSessionId };
     },
+
+    sessionStop: async ({ sessionId, serverId }) =>
+      await sessionStopWithServerScope(sessionId, { serverId }),
 
     sessionRollback: async ({ sessionId, serverId, target }) => {
       const sid = String(sessionId ?? '').trim();
@@ -224,6 +236,32 @@ export function createDefaultActionExecutor(opts?: Readonly<{
 
     sessionSendMessage: async ({ sessionId, message, serverId }) =>
       await sendSessionMessageWithServerScope({ sessionId, message, serverId }),
+
+    sessionTitleSet: async ({ sessionId, title, serverId }) => {
+      const sid = String(sessionId ?? '').trim();
+      const normalizedTitle = String(title ?? '').trim();
+      if (!sid || !normalizedTitle) {
+        return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      }
+
+      const updatedAt = Date.now();
+      try {
+        await sync.patchSessionMetadataWithRetry(
+          sid,
+          (metadata: any) => ({
+            ...(metadata ?? {}),
+            summary: { text: normalizedTitle, updatedAt },
+          }),
+          { serverId: typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : null },
+        );
+      } catch (error) {
+        const err = new Error(error instanceof Error ? error.message : 'action_failed');
+        (err as Error & { code?: string }).code = 'action_failed';
+        throw err;
+      }
+
+      return { ok: true, sessionId: sid, title: normalizedTitle, updatedAt };
+    },
 
     sessionPermissionRespond: async ({ sessionId, requestId, decision, serverId }) => {
       const reqId = String(requestId ?? '').trim();
