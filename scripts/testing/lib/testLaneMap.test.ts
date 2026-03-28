@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { classifyTestFile, collectLaneIssues, resolveFeatureTagIssue } from './testLaneMap.ts';
+import { LANE_ROOT_SCRIPTS, classifyTestFile, collectLaneIssues, resolveFeatureTagIssue } from './testLaneMap.ts';
 import { FEATURE_IDS } from './protocolFeatureIds.ts';
 
 test('classifies representative lane paths', () => {
@@ -15,6 +15,8 @@ test('classifies representative lane paths', () => {
   assert.equal(classifyTestFile('packages/tests/suites/core-e2e/login.test.ts'), 'test:e2e:core:fast');
   assert.equal(classifyTestFile('packages/tests/suites/core-e2e/login.slow.e2e.test.ts'), 'test:e2e:core:slow');
   assert.equal(classifyTestFile('packages/tests/suites/ui-e2e/login.spec.ts'), 'test:e2e:ui');
+  assert.equal(classifyTestFile('packages/tests/scripts/wsrepl-lima-matrix.test.mjs'), 'test:e2e:ui:wsrepl:lima:self');
+  assert.equal(classifyTestFile('packages/tests/scripts/lima-vm.test.mjs'), 'test:e2e:ui:wsrepl:lima:self');
   assert.equal(classifyTestFile('packages/tests/suites/providers/auth.test.ts'), 'test:providers');
   assert.equal(classifyTestFile('packages/tests/suites/stress/retry.test.ts'), 'test:stress');
   assert.equal(classifyTestFile('apps/stack/scripts/runtime.test.mjs'), 'stack:test:unit');
@@ -42,4 +44,9 @@ test('flags known lane naming violations', () => {
   assert.deepEqual(collectLaneIssues('packages/tests/suites/core-e2e/login.slow.test.ts'), [
     'Core E2E slow files must use *.slow.e2e.test.ts naming.',
   ]);
+});
+
+test('exposes the WSREPL Lima UI lane as a root script', () => {
+  assert.equal(LANE_ROOT_SCRIPTS['test:e2e:ui:wsrepl:lima'], 'yarn test:e2e:ui:wsrepl:lima');
+  assert.equal(LANE_ROOT_SCRIPTS['test:e2e:ui:wsrepl:lima:self'], 'yarn test:e2e:ui:wsrepl:lima:self');
 });

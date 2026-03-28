@@ -13,6 +13,8 @@ function createPackageJsonText(): string {
         'test:e2e:core:fast': 'yarn workspace @happier-dev/tests test:core:fast',
         'test:e2e:core:slow': 'yarn workspace @happier-dev/tests test:core:slow',
         'test:e2e:ui': 'yarn workspace @happier-dev/tests test:ui:e2e',
+        'test:e2e:ui:wsrepl:lima': 'yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima',
+        'test:e2e:ui:wsrepl:lima:self': 'yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima:self',
         'test:e2e:mobile': 'yarn workspace @happier-dev/tests test:mobile:e2e:android',
         'test:providers': 'yarn workspace @happier-dev/tests test:providers',
         'test:stress': 'yarn workspace @happier-dev/tests test:stress',
@@ -53,6 +55,7 @@ jobs:
       - run: yarn test:e2e:core:fast
       - run: yarn test:e2e:core:slow
       - run: yarn -s test:e2e:ui
+      - run: yarn -s test:e2e:ui:wsrepl:lima
       - run: yarn -s test:e2e:mobile
       - run: yarn workspace @happier-dev/tests providers:run all smoke
       - run: yarn test:stress
@@ -68,6 +71,8 @@ yarn test:integration
 yarn test:e2e:core:fast
 yarn test:e2e:core:slow
 yarn test:e2e:ui
+yarn test:e2e:ui:wsrepl:lima
+yarn test:e2e:ui:wsrepl:lima:self
 yarn test:e2e:mobile
 yarn test:providers
 yarn test:stress
@@ -137,4 +142,16 @@ test('flags unknown root commands mentioned in docs or workflow', () => {
   const messages = report.issues.map((issue) => issue.message).join('\n');
   assert.match(messages, /Workflow references unknown root command yarn test:not-real/);
   assert.match(messages, /Docs reference unknown root command yarn test:imaginary/);
+});
+
+test('tracks optional workflow coverage for the WSREPL Lima UI lane', () => {
+  const report = collectWorkflowScriptParityReport({
+    packageJsonText: createPackageJsonText(),
+    workflowText: createWorkflowText(),
+    docsText: createDocsText(),
+    configTexts: createFeatureGatingConfigTexts(),
+  });
+
+  const messages = report.issues.map((issue) => issue.message).join('\n');
+  assert.doesNotMatch(messages, /test:e2e:ui:wsrepl:lima/);
 });

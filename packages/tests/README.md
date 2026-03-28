@@ -41,6 +41,7 @@ Out of scope for this package:
 - Core deterministic e2e (fast lane): `yarn workspace @happier-dev/tests test:core:fast`
 - Core deterministic e2e (slow lane): `yarn workspace @happier-dev/tests test:core:slow`
 - UI E2E (Playwright, web UI): `yarn workspace @happier-dev/tests test:ui:e2e`
+- WSREPL Lima matrix (macOS/self-hosted opt-in): `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa`
 - Stress (seeded chaos): `yarn workspace @happier-dev/tests test:stress`
 - Providers (real provider CLIs, opt-in): `yarn workspace @happier-dev/tests test:providers`
 - Typecheck: `yarn workspace @happier-dev/tests typecheck`
@@ -119,6 +120,8 @@ Artifacts are written on failure by default. You can force keeping artifacts eve
 UI E2E (Playwright) notes:
 - Expo web is started via `expo start --web`; if you suspect stale Metro transforms, you can opt into cache clearing with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
 - UI E2E artifacts live under `.project/logs/e2e/ui-playwright/...` and include screenshots + videos on failure.
+- WSREPL Lima matrix artifacts live under `apps/stack/output/wsrepl-lima-matrix/...`; the lane entrypoint, raw harness, and Lima bootstrap helper now live in `packages/tests` (`packages/tests/scripts/run-wsrepl-lima-matrix.mjs`, `packages/tests/scripts/wsrepl-lima-matrix.sh`, `packages/tests/scripts/lima-vm.sh`). The stack copies are compatibility shims only and are excluded from the published stack package.
+- Harness self-tests run via `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima:self`.
 
 ## Core e2e suite: what each test ensures
 

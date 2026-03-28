@@ -16,7 +16,9 @@
     "bin/",
     "docs/",
     "extras/",
-    "scripts/"
+    "scripts/",
+    "!scripts/provision/macos-lima-wsrepl-matrix.sh",
+    "!scripts/provision/macos-lima-vm.sh"
   ],
   "bundledDependencies": [
     "@happier-dev/agents",

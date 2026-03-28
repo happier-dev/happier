@@ -74,3 +74,16 @@ test('stack package exposes happier as a published binary', async () => {
     happier: './bin/happier.mjs',
   });
 });
+
+test('stack package excludes the WSREPL Lima test shims from published files', async () => {
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(Array.isArray(pkg.files), 'expected stack package to declare published files');
+  assert.ok(
+    pkg.files.includes('!scripts/provision/macos-lima-wsrepl-matrix.sh'),
+    'expected WSREPL Lima matrix shim to be excluded from the published stack package',
+  );
+  assert.ok(
+    pkg.files.includes('!scripts/provision/macos-lima-vm.sh'),
+    'expected WSREPL Lima VM shim to be excluded from the published stack package',
+  );
+});

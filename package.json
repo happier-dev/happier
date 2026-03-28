@@ -57,6 +57,8 @@
     "test:e2e:core:fast": "yarn workspace @happier-dev/tests test:core:fast",
     "test:e2e:core:slow": "yarn workspace @happier-dev/tests test:core:slow",
     "test:e2e:ui": "yarn workspace @happier-dev/tests test:ui:e2e",
+    "test:e2e:ui:wsrepl:lima": "yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima",
+    "test:e2e:ui:wsrepl:lima:self": "yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima:self",
     "test:e2e:mobile": "yarn workspace @happier-dev/tests test:mobile:e2e:android",
     "test:e2e:mobile:android": "yarn workspace @happier-dev/tests test:mobile:e2e:android",
     "test:e2e:mobile:ios": "yarn workspace @happier-dev/tests test:mobile:e2e:ios",

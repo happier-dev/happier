@@ -35,6 +35,13 @@ const WRAPPER_CASES: WrapperCase[] = [
     buildArgs: (configPath) => ['--config', configPath],
   },
   {
+    name: 'run-wsrepl-lima-matrix',
+    scriptPath: 'packages/tests/scripts/run-wsrepl-lima-matrix.mjs',
+    toolCommandName: 'bash',
+    configName: 'wsrepl-vm-name.txt',
+    buildArgs: () => ['qa-vm'],
+  },
+  {
     name: 'apps-ui-with-node-heap-limit',
     scriptPath: 'apps/ui/scripts/withNodeHeapLimit.mjs',
     toolCommandName: 'fake-runner',

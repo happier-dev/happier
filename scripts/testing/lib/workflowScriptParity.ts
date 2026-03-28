@@ -95,6 +95,22 @@ const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
     triggerMode: 'optional',
   },
   {
+    id: 'test:e2e:ui:wsrepl:lima',
+    rootScriptName: 'test:e2e:ui:wsrepl:lima',
+    docsCommands: ['yarn test:e2e:ui:wsrepl:lima'],
+    workflowCommands: ['yarn -s test:e2e:ui:wsrepl:lima', 'yarn test:e2e:ui:wsrepl:lima'],
+    workflowMode: 'any',
+    triggerMode: 'optional',
+  },
+  {
+    id: 'test:e2e:ui:wsrepl:lima:self',
+    rootScriptName: 'test:e2e:ui:wsrepl:lima:self',
+    docsCommands: ['yarn test:e2e:ui:wsrepl:lima:self'],
+    workflowCommands: [],
+    workflowMode: 'any',
+    triggerMode: 'local-only',
+  },
+  {
     id: 'test:e2e:mobile',
     rootScriptName: 'test:e2e:mobile',
     docsCommands: ['yarn test:e2e:mobile'],

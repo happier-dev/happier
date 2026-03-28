@@ -17,8 +17,8 @@ async function fileExists(path) {
   }
 }
 
-test('macos lima VM script prints tips without executing backticks', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'hstack-macos-lima-vm-test-'));
+async function runLimaVmHelperTest(hostOs) {
+  const root = await mkdtemp(join(tmpdir(), `hstack-lima-vm-test-${hostOs.toLowerCase()}-`));
   const binDir = join(root, 'bin');
   const homeDir = join(root, 'home');
   const logDir = join(root, 'logs');
@@ -38,7 +38,7 @@ test('macos lima VM script prints tips without executing backticks', async () =>
   const unamePath = join(binDir, 'uname');
   await writeFile(
     unamePath,
-    ['#!/usr/bin/env bash', 'echo Darwin'].join('\n') + '\n',
+    ['#!/usr/bin/env bash', `echo ${hostOs}`].join('\n') + '\n',
     'utf-8'
   );
   await chmod(unamePath, 0o755);
@@ -104,7 +104,7 @@ test('macos lima VM script prints tips without executing backticks', async () =>
   );
   await chmod(limactlPath, 0o755);
 
-  const scriptPath = join(__dirname, 'macos-lima-vm.sh');
+  const scriptPath = join(__dirname, 'lima-vm.sh');
 
   const env = {
     ...process.env,
@@ -130,4 +130,12 @@ test('macos lima VM script prints tips without executing backticks', async () =>
 
   const limactlOut = await readFile(limactlLog, 'utf-8');
   assert.match(limactlOut, /limactl (create|stop|start)/, 'expected script to invoke limactl');
+}
+
+test('lima VM helper prints tips without executing backticks on macOS', async () => {
+  await runLimaVmHelperTest('Darwin');
+});
+
+test('lima VM helper prints tips without executing backticks on Linux', async () => {
+  await runLimaVmHelperTest('Linux');
 });

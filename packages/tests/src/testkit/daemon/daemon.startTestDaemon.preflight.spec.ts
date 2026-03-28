@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,6 +25,7 @@ import {
   startTestDaemon,
 } from './daemon';
 import { spawnDetachedTestProcess } from '../process/testSpawn';
+import { seedCliAuthForServer } from '../cliAuth';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -44,6 +46,21 @@ async function writeHoldingDaemonScript(scriptPath: string, opts: { writesState:
   ]
     .filter(Boolean)
     .join('\n');
+
+  await writeFile(scriptPath, contents, 'utf8');
+}
+
+async function writeExitAfterStateDaemonScript(scriptPath: string, opts: { homeDir: string; serverId: string; httpPort: number }): Promise<void> {
+  const contents = [
+    "import { mkdirSync, writeFileSync } from 'node:fs';",
+    "import { resolve } from 'node:path';",
+    "const homeDir = process.env.HAPPIER_HOME_DIR;",
+    "if (!homeDir) throw new Error('Missing HAPPIER_HOME_DIR');",
+    `const stateDir = resolve(homeDir, 'servers', ${JSON.stringify(opts.serverId)});`,
+    "mkdirSync(stateDir, { recursive: true });",
+    `writeFileSync(resolve(stateDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid, httpPort: ${opts.httpPort}, controlToken: 'fresh-control-token' }), 'utf8');`,
+    "process.exit(1);",
+  ].join('\n');
 
   await writeFile(scriptPath, contents, 'utf8');
 }
@@ -184,6 +201,52 @@ describe('startTestDaemon', () => {
     } finally {
       if (freshPid) await terminateProcessTreeByPid(freshPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
       if (stalePid) await terminateProcessTreeByPid(stalePid, { graceMs: 0, pollMs: 25 }).catch(() => {});
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns daemon state even if the daemon exits after persisting daemon.state.json', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-exit-after-state-'));
+    const homeDir = resolve(testDir, 'home');
+
+    try {
+      const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+
+      const { serverId } = await seedCliAuthForServer({
+        cliHome: homeDir,
+        serverUrl: 'http://127.0.0.1:31111',
+        token: 'token-for-start-test-daemon',
+        secret: Uint8Array.from(randomBytes(32)),
+      });
+
+      await writeExitAfterStateDaemonScript(resolve(fakeScriptDir, 'index.mjs'), {
+        homeDir,
+        serverId,
+        httpPort: 32_225,
+      });
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [resolve(fakeScriptDir, 'index.mjs')],
+        cwd: testDir,
+        env: {},
+      });
+
+      const daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 15_000,
+      });
+
+      expect(daemon.state.httpPort).toBe(32_225);
+      expect(daemon.state.pid).toBe(daemon.proc.child.pid);
+      expect(daemon.proc.child.exitCode).toBe(1);
+
+      await daemon.stop();
+    } finally {
       await rm(testDir, { recursive: true, force: true });
     }
   });
