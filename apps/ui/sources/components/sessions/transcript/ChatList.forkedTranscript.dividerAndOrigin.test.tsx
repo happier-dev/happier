@@ -119,16 +119,16 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                        Platform: {
-                            OS: 'ios',
-                            select: (values: any) => values?.ios ?? values?.default,
-                        },
-                        View: (props: any) => React.createElement('View', props, props.children),
-                        Text: (props: any) => React.createElement('Text', props, props.children),
-                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                        ActivityIndicator: () => React.createElement('ActivityIndicator'),
-                        FlatList: () => React.createElement('FlatList'),
-                    }
+                                Platform: {
+                                    OS: 'ios',
+                                    select: (values: any) => values?.ios ?? values?.default,
+                                },
+                                View: (props: any) => React.createElement('View', props, props.children),
+                                Text: (props: any) => React.createElement('Text', props, props.children),
+                                Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                                ActivityIndicator: () => React.createElement('ActivityIndicator'),
+                                FlatList: () => React.createElement('FlatList'),
+                            }
     );
 });
 

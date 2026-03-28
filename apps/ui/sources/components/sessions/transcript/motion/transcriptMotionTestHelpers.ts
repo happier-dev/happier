@@ -15,11 +15,6 @@ const transcriptMotionModuleState = vi.hoisted(() => ({
 }));
 
 vi.mock('react-native', async () => {
-    const activeOptions = transcriptMotionModuleState.options;
-    if (activeOptions.reactNative) {
-        return await activeOptions.reactNative();
-    }
-
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });

@@ -37,14 +37,9 @@ export function installMessageViewCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = messageViewCommonModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('react-native-unistyles', async () => {
         const activeOptions = messageViewCommonModuleState.options;
@@ -86,13 +81,8 @@ export function installMessageViewCommonModuleMocks(
         return createExpoRouterMock().module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-        const activeOptions = messageViewCommonModuleState.options;
-        if (activeOptions.storage) {
-            return await activeOptions.storage(importOriginal);
-        }
-
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
-    });
+    vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({});
+});
 }

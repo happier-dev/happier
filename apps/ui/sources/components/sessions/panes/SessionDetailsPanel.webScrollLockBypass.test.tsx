@@ -55,18 +55,18 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                                            Platform: {
-                                                            OS: 'web',
-                                                        },
-                                                            View: React.forwardRef((props: any, ref: any) => {
-                                                                    if (ref && typeof ref === 'object') {
-                                                                        ref.current = fakeDomNode;
-                                                                    }
-                                                                    return React.createElement('View', props, props.children);
-                                                                }),
-                                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                                            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-                                                        }
+                                                                    Platform: {
+                                                                    OS: 'web',
+                                                                },
+                                                                    View: React.forwardRef((props: any, ref: any) => {
+                                                                            if (ref && typeof ref === 'object') {
+                                                                                ref.current = fakeDomNode;
+                                                                            }
+                                                                            return React.createElement('View', props, props.children);
+                                                                        }),
+                                                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                                                    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+                                                                }
     );
 });
 

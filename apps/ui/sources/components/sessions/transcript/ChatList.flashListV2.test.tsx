@@ -155,27 +155,27 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                            Dimensions: {
-                                get: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
-                            },
-                            Platform: {
-                                get OS() {
-                                                return platformOs;
-                                            },
-                                select: (values: any) => values?.[platformOs] ?? values?.default,
-                            },
-                            Easing: {
-                                bezier: () => (t: number) => t,
-                                linear: (t: number) => t,
-                            },
-                            View: (props: any) => React.createElement('View', props, props.children),
-                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                            ActivityIndicator: () => React.createElement('ActivityIndicator'),
-                            FlatList: (_props: any) => {
-                                    renderedFlatListCount++;
-                                    return React.createElement('FlatList');
-                                },
-                        }
+                                    Dimensions: {
+                                        get: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
+                                    },
+                                    Platform: {
+                                        get OS() {
+                                                        return platformOs;
+                                                    },
+                                        select: (values: any) => values?.[platformOs] ?? values?.default,
+                                    },
+                                    Easing: {
+                                        bezier: () => (t: number) => t,
+                                        linear: (t: number) => t,
+                                    },
+                                    View: (props: any) => React.createElement('View', props, props.children),
+                                    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                                    ActivityIndicator: () => React.createElement('ActivityIndicator'),
+                                    FlatList: (_props: any) => {
+                                            renderedFlatListCount++;
+                                            return React.createElement('FlatList');
+                                        },
+                                }
     );
 });
 
