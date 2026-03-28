@@ -54,7 +54,6 @@ function sessionMessagesRow(params: Readonly<{
     messageIdsOldestFirst: params.idsOldestFirst,
     messagesById: params.messagesById,
     messagesMap: params.messagesById,
-    draftsByLocalId: {},
     reducerState,
     latestThinkingMessageId: null,
     latestThinkingMessageActivityAtMs: null,

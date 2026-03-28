@@ -10,6 +10,52 @@ type Metadata = {
 };
 
 describe('updateSessionMetadataWithRetry', () => {
+    it('refreshes sessions when metadata is missing before attempting the update', async () => {
+        const sessionId = 's1';
+
+        const sessions: Record<string, { metadataVersion: number; metadata: Metadata } | undefined> = {};
+
+        const decryptMetadata = async (_version: number, encrypted: string): Promise<Metadata | null> => JSON.parse(encrypted);
+        const encryptMetadata = async (metadata: Metadata): Promise<string> => JSON.stringify(metadata);
+
+        const applySessionMetadata = (next: { metadataVersion: number; metadata: Metadata }) => {
+            sessions[sessionId] = next;
+        };
+
+        const refreshSessionsCalls: string[] = [];
+        const refreshSessions = async () => {
+            refreshSessionsCalls.push('refresh');
+            sessions[sessionId] = { metadataVersion: 1, metadata: { path: '/tmp', host: 'h' } };
+        };
+
+        const emitUpdateMetadata = async (payload: { sid: string; expectedVersion: number; metadata: string }) => {
+            return {
+                result: 'success' as const,
+                version: payload.expectedVersion + 1,
+                metadata: payload.metadata,
+            };
+        };
+
+        await updateSessionMetadataWithRetry({
+            sessionId,
+            getSession: () => sessions[sessionId] ?? null,
+            refreshSessions,
+            encryptMetadata,
+            decryptMetadata,
+            emitUpdateMetadata,
+            applySessionMetadata,
+            updater: (base) => ({
+                ...base,
+                tools: ['a'],
+            }),
+            maxAttempts: 2,
+        });
+
+        expect(refreshSessionsCalls.length).toBe(1);
+        expect(sessions[sessionId]?.metadataVersion).toBe(2);
+        expect(sessions[sessionId]?.metadata.tools).toEqual(['a']);
+    });
+
     it('retries multiple version-mismatches and applies the latest server metadata before succeeding', async () => {
         const sessionId = 's1';
 

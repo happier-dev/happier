@@ -1,44 +1,51 @@
 import { createStorageModuleStub, createToolCallMessageFixture, renderHook } from '@/dev/testkit';
-import { makeToolCall } from '@/dev/testkit/harness/toolViewTestHelpers';
 import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const message = createToolCallMessageFixture({
-        id: 'tool_1',
-        createdAt: 10,
-        tool: makeToolCall({
-            name: 'Diff',
-            state: 'completed',
-            input: {
-                files: [
-                    {
-                        file_path: 'src/app.ts',
-                        unified_diff: 'diff --git a/src/app.ts b/src/app.ts\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new\n',
-                    },
-                ],
-                _happier: {
-                    v: 2,
-                    protocol: 'codex',
-                    provider: 'codex',
-                    rawToolName: 'CodexDiff',
-                    canonicalToolName: 'Diff',
-                    sessionChangeScope: 'turn',
-                    turnId: 'turn_1',
-                    sessionId: 'session_1',
-                    source: 'provider_native',
-                    confidence: 'exact',
-                    turnStatus: 'completed',
-                    seqRange: {
-                        startSeqInclusive: 1,
-                        endSeqInclusive: 4,
-                    },
+const message = createToolCallMessageFixture({
+    id: 'tool-call-1',
+    createdAt: 10,
+    tool: {
+        name: 'Diff',
+        state: 'completed',
+        input: {
+            files: [
+                {
+                    file_path: 'src/app.ts',
+                    oldText: 'a\n',
+                    newText: 'b\n',
+                    unified_diff: 'diff --git a/src/app.ts b/src/app.ts\n',
+                },
+            ],
+            _happier: {
+                v: 2,
+                protocol: 'codex',
+                provider: 'codex',
+                rawToolName: 'CodexDiff',
+                canonicalToolName: 'Diff',
+                sessionChangeScope: 'turn',
+                turnId: 'turn_1',
+                sessionId: 'session_1',
+                source: 'provider_native',
+                confidence: 'exact',
+                turnStatus: 'completed',
+                seqRange: {
+                    startSeqInclusive: 1,
+                    endSeqInclusive: 4,
                 },
             },
-            completedAt: 11,
-        }),
-    });
+        },
+        createdAt: 10,
+        startedAt: 10,
+        completedAt: 11,
+        description: null,
+        result: { status: 'completed' },
+    },
+});
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
         useSession: () => ({ metadata: {} }),
         useSessionMessages: () => ({
