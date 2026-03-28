@@ -42,6 +42,16 @@ const WRAPPER_CASES: WrapperCase[] = [
     buildArgs: (configPath) => ['fake-runner', configPath],
   },
   {
+    name: 'apps-ui-run-vitest-shards',
+    scriptPath: 'apps/ui/scripts/runVitestShards.mjs',
+    toolCommandName: 'vitest',
+    configName: 'vitest.config.ts',
+    buildArgs: (configPath) => ['--config', configPath],
+    extraEnv: {
+      HAPPIER_UI_VITEST_SHARDS: '1',
+    },
+  },
+  {
     name: 'apps-cli-with-node-heap-limit',
     scriptPath: 'apps/cli/scripts/withNodeHeapLimit.mjs',
     toolCommandName: 'fake-runner',
