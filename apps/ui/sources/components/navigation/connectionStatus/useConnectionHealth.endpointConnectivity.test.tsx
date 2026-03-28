@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
 import { installConnectionStatusCommonModuleMocks } from './connectionStatusTestHelpers';

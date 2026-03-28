@@ -106,11 +106,11 @@ vi.mock('@/sync/ops/machines', () => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useProfile: () => ({ id: 'prof_1', username: 'u1', connectedServices: [] }),
-        useIsDataReady: () => true,
-        useRealtimeStatus: () => 'connected',
-        useSocketStatus: () => ({ status: 'connected', lastError: null, lastErrorAt: null }),
-        useEndpointConnectivity: () => ({
+    useProfile: () => ({ id: 'prof_1', username: 'u1', connectedServices: [] }),
+    useIsDataReady: () => true,
+    useRealtimeStatus: () => 'connected',
+    useSocketStatus: () => ({ status: 'connected', lastError: null, lastErrorAt: null }),
+    useEndpointConnectivity: () => ({
             status: 'offline',
             reason: 'server_unreachable',
             attempt: 1,
@@ -119,11 +119,11 @@ vi.mock('@/sync/domains/state/storage', async () => {
             lastDisconnectedAt: Date.now(),
             lastErrorMessage: 'Network request failed',
         }),
-        useLastSyncAt: () => null,
-        useAllMachines: () => [],
-        useMachineListByServerId: () => ({}),
-        useMachineListStatusByServerId: () => ({}),
-    });
+    useLastSyncAt: () => null,
+    useAllMachines: () => [],
+    useMachineListByServerId: () => ({}),
+    useMachineListStatusByServerId: () => ({}),
+});
 });
 
 describe('SystemStatusView (endpoint connectivity)', () => {

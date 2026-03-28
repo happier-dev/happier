@@ -12,19 +12,17 @@ const PRESSABLE_TEST_ID = 'auggie-indexing-chip.pressable';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode; testID?: string }) =>
-                React.createElement(
-                    'Pressable',
-                    {
-                        ...props,
-                        testID: props.testID ?? PRESSABLE_TEST_ID,
-                    },
-                    props.children,
-                ),
-        }
-    );
+    return createReactNativeWebMock({
+        Pressable: (props: Record<string, unknown> & { children?: React.ReactNode; testID?: string }) =>
+            React.createElement(
+                'Pressable',
+                {
+                    ...props,
+                    testID: props.testID ?? PRESSABLE_TEST_ID,
+                },
+                props.children,
+            ),
+    });
 });
 
 vi.mock('@expo/vector-icons', async () => ({
