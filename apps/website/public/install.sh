@@ -520,8 +520,8 @@ if [[ "${DEBUG_MODE}" == "1" ]]; then
   set -x
 fi
 
-if [[ "${PRODUCT}" != "cli" && "${PRODUCT}" != "server" ]]; then
-  echo "Invalid HAPPIER_PRODUCT='${PRODUCT}'. Expected cli or server." >&2
+if [[ "${PRODUCT}" != "cli" && "${PRODUCT}" != "server" && "${PRODUCT}" != "stack" ]]; then
+  echo "Invalid HAPPIER_PRODUCT='${PRODUCT}'. Expected cli, server, or stack." >&2
   exit 1
 fi
 
@@ -725,6 +725,8 @@ if [[ "${OS}" == "unsupported" || "${ARCH}" == "unsupported" ]]; then
   echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2
   if [[ "${PRODUCT}" == "cli" ]]; then
     echo "Fallback: npm install -g @happier-dev/cli" >&2
+  elif [[ "${PRODUCT}" == "stack" ]]; then
+    echo "Fallback: npx --yes -p @happier-dev/stack@latest hstack --help" >&2
   else
     echo "Fallback: npx --yes --package @happier-dev/relay-server happier-server --help" >&2
   fi
@@ -755,9 +757,22 @@ if [[ "${PRODUCT}" == "server" ]]; then
   CHECKSUMS_PREFIX="checksums-happier-server-v"
 fi
 
+if [[ "${PRODUCT}" == "stack" ]]; then
+  TAG="stack-stable"
+  ASSET_REGEX="^hstack-v.*-${OS}-${ARCH}[.]tar[.]gz$"
+  CHECKSUMS_REGEX="^checksums-hstack-v.*[.]txt$"
+  SIG_REGEX="^checksums-hstack-v.*[.]txt[.]minisig$"
+  EXE_NAME="hstack"
+  INSTALL_NAME="Happier Stack"
+  VERSION_PREFIX="hstack-v"
+  CHECKSUMS_PREFIX="checksums-hstack-v"
+fi
+
 if [[ "${CHANNEL}" == "preview" ]]; then
   if [[ "${PRODUCT}" == "server" ]]; then
     TAG="server-preview"
+  elif [[ "${PRODUCT}" == "stack" ]]; then
+    TAG="stack-preview"
   else
     TAG="cli-preview"
   fi
