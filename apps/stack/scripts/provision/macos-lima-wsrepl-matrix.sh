@@ -1629,7 +1629,6 @@ restart_host_daemon_and_capture_logs() {
     stack_access_key_src="$(resolve_stack_cli_access_key_path_for_ui_url || true)"
     if [[ -n "${stack_access_key_src}" && -f "${stack_access_key_src}" ]]; then
       local host_home_dir="$HOME/${host_home_rel}"
-      local host_cli_dir="${host_home_dir}/cli"
       local host_server_dir="${host_home_dir}/servers/${stack_active_server_id}"
       local host_access_key_dst="${host_server_dir}/access.key"
       mkdir -p "${host_server_dir}"
@@ -1637,19 +1636,11 @@ restart_host_daemon_and_capture_logs() {
       chmod 600 "${host_access_key_dst}" 2>/dev/null || true
       if [[ -n "${canonical_stack_cli_root}" ]]; then
         local canonical_settings_src="${canonical_stack_cli_root}/settings.json"
-        local host_settings_dst="${host_cli_dir}/settings.json"
+        local host_settings_dst="${host_home_dir}/settings.json"
         if [[ -f "${canonical_settings_src}" ]]; then
-          mkdir -p "${host_cli_dir}"
+          mkdir -p "${host_home_dir}"
           cp -f "${canonical_settings_src}" "${host_settings_dst}"
           chmod 600 "${host_settings_dst}" 2>/dev/null || true
-        fi
-      fi
-      if [[ -n "${canonical_stack_cli_root}" && -n "${canonical_stack_active_server_id}" ]]; then
-        local canonical_daemon_state_src="${canonical_stack_cli_root}/servers/${canonical_stack_active_server_id}/daemon.state.json"
-        local host_daemon_state_dst="${host_server_dir}/daemon.state.json"
-        if [[ -f "${canonical_daemon_state_src}" ]]; then
-          cp -f "${canonical_daemon_state_src}" "${host_daemon_state_dst}"
-          chmod 600 "${host_daemon_state_dst}" 2>/dev/null || true
         fi
       fi
       stack_cli_root="${host_home_dir}"
@@ -1750,6 +1741,7 @@ PY
       export HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED="${effective_host_direct_peer_feature_enabled}"
       export HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${effective_host_direct_peer_advertised_hosts}"
       export HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED="${effective_host_direct_peer_server_enabled}"
+      export HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK=1
       export HAPPIER_DAEMON_WAIT_FOR_AUTH=1
       export HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}"
 

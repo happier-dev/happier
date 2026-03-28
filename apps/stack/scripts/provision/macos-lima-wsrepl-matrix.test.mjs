@@ -3834,7 +3834,7 @@ test('macos wsrepl lima matrix wrapper preserves the canonical host machine id w
         'echo "🤖 Daemon Status"',
         'echo "✓ Daemon is running"',
         'echo "📄 Daemon State:"',
-        'settings_path="${HAPPIER_HOME_DIR:-$HOME}/cli/settings.json"',
+        'settings_path="${HAPPIER_HOME_DIR:-$HOME}/settings.json"',
         'if [[ -f "$settings_path" ]]; then',
         '  machine_id="$(python3 - "$settings_path" "${HAPPIER_ACTIVE_SERVER_ID:-}" <<\'PY\'',
         'import json',
@@ -3965,7 +3965,7 @@ test('macos wsrepl lima matrix wrapper preserves the canonical host machine id w
 
   assert.equal(res.status, 0, `expected exit 0\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
-  const isolatedSettingsPath = join(homeDir, hostHomeRel, 'cli', 'settings.json');
+  const isolatedSettingsPath = join(homeDir, hostHomeRel, 'settings.json');
   assert.equal(await fileExists(isolatedSettingsPath), true, 'expected wrapper to seed settings.json into the isolated host home');
   const isolatedSettings = JSON.parse(await readFile(isolatedSettingsPath, 'utf8'));
   assert.equal(
@@ -7601,6 +7601,8 @@ test('macos wsrepl lima matrix wrapper rebuilds the CLI when host daemon status 
         JSON.stringify(hostLog),
       '          echo "start-env direct-peer-server=${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED:-}" >> ' +
         JSON.stringify(hostLog),
+      '          echo "start-env cli-subprocess-tsx-fallback=${HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK:-}" >> ' +
+        JSON.stringify(hostLog),
       '          exit 0',
       '          ;;',
       '        status)',
@@ -7748,8 +7750,11 @@ test('macos wsrepl lima matrix wrapper rebuilds the CLI when host daemon status 
   const hostOut = await readFile(hostLog, 'utf8');
   assert.match(hostOut, /happier\.mjs.*daemon status/);
   assert.match(hostOut, /start-env direct-peer-enabled=true/);
-  assert.equal((hostOut.match(/start-env direct-peer-bind-port=13378/g) ?? []).length, 2, hostOut);
+  const bindPortMatches = hostOut.match(/start-env direct-peer-bind-port=(\d+)/g) ?? [];
+  assert.equal(bindPortMatches.length, 2, hostOut);
+  assert.equal(bindPortMatches[0], bindPortMatches[1], hostOut);
   assert.match(hostOut, /start-env direct-peer-hosts=.*host\.lima\.internal/);
+  assert.match(hostOut, /start-env cli-subprocess-tsx-fallback=1/);
 
   const summary = JSON.parse(await readFile(join(reportDir, 'summary.json'), 'utf8'));
   assert.equal(summary.status, 0);
