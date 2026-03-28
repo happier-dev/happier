@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 describe('apps/cli package publish contract', () => {
   it('declares npm bin entrypoints for the published CLI', () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const cliPackageJsonPath = resolve(here, '..', '..', 'package.json');
+    const cliPackageJsonPath = fileURLToPath(new URL('../../package.json', import.meta.url));
     const cliPackageJson = JSON.parse(readFileSync(cliPackageJsonPath, 'utf8')) as {
       bin?: unknown;
     };
@@ -19,8 +18,7 @@ describe('apps/cli package publish contract', () => {
   });
 
   it('bundles internal workspaces and relies on protocol to declare its runtime deps', () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const cliPackageJsonPath = resolve(here, '..', '..', 'package.json');
+    const cliPackageJsonPath = fileURLToPath(new URL('../../package.json', import.meta.url));
     const cliPackageJson = JSON.parse(readFileSync(cliPackageJsonPath, 'utf8')) as {
       bundledDependencies?: unknown;
       dependencies?: Record<string, string> | undefined;
@@ -40,7 +38,7 @@ describe('apps/cli package publish contract', () => {
 
     // External runtime deps used by protocol should be declared on protocol itself
     // (and vendored into the bundled protocol package during `prepack`).
-    const protocolPackageJsonPath = resolve(here, '..', '..', '..', '..', 'packages', 'protocol', 'package.json');
+    const protocolPackageJsonPath = fileURLToPath(new URL('../../../../packages/protocol/package.json', import.meta.url));
     const protocolPackageJson = JSON.parse(readFileSync(protocolPackageJsonPath, 'utf8')) as {
       dependencies?: Record<string, string> | undefined;
     };
@@ -56,9 +54,8 @@ describe('apps/cli package publish contract', () => {
   });
 
   it('explicitly includes generated dist outputs in npm publish inputs', () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const cliPackageJsonPath = resolve(here, '..', '..', 'package.json');
-    const cliNpmIgnorePath = resolve(here, '..', '..', '.npmignore');
+    const cliPackageJsonPath = fileURLToPath(new URL('../../package.json', import.meta.url));
+    const cliNpmIgnorePath = fileURLToPath(new URL('../../.npmignore', import.meta.url));
     const cliPackageJson = JSON.parse(readFileSync(cliPackageJsonPath, 'utf8')) as {
       files?: unknown;
     };
