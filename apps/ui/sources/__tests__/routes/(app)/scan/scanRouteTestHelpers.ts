@@ -42,8 +42,8 @@ export function installScanRouteCommonModuleMocks(
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    View: 'View',
-                }
+                            View: 'View',
+                        }
     );
 });
 

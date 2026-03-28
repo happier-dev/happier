@@ -42,13 +42,13 @@ export function installTerminalRouteCommonModuleMocks(
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    View: 'View',
-                    Platform: {
-                        OS: 'web',
-                        select: (options: Record<string, unknown>) =>
-                            options.web ?? options.default ?? options.ios ?? options.android,
-                    },
-                }
+                            View: 'View',
+                            Platform: {
+                                OS: 'web',
+                                select: (options: Record<string, unknown>) =>
+                                    options.web ?? options.default ?? options.ios ?? options.android,
+                            },
+                        }
     );
 });
 

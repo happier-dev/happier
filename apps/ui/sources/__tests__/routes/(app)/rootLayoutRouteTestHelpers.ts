@@ -58,15 +58,15 @@ export function installRootLayoutRouteCommonModuleMocks(
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    Platform: {
-                        OS: 'ios',
-                        select: <T,>(choices: { ios?: T; default?: T; web?: T }) =>
-                            choices?.ios ?? choices?.default ?? choices?.web,
-                    },
-                    AppState: {
-                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                    },
-                }
+                            Platform: {
+                                OS: 'ios',
+                                select: <T,>(choices: { ios?: T; default?: T; web?: T }) =>
+                                    choices?.ios ?? choices?.default ?? choices?.web,
+                            },
+                            AppState: {
+                                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                            },
+                        }
     );
 });
 

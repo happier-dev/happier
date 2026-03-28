@@ -44,9 +44,9 @@ export function installServerRouteCommonModuleMocks(
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    KeyboardAvoidingView: 'KeyboardAvoidingView',
-                    Platform: { OS: 'ios' },
-                }
+                            KeyboardAvoidingView: 'KeyboardAvoidingView',
+                            Platform: { OS: 'ios' },
+                        }
     );
 });
 
