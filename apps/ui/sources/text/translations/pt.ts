@@ -1,18 +1,6 @@
 import type { TranslationStructure } from "../_types";
-import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
-import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
-import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
-import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
-import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
-import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
-const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions.pt;
-const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions.pt;
-const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions.pt;
-const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.pt;
-const memoryEmbeddingsTranslationExtension = memoryEmbeddingsTranslationExtensions.pt;
-const ptMcpServersUxTranslationExtension = {
+const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle:
     "Crie um servidor, importe JSON do host ou instale uma predefinição recomendada.",
   mcpServersHeroSubtitle: ({
@@ -163,6 +151,351 @@ const ptMcpServersUxTranslationExtension = {
   mcpServersDeliveryUnsupportedSubtitle:
     "Este backend ainda não recebe ferramentas do Happier.",
 };
+
+const newSessionMcpTranslationExtension = {
+  mcpChipLabel: 'MCP',
+  mcpChipLabelWithCount: ({ count }: { count: number }) => `MCP ${count}`,
+  mcpModalTitle: 'Servidores MCP',
+  mcpModalSubtitle: ({ machineName, directory }: { machineName: string; directory: string }) =>
+    `Visualize os servidores MCP disponíveis em ${machineName} para ${directory}.`,
+  mcpManagedToggleTitle: 'Servidores MCP gerenciados',
+  mcpManagedToggleSubtitle: 'Inclua servidores MCP gerenciados quando estiverem disponíveis para esta sessão.',
+  mcpOpenSettingsTitle: 'Abrir configurações de MCP',
+  mcpOpenSettingsSubtitle: 'Gerencie servidores configurados, vínculos e opções de importação.',
+  mcpUnavailableNoContextTitle: 'Escolha uma máquina e um diretório primeiro',
+  mcpUnavailableNoContextSubtitle: 'A visualização do MCP precisa de uma máquina de destino e de um diretório de trabalho.',
+  mcpSelectedSectionTitle: 'Selecionados',
+  mcpAvailableSectionTitle: 'Disponíveis',
+  mcpUnavailableSectionTitle: 'Indisponíveis',
+  mcpDetectedSectionTitle: 'Detectados nas configurações do provedor',
+  mcpDetectedSectionTitleForAgent: ({ agentName }: { agentName: string }) => `Detectados na configuração de ${agentName}`,
+  mcpDetectedEmptyTitle: 'Nenhum servidor MCP detectado',
+  mcpDetectedEmptySubtitle: 'Atualize para escanear os arquivos de configuração do provedor nesta máquina.',
+  mcpDetectedUnsupportedTitle: 'Os servidores MCP detectados não estão disponíveis',
+  mcpDetectedUnsupportedSubtitle: 'Atualize o Happier nesta máquina para habilitar a varredura de configurações do provedor.',
+  mcpHappierSectionTitle: 'Servidores MCP do Happier',
+  mcpHappierEmptyTitle: 'Nenhum servidor MCP definido no Happier',
+  mcpHappierEmptySubtitle: 'Defina servidores MCP nas configurações para usá-los nas sessões.',
+  mcpReasonActiveByDefault: 'Incluídos por padrão',
+  mcpReasonForcedIncluded: 'Obrigatórios pela configuração',
+  mcpReasonForcedExcluded: 'Excluídos pela configuração',
+  mcpReasonManagedDisabled: 'Os servidores MCP gerenciados estão desativados',
+  mcpReasonBindingDisabled: 'Desativados pelo vínculo do servidor',
+  mcpReasonAvailablePortable: 'Compatíveis com esta sessão',
+  mcpReasonNotPortable: 'Não compatíveis com esta sessão',
+} as const;
+
+const settingsAppearanceTranslationExtension = {
+  sessionListDensity: {
+    title: 'Densidade da lista de sessões',
+    subtitle: 'Escolha como as sessões são exibidas na barra lateral',
+    detailed: 'Detalhada',
+    detailedDescription: 'Linhas de tamanho completo com avatares e status',
+    cozy: 'Intermediário',
+    cozyDescription: 'Linhas menores com avatares',
+    narrow: 'Estreita',
+    narrowDescription: 'Linhas mínimas sem avatares',
+  },
+} as const;
+
+const ptAcpCatalogSettingsExtension = {
+    acpCatalog: 'Backends ACP',
+    acpCatalogSubtitle: 'Gerencie backends ACP integrados e personalizados',
+    acpCatalogBuiltIn: 'ACP integrado',
+    acpCatalogBuiltInFooter:
+        'Os agentes ACP genéricos integrados são definidos no catálogo compartilhado e executados pelo ambiente de execução ACP compartilhado.',
+    acpCatalogBackends: 'Backends personalizados',
+    acpCatalogBackendsFooter:
+        'Cada backend personalizado é uma definição CLI compatível com ACP que pode ser selecionada, com seu próprio lançador, padrões e configurações de autenticação.',
+    acpCatalogBackendsEmptyTitle: 'Nenhum backend ACP personalizado',
+    acpCatalogBackendsEmptySubtitle: 'Adicione um backend para criar uma opção selecionável de backend ACP personalizado.',
+    acpCatalogAddBackend: 'Adicionar backend ACP',
+    acpCatalogAddBackendSubtitle: 'Criar uma opção de backend ACP personalizado',
+    acpCatalogBackendEditorTitle: 'Backend ACP',
+    acpCatalogBasics: 'Básico',
+    acpCatalogLauncher: 'Lançador',
+    acpCatalogEnv: 'Ambiente',
+    acpCatalogAddEnv: 'Adicionar variável de ambiente',
+    acpCatalogAddEnvSubtitle: 'Armazene valores literais ou vincule Segredos salvos',
+    acpCatalogEnvEmptyTitle: 'Sem variáveis de ambiente',
+    acpCatalogEnvEmptySubtitle: 'Adicione variáveis de inicialização para este backend.',
+    acpCatalogAuth: 'Autenticação',
+    acpCatalogAuthSupport: 'Suporte de autenticação',
+    acpCatalogAuthParser: 'Analisador de status',
+    acpCatalogCapabilities: 'Capacidades',
+    acpCatalogTransportProfile: 'Perfil de transporte',
+    acpCatalogSupportsModes: 'Suporta modos',
+    acpCatalogSupportsModels: 'Suporta modelos',
+    acpCatalogSupportsConfigOptions: 'Suporta opções de configuração',
+    acpCatalogPromptImageSupport: 'Suporte a imagens em prompts',
+    acpCatalogFieldId: 'ID',
+    acpCatalogFieldName: 'Nome',
+    acpCatalogFieldTitle: 'Título',
+    acpCatalogFieldDescription: 'Descrição',
+    acpCatalogFieldCommand: 'Comando',
+    acpCatalogFieldArgs: 'Argumentos (um por linha)',
+    acpCatalogMachineLoginKey: 'Chave de login da máquina',
+    acpCatalogDocsUrl: 'URL da documentação',
+    acpCatalogLoginCommand: 'Comando de login',
+    acpCatalogLoginArgs: 'Argumentos de login (um por linha)',
+    acpCatalogStatusCommand: 'Tokens do comando de status (um por linha)',
+    acpCatalogDefaultMode: 'Modo padrão',
+    acpCatalogDefaultModel: 'Modelo padrão',
+    acpCatalogDeleteBackendTitle: 'Excluir backend ACP?',
+    acpCatalogDeleteBackendConfirm: ({ name }: { name: string }) => `Excluir "${name}"?`,
+    acpCatalogValidationFailed: 'As configurações do catálogo ACP são inválidas.',
+} as const;
+
+const acpCatalogTranslationExtension = {
+  settings: ptAcpCatalogSettingsExtension,
+  newSession: {},
+} as const;
+
+const memoryEmbeddingsTranslationExtension = {
+  status: {
+    embeddingsTitle: 'Tempo de execução de embeddings',
+    embeddingsProviderTitle: 'Provedor de embeddings',
+    embeddingsModelTitle: 'Modelo de embeddings',
+    embeddingsDisabled: 'Os embeddings estão desativados',
+    embeddingsReady: 'Os embeddings estão prontos',
+    embeddingsDownloading: 'O modelo de embeddings está sendo baixado',
+    embeddingsFallback: 'Embeddings indisponíveis, usando fallback apenas de texto',
+    embeddingsUnavailable: 'Embeddings indisponíveis',
+    embeddingsError: 'Falha ao inicializar embeddings',
+    embeddingsProviderLocal: 'Modelo local',
+    embeddingsProviderOpenAiCompatible: 'Endpoint compatível com OpenAI',
+  },
+  embeddings: {
+    groupTitle: 'Vetores',
+    groupFooter:
+      'Opcional: melhore o ranking de busca profunda com um modelo local ou com seu próprio endpoint compatível com OpenAI.',
+    mode: {
+      title: 'Modo de embeddings',
+      options: {
+        disabledTitle: 'Desativado',
+        disabledSubtitle: 'Usar apenas ranking de texto para busca profunda',
+        balancedTitle: 'Equilibrado',
+        balancedSubtitle: 'Preset local rápido e validado',
+        longContextTitle: 'Contexto longo',
+        longContextSubtitle: 'Melhor para blocos de conversa maiores',
+        qualityTitle: 'Qualidade',
+        qualitySubtitle: 'Preset local de maior custo para avaliação',
+        customTitle: 'Personalizado',
+        customSubtitle: 'Escolha seu próprio provedor e modelo',
+      },
+    },
+    provider: {
+      title: 'Provedor',
+      options: {
+        localTitle: 'Modelo local',
+        localSubtitle: 'Gerenciado pelo Happier e baixado no primeiro uso',
+        openAiCompatibleTitle: 'Endpoint compatível com OpenAI',
+        openAiCompatibleSubtitle: 'Use seu próprio servidor de embeddings e API key',
+      },
+    },
+    notSet: 'Não definido',
+    secretSet: 'Definido',
+    secretNotSet: 'Não definido',
+    queryPrefixTitle: 'Prefixo da consulta',
+    queryPrefixPromptBody: 'Prefixo opcional adicionado às consultas de busca do usuário antes de gerar embeddings.',
+    documentPrefixTitle: 'Prefixo do documento',
+    documentPrefixPromptBody: 'Prefixo opcional adicionado aos blocos de memória indexados antes de gerar embeddings.',
+    openAi: {
+      baseUrlTitle: 'URL base',
+      baseUrlPromptBody: 'Informe a URL base do seu endpoint de embeddings compatível com OpenAI.',
+      modelTitle: 'Modelo remoto',
+      modelPromptBody: 'Informe o id do modelo de embeddings a ser solicitado ao endpoint remoto.',
+      apiKeyTitle: 'Chave de API',
+      apiKeyPromptBody: 'Informe a chave de API usada pelo endpoint remoto de embeddings.',
+      dimensionsTitle: 'Dimensões',
+      dimensionsPromptBody: 'Substituição opcional da dimensão de saída para endpoints que a suportam.',
+    },
+    advanced: {
+      ftsWeightTitle: 'Peso da classificação textual',
+      ftsWeightPromptBody: 'Peso relativo da classificação full-text do SQLite ao combinar resultados.',
+      embeddingWeightTitle: 'Peso da classificação por embeddings',
+      embeddingWeightPromptBody: 'Peso relativo da similaridade de embeddings ao combinar resultados.',
+    },
+  },
+} as const;
+
+const promptLibraryUxRefinementTranslationExtension = {
+  pt: {
+    promptsSubtitle: 'Documentos de prompt reutilizáveis',
+    skillsSubtitle: 'Pacotes de habilidades reutilizáveis',
+    addPrompt: 'Adicionar novo prompt',
+    addPromptSubtitle: 'Criar um novo documento de prompt',
+    addSkill: 'Adicionar nova habilidade',
+    addSkillSubtitle: 'Criar um novo pacote de habilidade',
+    newTemplateSubtitle: 'Crie um modelo slash reutilizável',
+    noPrompts: 'Ainda não há prompts',
+    noPromptsSubtitle: 'Crie um prompt para começar a montar modelos e adições ao prompt do sistema.',
+    noSkills: 'Ainda não há habilidades',
+    noSkillsSubtitle: 'Crie um pacote de habilidade para reutilizar instruções do SKILL.md.',
+    imported: 'Importado',
+    builtIn: 'Integrado',
+    general: 'Geral',
+    promptNameLabel: 'Nome do prompt',
+    promptContent: 'Conteúdo do prompt',
+    skillNameLabel: 'Nome da habilidade',
+    skillContent: 'Conteúdo do SKILL.md',
+    supportingFiles: 'Arquivos de apoio',
+    supportingFilesEmptyTitle: 'Ainda não há arquivos de apoio',
+    supportingFilesEmptySubtitle: 'Adicione arquivos reutilizáveis para exportar junto com esta habilidade.',
+    supportingFilesSaveFirstTitle: 'Salve esta habilidade primeiro',
+    supportingFilesSaveFirstSubtitle: 'Crie a habilidade antes de adicionar arquivos de apoio.',
+    addSupportingFile: 'Adicionar arquivo de apoio',
+    addSupportingFileSubtitle: 'Criar outro arquivo dentro deste pacote de habilidade',
+    editSupportingFile: 'Editar arquivo de apoio',
+    newSupportingFile: 'Novo arquivo de apoio',
+    supportingFilePathLabel: 'Caminho do arquivo',
+    supportingFilePathPlaceholder: 'templates/review.md',
+    supportingFileContent: 'Conteúdo do arquivo',
+    supportingFileTextSubtitle: 'Arquivo de texto',
+    supportingFileBinarySubtitle: 'Arquivo binário · somente exportação',
+    deleteSupportingFileTitle: 'Excluir arquivo de apoio?',
+    deleteSupportingFileConfirm: 'Isso remove o arquivo do pacote de habilidade.',
+    linkedAssetsCount: ({ count }: { count: number }) => `${count} exportação${count === 1 ? '' : 'ões'}`,
+    manageExternalAssets: 'Gerenciar recursos externos',
+    deleteLibraryItemTitle: 'Excluir item da biblioteca?',
+    deleteLibraryItemBody: 'Isso remove o item da sua biblioteca e desvincula modelos ou adições ao prompt do sistema que o utilizam.',
+    folders: 'Pastas',
+    foldersSubtitle: 'Organize prompts e habilidades em pastas nomeadas',
+    addFolder: 'Adicionar pasta',
+    addFolderSubtitle: 'Crie uma pasta reutilizável para itens da biblioteca',
+    foldersEmptyTitle: 'Ainda não há pastas',
+    foldersEmptySubtitle: 'Crie uma pasta para organizar prompts e habilidades.',
+    renameFolder: 'Renomear pasta',
+    deleteFolderTitle: 'Excluir pasta?',
+    deleteFolderBody: 'Isso removerá a pasta dos prompts e habilidades que a utilizam.',
+    folderUsageCount: ({ count }: { count: number }) => `${count} item${count === 1 ? '' : 'ns'}`,
+    folderLabel: 'Pasta',
+    folderPlaceholder: 'Nome da pasta',
+    tagsLabel: 'Etiquetas',
+    tagsPlaceholder: 'tag-um, tag-dois',
+    addToStackSubtitle: 'Escolha um prompt ou habilidade para adicionar aqui',
+    externalAssetsImportAction: 'Importar',
+    externalAssetsLinkedTo: ({ title }: { title: string }) => `Vinculado a ${title}`,
+    externalAssetsExportTarget: 'Destino',
+    externalAssetsInstallMethod: 'Método de instalação',
+    externalAssetsInstallMethodCopy: 'Copiar arquivos',
+    externalAssetsInstallMethodCopySubtitle: 'Grava uma cópia independente no destino selecionado',
+    externalAssetsInstallMethodSymlink: 'Link simbólico (recomendado)',
+    externalAssetsInstallMethodSymlinkSubtitle: 'Vincula o destino a uma cópia gerida pelo Happier para atualizações mais simples',
+    registriesAddGitSourceSubtitle: 'Adicione um repositório Git ou checkout local como fonte de registro',
+    registriesSourceTitleLabel: 'Título da fonte',
+    registriesSourceUrlLabel: 'URL do repositório ou caminho local',
+    registriesSearchLabel: 'Pesquisar no registro',
+    registriesSearchPlaceholder: 'Pesquise habilidades (por exemplo: design)',
+    registriesItemSource: 'Repositório de origem',
+    registriesItemPath: 'Caminho do registro',
+    registriesItemFiles: 'Arquivos de apoio',
+    registriesItemPreview: 'Pré-visualização do SKILL.md',
+    registriesItemPreviewUnavailable: 'Nenhuma prévia de SKILL.md está disponível para este item do registro.',
+    registriesItemImportSubtitle: 'Importe este pacote de habilidade para a biblioteca do Happier',
+    registriesItemInstallAction: 'Instalar na máquina',
+    registriesItemInstallConfirmTitle: 'Instalar item do registro?',
+    registriesItemInstallConfirmBody: 'Isso importa a habilidade para a sua biblioteca e a instala no destino de máquina selecionado.',
+    templateTargetPromptLabel: 'Prompt de destino',
+    templateTargetPromptPlaceholder: 'Selecione um prompt',
+    editSelectedPrompt: 'Editar prompt selecionado',
+    editSelectedPromptDisabled: 'Selecione um prompt primeiro',
+    templateNameLabel: 'Nome do modelo',
+    templateTokenLabel: 'Comando slash',
+    templatesEmptyTitle: 'Ainda não há modelos',
+    templatesEmptySubtitle: 'Crie um modelo slash para inserir prompts rapidamente.',
+    librarySearchPlaceholder: 'Pesquisar na biblioteca',
+  },
+} as const;
+
+const sessionHandoffTranslationExtensions = {
+  pt: {
+    activeWarning: {
+      title: 'Esta sessão ainda está em execução aqui',
+      message: 'A transferência vai parar esta sessão nesta máquina antes de transferi-la para a máquina selecionada.',
+      confirm: 'Transferir e parar aqui',
+    },
+    progress: {
+      title: 'Transferindo sessao',
+      message: 'Preparando a maquina de destino e movendo o estado da sessao.',
+      planned: 'Planejado',
+      transferred: 'Transferido',
+      remaining: 'Restante',
+      timeline: {
+        scanSource: 'Escaneando origem',
+        plan: 'Planejando mudanças',
+        transferBlobs: 'Transferindo arquivos',
+        stageTarget: 'Preparando destino',
+        apply: 'Aplicando mudanças',
+        importSession: 'Importando sessão',
+        finalize: 'Finalizando',
+      },
+    },
+    failure: {
+      title: 'Falha ao transferir a sessao',
+      message: 'Nao foi possivel concluir a transferencia. Voce pode tentar novamente.',
+    },
+    recovery: {
+      title: 'A sessão foi parada aqui antes de a transferência ser concluída',
+      messageAfterSourceStop:
+        'O Happier já parou esta sessão nesta máquina, mas não conseguiu concluir a inicialização na máquina de destino. Reinicie-a aqui ou mantenha-a parada enquanto recupera a máquina de destino.',
+      restartOnSource: 'Reiniciar na origem',
+      keepStopped: 'Manter parada',
+    },
+  },
+} as const;
+
+const settingsSessionHandoffTranslationExtensions = {
+  pt: {
+    title: 'Transferencia de sessao',
+    groupTitle: 'Transferencia de sessao',
+    groupFooter: 'Escolha as opcoes padrao para mover uma sessao entre maquinas.',
+    entrySubtitle: 'Abrir padroes de transferencia',
+    workspaceTransfer: {
+      groupTitle: 'Transferencia do espaco de trabalho',
+      groupFooter: 'Decida se a transferencia deve copiar o espaco de trabalho e como os conflitos devem ser tratados por padrao.',
+      title: 'Transferir espaco de trabalho',
+      enabledSubtitle: 'Copie o espaco de trabalho para a maquina de destino por padrao.',
+      disabledSubtitle: 'Mantenha o espaco de trabalho de destino inalterado por padrao.',
+      strategy: {
+        title: 'Estrategia de transferencia do espaco de trabalho',
+        subtitle: 'Escolha entre transferir um snapshot completo ou sincronizar apenas as alteracoes.',
+        transferSnapshotTitle: 'Transferir snapshot',
+        transferSnapshotSubtitle: 'Exporte e mova um snapshot completo do espaco de trabalho.',
+        syncChangesTitle: 'Sincronizar alteracoes',
+        syncChangesSubtitle: 'Compare origem e destino e aplique apenas as alteracoes unidirecionais necessarias.',
+      },
+    },
+    conflictPolicy: {
+      title: 'Politica de conflito do espaco de trabalho',
+      subtitle: 'Escolha o que acontece quando o caminho de destino ja existe.',
+      createSiblingCopyTitle: 'Criar copia adjacente',
+      createSiblingCopySubtitle: 'Preserve o caminho de destino existente e crie uma copia adjacente para a transferencia.',
+      replaceExistingTitle: 'Substituir caminho existente',
+      replaceExistingSubtitle: 'Substitua o caminho de destino existente apos a confirmacao.',
+    },
+    includeIgnoredMode: {
+      title: 'Arquivos ignorados',
+      subtitle: 'Escolha como os arquivos ignorados pelo git sao tratados durante a transferencia do espaco de trabalho.',
+      excludeTitle: 'Excluir arquivos ignorados',
+      excludeSubtitle: 'Ignorar arquivos ignorados por padrao.',
+      includeSelectedTitle: 'Incluir arquivos ignorados selecionados',
+      includeSelectedSubtitle: 'Copie apenas os caminhos ignorados que correspondem aos globs configurados.',
+      globsTitle: 'Globs de inclusao de ignorados',
+      globsPlaceholder: 'dist/**, .env.local',
+    },
+    directTargetMode: {
+      title: 'Modo de destino para sessao direta',
+      subtitle: 'Escolha o que deve acontecer ao transferir uma sessao direta.',
+      groupTitle: 'Transferencia de sessao direta',
+      groupFooter: 'Aplica-se apenas quando a sessao de origem esta atualmente em modo direto.',
+      keepDirectTitle: 'Manter direta',
+      keepDirectSubtitle: 'Retome o destino como uma sessao direta quando o provedor oferecer suporte.',
+      convertToPersistedTitle: 'Converter para sincronizada',
+      convertToPersistedSubtitle: 'Importe a transcricao e continue como uma sessao sincronizada do Happier.',
+    },
+  },
+} as const;
 
 /**
  * Portuguese plural helper function
@@ -4456,6 +4789,7 @@ export const pt: TranslationStructure = {
         count: number;
       }) => `${file} e ${count} mais`,
       showingDiff: "Mostrando alterações",
+      turnDiffRecap: "Resumo das alterações deste turno",
     },
     askUserQuestion: {
       submit: "Enviar resposta",
