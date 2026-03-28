@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { installModalComponentCommonModuleMocks } from '@/modal/components/modalComponentTestHelpers';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
 installModalComponentCommonModuleMocks();
@@ -28,7 +29,9 @@ vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
-    useMachine: () => null,
+    ...createStorageModuleStub({
+        useMachine: () => null,
+    }),
 }));
 
 vi.mock('@/utils/sessions/machineUtils', () => ({
