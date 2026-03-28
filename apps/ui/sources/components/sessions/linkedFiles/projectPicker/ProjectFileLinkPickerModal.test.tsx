@@ -9,17 +9,16 @@ import { installProjectFileLinkPickerCommonModuleMocks } from './projectFileLink
 
 installProjectFileLinkPickerCommonModuleMocks();
 
-vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
-  RepositoryTreeList: 'RepositoryTreeList',
-}));
-
-vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', () => ({
-  SessionRepositoryTreeBrowserView: (props: any) => React.createElement(
-      'SessionRepositoryTreeBrowserView',
+vi.mock('@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent', () => ({
+  LinkFilePickerPopoverContent: (props: any) => React.createElement(
+      'LinkFilePickerPopoverContent',
       props,
       React.createElement('Pressable', {
           testID: 'repository-tree-row-src_api.ts',
-          onPress: () => props.onOpenFile('src/api.ts'),
+          onPress: () => {
+              props.onPickPath('src/api.ts');
+              props.onRequestClose();
+          },
       }),
   ),
 }));
