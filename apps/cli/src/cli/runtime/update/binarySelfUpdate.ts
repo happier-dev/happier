@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile, lstat, realpath 
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import {
   extractReleasePayloadRootFromArchive,
   installVersionedPayload,
@@ -101,6 +102,7 @@ export async function updateInstalledCliPayloadFromReleaseAssets(params: Readonl
   happyHomeDir: string;
   minisignPubkeyFile?: string;
   preferVersion: string | null;
+  channel?: PublicReleaseRingId;
 }>): Promise<Readonly<{ updatedTo: string; installRoot: string }>> {
   const bundle = resolveCliBinaryAssetBundleFromReleaseAssets({
     assets: params.assets,
@@ -133,6 +135,7 @@ export async function updateInstalledCliPayloadFromReleaseAssets(params: Readonl
       componentId: 'happier-cli',
       versionId: bundle.version,
       payloadRoot,
+      channel: params.channel,
       processEnv,
     });
 
@@ -140,6 +143,7 @@ export async function updateInstalledCliPayloadFromReleaseAssets(params: Readonl
       updatedTo: bundle.version,
       installRoot: resolveFirstPartyInstallLayout({
         componentId: 'happier-cli',
+        channel: params.channel,
         processEnv,
       }).installRoot,
     };

@@ -18,6 +18,12 @@ The Happier CLI is the power-user client for:
 curl -fsSL https://happier.dev/install | bash
 ```
 
+Public installer lanes:
+
+- `stable`: `curl -fsSL https://happier.dev/install | bash` -> `happier`
+- `preview`: `curl -fsSL https://happier.dev/install-preview | bash` -> `hprev`
+- `dev`: `curl -fsSL https://happier.dev/install-dev | bash` -> `hdev`
+
 Windows (PowerShell):
 
 ```powershell
@@ -34,7 +40,7 @@ npm install -g @happier-dev/cli
 
 How you update depends on how you installed the CLI:
 
-- **Installer install**: `happier self check` / `happier self update` (or rerun `curl -fsSL https://happier.dev/install | bash`). Installer installs keep the full CLI payload under `~/.happier/cli/current` and refresh the stable `happier` shim for you.
+- **Installer install**: run the lane-specific command (`happier`, `hprev`, or `hdev`) with `self check` / `self update` (or rerun the matching installer endpoint). Installer installs keep the full CLI payload under `~/.happier/cli/current` and refresh the selected lane shim for you.
 - **npm install**: `npm install -g @happier-dev/cli@latest` (or `@next` for preview)
 
 The CLI can also show periodic update notices in TTY sessions; disable with:

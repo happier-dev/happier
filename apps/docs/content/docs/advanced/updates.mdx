@@ -9,7 +9,7 @@ This page is the “source of truth” for:
 
 - which artifacts update automatically vs manually
 - what commands to run for each install method
-- how stable/preview channels map to rolling release tags
+- how stable/preview/dev channels map to rolling release tags
 - where “embedded UI” comes from in self-hosted deployments
 
 ## Update channels
@@ -18,8 +18,11 @@ Most artifacts are published into channels:
 
 - `stable` (production)
 - `preview` (pre-release / early access)
+- `dev` (rolling public nightly / newest public branch builds)
 
-Under the hood, channels are implemented using **rolling release tags** (for example `cli-stable`, `server-preview`, `ui-web-stable`). Those tags are updated to point at the newest version in that channel.
+Under the hood, channels are implemented using **rolling release tags** (for example `cli-stable`, `cli-preview`, `cli-dev`, `server-preview`, `ui-web-dev`). Those tags are updated to point at the newest version in that channel.
+
+Availability still depends on the artifact. For example, some assets expose all three public rings (`stable`, `preview`, `dev`), while others may currently expose only a subset.
 
 ## Update matrix (everything we ship)
 
@@ -27,7 +30,7 @@ The table below covers all user-facing released assets and how updates work.
 
 | Shipped asset | How you got it | Updates happen when… | Automatic? | How to update / control |
 | --- | --- | --- | --- | --- |
-| **Desktop app** (Tauri, “Tori” / Happier desktop) | Installed app bundle (`.app` / installer) | The app checks a signed update feed and offers an in-app update | **Checks automatically**, install is **user-triggered** | Accept the in-app update prompt; stable/preview is determined by which build you installed |
+| **Desktop app** (Tauri, “Tori” / Happier desktop) | Installed app bundle (`.app` / installer) | The app checks a signed update feed and offers an in-app update | **Checks automatically**, install is **user-triggered** | Accept the in-app update prompt; stable/preview/dev is determined by which build you installed |
 | **Mobile app** (iOS/Android) | App Store / Play Store | (1) JS/asset OTA updates may be fetched; (2) native updates come from the store | OTA can be **automatic + user-applied**; store updates are **store-managed** | In-app “Update available” banner applies OTA updates (reload). Native updates require installing the new store version |
 | **Web app** (hosted) | You open the hosted web UI | New deployments go live; users get them on refresh | Yes (on refresh) | Refresh the page (hard refresh if your browser is caching aggressively) |
 | **Self-hosted web UI bundle** (`happier-ui-web`) | Embedded/served by your self-hosted server, Docker image, or runner | It changes when your server runtime updates (or when your runner downloads a newer UI bundle) | Depends on the host (see below) | Control updates via the host (Docker pull, `hstack self-host update`, runner restart, or pin tags) |
@@ -37,9 +40,9 @@ The table below covers all user-facing released assets and how updates work.
 | **UI “embedded” in relay-server npm runner** | Downloaded + cached by the runner (not shipped inside npm tarball) | The runner downloads the UI bundle when needed | Yes (on restart) | Same controls as the runner: `--ui-tag …`, `--without-ui`, or set `HAPPIER_SERVER_UI_DIR` to a fixed directory |
 | **Self-host managed runtime** (`hstack self-host …`) | `curl -fsSL https://happier.dev/self-host \| bash` | You run `hstack self-host update` (or an opt-in scheduler runs it for you) | Optional (opt-in) | `hstack self-host update` (manual). Opt-in auto-update schedules the same command (systemd/launchd/schtasks) |
 | **Self-host installer** (`https://happier.dev/self-host`) | The installer script itself | You rerun it | No | Re-run the installer to reinstall/repair + rerun `hstack self-host install` |
-| **Server runtime installer** (`https://happier.dev/install-server`) | `curl …install-server \| bash` (Linux) | You rerun it | No | Re-run the installer to replace the `happier-server` binary (rolling tags `server-stable` / `server-preview`) |
-| **CLI installer** (`https://happier.dev/install`) | `curl …install \| bash` / `irm …install.ps1` | You rerun it (or use the CLI’s self-update for installer installs) | No | Re-run the installer, or run `happier self update` |
-| **CLI installer payload** | Installed under `~/.happier/cli/{versions,current,previous}` with stable shims in `~/.happier/bin` and `~/.local/bin` (or Windows equivalent) | You run `happier self update` or rerun the installer | No (but it can show notices) | `happier self check` / `happier self update` (supports `--channel preview`, `--to <versionOrTag>`) |
+| **Server runtime installer** (`https://happier.dev/install-server`) | `curl …install-server \| bash` (Linux) | You rerun it | No | Re-run the installer to replace the `happier-server` binary (rolling tags `server-stable` / `server-preview` / `server-dev`) |
+| **CLI installer** (`https://happier.dev/install`) | `curl …install \| bash` / `irm …install.ps1` | You rerun it (or use the CLI’s self-update for installer installs) | No | Re-run the installer, or run the lane-specific command (`happier`, `hprev`, or `hdev`) with `self update` |
+| **CLI installer payload** | Installed under `~/.happier/cli/{versions,current,previous}` with lane-specific shims in `~/.happier/bin` and `~/.local/bin` (or Windows equivalent) | You run `happier self update`, `hprev self update`, `hdev self update`, or rerun the installer | No (but it can show notices) | Installer lanes are `stable` (`happier`), `preview` (`hprev`), and `dev` (`hdev`). You can still target `--channel preview|dev` or `--to <versionOrTag>` explicitly. |
 | **CLI npm package** (`@happier-dev/cli`) | `npm install -g @happier-dev/cli` | You upgrade the npm package | No (but it can show notices) | `npm install -g @happier-dev/cli@latest` (or `@next` for preview) |
 | **Stack npm package** (`@happier-dev/stack`) | `npm install -g @happier-dev/stack` | You upgrade the npm package (or use `hstack self update` runtime install) | No (but it can show notices) | `hstack self update` (recommended in-stack) or `npm install -g @happier-dev/stack@latest` |
 
@@ -59,6 +62,7 @@ The desktop app uses Tauri’s updater plugin:
 - installing the update downloads a signed bundle and restarts the app
 
 Stable vs preview is determined by which desktop build you installed.
+Public dev builds use the same updater model, but point at the `dev` feed instead.
 
 ## App (mobile + web)
 
@@ -112,6 +116,12 @@ Preview channel:
 
 ```bash
 happier self update --channel=preview
+```
+
+Public dev channel:
+
+```bash
+hdev self update
 ```
 
 Pin to a specific version (or rolling tag like `latest`/`next`):
@@ -222,8 +232,8 @@ hstack self-host rollback --to <version>
 
 `hstack self-host update` pulls and installs:
 
-- the **server runtime binary** (from the rolling release tag for your channel: `server-stable` / `server-preview`)
-- the **UI web bundle** (from `ui-web-stable` / `ui-web-preview`), unless you disabled UI
+- the **server runtime binary** (from the rolling release tag for your channel: `server-stable` / `server-preview` / `server-dev`)
+- the **UI web bundle** (from `ui-web-stable` / `ui-web-preview` / `ui-web-dev`), unless you disabled UI
 
 `hstack self-host status` shows:
 
@@ -258,8 +268,8 @@ Environment variables (equivalent defaults/overrides):
 
 By default, the runner tracks rolling tags:
 
-- server runtime: `server-stable` / `server-preview`
-- UI web bundle: `ui-web-stable` / `ui-web-preview`
+- server runtime: `server-stable` / `server-preview` / `server-dev`
+- UI web bundle: `ui-web-stable` / `ui-web-preview` / `ui-web-dev`
 
 Updates are picked up on restart (the runner fetches tag metadata each time it starts).
 

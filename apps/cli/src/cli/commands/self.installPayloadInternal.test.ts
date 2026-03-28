@@ -33,10 +33,34 @@ describe('happier self __install-payload', () => {
       });
 
       expect(installVersionedPayloadMock).toHaveBeenCalledWith({
+        channel: 'stable',
         componentId: 'happier-cli',
         payloadRoot: '/tmp/payload',
         processEnv: process.env,
         versionId: '1.2.3',
+      });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('forwards the publicdev release ring when payload promotion is scoped to the dev lane', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      const { handleSelfCliCommand } = await import('./self');
+      await handleSelfCliCommand({
+        args: ['self', '__install-payload', '--component', 'happier-cli', '--payload-root', '/tmp/payload', '--version', '1.2.3-dev.4', '--channel', 'publicdev'],
+        rawArgv: ['hdev', 'self', '__install-payload', '--component', 'happier-cli', '--payload-root', '/tmp/payload', '--version', '1.2.3-dev.4', '--channel', 'publicdev'],
+        terminalRuntime: null,
+      });
+
+      expect(installVersionedPayloadMock).toHaveBeenCalledWith({
+        channel: 'publicdev',
+        componentId: 'happier-cli',
+        payloadRoot: '/tmp/payload',
+        processEnv: process.env,
+        versionId: '1.2.3-dev.4',
       });
     } finally {
       logSpy.mockRestore();

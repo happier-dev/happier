@@ -2787,6 +2787,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     if (!environment) {
       fail(`--environment must be ${JSON.stringify(TAURI_RELEASE_ENVIRONMENT_CHOICES)} (got: ${requestedEnvironment || '<empty>'})`);
     }
+    const environmentArg = environment === 'publicdev' ? 'dev' : environment;
     const repo = String(values.repo ?? '').trim();
     const uiVersion = String(values['ui-version'] ?? '').trim();
     if (!repo) fail('--repo is required');
@@ -2828,7 +2829,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       dryRun,
       args: [
         '--environment',
-        environment,
+        environmentArg,
         '--ui-version',
         uiVersion,
         '--repo',
@@ -2863,6 +2864,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       if (!environment) {
         fail(`--environment must be ${JSON.stringify(TAURI_RELEASE_ENVIRONMENT_CHOICES)} (got: ${requestedEnvironment || '<empty>'})`);
       }
+      const environmentArg = environment === 'publicdev' ? 'dev' : environment;
 
       const buildVersion = String(values['build-version'] ?? '').trim();
       const tauriTarget = String(values['tauri-target'] ?? '').trim();
@@ -2901,7 +2903,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         dryRun,
         args: [
           '--environment',
-          environment,
+          environmentArg,
           ...(buildVersion ? ['--build-version', buildVersion] : []),
           ...(tauriTarget ? ['--tauri-target', tauriTarget] : []),
           ...(uiDir ? ['--ui-dir', uiDir] : []),
@@ -2989,6 +2991,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       if (!environment) {
         fail(`--environment must be ${JSON.stringify(TAURI_RELEASE_ENVIRONMENT_CHOICES)} (got: ${requestedEnvironment || '<empty>'})`);
       }
+      const environmentArg = environment === 'publicdev' ? 'dev' : environment;
 
       const platformKey = String(values['platform-key'] ?? '').trim();
       const uiVersion = String(values['ui-version'] ?? '').trim();
@@ -3002,7 +3005,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         dryRun,
         args: [
           '--environment',
-          environment,
+          environmentArg,
           '--platform-key',
           platformKey,
           '--ui-version',

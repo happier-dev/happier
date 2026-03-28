@@ -193,7 +193,7 @@ export const COMMAND_HELP_EXPO = {
     ],
     bullets: ['Used by ui-mobile-release when building APK profiles.'],
     examples: [
-      'node scripts/pipeline/run.mjs expo-publish-apk-release --environment dev --apk-path dist/ui-mobile/happier-publicdev-android.apk --target-sha $(git rev-parse HEAD)',
+      'node scripts/pipeline/run.mjs expo-publish-apk-release --environment dev --apk-path dist/ui-mobile/happier-dev-android.apk --target-sha $(git rev-parse HEAD)',
       'node scripts/pipeline/run.mjs expo-publish-apk-release --environment preview --apk-path dist/ui-mobile/happier-preview-android.apk --target-sha $(git rev-parse HEAD)',
     ],
   },

@@ -129,6 +129,14 @@ Happier is designed with privacy as a foundation, not an afterthought.
 
 ### Step 2: Install the CLI on your computer
 
+Release channels:
+
+- `stable`: install the default lane and use `happier`
+- `preview`: install the preview lane and use `hprev`
+- `dev`: install the rolling public dev lane and use `hdev`
+
+See the full release/update matrix: [docs.happier.dev/docs/advanced/updates](https://docs.happier.dev/docs/advanced/updates)
+
 ```bash
 npm install -g @happier-dev/cli@next
 ```
@@ -207,6 +215,8 @@ Simply run the [self-host guided setup](https://docs.happier.dev/deployment/self
 ```
 curl -fsSL https://happier.dev/self-host-preview | bash
 ```
+
+The self-host runtime also follows the public release-ring model (`stable`, `preview`, `dev`) when those rolling installer endpoints are published.
 
 By default is uses an SQLite database.
 

@@ -192,11 +192,11 @@ See also: `/docs/providers`.
 
 Provision a remote machine over SSH (install Happier, pair credentials, optionally install/start the daemon service):
 
-- `hstack remote daemon setup --ssh user@host [--channel stable|preview] [--service user|none]`
+- `hstack remote daemon setup --ssh user@host [--channel stable|preview|dev] [--service user|none]`
 
 Provision a remote machine over SSH to run the self-hosted server as a managed service:
 
-- `hstack remote server setup --ssh user@host [--channel stable|preview] [--mode user|system] [--env KEY=VALUE]...`
+- `hstack remote server setup --ssh user@host [--channel stable|preview|dev] [--mode user|system] [--env KEY=VALUE]...`
 
 See:
 
@@ -209,7 +209,7 @@ See:
 
 Install and manage the self-host runtime (server + optional UI web bundle) as a managed service:
 
-- Install: `hstack self-host install [--channel stable|preview] [--mode user|system]`
+- Install: `hstack self-host install [--channel stable|preview|dev] [--mode user|system]`
 - Status: `hstack self-host status`
 - Manual update: `hstack self-host update`
 - Roll back: `hstack self-host rollback --to <version>`

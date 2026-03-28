@@ -53,6 +53,33 @@ describe('happier self update for binary installs', () => {
       expect(fetchGitHubReleaseByTagMock).toHaveBeenCalled();
       expect(resolveCliBinaryAssetBundleFromReleaseAssetsMock).toHaveBeenCalled();
       expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledTimes(1);
+      expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledWith(expect.objectContaining({
+        channel: 'stable',
+      }));
+    } finally {
+      process.argv = originalArgv;
+      logSpy.mockRestore();
+    }
+  });
+
+  it('defaults binary self update to the publicdev ring when invoked through hdev', async () => {
+    const originalArgv = [...process.argv];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      process.argv[1] = '/opt/happier/bin/hdev';
+      const { handleSelfCliCommand } = await import('./self');
+      await handleSelfCliCommand({
+        args: ['self', 'update'],
+        rawArgv: ['hdev', 'self', 'update'],
+        terminalRuntime: null,
+      });
+
+      expect(fetchGitHubReleaseByTagMock).toHaveBeenCalled();
+      expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledTimes(1);
+      expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledWith(expect.objectContaining({
+        channel: 'publicdev',
+      }));
     } finally {
       process.argv = originalArgv;
       logSpy.mockRestore();

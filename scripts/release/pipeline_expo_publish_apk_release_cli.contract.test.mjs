@@ -12,7 +12,7 @@ const repoRoot = resolve(here, '..', '..');
 
 test('pipeline CLI can publish the dev UI mobile APK rolling release in dry-run', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'happier-apk-'));
-  const apkPath = join(dir, 'happier-publicdev-android.apk');
+  const apkPath = join(dir, 'happier-dev-android.apk');
   writeFileSync(apkPath, 'fake-apk');
 
   const out = execFileSync(

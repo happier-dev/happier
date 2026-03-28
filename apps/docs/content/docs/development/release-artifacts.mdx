@@ -7,6 +7,7 @@ description: Binary artifacts, channels, checksums/signatures, and manifests.
 
 - `stable`
 - `preview`
+- `dev`
 
 ## Artifact naming
 
@@ -56,6 +57,6 @@ Each platform manifest includes:
 
 ## Rollback policy
 
-- CLI/hstack: rolling tags (`cli-stable` / `cli-preview`, `stack-stable` / `stack-preview`) + versioned tags.
+- CLI/hstack: rolling tags (`cli-stable` / `cli-preview` / `cli-dev`, `stack-stable` / `stack-preview` / `stack-dev`) + versioned tags.
 - Self-host runtime: rolling server release tags + versioned artifacts.
 - `happier self-update` and `hstack self-host rollback --to <version>` are version-targeted rollback entry points.

@@ -18,7 +18,7 @@ function run(args, env = {}) {
 
 for (const [environment, buildVersion] of [
   ['preview', '0.0.0-preview.1'],
-  ['publicdev', '0.0.0-dev.1'],
+  ['dev', '0.0.0-dev.1'],
 ]) {
   test(`pipeline run exposes tauri-build-updater-artifacts for ${environment} (dry-run)`, () => {
     const res = run(
@@ -57,7 +57,7 @@ test('pipeline run exposes tauri-notarize-macos-artifacts (dry-run)', () => {
   assert.equal(res.status, 0, `expected exit 0, got ${res.status} stderr=${res.stderr}`);
 });
 
-for (const environment of ['preview', 'publicdev']) {
+for (const environment of ['preview', 'dev']) {
   test(`pipeline run exposes tauri-collect-updater-artifacts for ${environment} (dry-run)`, () => {
     const res = run(
       [

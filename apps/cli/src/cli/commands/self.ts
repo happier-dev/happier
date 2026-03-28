@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import packageJson from '../../../package.json';
 import { configuration } from '@/configuration';
@@ -8,6 +8,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import {
   FIRST_PARTY_COMPONENT_IDS,
   installVersionedPayload,
+  resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import type { FirstPartyComponentId } from '@happier-dev/cli-common/firstPartyRuntime';
 import {
@@ -19,24 +20,29 @@ import {
 } from '@happier-dev/cli-common/update';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import {
+  normalizePublicReleaseRingId,
+  type PublicReleaseRingId,
+} from '@happier-dev/release-runtime/releaseRings';
+import {
   resolveCliBinaryAssetBundleFromReleaseAssets,
   updateInstalledCliPayloadFromReleaseAssets,
 } from '@/cli/runtime/update/binarySelfUpdate';
 
-type SelfChannel = 'stable' | 'preview';
+type SelfChannel = PublicReleaseRingId;
 
 function usage(): string {
   return [
     `${chalk.bold('happier self')} - Self update + update checks`,
     '',
     `${chalk.bold('Usage:')}`,
-    `  happier self check [--preview|--channel=preview] [--quiet]`,
-    `  happier self update [--preview|--channel=preview] [--to <versionOrTag>]`,
-    `  happier self-update [--check] [--preview|--channel=preview] [--to <versionOrTag>]`,
+    `  happier self check [--preview|--dev|--channel=<preview|dev>] [--quiet]`,
+    `  happier self update [--preview|--dev|--channel=<preview|dev>] [--to <versionOrTag>]`,
+    `  happier self-update [--check] [--preview|--dev|--channel=<preview|dev>] [--to <versionOrTag>]`,
     '',
     `${chalk.bold('Channels:')}`,
     `  stable  → npm dist-tag ${chalk.cyan('latest')}`,
     `  preview → npm dist-tag ${chalk.cyan('next')}`,
+    `  dev     → npm dist-tag ${chalk.cyan('next')} (${chalk.gray('dev rolling binaries')})`,
     '',
     `${chalk.bold('Environment:')}`,
     `  HAPPIER_CLI_UPDATE_CHECK=0                 Disable update notice + background check`,
@@ -88,12 +94,24 @@ function readPackageJsonVersion(path: string): string | null {
   }
 }
 
-export function parseSelfChannel(args: string[]): SelfChannel {
+function inferSelfChannelFromInvokerPath(invokedPath: string): SelfChannel {
+  const name = basename(String(invokedPath ?? '').trim()).replace(/\.m?js$/i, '').replace(/\.exe$/i, '');
+  if (name === 'hprev') return 'preview';
+  if (name === 'hdev') return 'publicdev';
+  return 'stable';
+}
+
+function resolveSelfNpmDistTag(channel: SelfChannel): 'latest' | 'next' {
+  return channel === 'stable' ? 'latest' : 'next';
+}
+
+export function parseSelfChannel(args: string[], invokedPath = process.argv[1] ?? ''): SelfChannel {
   if (args.includes('--preview')) return 'preview';
+  if (args.includes('--dev')) return 'publicdev';
   const ch = args.find((a) => a === '--channel' || a.startsWith('--channel='));
-  if (!ch) return 'stable';
+  if (!ch) return inferSelfChannelFromInvokerPath(invokedPath);
   const value = ch === '--channel' ? (args[args.indexOf(ch) + 1] ?? '') : ch.slice('--channel='.length);
-  return String(value).trim() === 'preview' ? 'preview' : 'stable';
+  return normalizePublicReleaseRingId(value) || 'stable';
 }
 
 export function computeSelfUpdateSpec(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
@@ -105,7 +123,7 @@ export function computeSelfUpdateSpec(params: Readonly<{ packageName: string; ch
     }
     return `${pkg}@${to}`;
   }
-  return `${pkg}@${params.channel === 'preview' ? 'next' : 'latest'}`;
+  return `${pkg}@${resolveSelfNpmDistTag(params.channel)}`;
 }
 
 export function detectInstallSource(path: string): 'npm' | 'binary' {
@@ -138,14 +156,17 @@ function resolveBinaryUpdatePlatform(env: NodeJS.ProcessEnv): Readonly<{ os: str
 }
 
 function resolveBinaryUpdateTag(channel: SelfChannel): string {
-  return channel === 'preview' ? 'cli-preview' : 'cli-stable';
+  return resolveFirstPartyComponentPublicReleaseVariant({
+    componentId: 'happier-cli',
+    channel,
+  }).releaseTag;
 }
 
 function npmUpgradeCommand(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
   const pkg = String(params.packageName ?? '').trim();
   const to = String(params.to ?? '').trim();
   if (to) return `npm install -g ${pkg}@${to}`;
-  return `npm install -g ${pkg}@${params.channel === 'preview' ? 'next' : 'latest'}`;
+  return `npm install -g ${pkg}@${resolveSelfNpmDistTag(params.channel)}`;
 }
 
 function cachePath(): string {
@@ -205,7 +226,7 @@ async function cmdCheck(argv: string[]): Promise<void> {
     console.log(chalk.green('Up to date.'));
     return;
   }
-  const distTag = channel === 'preview' ? 'next' : 'latest';
+  const distTag = resolveSelfNpmDistTag(channel);
   const pkgName = resolveUpdatePackageName();
 
   const runtimePkgJson = packageJsonPathForNodeModules({ rootDir: runtimeDir(), packageName: pkgName });
@@ -294,10 +315,19 @@ async function cmdUpdate(argv: string[]): Promise<void> {
     happyHomeDir: configuration.happyHomeDir,
     preferVersion: effective.preferVersion,
     minisignPubkeyFile,
+    channel: effective.channel,
   });
 
   // Refresh cache best-effort.
-  await cmdCheck(['check', '--quiet', ...(effective.channel === 'preview' ? ['--preview'] : [])]);
+  await cmdCheck([
+    'check',
+    '--quiet',
+    ...(effective.channel === 'preview'
+      ? ['--preview']
+      : effective.channel === 'publicdev'
+        ? ['--dev']
+        : []),
+  ]);
   console.log(chalk.green(`✓ Updated happier to ${result.updatedTo}`));
 }
 
@@ -321,6 +351,7 @@ async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
   const componentId = parseFirstPartyComponentId(resolveInternalInstallPayloadArgValue(argv, '--component'));
   const payloadRoot = resolveInternalInstallPayloadArgValue(argv, '--payload-root');
   const versionId = resolveInternalInstallPayloadArgValue(argv, '--version');
+  const channel = normalizePublicReleaseRingId(resolveInternalInstallPayloadArgValue(argv, '--channel')) || parseSelfChannel(argv);
 
   if (!payloadRoot) {
     throw new Error('--payload-root is required');
@@ -331,6 +362,7 @@ async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
 
   await installVersionedPayload({
     componentId,
+    channel,
     payloadRoot,
     processEnv: process.env,
     versionId,

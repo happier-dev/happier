@@ -67,9 +67,9 @@ hstack self-host config view
 
 The relay server package is a **server runner**:
 
-- it fetches the server runtime by rolling tag (`server-stable` / `server-preview`)
+- it fetches the server runtime by rolling tag (`server-stable` / `server-preview` / `server-dev`)
 - verifies and extracts it into a cache
-- optionally fetches the UI web bundle (`ui-web-stable` / `ui-web-preview`)
+- optionally fetches the UI web bundle (`ui-web-stable` / `ui-web-preview` / `ui-web-dev`)
 - sets `HAPPIER_SERVER_UI_DIR` (if UI is enabled)
 - then starts the extracted `happier-server` binary
 

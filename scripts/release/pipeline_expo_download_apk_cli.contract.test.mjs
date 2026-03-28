@@ -57,4 +57,5 @@ test('pipeline CLI can download Android APK (dry-run) from EAS build JSON for de
 
   assert.match(out, /\[pipeline\] expo download apk: environment=dev/);
   assert.match(out, /scripts\/pipeline\/expo\/download-android-apk\.mjs/);
+  assert.match(out, /happier-dev-android\.apk/);
 });

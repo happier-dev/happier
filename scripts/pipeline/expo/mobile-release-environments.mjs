@@ -198,7 +198,7 @@ export function resolveMobileNativeArtifactRelativePath({ environment, platform,
     return path.join(outDir, `happier-production-${platform}-v${appVersion}.${ext}`);
   }
 
-  return path.join(outDir, `happier-${environment}-${platform}.${ext}`);
+  return path.join(outDir, `happier-${formatMobileReleaseEnvironment(environment)}-${platform}.${ext}`);
 }
 
 /**

@@ -19,19 +19,24 @@ hstack remote daemon setup --ssh user@host
 
 Default behavior:
 
-- uses the **stable** channel (set `--channel preview` when you want preview binaries)
+- uses the **stable** channel (set `--channel preview` or `--channel dev` when you want newer public binaries)
 - installs/starts the daemon service in **user** mode
 
-## Preview vs stable channel
+## Release channel
 
 ```bash
 hstack remote daemon setup --ssh user@host --channel preview
+```
+
+```bash
+hstack remote daemon setup --ssh user@host --channel dev
 ```
 
 Equivalent shortcuts:
 
 ```bash
 hstack remote daemon setup --ssh user@host --preview
+hstack remote daemon setup --ssh user@host --dev
 hstack remote daemon setup --ssh user@host --stable
 ```
 
@@ -78,4 +83,3 @@ happier auth pair-remote --ssh user@host --json
 - SSH access to the remote host (`ssh user@host`)
 - Remote host has `bash` and `curl`
 - The remote host must be a Unix-like OS (Linux/macOS). Windows hosts are not supported for this SSH flow.
-
