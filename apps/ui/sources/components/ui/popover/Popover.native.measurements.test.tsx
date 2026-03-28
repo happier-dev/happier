@@ -82,6 +82,63 @@ describe('Popover (native measurements)', () => {
         expect(style.top).toBe(440);
     });
 
+    it('does not double-apply the portal-root offset when measureInWindow already reports portal-relative coordinates (prevents popovers rendering too high)', async () => {
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            // Window-relative portal root coordinates (contained sheet starts lower on screen).
+            measureInWindow: (cb: any) => cb(0, 200, 1000, 600),
+            measure: (cb: any) => cb(0, 0, 1000, 600, 0, 200),
+        } as any;
+
+        const anchorNode = {
+            // BUGGY BUT REALISTIC: some contained presentations report anchor coordinates already
+            // relative to the portal root via `measureInWindow`.
+            measureInWindow: (cb: any) => cb(0, 400, 100, 40),
+            // Correct portal-relative coordinates via measureLayout.
+            measureLayout: (_relativeTo: any, onSuccess: any) => onSuccess(0, 400, 100, 40),
+        } as any;
+
+        const anchorRef = { current: anchorNode } as any;
+        const portalTarget = {
+            rootRef: { current: portalRootNode },
+            layout: { width: 1000, height: 600 },
+        } as const;
+
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover
+                        open
+                        anchorRef={anchorRef}
+                        portal={{ native: true }}
+                        placement="bottom"
+                        gap={0}
+                        maxHeightCap={320}
+                        onRequestClose={() => {}}
+                    >
+                        {() => React.createElement('PopoverChild')}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+
+        await act(async () => {
+            await flushHookEffects({ cycles: 1, turns: 6 });
+        });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const style = flattenStyle(contentView?.props?.style);
+        // If we incorrectly subtract portalRootY again: (400 - 200) + 40 = 240 (too high).
+        // Correct anchor bottom uses portal-relative coords directly: 400 + 40 = 440.
+        expect(style.top).toBe(440);
+    });
+
     it('falls back to measureLayout when window measurements are in a different coordinate space (prevents negative/way-off offsets)', async () => {
         const { Popover } = await import('./Popover');
         const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
@@ -134,5 +191,61 @@ describe('Popover (native measurements)', () => {
         const style = flattenStyle(contentView?.props?.style);
         // Correct relative anchor bottom from measureLayout: 300 + 40 = 340.
         expect(style.top).toBe(340);
+    });
+
+    it('prefers measureInWindow over measure() when both exist (keeps portal-root deltas consistent in iOS sheets)', async () => {
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            // Window-relative coordinates.
+            measureInWindow: (cb: any) => cb(0, 200, 1000, 600),
+            // Some contained presentations report a different coordinate space via `measure`.
+            measure: (cb: any) => cb(0, 0, 1000, 600, 0, 200),
+        } as any;
+
+        const anchorNode = {
+            // Window-relative coordinates.
+            measureInWindow: (cb: any) => cb(0, 600, 100, 40),
+            // Wrong coordinate space (e.g. relative to sheet root) via `measure`.
+            measure: (cb: any) => cb(0, 0, 100, 40, 0, 500),
+        } as any;
+
+        const anchorRef = { current: anchorNode } as any;
+        const portalTarget = {
+            rootRef: { current: portalRootNode },
+            layout: { width: 1000, height: 600 },
+        } as const;
+
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover
+                        open
+                        anchorRef={anchorRef}
+                        portal={{ native: true }}
+                        placement="bottom"
+                        gap={0}
+                        maxHeightCap={320}
+                        onRequestClose={() => {}}
+                    >
+                        {() => React.createElement('PopoverChild')}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+
+        await act(async () => {
+            await flushHookEffects({ cycles: 1, turns: 6 });
+        });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const style = flattenStyle(contentView?.props?.style);
+        // Correct relative anchor bottom: (600 - 200) + 40 = 440.
+        expect(style.top).toBe(440);
     });
 });

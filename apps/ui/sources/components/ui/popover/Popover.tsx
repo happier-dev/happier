@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type StyleProp, type ViewProps, type ViewStyle, useWindowDimensions } from 'react-native';
+import { Keyboard, Platform, View, type StyleProp, type ViewProps, type ViewStyle, useWindowDimensions } from 'react-native';
 import { usePopoverBoundaryRef } from './PopoverBoundary';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { useOverlayPortal } from './OverlayPortal';
@@ -275,6 +275,8 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         return { horizontal, vertical };
     }, [edgePadding]);
 
+    const keyboardHeightRef = React.useRef(0);
+
     const recompute = React.useCallback(async () => {
         if (!open) return;
 
@@ -317,37 +319,56 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 // `measure`/`measureInWindow` can also occasionally return coordinates in a different
                 // space than the portal root (yielding negative/way-off deltas). In that case, fall
                 // back to `measureLayout`.
-                const relativeFromWindowDelta = async (): Promise<WindowRect | null> => {
+                const relativeFromWindowDelta = async (): Promise<Readonly<{
+                    deltaRect: WindowRect;
+                    anchorWindowRect: WindowRect;
+                }> | null> => {
                     if (Platform.OS === 'web') return null;
                     const portalRootWindowRect = await measureInWindow(portalRootNode);
                     const anchorWindowRect = await measureInWindow(anchorNode);
                     if (!portalRootWindowRect || !anchorWindowRect) return null;
-                    return {
+                    const deltaRect: WindowRect = {
                         x: anchorWindowRect.x - portalRootWindowRect.x,
                         y: anchorWindowRect.y - portalRootWindowRect.y,
                         width: anchorWindowRect.width,
                         height: anchorWindowRect.height,
                     };
+                    return { deltaRect, anchorWindowRect };
                 };
 
                 const relativeFromLayout = async (): Promise<WindowRect | null> => {
                     return await measureLayoutRelativeTo(anchorNode, portalRootNode);
                 };
 
-                const [deltaRect, layoutRect] = await Promise.all([
+                const [deltaResult, layoutRect] = await Promise.all([
                     relativeFromWindowDelta(),
                     relativeFromLayout(),
                 ]);
 
-                // Choose the first portal-relative rect that is plausible for the portal root.
-                // If the preferred delta-based rect is out-of-bounds but the layout-based rect is
-                // in-bounds, use layout to avoid negative/offset popovers in contained modals.
-                const chosen =
-                    (deltaRect && withinPortalLayout(deltaRect))
-                        ? deltaRect
-                        : (layoutRect && withinPortalLayout(layoutRect))
-                            ? layoutRect
-                            : (deltaRect ?? layoutRect);
+                const deltaRect = deltaResult?.deltaRect ?? null;
+                const anchorWindowRect = deltaResult?.anchorWindowRect ?? null;
+
+                // Choose the portal-relative rect that is most plausible for the portal root.
+                //
+                // iOS/react-native-screens quirk:
+                // Some contained presentations can report anchor coordinates that are already
+                // portal-relative via `measureInWindow`. If we blindly subtract the portal root
+                // window origin, the popover ends up rendered too high (double-applied offset).
+                //
+                // When `measureLayout` is available (portal-relative by definition), use it as an
+                // arbiter: whichever candidate better matches the layout-based measurement wins.
+                const chosen = (() => {
+                    if (deltaRect && withinPortalLayout(deltaRect)) {
+                        if (layoutRect && withinPortalLayout(layoutRect) && anchorWindowRect && withinPortalLayout(anchorWindowRect)) {
+                            const errDelta = Math.abs(deltaRect.x - layoutRect.x) + Math.abs(deltaRect.y - layoutRect.y);
+                            const errRaw = Math.abs(anchorWindowRect.x - layoutRect.x) + Math.abs(anchorWindowRect.y - layoutRect.y);
+                            if (errRaw + 8 < errDelta) return anchorWindowRect;
+                        }
+                        return deltaRect;
+                    }
+                    if (layoutRect && withinPortalLayout(layoutRect)) return layoutRect;
+                    return deltaRect ?? layoutRect;
+                })();
 
                 if (chosen) {
                     anchorRect = chosen;
@@ -431,11 +452,23 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 return false;
             }
 
-            const boundaryRect =
+            const boundaryRectBase =
                 boundaryRectRaw ??
                 (portalRootNode && portalTarget?.layout?.width && portalTarget?.layout?.height
                     ? { x: 0, y: 0, width: portalTarget.layout.width, height: portalTarget.layout.height }
                     : getFallbackBoundaryRect({ windowWidth, windowHeight }));
+
+            // Treat the on-screen keyboard as reducing the usable bottom viewport. Without this,
+            // `placement="auto"` can flip a menu into the region covered by the keyboard, making it
+            // look like the popover disappeared.
+            const keyboardHeight = Math.max(0, keyboardHeightRef.current || 0);
+            const boundaryRect: WindowRect =
+                keyboardHeight > 0
+                    ? {
+                        ...boundaryRectBase,
+                        height: Math.max(0, boundaryRectBase.height - keyboardHeight),
+                    }
+                    : boundaryRectBase;
 
             // Shrink the usable boundary so the popover doesn't sit flush to the container edges.
             // (This also makes maxHeight/maxWidth clamping respect the margin.)
@@ -576,6 +609,81 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             }
         };
     }, [getBoundaryDomElement, open, portalTargetOnWeb, recompute, shouldPortalWeb]);
+
+    React.useEffect(() => {
+        if (!open) return;
+        if (Platform.OS === 'web') return;
+        let timer: any = null;
+        let subs: Array<{ remove: () => void }> = [];
+
+        const debounceMs = 60;
+        const schedule = () => {
+            if (timer !== null) clearTimeout(timer);
+            timer = setTimeout(() => {
+                timer = null;
+                // Debounced after the keyboard event; `recompute()` already includes frame-retry
+                // logic to avoid transient 0/incorrect rects.
+                recompute();
+            }, debounceMs);
+        };
+
+        // Prefer `willChangeFrame` for interactive keyboard dismissal; fall back to show/hide.
+        const events = [
+            'keyboardWillChangeFrame',
+            'keyboardDidChangeFrame',
+            'keyboardWillShow',
+            'keyboardDidShow',
+            'keyboardWillHide',
+            'keyboardDidHide',
+        ] as const;
+
+        const getKeyboardHeightFromEvent = (e: any): number | null => {
+            const h = e?.endCoordinates?.height;
+            if (typeof h === 'number' && Number.isFinite(h) && h >= 0) return h;
+            return null;
+        };
+
+        const handleKeyboardEvent = (event: (typeof events)[number]) => {
+            return (e: unknown) => {
+                if (event.includes('Hide')) {
+                    keyboardHeightRef.current = 0;
+                } else {
+                    const next = getKeyboardHeightFromEvent(e as any);
+                    if (next !== null) {
+                        keyboardHeightRef.current = next;
+                    }
+                }
+                schedule();
+            };
+        };
+
+        // Subscribe synchronously so we don't miss the first keyboard transition.
+        // (Async module resolution here has proven flaky in tests and can delay subscription
+        // enough that a fast open->focus sequence misses the show event.)
+        const keyboard: any = Keyboard as any;
+        if (!keyboard || typeof keyboard.addListener !== 'function') return;
+
+        subs = events
+            .map((event) => {
+                try {
+                    return keyboard.addListener(event, handleKeyboardEvent(event));
+                } catch {
+                    return null;
+                }
+            })
+            .filter(Boolean) as Array<{ remove: () => void }>;
+
+        return () => {
+            if (timer !== null) clearTimeout(timer);
+            for (const sub of subs) {
+                try {
+                    sub.remove();
+                } catch {
+                    // ignore
+                }
+            }
+        };
+    }, [open, recompute]);
 
     const fixedPositionOnWeb = (Platform.OS === 'web' ? ('fixed' as any) : 'absolute') as ViewStyle['position'];
 
