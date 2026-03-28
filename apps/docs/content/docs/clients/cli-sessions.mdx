@@ -126,6 +126,25 @@ Notes:
 - `--model` lets you target a specific model for that message when the backend supports it.
 - `--json` + explicit timeouts are recommended for scripts.
 
+## History
+
+Get recent transcript rows:
+
+```bash
+happier session history <session-id-or-prefix> --limit 20
+```
+
+Scripting / debugging variants:
+
+```bash
+happier session history <session-id-or-prefix> --json
+happier session history <session-id-or-prefix> --format raw --include-meta --json
+happier session history <session-id-or-prefix> --format raw --include-meta --include-structured-payload --json
+```
+
+Use `compact` when you want a simpler text-focused view.
+Use `raw` when you need provider payloads, metadata, or structured tool/message records.
+
 ## Session control
 
 Stop a session:
@@ -182,6 +201,24 @@ Approve/deny in the app Inbox:
 - [Inbox and approvals](/docs/features/inbox-and-approvals)
 - [Happier tools & actions](/docs/features/happier-tools)
 
+### Decide approvals from the CLI (advanced)
+
+For automation-heavy workflows, the same approval flow is also available through the generic action executor.
+
+Example:
+
+```bash
+# 1) run an approval-gated command
+happier session set-title <session-id> "New title" --json
+
+# 2) approve it through the generic action path
+happier session actions execute <session-id> approval.request.decide \
+  --input-json '{"artifactId":"<approval-artifact-id>","decision":"approve"}' \
+  --json
+```
+
+This is the same approval object that the app Inbox shows. Most users should review in the app, but scripted operators can decide approvals through the action surface when that fits their workflow.
+
 ## Actions (advanced scripting)
 
 Discover actions:
@@ -197,6 +234,12 @@ Execute an action:
 happier session actions execute <session-id> <action-id> --input-json '<json>' --json
 ```
 
+Current JSON envelopes:
+
+- `session actions list --json` returns `data.actionSpecs`
+- `session actions describe <action-id> --json` returns `data.actionSpec`
+- `session actions execute ... --json` returns `data.result`
+
 ## Execution runs
 
 Execution runs are the structured “run” layer for multi-step flows (review / plan / delegate / voice agent):
@@ -204,6 +247,17 @@ Execution runs are the structured “run” layer for multi-step flows (review /
 ```bash
 happier session run start <session-id> --intent <intent> --backend <backend-target-key> --json
 happier session run list <session-id> --json
+happier session run get <session-id> <run-id> --json
 happier session run send <session-id> <run-id> "message" --json
 happier session run stop <session-id> <run-id> --json
+happier session run wait <session-id> <run-id> --timeout 300 --json
+```
+
+Advanced run control:
+
+```bash
+happier session run action <session-id> <run-id> <action-id> --input-json '<json>' --json
+happier session run stream-start <session-id> <run-id> "message" --json
+happier session run stream-read <session-id> <run-id> <stream-id> --cursor 0 --json
+happier session run stream-cancel <session-id> <run-id> <stream-id> --json
 ```

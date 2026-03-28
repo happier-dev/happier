@@ -266,6 +266,8 @@ happier session send <session-id> "ping" --wait --timeout 60
 
 ```bash
 happier session status <session-id>
+happier session history <session-id>
+happier session wait <session-id> --timeout 60
 happier session stop <session-id>
 happier session archive <session-id>
 happier session unarchive <session-id>
@@ -296,6 +298,12 @@ Use the app’s **Inbox** to review/approve/deny and see the final execution res
 
 - [Inbox and approvals](/docs/features/inbox-and-approvals)
 - [Happier tools & actions](/docs/features/happier-tools)
+
+For advanced automation, approvals can also be decided through the generic action executor:
+
+```bash
+happier session actions execute <session-id> approval.request.decide --input-json '{"artifactId":"<id>","decision":"approve"}' --json
+```
 
 ### Action catalog from the CLI
 

@@ -196,7 +196,6 @@ The one exception is **Experimental: local permission bridge**, which affects **
 | --- | --- | --- |
 | **Use Agent SDK (remote)** | On | Enables the official Agent SDK remote runner (`@anthropic-ai/claude-agent-sdk`). When off, Happier uses the legacy remote runner. |
 | **Setting sources** | User + Project | Controls what Claude settings get loaded: **Project only** loads repo config (for example `CLAUDE.md`); **User + Project** includes user-global config too (including user-defined MCP servers); **None** ignores both for maximum determinism. |
-| **Partial streaming updates** | Off | Shows partial assistant output while Claude is still responding (remote Agent SDK only). |
 | **Force-enable Agent Teams (experimental)** | Off | When enabled, Happier force-enables Claude Code experimental Agent Teams for all Claude starts (local + remote). When off, Happier does not force-disable and Claude uses its own defaults. |
 | **Experimental: local permission bridge** | On | In local mode, forwards Claude permission prompts into Happier so you can approve/deny from the app UI instead of only in the terminal. |
 | **File checkpointing + /rewind** | Off | Enables file checkpoint capture and the `/rewind` command (remote Agent SDK only). Adds overhead. |

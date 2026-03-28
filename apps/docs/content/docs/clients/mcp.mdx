@@ -142,6 +142,37 @@ Execution run tool:
 
 The exact set depends on what your account has enabled (and on which surfaces). See “Approvals and enablement”.
 
+## Generic action execution
+
+The external MCP server also exposes a generic tool:
+
+- `action_execute`
+
+Use it when:
+
+- you already know the exact `actionId`
+- you want to call an action that does not have a dedicated named tool
+- you want to manage approval artifacts programmatically
+
+Shape:
+
+```json
+{
+  "actionId": "session.title.set",
+  "input": {
+    "sessionId": "sess_123",
+    "title": "Fix flaky tests"
+  }
+}
+```
+
+This is also the path to advanced approval actions such as:
+
+- `approval.request.create`
+- `approval.request.decide`
+
+Those approval actions are available through the action catalog, but they are not advertised as separate named MCP tools. Use `action_execute` when you need them.
+
 ## Approvals and enablement
 
 Happier treats **actions** as a single catalog that can be enabled/disabled per “surface”, including:
@@ -165,6 +196,24 @@ Use the app’s **Inbox** to approve/deny and view the final result:
 
 - [Inbox and approvals](/docs/features/inbox-and-approvals)
 - [Happier tools & actions](/docs/features/happier-tools)
+
+### Programmatic approval decisions
+
+If you want an MCP host to manage approvals directly, call `action_execute` with `approval.request.decide`.
+
+Example:
+
+```json
+{
+  "actionId": "approval.request.decide",
+  "input": {
+    "artifactId": "2765bc88-69ea-4316-9085-290ce5b3a3b6",
+    "decision": "approve"
+  }
+}
+```
+
+That executes the same approval object you can review in the app Inbox. The same generic approval model works regardless of whether the request came from the CLI, an external MCP host, a session agent, or another Happier surface.
 
 ## Troubleshooting
 

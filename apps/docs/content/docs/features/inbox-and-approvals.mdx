@@ -60,6 +60,27 @@ This gives you:
 
 The approval system is intentionally **ActionSpec-driven**, which means the mechanism is generic rather than hardcoded only for prompts or skills.
 
+### Per-surface approval gates
+
+Any action can be configured to require approval on a specific surface.
+
+Examples:
+
+- allow `session.title.set` directly in the app, but require approval from the CLI
+- allow `session.stop` for session agents, but require approval from external MCP hosts
+- disable an action entirely on one surface while keeping it available on another
+
+In **Settings → Actions**, Happier stores this as per-action, per-surface policy.
+
+That means approvals are not implemented as one-off action-specific code paths.
+The same generic approval flow can be reused across:
+
+- app buttons
+- CLI session control
+- session-agent tools
+- external MCP hosts
+- voice-driven actions when applicable
+
 ## Permission requests
 
 Permissions and approvals are related, but they are not the same thing.
@@ -166,6 +187,7 @@ Examples:
 
 - approve a prompt update proposal
 - approve an external asset export or install
+- approve a session-control action requested by the CLI or external MCP
 
 These are about **action execution**, not only tool access.
 

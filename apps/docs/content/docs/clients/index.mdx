@@ -12,6 +12,15 @@ Use this section to understand which surface does what:
 - **Daemon**: the background process that keeps remote session control available without an open terminal.
 - **Happier MCP**: the external MCP server you run from the CLI so other MCP hosts can control Happier sessions and actions.
 
+All of these clients reuse the same core control plane:
+
+- the same authenticated account/server selection
+- the same canonical action catalog
+- the same per-surface action settings
+- the same approval flow when an action is configured as approval-gated
+
+That is why session control, action discovery, approvals, and execution runs can appear consistently across the app, CLI, session agents, voice, and external MCP hosts.
+
 For the most common user-facing flows:
 
 - [CLI](./cli) for install/auth/server selection
