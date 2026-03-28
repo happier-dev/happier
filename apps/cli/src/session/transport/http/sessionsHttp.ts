@@ -26,9 +26,14 @@ function parseOrThrow<T>(schema: { safeParse: (value: unknown) => { success: boo
   return parsed.data;
 }
 
+function encodeSessionIdPathSegment(sessionId: string): string {
+  return encodeURIComponent(String(sessionId ?? ''));
+}
+
 export async function fetchSessionById(params: Readonly<{ token: string; sessionId: string }>): Promise<RawSessionRecord | null> {
   const serverUrl = resolveServerHttpBaseUrl();
-  const response = await axios.get(`${serverUrl}/v2/sessions/${params.sessionId}`, {
+  const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
+  const response = await axios.get(`${serverUrl}/v2/sessions/${encodedSessionId}`, {
     headers: {
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
@@ -55,13 +60,18 @@ function looksLikeMissingV2SessionRoute404(data: unknown, sessionId: string): bo
   const path = typeof anyData.path === 'string' ? anyData.path : '';
   const message = typeof anyData.message === 'string' ? anyData.message : '';
   if (error !== 'Not found') return false;
-  const needle = `/v2/sessions/${sessionId}`;
-  return (path && path.includes(needle)) || (message && message.includes(needle));
+  const rawNeedle = `/v2/sessions/${sessionId}`;
+  const encodedNeedle = `/v2/sessions/${encodeSessionIdPathSegment(sessionId)}`;
+  return (
+    (path && (path.includes(rawNeedle) || path.includes(encodedNeedle)))
+    || (message && (message.includes(rawNeedle) || message.includes(encodedNeedle)))
+  );
 }
 
 export async function fetchSessionByIdCompat(params: Readonly<{ token: string; sessionId: string }>): Promise<RawSessionRecord | null> {
   const serverUrl = resolveServerHttpBaseUrl();
-  const response = await axios.get(`${serverUrl}/v2/sessions/${params.sessionId}`, {
+  const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
+  const response = await axios.get(`${serverUrl}/v2/sessions/${encodedSessionId}`, {
     headers: {
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
@@ -171,7 +181,8 @@ export async function commitSessionStoredMessage(params: Readonly<{
   localId: string;
 }>): Promise<{ didWrite: boolean; messageId: string; seq: number; createdAt: number }> {
   const serverUrl = resolveServerHttpBaseUrl();
-  const response = await axios.post(`${serverUrl}/v2/sessions/${params.sessionId}/messages`, {
+  const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
+  const response = await axios.post(`${serverUrl}/v2/sessions/${encodedSessionId}/messages`, {
     content: params.content,
     localId: params.localId,
   }, {

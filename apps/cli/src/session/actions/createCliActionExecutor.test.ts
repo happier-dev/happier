@@ -684,6 +684,33 @@ describe('createCliActionExecutor', () => {
     expect(sendSessionMessage).not.toHaveBeenCalled();
   });
 
+  it('routes approval-required actions through approvalsCreate when CLI surface is implicit', async () => {
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'session.message.send': { enabled: true, disabledSurfaces: [], disabledPlacements: [], approvalRequiredSurfaces: ['cli'] },
+      },
+    });
+
+    mockAxiosPost.mockResolvedValueOnce({ status: 200, data: { id: 'artifact-1' } });
+
+    const executor = createDataKeyExecutor();
+    sendSessionMessage.mockResolvedValueOnce({ ok: true, sessionId: 'sess-1', localId: 'local-1', waited: false });
+
+    const result = await executor.execute(
+      'session.message.send',
+      { sessionId: 'sess-1', message: 'hello' },
+      { defaultSessionId: 'sess-1' },
+    );
+
+    expect((result as any).result).toEqual(expect.objectContaining({
+      kind: 'approval_request_created',
+      artifactId: 'artifact-1',
+      actionId: 'session.message.send',
+    }));
+    expect(sendSessionMessage).not.toHaveBeenCalled();
+  });
+
   it('uses a session-specific data key encryption context when starting execution runs in other sessions', async () => {
     const machineKey = new Uint8Array(32).fill(7);
     const publicKey = deriveBoxPublicKeyFromSeed(machineKey);

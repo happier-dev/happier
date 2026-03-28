@@ -63,6 +63,10 @@ export function normalizeSessionHandoffTargetPathForLocalMachine(params: Readonl
     const expanded = expandHomeRelativePath({ path: params.requestedTargetPath, homeDir: params.homeDir });
     const homeDir = params.homeDir.trim().replace(/\/+$/, '');
 
+    if (expanded === homeDir || expanded.startsWith(`${homeDir}/`)) {
+        return expanded;
+    }
+
     // Handoff commonly uses app-owned `~/.happier/**` roots. When the request carries an absolute path
     // from another machine (macOS `/Users/...` vs Linux `/home/...`), rebase that `/.happier/` suffix
     // onto the local home dir so the target machine always uses a machine-local writable root.

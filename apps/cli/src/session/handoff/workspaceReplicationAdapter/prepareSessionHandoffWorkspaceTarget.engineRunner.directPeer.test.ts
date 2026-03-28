@@ -128,6 +128,7 @@ async function writeWorkspaceReplicationBlobPackFile(input: Readonly<{
           packId: expectedPackId,
           digests: missingDigests,
         });
+        expect(input.timeoutMs).toBe(12_345);
         // Adapter must rewrite endpoint candidates to point at the requested transferId, without query-param auth.
         expect(input.endpointCandidates).toEqual([
           {
@@ -190,6 +191,7 @@ async function writeWorkspaceReplicationBlobPackFile(input: Readonly<{
         blobPackTargetBytes: 1024,
         blobPackMaxBlobs: 10,
         blobPackMaxSingleBlobBytes: 1024 * 1024,
+        serverRoutedTransferTimeoutMs: 12_345,
       });
 
       // Direct-peer blob packs must be resolved on-demand only. No pre-publish path.

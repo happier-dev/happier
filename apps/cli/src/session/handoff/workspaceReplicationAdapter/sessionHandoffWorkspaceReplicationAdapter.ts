@@ -371,6 +371,9 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
                 packId: safePackId,
                 digests: [...digests],
               },
+              ...(typeof input.serverRoutedTransferTimeoutMs === 'number'
+                ? { timeoutMs: input.serverRoutedTransferTimeoutMs }
+                : {}),
             });
             return;
           }

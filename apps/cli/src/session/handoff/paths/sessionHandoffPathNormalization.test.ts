@@ -43,6 +43,16 @@ describe('sessionHandoffPathNormalization', () => {
         })).toBe('/home/guest/projects/demo');
     });
 
+    it('normalizeSessionHandoffTargetPathForLocalMachine leaves paths already rooted under the local home unchanged', () => {
+        const homeDir = '/Users/leeroy/Documents/Development/happier/dev/.project/logs/e2e/run/cli-home-target';
+        const requestedTargetPath = `${homeDir}/workspace`;
+
+        expect(normalizeSessionHandoffTargetPathForLocalMachine({
+            requestedTargetPath,
+            homeDir,
+        })).toBe(requestedTargetPath);
+    });
+
     it('resolveSessionHandoffLocalHomeDir prefers the activeServerDir /.happier/ prefix over os homedir', () => {
         expect(resolveSessionHandoffLocalHomeDir({
             activeServerDir: '/home/leeroy.guest/.happier/wsrepl-qa/servers/stack_wsrepl__id_default',

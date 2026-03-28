@@ -42,6 +42,29 @@ export function tryResolveDecryptedTranscriptPayload(params: Readonly<{
   }
 }
 
+function extractOutputText(body: unknown): string {
+  const obj = body && typeof body === 'object' && !Array.isArray(body) ? (body as any) : null;
+  const data = obj?.data && typeof obj.data === 'object' && !Array.isArray(obj.data) ? obj.data : null;
+
+  const message = data?.message && typeof data.message === 'object' && !Array.isArray(data.message) ? data.message : null;
+  const content = message?.content;
+  if (typeof content === 'string') return content;
+
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const item of content) {
+      const piece = item && typeof item === 'object' && !Array.isArray(item) ? (item as any) : null;
+      if (piece?.type === 'text' && typeof piece?.text === 'string') {
+        parts.push(piece.text);
+      }
+    }
+    if (parts.length > 0) return parts.join('');
+  }
+
+  if (typeof data?.text === 'string') return data.text;
+  return '';
+}
+
 export function extractCompactRow(params: Readonly<{
   decrypted: unknown;
   createdAt: number;
@@ -53,7 +76,12 @@ export function extractCompactRow(params: Readonly<{
 
   const body = obj?.content;
   const kind = typeof body?.type === 'string' ? String(body.type) : 'unknown';
-  const text = kind === 'text' && typeof body?.text === 'string' ? String(body.text) : '';
+  const text =
+    kind === 'text' && typeof body?.text === 'string'
+      ? String(body.text)
+      : kind === 'output'
+        ? extractOutputText(body)
+        : '';
 
   return {
     id: params.fallbackId,
