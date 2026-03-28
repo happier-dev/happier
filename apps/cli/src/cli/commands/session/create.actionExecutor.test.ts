@@ -106,4 +106,50 @@ describe('happier session create (action executor)', () => {
       output.restore();
     }
   });
+
+  it('defaults the spawn path from the stack-invoked cwd when --path is omitted', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        type: 'success',
+        sessionId: 'sess-2',
+        created: true,
+        session: { id: 'sess-2' },
+      },
+    });
+
+    const previous = process.env.HAPPIER_STACK_INVOKED_CWD;
+    process.env.HAPPIER_STACK_INVOKED_CWD = '/tmp/hstack-invoked-cwd';
+
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+
+    const output = captureConsoleJsonOutput();
+    try {
+      execute.mockClear();
+      await handleSessionCommand(
+        ['create', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          }),
+        },
+      );
+
+      expect(execute).toHaveBeenLastCalledWith(
+        'session.spawn_new',
+        expect.objectContaining({
+          path: '/tmp/hstack-invoked-cwd',
+        }),
+        { surface: 'cli', defaultSessionId: null },
+      );
+    } finally {
+      output.restore();
+      if (previous === undefined) {
+        delete process.env.HAPPIER_STACK_INVOKED_CWD;
+      } else {
+        process.env.HAPPIER_STACK_INVOKED_CWD = previous;
+      }
+    }
+  });
 });

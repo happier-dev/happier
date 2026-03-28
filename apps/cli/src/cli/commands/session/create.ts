@@ -9,13 +9,16 @@ import type { Credentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
+import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 
 export async function cmdSessionCreate(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const path = (readFlagValue(argv, '--path') ?? process.cwd()).trim();
+  const path = resolveRequestedSessionDirectory({
+    requestedDirectory: readFlagValue(argv, '--path') ?? null,
+  });
   const tag = (readFlagValue(argv, '--tag') ?? '').trim();
   const title = (readFlagValue(argv, '--title') ?? '').trim();
   const initialPrompt = (readFlagValue(argv, '--message') ?? readFlagValue(argv, '--prompt') ?? '').trim();
