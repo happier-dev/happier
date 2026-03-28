@@ -1,11 +1,13 @@
-import React, { useRef, useEffect } from 'react';
-import { View, ScrollView, Platform } from 'react-native';
+import * as React from 'react';
+import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Command, CommandCategory } from './types';
 import { CommandPaletteItem } from './CommandPaletteItem';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
+import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 
 
 interface CommandPaletteResultsProps {
@@ -21,8 +23,10 @@ export function CommandPaletteResults({
     onSelectCommand, 
     onSelectionChange 
 }: CommandPaletteResultsProps) {
-    const scrollViewRef = useRef<ScrollView>(null);
-    const itemRefs = useRef<{ [key: number]: View | null }>({});
+    const scrollViewRef = React.useRef<ScrollView>(null);
+    const itemRefs = React.useRef<{ [key: number]: View | null }>({});
+    const isInsideModalBoundary = useIsInsideModalBoundary();
+    const wheelScrollHandlers = useScrollViewWheelScrollTo(scrollViewRef);
     
     // Flatten commands for index tracking
     const allCommands = React.useMemo(() => {
@@ -30,7 +34,7 @@ export function CommandPaletteResults({
     }, [categories]);
 
     // Scroll to selected item when index changes
-    useEffect(() => {
+    React.useEffect(() => {
         const selectedItem = itemRefs.current[selectedIndex];
         if (selectedItem && scrollViewRef.current) {
             // For web, we need to use the DOM API
@@ -61,6 +65,8 @@ export function CommandPaletteResults({
             style={styles.container}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            onScroll={isInsideModalBoundary ? wheelScrollHandlers.onScroll : undefined}
+            {...(isInsideModalBoundary ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
         >
             {categories.map(category => {
                 if (category.commands.length === 0) return null;
@@ -103,12 +109,8 @@ export function CommandPaletteResults({
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        // Use viewport-based height for better proportions
-        ...(Platform.OS === 'web' ? {
-            maxHeight: '40vh', // 40% of viewport height for results
-        } as any : {
-            maxHeight: 420, // Fallback for native
-        }),
+        flex: 1,
+        minHeight: 0,
         paddingVertical: 8,
     },
     emptyContainer: {

@@ -1,17 +1,47 @@
-import React from 'react';
-import { View, Platform } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import * as React from 'react';
+import { Platform, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
+import { t } from '@/text';
+
 import { CommandPaletteInput } from './CommandPaletteInput';
 import { CommandPaletteResults } from './CommandPaletteResults';
 import { useCommandPalette } from './useCommandPalette';
 import { Command } from './types';
 
-interface CommandPaletteProps {
+export type CommandPaletteProps = CustomModalInjectedProps & Readonly<{
     commands: Command[];
-    onClose: () => void;
-}
+}>;
 
-export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
+const stylesheet = StyleSheet.create(() => ({
+    body: {
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
+    },
+}));
+
+export function CommandPalette(props: CommandPaletteProps) {
+    useUnistyles();
+    const styles = stylesheet;
+    const title = t('settingsFeatures.commandPalette');
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title,
+        testID: 'command-palette:modal',
+        closeButtonTestID: 'command-palette:close',
+        layout: 'fill' as const,
+        dimensions: {
+            width: 800,
+            maxHeightRatio: 0.6,
+            size: 'lg' as const,
+        },
+    }), [title]);
+
+    useModalCardChrome(props.setChrome, chrome);
+
     const {
         searchQuery,
         selectedIndex,
@@ -21,7 +51,7 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
         handleSelectCommand,
         handleKeyPress,
         setSelectedIndex,
-    } = useCommandPalette(commands, onClose);
+    } = useCommandPalette(props.commands, props.onClose);
 
     // Only render on web
     if (Platform.OS !== 'web') {
@@ -29,7 +59,7 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
     }
 
     return (
-        <View style={styles.container}>
+        <View style={styles.body}>
             <CommandPaletteInput
                 value={searchQuery}
                 onChangeText={handleSearchChange}
@@ -46,29 +76,3 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
         </View>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        width: '100%',
-        maxWidth: 800, // Increased from 640 for wider input
-        // Use viewport-based height for better layout
-        ...(Platform.OS === 'web' ? {
-            maxHeight: '60vh', // Takes up to 60% of viewport height
-        } as any : {
-            maxHeight: 500, // Fallback for native
-        }),
-        overflow: 'hidden',
-        shadowColor: '#000',
-        shadowOffset: {
-            width: 0,
-            height: 20,
-        },
-        shadowOpacity: 0.25,
-        shadowRadius: 40,
-        elevation: 20,
-        borderWidth: 1,
-        borderColor: 'rgba(0, 0, 0, 0.08)',
-    },
-});
