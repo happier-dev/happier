@@ -211,35 +211,4 @@ describe('ChainTranscriptList presentation parity', () => {
         );
     });
 
-    it('overlays draft transcript text onto the matching committed message in the same chain', async () => {
-        const { ChainTranscriptList } = await import('./ChainTranscriptList');
-
-        const committedMessage: Message = {
-            kind: 'agent-text',
-            id: 'msg-1',
-            localId: 'local-1',
-            createdAt: 1,
-            text: 'Committed',
-        };
-        const draftMessage: Message = {
-            kind: 'agent-text',
-            id: 'draft:local-1',
-            localId: 'local-1',
-            createdAt: 2,
-            text: 'Committed with live draft tail',
-            isThinking: false,
-        };
-
-        await renderScreen(React.createElement(ChainTranscriptList, {
-                    sessionId: 's1',
-                    messages: [committedMessage],
-                    draftMessages: [draftMessage],
-                    metadata: null,
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                }));
-
-        expect(messageViewSpy.mock.calls.map((call) => call[0]?.message?.id)).toEqual(['msg-1']);
-        expect(messageViewSpy.mock.calls.at(-1)?.[0]?.message?.text).toBe('Committed with live draft tail');
-    });
-
 });

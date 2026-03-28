@@ -3,7 +3,6 @@ import { ActivityIndicator, View, type LayoutChangeEvent, type NativeScrollEvent
 import { FlashList, type FlashListRef } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { mergeTranscriptCommittedAndDraftMessages } from '@/sync/domains/messages/mergeTranscriptCommittedAndDraftMessages';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 
@@ -97,7 +96,6 @@ function isWebScrollElementLike(value: unknown): value is HTMLElement {
 export const ChainTranscriptList = React.memo(function ChainTranscriptList(props: {
     sessionId: string;
     messages: Message[];
-    draftMessages?: Message[];
     metadata: Metadata | null;
     interaction: TranscriptInteraction;
     forcePermissionPromptsInTranscript?: boolean;
@@ -114,24 +112,8 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
     const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
     const sessionThinkingInlinePresentation = useSetting('sessionThinkingInlinePresentation');
     const transcriptThinkingPulseStaleMs = useSetting('transcriptThinkingPulseStaleMs');
-    const mergedMessages = React.useMemo(() => {
-        if (!Array.isArray(props.draftMessages) || props.draftMessages.length === 0) {
-            return props.messages;
-        }
-        const committedIds = props.messages.map((message) => message.id);
-        const committedMessagesById = buildMessagesById(props.messages);
-        const merged = mergeTranscriptCommittedAndDraftMessages({
-            committedIds,
-            committedMessagesById,
-            draftMessages: props.draftMessages.filter(
-                (message): message is Extract<Message, { kind: 'agent-text' }> => message.kind === 'agent-text',
-            ),
-        });
-        return merged.ids.map((id) => merged.messagesById[id]!).filter(Boolean);
-    }, [props.draftMessages, props.messages]);
-
-    const messageIdsOldestFirst = React.useMemo(() => mergedMessages.map((message) => message.id), [mergedMessages]);
-    const messagesById = React.useMemo(() => buildMessagesById(mergedMessages), [mergedMessages]);
+    const messageIdsOldestFirst = React.useMemo(() => props.messages.map((message) => message.id), [props.messages]);
+    const messagesById = React.useMemo(() => buildMessagesById(props.messages), [props.messages]);
 
     const groupingMode = transcriptGroupingMode === 'turns' ? 'turns' : 'linear';
     const groupToolCalls =

@@ -137,37 +137,4 @@ describe('ChatList (turn grouping mode)', () => {
 
     await screen.unmount();
   });
-
-  it('overlays main-chain transcript drafts onto the matching committed message instead of rendering a duplicate row', async () => {
-    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
-    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-    legacyChatListHarnessState.settingValues.transcriptListImplementation = 'flatlist_legacy';
-
-    legacyChatListHarnessState.sessionMessagesState = {
-      isLoaded: true,
-      messages: [
-        { kind: 'agent-text', id: 'm1', localId: 'local-1', createdAt: 1, text: 'Committed' },
-      ],
-    };
-    legacyChatListHarnessState.sessionTranscriptDraftMessagesState = [
-      { kind: 'agent-text', id: 'draft:local-1', localId: 'local-1', createdAt: 2, text: 'Committed plus live draft tail', isThinking: false },
-    ];
-    buildChatListItemsMock.mockImplementation((opts: any) => {
-      if (opts?.includeCommittedMessages === false) return [];
-      return (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
-        kind: 'message',
-        id,
-        messageId: id,
-        createdAt: opts.messagesById[id]?.createdAt ?? 0,
-        seq: null,
-      }));
-    });
-
-    const screen = await renderLegacyChatList();
-
-    expect(capturedMessageViewProps.map((props) => props?.message?.id)).toEqual(['m1']);
-    expect(capturedMessageViewProps[0]?.message?.text).toBe('Committed plus live draft tail');
-
-    await screen.unmount();
-  });
 });
