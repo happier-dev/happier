@@ -38,7 +38,6 @@ export function useDemoMessages(messages: Message[]) {
                     messageIdsOldestFirst,
                     messagesById,
                     messagesMap: messagesById,
-                    draftsByLocalId: {},
                     reducerState: createReducer(),
                     latestThinkingMessageId,
                     latestThinkingMessageActivityAtMs: null,

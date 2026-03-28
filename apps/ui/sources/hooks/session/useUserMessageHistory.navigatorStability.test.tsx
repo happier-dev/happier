@@ -23,7 +23,6 @@ describe('useUserMessageHistory', () => {
             messageIdsOldestFirst: ['u1', 'a1', 'u2'],
             messagesById,
             messagesMap: messagesById,
-            draftsByLocalId: {},
             reducerState: {} as any,
             latestThinkingMessageId: null,
             latestThinkingMessageActivityAtMs: null,

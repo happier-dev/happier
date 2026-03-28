@@ -70,6 +70,12 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                     enabled: overrides.connectedServicesQuotasEnabled ?? false,
                 },
             },
+            channelBridges: {
+                enabled: false,
+                telegram: {
+                    enabled: false,
+                },
+            },
             updates: {
                 ota: {
                     enabled: overrides.updatesOtaEnabled ?? true,

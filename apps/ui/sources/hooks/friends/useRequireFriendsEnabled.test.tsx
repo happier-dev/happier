@@ -48,9 +48,13 @@ describe('useRequireFriendsEnabled', () => {
             }) as any,
         );
 
-        vi.doMock('expo-router', () => ({
-            useRouter: () => ({ replace }),
-        }));
+        vi.doMock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { replace },
+    });
+    return expoRouterMock.module;
+});
 
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
@@ -106,9 +110,13 @@ describe('useRequireFriendsEnabled', () => {
             })) as any,
         );
 
-        vi.doMock('expo-router', () => ({
-            useRouter: () => ({ replace }),
-        }));
+        vi.doMock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { replace },
+    });
+    return expoRouterMock.module;
+});
 
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({

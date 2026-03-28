@@ -7,14 +7,16 @@ const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'web' },
-        AppState: {
-            get currentState() {
-                return appState.currentState;
-            },
-        },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: { OS: 'web' },
+                AppState: {
+                    get currentState() {
+                        return appState.currentState;
+                    },
+                },
+            }
+    );
 });
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

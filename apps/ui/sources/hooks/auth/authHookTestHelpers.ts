@@ -32,14 +32,9 @@ export function installAuthHookCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = authHookModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('@/modal', async () => {
         const activeOptions = authHookModuleState.options;
@@ -62,14 +57,9 @@ export function installAuthHookCommonModuleMocks(
     });
 
     vi.mock('@/sync/domains/state/storage', async () => {
-        const activeOptions = authHookModuleState.options;
-        if (activeOptions.storage) {
-            return await activeOptions.storage();
-        }
-
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
-    });
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({});
+});
 
     vi.mock('@/text', async () => {
         const activeOptions = authHookModuleState.options;
