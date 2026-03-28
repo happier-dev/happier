@@ -25,6 +25,7 @@ import {
     SESSION_HANDOFF_INCLUDE_IGNORED_MODE_OPTIONS,
     SESSION_HANDOFF_WORKSPACE_TRANSFER_STRATEGY_OPTIONS,
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
+import { resolveSessionHandoffPickerSourceMachineId } from '@/sync/domains/sessionHandoff/resolveSessionHandoffPickerSourceMachineId';
 import { useMachineListByServerId, useMachineRecordValues, useSession, useSessions, useSettingMutable } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
@@ -111,32 +112,6 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const styles = stylesheet;
     const actionSpec = getActionSpec('session.handoff');
 
-    React.useEffect(() => {
-        // The picker can open before Sync has hydrated credentials (common in QA flows that inject
-        // credentials into storage and then immediately navigate to the handoff UI). A one-shot
-        // refresh would no-op in that window and the modal would render only the local machine.
-        //
-        // Retry for a short bounded window so newly-registered machines appear deterministically.
-        let cancelled = false;
-
-        const run = async () => {
-            const startedAt = Date.now();
-            while (!cancelled && (Date.now() - startedAt) < 10_000) {
-                if (sync.getCredentials()) {
-                    await sync.refreshMachinesThrottled({ force: true });
-                    return;
-                }
-                await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
-            }
-        };
-
-        void run();
-
-        return () => {
-            cancelled = true;
-        };
-    }, []);
-
     const sessions = useSessions() ?? [];
     const sessionRecord = useSession(sessionId);
     const machineListByServerId = useMachineListByServerId();
@@ -164,7 +139,10 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         return sessions.find((session: any) => normalizeId(session?.id) === normalizeId(sessionId)) ?? null;
     }, [sessionId, sessionRecord, sessions]);
     const resolvedSourceMachineId = React.useMemo(
-        () => normalizeId(sourceMachineId) || normalizeId((currentSession as any)?.metadata?.machineId),
+        () => resolveSessionHandoffPickerSourceMachineId({
+            sourceMachineId,
+            sessionMetadata: (currentSession as any)?.metadata,
+        }),
         [currentSession, sourceMachineId],
     );
     const sourceMachine = React.useMemo(() => {
@@ -198,6 +176,38 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
             return true;
         });
     }, [allServerMachines, resolvedSourceMachineId]);
+    const hasSelectableMachine = React.useMemo(
+        () => machines.some((machine: any) => normalizeId(machine?.id).length > 0),
+        [machines],
+    );
+
+    React.useEffect(() => {
+        // The picker can open before Sync has hydrated credentials (common in QA flows that inject
+        // credentials into storage and then immediately navigate to the handoff UI). A one-shot
+        // refresh would no-op in that window and the modal would render only the local machine.
+        //
+        // Retry for a short bounded window so newly-registered machines appear deterministically.
+        let cancelled = false;
+
+        const run = async () => {
+            const startedAt = Date.now();
+            while (!cancelled && (Date.now() - startedAt) < 10_000) {
+                if (sync.getCredentials()) {
+                    await sync.refreshMachinesThrottled({ force: true });
+                    if (cancelled) return;
+                    if (hasSelectableMachine) return;
+                }
+                if (cancelled) return;
+                await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+            }
+        };
+
+        void run();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [hasSelectableMachine]);
 
     const favoriteMachineIds = Array.isArray(favoriteMachinesRaw) ? favoriteMachinesRaw : [];
     const favoriteMachines = React.useMemo(() => {

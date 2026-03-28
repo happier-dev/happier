@@ -474,6 +474,56 @@ describe('SessionHandoffPickerModal', () => {
         ]);
     });
 
+    it('prefers the current session machineId over a divergent sourceMachineId prop when filtering picker targets', async () => {
+        sessionsByIdState = {
+            sess_1: {
+                id: 'sess_1',
+                metadata: {
+                    flavor: 'claude',
+                    machineId: 'machine_source',
+                    path: '/Users/tester/repo',
+                },
+            },
+        };
+        sessionsState = [
+            {
+                id: 'sess_1',
+                metadata: {
+                    flavor: 'claude',
+                    machineId: 'machine_source',
+                    path: '/Users/tester/repo',
+                },
+            },
+        ];
+        machineListByServerIdState = {
+            server_a: [
+                { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
+                { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
+            ],
+        };
+        allMachinesState = [
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
+            { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
+        ];
+
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+
+        const tree = (await renderScreen(<SessionHandoffPickerModal
+                    onClose={onClose}
+                    onResolve={onResolve}
+                    sessionId="sess_1"
+                    sourceMachineId="machine_target"
+                    serverId="server_a"
+                />)).tree;
+
+        const machineSelector = tree.findByType('MachineSelector' as any);
+        expect(machineSelector.props.machines).toEqual([
+            { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
+        ]);
+    });
+
     it('forces workspace transfer off for home-directory shorthand paths', async () => {
         sessionsByIdState = {
             sess_1: {
@@ -648,6 +698,69 @@ describe('SessionHandoffPickerModal', () => {
         await act(async () => {});
 
         expect(refreshMachinesThrottledMock).toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+
+    it('keeps retrying machine refresh until a second online machine becomes visible', async () => {
+        vi.useFakeTimers();
+        credentialsReady = true;
+
+        let refreshCount = 0;
+        machineListByServerIdState = {
+            server_a: [
+                { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
+            ],
+        };
+        allMachinesState = [
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
+        ];
+        refreshMachinesThrottledMock.mockImplementation(async () => {
+            refreshCount += 1;
+            if (refreshCount >= 2) {
+                machineListByServerIdState = {
+                    server_a: [
+                        { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
+                        { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
+                    ],
+                };
+                allMachinesState = [
+                    { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
+                    { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
+                ];
+            }
+        });
+
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const renderModal = () => (
+            <SessionHandoffPickerModal
+                onClose={onClose}
+                onResolve={onResolve}
+                sessionId="sess_1"
+                sourceMachineId="machine_source"
+                serverId="server_a"
+            />
+        );
+
+        let tree!: ReactTestRenderer;
+        tree = (await renderScreen(renderModal())).tree;
+
+        await act(async () => {});
+        expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(300);
+        });
+        await act(async () => {
+            tree.update(renderModal());
+        });
+        await act(async () => {});
+
+        expect(refreshMachinesThrottledMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+        const machineSelector = tree.findByType('MachineSelector' as any);
+        expect(machineSelector.props.machines.map((machine: any) => machine.id)).toEqual(['machine_target']);
+
         vi.useRealTimers();
     });
 });

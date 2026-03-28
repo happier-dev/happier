@@ -1,26 +1,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
 const applySessionListRenderablePatchesSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async () => true);
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
-            applySessionListRenderablePatches: applySessionListRenderablePatchesSpy,
-        }),
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    createPartialStorageModuleMock(importOriginal, {
+        storage: {
+            getState: () => ({
+                applySessionListRenderablePatches: applySessionListRenderablePatchesSpy,
+            }),
+        },
+    }),
+);
 
-vi.mock('@/modal', () => ({
-    Modal: {
+vi.mock('@/modal', () => createModalModuleMock({
+    spies: {
         confirm: modalConfirmSpy,
     },
-}));
+}).module);
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/text', () => createTextModuleMock({
+    translate: (key: string) => key,
 }));
 
 describe('stopSessionAndMaybeArchive', () => {
