@@ -176,37 +176,6 @@ describe('socket update handling: machine-activity for unknown machine', () => {
     });
 });
 
-describe('socket update handling: transcript-draft ephemerals', () => {
-    it('routes transcript draft updates to onTranscriptDraftUpdate callback', () => {
-        const onTranscriptDraftUpdate = vi.fn();
-
-        handleEphemeralSocketUpdate({
-            update: {
-                type: 'transcript-draft',
-                sessionId: 's1',
-                localId: 'local-1',
-                segmentKind: 'assistant',
-                sidechainId: null,
-                delta: { t: 'encrypted', c: 'ciphertext' },
-                createdAt: 123,
-            },
-            addActivityUpdate: () => {},
-            addMachineActivityUpdate: () => {},
-            onTranscriptDraftUpdate,
-        });
-
-        expect(onTranscriptDraftUpdate).toHaveBeenCalledWith({
-            type: 'transcript-draft',
-            sessionId: 's1',
-            localId: 'local-1',
-            segmentKind: 'assistant',
-            sidechainId: null,
-            delta: { t: 'encrypted', c: 'ciphertext' },
-            createdAt: 123,
-        });
-    });
-});
-
 describe('socket update handling: execution-run-updated ephemerals', () => {
     it('notifies execution run activity so polling can recheck quickly', () => {
         const listener = vi.fn();

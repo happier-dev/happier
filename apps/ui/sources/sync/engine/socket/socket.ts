@@ -654,9 +654,8 @@ export function handleEphemeralSocketUpdate(params: {
     update: unknown;
     addActivityUpdate: (update: ApiEphemeralActivityUpdate) => void;
     addMachineActivityUpdate: (update: MachineActivityUpdate) => void;
-    onTranscriptDraftUpdate?: (update: Extract<EphemeralUpdate, { type: 'transcript-draft' }>) => void;
 }): void {
-    const { update, addActivityUpdate, addMachineActivityUpdate, onTranscriptDraftUpdate } = params;
+    const { update, addActivityUpdate, addMachineActivityUpdate } = params;
 
     const updateData = parseEphemeralUpdate(update);
     if (!updateData) return;
@@ -667,8 +666,6 @@ export function handleEphemeralSocketUpdate(params: {
     } else if (updateData.type === 'machine-activity') {
         // Handle machine activity updates through batching accumulator
         addMachineActivityUpdate({ id: updateData.id, active: updateData.active, activeAt: updateData.activeAt });
-    } else if (updateData.type === 'transcript-draft') {
-        onTranscriptDraftUpdate?.(updateData);
     } else if (updateData.type === 'execution-run-updated') {
         notifyExecutionRunActivity(updateData.sessionId);
     }

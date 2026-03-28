@@ -24,9 +24,11 @@ vi.mock('expo-notifications', () => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'ios' },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: { OS: 'ios' },
+            }
+    );
 });
 
 vi.mock('@/sync/api/session/apiPush', () => ({

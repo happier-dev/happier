@@ -24,10 +24,12 @@ vi.mock('react-native-mmkv', () => {
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'web' },
-        AppState: { addEventListener: appStateAddListener as any },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: { OS: 'web' },
+                AppState: { addEventListener: appStateAddListener as any },
+            }
+    );
 });
 
 const runtimeFetchSpy = vi.hoisted(() => vi.fn());
