@@ -8,11 +8,6 @@
   "homepage": "https://github.com/happier-dev/happier",
   "bugs": "https://github.com/happier-dev/happier/issues",
   "repository": "happier-dev/happier",
-  "bin": {
-    "happier": "./bin/happier.mjs",
-    "happier-mcp": "./bin/happier-mcp.mjs",
-    "happier-dev": "./bin/happier-dev.mjs"
-  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.cts",
