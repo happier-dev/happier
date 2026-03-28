@@ -13,6 +13,10 @@ on:
         required: false
         default: false
         type: boolean
+      run_wsrepl_lima:
+        required: false
+        default: false
+        type: boolean
       run_mobile_e2e_android:
         required: false
         default: false
@@ -216,6 +220,59 @@ jobs:
           name: ui-e2e-playwright-artifacts
           path: |
             packages/tests/.project/logs/e2e/ui-playwright
+            .project/logs/e2e/*ui-e2e*
+          if-no-files-found: ignore
+
+  ui-e2e-wsrepl-lima:
+    if: ${{ github.event_name == 'workflow_call' && inputs.run_wsrepl_lima }}
+    name: UI E2E (WSREPL Lima matrix)
+    runs-on:
+      - self-hosted
+      - macOS
+      - wsrepl-lima
+    timeout-minutes: 90
+    env:
+      HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Lima host prerequisites
+        run: |
+          limactl --version
+          sw_vers
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Run WSREPL Lima matrix
+        run: yarn -s test:e2e:ui:wsrepl:lima
+
+      - name: Upload WSREPL Lima artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-wsrepl-lima-artifacts
+          path: |
+            apps/stack/output/wsrepl-lima-matrix
             .project/logs/e2e/*ui-e2e*
           if-no-files-found: ignore
 

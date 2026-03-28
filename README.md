@@ -125,7 +125,9 @@ Happier is designed with privacy as a foundation, not an afterthought.
 
 #### Android APK
 
-[Download the APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk) from the releases page.
+Public APK releases are currently published on the `preview` lane:
+
+[Download the preview APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk) from the releases page.
 
 ### Step 2: Install the CLI on your computer
 
@@ -133,12 +135,28 @@ Release channels:
 
 - `stable`: install the default lane and use `happier`
 - `preview`: install the preview lane and use `hprev`
-- `dev`: install the rolling public dev lane and use `hdev`
+- `dev`: install the rolling dev lane and use `hdev`
+
+Public docs and commands always use `stable`, `preview`, and `dev`.
+Internal release-ring ids are implementation details and are not part of the user-facing contract.
 
 See the full release/update matrix: [docs.happier.dev/docs/advanced/updates](https://docs.happier.dev/docs/advanced/updates)
 
 ```bash
-npm install -g @happier-dev/cli@next
+curl -fsSL https://happier.dev/install | bash
+```
+
+Preview / dev installers:
+
+```bash
+curl -fsSL https://happier.dev/install-preview | bash
+curl -fsSL https://happier.dev/install-dev | bash
+```
+
+If you specifically want the npm package instead of the installer-managed lanes:
+
+```bash
+npm install -g @happier-dev/cli@latest
 ```
 
 ### Step 3: Authenticate (recommended: mobile-first)
@@ -213,7 +231,7 @@ It is lightweight, and can run as a simple service on your computer. You can the
 
 Simply run the [self-host guided setup](https://docs.happier.dev/deployment/self-host-runtime) on your computer:
 ```
-curl -fsSL https://happier.dev/self-host-preview | bash
+curl -fsSL https://happier.dev/self-host | bash
 ```
 
 The self-host runtime also follows the public release-ring model (`stable`, `preview`, `dev`) when those rolling installer endpoints are published.

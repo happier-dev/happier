@@ -134,6 +134,30 @@ test('pipeline CLI help reflects expanded Tauri environment support', async () =
   }
 });
 
+test('pipeline CLI help reflects the public dev release ring for publish/release commands', async () => {
+  for (const command of [
+    'publish-cli-binaries',
+    'publish-hstack-binaries',
+    'publish-server-runtime',
+    'publish-ui-web',
+    'release-build-cli-binaries',
+    'release-build-hstack-binaries',
+    'release-build-server-binaries',
+    'release-publish-manifests',
+    'release-build-ui-web-bundle',
+  ]) {
+    const help = execFileSync(process.execPath, [pipelineCli, 'help', command], {
+      cwd: repoRoot,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    });
+    assert.match(help, /stable\|preview\|dev/);
+    assert.doesNotMatch(help, /\bpublicdev\b/);
+  }
+});
+
 test('pipeline help covers every supported subcommand', async () => {
   const runSource = fs.readFileSync(pipelineCli, 'utf8');
   const allowlist = Array.from(runSource.matchAll(/subcommand\s*!==\s*'([^']+)'/g)).map((m) => String(m[1] ?? '').trim()).filter(Boolean);

@@ -1,5 +1,7 @@
 // @ts-check
 
+import { formatPublicReleaseChannelChoices } from '../../release/lib/public-release-rings.mjs';
+
 /**
  * @typedef {{
  *   summary: string;
@@ -11,13 +13,15 @@
  */
 
 /** @type {Record<string, CommandHelpSpec>} */
+const publicReleaseChannelChoices = formatPublicReleaseChannelChoices();
+
 export const COMMAND_HELP_PUBLISH = {
   'publish-cli-binaries': {
     summary: 'Build + publish CLI binaries to GitHub Releases (rolling + version tags).',
     usage:
-      'node scripts/pipeline/run.mjs publish-cli-binaries --channel <preview|stable> [--release-message <text>] [--dry-run]',
+      `node scripts/pipeline/run.mjs publish-cli-binaries --channel <${publicReleaseChannelChoices}> [--release-message <text>] [--dry-run]`,
     options: [
-      '--channel <preview|stable>        Required.',
+      `--channel <${publicReleaseChannelChoices}>        Required.`,
       '--allow-stable <bool>            true|false (default: false).',
       '--release-message <text>         Optional.',
       '--run-contracts <auto|true|false> (default: auto).',
@@ -30,7 +34,7 @@ export const COMMAND_HELP_PUBLISH = {
     ],
     bullets: [
       'Requires MINISIGN_SECRET_KEY (+ MINISIGN_PASSPHRASE if encrypted).',
-      'Publishes a rolling tag (cli-preview/cli-stable) and a versioned tag (cli-vX.Y.Z...).',
+      'Publishes a rolling tag (cli-stable/cli-preview/cli-dev) and a versioned tag (cli-vX.Y.Z...).',
     ],
     examples: ['node scripts/pipeline/run.mjs publish-cli-binaries --channel preview --release-message "CLI preview"'],
   },
@@ -38,9 +42,9 @@ export const COMMAND_HELP_PUBLISH = {
   'publish-hstack-binaries': {
     summary: 'Build + publish hstack binaries to GitHub Releases (rolling + version tags).',
     usage:
-      'node scripts/pipeline/run.mjs publish-hstack-binaries --channel <preview|stable> [--release-message <text>] [--dry-run]',
+      `node scripts/pipeline/run.mjs publish-hstack-binaries --channel <${publicReleaseChannelChoices}> [--release-message <text>] [--dry-run]`,
     options: [
-      '--channel <preview|stable>        Required.',
+      `--channel <${publicReleaseChannelChoices}>        Required.`,
       '--allow-stable <bool>            true|false (default: false).',
       '--release-message <text>         Optional.',
       '--run-contracts <auto|true|false> (default: auto).',
@@ -58,9 +62,9 @@ export const COMMAND_HELP_PUBLISH = {
   'publish-server-runtime': {
     summary: 'Build + publish relay-server (server runner) runtime binaries to GitHub Releases.',
     usage:
-      'node scripts/pipeline/run.mjs publish-server-runtime --channel <preview|stable> [--release-message <text>] [--dry-run]',
+      `node scripts/pipeline/run.mjs publish-server-runtime --channel <${publicReleaseChannelChoices}> [--release-message <text>] [--dry-run]`,
     options: [
-      '--channel <preview|stable>        Required.',
+      `--channel <${publicReleaseChannelChoices}>        Required.`,
       '--allow-stable <bool>            true|false (default: false).',
       '--release-message <text>         Optional.',
       '--run-contracts <auto|true|false> (default: auto).',
@@ -78,9 +82,9 @@ export const COMMAND_HELP_PUBLISH = {
   'publish-ui-web': {
     summary: 'Build + publish the UI web bundle as GitHub release assets.',
     usage:
-      'node scripts/pipeline/run.mjs publish-ui-web --channel <preview|stable> [--release-message <text>] [--dry-run]',
+      `node scripts/pipeline/run.mjs publish-ui-web --channel <${publicReleaseChannelChoices}> [--release-message <text>] [--dry-run]`,
     options: [
-      '--channel <preview|stable>        Required.',
+      `--channel <${publicReleaseChannelChoices}>        Required.`,
       '--allow-stable <bool>            true|false (default: false).',
       '--release-message <text>         Optional.',
       '--run-contracts <auto|true|false> (default: auto).',
@@ -95,4 +99,3 @@ export const COMMAND_HELP_PUBLISH = {
     examples: ['node scripts/pipeline/run.mjs publish-ui-web --channel preview --release-message "UI web preview"'],
   },
 };
-

@@ -72,8 +72,6 @@ jobs:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
-    env:
-      HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
     steps:
       - name: Enforce stable publishing gate
         if: ${{ inputs.channel == 'stable' && inputs.allow_stable != true }}
@@ -81,22 +79,26 @@ jobs:
           echo "Stable server runtime publishing is disabled. Re-run with allow_stable=true if intentional." >&2
           exit 1
 
-      - name: Resolve source ref
-        id: resolve_source
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Resolve channel metadata
+        id: channel_meta
         run: |
           set -euo pipefail
-          channel="${{ inputs.channel }}"
-          src="${{ inputs.source_ref }}"
-          if [ "$src" = "auto" ]; then
-            if [ "$channel" = "dev" ] || [ "$channel" = "publicdev" ]; then
-              src="dev"
-            elif [ "$channel" = "preview" ]; then
-              src="preview"
-            else
-              src="main"
-            fi
-          fi
-          echo "ref=$src" >> "$GITHUB_OUTPUT"
+          node scripts/pipeline/release/resolve-public-release-channel-meta.mjs \
+            --channel "${{ inputs.channel }}" \
+            --source-ref "${{ inputs.source_ref }}" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Create GitHub App token
         id: app_token
@@ -108,17 +110,10 @@ jobs:
       - name: Checkout source ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.resolve_source.outputs.ref }}
+          ref: ${{ steps.channel_meta.outputs.source_ref }}
           fetch-depth: 0
           token: ${{ steps.app_token.outputs.token }}
           persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
         run: |
@@ -140,6 +135,7 @@ jobs:
           npm_config_production: "false"
           # Speed up installs: server runtime publishing does not require UI web-only vendored assets.
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Publish server runtime (pipeline)
@@ -148,6 +144,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs publish-server-runtime \

@@ -1,5 +1,7 @@
 // @ts-check
 
+import { formatPublicReleaseChannelChoices } from '../../release/lib/public-release-rings.mjs';
+
 /**
  * @typedef {{
  *   summary: string;
@@ -22,6 +24,8 @@
  */
 
 /** @type {Record<string, CommandHelpSpec>} */
+const publicReleaseChannelChoices = formatPublicReleaseChannelChoices();
+
 export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-bump-plan': {
     summary: 'Compute a bump plan from “changed components” inputs (workflow helper).',
@@ -105,14 +109,14 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-build-cli-binaries': {
     summary: 'Build CLI binary artifacts + minisign checksums (advanced helper).',
     usage:
-      'node scripts/pipeline/run.mjs release-build-cli-binaries --channel <preview|stable> [--version <ver>] [--targets <csv>] [--externals <csv>]',
+      `node scripts/pipeline/run.mjs release-build-cli-binaries --channel <${publicReleaseChannelChoices}> [--version <ver>] [--targets <csv>] [--externals <csv>]`,
     options: [
       '--deploy-environment <env>        Wrapper flag (default: production).',
       '--secrets-source <auto|env|keychain>  Wrapper flag.',
       '--keychain-service <name>         Wrapper flag (default: happier/pipeline).',
       '--keychain-account <name>         Wrapper flag.',
       '--dry-run                         Wrapper flag.',
-      '--channel <preview|stable>        Script flag.',
+      `--channel <${publicReleaseChannelChoices}>        Script flag.`,
       '--version <ver>                   Script flag; defaults to apps/cli package.json.',
       '--targets <csv>                   Script flag.',
       '--externals <csv>                 Script flag; bun externals.',
@@ -124,14 +128,14 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-build-hstack-binaries': {
     summary: 'Build hstack binary artifacts + minisign checksums (advanced helper).',
     usage:
-      'node scripts/pipeline/run.mjs release-build-hstack-binaries --channel <preview|stable> [--version <ver>] [--entrypoint <path>] [--targets <csv>]',
+      `node scripts/pipeline/run.mjs release-build-hstack-binaries --channel <${publicReleaseChannelChoices}> [--version <ver>] [--entrypoint <path>] [--targets <csv>]`,
     options: [
       '--deploy-environment <env>        Wrapper flag (default: production).',
       '--secrets-source <auto|env|keychain>  Wrapper flag.',
       '--keychain-service <name>         Wrapper flag (default: happier/pipeline).',
       '--keychain-account <name>         Wrapper flag.',
       '--dry-run                         Wrapper flag.',
-      '--channel <preview|stable>        Script flag.',
+      `--channel <${publicReleaseChannelChoices}>        Script flag.`,
       '--version <ver>                   Script flag; defaults to apps/stack package.json.',
       '--entrypoint <path>               Script flag; defaults to apps/stack/scripts/self_host.mjs.',
       '--targets <csv>                   Script flag.',
@@ -144,14 +148,14 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-build-server-binaries': {
     summary: 'Build server binary artifacts + minisign checksums (advanced helper).',
     usage:
-      'node scripts/pipeline/run.mjs release-build-server-binaries --channel <preview|stable> [--version <ver>] [--entrypoint <path>] [--targets <csv>]',
+      `node scripts/pipeline/run.mjs release-build-server-binaries --channel <${publicReleaseChannelChoices}> [--version <ver>] [--entrypoint <path>] [--targets <csv>]`,
     options: [
       '--deploy-environment <env>        Wrapper flag (default: production).',
       '--secrets-source <auto|env|keychain>  Wrapper flag.',
       '--keychain-service <name>         Wrapper flag (default: happier/pipeline).',
       '--keychain-account <name>         Wrapper flag.',
       '--dry-run                         Wrapper flag.',
-      '--channel <preview|stable>        Script flag.',
+      `--channel <${publicReleaseChannelChoices}>        Script flag.`,
       '--version <ver>                   Script flag; defaults to apps/server package.json.',
       '--entrypoint <path>               Script flag; defaults to apps/server/sources/main.light.ts.',
       '--targets <csv>                   Script flag.',
@@ -164,7 +168,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-publish-manifests': {
     summary: 'Generate “latest.json” manifest(s) for a product/channel (advanced helper).',
     usage:
-      'node scripts/pipeline/run.mjs release-publish-manifests --product <happier|hstack|happier-server> --channel <preview|stable> --assets-base-url <url> [--artifacts-dir <dir>]',
+      `node scripts/pipeline/run.mjs release-publish-manifests --product <happier|hstack|happier-server> --channel <${publicReleaseChannelChoices}> --assets-base-url <url> [--artifacts-dir <dir>]`,
     options: [
       '--deploy-environment <env>        Wrapper flag (default: production).',
       '--secrets-source <auto|env|keychain>  Wrapper flag.',
@@ -172,7 +176,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--keychain-account <name>         Wrapper flag.',
       '--dry-run                         Wrapper flag.',
       '--product <name>                  Script flag (required).',
-      '--channel <preview|stable>        Script flag (required).',
+      `--channel <${publicReleaseChannelChoices}>        Script flag (required).`,
       '--assets-base-url <url>           Script flag (required).',
       '--artifacts-dir <dir>             Script flag (default: dist/release-assets).',
       '--out-dir <dir>                   Script flag (default: dist/manifests).',
@@ -284,14 +288,14 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-build-ui-web-bundle': {
     summary: 'Build the UI web bundle artifact (advanced helper).',
     usage:
-      'node scripts/pipeline/run.mjs release-build-ui-web-bundle --channel <preview|stable> [--version <ver>] [--dist-dir <dir>] [--out-dir <dir>] [--skip-build]',
+      `node scripts/pipeline/run.mjs release-build-ui-web-bundle --channel <${publicReleaseChannelChoices}> [--version <ver>] [--dist-dir <dir>] [--out-dir <dir>] [--skip-build]`,
     options: [
       '--deploy-environment <env>        Wrapper flag (default: production).',
       '--dry-run                         Wrapper flag.',
       '--secrets-source <auto|env|keychain>  Wrapper flag.',
       '--keychain-service <name>         Wrapper flag.',
       '--keychain-account <name>         Wrapper flag.',
-      '--channel <preview|stable>        Script flag.',
+      `--channel <${publicReleaseChannelChoices}>        Script flag.`,
       '--version <ver>                   Script flag; defaults to apps/ui package.json.',
       '--dist-dir <dir>                  Script flag (default: apps/ui/dist).',
       '--out-dir <dir>                   Script flag (default: dist/release-assets/ui-web).',

@@ -133,7 +133,7 @@ jobs:
 
   validate_apple_api_private_key:
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
-    if: ${{ inputs.action == 'build_and_submit' && ((inputs.environment == 'dev' || inputs.environment == 'publicdev') || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
     steps:
       - name: Fail when APPLE_API_PRIVATE_KEY is missing
@@ -206,7 +206,7 @@ jobs:
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || (((inputs.environment == 'dev' || inputs.environment == 'publicdev') || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: EAS build (local runner) (pipeline)
@@ -271,7 +271,7 @@ jobs:
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || (((inputs.environment == 'dev' || inputs.environment == 'publicdev') || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: EAS build (local runner) (pipeline)
@@ -297,7 +297,7 @@ jobs:
 
   submit_android:
     name: Submit (android)
-    if: ${{ inputs.action == 'build_and_submit' && ((inputs.environment == 'dev' || inputs.environment == 'publicdev') || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token, build_android]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -325,9 +325,6 @@ jobs:
         run: |
           set -euo pipefail
           env_name="${{ inputs.environment }}"
-          if [ "${env_name}" = "publicdev" ]; then
-            env_name="dev"
-          fi
           platform="${EAS_PLATFORM}"
           profile="${{ inputs.profile }}"
           if [ "${profile}" = "auto" ]; then
@@ -444,7 +441,7 @@ jobs:
           npm_config_production: "false"
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || (((inputs.environment == 'dev' || inputs.environment == 'publicdev') || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Publish OTA via pipeline
@@ -458,7 +455,7 @@ jobs:
 
   submit_ios:
     name: Submit (ios)
-    if: ${{ inputs.action == 'build_and_submit' && ((inputs.environment == 'dev' || inputs.environment == 'publicdev') || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token, validate_apple_api_private_key, build_ios]
     runs-on: macos-latest
     environment: release-shared
@@ -487,9 +484,6 @@ jobs:
         run: |
           set -euo pipefail
           env_name="${{ inputs.environment }}"
-          if [ "${env_name}" = "publicdev" ]; then
-            env_name="dev"
-          fi
           platform="${EAS_PLATFORM}"
 
           app_version="$(node -p 'require("./apps/ui/package.json").version' | tr -d '\n')"

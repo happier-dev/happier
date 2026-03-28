@@ -464,7 +464,7 @@ Preview channel:
   curl -fsSL https://happier.dev/install | HAPPIER_CHANNEL=preview bash
   curl -fsSL https://happier.dev/install-preview | bash
 
-Public dev channel:
+Dev channel:
   curl -fsSL https://happier.dev/install | bash -s -- --channel dev
   curl -fsSL https://happier.dev/install | HAPPIER_CHANNEL=dev bash
   curl -fsSL https://happier.dev/install-dev | bash
@@ -1001,7 +1001,14 @@ else
   chmod +x "${TARGET_BIN}"
 fi
 
-if [[ "${PRODUCT}" != "cli" || "${CLI_USED_LEGACY_FALLBACK}" == "1" ]]; then
+if [[ "${PRODUCT}" == "cli" && "${CLI_USED_LEGACY_FALLBACK}" != "1" ]]; then
+  CLI_INSTALLED_SHIM_PATH="${INSTALL_DIR}/bin/${CLI_SHIM_NAME}"
+  if [[ -x "${CLI_INSTALLED_SHIM_PATH}" ]]; then
+    ln -sf "${CLI_INSTALLED_SHIM_PATH}" "${DISPLAY_SHIM_PATH}"
+  else
+    ln -sf "${DISPLAY_BINARY_PATH}" "${DISPLAY_SHIM_PATH}"
+  fi
+else
   ln -sf "${TARGET_BIN}" "${DISPLAY_SHIM_PATH}"
 fi
 

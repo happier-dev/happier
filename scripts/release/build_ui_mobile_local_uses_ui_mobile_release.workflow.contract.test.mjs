@@ -17,4 +17,6 @@ test('build-ui-mobile-local workflow delegates local builds to ui-mobile-release
   assert.match(src, /-\s+internalpreview-apk\b/);
   assert.match(src, /-\s+dev-apk\b/);
   assert.match(src, /-\s+ota\b/);
+  assert.doesNotMatch(src, /inputs\.environment == 'publicdev'/);
+  assert.doesNotMatch(src, /\benv_name\b[\s\S]*?"publicdev"/);
 });

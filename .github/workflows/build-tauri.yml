@@ -8,13 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Environment — Controls config (preview|publicdev|production)"
+        description: "Environment — Controls config (preview|dev|production)"
         required: true
         type: choice
         default: preview
         options:
           - preview
-          - publicdev
+          - dev
           - production
       source_ref:
         description: "Source ref — Branch, tag, or SHA to build"
@@ -249,7 +249,7 @@ jobs:
           fi
           if [ "${{ inputs.environment }}" = "preview" ]; then
             build_version="${ui_version}-preview.${GITHUB_RUN_NUMBER}"
-          elif [ "${{ inputs.environment }}" = "publicdev" ]; then
+          elif [ "${{ inputs.environment }}" = "dev" ]; then
             build_version="${ui_version}-dev.${GITHUB_RUN_NUMBER}"
           else
             build_version="${ui_version}"
@@ -386,8 +386,8 @@ jobs:
       assets_dir: dist/ui-desktop-assets/ui-desktop-preview
       clobber: true
 
-  publish_publicdev:
-    if: ${{ inputs.publish_release == true && inputs.environment == 'publicdev' }}
+  publish_dev:
+    if: ${{ inputs.publish_release == true && inputs.environment == 'dev' }}
     needs: [prepare_assets]
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit

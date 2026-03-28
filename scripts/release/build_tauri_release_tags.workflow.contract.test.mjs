@@ -28,6 +28,20 @@ test('build-tauri publishes desktop releases under ui-desktop-* tags', async () 
   assert.doesNotMatch(raw, /tag:\s*ui-v\$\{\{/);
 });
 
+test('build-tauri keeps the public manual workflow surface on dev while retaining internal dev release tags', async () => {
+  const raw = await loadWorkflow('build-tauri.yml');
+
+  assert.match(raw, /Environment — Controls config \(preview\|dev\|production\)/);
+  assert.match(raw, /options:\s*\n(?:\s+- .*\n)*\s+- dev\b/);
+  assert.doesNotMatch(raw, /Environment — Controls config \(preview\|publicdev\|production\)/);
+  assert.doesNotMatch(raw, /^\s+- publicdev$/m);
+
+  assert.match(raw, /publish_dev:/);
+  assert.doesNotMatch(raw, /publish_publicdev:/);
+  assert.match(raw, /tag:\s*ui-desktop-dev\b/);
+  assert.doesNotMatch(raw, /inputs\.environment\s*==\s*'publicdev'/);
+});
+
 test('build-tauri latest.json generator uses ui-desktop-* release tags and publish assets are namespaced', async () => {
   const raw = await loadWorkflow('build-tauri.yml');
 

@@ -253,7 +253,7 @@ Preview channel:
   curl -fsSL https://happier.dev/self-host | HAPPIER_CHANNEL=preview bash
   curl -fsSL https://happier.dev/self-host-preview | bash
 
-Public dev channel:
+Dev channel:
   curl -fsSL https://happier.dev/self-host | bash -s -- --channel dev
   curl -fsSL https://happier.dev/self-host | HAPPIER_CHANNEL=dev bash
   curl -fsSL https://happier.dev/self-host-dev | bash

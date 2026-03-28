@@ -80,6 +80,16 @@ export function resolveRollingPrerelease(channel) {
 
 /**
  * @param {import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId} channel
+ * @param {string} [requestedSourceRef]
+ */
+export function resolvePublicReleaseSourceRef(channel, requestedSourceRef = 'auto') {
+  const requested = String(requestedSourceRef ?? '').trim();
+  if (requested && requested !== 'auto') return requested;
+  return getPublicReleaseRingEntry(channel).sourceBranch;
+}
+
+/**
+ * @param {import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId} channel
  */
 export function resolveEmbeddedPolicyForChannel(channel) {
   const embeddedPolicy = getPublicReleaseRingEntry(channel).embeddedPolicyEnv;

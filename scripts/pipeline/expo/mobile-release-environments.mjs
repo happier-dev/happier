@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
+import { getReleaseRingCatalogEntry, normalizeReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 const require = createRequire(import.meta.url);
 const { getAppEnvironmentConfig, normalizeAppEnvironmentId } = require('../../../apps/ui/appVariantConfig.cjs');
@@ -10,96 +10,54 @@ const { getAppEnvironmentConfig, normalizeAppEnvironmentId } = require('../../..
 /** @typedef {'internaldev' | 'internalpreview' | 'publicdev' | 'preview' | 'production'} MobileReleaseEnvironment */
 /** @typedef {'internaldev' | 'internaldev-store' | 'internalpreview' | 'internalpreview-apk' | 'publicdev' | 'publicdev-apk' | 'preview' | 'preview-apk' | 'production' | 'production-apk'} MobileReleaseProfile */
 
-/** @type {readonly MobileReleaseEnvironment[]} */
-export const MOBILE_RELEASE_ENVIRONMENTS = ['internaldev', 'internalpreview', 'publicdev', 'preview', 'production'];
-export const MOBILE_RELEASE_ENVIRONMENT_INPUTS = ['internaldev', 'internalpreview', 'dev', 'preview', 'production'];
-export const MOBILE_RELEASE_ENVIRONMENT_CHOICES = MOBILE_RELEASE_ENVIRONMENT_INPUTS.join('|');
-export const MOBILE_STORE_SUBMIT_ENVIRONMENT_INPUTS = ['dev', 'preview', 'production'];
-export const MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES = MOBILE_STORE_SUBMIT_ENVIRONMENT_INPUTS.join('|');
-/** @type {readonly MobileReleaseProfile[]} */
-export const MOBILE_RELEASE_PROFILES = [
-  'internaldev',
-  'internaldev-store',
-  'internalpreview',
-  'internalpreview-apk',
-  'publicdev',
-  'publicdev-apk',
-  'preview',
-  'preview-apk',
-  'production',
-  'production-apk',
-];
-export const MOBILE_RELEASE_PROFILE_INPUTS = [
-  'internaldev',
-  'internaldev-store',
-  'internalpreview',
-  'internalpreview-apk',
-  'dev',
-  'dev-apk',
-  'preview',
-  'preview-apk',
-  'production',
-  'production-apk',
-];
-export const MOBILE_RELEASE_PROFILE_CHOICES = MOBILE_RELEASE_PROFILE_INPUTS.join('|');
+/** @type {readonly Exclude<MobileReleaseEnvironment, 'production'>[]} */
+const MOBILE_RELEASE_RING_ENVIRONMENTS = ['internaldev', 'internalpreview', 'publicdev', 'preview'];
 
-const mobileReleaseConfigs = {
-  internaldev: {
-    id: 'internaldev',
-    pipelineDeployEnvironment: 'preview',
-    profilePrefix: 'internaldev',
-    supportsNativeSubmit: false,
-    supportsApkReleasePublishing: false,
-    releaseTag: '',
-    releaseTitle: '',
-    releaseNotes: '',
-    prerelease: true,
-    rollingTag: false,
+/** @type {Readonly<Record<MobileReleaseEnvironment, readonly string[]>>} */
+const MOBILE_RELEASE_PROFILE_SUFFIXES = {
+  internaldev: ['', '-store'],
+  internalpreview: ['', '-apk'],
+  publicdev: ['', '-apk'],
+  preview: ['', '-apk'],
+  production: ['', '-apk'],
+};
+
+function titleCase(value) {
+  return value.slice(0, 1).toUpperCase() + value.slice(1);
+}
+
+/**
+ * @param {Exclude<MobileReleaseEnvironment, 'production'>} environment
+ */
+function createReleaseRingBackedMobileReleaseConfig(environment) {
+  const ring = getReleaseRingCatalogEntry(environment);
+  const rollingSuffix = ring.rollingReleaseSuffix;
+  const supportsRollingRelease = Boolean(ring.supportsMobileStoreSubmit && rollingSuffix);
+  const publicLabel = ring.publicLabel;
+
+  return {
+    id: environment,
+    pipelineDeployEnvironment: ring.embeddedPolicyEnv === 'production' ? 'production' : 'preview',
+    profilePrefix: environment,
+    supportsNativeSubmit: ring.supportsMobileStoreSubmit,
+    supportsApkReleasePublishing: ring.supportsMobileStoreSubmit,
+    releaseTag: supportsRollingRelease ? `ui-mobile-${rollingSuffix}` : '',
+    releaseTitle: supportsRollingRelease ? `Happier UI Mobile ${titleCase(publicLabel)}` : '',
+    releaseNotes: supportsRollingRelease ? `Rolling ${publicLabel} build.` : '',
+    prerelease: ring.id !== 'stable',
+    rollingTag: supportsRollingRelease,
     generateNotes: false,
-    submitAllowFailure: false,
-  },
-  internalpreview: {
-    id: 'internalpreview',
-    pipelineDeployEnvironment: 'preview',
-    profilePrefix: 'internalpreview',
-    supportsNativeSubmit: false,
-    supportsApkReleasePublishing: false,
-    releaseTag: '',
-    releaseTitle: '',
-    releaseNotes: '',
-    prerelease: true,
-    rollingTag: false,
-    generateNotes: false,
-    submitAllowFailure: false,
-  },
-  publicdev: {
-    id: 'publicdev',
-    pipelineDeployEnvironment: 'preview',
-    profilePrefix: 'publicdev',
-    supportsNativeSubmit: true,
-    supportsApkReleasePublishing: true,
-    releaseTag: `ui-mobile-${getReleaseRingCatalogEntry('publicdev').rollingReleaseSuffix}`,
-    releaseTitle: 'Happier UI Mobile Dev',
-    releaseNotes: 'Rolling dev build.',
-    prerelease: true,
-    rollingTag: true,
-    generateNotes: false,
-    submitAllowFailure: true,
-  },
-  preview: {
-    id: 'preview',
-    pipelineDeployEnvironment: 'preview',
-    profilePrefix: 'preview',
-    supportsNativeSubmit: true,
-    supportsApkReleasePublishing: true,
-    releaseTag: `ui-mobile-${getReleaseRingCatalogEntry('preview').rollingReleaseSuffix}`,
-    releaseTitle: 'Happier UI Mobile Preview',
-    releaseNotes: 'Rolling preview build.',
-    prerelease: true,
-    rollingTag: true,
-    generateNotes: false,
-    submitAllowFailure: true,
-  },
+    submitAllowFailure: ring.visibility === 'public' && ring.id !== 'stable' && ring.supportsMobileStoreSubmit,
+  };
+}
+
+const mobileReleaseConfigs = Object.freeze({
+  ...Object.fromEntries(
+    MOBILE_RELEASE_RING_ENVIRONMENTS.map((environment) => [
+      environment,
+      createReleaseRingBackedMobileReleaseConfig(environment),
+    ]),
+  ),
   production: {
     id: 'production',
     pipelineDeployEnvironment: 'production',
@@ -114,7 +72,36 @@ const mobileReleaseConfigs = {
     generateNotes: true,
     submitAllowFailure: false,
   },
-};
+});
+
+/** @type {readonly MobileReleaseEnvironment[]} */
+export const MOBILE_RELEASE_ENVIRONMENTS = Object.freeze([
+  ...MOBILE_RELEASE_RING_ENVIRONMENTS,
+  'production',
+]);
+
+export const MOBILE_RELEASE_ENVIRONMENT_INPUTS = Object.freeze(
+  MOBILE_RELEASE_ENVIRONMENTS.map((environment) => formatMobileReleaseEnvironment(environment)),
+);
+export const MOBILE_RELEASE_ENVIRONMENT_CHOICES = MOBILE_RELEASE_ENVIRONMENT_INPUTS.join('|');
+export const MOBILE_STORE_SUBMIT_ENVIRONMENT_INPUTS = Object.freeze(
+  MOBILE_RELEASE_ENVIRONMENTS
+    .filter((environment) => resolveMobileReleaseEnvironmentConfig(environment).supportsNativeSubmit)
+    .map((environment) => formatMobileReleaseEnvironment(environment)),
+);
+export const MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES = MOBILE_STORE_SUBMIT_ENVIRONMENT_INPUTS.join('|');
+/** @type {readonly MobileReleaseProfile[]} */
+export const MOBILE_RELEASE_PROFILES = Object.freeze(
+  MOBILE_RELEASE_ENVIRONMENTS.flatMap((environment) =>
+    MOBILE_RELEASE_PROFILE_SUFFIXES[environment].map(
+      (suffix) => /** @type {MobileReleaseProfile} */ (`${environment}${suffix}`),
+    ),
+  ),
+);
+export const MOBILE_RELEASE_PROFILE_INPUTS = Object.freeze(
+  MOBILE_RELEASE_PROFILES.map((profile) => formatMobileReleaseProfile(profile)),
+);
+export const MOBILE_RELEASE_PROFILE_CHOICES = MOBILE_RELEASE_PROFILE_INPUTS.join('|');
 
 /**
  * @param {string} value
@@ -131,12 +118,14 @@ export function isMobileReleaseEnvironment(value) {
 export function normalizeMobileReleaseEnvironment(raw) {
   const value = String(raw ?? '').trim().toLowerCase();
   if (!value) return '';
-  if (value === 'dev' || value === 'publicdev' || value === 'public-dev' || value === 'public_dev') {
-    return 'publicdev';
+  const normalizedReleaseRing = normalizeReleaseRingId(value);
+  if (normalizedReleaseRing === 'stable') return 'production';
+  if (isMobileReleaseEnvironment(normalizedReleaseRing)) {
+    return normalizedReleaseRing;
   }
   const normalizedAppEnvironment = normalizeAppEnvironmentId(value);
   if (isMobileReleaseEnvironment(normalizedAppEnvironment)) return normalizedAppEnvironment;
-  if (value === 'preview' || value === 'production') return /** @type {MobileReleaseEnvironment} */ (value);
+  if (value === 'production') return 'production';
   return '';
 }
 
@@ -144,7 +133,12 @@ export function normalizeMobileReleaseEnvironment(raw) {
  * @param {MobileReleaseEnvironment} environment
  */
 export function formatMobileReleaseEnvironment(environment) {
-  return environment === 'publicdev' ? 'dev' : environment;
+  if (environment === 'production') return 'production';
+  if (MOBILE_RELEASE_RING_ENVIRONMENTS.includes(/** @type {Exclude<MobileReleaseEnvironment, 'production'>} */ (environment))) {
+    const ring = getReleaseRingCatalogEntry(/** @type {Exclude<MobileReleaseEnvironment, 'production'>} */ (environment));
+    return ring.visibility === 'public' ? ring.publicLabel : environment;
+  }
+  return environment;
 }
 
 /**
@@ -154,24 +148,28 @@ export function formatMobileReleaseEnvironment(environment) {
 export function normalizeMobileReleaseProfile(raw) {
   const value = String(raw ?? '').trim().toLowerCase();
   if (!value) return '';
-  if (value === 'dev' || value === 'publicdev' || value === 'public-dev' || value === 'public_dev') {
-    return 'publicdev';
+  for (const suffix of ['-apk', '-store']) {
+    if (!value.endsWith(suffix)) continue;
+    const environment = normalizeMobileReleaseEnvironment(value.slice(0, -suffix.length));
+    if (!environment) return '';
+    const candidate = /** @type {MobileReleaseProfile} */ (`${environment}${suffix}`);
+    return MOBILE_RELEASE_PROFILES.includes(candidate) ? candidate : '';
   }
-  if (value === 'dev-apk' || value === 'publicdev-apk' || value === 'public-dev-apk' || value === 'public_dev_apk') {
-    return 'publicdev-apk';
-  }
-  if (value === 'stable') return 'production';
-  if (value === 'stable-apk') return 'production-apk';
-  return MOBILE_RELEASE_PROFILES.includes(/** @type {MobileReleaseProfile} */ (value))
-    ? /** @type {MobileReleaseProfile} */ (value)
-    : '';
+  const environment = normalizeMobileReleaseEnvironment(value);
+  if (environment) return environment;
+  return MOBILE_RELEASE_PROFILES.includes(/** @type {MobileReleaseProfile} */ (value)) ? /** @type {MobileReleaseProfile} */ (value) : '';
 }
 
 /**
  * @param {MobileReleaseProfile} profile
  */
 export function formatMobileReleaseProfile(profile) {
-  return profile.startsWith('publicdev') ? profile.replace('publicdev', 'dev') : profile;
+  for (const suffix of ['-apk', '-store']) {
+    if (!profile.endsWith(suffix)) continue;
+    const environment = /** @type {MobileReleaseEnvironment} */ (profile.slice(0, -suffix.length));
+    return `${formatMobileReleaseEnvironment(environment)}${suffix}`;
+  }
+  return formatMobileReleaseEnvironment(/** @type {MobileReleaseEnvironment} */ (profile));
 }
 
 /**
