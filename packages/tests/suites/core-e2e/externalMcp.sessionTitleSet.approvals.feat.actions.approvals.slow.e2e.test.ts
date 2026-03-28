@@ -13,8 +13,6 @@ import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
-import { fetchArtifactViaApi } from '../../src/testkit/artifactApi';
-import { fetchJson } from '../../src/testkit/http';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -55,25 +53,86 @@ async function connectExternalMcp(params: Readonly<{
   return { client, transport, stderrLines };
 }
 
-async function assertArtifactExists(params: Readonly<{ baseUrl: string; token: string; artifactId: string }>): Promise<void> {
-  const res = await fetchJson<any>(`${params.baseUrl}/v1/artifacts/${encodeURIComponent(params.artifactId)}`, {
-    headers: { Authorization: `Bearer ${params.token}` },
-    timeoutMs: 20_000,
-  });
-  if (res.status !== 200) {
-    throw new Error(`Expected approval artifact to exist (status=${res.status})`);
-  }
-}
+async function createScenario(): Promise<{
+  authToken: string;
+  client: any;
+  cliHome: string;
+  secret: Uint8Array;
+  server: StartedServer;
+  serverBaseUrl: string;
+  sessionId: string;
+  stderrLines: string[];
+  transport: any;
+}> {
+  const testDir = run.testDir(`external-mcp-title-approvals-${randomUUID()}`);
 
-async function assertApprovalArtifactState(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  artifactId: string;
-}>): Promise<{ headerVersion: number; bodyVersion: number }> {
-  const artifact = await fetchArtifactViaApi(params);
-  expect(artifact.headerVersion).toBeGreaterThanOrEqual(1);
-  expect(artifact.bodyVersion).toBeGreaterThanOrEqual(1);
-  return { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion };
+  const server = await startServerLight({ testDir, dbProvider: 'sqlite' });
+  const serverBaseUrl = server.baseUrl;
+  const auth = await createTestAuth(serverBaseUrl);
+
+  const cliHome = resolve(join(testDir, 'cli-home'));
+  const workspaceDir = resolve(join(testDir, 'workspace'));
+  await mkdir(cliHome, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+
+  const secret = Uint8Array.from(randomBytes(32));
+  await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
+
+  await upsertEncryptedAccountSettingsV2({
+    baseUrl: serverBaseUrl,
+    token: auth.token,
+    secret,
+    settings: {
+      schemaVersion: 2,
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.title.set': {
+            enabled: true,
+            disabledSurfaces: [],
+            disabledPlacements: [],
+            approvalRequiredSurfaces: ['mcp'],
+          },
+        },
+      },
+    },
+  });
+
+  const metadataCiphertextBase64 = encryptLegacyBase64(
+    { path: workspaceDir, host: 'e2e', name: 'external-mcp-title-approvals', createdAt: Date.now() },
+    secret,
+  );
+  const { sessionId } = await createSessionWithCiphertexts({
+    baseUrl: serverBaseUrl,
+    token: auth.token,
+    tag: `e2e-external-mcp-title-approvals-${randomUUID()}`,
+    metadataCiphertextBase64,
+    agentStateCiphertextBase64: null,
+  });
+
+  const cliEntrypoint = await ensureCliDistBuilt(
+    { testDir, env: process.env },
+    { lockPath: resolve(testDir, 'cli-dist-build.lock') },
+  );
+
+  const { client, transport, stderrLines } = await connectExternalMcp({
+    cliEntrypoint,
+    sessionId,
+    cliHome,
+    serverBaseUrl,
+  });
+
+  return {
+    authToken: auth.token,
+    client,
+    cliHome,
+    secret,
+    server,
+    serverBaseUrl,
+    sessionId,
+    stderrLines,
+    transport,
+  };
 }
 
 describe('core e2e: external MCP approvals for session.title.set', () => {
@@ -84,235 +143,71 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
     server = null;
   });
 
-  it('routes session.title.set through approvals on the mcp surface, then applies after approval', async () => {
-    const testDir = run.testDir(`external-mcp-title-approvals-${randomUUID()}`);
+  it('ignores MCP approval settings for session_title_set and updates metadata immediately', async () => {
+    const scenario = await createScenario();
+    server = scenario.server;
 
-    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
-    const serverBaseUrl = server.baseUrl;
-    const auth = await createTestAuth(serverBaseUrl);
-
-    const cliHome = resolve(join(testDir, 'cli-home'));
-    const workspaceDir = resolve(join(testDir, 'workspace'));
-    await mkdir(cliHome, { recursive: true });
-    await mkdir(workspaceDir, { recursive: true });
-
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
-
-    await upsertEncryptedAccountSettingsV2({
-      baseUrl: serverBaseUrl,
-      token: auth.token,
-      secret,
-      settings: {
-        schemaVersion: 2,
-        actionsSettingsV1: {
-          v: 1,
-          actions: {
-            'session.title.set': {
-              enabled: true,
-              disabledSurfaces: [],
-              disabledPlacements: [],
-              approvalRequiredSurfaces: ['mcp'],
-            },
-          },
-        },
-      },
-    });
-
-    const metadataCiphertextBase64 = encryptLegacyBase64(
-      { path: workspaceDir, host: 'e2e', name: 'external-mcp-title-approvals', createdAt: Date.now() },
-      secret,
-    );
-    const { sessionId } = await createSessionWithCiphertexts({
-      baseUrl: serverBaseUrl,
-      token: auth.token,
-      tag: `e2e-external-mcp-title-approvals-${randomUUID()}`,
-      metadataCiphertextBase64,
-      agentStateCiphertextBase64: null,
-    });
-
-    const snapBefore = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-    expect(snapBefore.metadataVersion).toBeGreaterThanOrEqual(0);
+    const snapBefore = await fetchSessionV2(scenario.serverBaseUrl, scenario.authToken, scenario.sessionId);
     const beforeMetadataVersion = snapBefore.metadataVersion;
     const beforeMetadataCiphertext = snapBefore.metadata;
 
-    const cliEntrypoint = await ensureCliDistBuilt(
-      { testDir, env: process.env },
-      { lockPath: resolve(testDir, 'cli-dist-build.lock') },
-    );
-
-    const { client, transport, stderrLines } = await connectExternalMcp({
-      cliEntrypoint,
-      sessionId,
-      cliHome,
-      serverBaseUrl,
-    });
-
     try {
-      const tools = await client.listTools();
+      const tools = await scenario.client.listTools();
       expect(tools.tools.map((tool: any) => tool.name)).toEqual(expect.arrayContaining(['session_title_set', 'action_execute']));
 
-      const titleCall = await client.callTool({ name: 'session_title_set', arguments: { sessionId, title: 'New title from MCP' } });
+      const titleCall = await scenario.client.callTool({
+        name: 'session_title_set',
+        arguments: { sessionId: scenario.sessionId, title: 'New title from MCP' },
+      });
       const titlePayload = JSON.parse(String((titleCall.content as any[])[0]?.text ?? ''));
       expect(titlePayload).toEqual(expect.objectContaining({
-        kind: 'approval_request_created',
-        actionId: 'session.title.set',
-        artifactId: expect.any(String),
-      }));
-
-      await assertArtifactExists({ baseUrl: serverBaseUrl, token: auth.token, artifactId: titlePayload.artifactId });
-      const approvalArtifactBeforeDecision = await assertApprovalArtifactState({
-        baseUrl: serverBaseUrl,
-        token: auth.token,
-        artifactId: titlePayload.artifactId,
-      });
-
-      const snapAfterRequest = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-      expect(snapAfterRequest.metadataVersion).toBe(beforeMetadataVersion);
-      expect(snapAfterRequest.metadata).toBe(beforeMetadataCiphertext);
-
-      const decideCall = await client.callTool({
-        name: 'action_execute',
-        arguments: {
-          actionId: 'approval.request.decide',
-          input: { artifactId: titlePayload.artifactId, decision: 'approve' },
-        },
-      });
-      const decidePayload = JSON.parse(String((decideCall.content as any[])[0]?.text ?? ''));
-      expect(decidePayload).toEqual(expect.objectContaining({
         ok: true,
-        status: 'executed',
-        execution: expect.objectContaining({
-          ok: true,
-          result: expect.objectContaining({ ok: true }),
-        }),
       }));
-      const approvalArtifactAfterDecision = await assertApprovalArtifactState({
-        baseUrl: serverBaseUrl,
-        token: auth.token,
-        artifactId: titlePayload.artifactId,
-      });
-      expect(approvalArtifactAfterDecision.headerVersion).toBeGreaterThanOrEqual(approvalArtifactBeforeDecision.headerVersion);
-      expect(approvalArtifactAfterDecision.bodyVersion).toBeGreaterThanOrEqual(approvalArtifactBeforeDecision.bodyVersion);
+      expect(titlePayload.result?.kind).not.toBe('approval_request_created');
 
-      const snapAfterApprove = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-      expect(snapAfterApprove.metadataVersion).toBeGreaterThan(beforeMetadataVersion);
-      expect(snapAfterApprove.metadata).not.toBe(beforeMetadataCiphertext);
+      const snapAfterRename = await fetchSessionV2(scenario.serverBaseUrl, scenario.authToken, scenario.sessionId);
+      expect(snapAfterRename.metadataVersion).toBeGreaterThan(beforeMetadataVersion);
+      expect(snapAfterRename.metadata).not.toBe(beforeMetadataCiphertext);
     } catch (error) {
-      const stderrDump = stderrLines.join('');
+      const stderrDump = scenario.stderrLines.join('');
       throw Object.assign(new Error(`external mcp stdio server failed (stderr follows)\n\n${stderrDump}`), { cause: error });
     } finally {
-      await transport.close().catch(() => {});
-      await client.close().catch(() => {});
+      await scenario.transport.close().catch(() => {});
+      await scenario.client.close().catch(() => {});
     }
   }, 240_000);
 
-  it('rejects a session.title.set approval without changing session metadata', async () => {
-    const testDir = run.testDir(`external-mcp-title-reject-${randomUUID()}`);
+  it('ignores MCP approval settings for action_execute session.title.set requests', async () => {
+    const scenario = await createScenario();
+    server = scenario.server;
 
-    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
-    const serverBaseUrl = server.baseUrl;
-    const auth = await createTestAuth(serverBaseUrl);
-
-    const cliHome = resolve(join(testDir, 'cli-home'));
-    const workspaceDir = resolve(join(testDir, 'workspace'));
-    await mkdir(cliHome, { recursive: true });
-    await mkdir(workspaceDir, { recursive: true });
-
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
-
-    await upsertEncryptedAccountSettingsV2({
-      baseUrl: serverBaseUrl,
-      token: auth.token,
-      secret,
-      settings: {
-        schemaVersion: 2,
-        actionsSettingsV1: {
-          v: 1,
-          actions: {
-            'session.title.set': {
-              enabled: true,
-              disabledSurfaces: [],
-              disabledPlacements: [],
-              approvalRequiredSurfaces: ['mcp'],
-            },
-          },
-        },
-      },
-    });
-
-    const metadataCiphertextBase64 = encryptLegacyBase64(
-      { path: workspaceDir, host: 'e2e', name: 'external-mcp-title-reject', createdAt: Date.now() },
-      secret,
-    );
-    const { sessionId } = await createSessionWithCiphertexts({
-      baseUrl: serverBaseUrl,
-      token: auth.token,
-      tag: `e2e-external-mcp-title-reject-${randomUUID()}`,
-      metadataCiphertextBase64,
-      agentStateCiphertextBase64: null,
-    });
-
-    const snapBefore = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+    const snapBefore = await fetchSessionV2(scenario.serverBaseUrl, scenario.authToken, scenario.sessionId);
     const beforeMetadataVersion = snapBefore.metadataVersion;
     const beforeMetadataCiphertext = snapBefore.metadata;
 
-    const cliEntrypoint = await ensureCliDistBuilt(
-      { testDir, env: process.env },
-      { lockPath: resolve(testDir, 'cli-dist-build.lock') },
-    );
-
-    const { client, transport, stderrLines } = await connectExternalMcp({
-      cliEntrypoint,
-      sessionId,
-      cliHome,
-      serverBaseUrl,
-    });
-
     try {
-      const titleCall = await client.callTool({ name: 'session_title_set', arguments: { sessionId, title: 'Rejected title' } });
-      const titlePayload = JSON.parse(String((titleCall.content as any[])[0]?.text ?? ''));
-      expect(titlePayload).toEqual(expect.objectContaining({
-        kind: 'approval_request_created',
-        actionId: 'session.title.set',
-        artifactId: expect.any(String),
-      }));
-
-      const decideCall = await client.callTool({
+      const actionCall = await scenario.client.callTool({
         name: 'action_execute',
         arguments: {
-          actionId: 'approval.request.decide',
-          input: { artifactId: titlePayload.artifactId, decision: 'reject' },
+          actionId: 'session.title.set',
+          input: { sessionId: scenario.sessionId, title: 'New title from action_execute' },
         },
       });
-      const decidePayload = JSON.parse(String((decideCall.content as any[])[0]?.text ?? ''));
-      expect(decidePayload).toEqual(expect.objectContaining({
+      const actionPayload = JSON.parse(String((actionCall.content as any[])[0]?.text ?? ''));
+      expect(actionPayload).toEqual(expect.objectContaining({
         ok: true,
-        status: 'rejected',
       }));
-      const approvalArtifactBeforeDecision = await assertApprovalArtifactState({
-        baseUrl: serverBaseUrl,
-        token: auth.token,
-        artifactId: titlePayload.artifactId,
-      });
-      const approvalArtifactAfterDecision = await assertApprovalArtifactState({
-        baseUrl: serverBaseUrl,
-        token: auth.token,
-        artifactId: titlePayload.artifactId,
-      });
-      expect(approvalArtifactAfterDecision.headerVersion).toBeGreaterThanOrEqual(approvalArtifactBeforeDecision.headerVersion);
-      expect(approvalArtifactAfterDecision.bodyVersion).toBeGreaterThanOrEqual(approvalArtifactBeforeDecision.bodyVersion);
+      expect(actionPayload.result?.kind).not.toBe('approval_request_created');
 
-      const snapAfterReject = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-      expect(snapAfterReject.metadataVersion).toBe(beforeMetadataVersion);
-      expect(snapAfterReject.metadata).toBe(beforeMetadataCiphertext);
+      const snapAfterRename = await fetchSessionV2(scenario.serverBaseUrl, scenario.authToken, scenario.sessionId);
+      expect(snapAfterRename.metadataVersion).toBeGreaterThan(beforeMetadataVersion);
+      expect(snapAfterRename.metadata).not.toBe(beforeMetadataCiphertext);
     } catch (error) {
-      const stderrDump = stderrLines.join('');
+      const stderrDump = scenario.stderrLines.join('');
       throw Object.assign(new Error(`external mcp stdio server failed (stderr follows)\n\n${stderrDump}`), { cause: error });
     } finally {
-      await transport.close().catch(() => {});
-      await client.close().catch(() => {});
+      await scenario.transport.close().catch(() => {});
+      await scenario.client.close().catch(() => {});
     }
   }, 240_000);
 });
