@@ -183,7 +183,7 @@ describe('SessionHandoffProgressModal', () => {
         expect(screen.findByTestId('session-handoff-progress-stat-applied')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-bar')).toBeNull();
         expect(screen.findByTestId('session-handoff-progress-percent')).toBeNull();
-        expect(screen.getTextContent()).toContain('sessionHandoff.progress.apply');
+        expect(screen.getTextContent()).toContain('common.applied');
         expect(screen.getTextContent()).toContain('sessionHandoff.progress.remaining');
     });
 
@@ -649,7 +649,6 @@ describe('SessionHandoffProgressModal', () => {
         expect(textContent).not.toContain('+2');
         expect(textContent).not.toContain('~1');
         expect(textContent).not.toContain('-3');
-        expect(textContent).not.toContain('2.0 KB');
     });
 
 });

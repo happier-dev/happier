@@ -8,12 +8,19 @@ import {
   SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR,
 } from './serverRoutedTransferPolicy';
 import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR, resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
+import { clampTransferChunkBytes } from './transferChunkSizeLimit';
 import {
   createEncryptedTransferChunkEnvelope,
   createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope,
   parseTransferRecipientPublicKeyBase64,
 } from './transferChunkEncryption';
+import {
+  resolveServerRoutedTransferChunkBytes,
+  resolveServerRoutedTransferMaxActiveTransfers,
+  resolveServerRoutedTransferOpenPayloadMaxBytes,
+  resolveServerRoutedTransferTimeoutMs as resolveServerRoutedTransferTimeoutMsConfig,
+} from './transferRuntimeConfig';
 import {
   readTransferPayloadChunk,
   resolveTransferPayloadManifestHash,
@@ -22,20 +29,9 @@ import {
   type TransferPayloadSource,
 } from './transferPayloadSource';
 import { createTransferPayloadFileSink, type TransferPayloadFileResult } from './transferPayloadFileSink';
-import { readPositiveIntEnv } from '../../utils/readPositiveIntEnv';
-import { clampTransferChunkBytes } from './transferChunkSizeLimit';
 
 // Default is intentionally large enough to cover deferred source-export on large workspaces.
-const DEFAULT_TRANSFER_TIMEOUT_MS = 10 * 60_000;
-// Large-repo workspace handoff exports can legitimately take minutes before the first byte is
-// available (deferred source export). Keep a hard cap, but allow env overrides above the default.
 const TRANSFER_TIMEOUT_HARD_MAX_MS = 30 * 60_000;
-const DEFAULT_TRANSFER_MAX_ACTIVE_TRANSFERS = 128;
-const TRANSFER_MAX_ACTIVE_TRANSFERS_HARD_MAX = 10_000;
-const DEFAULT_TRANSFER_CHUNK_BYTES = 256 * 1024;
-const DEFAULT_TRANSFER_OPEN_PAYLOAD_MAX_BYTES = 64 * 1024;
-// Open payloads should stay tiny metadata-only envelopes. Keep the hard ceiling well below the
-// file-backed chunk path so env overrides cannot turn the open envelope into a large-buffer path.
 const TRANSFER_OPEN_PAYLOAD_HARD_MAX_BYTES = 64 * 1024;
 // Open payloads are small metadata envelopes. Cap nesting depth to prevent stack overflows and
 // pathological CPU work when serializing or validating JSON-like payloads.
@@ -109,10 +105,7 @@ type ActiveTransferState = Readonly<{
 }>;
 
 function readTransferTimeoutMs(): number {
-  return Math.min(
-    readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS', DEFAULT_TRANSFER_TIMEOUT_MS),
-    TRANSFER_TIMEOUT_HARD_MAX_MS,
-  );
+  return resolveServerRoutedTransferTimeoutMsConfig();
 }
 
 export function resolveServerRoutedTransferTimeoutMs(): number {
@@ -120,13 +113,7 @@ export function resolveServerRoutedTransferTimeoutMs(): number {
 }
 
 function readTransferMaxActiveTransfers(): number {
-  return Math.min(
-    readPositiveIntEnv(
-      'HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_MAX_ACTIVE_TRANSFERS',
-      DEFAULT_TRANSFER_MAX_ACTIVE_TRANSFERS,
-    ),
-    TRANSFER_MAX_ACTIVE_TRANSFERS_HARD_MAX,
-  );
+  return resolveServerRoutedTransferMaxActiveTransfers();
 }
 
 function clampTransferTimeoutMs(timeoutMs: number): number {
@@ -137,19 +124,11 @@ function clampTransferTimeoutMs(timeoutMs: number): number {
 }
 
 function readTransferChunkBytes(): number {
-  return clampTransferChunkBytes(readPositiveIntEnv(
-    'HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES',
-    DEFAULT_TRANSFER_CHUNK_BYTES,
-  ));
+  return resolveServerRoutedTransferChunkBytes();
 }
 
 function readTransferOpenPayloadMaxBytes(): number {
-  const configured = readPositiveIntEnv(
-    'HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_OPEN_PAYLOAD_MAX_BYTES',
-    DEFAULT_TRANSFER_OPEN_PAYLOAD_MAX_BYTES,
-  );
-  // Open-payload decoding is in-memory; clamp to the global in-memory ceiling.
-  return Math.min(configured, resolveInMemoryTransferMaxBytes(), TRANSFER_OPEN_PAYLOAD_HARD_MAX_BYTES);
+  return resolveServerRoutedTransferOpenPayloadMaxBytes();
 }
 
 function isBase64TrimChar(code: number): boolean {

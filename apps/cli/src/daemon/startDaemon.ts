@@ -42,6 +42,7 @@ import {
   requestDirectPeerTransferToFile,
   startDirectPeerTransferServer,
 } from '@/machines/transfer/directPeerTransport';
+import { resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
 import { buildHandoffSessionMetadataFromTrackedSession } from './sessions/buildHandoffSessionMetadataFromTrackedSession';
@@ -1356,14 +1357,9 @@ export async function startDaemon(): Promise<void> {
       onHappySessionWebhook,
       controlToken,
     });
-    const directPeerFeatureEnabled = parseBooleanEnv(
-      process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED,
-      true,
-    );
-    const directPeerServerEnabled = directPeerFeatureEnabled && parseBooleanEnv(
-      process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED,
-      true,
-    );
+    const directPeerRuntimeConfig = resolveMachineTransferRuntimeConfig();
+    const directPeerFeatureEnabled = directPeerRuntimeConfig.directPeer.featureEnabled;
+    const directPeerServerEnabled = directPeerRuntimeConfig.directPeer.serverEnabled;
     let directPeerRegistry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
     let stopDirectPeerServer: () => Promise<void> = async () => {};
     if (directPeerServerEnabled) {

@@ -529,10 +529,11 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
     // not as an absolute wall-clock cap. Large replications can legitimately exceed 5m.
     let lastProgressAtMs = params.now();
     let lastStatusKey = '';
+    const pollRuntimeConfig = resolveSessionHandoffRuntimeConfig();
     const serverId = normalizeId(params.serverId) || null;
     const pollMachineRpcTimeoutMs = Math.min(
-        runtimeConfig.machineRpcTimeoutMs,
-        runtimeConfig.machineRpcPollTimeoutMs,
+        pollRuntimeConfig.machineRpcTimeoutMs,
+        pollRuntimeConfig.machineRpcPollTimeoutMs,
     );
 
     const buildStatusKey = (status: SessionHandoffStatus): string => {

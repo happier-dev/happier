@@ -24,6 +24,11 @@ type Props = CustomModalInjectedProps & Readonly<{
     status?: SessionHandoffStatus;
 }>;
 
+type ProgressStatCounts = Readonly<{
+    files?: number;
+    bytes?: number;
+}>;
+
 const CHECKPOINT_TIMELINE = SessionHandoffProgressCheckpointSchema.options;
 const FULL_TIMELINE = SESSION_HANDOFF_PROGRESS_FULL_TIMELINE;
 const FULL_TIMELINE_WITH_SOURCE_SCAN = SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN;
@@ -99,6 +104,26 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         color: theme.colors.textSecondary,
         ...Typography.default('semiBold'),
+    },
+    stats: {
+        gap: 8,
+    },
+    statRow: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        gap: 12,
+    },
+    statLabel: {
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
+    },
+    statValue: {
+        fontSize: 12,
+        color: theme.colors.text,
+        ...Typography.default(),
+        textAlign: 'right',
     },
     progressTrack: {
         height: 8,
@@ -184,6 +209,77 @@ function buildSummaryChips(status: SessionHandoffStatus | undefined): readonly s
         chips.push(formatByteSize(totalBytes));
     }
     return chips;
+}
+
+function subtractProgressCounts(
+    planned: ProgressStatCounts | null | undefined,
+    transferred: ProgressStatCounts | null | undefined,
+): ProgressStatCounts {
+    const plannedFiles = typeof planned?.files === 'number' ? planned.files : 0;
+    const plannedBytes = typeof planned?.bytes === 'number' ? planned.bytes : 0;
+    const transferredFiles = typeof transferred?.files === 'number' ? transferred.files : 0;
+    const transferredBytes = typeof transferred?.bytes === 'number' ? transferred.bytes : 0;
+
+    return {
+        files: Math.max(0, plannedFiles - transferredFiles),
+        bytes: Math.max(0, plannedBytes - transferredBytes),
+    };
+}
+
+function formatProgressStatValue(counts: ProgressStatCounts | null | undefined): string {
+    const parts: string[] = [];
+    if (typeof counts?.files === 'number') {
+        parts.push(`${counts.files} ${t('common.files')}`);
+    }
+    if (typeof counts?.bytes === 'number') {
+        parts.push(formatByteSize(counts.bytes));
+    }
+    return parts.length > 0 ? parts.join(' · ') : '—';
+}
+
+function buildProgressStatRows(status: SessionHandoffStatus | undefined): readonly Readonly<{
+    testID: string;
+    label: string;
+    counts: ProgressStatCounts;
+}>[] {
+    const progress = status?.progress;
+    if (!progress) {
+        return [];
+    }
+
+    const plannedCounts: ProgressStatCounts = {
+        files: progress.planned.totalFiles,
+        bytes: progress.planned.totalBytes,
+    };
+    const transferredCounts: ProgressStatCounts = {
+        files: progress.transferred.files,
+        bytes: progress.transferred.bytes,
+    };
+    const appliedCounts: ProgressStatCounts = progress.applied ?? { files: 0, bytes: 0 };
+    const remainingCounts: ProgressStatCounts = progress.remaining ?? subtractProgressCounts(plannedCounts, transferredCounts);
+
+    return [
+        {
+            testID: 'session-handoff-progress-stat-planned',
+            label: t('sessionHandoff.progress.planned'),
+            counts: plannedCounts,
+        },
+        {
+            testID: 'session-handoff-progress-stat-transferred',
+            label: t('sessionHandoff.progress.transferred'),
+            counts: transferredCounts,
+        },
+        {
+            testID: 'session-handoff-progress-stat-remaining',
+            label: t('sessionHandoff.progress.remaining'),
+            counts: remainingCounts,
+        },
+        {
+            testID: 'session-handoff-progress-stat-applied',
+            label: t('common.applied'),
+            counts: appliedCounts,
+        },
+    ];
 }
 
 function isKnownCheckpoint(value: unknown): value is SessionHandoffProgressCheckpoint {
@@ -288,6 +384,7 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
     const canShowActiveProgress = !isFailureState && !isReadyForCutover;
     const progressFraction = canShowActiveProgress ? computeProgressFraction(effectiveStatus) : null;
     const summaryChips = buildSummaryChips(effectiveStatus);
+    const progressStats = buildProgressStatRows(effectiveStatus);
     const progressLabel = progressFraction === null ? null : `${Math.round(progressFraction * 100)}%`;
     const checkpointFromProgress = isKnownCheckpoint(effectiveStatus?.progress?.checkpoint) ? effectiveStatus?.progress?.checkpoint : null;
     const currentCheckpoint = checkpointFromProgress;
@@ -392,6 +489,16 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
                             {summaryChips.map((chip) => (
                                 <View key={chip} style={styles.summaryChip}>
                                     <Text style={styles.summaryChipText}>{chip}</Text>
+                                </View>
+                            ))}
+                        </View>
+                    ) : null}
+                    {progressStats.length > 0 ? (
+                        <View testID="session-handoff-progress-stats" style={styles.stats}>
+                            {progressStats.map((stat) => (
+                                <View key={stat.testID} testID={stat.testID} style={styles.statRow}>
+                                    <Text style={styles.statLabel}>{stat.label}</Text>
+                                    <Text style={styles.statValue}>{formatProgressStatValue(stat.counts)}</Text>
                                 </View>
                             ))}
                         </View>

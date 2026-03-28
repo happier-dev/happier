@@ -88,6 +88,13 @@ export const SessionHandoffProgressWarningCodeSchema = z.enum([
 ]);
 export type SessionHandoffProgressWarningCode = z.infer<typeof SessionHandoffProgressWarningCodeSchema>;
 
+const SessionHandoffProgressCountsSchema = z
+  .object({
+    files: z.number().int().min(0).optional(),
+    bytes: z.number().int().min(0).optional(),
+  })
+  .strict();
+
 export const SessionHandoffProgressSchema = z
   .object({
     updatedAtMs: z.number().int().min(0),
@@ -104,6 +111,8 @@ export const SessionHandoffProgressSchema = z
       bytes: z.number().int().min(0).optional(),
       blobs: z.number().int().min(0).optional(),
     }).strict(),
+    applied: SessionHandoffProgressCountsSchema.optional(),
+    remaining: SessionHandoffProgressCountsSchema.optional(),
     current: z.object({
       relativePath: z.string().min(1).max(MAX_PATH_LENGTH).optional(),
       digest: z.string().min(1).max(MAX_DIGEST_LENGTH).optional(),

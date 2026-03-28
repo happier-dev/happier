@@ -208,7 +208,7 @@ function readDirectPeerTtlMs(): number {
 }
 
 function readDirectPeerRequestTimeoutMs(): number {
-  return resolveDirectPeerTransferRequestTimeoutOverrideMs(undefined);
+  return resolveDirectPeerTransferRequestTimeoutOverrideMsConfig(undefined);
 }
 
 function resolveDirectPeerRequestTimeoutOverrideMs(timeoutMs: number | undefined): number {

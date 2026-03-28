@@ -43,7 +43,7 @@ function readClampedPositiveIntEnv(
     const raw = String(env[name] ?? '').trim();
     if (!raw) return fallback;
     const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    if (!Number.isFinite(parsed)) return fallback;
     return Math.max(min, Math.min(max, parsed));
 }
 

@@ -8,6 +8,9 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Передача сессии',
             message: 'Подготавливаем целевую машину и переносим состояние сессии.',
+            planned: 'Запланировано',
+            transferred: 'Передано',
+            remaining: 'Осталось',
             timeline: {
                 scanSource: 'Сканирование источника',
                 plan: 'Планирование изменений',
@@ -39,6 +42,9 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Przekazywanie sesji',
             message: 'Przygotowujemy maszynę docelową i przenosimy stan sesji.',
+            planned: 'Zaplanowane',
+            transferred: 'Przesłane',
+            remaining: 'Pozostało',
             timeline: {
                 scanSource: 'Skanowanie źródła',
                 plan: 'Planowanie zmian',
@@ -70,6 +76,9 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Transfiriendo sesion',
             message: 'Preparando la maquina de destino y moviendo el estado de la sesion.',
+            planned: 'Planificado',
+            transferred: 'Transferido',
+            remaining: 'Restante',
             timeline: {
                 scanSource: 'Escaneando origen',
                 plan: 'Planificando cambios',
@@ -101,6 +110,9 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Trasferimento della sessione',
             message: 'Preparazione della macchina di destinazione e spostamento dello stato della sessione.',
+            planned: 'Pianificato',
+            transferred: 'Trasferito',
+            remaining: 'Rimanente',
             timeline: {
                 scanSource: 'Scansione sorgente',
                 plan: 'Pianificazione modifiche',
@@ -132,6 +144,9 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Transferindo sessao',
             message: 'Preparando a maquina de destino e movendo o estado da sessao.',
+            planned: 'Planejado',
+            transferred: 'Transferido',
+            remaining: 'Restante',
             timeline: {
                 scanSource: 'Escaneando origem',
                 plan: 'Planejando mudanças',
@@ -163,6 +178,9 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Transferint la sessio',
             message: 'S esta preparant la maquina de destinacio i movent l estat de la sessio.',
+            planned: 'Planificat',
+            transferred: 'Transferit',
+            remaining: 'Restant',
             timeline: {
                 scanSource: 'Escanejant origen',
                 plan: 'Planificant canvis',
@@ -194,6 +212,9 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: '正在移交会话',
             message: '正在准备目标机器并迁移会话状态。',
+            planned: '已计划',
+            transferred: '已传输',
+            remaining: '剩余',
             timeline: {
                 scanSource: '扫描源',
                 plan: '规划更改',
@@ -225,6 +246,9 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: '正在移交工作階段',
             message: '正在準備目標機器並移動工作階段狀態。',
+            planned: '已規劃',
+            transferred: '已傳輸',
+            remaining: '剩餘',
             timeline: {
                 scanSource: '掃描來源',
                 plan: '規劃變更',
@@ -256,6 +280,9 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'セッションを引き継ぎ中',
             message: '対象のマシンを準備し、セッションの状態を移動しています。',
+            planned: '計画済み',
+            transferred: '転送済み',
+            remaining: '残り',
             timeline: {
                 scanSource: 'ソースをスキャン',
                 plan: '変更を計画',

@@ -2680,8 +2680,8 @@ function createLoopbackMachineTransferChannels() {
               bytes: 100,
             },
             applied: {
-              files: 10,
-              bytes: 100,
+              files: 0,
+              bytes: 0,
             },
             remaining: {
               files: 0,

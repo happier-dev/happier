@@ -285,6 +285,8 @@ function buildPreparePendingStatus(input: Readonly<{
       checkpoint: 'stage_target',
       planned: {},
       transferred: {},
+      applied: {},
+      remaining: {},
       current: {
         phaseDetail: input.phaseDetail,
       },
@@ -315,6 +317,66 @@ function mapWorkspaceReplicationJobCheckpointToHandoffCheckpoint(
   }
 }
 
+function clampNonNegativeDifference(left: number, right: number): number {
+  return Math.max(0, left - right);
+}
+
+function buildHandoffProgressCountsFromWorkspaceReplicationCounters(counters: Readonly<{
+  plannedFiles: number;
+  plannedBytes: number;
+  transferredFiles: number;
+  transferredBytes: number;
+  appliedFiles: number;
+  appliedBytes: number;
+}>): Readonly<{
+  planned: Readonly<{ totalFiles: number; totalBytes: number }>;
+  transferred: Readonly<{ files: number; bytes: number }>;
+  applied: Readonly<{ files: number; bytes: number }>;
+  remaining: Readonly<{ files: number; bytes: number }>;
+}> {
+  return {
+    planned: {
+      totalFiles: counters.plannedFiles,
+      totalBytes: counters.plannedBytes,
+    },
+    transferred: {
+      files: counters.transferredFiles,
+      bytes: counters.transferredBytes,
+    },
+    applied: {
+      files: counters.appliedFiles,
+      bytes: counters.appliedBytes,
+    },
+    remaining: {
+      files: clampNonNegativeDifference(counters.plannedFiles, counters.transferredFiles),
+      bytes: clampNonNegativeDifference(counters.plannedBytes, counters.transferredBytes),
+    },
+  };
+}
+
+function normalizeHandoffProgress(progress: NonNullable<SessionHandoffStatus['progress']> | undefined): NonNullable<SessionHandoffStatus['progress']> | undefined {
+  if (!progress) {
+    return progress;
+  }
+
+  const plannedFiles = typeof progress.planned.totalFiles === 'number' ? progress.planned.totalFiles : 0;
+  const plannedBytes = typeof progress.planned.totalBytes === 'number' ? progress.planned.totalBytes : 0;
+  const transferredFiles = typeof progress.transferred.files === 'number' ? progress.transferred.files : 0;
+  const transferredBytes = typeof progress.transferred.bytes === 'number' ? progress.transferred.bytes : 0;
+
+  return {
+    ...progress,
+    applied: progress.applied ?? {
+      files: 0,
+      bytes: 0,
+    },
+    remaining: progress.remaining ?? {
+      files: clampNonNegativeDifference(plannedFiles, transferredFiles),
+      bytes: clampNonNegativeDifference(plannedBytes, transferredBytes),
+    },
+  };
+}
+
 function mergeWorkspaceReplicationProgressIntoHandoffStatus(params: Readonly<{
   baseStatus: SessionHandoffStatus;
   job: Readonly<{
@@ -327,6 +389,8 @@ function mergeWorkspaceReplicationProgressIntoHandoffStatus(params: Readonly<{
         plannedBytes: number;
         transferredFiles: number;
         transferredBytes: number;
+        appliedFiles: number;
+        appliedBytes: number;
       }>;
     }>;
   }>;
@@ -334,20 +398,17 @@ function mergeWorkspaceReplicationProgressIntoHandoffStatus(params: Readonly<{
   const baseProgress = params.baseStatus.progress;
   const counters = params.job.status.progressCounters;
   const checkpoint = mapWorkspaceReplicationJobCheckpointToHandoffCheckpoint(params.job.status.checkpoint);
+  const progressCounts = buildHandoffProgressCountsFromWorkspaceReplicationCounters(counters);
 
   return {
     ...params.baseStatus,
     progress: {
       updatedAtMs: params.job.updatedAtMs,
       checkpoint,
-      planned: {
-        totalFiles: counters.plannedFiles,
-        totalBytes: counters.plannedBytes,
-      },
-      transferred: {
-        files: counters.transferredFiles,
-        bytes: counters.transferredBytes,
-      },
+      planned: progressCounts.planned,
+      transferred: progressCounts.transferred,
+      applied: progressCounts.applied,
+      remaining: progressCounts.remaining,
       current: {
         ...(baseProgress?.current ?? {}),
         phaseDetail: `workspace_replication:${params.job.status.phase}`,
@@ -373,6 +434,7 @@ function buildWorkspaceReplicationStatusProgress(params: Readonly<{
     ...comparison.changed.map((entry) => entry.next),
   ].filter((entry): entry is Extract<WorkspaceManifest['entries'][number], { kind: 'file' }> => entry.kind === 'file');
   const totalBytes = transferredFileEntries.reduce((sum, entry) => sum + entry.sizeBytes, 0);
+  const totalFiles = transferredFileEntries.length;
 
   return {
     workspacePreflightSummary: {
@@ -385,16 +447,24 @@ function buildWorkspaceReplicationStatusProgress(params: Readonly<{
       updatedAtMs: Date.now(),
       checkpoint: params.checkpoint,
       planned: {
-        totalFiles: transferredFileEntries.length,
+        totalFiles,
         totalBytes,
         added: comparison.added.length,
         changed: comparison.changed.length,
         removed: comparison.removed.length,
       },
       transferred: {
-        files: transferredFileEntries.length,
+        files: totalFiles,
         bytes: totalBytes,
         blobs: params.blobCount,
+      },
+      applied: {
+        files: 0,
+        bytes: 0,
+      },
+      remaining: {
+        files: 0,
+        bytes: 0,
       },
       current: {
         phaseDetail: params.phaseDetail,
@@ -2746,7 +2816,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           };
         }
       }
-      return { handoffId: parsed.data.handoffId, status: baseStatus };
+      return {
+        handoffId: parsed.data.handoffId,
+        status: {
+          ...baseStatus,
+          ...(baseStatus.progress ? { progress: normalizeHandoffProgress(baseStatus.progress) } : {}),
+        },
+      };
     }
     const persistedSourceExport = await sourceExportStore.load(parsed.data.handoffId);
     if (persistedSourceExport) {
