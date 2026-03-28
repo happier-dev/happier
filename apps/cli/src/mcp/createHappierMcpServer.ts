@@ -5,10 +5,10 @@ import { logger } from '@/ui/logger';
 
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
-import { normalizeExecutionRunToolResult } from '@/agent/tools/happierTools/normalizeExecutionRunToolResult';
+import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
+import { createStartExecutionRunToolHandler } from '@/agent/tools/happierTools/createStartExecutionRunToolHandler';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRuns';
-import { createSessionTitleMetadataUpdater } from '@/session/services/setSessionTitle';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import type { Credentials } from '@/persistence';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
@@ -16,6 +16,7 @@ import { resolveSessionEncryptionContextFromCredentials } from '@/session/transp
 import {
   PromptRegistryInstallRequestV1Schema,
   PromptRegistryInstallResponseV1Schema,
+  type ActionId,
   getActionSpec,
   isActionSpecSurfacedOn,
 } from '@happier-dev/protocol';
@@ -31,17 +32,6 @@ export function createHappierMcpServer(
   const ctx = credentials
     ? resolveSessionEncryptionContextFromCredentials(credentials)
     : { encryptionKey: new Uint8Array(0), encryptionVariant: 'legacy' as const };
-
-  const changeTitleHandler = async (title: string) => {
-    logger.debug('[happierMCP] Changing title to:', title);
-    try {
-      await client.updateMetadata((metadata) => createSessionTitleMetadataUpdater({ title })(metadata));
-
-      return { success: true, title };
-    } catch (error) {
-      return { success: false, error: String(error) };
-    }
-  };
 
   const mcp = new McpServer({
     name: 'Happier MCP',
@@ -149,15 +139,22 @@ export function createHappierMcpServer(
     sessionId: client.sessionId,
     surface: toolSurface,
     deps: {
-      changeTitle: async (_sessionId, title) => {
-        const response = await changeTitleHandler(title);
-        logger.debug('[happierMCP] Response:', response);
-        return response;
-      },
-      startExecutionRun: async (_sessionId, request) =>
-        normalizeExecutionRunToolResult(
-          await executionRuns.start(request),
-        ),
+      changeTitle: createChangeTitleToolHandler({
+        executor,
+        surface: toolSurface,
+        afterCommit: async ({ title }) => {
+          // Keep the in-memory session metadata snapshot in sync so the UI / session agent
+          // can reflect the new title immediately (without requiring a full server refresh).
+          await Promise.resolve(client.updateMetadata((current) => ({
+            ...current,
+            summary: {
+              text: title,
+              updatedAt: Date.now(),
+            },
+          })));
+        },
+      }),
+      startExecutionRun: createStartExecutionRunToolHandler({ executor, surface: toolSurface }),
       executeActionByToolName: actionToolBridge.executeActionByToolName,
       resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, client.sessionId),
       isActionEnabled: actionToolBridge.isActionEnabled,

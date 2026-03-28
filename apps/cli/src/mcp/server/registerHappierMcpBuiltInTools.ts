@@ -18,7 +18,7 @@ export function registerHappierMcpBuiltInTools(
 ): Readonly<{ toolNames: string[] }> {
   const enabledTools = listBuiltInHappierTools({ surface: params.surface });
 
-  for (const tool of enabledTools) {
+    for (const tool of enabledTools) {
         server.registerTool(
             tool.name,
             {
@@ -27,24 +27,40 @@ export function registerHappierMcpBuiltInTools(
                 inputSchema: tool.inputSchema,
             } as any,
             async (args: unknown) => {
-                const sessionId = params.resolveSessionId ? params.resolveSessionId(args) : params.sessionId;
-                const result = await dispatchBuiltInHappierTool({
-                    toolName: tool.name,
-                    args,
-                    sessionId,
-                    surface: params.surface,
-                    deps: params.deps,
-                });
+                try {
+                    const sessionId = params.resolveSessionId ? params.resolveSessionId(args) : params.sessionId;
+                    const result = await dispatchBuiltInHappierTool({
+                        toolName: tool.name,
+                        args,
+                        sessionId,
+                        surface: params.surface,
+                        deps: params.deps,
+                    });
 
-                return result.ok
-                    ? {
-                          content: [{ type: 'text' as const, text: JSON.stringify(result.result) }],
-                          isError: false as const,
-                      }
-                    : {
-                          content: [{ type: 'text' as const, text: JSON.stringify({ errorCode: result.errorCode, error: result.error }) }],
-                          isError: true as const,
-                      };
+                    if (result.ok) {
+                        return {
+                            content: [{ type: 'text' as const, text: JSON.stringify(result.result) }],
+                            isError: false as const,
+                        };
+                    }
+
+                    return {
+                        content: [{ type: 'text' as const, text: JSON.stringify({ errorCode: result.errorCode, error: result.error }) }],
+                        isError: true as const,
+                    };
+                } catch (error) {
+                    const errorText = error instanceof Error ? error.message : String(error);
+                    let payload = '{"errorCode":"tool_failed","error":"tool_failed"}';
+                    try {
+                        payload = JSON.stringify({ errorCode: 'tool_failed', error: errorText });
+                    } catch {
+                        // ignore
+                    }
+                    return {
+                        content: [{ type: 'text' as const, text: payload }],
+                        isError: true as const,
+                    };
+                }
             },
         );
     }

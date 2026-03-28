@@ -19,6 +19,31 @@ vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
 import { resolveRunnerMcpServers } from './resolveRunnerMcpServers';
 
 describe('resolveRunnerMcpServers', () => {
+  it('passes runner credentials into the built-in Happier MCP bridge', async () => {
+    const session = {} as any;
+    const credentials = {
+      token: 'token_1',
+      encryption: {
+        type: 'legacy',
+        secret: new Uint8Array(32).fill(7),
+      },
+    } as any;
+
+    await resolveRunnerMcpServers({
+      session,
+      credentials,
+      accountSettings: null,
+      machineId: 'machine-1',
+      directory: '/tmp/repo',
+      env: {},
+      tmpDir: null,
+    });
+
+    expect(createHappierMcpBridgeMock).toHaveBeenCalledWith(session, expect.objectContaining({
+      credentials,
+    }));
+  });
+
   it('applies session metadata mcpSelection to managed MCP materialization', async () => {
     const result = await resolveRunnerMcpServers({
       session: {} as any,

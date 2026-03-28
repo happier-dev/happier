@@ -35,7 +35,10 @@ export async function resolveRunnerMcpServers(params: Readonly<{
 }>> {
   const env = params.env ?? process.env;
 
-  const builtIn = await createHappierMcpBridge(params.session, { commandMode: params.commandMode });
+  const builtIn = await createHappierMcpBridge(params.session, {
+    commandMode: params.commandMode,
+    credentials: params.credentials,
+  });
 
   const accountSettings = params.accountSettings ?? null;
   if (!accountSettings) {

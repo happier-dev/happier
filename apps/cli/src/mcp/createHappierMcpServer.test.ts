@@ -253,4 +253,135 @@ describe('createHappierMcpServer', () => {
     await handlers.change_title({ title: 'Hello' });
     expect(captured.surface).toBe('session_agent');
   });
+
+  it('routes change_title through the action executor (so approvals/enablement apply)', async () => {
+    const execute = vi.fn(async () => ({ ok: true, result: { ok: true } }));
+    const captured: { deps?: any } = {};
+
+    vi.doMock('@/session/actions/createCliActionExecutorHarness', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/session/actions/createCliActionExecutorHarness')>();
+      return {
+        ...actual,
+        createCliActionExecutorHarness: () => ({ executor: { execute } }),
+      };
+    });
+
+    vi.doMock('@/mcp/server/registerHappierMcpBuiltInTools', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/mcp/server/registerHappierMcpBuiltInTools')>();
+      return {
+        ...actual,
+        registerHappierMcpBuiltInTools: (_server: any, params: any) => {
+          captured.deps = params.deps;
+          return { toolNames: [] };
+        },
+      };
+    });
+
+    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+    createHappierMcpServer(
+      {
+        sessionId: 'sess_change_title_1',
+        rpcHandlerManager: { invokeLocal: async () => ({}) },
+        sendClaudeSessionMessage: () => {},
+        updateMetadata: () => {},
+      } as any,
+      { credentials: null },
+    );
+
+    expect(captured.deps).toBeDefined();
+    await captured.deps.changeTitle('sess_change_title_1', 'New title');
+    expect(execute).toHaveBeenCalledWith(
+      'session.title.set',
+      { sessionId: 'sess_change_title_1', title: 'New title' },
+      { surface: 'session_agent', defaultSessionId: 'sess_change_title_1' },
+    );
+  });
+
+  it('treats session-agent metadata refresh after change_title as best-effort', async () => {
+    const execute = vi.fn(async () => ({ ok: true, result: { ok: true } }));
+    const updateMetadata = vi.fn(() => {
+      throw new Error('local metadata sync failed');
+    });
+    const captured: { deps?: any } = {};
+
+    vi.doMock('@/session/actions/createCliActionExecutorHarness', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/session/actions/createCliActionExecutorHarness')>();
+      return {
+        ...actual,
+        createCliActionExecutorHarness: () => ({ executor: { execute } }),
+      };
+    });
+
+    vi.doMock('@/mcp/server/registerHappierMcpBuiltInTools', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/mcp/server/registerHappierMcpBuiltInTools')>();
+      return {
+        ...actual,
+        registerHappierMcpBuiltInTools: (_server: any, params: any) => {
+          captured.deps = params.deps;
+          return { toolNames: [] };
+        },
+      };
+    });
+
+    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+    createHappierMcpServer(
+      {
+        sessionId: 'sess_change_title_refresh_1',
+        rpcHandlerManager: { invokeLocal: async () => ({}) },
+        sendClaudeSessionMessage: () => {},
+        updateMetadata,
+      } as any,
+      { credentials: null },
+    );
+
+    expect(captured.deps).toBeDefined();
+    await expect(captured.deps.changeTitle('sess_change_title_refresh_1', 'New title')).resolves.toEqual({
+      success: true,
+      title: 'New title',
+    });
+    expect(updateMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes execution_run_start through the action executor (so approvals/enablement apply)', async () => {
+    const execute = vi.fn(async () => ({ ok: true, result: { ok: true } }));
+    const captured: { deps?: any } = {};
+
+    vi.doMock('@/session/actions/createCliActionExecutorHarness', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/session/actions/createCliActionExecutorHarness')>();
+      return {
+        ...actual,
+        createCliActionExecutorHarness: () => ({ executor: { execute } }),
+      };
+    });
+
+    vi.doMock('@/mcp/server/registerHappierMcpBuiltInTools', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/mcp/server/registerHappierMcpBuiltInTools')>();
+      return {
+        ...actual,
+        registerHappierMcpBuiltInTools: (_server: any, params: any) => {
+          captured.deps = params.deps;
+          return { toolNames: [] };
+        },
+      };
+    });
+
+    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+    createHappierMcpServer(
+      {
+        sessionId: 'sess_execution_run_start_1',
+        rpcHandlerManager: { invokeLocal: async () => ({}) },
+        sendClaudeSessionMessage: () => {},
+        updateMetadata: () => {},
+      } as any,
+      { credentials: null },
+    );
+
+    expect(captured.deps).toBeDefined();
+    await captured.deps.startExecutionRun('sess_execution_run_start_1', { intent: 'plan' });
+    expect(execute).toHaveBeenCalledWith(
+      'execution.run.start',
+      { intent: 'plan' },
+      { surface: 'session_agent', defaultSessionId: 'sess_execution_run_start_1' },
+    );
+  });
 });

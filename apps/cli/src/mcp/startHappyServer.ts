@@ -7,6 +7,7 @@ import { listBuiltInHappierTools } from "@/agent/tools/happierTools/listBuiltInH
 import type { RpcHandlerManagerLike } from "@/api/rpc/types";
 import type { Metadata } from "@/api/types";
 import { configuration } from "@/configuration";
+import type { Credentials } from '@/persistence';
 import type { ExecutionRunServiceResult } from "@/session/services/executionRuns";
 
 export type HappyMcpExecutionRunService = Readonly<{
@@ -28,7 +29,10 @@ export type HappyMcpSessionClient = {
     executionRuns?: HappyMcpExecutionRunService;
 };
 
-export async function startHappyServer(client: HappyMcpSessionClient) {
+export async function startHappyServer(
+    client: HappyMcpSessionClient,
+    opts?: Readonly<{ credentials?: Credentials | null }>,
+) {
     // Do not eagerly construct an MCP server on startup; only snapshot the names.
     // Full server creation is done per request inside the handler.
     const toolNamesSnapshot = listBuiltInHappierTools({ surface: 'session_agent' }).map((tool) => tool.name);
@@ -50,7 +54,9 @@ export async function startHappyServer(client: HappyMcpSessionClient) {
         // clients re-send initialize and do not keep MCP session headers.
         // In newer MCP SDK versions, stateless transports are single-use; reusing
         // one transport across requests can surface as client-side "Error POSTing to endpoint".
-        const { mcp } = createHappierMcpServer(client);
+        const { mcp } = createHappierMcpServer(client, {
+            credentials: opts?.credentials ?? null,
+        });
 
         const transport = new StreamableHTTPServerTransport({
             // NOTE: Returning session id here will result in claude

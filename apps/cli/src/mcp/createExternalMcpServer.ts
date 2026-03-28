@@ -5,8 +5,8 @@ import { getActionSpec, isActionSpecSurfacedOn, type ActionId } from '@happier-d
 import type { Credentials } from '@/persistence';
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
-import { normalizeExecutionRunToolResult } from '@/agent/tools/happierTools/normalizeExecutionRunToolResult';
-import type { ExecutionRunServiceResult } from '@/session/services/executionRuns';
+import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
+import { createStartExecutionRunToolHandler } from '@/agent/tools/happierTools/createStartExecutionRunToolHandler';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
@@ -20,10 +20,6 @@ function readSessionIdFromToolArgs(args: unknown): string | null {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
   const sessionId = normalizeId((args as any).sessionId);
   return sessionId || null;
-}
-
-function isExecutionRunServiceResult(value: unknown): value is ExecutionRunServiceResult<unknown> {
-  return Boolean(value) && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'ok');
 }
 
 export function createExternalMcpServer(params: Readonly<{
@@ -81,33 +77,11 @@ export function createExternalMcpServer(params: Readonly<{
     surface: toolSurface,
     resolveSessionId: (toolArgs) => readSessionIdFromToolArgs(toolArgs) ?? defaultSessionId ?? 'cli-global',
     deps: {
-      changeTitle: async (_sessionId, title) => {
-        const sessionId = normalizeId(_sessionId);
-        if (!sessionId) return { success: false, error: 'session_not_selected' };
-        const res = await executor.execute(
-          'session.title.set' as ActionId,
-          { sessionId, title },
-          { surface: toolSurface, defaultSessionId: sessionId },
-        );
-        return res.ok ? { success: true, title } : { success: false, error: res.error };
-      },
-      startExecutionRun: async (sessionId, request) => {
-        const res = await executor.execute(
-          'execution.run.start' as ActionId,
-          request,
-          { surface: toolSurface, defaultSessionId: sessionId },
-        );
-        if (!res.ok) {
-          return { ok: false, errorCode: res.errorCode, error: res.error };
-        }
-        if (res.result && typeof res.result === 'object' && (res.result as any).kind === 'approval_request_created') {
-          return { ok: true, result: res.result };
-        }
-        if (!isExecutionRunServiceResult(res.result)) {
-          return { ok: false, errorCode: 'invalid_execution_run_result', error: 'invalid_execution_run_result' };
-        }
-        return normalizeExecutionRunToolResult(res.result);
-      },
+      changeTitle: createChangeTitleToolHandler({
+        executor,
+        surface: toolSurface,
+      }),
+      startExecutionRun: createStartExecutionRunToolHandler({ executor, surface: toolSurface }),
       executeActionByToolName: actionToolBridge.executeActionByToolName,
       resolveActionOptions: async (resolverArgs) =>
         await actionToolBridge.resolveActionOptions(

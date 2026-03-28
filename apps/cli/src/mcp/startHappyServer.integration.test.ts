@@ -278,6 +278,16 @@ describe('startHappyServer (MCP integration)', () => {
   });
 
   it('routes change_title through session metadata updates instead of provider-specific summary messages', async () => {
+    const prevActions = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    // Regression guard: account settings default-disable session.title.set for `session_agent`.
+    // The session-scoped MCP server used by provider bridges must expose `change_title` on the `mcp`
+    // surface so Claude/Codex can call it.
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'session.title.set': { disabledSurfaces: ['session_agent'], disabledPlacements: [] },
+      },
+    });
     const rpcHandlerManager = new RpcHandlerManager({
       scopePrefix: 'sess_mcp_change_title_1',
       encryptionKey: new Uint8Array([1, 2, 3, 4]),
@@ -324,6 +334,8 @@ describe('startHappyServer (MCP integration)', () => {
     } finally {
       await (client as any)?.close?.();
       server.stop();
+      if (prevActions === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prevActions;
     }
   });
 
