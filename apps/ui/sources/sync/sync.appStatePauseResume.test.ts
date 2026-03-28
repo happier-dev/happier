@@ -33,13 +33,15 @@ const appStateAddListener = vi.hoisted(() => vi.fn((_event: string, handler: (st
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'web' },
-        AppState: {
-            currentState: 'active',
-            addEventListener: appStateAddListener as any,
-        },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: { OS: 'web' },
+                AppState: {
+                    currentState: 'active',
+                    addEventListener: appStateAddListener as any,
+                },
+            }
+    );
 });
 
 const apiSocketDisconnect = vi.hoisted(() => vi.fn());

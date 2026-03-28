@@ -26,13 +26,13 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                            Platform: {
-                                OS: 'web',
-                            },
-                            AppState: {
-                                addEventListener: appStateAddListener as any,
-                            },
-                        }
+                                    Platform: {
+                                        OS: 'web',
+                                    },
+                                    AppState: {
+                                        addEventListener: appStateAddListener as any,
+                                    },
+                                }
     );
 });
 
@@ -344,6 +344,99 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(sessionByIdCalls).toHaveLength(1);
     });
 
+    it('re-fetches a known encrypted session when the stored record is still partially hydrated', async () => {
+        const sessionId = 'known_session_partial_refresh';
+        storage.getState().applySessions([createSession({ sessionId })]);
+        storage.getState().resetSessionMessages(sessionId);
+
+        const { sync } = await import('./sync');
+
+        const initializeSessions = vi.fn(async () => {});
+        const decryptMetadata = vi.fn(async () => ({ readStateV1: null }));
+        const decryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
+
+        (sync as any).credentials = { token: 't' };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => new Uint8Array([1, 2, 3])),
+            initializeSessions,
+            getSessionEncryption: vi.fn(() => ({ decryptMetadata, decryptAgentState })),
+        };
+
+        requestMock.mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    session: {
+                        id: sessionId,
+                        createdAt: 1,
+                        updatedAt: 2,
+                        seq: 3,
+                        active: true,
+                        activeAt: 2,
+                        encryptionMode: 'e2ee',
+                        dataEncryptionKey: 'dek',
+                        metadataVersion: 1,
+                        metadata: 'enc-meta',
+                        agentStateVersion: 1,
+                        agentState: 'enc-state',
+                        share: null,
+                    },
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+        );
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({
+                method: 'GET',
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer t',
+                }),
+            }),
+        );
+        expect(initializeSessions).toHaveBeenCalled();
+    });
+
+    it('keeps a fully hydrated known encrypted session on the fast path', async () => {
+        const sessionId = 'known_session_fast_path';
+        storage.getState().applySessions([
+            {
+                ...createSession({ sessionId }),
+                metadataVersion: 1,
+                metadata: {
+                    path: '/repo',
+                    host: 'host',
+                    machineId: 'machine-1',
+                },
+                agentStateVersion: 1,
+                agentState: {
+                    controlledByUser: true,
+                    requests: {},
+                    completedRequests: {},
+                },
+            } as Session,
+        ]);
+        storage.getState().resetSessionMessages(sessionId);
+
+        const { sync } = await import('./sync');
+
+        (sync as any).credentials = { token: 't' };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+        (sync as any).encryption = {
+            decryptEncryptionKey: vi.fn(async () => new Uint8Array([1, 2, 3])),
+            initializeSessions: vi.fn(async () => {}),
+            getSessionEncryption: vi.fn(() => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
+        };
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+        expect(requestMock).not.toHaveBeenCalled();
+    });
+
     it('hydrates through the preferred owner server when local cache maps the session to a non-active server', async () => {
         const sessionId = 'deep_link_scoped_owner';
         const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
@@ -449,7 +542,23 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('ignores localStorage read errors while evaluating debug hydration logging', async () => {
         const sessionId = 'deep_link_local_storage_error';
-        storage.getState().applySessions([createSession({ sessionId })]);
+        storage.getState().applySessions([
+            {
+                ...createSession({ sessionId }),
+                metadataVersion: 1,
+                metadata: {
+                    path: '/repo',
+                    host: 'host',
+                    machineId: 'machine-1',
+                },
+                agentStateVersion: 1,
+                agentState: {
+                    controlledByUser: true,
+                    requests: {},
+                    completedRequests: {},
+                },
+            } as Session,
+        ]);
 
         const localStorageMock = {
             getItem: vi.fn(() => {
@@ -460,36 +569,13 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
         (sync as any).credentials = { token: 't' };
-        (sync as any).activeServerSessionIds = new Set<string>();
-        (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
         (sync as any).encryption = {
             decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
             initializeSessions: async () => {},
             getSessionEncryption: vi.fn(() => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
         };
-
-        requestMock.mockResolvedValue(
-            new Response(
-                JSON.stringify({
-                    session: {
-                        id: sessionId,
-                        createdAt: 1,
-                        updatedAt: 2,
-                        seq: 3,
-                        active: true,
-                        activeAt: 2,
-                        encryptionMode: 'plain',
-                        dataEncryptionKey: null,
-                        metadataVersion: 0,
-                        metadata: null,
-                        agentStateVersion: 0,
-                        agentState: null,
-                        share: null,
-                    },
-                }),
-                { status: 200, headers: { 'Content-Type': 'application/json' } },
-            ),
-        );
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
         expect(localStorageMock.getItem).toHaveBeenCalledWith('happier.debug.sessionHydrate');

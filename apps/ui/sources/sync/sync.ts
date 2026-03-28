@@ -212,6 +212,10 @@ function createDefaultMessageTransport(): SyncMessageTransport {
     };
 }
 
+function hasAuthoritativeSessionRouteData(session: Session | null | undefined): boolean {
+    return Boolean(session?.metadata != null && session?.agentState != null);
+}
+
 function isFallbackSafeSessionUserMessageRpcError(error: unknown): boolean {
     // The only intended fallback here is compatibility with older daemons that don't implement
     // the active-session runtime RPC yet.
@@ -803,16 +807,17 @@ class Sync {
                     })()
                 );
 
-            // Fast-path when we already know the session exists on this server and, for e2ee sessions,
-            // encryption has been initialized (deep links can occur before the sessions snapshot bootstraps).
+            // Fast-path when we already know the session exists on this server and the stored record is
+            // already authoritatively hydrated (deep links can occur before the sessions snapshot bootstraps).
             const existingSession = storage.getState().sessions[normalized];
             if (!forceRefresh && this.isSessionKnownOnActiveServer(normalized) && existingSession) {
                 const encryptionMode: 'e2ee' | 'plain' = existingSession.encryptionMode === 'plain' ? 'plain' : 'e2ee';
                 const hasEncryption = Boolean(this.encryption.getSessionEncryption(normalized));
+                const hasAuthoritativeSessionRouteState = hasAuthoritativeSessionRouteData(existingSession);
                 if (DEBUG_SESSION_HYDRATE) {
-                    log.log(`[sessionHydrate] fast-path check ${normalized} mode=${encryptionMode} hasEncryption=${hasEncryption}`);
+                    log.log(`[sessionHydrate] fast-path check ${normalized} mode=${encryptionMode} hasEncryption=${hasEncryption} hasRouteState=${hasAuthoritativeSessionRouteState}`);
                 }
-                if (encryptionMode === 'plain' || hasEncryption) {
+                if (hasAuthoritativeSessionRouteState && (encryptionMode === 'plain' || hasEncryption)) {
                     if (DEBUG_SESSION_HYDRATE) {
                         log.log(`[sessionHydrate] fast-path hit ${normalized}`);
                     }
@@ -1015,7 +1020,10 @@ class Sync {
                         {
                             text,
                             localId,
-                            meta: content.meta ?? {},
+                            meta:
+                                content.meta && typeof content.meta === 'object' && !Array.isArray(content.meta)
+                                    ? (content.meta as Record<string, unknown>)
+                                    : {},
                         },
                         { timeoutMs: this.syncTuning.sessionRpcTimeoutMs },
                     );
@@ -3426,50 +3434,6 @@ class Sync {
         flushMachineActivityUpdatesEngine({ updates, applyMachines: (machines) => storage.getState().applyMachines(machines) });
     }
 
-    private handleTranscriptDraftEphemeralUpdate = async (updateData: {
-        sessionId: string;
-        localId: string;
-        segmentKind: 'assistant' | 'thinking';
-        sidechainId?: string | null;
-        delta: any;
-        createdAt: number;
-    }): Promise<void> => {
-        const sessionId = typeof updateData.sessionId === 'string' ? updateData.sessionId : '';
-        const localId = typeof updateData.localId === 'string' ? updateData.localId.trim() : '';
-        if (!sessionId || !localId) return;
-
-        const sessionEncryption = this.encryption.getSessionEncryption(sessionId);
-        const record = await readStoredSessionRawRecord({
-            content: updateData.delta,
-            decryptEncrypted: sessionEncryption ? (ciphertext) => sessionEncryption.decryptRaw(ciphertext) : undefined,
-        });
-        if (!record) return;
-
-        const deltaText = (() => {
-            if (record.role !== 'agent') return null;
-            const content: any = (record as any).content;
-            if (!content || content.type !== 'acp') return null;
-            const data: any = content.data;
-            if (!data || typeof data !== 'object') return null;
-            if (updateData.segmentKind === 'assistant' && data.type === 'message' && typeof data.message === 'string') {
-                return data.message;
-            }
-            if (updateData.segmentKind === 'thinking' && data.type === 'thinking' && typeof data.text === 'string') {
-                return data.text;
-            }
-            return null;
-        })();
-        if (!deltaText) return;
-
-        storage.getState().applyTranscriptDraftDelta(sessionId, {
-            localId,
-            segmentKind: updateData.segmentKind,
-            sidechainId: typeof updateData.sidechainId === 'string' && updateData.sidechainId.trim() ? updateData.sidechainId.trim() : null,
-            deltaText,
-            createdAtMs: updateData.createdAt,
-        });
-    }
-
     private handleEphemeralUpdate = (update: unknown) => {
         handleEphemeralSocketUpdate({
             update,
@@ -3478,12 +3442,6 @@ class Sync {
             },
             addMachineActivityUpdate: (machineUpdate) => {
                 this.machineActivityAccumulator.addUpdate(machineUpdate);
-            },
-            onTranscriptDraftUpdate: (draftUpdate) => {
-                fireAndForget(
-                    this.handleTranscriptDraftEphemeralUpdate(draftUpdate as any),
-                    { tag: 'Sync.handleEphemeralUpdate.transcriptDraft' },
-                );
             },
         });
     }

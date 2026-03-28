@@ -46,6 +46,8 @@ type NormalizedAgentContent =
         prompt: string
     };
 
+type ToolResultPermissions = Extract<NormalizedAgentContent, { type: 'tool-result' }>['permissions'];
+
 export type NormalizedMessage = ({
     role: 'user'
     content: {
@@ -79,37 +81,37 @@ export function normalizeRawMessage(
     id: string,
     localId: string | null,
     createdAt: number,
-    raw: unknown,
+    rawInput: unknown,
     opts?: Readonly<{ seq?: number }>,
 ): NormalizedMessage | null {
     const seq = typeof opts?.seq === 'number' && Number.isFinite(opts.seq) ? Math.trunc(opts.seq) : undefined;
 
     // Zod transform handles normalization during validation
-    let parsed = rawRecordSchema.safeParse(raw);
+    const parsed = rawRecordSchema.safeParse(rawInput);
     if (!parsed.success) {
         // Never log full raw messages in production: tool outputs and user text may contain secrets.
         // Keep enough context for debugging in dev builds only.
         console.error(`[typesRaw] Message validation failed (id=${id})`);
         if (__DEV__) {
-            const contentType = (raw as any)?.content?.type;
-            const dataType = (raw as any)?.content?.data?.type;
-            const provider = (raw as any)?.content?.provider;
+            const contentType = (rawInput as any)?.content?.type;
+            const dataType = (rawInput as any)?.content?.data?.type;
+            const provider = (rawInput as any)?.content?.provider;
             const toolName =
                 contentType === 'codex'
-                    ? (raw as any)?.content?.data?.name
+                    ? (rawInput as any)?.content?.data?.name
                     : contentType === 'acp'
-                        ? (raw as any)?.content?.data?.name
+                        ? (rawInput as any)?.content?.data?.name
                         : null;
             const callId =
                 contentType === 'codex'
-                    ? (raw as any)?.content?.data?.callId
+                    ? (rawInput as any)?.content?.data?.callId
                     : contentType === 'acp'
-                        ? (raw as any)?.content?.data?.callId
+                        ? (rawInput as any)?.content?.data?.callId
                         : null;
 
             console.error('Zod issues:', JSON.stringify(parsed.error.issues, null, 2));
             console.error('Raw summary:', {
-                role: raw?.role,
+                role: (rawInput as any)?.role,
                 contentType,
                 dataType,
                 provider,
@@ -117,7 +119,7 @@ export function normalizeRawMessage(
                 callId: typeof callId === 'string' ? callId : undefined,
             });
         }
-        const unsafeRole = (raw as any)?.role;
+        const unsafeRole = (rawInput as any)?.role;
         const role = unsafeRole === 'user' ? 'user' : 'agent';
         const text =
             role === 'user'
@@ -132,7 +134,7 @@ export function normalizeRawMessage(
                 role: 'user',
                 isSidechain: false,
                 content: { type: 'text', text },
-                meta: (raw as any)?.meta,
+                meta: (rawInput as any)?.meta,
             }
             : {
                 id,
@@ -142,10 +144,10 @@ export function normalizeRawMessage(
                 role: 'agent',
                 isSidechain: false,
                 content: [{ type: 'text', text, uuid: id, parentUUID: null }],
-                meta: (raw as any)?.meta,
+                meta: (rawInput as any)?.meta,
             };
     }
-    raw = parsed.data as RawRecord;
+    const raw = parsed.data as RawRecord;
 
     const toolResultContentToText = (content: unknown): string => {
         if (content === null || content === undefined) return '';
@@ -171,6 +173,35 @@ export function normalizeRawMessage(
         } catch {
             return String(content);
         }
+    };
+
+    const normalizeToolResultPermissions = (rawPermissions: unknown): ToolResultPermissions => {
+        if (!rawPermissions || typeof rawPermissions !== 'object') return undefined;
+        const record = rawPermissions as Record<string, unknown>;
+        const date = typeof record.date === 'number' ? record.date : undefined;
+        const result = record.result === 'approved' || record.result === 'denied' ? record.result : undefined;
+        const mode = typeof record.mode === 'string' ? record.mode : undefined;
+        const allowedTools = Array.isArray(record.allowedTools)
+            ? record.allowedTools.filter((tool): tool is string => typeof tool === 'string')
+            : undefined;
+        const decisionRaw = record.decision;
+        const decision =
+            decisionRaw === 'approved'
+            || decisionRaw === 'approved_for_session'
+            || decisionRaw === 'approved_execpolicy_amendment'
+            || decisionRaw === 'denied'
+            || decisionRaw === 'abort'
+                ? decisionRaw
+                : undefined;
+
+        if (date === undefined || result === undefined) return undefined;
+        return {
+            date,
+            result,
+            ...(mode !== undefined ? { mode } : {}),
+            ...(allowedTools !== undefined ? { allowedTools } : {}),
+            ...(decision !== undefined ? { decision } : {}),
+        };
     };
 
     const isClaudeTaskNotificationText = (text: string): boolean => {
@@ -257,7 +288,7 @@ export function normalizeRawMessage(
             type: 'assistant';
             uuid?: string | null;
             parentUuid?: string | null;
-            message: { content: RawAgentContent[]; usage?: UsageData };
+            message: { content: string | RawAgentContent[]; usage?: UsageData };
         };
 
         const isOutputAssistantData = (value: unknown): value is OutputAssistantData => {
@@ -267,7 +298,7 @@ export function normalizeRawMessage(
             const message = v.message;
             if (!message || typeof message !== 'object') return false;
             const content = (message as Record<string, unknown>).content;
-            return Array.isArray(content);
+            return typeof content === 'string' || Array.isArray(content);
         };
 
         type OutputUserData = {
@@ -319,33 +350,43 @@ export function normalizeRawMessage(
                         ? String((raw.content.data as any).parent_tool_use_id)
 	                        : undefined;
 		                let content: NormalizedAgentContent[] = [];
-		                for (const cRaw of raw.content.data.message.content) {
-			                    if (!isRecord(cRaw) || typeof cRaw.type !== 'string') continue;
-			                    if (cRaw.type === 'text') {
-			                        content.push({
-			                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
-			                            uuid: outputUuid,
-			                            parentUUID: raw.content.data.parentUuid ?? null
-			                        } as NormalizedAgentContent);
-			                    } else if (cRaw.type === 'thinking') {
-			                        content.push({
-			                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones (signature, etc.)
-			                            uuid: outputUuid,
-			                            parentUUID: raw.content.data.parentUuid ?? null
-			                        } as NormalizedAgentContent);
-			                    } else if (cRaw.type === 'tool_use') {
-		                        let description: string | null = null;
-		                        const input = cRaw.input;
-		                        if (isRecord(input) && typeof input.description === 'string') {
-		                            description = input.description;
-			                        }
-			                        content.push({
-			                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
-			                            type: 'tool-call',
-			                            description,
-			                            uuid: outputUuid,
-			                            parentUUID: raw.content.data.parentUuid ?? null
-	                        } as NormalizedAgentContent);
+                        const assistantRawContent = raw.content.data.message.content;
+                        if (typeof assistantRawContent === 'string') {
+                            content.push({
+                                type: 'text',
+                                text: assistantRawContent,
+                                uuid: outputUuid,
+                                parentUUID: raw.content.data.parentUuid ?? null,
+                            });
+                        } else {
+		                    for (const cRaw of assistantRawContent) {
+			                        if (!isRecord(cRaw) || typeof cRaw.type !== 'string') continue;
+			                        if (cRaw.type === 'text') {
+			                            content.push({
+			                                ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
+			                                uuid: outputUuid,
+			                                parentUUID: raw.content.data.parentUuid ?? null
+			                            } as NormalizedAgentContent);
+			                        } else if (cRaw.type === 'thinking') {
+			                            content.push({
+			                                ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones (signature, etc.)
+			                                uuid: outputUuid,
+			                                parentUUID: raw.content.data.parentUuid ?? null
+			                            } as NormalizedAgentContent);
+			                        } else if (cRaw.type === 'tool_use') {
+		                                let description: string | null = null;
+		                                const input = cRaw.input;
+		                                if (isRecord(input) && typeof input.description === 'string') {
+		                                    description = input.description;
+			                            }
+			                            content.push({
+			                                ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
+			                                type: 'tool-call',
+			                                description,
+			                                uuid: outputUuid,
+			                                parentUUID: raw.content.data.parentUuid ?? null
+	                                } as NormalizedAgentContent);
+	                        }
 	                    }
 	                }
                     const sidechainId = metaSidechainId ?? getOutputSidechainId(raw.content.data) ?? claudeParentToolUseId;
@@ -422,26 +463,20 @@ export function normalizeRawMessage(
 	                    });
 	                } else {
 	                    for (let c of raw.content.data.message.content) {
-	                        if (c.type === 'tool_result') {
-	                            const rawResultContent = raw.content.data.toolUseResult ?? c.content;
-	                            content.push({
-	                                ...c,  // WOLOG: Preserve all fields including unknown ones
+		                        if (c.type === 'tool_result') {
+		                            const rawResultContent = raw.content.data.toolUseResult ?? c.content;
+		                            content.push({
+		                                ...c,  // WOLOG: Preserve all fields including unknown ones
 	                                type: 'tool-result',
 	                                content: toolResultContentToText(rawResultContent),
 	                                is_error: c.is_error || false,
-	                                uuid: outputUuid,
-	                                parentUUID: raw.content.data.parentUuid ?? null,
-	                                permissions: c.permissions ? {
-	                                    date: c.permissions.date,
-	                                    result: c.permissions.result,
-	                                    mode: c.permissions.mode,
-                                    allowedTools: c.permissions.allowedTools,
-                                    decision: c.permissions.decision
-                                } : undefined
-                            } as NormalizedAgentContent);
-                        }
-                    }
-                }
+		                                uuid: outputUuid,
+		                                parentUUID: raw.content.data.parentUuid ?? null,
+		                                permissions: normalizeToolResultPermissions(c.permissions),
+		                            } as NormalizedAgentContent);
+		                        }
+		                    }
+		                }
                   return {
                       id,
                       ...(seq !== undefined ? { seq } : {}),
@@ -569,8 +604,10 @@ export function normalizeRawMessage(
           // ACP (Agent Communication Protocol) - unified format for all agent providers
           if (raw.content.type === 'acp') {
               const structuredSidechain = resolveStructuredContentSidechain(raw.content.data);
+              const acpDataRecord = raw.content.data as unknown as Record<string, unknown>;
 
               if (raw.content.data.type === 'message') {
+                  const messageText = typeof acpDataRecord.message === 'string' ? acpDataRecord.message : '';
                   return {
                       id,
                       ...(seq !== undefined ? { seq } : {}),
@@ -581,7 +618,7 @@ export function normalizeRawMessage(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'text',
-                        text: raw.content.data.message,
+                        text: messageText,
                         uuid: id,
                         parentUUID: null
                     }],
@@ -589,6 +626,7 @@ export function normalizeRawMessage(
                 } satisfies NormalizedMessage;
             }
               if (raw.content.data.type === 'reasoning') {
+                  const messageText = typeof acpDataRecord.message === 'string' ? acpDataRecord.message : '';
                   return {
                       id,
                       ...(seq !== undefined ? { seq } : {}),
@@ -599,7 +637,7 @@ export function normalizeRawMessage(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'text',
-                        text: raw.content.data.message,
+                        text: messageText,
                         uuid: id,
                         parentUUID: null
                     }],
@@ -628,11 +666,11 @@ export function normalizeRawMessage(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
-                        id: raw.content.data.callId,
-                        name: raw.content.data.name || 'unknown',
+                        id: typeof acpDataRecord.callId === 'string' ? acpDataRecord.callId : '',
+                        name: typeof acpDataRecord.name === 'string' ? acpDataRecord.name : 'unknown',
                         input: parsedInput,
                         description,
-                        uuid: raw.content.data.id,
+                        uuid: typeof acpDataRecord.id === 'string' ? acpDataRecord.id : id,
                         parentUUID: null
                     }],
                     meta: raw.meta
@@ -650,10 +688,10 @@ export function normalizeRawMessage(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
-                        tool_use_id: raw.content.data.callId,
+                        tool_use_id: typeof acpDataRecord.callId === 'string' ? acpDataRecord.callId : '',
                         content: parsedOutput,
-                        is_error: raw.content.data.isError ?? false,
-                        uuid: raw.content.data.id,
+                        is_error: typeof acpDataRecord.isError === 'boolean' ? acpDataRecord.isError : false,
+                        uuid: typeof acpDataRecord.id === 'string' ? acpDataRecord.id : id,
                         parentUUID: null
                     }],
                     meta: raw.meta
@@ -672,16 +710,17 @@ export function normalizeRawMessage(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
-                        tool_use_id: raw.content.data.callId,
+                        tool_use_id: typeof acpDataRecord.callId === 'string' ? acpDataRecord.callId : '',
                         content: parsedOutput,
                         is_error: false,
-                        uuid: raw.content.data.id,
+                        uuid: typeof acpDataRecord.id === 'string' ? acpDataRecord.id : id,
                         parentUUID: null
                     }],
                     meta: raw.meta
                 } satisfies NormalizedMessage;
             }
               if (raw.content.data.type === 'thinking') {
+                  const thinkingText = typeof acpDataRecord.text === 'string' ? acpDataRecord.text : '';
                   return {
                       id,
                       ...(seq !== undefined ? { seq } : {}),
@@ -692,7 +731,7 @@ export function normalizeRawMessage(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'thinking',
-                        thinking: raw.content.data.text,
+                        thinking: thinkingText,
                         uuid: id,
                         parentUUID: null
                     }],
@@ -700,6 +739,12 @@ export function normalizeRawMessage(
                 } satisfies NormalizedMessage;
             }
               if (raw.content.data.type === 'file-edit') {
+                  const fileEditId = typeof acpDataRecord.id === 'string' ? acpDataRecord.id : id;
+                  const descriptionText = typeof acpDataRecord.description === 'string' ? acpDataRecord.description : '';
+                  const filePathText = typeof acpDataRecord.filePath === 'string' ? acpDataRecord.filePath : '';
+                  const diffText = typeof acpDataRecord.diff === 'string' ? acpDataRecord.diff : undefined;
+                  const oldContentText = typeof acpDataRecord.oldContent === 'string' ? acpDataRecord.oldContent : undefined;
+                  const newContentText = typeof acpDataRecord.newContent === 'string' ? acpDataRecord.newContent : undefined;
                   // Map file-edit to tool-call for UI rendering
                   return {
                       id,
@@ -711,23 +756,25 @@ export function normalizeRawMessage(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
-                        id: raw.content.data.id,
+                        id: fileEditId,
                         name: 'file-edit',
                         input: {
-                            filePath: raw.content.data.filePath,
-                            description: raw.content.data.description,
-                            diff: raw.content.data.diff,
-                            oldContent: raw.content.data.oldContent,
-                            newContent: raw.content.data.newContent
+                            filePath: filePathText,
+                            description: descriptionText,
+                            diff: diffText,
+                            oldContent: oldContentText,
+                            newContent: newContentText
                         },
-                        description: raw.content.data.description,
-                        uuid: raw.content.data.id,
+                        description: descriptionText,
+                        uuid: fileEditId,
                         parentUUID: null
                     }],
                     meta: raw.meta
                 } satisfies NormalizedMessage;
             }
               if (raw.content.data.type === 'terminal-output') {
+                  const toolUseId = typeof acpDataRecord.callId === 'string' ? acpDataRecord.callId : '';
+                  const toolOutputText = typeof acpDataRecord.data === 'string' ? acpDataRecord.data : '';
                   // Map terminal-output to tool-result
                   return {
                       id,
@@ -739,8 +786,8 @@ export function normalizeRawMessage(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
-                        tool_use_id: raw.content.data.callId,
-                        content: raw.content.data.data,
+                        tool_use_id: toolUseId,
+                        content: toolOutputText,
                         is_error: false,
                         uuid: id,
                         parentUUID: null
@@ -749,11 +796,14 @@ export function normalizeRawMessage(
                 } satisfies NormalizedMessage;
             }
               if (raw.content.data.type === 'permission-request') {
+                  const permissionId = typeof acpDataRecord.permissionId === 'string' ? acpDataRecord.permissionId : '';
+                  const toolName = typeof acpDataRecord.toolName === 'string' ? acpDataRecord.toolName : '';
+                  const descriptionText = typeof acpDataRecord.description === 'string' ? acpDataRecord.description : '';
                   // Map permission-request to tool-call for UI to show permission dialog
-                  const rawOptions = raw.content.data.options ?? {};
+                  const rawOptions = acpDataRecord.options ?? {};
                 const input =
                     rawOptions && typeof rawOptions === 'object' && !Array.isArray(rawOptions)
-                        ? { ...(rawOptions as Record<string, unknown>), title: (rawOptions as any).title ?? raw.content.data.description }
+                        ? { ...(rawOptions as Record<string, unknown>), title: (rawOptions as any).title ?? descriptionText }
                         : rawOptions;
                   return {
                       id,
@@ -765,10 +815,10 @@ export function normalizeRawMessage(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
-                        id: raw.content.data.permissionId,
-                        name: raw.content.data.toolName,
+                        id: permissionId,
+                        name: toolName,
                         input,
-                        description: raw.content.data.description,
+                        description: descriptionText,
                         uuid: id,
                         parentUUID: null
                     }],

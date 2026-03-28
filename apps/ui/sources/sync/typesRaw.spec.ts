@@ -918,10 +918,12 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(sidechainMessage);
 
             expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                expect(result.data.content.data.isSidechain).toBe(true);
-                expect(result.data.content.data.parent_tool_use_id).toBe('toolu_parent');
-            }
+            if (!result.success) return;
+            if (result.data.content.type !== 'output') return;
+            const data = result.data.content.data;
+            if (data.type !== 'assistant') return;
+            expect(data.isSidechain).toBe(true);
+            expect((data as any).parent_tool_use_id).toBe('toolu_parent');
         });
     });
 
@@ -1048,9 +1050,11 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(summaryMessage);
 
             expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'summary') {
-                expect(result.data.content.data.summary).toBe('Session summary text');
-            }
+            if (!result.success) return;
+            if (result.data.content.type !== 'output') return;
+            const data = result.data.content.data;
+            if (data.type !== 'summary') return;
+            expect((data as any).summary).toBe('Session summary text');
         });
 
         it('handles event messages (no content transformation)', () => {
