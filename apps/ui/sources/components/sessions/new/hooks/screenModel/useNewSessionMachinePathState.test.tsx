@@ -183,6 +183,41 @@ describe('useNewSessionMachinePathState', () => {
         await hook.unmount();
     });
 
+    it('upgrades an implicitly selected offline machine to an online replacement once machines hydrate', async () => {
+        const now = Date.now();
+
+        const hook = await renderMachinePathState({
+            machines: toMachines(
+                { id: 'machine-old', metadata: { homeDir: '/old' }, activeAt: now - 3 * 60_000 },
+            ),
+            recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
+            machineIdParam: null,
+            pathParam: null,
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-old',
+            selectedPath: '/repo/old',
+        });
+
+        await hook.rerender({
+            machines: toMachines(
+                { id: 'machine-old', metadata: { homeDir: '/old' }, activeAt: now - 3 * 60_000 },
+                { id: 'machine-new', metadata: { homeDir: '/new' }, activeAt: now - 10_000 },
+            ),
+            recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
+            machineIdParam: null,
+            pathParam: null,
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-new',
+            selectedPath: '/new',
+        });
+
+        await hook.unmount();
+    });
+
     it('preserves the requested route machine when it is offline but still available', async () => {
         const now = Date.now();
 

@@ -103,6 +103,13 @@ vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () 
     formatAttachmentsBlock: vi.fn(() => ''),
 }));
 
+vi.mock('@/components/ui/popover', () => ({
+    PopoverPortalTargetProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('PopoverPortalTargetProvider', props, props.children),
+    PopoverBoundaryProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('PopoverBoundaryProvider', props, props.children),
+}));
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
@@ -228,6 +235,23 @@ function buildProps() {
 }
 
 describe('NewSessionWizard agent input chips', () => {
+    it('provides a screen-local popover portal + boundary for chip popovers', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const popoverBoundaryRef = { current: null } as any;
+
+        const screen = await renderScreen(React.createElement(NewSessionWizard, {
+            ...buildProps(),
+            popoverBoundaryRef,
+        } as any));
+
+        const portalProviders = screen.tree.findAll((node: any) => node?.type === 'PopoverPortalTargetProvider');
+        expect(portalProviders.length).toBe(1);
+
+        const boundaryProviders = screen.tree.findAll((node: any) => node?.type === 'PopoverBoundaryProvider');
+        expect(boundaryProviders.length).toBe(1);
+        expect(boundaryProviders[0]?.props?.boundaryRef).toBe(popoverBoundaryRef);
+    });
+
     it('passes engine picker popover props to AgentInput instead of the legacy agent click handler', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         const onAgentPickerSelect = vi.fn();
@@ -263,12 +287,16 @@ describe('NewSessionWizard agent input chips', () => {
 
     it('passes the profile popover to AgentInput and omits the redundant env chip props', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
+        const popoverBoundaryRef = { current: null } as any;
 
         AgentInputMock.mockClear();
         ProfilesListMock.mockClear();
         EnvironmentVariablesPreviewPanelMock.mockClear();
 
-        await renderScreen(React.createElement(NewSessionWizard, buildProps() as any));
+        await renderScreen(React.createElement(NewSessionWizard, {
+            ...buildProps(),
+            popoverBoundaryRef,
+        } as any));
 
         expect(AgentInputMock).toHaveBeenCalled();
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
@@ -279,6 +307,13 @@ describe('NewSessionWizard agent input chips', () => {
         expect(props.envVarsCount).toBeUndefined();
         expect(props.envVarsPopover).toBeUndefined();
         expect(props.onEnvVarsClick).toBeUndefined();
+
+        const profilePopover = props.profilePopover as any;
+        const rendered = profilePopover.renderContent({ maxHeight: 420, requestClose: vi.fn() });
+        await renderScreen(rendered);
+        expect(ProfilesListMock).toHaveBeenCalled();
+        const profileListProps = ProfilesListMock.mock.calls[0]?.[0] as any;
+        expect(profileListProps.popoverBoundaryRef).toBe(popoverBoundaryRef);
     });
 
     it('passes machine, path, and resume popover props to AgentInput and drops the legacy chip handlers when provided', async () => {

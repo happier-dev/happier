@@ -38,6 +38,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     headerHeight: number;
     newSessionSidePadding: number;
     newSessionBottomPadding: number;
+    shouldBottomAnchor: boolean;
 
     // Profiles section
     useProfiles: boolean;
@@ -135,7 +136,6 @@ export function useNewSessionWizardProps(params: Readonly<{
     resumePopover?: NewSessionWizardFooterProps['resumePopover'];
     isResumeSupportChecking: boolean;
     sessionPromptInputMaxHeight: number;
-    automationSection?: React.ReactNode;
     agentInputExtraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
     attachmentFlowId?: string | null;
 }>): Readonly<{
@@ -153,11 +153,13 @@ export function useNewSessionWizardProps(params: Readonly<{
             headerHeight: params.headerHeight,
             newSessionSidePadding: params.newSessionSidePadding,
             newSessionBottomPadding: params.newSessionBottomPadding,
+            shouldBottomAnchor: params.shouldBottomAnchor,
         };
     }, [
         params.headerHeight,
         params.newSessionBottomPadding,
         params.newSessionSidePadding,
+        params.shouldBottomAnchor,
         params.safeAreaBottom,
         params.theme,
         params.styles,
@@ -434,7 +436,6 @@ export function useNewSessionWizardProps(params: Readonly<{
             resumePopover: params.resumePopover,
             resumeIsChecking: params.isResumeSupportChecking,
             inputMaxHeight: params.sessionPromptInputMaxHeight,
-            automationSection: params.automationSection,
             agentInputExtraActionChips: params.agentInputExtraActionChips,
             attachmentFlowId: params.attachmentFlowId,
         };
@@ -445,7 +446,6 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.agentType,
         params.agentInputExtraActionChips,
         params.attachmentFlowId,
-        params.automationSection,
         params.canCreate,
         params.connectionStatus,
         params.emptyAutocompletePrefixes,

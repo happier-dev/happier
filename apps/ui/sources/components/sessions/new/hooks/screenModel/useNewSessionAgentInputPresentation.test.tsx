@@ -19,8 +19,12 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
+vi.mock('@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent', () => ({
+    LinkFilePickerPopoverContent: (props: Record<string, unknown>) => React.createElement('LinkFilePickerPopoverContent', props),
+}));
+
 describe('useNewSessionAgentInputPresentation', () => {
-    it('exposes an inline automation settings section when automation controls are enabled', async () => {
+    it('exposes automation controls via an action chip (no inline automation section)', async () => {
         const { useNewSessionAgentInputPresentation } = await import('./useNewSessionAgentInputPresentation');
         const routerMock = createExpoRouterMock();
         const router = {
@@ -106,7 +110,6 @@ describe('useNewSessionAgentInputPresentation', () => {
             setWindowsRemoteSessionLaunchModeOverride: vi.fn(),
         }));
 
-        expect(hook.getCurrent().automationSection).not.toBeNull();
         expect(hook.getCurrent().agentInputExtraActionChips.some((chip) => chip.key === 'new-session-automate')).toBe(true);
     });
 
@@ -218,24 +221,24 @@ describe('useNewSessionAgentInputPresentation', () => {
         if (!chip?.collapsedContentPopover) {
             throw new Error('Expected link-file chip to define collapsedContentPopover');
         }
+        // Popover content must be scroll-enabled so it doesn't collapse to 0-height on native.
+        expect(chip.collapsedContentPopover.scrollEnabled).toBe(true);
         const renderContent = chip.collapsedContentPopover.renderContent;
         if (typeof renderContent !== 'function') {
             throw new Error('Expected collapsedContentPopover.renderContent to be a function');
         }
 
-        const requestClose = vi.fn();
-        const contentNode = renderContent({ requestClose, maxHeight: 300 });
+        const contentNode = renderContent({ requestClose: vi.fn(), maxHeight: 300 });
         if (!React.isValidElement(contentNode)) {
             throw new Error('Expected link-file popover content to be a React element');
         }
 
-        // We don't mount the file browser here; we just prove the wiring by calling its onPickPath handler.
-        const { MachinePathBrowserView } = await import('@/components/ui/pathBrowser/MachinePathBrowserModal');
-        expect(contentNode.type).toBe(MachinePathBrowserView);
-        expect(typeof (contentNode.props as any).onPickPath).toBe('function');
+        const { LinkFilePickerPopoverContent } = await import('@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent');
+        expect(contentNode.type).toBe(LinkFilePickerPopoverContent);
+        const { onPickPath } = contentNode.props as { onPickPath: (path: string) => void };
+        expect(typeof onPickPath).toBe('function');
 
-        (contentNode.props as any).onPickPath('/repo/file.ts');
-        expect(requestClose).toHaveBeenCalled();
+        onPickPath('/repo/file.ts');
 
         expect(setSessionPromptSpy).toHaveBeenCalled();
         const arg = setSessionPromptSpy.mock.calls.at(-1)?.[0];

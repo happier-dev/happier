@@ -427,7 +427,7 @@ describe('NewSessionSimplePanel', () => {
         expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
     });
 
-    it('renders an inline automation section when provided by the shared composer model', async () => {
+    it('does not render an inline automation section (automation is controlled via the action chip popover)', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
         const screen = await renderScreen(
@@ -448,7 +448,6 @@ describe('NewSessionSimplePanel', () => {
                 emptyAutocompletePrefixes={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
-                automationSection={React.createElement('AutomationSection')}
                 agentInputExtraActionChips={[]}
                 agentType="codex"
                 handleAgentClick={() => {}}
@@ -468,10 +467,10 @@ describe('NewSessionSimplePanel', () => {
             />,
         );
 
-        expect(screen.findByType('AutomationSection' as any)).toBeTruthy();
+        expect(screen.findAllByType('AutomationSection' as any).length).toBe(0);
     });
 
-    it('renders the automation section after the agent input', async () => {
+    it('does not render the automation section after the agent input', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
         const screen = await renderScreen(
@@ -492,7 +491,6 @@ describe('NewSessionSimplePanel', () => {
                 emptyAutocompletePrefixes={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
-                automationSection={React.createElement('AutomationSection')}
                 agentInputExtraActionChips={[]}
                 agentType="codex"
                 handleAgentClick={() => {}}
@@ -513,13 +511,10 @@ describe('NewSessionSimplePanel', () => {
         );
 
         const agentInput = screen.findByType('AgentInput' as any);
-        const automationSection = screen.findByType('AutomationSection' as any);
+        const automationSections = screen.findAllByType('AutomationSection' as any);
 
         expect(agentInput).toBeTruthy();
-        expect(automationSection).toBeTruthy();
-        expect(agentInput?.parent?.children.indexOf(agentInput)).toBeLessThan(
-            automationSection?.parent?.children.indexOf(automationSection) ?? -1,
-        );
+        expect(automationSections.length).toBe(0);
     });
 
     it('uses the latest handleCreateSession callback after rerendering', async () => {

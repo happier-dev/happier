@@ -7,12 +7,17 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const mockEnv = vi.hoisted(() => ({
+    windowWidth: 800,
+}));
+
 const pathSelectorPropsRef: { current: Record<string, unknown> | null } = { current: null };
 installNewSessionComponentsCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
-            Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
+            useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
+            Dimensions: { get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }) },
         });
     },
 });
@@ -96,10 +101,146 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 describe('NewSessionWizard', () => {
+    it('anchors the wizard shell to the bottom on narrow mobile web layouts', async () => {
+        mockEnv.windowWidth = 390;
+        try {
+            const { NewSessionWizard } = await import('./NewSessionWizard');
+
+            const screen = await renderScreen(<NewSessionWizard
+                            popoverBoundaryRef={{ current: null } as any}
+                            layout={{
+                                theme: {
+                                    colors: {
+                                        divider: '#ddd',
+                                        shadow: { color: '#000' },
+                                        groupped: { background: '#fff' },
+                                        text: '#000',
+                                        textSecondary: '#666',
+                                        input: { background: '#fff' },
+                                        button: { secondary: { tint: '#000' } },
+                                        warning: '#d97706',
+                                        box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                                    },
+                                } as any,
+                                styles: {} as any,
+                                safeAreaBottom: 0,
+                                headerHeight: 44,
+                                newSessionSidePadding: 0,
+                                newSessionBottomPadding: 0,
+                            }}
+                            profiles={{
+                                useProfiles: false,
+                                profiles: [],
+                                favoriteProfileIds: [],
+                                setFavoriteProfileIds: () => {},
+                                selectedProfileId: null,
+                                onPressDefaultEnvironment: () => {},
+                                onPressProfile: () => {},
+                                selectedMachineId: 'machine-1',
+                                getProfileDisabled: () => false,
+                                getProfileSubtitleExtra: () => null,
+                                handleAddProfile: () => {},
+                                openProfileEdit: () => {},
+                                handleDuplicateProfile: () => {},
+                                handleDeleteProfile: () => {},
+                                openProfileEnvVarsPreview: () => {},
+                                suppressNextSecretAutoPromptKeyRef: { current: null },
+                                openSecretRequirementModal: () => {},
+                                profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
+                                getSecretOverrideReady: () => false,
+                                getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
+                                getSecretMachineEnvOverride: () => null,
+                                secretBindingsByProfileId: {},
+                                selectedSecretIdByProfileIdByEnvVarName: {},
+                                setSecretBindingChoice: () => {},
+                                setSessionOnlySecretValueEnc: () => {},
+                            } as any}
+                            agent={{
+                                cliAvailability: { available: true },
+                                tmuxRequested: false,
+                                enabledAgentIds: ['codex'],
+                                isAgentSelectable: () => true,
+                                isCliBannerDismissed: () => true,
+                                dismissCliBanner: () => {},
+                                agentType: 'codex',
+                                setAgentType: () => {},
+                                selectedIndicatorColor: '#000',
+                                permissionMode: 'default',
+                                handlePermissionModeChange: () => {},
+                                modelOptions: [],
+                                modelMode: 'default',
+                                setModelMode: () => {},
+                            } as any}
+                            machine={{
+                                machines: [{
+                                    id: 'machine-1',
+                                    seq: 1,
+                                    createdAt: 0,
+                                    updatedAt: 0,
+                                    active: true,
+                                    activeAt: 0,
+                                    revokedAt: null,
+                                    metadata: {
+                                        host: 'box.local',
+                                        platform: 'test',
+                                        happyCliVersion: '0.0.0-test',
+                                        happyHomeDir: '/tmp/happy-home',
+                                        homeDir: '/tmp',
+                                        displayName: 'Box',
+                                    },
+                                    metadataVersion: 1,
+                                    daemonState: null,
+                                    daemonStateVersion: 0,
+                                }],
+                                serverId: 'server-1',
+                                selectedMachine: null,
+                                recentMachines: [],
+                                favoriteMachineItems: [],
+                                useMachinePickerSearch: false,
+                                onRefreshMachines: () => {},
+                                setSelectedMachineId: () => {},
+                                getBestPathForMachine: () => '/tmp',
+                                setSelectedPath: () => {},
+                                favoriteMachines: [],
+                                setFavoriteMachines: () => {},
+                                selectedPath: '/tmp',
+                                recentPaths: [],
+                                usePathPickerSearch: false,
+                                favoriteDirectories: [],
+                                setFavoriteDirectories: () => {},
+                            } as any}
+                            footer={{
+                                sessionPrompt: '',
+                                setSessionPrompt: () => {},
+                                handleCreateSession: () => {},
+                                canCreate: true,
+                                isCreating: false,
+                                emptyAutocompletePrefixes: [],
+                                emptyAutocompleteSuggestions: async () => [],
+                                sessionPromptInputMaxHeight: 200,
+                                isResumeSupportChecking: false,
+                                resumeSessionId: null,
+                                connectionStatus: undefined,
+                                showResumePicker: false,
+                            } as any}
+                        />);
+
+            const keyboardView = screen.findByType('KeyboardAvoidingView');
+            expect(keyboardView.props.style).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    justifyContent: 'flex-end',
+                }),
+            ]));
+        } finally {
+            mockEnv.windowWidth = 800;
+        }
+    });
+
     it('does not render the legacy visible session type section even when the feature flag is enabled', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
         const screen = await renderScreen(<NewSessionWizard
+                        popoverBoundaryRef={{ current: null } as any}
                         layout={{
                             theme: {
                                 colors: {
@@ -245,10 +386,11 @@ describe('NewSessionWizard', () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
         await renderScreen(<NewSessionWizard
-                    layout={{
-                        theme: {
-                            colors: {
-                                divider: '#ddd',
+                        popoverBoundaryRef={{ current: null } as any}
+                        layout={{
+                            theme: {
+                                colors: {
+                                    divider: '#ddd',
                                 shadow: { color: '#000' },
                                 groupped: { background: '#fff' },
                                 text: '#000',
@@ -390,10 +532,11 @@ describe('NewSessionWizard', () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
         const screen = await renderScreen(<NewSessionWizard
-                    layout={{
-                        theme: {
-                            colors: {
-                                divider: '#ddd',
+                        popoverBoundaryRef={{ current: null } as any}
+                        layout={{
+                            theme: {
+                                colors: {
+                                    divider: '#ddd',
                                 shadow: { color: '#000' },
                                 groupped: { background: '#fff' },
                                 text: '#000',
@@ -534,10 +677,11 @@ describe('NewSessionWizard', () => {
 
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<NewSessionWizard
-                    layout={{
-                        theme: {
-                            colors: {
-                                divider: '#ddd',
+                        popoverBoundaryRef={{ current: null } as any}
+                        layout={{
+                            theme: {
+                                colors: {
+                                    divider: '#ddd',
                                 shadow: { color: '#000' },
                                 groupped: { background: '#fff' },
                                 text: '#000',
@@ -682,10 +826,11 @@ describe('NewSessionWizard', () => {
 
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<NewSessionWizard
-                    layout={{
-                        theme: {
-                            colors: {
-                                divider: '#ddd',
+                        popoverBoundaryRef={{ current: null } as any}
+                        layout={{
+                            theme: {
+                                colors: {
+                                    divider: '#ddd',
                                 shadow: { color: '#000' },
                                 groupped: { background: '#fff' },
                                 text: '#000',

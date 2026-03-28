@@ -136,6 +136,7 @@ describe('NewSessionWizard submit deferral', () => {
         (Platform as any).OS = 'web';
 
         const screen = await renderScreen(<NewSessionWizard
+                    popoverBoundaryRef={{ current: null } as any}
                     layout={{
                         theme: {
                             colors: {

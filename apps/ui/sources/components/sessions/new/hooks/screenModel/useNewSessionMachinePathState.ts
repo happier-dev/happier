@@ -3,6 +3,7 @@ import * as React from 'react';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { normalizeOptionalParam } from '@/profileRouteParams';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 
 type RecentMachinePathsList = Array<{ machineId: string; path: string }>;
@@ -64,9 +65,16 @@ export function useNewSessionMachinePathState(params: Readonly<{
         return machine?.metadata?.homeDir ?? '';
     }, [params.machines, recentMachinePaths]);
 
-    const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => {
+    const [selectedMachineId, setSelectedMachineIdState] = React.useState<string | null>(() => {
         return resolveMachineId(null);
     });
+    const hasUserSelectedMachineRef = React.useRef(false);
+    const selectedMachineOnlineSeenByIdRef = React.useRef<Map<string, boolean>>(new Map());
+
+    const setSelectedMachineId = React.useCallback<React.Dispatch<React.SetStateAction<string | null>>>((next) => {
+        hasUserSelectedMachineRef.current = true;
+        setSelectedMachineIdState((current) => typeof next === 'function' ? next(current) : next);
+    }, []);
 
     const [selectedPath, setSelectedPathState] = React.useState<string>(() => {
         const trimmedPath = normalizePathParam(params.pathParam);
@@ -105,7 +113,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
 
         lastAppliedMachineParamRef.current = machineId;
         if (machineId === selectedMachineId) return;
-        setSelectedMachineId(machineId);
+        hasUserSelectedMachineRef.current = true;
+        setSelectedMachineIdState(machineId);
         hasUserEditedPathRef.current = false;
         const trimmedPath = normalizePathParam(params.pathParam);
         setSelectedPathState(trimmedPath || getBestPathForMachine(machineId));
@@ -118,7 +127,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
         const machineIdToUse = resolveMachineId(null);
         const trimmedPath = normalizePathParam(params.pathParam);
 
-        setSelectedMachineId(machineIdToUse);
+        hasUserSelectedMachineRef.current = false;
+        setSelectedMachineIdState(machineIdToUse);
         hasUserEditedPathRef.current = false;
         setSelectedPathState(trimmedPath || getBestPathForMachine(machineIdToUse));
     }, [getBestPathForMachine, params.machines, params.pathParam, resolveMachineId, selectedMachineId]);
@@ -131,10 +141,39 @@ export function useNewSessionMachinePathState(params: Readonly<{
         const machineIdToUse = resolveMachineId(null);
         if (machineIdToUse === selectedMachineId) return;
 
-        setSelectedMachineId(machineIdToUse);
+        hasUserSelectedMachineRef.current = false;
+        setSelectedMachineIdState(machineIdToUse);
         hasUserEditedPathRef.current = false;
         setSelectedPathState(getBestPathForMachine(machineIdToUse));
     }, [getBestPathForMachine, hasMachine, resolveMachineId, selectedMachineId]);
+
+    React.useEffect(() => {
+        if (!selectedMachineId) return;
+        const machine = params.machines.find((m) => m.id === selectedMachineId);
+        if (!machine) return;
+        if (!isMachineOnline(machine)) return;
+        selectedMachineOnlineSeenByIdRef.current.set(selectedMachineId, true);
+    }, [params.machines, selectedMachineId]);
+
+    // If we implicitly selected an offline machine, upgrade to the best available online machine
+    // once machine snapshots hydrate. Keep explicit user/route choices stable.
+    React.useEffect(() => {
+        if (selectedMachineId === null) return;
+        if (hasUserSelectedMachineRef.current) return;
+        if (normalizeMachineIdParam(params.machineIdParam)) return;
+        if (selectedMachineOnlineSeenByIdRef.current.get(selectedMachineId) === true) return;
+
+        const machineIdToUse = resolveMachineId(selectedMachineId);
+        if (!machineIdToUse || machineIdToUse === selectedMachineId) return;
+
+        hasUserSelectedMachineRef.current = false;
+        setSelectedMachineIdState(machineIdToUse);
+
+        if (hasUserEditedPathRef.current) return;
+        const trimmedPath = normalizePathParam(params.pathParam);
+        hasUserEditedPathRef.current = false;
+        setSelectedPathState(trimmedPath || getBestPathForMachine(machineIdToUse));
+    }, [getBestPathForMachine, params.machineIdParam, params.pathParam, resolveMachineId, selectedMachineId]);
 
     // Handle path route param from picker screens (main's navigation pattern)
     React.useEffect(() => {

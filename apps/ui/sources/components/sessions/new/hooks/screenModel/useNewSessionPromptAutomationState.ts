@@ -105,7 +105,12 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
         params.hydratedTempAuthoringDraft?.automation,
         shouldIgnorePersistedAutomationDraft,
     ]);
-    const [automationDraft, setAutomationDraft] = React.useState<NewSessionAutomationDraft>(() => initialAutomationDraft);
+    const [automationDraft, setAutomationDraftState] = React.useState<NewSessionAutomationDraft>(() => initialAutomationDraft);
+    const hasUserEditedAutomationDraftRef = React.useRef(false);
+    const setAutomationDraft = React.useCallback<React.Dispatch<React.SetStateAction<NewSessionAutomationDraft>>>((next) => {
+        hasUserEditedAutomationDraftRef.current = true;
+        setAutomationDraftState(next);
+    }, []);
 
     const automationEditId = React.useMemo(() => {
         if (typeof params.automationEditIdParam !== 'string') {
@@ -116,7 +121,8 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     }, [params.automationEditIdParam]);
 
     React.useEffect(() => {
-        setAutomationDraft(initialAutomationDraft);
+        if (hasUserEditedAutomationDraftRef.current) return;
+        setAutomationDraftState(initialAutomationDraft);
     }, [params.hydratedPersistedAuthoringDraft, params.hydratedTempAuthoringDraft, initialAutomationDraft]);
 
     React.useEffect(() => {
@@ -126,8 +132,9 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     React.useEffect(() => {
         if (!params.automationFeatureEnabled) return;
         if (!isForcedAutomationRoute) return;
+        if (hasUserEditedAutomationDraftRef.current) return;
 
-        setAutomationDraft({
+        setAutomationDraftState({
             ...DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
             enabled: true,
         });
@@ -136,8 +143,9 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     React.useEffect(() => {
         if (!params.automationFeatureEnabled) return;
         if (!hasExplicitAutomationSeedParams) return;
+        if (hasUserEditedAutomationDraftRef.current) return;
 
-        setAutomationDraft((prev) => {
+        setAutomationDraftState((prev) => {
             const parsed = sanitizeNewSessionAutomationDraft({
                 enabled: typeof params.automationEnabledParam === 'string'
                     ? ['1', 'true', 'yes', 'on'].includes(params.automationEnabledParam.trim().toLowerCase())

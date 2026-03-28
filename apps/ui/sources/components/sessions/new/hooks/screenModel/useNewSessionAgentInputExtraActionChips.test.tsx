@@ -77,8 +77,8 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
         expect(automationChip?.collapsedContentPopover).toEqual(expect.objectContaining({
             renderContent: expect.any(Function),
             scrollEnabled: true,
-            boundaryRef: null,
         }));
+        expect(automationChip?.collapsedContentPopover?.boundaryRef).toBeUndefined();
         expect(automationChip?.collapsedAction).toBeUndefined();
     });
 

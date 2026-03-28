@@ -136,6 +136,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         AgentInputMock.mockClear();
 
         await renderScreen(React.createElement(NewSessionWizard, {
+                    popoverBoundaryRef: { current: null } as any,
                     layout: {
                         theme: {
                             colors: {
@@ -241,218 +242,111 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         expect(typeof attachmentChip?.collapsedAction).toBe('function');
     });
 
-    it('renders an inline automation section when provided by the shared composer model', async () => {
+    it('does not render an inline automation section (automation is controlled via the action chip popover)', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
         const screen = await renderScreen(React.createElement(NewSessionWizard, {
-                    layout: {
-                        theme: {
-                            colors: {
-                                divider: '#ddd',
-                                shadow: { color: '#000' },
-                                groupped: { background: '#fff' },
-                                text: '#000',
-                                textSecondary: '#666',
-                                input: { background: '#fff' },
-                                button: { secondary: { tint: '#000' } },
-                            },
-                        },
-                        styles: {},
-                        safeAreaBottom: 0,
-                        headerHeight: 44,
-                        newSessionSidePadding: 0,
-                        newSessionBottomPadding: 0,
+            popoverBoundaryRef: { current: null } as any,
+            layout: {
+                theme: {
+                    colors: {
+                        divider: '#ddd',
+                        shadow: { color: '#000' },
+                        groupped: { background: '#fff' },
+                        text: '#000',
+                        textSecondary: '#666',
+                        input: { background: '#fff' },
+                        button: { secondary: { tint: '#000' } },
                     },
-                    profiles: {
-                        useProfiles: false,
-                        profiles: [],
-                        favoriteProfileIds: [],
-                        setFavoriteProfileIds: () => {},
-                        selectedProfileId: null,
-                        onPressDefaultEnvironment: () => {},
-                        onPressProfile: () => {},
-                        selectedMachineId: null,
-                        getProfileDisabled: () => false,
-                        getProfileSubtitleExtra: () => null,
-                        handleAddProfile: () => {},
-                        openProfileEdit: () => {},
-                        handleDuplicateProfile: () => {},
-                        handleDeleteProfile: () => {},
-                        openProfileEnvVarsPreview: () => {},
-                        suppressNextSecretAutoPromptKeyRef: { current: null },
-                        openSecretRequirementModal: () => {},
-                        profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
-                        getSecretOverrideReady: () => false,
-                        getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
-                        getSecretMachineEnvOverride: () => null,
-                        secretBindingsByProfileId: {},
-                        selectedSecretIdByProfileIdByEnvVarName: {},
-                        setSecretBindingChoice: () => {},
-                        setSessionOnlySecretValueEnc: () => {},
-                    } as any,
-                    agent: {
-                        cliAvailability: { available: true },
-                        tmuxRequested: false,
-                        enabledAgentIds: ['codex'],
-                        isAgentSelectable: () => true,
-                        isCliBannerDismissed: () => true,
-                        dismissCliBanner: () => {},
-                        agentType: 'codex',
-                        setAgentType: () => {},
-                        selectedIndicatorColor: '#000',
-                        permissionMode: 'default',
-                        handlePermissionModeChange: () => {},
-                        modelOptions: [{ value: 'default', label: 'Default', description: '' }],
-                        modelMode: 'default',
-                        setModelMode: () => {},
-                    } as any,
-                    machine: {
-                        machines: [],
-                        serverId: null,
-                        selectedMachine: null,
-                        recentMachines: [],
-                        favoriteMachineItems: [],
-                        useMachinePickerSearch: false,
-                        onRefreshMachines: () => {},
-                        setSelectedMachineId: () => {},
-                        getBestPathForMachine: () => '',
-                        setSelectedPath: () => {},
-                        favoriteMachines: [],
-                        setFavoriteMachines: () => {},
-                        selectedPath: '',
-                        recentPaths: [],
-                        usePathPickerSearch: false,
-                        favoriteDirectories: [],
-                        setFavoriteDirectories: () => {},
-                    },
-                    footer: {
-                        sessionPrompt: '',
-                        setSessionPrompt: () => {},
-                        handleCreateSession: () => {},
-                        canCreate: true,
-                        isCreating: false,
-                        emptyAutocompletePrefixes: [],
-                        emptyAutocompleteSuggestions: async () => [],
-                        automationSection: React.createElement('AutomationSection'),
-                        agentInputExtraActionChips: [],
-                    },
-                }));
+                },
+                styles: {},
+                safeAreaBottom: 0,
+                headerHeight: 44,
+                newSessionSidePadding: 0,
+                newSessionBottomPadding: 0,
+            },
+            profiles: {
+                useProfiles: false,
+                profiles: [],
+                favoriteProfileIds: [],
+                setFavoriteProfileIds: () => {},
+                selectedProfileId: null,
+                onPressDefaultEnvironment: () => {},
+                onPressProfile: () => {},
+                selectedMachineId: null,
+                getProfileDisabled: () => false,
+                getProfileSubtitleExtra: () => null,
+                handleAddProfile: () => {},
+                openProfileEdit: () => {},
+                handleDuplicateProfile: () => {},
+                handleDeleteProfile: () => {},
+                openProfileEnvVarsPreview: () => {},
+                suppressNextSecretAutoPromptKeyRef: { current: null },
+                openSecretRequirementModal: () => {},
+                profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
+                getSecretOverrideReady: () => false,
+                getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
+                getSecretMachineEnvOverride: () => null,
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                setSecretBindingChoice: () => {},
+                setSessionOnlySecretValueEnc: () => {},
+            } as any,
+            agent: {
+                cliAvailability: { available: true },
+                tmuxRequested: false,
+                enabledAgentIds: ['codex'],
+                isAgentSelectable: () => true,
+                isCliBannerDismissed: () => true,
+                dismissCliBanner: () => {},
+                agentType: 'codex',
+                setAgentType: () => {},
+                selectedIndicatorColor: '#000',
+                permissionMode: 'default',
+                handlePermissionModeChange: () => {},
+                modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+                modelMode: 'default',
+                setModelMode: () => {},
+            } as any,
+            machine: {
+                machines: [],
+                serverId: null,
+                selectedMachine: null,
+                recentMachines: [],
+                favoriteMachineItems: [],
+                useMachinePickerSearch: false,
+                onRefreshMachines: () => {},
+                setSelectedMachineId: () => {},
+                getBestPathForMachine: () => '',
+                setSelectedPath: () => {},
+                favoriteMachines: [],
+                setFavoriteMachines: () => {},
+                selectedPath: '',
+                recentPaths: [],
+                usePathPickerSearch: false,
+                favoriteDirectories: [],
+                setFavoriteDirectories: () => {},
+            },
+            footer: {
+                sessionPrompt: '',
+                setSessionPrompt: () => {},
+                handleCreateSession: () => {},
+                canCreate: true,
+                isCreating: false,
+                emptyAutocompletePrefixes: [],
+                emptyAutocompleteSuggestions: async () => [],
+                agentInputExtraActionChips: [],
+            },
+        }));
 
-        expect(() => screen.findByType('AutomationSection' as any)).not.toThrow();
-    });
-
-    it('renders the automation section after the agent input when provided by the shared composer model', async () => {
-        const { NewSessionWizard } = await import('./NewSessionWizard');
-        AgentInputMock.mockImplementation(() => React.createElement('AgentInput', null));
-
-        const screen = await renderScreen(React.createElement(NewSessionWizard, {
-                    layout: {
-                        theme: {
-                            colors: {
-                                divider: '#ddd',
-                                shadow: { color: '#000' },
-                                groupped: { background: '#fff' },
-                                text: '#000',
-                                textSecondary: '#666',
-                                input: { background: '#fff' },
-                                button: { secondary: { tint: '#000' } },
-                            },
-                        },
-                        styles: {},
-                        safeAreaBottom: 0,
-                        headerHeight: 44,
-                        newSessionSidePadding: 0,
-                        newSessionBottomPadding: 0,
-                    },
-                    profiles: {
-                        useProfiles: false,
-                        profiles: [],
-                        favoriteProfileIds: [],
-                        setFavoriteProfileIds: () => {},
-                        selectedProfileId: null,
-                        onPressDefaultEnvironment: () => {},
-                        onPressProfile: () => {},
-                        selectedMachineId: null,
-                        getProfileDisabled: () => false,
-                        getProfileSubtitleExtra: () => null,
-                        handleAddProfile: () => {},
-                        openProfileEdit: () => {},
-                        handleDuplicateProfile: () => {},
-                        handleDeleteProfile: () => {},
-                        openProfileEnvVarsPreview: () => {},
-                        suppressNextSecretAutoPromptKeyRef: { current: null },
-                        openSecretRequirementModal: () => {},
-                        profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
-                        getSecretOverrideReady: () => false,
-                        getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
-                        getSecretMachineEnvOverride: () => null,
-                        secretBindingsByProfileId: {},
-                        selectedSecretIdByProfileIdByEnvVarName: {},
-                        setSecretBindingChoice: () => {},
-                        setSessionOnlySecretValueEnc: () => {},
-                    } as any,
-                    agent: {
-                        cliAvailability: { available: true },
-                        tmuxRequested: false,
-                        enabledAgentIds: ['codex'],
-                        isAgentSelectable: () => true,
-                        isCliBannerDismissed: () => true,
-                        dismissCliBanner: () => {},
-                        agentType: 'codex',
-                        setAgentType: () => {},
-                        selectedIndicatorColor: '#000',
-                        permissionMode: 'default',
-                        handlePermissionModeChange: () => {},
-                        modelOptions: [{ value: 'default', label: 'Default', description: '' }],
-                        modelMode: 'default',
-                        setModelMode: () => {},
-                    } as any,
-                    machine: {
-                        machines: [],
-                        serverId: null,
-                        selectedMachine: null,
-                        recentMachines: [],
-                        favoriteMachineItems: [],
-                        useMachinePickerSearch: false,
-                        onRefreshMachines: () => {},
-                        setSelectedMachineId: () => {},
-                        getBestPathForMachine: () => '',
-                        setSelectedPath: () => {},
-                        favoriteMachines: [],
-                        setFavoriteMachines: () => {},
-                        selectedPath: '',
-                        recentPaths: [],
-                        usePathPickerSearch: false,
-                        favoriteDirectories: [],
-                        setFavoriteDirectories: () => {},
-                    },
-                    footer: {
-                        sessionPrompt: '',
-                        setSessionPrompt: () => {},
-                        handleCreateSession: () => {},
-                        canCreate: true,
-                        isCreating: false,
-                        emptyAutocompletePrefixes: [],
-                        emptyAutocompleteSuggestions: async () => [],
-                        automationSection: React.createElement('AutomationSection'),
-                        agentInputExtraActionChips: [],
-                    },
-                }));
-
-        const renderedOrder = [
-            ...screen.findAllByType('AgentInput'),
-            ...screen.findAllByType('AutomationSection'),
-        ].map((node) => String(node.type));
-
-        expect(renderedOrder).toEqual(['AgentInput', 'AutomationSection']);
-
-        AgentInputMock.mockImplementation((_props: any) => null);
+        expect(screen.findAllByType('AutomationSection' as any)).toHaveLength(0);
     });
 
     it('shows an inline warning when the selected machine is offline', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
         const screen = await renderScreen(React.createElement(NewSessionWizard, {
+                    popoverBoundaryRef: { current: null } as any,
                     layout: {
                         theme: {
                             colors: {
@@ -596,6 +490,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(React.createElement(NewSessionWizard, {
+                    popoverBoundaryRef: { current: null } as any,
                     layout: {
                         theme: {
                             colors: {
@@ -738,6 +633,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         const handleCreateSession = vi.fn();
 
         await renderScreen(React.createElement(NewSessionWizard, {
+                    popoverBoundaryRef: { current: null } as any,
                     layout: {
                         theme: {
                             colors: {

@@ -42,6 +42,7 @@ import {
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { computeNewSessionInputMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { useProfileMap } from '@/components/sessions/new/modules/profileHelpers';
 import { newSessionScreenStyles } from '@/components/sessions/new/newSessionScreenStyles';
 import { coerceNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
@@ -101,7 +102,6 @@ import { NewSessionResumeSelectionContent } from '@/components/sessions/new/comp
 import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
-import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
 import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
 
 
@@ -123,6 +123,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const newSessionSidePadding = 16;
     const newSessionBottomPadding = Math.max(screenWidth < 420 ? 8 : 16, safeArea.bottom);
+    const shouldBottomAnchor = isMobileLayoutWidth(screenWidth);
 
     // Simple (non-wizard) new-session screen spacing.
     // Keep wizard spacing unchanged (the wizard layout benefits from wider margins).
@@ -1174,7 +1175,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                     showInlineHeader={false}
                     resumeBrowse={browseEnabled ? {
                         enabled: true,
-                        onBrowse: async () => {
+                        onBrowse: () => {
                             if (!selectedMachineId) return null;
                             const source = resolveDirectBrowseLockedSource({
                                 providerId: agentType as any,
@@ -1183,15 +1184,18 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                                 settings,
                             });
                             if (!source) return null;
-                            return await openDirectSessionsResumeIdPickerModal({
-                                lockScope: {
+                            // See ResumePickerScreen: avoid app-root modals inside the new-session sheet/drawer on native.
+                            requestClose();
+                            router.push({
+                                pathname: '/new/pick/resume-browse',
+                                params: {
+                                    agentType,
                                     machineId: selectedMachineId,
-                                    serverId: targetServerId ?? null,
-                                    providerId: agentType as any,
-                                    source,
+                                    spawnServerId: targetServerId ?? undefined,
+                                    dataId: dataId ?? undefined,
                                 },
-                                title: t('directSessions.browseTitle'),
                             });
+                            return null;
                         },
                     } : null}
                 />
@@ -1289,7 +1293,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const {
         connectionStatus,
-        automationSection,
         agentInputExtraActionChips,
     } = useNewSessionAgentInputPresentation({
         theme,
@@ -1365,6 +1368,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         headerHeight,
         newSessionSidePadding,
         newSessionBottomPadding,
+        shouldBottomAnchor,
 
         useProfiles,
         profiles,
@@ -1465,7 +1469,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         resumePopover,
         isResumeSupportChecking,
         sessionPromptInputMaxHeight,
-        automationSection,
         agentInputExtraActionChips,
         attachmentFlowId: effectiveDataId,
     });
@@ -1495,6 +1498,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         newSessionTopPadding: simpleNewSessionTopPadding,
         newSessionSidePadding: simpleNewSessionSidePadding,
         newSessionBottomPadding: simpleNewSessionBottomPadding,
+        shouldBottomAnchor,
         containerStyle: styles.container as any,
         sessionPrompt,
         setSessionPrompt,
@@ -1505,7 +1509,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         emptyAutocompletePrefixes,
         emptyAutocompleteSuggestions,
         sessionPromptInputMaxHeight,
-        automationSection,
         agentType,
         agentLabel,
         handleAgentClick,

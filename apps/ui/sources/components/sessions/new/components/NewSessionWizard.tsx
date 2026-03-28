@@ -1,12 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Platform, ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View, useWindowDimensions, type View as RNView } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { LinearGradient } from 'expo-linear-gradient';
 import Color from 'color';
 import { Typography } from '@/constants/Typography';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
+import { PopoverBoundaryProvider, PopoverPortalTargetProvider } from '@/components/ui/popover';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
@@ -36,6 +37,7 @@ import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/ne
 import { NewSessionProfilesBrowserContent } from '@/components/sessions/new/components/NewSessionProfilesBrowserContent';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 
 
 export interface NewSessionWizardLayoutProps {
@@ -45,6 +47,7 @@ export interface NewSessionWizardLayoutProps {
     headerHeight: number;
     newSessionSidePadding: number;
     newSessionBottomPadding: number;
+    shouldBottomAnchor?: boolean;
 }
 
 export interface NewSessionWizardProfilesProps {
@@ -142,12 +145,12 @@ export interface NewSessionWizardFooterProps {
     resumePopover?: React.ComponentProps<typeof AgentInput>['resumePopover'];
     resumeIsChecking?: boolean;
     inputMaxHeight?: number;
-    automationSection?: React.ReactNode;
     agentInputExtraActionChips?: React.ComponentProps<typeof AgentInput>['extraActionChips'];
     attachmentFlowId?: string | null;
 }
 
 export interface NewSessionWizardProps {
+    popoverBoundaryRef: React.RefObject<RNView>;
     layout: NewSessionWizardLayoutProps;
     profiles: NewSessionWizardProfilesProps;
     agent: NewSessionWizardAgentProps;
@@ -163,7 +166,11 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         headerHeight,
         newSessionSidePadding,
         newSessionBottomPadding,
+        shouldBottomAnchor: shouldBottomAnchorOverride,
     } = props.layout;
+    const { width: windowWidth } = useWindowDimensions();
+    const shouldBottomAnchor =
+        shouldBottomAnchorOverride ?? (Platform.OS !== 'web' || isMobileLayoutWidth(windowWidth));
 
     // Wizard-only scroll bookkeeping (keep it out of NewSessionScreen)
     const scrollViewRef = React.useRef<ScrollView>(null);
@@ -324,28 +331,37 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
             profilesProps: props.profiles,
             serverId,
             machineName: machineDisplayName,
-            popoverBoundaryRef: scrollViewRef,
+            popoverBoundaryRef: props.popoverBoundaryRef,
         });
-    }, [machineDisplayName, props.profiles, scrollViewRef, serverId]);
+    }, [machineDisplayName, props.popoverBoundaryRef, props.profiles, serverId]);
 
     return (
         <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight + safeAreaBottom + 16 : 0}
-            style={[styles.container, { backgroundColor: theme.colors.groupped.background }]}
+            style={[
+                styles.container,
+                {
+                    backgroundColor: theme.colors.groupped.background,
+                    justifyContent: shouldBottomAnchor ? 'flex-end' : 'center',
+                    ...(shouldBottomAnchor ? { paddingTop: 0 } : {}),
+                },
+            ]}
         >
-            <View style={{ flex: 1 }}>
-                <ScrollView
-                    ref={scrollViewRef}
-                    style={styles.scrollContainer}
-                    contentContainerStyle={styles.contentContainer}
-                    keyboardShouldPersistTaps="handled"
-                >
-                    <View style={{ paddingHorizontal: 0 }}>
-                        <View style={[
-                            { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
-                        ]}>
-                            <View onLayout={registerWizardSectionOffset('profile')} style={styles.wizardContainer}>
+            <View ref={props.popoverBoundaryRef} style={{ flex: 1 }}>
+                <PopoverPortalTargetProvider>
+                    <PopoverBoundaryProvider boundaryRef={props.popoverBoundaryRef}>
+                        <ScrollView
+                            ref={scrollViewRef}
+                            style={styles.scrollContainer}
+                            contentContainerStyle={styles.contentContainer}
+                            keyboardShouldPersistTaps="handled"
+                        >
+                            <View style={{ paddingHorizontal: 0 }}>
+                                <View style={[
+                                    { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
+                                ]}>
+                                    <View onLayout={registerWizardSectionOffset('profile')} style={styles.wizardContainer}>
                                 {useProfiles && (
                                     <>
                                         <View style={styles.wizardSectionHeaderRow}>
@@ -790,13 +806,14 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                       onEnvVarsClick: undefined,
                                   } : {})}
                               />
-                              {props.footer.automationSection ?? null}
                               {attachmentsUploadsEnabled ? (
                                   <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={addPickedAttachments} multiple />
                               ) : null}
                           </View>
                       </View>
                 </View>
+                    </PopoverBoundaryProvider>
+                </PopoverPortalTargetProvider>
             </View>
         </KeyboardAvoidingView>
     );

@@ -132,8 +132,13 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
     const inputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
     const agentType = isAgentId(props.agentType) ? props.agentType : DEFAULT_AGENT_ID;
     const agentLabel = t(getAgentCore(agentType).displayNameKey);
+    const shouldAutoFocus = Platform.OS === 'web';
 
     const focusInputWithRetries = React.useCallback(() => {
+        if (!shouldAutoFocus) {
+            return () => undefined;
+        }
+
         let cancelled = false;
         const focus = () => {
             if (cancelled) return;
@@ -170,13 +175,19 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
                 caf(rafId);
             }
         };
-    }, []);
+    }, [shouldAutoFocus]);
 
     React.useEffect(() => {
+        if (!shouldAutoFocus) {
+            return undefined;
+        }
         return focusInputWithRetries();
     }, [focusInputWithRetries]);
 
     useFocusEffect(React.useCallback(() => {
+        if (!shouldAutoFocus) {
+            return undefined;
+        }
         if (props.focusMode !== 'routeFocus') {
             return undefined;
         }
@@ -192,7 +203,7 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
             interactionCleanup?.();
             cleanup();
         };
-    }, [focusInputWithRetries, props.focusMode]));
+    }, [focusInputWithRetries, props.focusMode, shouldAutoFocus]));
 
     const handlePaste = React.useCallback(async () => {
         const text = await getClipboardStringTrimmedSafe();
@@ -229,7 +240,7 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
                             onChangeText={props.onChangeValue}
                             placeholder={t('newSession.resume.placeholder', { agent: agentLabel })}
                             placeholderTextColor={theme.colors.input.placeholder}
-                            autoFocus={true}
+                            autoFocus={shouldAutoFocus}
                             style={styles.textInput}
                             autoCapitalize="none"
                             autoCorrect={false}

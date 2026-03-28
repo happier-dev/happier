@@ -11,9 +11,7 @@ import { Text } from '@/components/ui/text/Text';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import type { CreatedSessionFollowUpContext } from '../hooks/useCreateNewSession';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
-
-// Treat <=767px as "mobile" on web: keep the AgentInput bottom-anchored like native.
-const MOBILE_WEB_BOTTOM_ANCHORED_WIDTH = 768;
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 
 export type NewSessionSimplePanelProps = Readonly<{
     popoverBoundaryRef: React.RefObject<View>;
@@ -23,6 +21,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     newSessionTopPadding: number;
     newSessionSidePadding: number;
     newSessionBottomPadding: number;
+    shouldBottomAnchor?: boolean;
     containerStyle: ViewStyle;
     sessionPrompt: string;
     setSessionPrompt: (v: string) => void;
@@ -32,7 +31,6 @@ export type NewSessionSimplePanelProps = Readonly<{
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     sessionPromptInputMaxHeight: number;
-    automationSection?: React.ReactNode;
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     agentInputExtraActionChips?: React.ComponentProps<typeof AgentInput>['extraActionChips'];
     agentType: React.ComponentProps<typeof AgentInput>['agentType'];
@@ -77,7 +75,7 @@ export type NewSessionSimplePanelProps = Readonly<{
 export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.ReactElement {
     const { width: windowWidth } = useWindowDimensions();
     const shouldBottomAnchor =
-        Platform.OS !== 'web' || windowWidth < MOBILE_WEB_BOTTOM_ANCHORED_WIDTH;
+        props.shouldBottomAnchor ?? (Platform.OS !== 'web' || isMobileLayoutWidth(windowWidth));
 
     const {
         attachmentsUploadsEnabled,
@@ -114,7 +112,6 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                     : [
                         {
                             justifyContent: 'center' as const,
-                            paddingTop: 0,
                         },
                     ]),
             ]}
@@ -211,7 +208,6 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                                                 }
                                                 : {})}
                                         />
-                                        {props.automationSection ?? null}
                                         {attachmentsUploadsEnabled ? (
                                             <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={addPickedAttachments} multiple />
                                         ) : null}

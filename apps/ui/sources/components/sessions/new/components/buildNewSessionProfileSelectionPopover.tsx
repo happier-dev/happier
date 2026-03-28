@@ -59,7 +59,7 @@ export function buildNewSessionProfileSelectionPopover(params: Params): Result {
                     maxHeight={maxHeight}
                     profilesListProps={{
                         ...sharedProfilesListProps,
-                        popoverBoundaryRef: null,
+                        popoverBoundaryRef: params.popoverBoundaryRef,
                         onPressDefaultEnvironment: () => {
                             requestClose();
                             params.profilesProps.onPressDefaultEnvironment();

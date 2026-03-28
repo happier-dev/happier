@@ -78,6 +78,27 @@ vi.mock('@/utils/ui/clipboard', () => ({
 }));
 
 describe('NewSessionResumeSelectionContent', () => {
+    it('does not auto-focus the resume id input on native', async () => {
+        const { NewSessionResumeSelectionContent } = await import('./NewSessionResumeSelectionContent');
+
+        const screen = await renderScreen(<NewSessionResumeSelectionContent
+                    value=""
+                    onChangeValue={() => {}}
+                    onSave={() => {}}
+                    onClear={() => {}}
+                    onClose={() => {}}
+                    agentType="claude"
+                />);
+
+        const input = screen.findByTestId('resume-id-input');
+        expect(input).toBeTruthy();
+        if (!input) {
+            throw new Error('expected resume-id-input');
+        }
+
+        expect(input.props?.autoFocus).not.toBe(true);
+    });
+
     it('does not render inline modal-style header chrome inside the popover content', async () => {
         const { NewSessionResumeSelectionContent } = await import('./NewSessionResumeSelectionContent');
 
@@ -155,5 +176,38 @@ describe('NewSessionResumeSelectionContent', () => {
 
         expect(onBrowse).toHaveBeenCalledTimes(1);
         expect(onSave).toHaveBeenCalledWith('sess-123');
+    });
+
+    it('does not auto-save when browse is handled by navigation (onBrowse returns null)', async () => {
+        const { NewSessionResumeSelectionContent } = await import('./NewSessionResumeSelectionContent');
+
+        const onBrowse = vi.fn(async () => null);
+        const onSave = vi.fn();
+
+        const screen = await renderScreen(
+            <NewSessionResumeSelectionContent
+                value=""
+                onChangeValue={() => {}}
+                onSave={onSave}
+                onClear={() => {}}
+                onClose={() => {}}
+                agentType="claude"
+                resumeBrowse={{
+                    enabled: true,
+                    onBrowse,
+                }}
+            />,
+        );
+
+        const browseButton = screen.findByTestId('resume-id-browse-trigger');
+        expect(browseButton).toBeTruthy();
+        if (!browseButton) {
+            throw new Error('expected resume-id-browse-trigger');
+        }
+
+        await browseButton.props.onPress?.();
+
+        expect(onBrowse).toHaveBeenCalledTimes(1);
+        expect(onSave).not.toHaveBeenCalled();
     });
 });
