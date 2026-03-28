@@ -1,11 +1,14 @@
 import type { FeatureId } from '@happier-dev/protocol';
 import type { TranslationKey } from '@/text';
 
+export type UiFeatureToggleServerVisibilityScope = 'main_selection' | 'runtime';
+
 export type UiFeatureDefinition = Readonly<{
     settingsToggle?: Readonly<{
         showInSettings: boolean;
         isExperimental: boolean;
         defaultEnabled: boolean;
+        serverVisibilityScope?: UiFeatureToggleServerVisibilityScope;
         titleKey: TranslationKey;
         subtitleKey: TranslationKey;
         icon: Readonly<{
@@ -94,6 +97,7 @@ export const UI_FEATURE_REGISTRY = {
             showInSettings: true,
             isExperimental: true,
             defaultEnabled: false,
+            serverVisibilityScope: 'runtime',
             titleKey: 'settingsFeatures.expChannelBridges',
             subtitleKey: 'settingsFeatures.expChannelBridgesSubtitle',
             icon: { ioniconName: 'swap-horizontal-outline', color: '#FF9500' },

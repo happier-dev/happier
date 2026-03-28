@@ -11,6 +11,7 @@ import {
 (globalThis as any).__DEV__ = false;
 
 const useServerFeaturesMainSelectionSnapshotMock = vi.fn();
+const useServerFeaturesRuntimeSnapshotMock = vi.fn();
 const useEffectiveServerSelectionMock = vi.fn();
 
 vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal) => {
@@ -18,6 +19,7 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal)
     return {
         ...actual,
         useServerFeaturesMainSelectionSnapshot: (...args: any[]) => useServerFeaturesMainSelectionSnapshotMock(...args),
+        useServerFeaturesRuntimeSnapshot: (...args: any[]) => useServerFeaturesRuntimeSnapshotMock(...args),
     };
 });
 
@@ -82,6 +84,7 @@ describe('FeaturesSettingsScreen gating', () => {
 
         useEffectiveServerSelectionMock.mockReturnValue({ serverIds: [] });
         useServerFeaturesMainSelectionSnapshotMock.mockReturnValue({ status: 'ready', serverIds: [], snapshotsByServerId: {} });
+        useServerFeaturesRuntimeSnapshotMock.mockReturnValue({ status: 'loading' });
 
         useSettingMutableMock.mockImplementation((key: string) => {
             if (key === 'experiments') return createNoopMutable(true);
@@ -194,11 +197,19 @@ describe('FeaturesSettingsScreen gating', () => {
                     status: 'ready',
                     features: createRootLayoutFeaturesResponse({
                         features: {
-                            channelBridges: { enabled: true, telegram: { enabled: true } },
+                            voice: { enabled: true, happierVoice: { enabled: false } },
                         },
                     }),
                 },
             },
+        });
+        useServerFeaturesRuntimeSnapshotMock.mockReturnValue({
+            status: 'ready',
+            features: createRootLayoutFeaturesResponse({
+                features: {
+                    channelBridges: { enabled: true, telegram: { enabled: true } },
+                },
+            }),
         });
 
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
@@ -208,7 +219,7 @@ describe('FeaturesSettingsScreen gating', () => {
         expect(bridgeItem).toBeTruthy();
     });
 
-    it('hides the channel bridges toggle when telegram is hard-disabled by the server', async () => {
+    it('hides the channel bridges toggle when channel bridges are hard-disabled by the runtime server snapshot', async () => {
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = 'channelBridges';
 
         useEffectiveServerSelectionMock.mockReturnValue({ serverIds: ['server-1'] });
@@ -220,11 +231,19 @@ describe('FeaturesSettingsScreen gating', () => {
                     status: 'ready',
                     features: createRootLayoutFeaturesResponse({
                         features: {
-                            channelBridges: { enabled: true, telegram: { enabled: false } },
+                            channelBridges: { enabled: true, telegram: { enabled: true } },
                         },
                     }),
                 },
             },
+        });
+        useServerFeaturesRuntimeSnapshotMock.mockReturnValue({
+            status: 'ready',
+            features: createRootLayoutFeaturesResponse({
+                features: {
+                    channelBridges: { enabled: false, telegram: { enabled: true } },
+                },
+            }),
         });
 
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');

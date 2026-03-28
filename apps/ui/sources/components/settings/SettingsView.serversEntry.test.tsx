@@ -25,9 +25,9 @@ const shared = vi.hoisted(() => ({
 const useFeatureDecisionMock = vi.hoisted(() => vi.fn());
 
 useFeatureDecisionMock.mockImplementation((featureId: string) => {
-    if (featureId !== 'channelBridges') return null;
+    if (featureId !== 'channelBridges' && featureId !== 'channelBridges.telegram') return null;
     return {
-        featureId: 'channelBridges',
+        featureId,
         state: 'enabled',
         blockedBy: null,
         blockerCode: 'none',
@@ -269,9 +269,9 @@ afterEach(() => {
     shared.canRequestReviewSpy.mockResolvedValue(true);
     useFeatureDecisionMock.mockReset();
     useFeatureDecisionMock.mockImplementation((featureId: string) => {
-        if (featureId !== 'channelBridges') return null;
+        if (featureId !== 'channelBridges' && featureId !== 'channelBridges.telegram') return null;
         return {
-            featureId: 'channelBridges',
+            featureId,
             state: 'enabled',
             blockedBy: null,
             blockerCode: 'none',
