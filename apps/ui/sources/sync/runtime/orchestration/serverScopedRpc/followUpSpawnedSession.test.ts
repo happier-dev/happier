@@ -253,7 +253,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         );
     });
 
-    it('forces active-scope hydration when the stored session already exists but is still inactive', async () => {
+    it('forces active-scope hydration when the stored session already exists but is only partially hydrated', async () => {
         const refreshSessions = vi.fn(async () => {});
         const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean }>) => {});
         let storedSession: Session | null = {
@@ -261,8 +261,8 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             createdAt: 1,
             updatedAt: 2,
             seq: 0,
-            active: false,
-            activeAt: 0,
+            active: true,
+            activeAt: 2,
             encryptionMode: 'plain',
             metadataVersion: 0,
             metadata: null,
@@ -284,9 +284,19 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 await ensureSessionVisibleForMessageRoute(sessionId, options);
                 storedSession = {
                     ...storedSession!,
-                    active: true,
-                    activeAt: 3,
                     updatedAt: 3,
+                    metadataVersion: 1,
+                    metadata: {
+                        path: '/repo',
+                        host: 'host',
+                        hydrated: true,
+                    },
+                    agentStateVersion: 2,
+                    agentState: {
+                        controlledByUser: true,
+                        requests: {},
+                        completedRequests: {},
+                    },
                 };
             },
             getStoredSession: () => storedSession,
@@ -298,7 +308,9 @@ describe('followUpSpawnedSessionWithServerScope', () => {
 
         expect(refreshSessions).toHaveBeenCalledTimes(1);
         expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
-        expect(storedSession?.active).toBe(true);
+        expect(storedSession?.metadata).toMatchObject({
+            hydrated: true,
+        });
     });
 
     it('passes displayText, metadata overrides, and profileId through the default active-scope sendMessage wrapper', async () => {

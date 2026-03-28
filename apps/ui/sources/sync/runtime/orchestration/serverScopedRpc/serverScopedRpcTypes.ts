@@ -15,6 +15,7 @@ export type ActiveServerRpcContext = Readonly<{
     scope: 'active';
     machineId: string;
     timeoutMs: number;
+    targetServerId: string;
 }>;
 
 export type ScopedServerRpcContext = Readonly<{

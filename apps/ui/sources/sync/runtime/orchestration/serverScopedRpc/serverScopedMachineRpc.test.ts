@@ -60,6 +60,7 @@ describe('machineRpcWithServerScope', () => {
         machineRpcSpy.mockResolvedValue({ ok: true });
 
         const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        const { readCachedMachineRpcDirectRoute } = await import('@/sync/domains/transfers/runtime/transferRouteCache');
         const result = await machineRpcWithServerScope({
             machineId: 'machine-1',
             method: 'method-test',
@@ -73,6 +74,12 @@ describe('machineRpcWithServerScope', () => {
             { value: 1 },
             { timeoutMs: 30000 },
         );
+        expect(readCachedMachineRpcDirectRoute({
+            serverId: 'server-a',
+            remoteMachineId: 'machine-1',
+        })).toEqual(expect.objectContaining({
+            status: 'viable',
+        }));
         expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
     });
 
@@ -112,6 +119,7 @@ describe('machineRpcWithServerScope', () => {
         createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
 
         const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        const { readCachedMachineRpcDirectRoute } = await import('@/sync/domains/transfers/runtime/transferRouteCache');
         const result = await machineRpcWithServerScope({
             machineId: 'machine-1',
             method: 'method-test',
@@ -134,6 +142,12 @@ describe('machineRpcWithServerScope', () => {
             params: 'encrypted-payload',
             timeoutMs: 5000,
         });
+        expect(readCachedMachineRpcDirectRoute({
+            serverId: 'server-b',
+            remoteMachineId: 'machine-1',
+        })).toEqual(expect.objectContaining({
+            status: 'viable',
+        }));
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
     });
 

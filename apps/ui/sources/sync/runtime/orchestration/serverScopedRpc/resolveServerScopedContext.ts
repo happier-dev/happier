@@ -27,6 +27,7 @@ export async function resolveServerScopedContext(params: Readonly<{
             scope: 'active',
             machineId,
             timeoutMs,
+            targetServerId: activeServerId,
         };
     }
 

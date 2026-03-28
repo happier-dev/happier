@@ -4,6 +4,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { apiSocket } from '@/sync/api/session/apiSocket';
+import { recordCachedMachineRpcDirectRouteViable } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { resolveServerScopedContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedContext';
 import { resolveScopedMachineDataKey } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
@@ -81,7 +82,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
 
         if (context.scope === 'active' && params.preferScoped !== true) {
             try {
-                return await withMachineRpcTimeout(
+                const result = await withMachineRpcTimeout(
                     apiSocket.machineRPC<R, A>(
                         context.machineId,
                         params.method,
@@ -94,6 +95,11 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
                         timeoutMs: context.timeoutMs,
                     },
                 );
+                recordCachedMachineRpcDirectRouteViable({
+                    serverId: context.targetServerId,
+                    remoteMachineId: context.machineId,
+                });
+                return result;
             } catch (error) {
                 if (!shouldFallbackToScopedMachineRpc(error)) {
                     throw error;
@@ -143,7 +149,12 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
             );
 
             if (result.ok) {
-                return await machineEncryption.decryptRaw(result.result) as R;
+                const decoded = await machineEncryption.decryptRaw(result.result) as R;
+                recordCachedMachineRpcDirectRouteViable({
+                    serverId: context.targetServerId,
+                    remoteMachineId: context.machineId,
+                });
+                return decoded;
             }
 
             throw createRpcCallError({

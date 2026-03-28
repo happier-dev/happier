@@ -65,11 +65,6 @@ async function ensureSessionHydratedForNavigation(params: Readonly<{
     getStoredSession: (sessionId: string) => Session | null;
     ensureSessionVisibleForMessageRoute?: (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => Promise<unknown>;
 }>): Promise<void> {
-    const storedSession = params.getStoredSession(params.sessionId);
-    if (storedSession && storedSession.active !== false) {
-        return;
-    }
-
     if (typeof params.ensureSessionVisibleForMessageRoute === 'function') {
         await params.ensureSessionVisibleForMessageRoute(params.sessionId, { forceRefresh: true });
     }
