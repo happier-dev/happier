@@ -43,7 +43,6 @@ export interface EnhancedMode {
     claudeRemoteAgentSdkEnabled?: boolean;
     claudeRemoteSettingSourcesV2?: ReadonlyArray<'user' | 'project' | 'local'>;
     claudeRemoteSettingSources?: 'project' | 'user_project' | 'none';
-    claudeRemoteIncludePartialMessages?: boolean;
     claudeCodeExperimentalAgentTeamsEnabled?: boolean;
     claudeRemoteEnableFileCheckpointing?: boolean;
     claudeRemoteMaxThinkingTokens?: number | null;

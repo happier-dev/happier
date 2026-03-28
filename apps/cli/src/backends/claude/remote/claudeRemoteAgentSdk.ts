@@ -32,6 +32,7 @@ import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAg
 import { parseExplicitSpawnEnvKeysFromProcessEnv } from './agentSdk/explicitSpawnEnvKeysMarker';
 import {
     extractTextDeltaFromStreamEvent,
+    extractThinkingDeltaFromStreamEvent,
     extractToolResultStartFromStreamEvent,
     extractToolUseInputJsonDeltaFromStreamEvent,
     extractToolUseStartFromStreamEvent,
@@ -41,6 +42,7 @@ import {
     recordSeenToolBlocks,
     stripSeenToolBlocksFromMessage,
 } from './agentSdk/streamEventToolBlocks';
+import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 
 type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<SDKUserMessage>;
@@ -99,6 +101,7 @@ export async function claudeRemoteAgentSdk(opts: {
     onSessionFound: (id: string, data?: SessionHookData) => void;
     onThinkingChange?: (thinking: boolean) => void;
     onMessage: (message: SDKMessage) => void;
+    streamedTranscriptWriter?: StreamedTranscriptWriter | null;
     onCompletionEvent?: (message: string) => void;
     onSessionReset?: () => void;
     setUserMessageSender?: (sender: ((message: SDKUserMessage) => void) | null) => void;
@@ -349,8 +352,54 @@ export async function claudeRemoteAgentSdk(opts: {
     const hooks = builtHooks.hooks as any;
     const canUseTool = builtHooks.canUseTool as any;
 
-    const emitMessage = (message: SDKMessage) => {
-        opts.onMessage(normalizeClaudeToolUseNamesInSdkMessage(message));
+    let syntheticUuidCounter = 0;
+    const createSyntheticUuid = () => `happier_synth_${process.pid}_${++syntheticUuidCounter}`;
+
+    const resolvePreferredModelId = (): string | null => {
+        const candidate = argOverrides.model ?? mode.model;
+        return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate : null;
+    };
+
+    const normalizeSdkMessageForUiCompatibility = (message: SDKMessage, hints?: { defaultUuid?: string | null }) => {
+        const preferredModelId = resolvePreferredModelId();
+
+        const existingUuid = (message as any)?.uuid;
+        const nextUuid =
+            typeof existingUuid === 'string' && existingUuid.trim().length > 0
+                ? existingUuid
+                : typeof hints?.defaultUuid === 'string' && hints.defaultUuid.trim().length > 0
+                    ? hints.defaultUuid
+                    : createSyntheticUuid();
+
+        const needsUuidPatch = nextUuid !== existingUuid;
+        const needsModelPatch =
+            message?.type === 'assistant' &&
+            preferredModelId &&
+            message &&
+            typeof message === 'object' &&
+            (message as any).message &&
+            typeof (message as any).message === 'object' &&
+            typeof (message as any).message.model !== 'string';
+
+        if (!needsUuidPatch && !needsModelPatch) return message;
+
+        return {
+            ...(message as any),
+            ...(needsUuidPatch ? { uuid: nextUuid } : null),
+            ...(needsModelPatch
+                ? {
+                    message: {
+                        ...(message as any).message,
+                        model: preferredModelId,
+                    },
+                }
+                : null),
+        } as SDKMessage;
+    };
+
+    const emitMessage = (message: SDKMessage, hints?: { defaultUuid?: string | null }) => {
+        const normalized = normalizeClaudeToolUseNamesInSdkMessage(message);
+        opts.onMessage(normalizeSdkMessageForUiCompatibility(normalized, hints));
     };
 
     const buildSystemPrompt = (): any => {
@@ -445,6 +494,11 @@ export async function claudeRemoteAgentSdk(opts: {
             const queryOptions: Record<string, unknown> = {
                 abortController,
                 cwd: opts.path,
+                // Claude Agent SDK: required so we receive `stream_event` deltas.
+                // Without these, the remote launcher may select the Agent SDK runner (and strip
+                // assistant {text,thinking} blocks), but we would never materialize output through
+                // the streamed transcript writer (resulting in "thinking → online" with no reply).
+                includePartialMessages: true,
             continue: shouldContinue || undefined,
             resume: startFrom ?? undefined,
             ...(startFrom && resumeSessionAt ? { resumeSessionAt } : {}),
@@ -462,7 +516,6 @@ export async function claudeRemoteAgentSdk(opts: {
             env: { ...xdgIsolationEnv, ...buildClaudeSubprocessEnv(), ...experimentalEnvOverlay },
             executable: runtimeExecutable,
             pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
-        includePartialMessages: mode.claudeRemoteIncludePartialMessages === true || undefined,
         enableFileCheckpointing: enableFileCheckpointing || undefined,
         extraArgs: enableFileCheckpointing ? { 'replay-user-messages': null } : undefined,
         maxThinkingTokens: typeof mode.claudeRemoteMaxThinkingTokens === 'number' ? mode.claudeRemoteMaxThinkingTokens : undefined,
@@ -540,6 +593,61 @@ export async function claudeRemoteAgentSdk(opts: {
         if (!promise) return;
         await promise.catch(() => {});
     };
+
+    const streamedTranscriptWriter = opts.streamedTranscriptWriter ?? null;
+
+    const flushStreamedTranscriptWriter = async (
+        reason: 'tool-call-boundary' | 'turn-end' | 'abort',
+        interruptedReason?: string,
+    ) => {
+        if (!streamedTranscriptWriter) return;
+        try {
+            await streamedTranscriptWriter.flushAll({
+                reason,
+                ...(reason === 'abort' && interruptedReason ? { interruptedReason } : {}),
+            });
+        } catch (error) {
+            logger.debug('[claudeRemoteAgentSdk] Failed flushing streamed transcript writer (non-fatal)', { error, reason });
+        }
+    };
+
+    const normalizeSidechainIdForStream = (message: unknown): string | null => {
+        if (!message || typeof message !== 'object') return null;
+        const raw = (message as any).parent_tool_use_id;
+        if (raw === null || raw === undefined) return null;
+        if (typeof raw !== 'string') return null;
+        const trimmed = raw.trim();
+        return trimmed.length > 0 ? trimmed : null;
+    };
+
+    const extractAssistantAndThinkingTextFromAssistantMessage = (
+        message: unknown,
+    ): Readonly<{ assistantText: string | null; thinkingText: string | null }> => {
+        if (!message || typeof message !== 'object') return { assistantText: null, thinkingText: null };
+        const m = message as any;
+        if (m.type !== 'assistant') return { assistantText: null, thinkingText: null };
+        const content = m?.message?.content;
+        if (!Array.isArray(content)) return { assistantText: null, thinkingText: null };
+
+        const assistantParts: string[] = [];
+        const thinkingParts: string[] = [];
+        for (const block of content) {
+            if (!block || typeof block !== 'object') continue;
+            if (block.type === 'text' && typeof (block as any).text === 'string') {
+                assistantParts.push(String((block as any).text));
+            } else if (block.type === 'thinking' && typeof (block as any).thinking === 'string') {
+                thinkingParts.push(String((block as any).thinking));
+            }
+        }
+
+        const assistantText = assistantParts.join('');
+        const thinkingText = thinkingParts.join('');
+        return {
+            assistantText: assistantText.trim().length > 0 ? assistantText : null,
+            thinkingText: thinkingText.trim().length > 0 ? thinkingText : null,
+        };
+    };
+
     try {
         response = createQuery({
             prompt: messages,
@@ -553,6 +661,8 @@ export async function claudeRemoteAgentSdk(opts: {
         let streamingToolResult: { sessionId: string; toolUseId: string; content: string; isError: boolean } | null = null;
         let pendingToolUseMessage: { toolUseId: string; message: SDKMessage } | null = null;
         let pendingToolResultMessage: { toolUseId: string; message: SDKMessage } | null = null;
+        let streamingAssistantText: { sessionId: string; text: string; lastUuid: string | null } | null = null;
+        let pendingStreamEventAssistantTextFlushes: { sessionId: string; text: string; uuid: string | null }[] = [];
         const seen = { toolUseIds: new Set<string>(), toolResultIds: new Set<string>() };
         let lastCheckpointId: string | null = null;
         const checkpointIds: string[] = [];
@@ -576,6 +686,48 @@ export async function claudeRemoteAgentSdk(opts: {
                             (c: any) => c?.type === 'text' && typeof c.text === 'string' && c.text.trim().length > 0,
                         )))
             );
+        };
+
+        const extractAssistantText = (message: unknown): string | null => {
+            const msg: any = message;
+            if (!msg || typeof msg !== 'object') return null;
+            if (msg.type !== 'assistant') return null;
+            const content = msg?.message?.content;
+            if (!Array.isArray(content)) return null;
+            const text = content
+                .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
+                .map((block: any) => String(block.text))
+                .join('');
+            return text.trim().length > 0 ? text : null;
+        };
+
+        const flushPendingStreamEventAssistantText = (incoming: unknown) => {
+            if (pendingStreamEventAssistantTextFlushes.length === 0) return;
+
+            const incomingAssistantText = extractAssistantText(incoming);
+            if (incomingAssistantText) {
+                pendingStreamEventAssistantTextFlushes = pendingStreamEventAssistantTextFlushes.filter(
+                    (pending) => pending.text.trim() !== incomingAssistantText,
+                );
+                if (pendingStreamEventAssistantTextFlushes.length === 0) return;
+            }
+
+            for (const pending of pendingStreamEventAssistantTextFlushes) {
+                if (!pending.text.trim()) continue;
+                const defaultUuid =
+                    typeof pending.uuid === 'string' && pending.uuid.trim().length > 0 ? pending.uuid.trim() : null;
+                emitMessage({
+                    type: 'assistant',
+                    session_id: pending.sessionId,
+                    parent_tool_use_id: null,
+                    ...(defaultUuid ? { uuid: defaultUuid } : null),
+                    message: {
+                        role: 'assistant',
+                        content: [{ type: 'text', text: pending.text }],
+                    },
+                } as any, { defaultUuid });
+            }
+            pendingStreamEventAssistantTextFlushes = [];
         };
 
         const ABORTED = Symbol('aborted');
@@ -733,6 +885,7 @@ export async function claudeRemoteAgentSdk(opts: {
             didFinalizeTurn = true;
             awaitingNextTurnStart = true;
             updateThinking(false);
+            await flushStreamedTranscriptWriter('turn-end');
             if (params?.completionEvent) {
                 opts.onCompletionEvent?.(params.completionEvent);
             }
@@ -795,6 +948,7 @@ export async function claudeRemoteAgentSdk(opts: {
                 const toolUseStart = extractToolUseStartFromStreamEvent(message);
                 if (toolUseStart) {
                     clearFinalizeGuardForNextTurnStart();
+                    await flushStreamedTranscriptWriter('tool-call-boundary');
                     streamingToolUse = {
                         sessionId: typeof (message as any).session_id === 'string' ? (message as any).session_id : '',
                         id: toolUseStart.id,
@@ -824,29 +978,46 @@ export async function claudeRemoteAgentSdk(opts: {
                     continue;
                 }
 
-                const textDelta = extractTextDeltaFromStreamEvent(message);
-                if (textDelta) {
+                const thinkingDelta = extractThinkingDeltaFromStreamEvent(message);
+                if (thinkingDelta) {
                     clearFinalizeGuardForNextTurnStart();
-                    if (streamingToolResult) {
-                        streamingToolResult.content += textDelta;
-                        continue;
-                    }
-                    if (mode.claudeRemoteIncludePartialMessages === true) {
-                            emitMessage({
-                                type: 'assistant',
-                                happierPartial: true,
-                                session_id: (message as any).session_id,
-                                parent_tool_use_id: null,
-                                message: {
-                                    role: 'assistant',
-                                    content: [{ type: 'text', text: textDelta }],
-                                },
-                            } as any);
-                        }
+                    streamedTranscriptWriter?.appendThinkingDelta(thinkingDelta, { sidechainId: normalizeSidechainIdForStream(message) });
                     continue;
                 }
 
+	                const textDelta = extractTextDeltaFromStreamEvent(message);
+	                if (textDelta) {
+	                    clearFinalizeGuardForNextTurnStart();
+                        if (!streamingToolResult) {
+                            const sessionId = typeof (message as any).session_id === 'string' ? (message as any).session_id : '';
+                            const uuid = typeof (message as any).uuid === 'string' ? (message as any).uuid : null;
+                            if (!streamingAssistantText) {
+                                streamingAssistantText = { sessionId, text: '', lastUuid: null };
+                            }
+                            if (streamingAssistantText.sessionId !== sessionId) {
+                                streamingAssistantText.sessionId = sessionId;
+                            }
+                            streamingAssistantText.text += textDelta;
+                            streamingAssistantText.lastUuid = uuid;
+                            streamedTranscriptWriter?.appendAssistantDelta(textDelta, { sidechainId: normalizeSidechainIdForStream(message) });
+                        }
+	                    if (streamingToolResult) {
+	                        streamingToolResult.content += textDelta;
+	                        continue;
+	                    }
+	                    continue;
+	                }
+
                 if (isContentBlockStopStreamEvent(message)) {
+                    if (streamingAssistantText && streamingAssistantText.text.trim().length > 0) {
+                        pendingStreamEventAssistantTextFlushes.push({
+                            sessionId: streamingAssistantText.sessionId,
+                            text: streamingAssistantText.text,
+                            uuid: streamingAssistantText.lastUuid,
+                        });
+                        streamingAssistantText = null;
+                    }
+
                     if (streamingToolUse) {
                         if (seen.toolUseIds.has(streamingToolUse.id)) {
                             streamingToolUse = null;
@@ -862,17 +1033,18 @@ export async function claudeRemoteAgentSdk(opts: {
                             }
                         })();
 
-                        pendingToolUseMessage = {
-                            toolUseId: streamingToolUse.id,
-                            message: {
-                            type: 'assistant',
-                            session_id: streamingToolUse.sessionId,
-                            parent_tool_use_id: null,
-                            message: {
-                                role: 'assistant',
-                                content: [
-                                    {
-                                        type: 'tool_use',
+	                        pendingToolUseMessage = {
+	                            toolUseId: streamingToolUse.id,
+	                            message: {
+	                            type: 'assistant',
+	                            session_id: streamingToolUse.sessionId,
+	                            parent_tool_use_id: null,
+	                            uuid: streamingToolUse.id,
+	                            message: {
+	                                role: 'assistant',
+	                                content: [
+	                                    {
+	                                        type: 'tool_use',
                                         id: streamingToolUse.id,
                                         name: streamingToolUse.name,
                                         input: inputFromJson ?? streamingToolUse.initialInput ?? {},
@@ -891,16 +1063,17 @@ export async function claudeRemoteAgentSdk(opts: {
                             streamingToolResult = null;
                             continue;
                         }
-                        pendingToolResultMessage = {
-                            toolUseId: streamingToolResult.toolUseId,
-                            message: {
-                                type: 'user',
-                            session_id: streamingToolResult.sessionId,
-                            parent_tool_use_id: null,
-                            message: {
-                                role: 'user',
-                                content: [
-                                    {
+	                        pendingToolResultMessage = {
+	                            toolUseId: streamingToolResult.toolUseId,
+	                            message: {
+	                                type: 'user',
+	                            session_id: streamingToolResult.sessionId,
+	                            parent_tool_use_id: null,
+	                            uuid: streamingToolResult.toolUseId,
+	                            message: {
+	                                role: 'user',
+	                                content: [
+	                                    {
                                         type: 'tool_result',
                                         tool_use_id: streamingToolResult.toolUseId,
                                         content: streamingToolResult.content,
@@ -924,6 +1097,9 @@ export async function claudeRemoteAgentSdk(opts: {
             // Important: Claude Code can emit system/status/progress messages between stream_event stop and the
             // assembled assistant/user message. Do not flush pending tool blocks on those intermediary messages.
             const incomingMessageType = (message as any)?.type;
+            if (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result') {
+                flushPendingStreamEventAssistantText(message);
+            }
             if (pendingToolUseMessage && (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result')) {
                 if (messageContainsToolUseId(message, pendingToolUseMessage.toolUseId)) {
                     pendingToolUseMessage = null;
@@ -931,31 +1107,43 @@ export async function claudeRemoteAgentSdk(opts: {
                     // Not a boundary that implies the tool ran (tool_result) and not the assembled tool_use;
                     // keep buffering so we can still dedupe when the assistant tool_use arrives.
                 } else {
-                        const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
-                        if (deduped) {
-                            emitMessage(deduped);
-                            recordSeenToolBlocks(deduped, seen);
-                        }
-                    pendingToolUseMessage = null;
-                }
-            }
+	                        const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
+	                        if (deduped) {
+	                            emitMessage(deduped, { defaultUuid: pendingToolUseMessage.toolUseId });
+	                            recordSeenToolBlocks(deduped, seen);
+	                        }
+	                    pendingToolUseMessage = null;
+	                }
+	            }
 
             if (pendingToolResultMessage && (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result')) {
                 if (messageContainsToolResultForToolUseId(message, pendingToolResultMessage.toolUseId)) {
                     pendingToolResultMessage = null;
                 } else {
-                        const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
-                        if (deduped) {
-                            emitMessage(deduped);
-                            recordSeenToolBlocks(deduped, seen);
-                        }
-                    pendingToolResultMessage = null;
-                }
-            }
+	                        const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
+	                        if (deduped) {
+	                            emitMessage(deduped, { defaultUuid: pendingToolResultMessage.toolUseId });
+	                            recordSeenToolBlocks(deduped, seen);
+	                        }
+	                    pendingToolResultMessage = null;
+	                }
+	            }
 
                 const sdkMessage = message as SDKMessage;
                 const deduped = stripSeenToolBlocksFromMessage(sdkMessage, seen);
                 if (!deduped) continue;
+
+                if (incomingMessageType === 'assistant' && streamedTranscriptWriter) {
+                    const { assistantText, thinkingText } = extractAssistantAndThinkingTextFromAssistantMessage(deduped);
+                    const sidechainId = normalizeSidechainIdForStream(deduped);
+                    if (typeof thinkingText === 'string' && thinkingText.length > 0) {
+                        streamedTranscriptWriter.overrideThinkingText(thinkingText, { sidechainId });
+                    }
+                    if (typeof assistantText === 'string' && assistantText.length > 0) {
+                        streamedTranscriptWriter.overrideAssistantText(assistantText, { sidechainId });
+                    }
+                }
+
                 emitMessage(deduped);
                 recordSeenToolBlocks(deduped, seen);
 
@@ -1024,6 +1212,7 @@ export async function claudeRemoteAgentSdk(opts: {
     } catch (e) {
         if (e instanceof AgentSdkAbortError) {
             logger.debug('[claudeRemoteAgentSdk] Aborted');
+            await flushStreamedTranscriptWriter('abort', 'agent-sdk-abort');
             return;
         }
         if (e && typeof e === 'object') {
@@ -1039,6 +1228,7 @@ export async function claudeRemoteAgentSdk(opts: {
     } finally {
         opts.setUserMessageSender?.(null);
         updateThinking(false);
+        await flushStreamedTranscriptWriter('abort', 'runner-finalize');
         abortController.abort();
         await swallowOptionalPromise(nextMessagePump);
         try {

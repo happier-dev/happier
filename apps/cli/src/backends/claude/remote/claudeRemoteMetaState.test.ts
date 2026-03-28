@@ -56,7 +56,6 @@ describe('applyClaudeRemoteMetaState', () => {
   it('applies supported boolean toggles when provided', () => {
     const next = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE, {
       claudeRemoteAgentSdkEnabled: true,
-      claudeRemoteIncludePartialMessages: true,
       claudeLocalPermissionBridgeEnabled: true,
       claudeLocalPermissionBridgeWaitIndefinitely: true,
       claudeRemoteEnableFileCheckpointing: true,
@@ -67,7 +66,6 @@ describe('applyClaudeRemoteMetaState', () => {
 
     expect(next).toMatchObject({
       claudeRemoteAgentSdkEnabled: true,
-      claudeRemoteIncludePartialMessages: true,
       claudeLocalPermissionBridgeEnabled: true,
       claudeLocalPermissionBridgeWaitIndefinitely: true,
       claudeRemoteEnableFileCheckpointing: true,

@@ -45,6 +45,7 @@ import type { AccountSettings } from '@happier-dev/protocol';
 import { buildTurnChangeSetDiffInput } from '@/agent/tools/diff/buildTurnChangeSetDiffInput';
 import { ClaudeTurnChangeTracker } from './utils/ClaudeTurnChangeTracker';
 import { isClaudeExplicitDiffToolInput } from './utils/isClaudeExplicitDiffToolInput';
+import { createStreamedTranscriptWriter, type StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 
 interface PermissionsField {
     date: number;
@@ -294,6 +295,24 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         (logMessage, meta) => session.client.sendClaudeSessionMessage(logMessage, meta)
     );
 
+    // Whether the currently-running remote runner is actually using streamed transcript writing.
+    // We gate stripping of assistant {text,thinking} blocks on this to avoid dropping output when
+    // the legacy runner is selected (or when Agent SDK falls back to legacy).
+    let streamedTranscriptWriterActive = false;
+
+    const streamedTranscriptWriter: StreamedTranscriptWriter | null = (() => {
+        const client: any = session.client as any;
+        if (typeof client?.sendAgentMessageCommitted !== 'function') return null;
+
+        return createStreamedTranscriptWriter({
+            provider: 'claude' as any,
+            session: {
+                sendAgentMessage: (provider, body, opts) => session.client.sendAgentMessage(provider, body, opts),
+                sendAgentMessageCommitted: (provider, body, opts) => client.sendAgentMessageCommitted(provider, body, opts),
+            },
+        });
+    })();
+
     const taskOutputCollector = new ClaudeRemoteTaskOutputCollector();
     const subagentFileCollector = new ClaudeRemoteSubagentFileCollector({
         emitImported: (body, meta) => {
@@ -541,6 +560,25 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         content: filteredContent,
                     },
                 };
+            }
+
+            if (streamedTranscriptWriter && streamedTranscriptWriterActive) {
+                const content = Array.isArray((msg as SDKAssistantMessage).message?.content)
+                    ? (msg as SDKAssistantMessage).message.content
+                    : [];
+                const stripped = content.filter((block) => {
+                    if (!block || typeof block !== 'object') return true;
+                    return block.type !== 'text' && block.type !== 'thinking';
+                });
+                if (stripped.length !== content.length) {
+                    msg = {
+                        ...(msg as SDKAssistantMessage),
+                        message: {
+                            ...(msg as SDKAssistantMessage).message,
+                            content: stripped,
+                        },
+                    };
+                }
             }
         }
 
@@ -792,6 +830,9 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     // from the transcript file so unread teammate messages still import correctly.
                     await seedTeamInboxFromTranscriptPath(session.sessionId, session.transcriptPath ?? null);
 
+                    // Default to legacy-safe behavior until the dispatch selects a runner.
+                    streamedTranscriptWriterActive = false;
+
                     const remoteResult = await claudeRemoteDispatch({
                         sessionId: session.sessionId,
                         transcriptPath: session.transcriptPath,
@@ -801,6 +842,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         resumeSessionAt,
                         happierMcpServers: baseMcpServers,
                         happierMcpConfigJson: baseMcpConfigJson,
+                        streamedTranscriptWriter,
+                        onRunnerSelected: (runner) => {
+                            streamedTranscriptWriterActive = runner === 'agentSdk';
+                        },
                     canCallTool: permissionHandler.handleToolCall,
                     isAborted: (toolCallId: string) => {
                         return permissionHandler.isAborted(toolCallId);

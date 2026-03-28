@@ -237,4 +237,15 @@ describe('SDKToLogConverter core conversion', () => {
       expect(logMessage).toBeFalsy();
     });
   });
+
+  describe('Internal Claude events', () => {
+    it('does not convert rate_limit_event messages (telemetry, not transcript content)', () => {
+      const logMessage = converter.convert({
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'allowed' },
+      } as any);
+
+      expect(logMessage).toBeNull();
+    });
+  });
 });

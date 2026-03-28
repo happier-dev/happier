@@ -199,6 +199,67 @@ describe.sequential('claudeRemoteLauncher', () => {
     });
   });
 
+  it('does not strip assistant text/thinking blocks when the legacy runner is selected (even if streamed transcript writer is available)', async () => {
+    const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(label)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    };
+
+    const harness = createRemoteHarness();
+
+    // Ensure the remote launcher considers streamed transcript writing available.
+    (harness.client as any).sendAgentMessageCommitted = vi.fn(async () => {});
+
+    // Seed a first queued message that disables the Agent SDK runner (legacy path).
+    harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: false } as any);
+
+    const dispatchObserved = createDeferred<void>();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      const first = await opts.nextMessage();
+      expect(first?.mode?.claudeRemoteAgentSdkEnabled).toBe(false);
+
+      // Ensure switch/exit handlers have session info to work with.
+      opts.onSessionFound?.('sess_legacy', hookWithTranscript('/tmp/sess_legacy.jsonl'));
+
+      // Emit a plain assistant message (no tool blocks) as the legacy runner would.
+      opts.onMessage?.({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'Thinking...' },
+            { type: 'text', text: 'Hello from legacy.' },
+          ],
+        },
+      });
+
+      dispatchObserved.resolve();
+      await waitForAbort(opts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(harness.session);
+
+    const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+    await waitWithin(dispatchObserved.promise, 'remote dispatch mock did not run');
+
+    await waitWithin(Promise.resolve(switchHandler({ to: 'local' })), 'switch handler did not resolve');
+
+    await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
+
+    // The legacy runner must keep text/thinking content intact when converting.
+    const convertedArg = mockConvert.mock.calls[0]?.[0] as any;
+    const blocks = Array.isArray(convertedArg?.message?.content) ? convertedArg.message.content : [];
+    expect(blocks.some((b: any) => b?.type === 'text' && b?.text === 'Hello from legacy.')).toBe(true);
+    expect(blocks.some((b: any) => b?.type === 'thinking' && b?.thinking === 'Thinking...')).toBe(true);
+  });
+
   afterEach(() => {
     for (const session of createdSessions.splice(0)) {
       session.cleanup();

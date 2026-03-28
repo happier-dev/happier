@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -208,6 +208,40 @@ describe('claude session handoff bundle', () => {
       transcriptStorage: 'persisted',
       approvedNewDirectoryCreation: true,
     });
+  });
+
+  it('keeps imported Claude project ids length-safe for deep workspace roots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-import-long-path-'));
+    const targetPath = join(
+      root,
+      ...Array.from({ length: 12 }, (_, index) => `very-long-segment-${String(index).padStart(2, '0')}`),
+      'repo-with-an-exceptionally-long-name-for-claude-project-id-derivation',
+    );
+    await mkdir(targetPath, { recursive: true });
+
+    const result = await importClaudeSessionBundle({
+      bundle: {
+        providerId: 'claude',
+        remoteSessionId: 'claude_session_long_path',
+        transcriptBase64: Buffer.from('{"type":"assistant","text":"long-path"}\n', 'utf8').toString('base64'),
+      },
+      targetPath,
+      env: {
+        CLAUDE_CONFIG_DIR: join(root, '.claude-target'),
+      },
+    });
+
+    const rawProjectId = resolve(targetPath).replace(/[^a-zA-Z0-9-]/g, '-');
+    expect(result.directSource).toMatchObject({
+      kind: 'claudeConfig',
+      configDir: join(root, '.claude-target'),
+    });
+    const projectId = result.directSource.projectId as string;
+    expect(projectId).not.toBe(rawProjectId);
+    expect(projectId.length).toBeLessThan(120);
+
+    const importedPath = join(root, '.claude-target', 'projects', projectId, 'claude_session_long_path.jsonl');
+    await expect(readFile(importedPath, 'utf8')).resolves.toBe('{"type":"assistant","text":"long-path"}\n');
   });
 
   it('uses HAPPIER_CLAUDE_CONFIG_DIR for target import when CLAUDE_CONFIG_DIR is unset', async () => {

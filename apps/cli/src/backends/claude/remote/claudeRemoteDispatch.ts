@@ -10,6 +10,8 @@ type ClaudeRemoteDispatchDependencies = Readonly<{
     claudeRemoteAgentSdk: typeof claudeRemoteAgentSdk;
 }>;
 
+export type ClaudeRemoteRunnerKind = 'legacy' | 'agentSdk';
+
 function isClaudeAgentSdkAuthenticationError(error: unknown): boolean {
     if (!error || typeof error !== 'object') return false;
     const message = (error as { message?: unknown }).message;
@@ -28,7 +30,7 @@ function isClaudeAgentSdkAuthenticationError(error: unknown): boolean {
 }
 
 export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage }>(
-    opts: T,
+    opts: T & { onRunnerSelected?: ((runner: ClaudeRemoteRunnerKind) => void) | null },
     deps?: Partial<ClaudeRemoteDispatchDependencies>,
 ): Promise<void> {
     const first = await opts.nextMessage();
@@ -63,10 +65,12 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
 
     if (first.mode.claudeRemoteAgentSdkEnabled === true) {
         try {
+            baseOpts.onRunnerSelected?.('agentSdk');
             await resolvedAgentSdk({ ...baseOpts, nextMessage: createNextMessage() } as any);
             return;
         } catch (error) {
             if (!consumedBeyondFirst && !didStartSession && isClaudeAgentSdkAuthenticationError(error)) {
+                baseOpts.onRunnerSelected?.('legacy');
                 await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
                 return;
             }
@@ -74,5 +78,6 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
         }
     }
 
+    baseOpts.onRunnerSelected?.('legacy');
     await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
 }

@@ -13,7 +13,6 @@ export type ClaudeRemoteMetaState = Readonly<{
      * Kept for back-compat with older clients. New code should prefer `claudeRemoteSettingSourcesV2`.
      */
     claudeRemoteSettingSources: 'project' | 'user_project' | 'none';
-    claudeRemoteIncludePartialMessages: boolean;
     claudeCodeExperimentalAgentTeamsEnabled: boolean;
     claudeLocalPermissionBridgeEnabled: boolean;
     claudeLocalPermissionBridgeWaitIndefinitely: boolean;
@@ -47,7 +46,6 @@ export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.fr
     // Default to loading BOTH user + project settings so Claude Code can see the user's
     // globally configured MCP servers (and other preferences) when launched by Happier.
     claudeRemoteSettingSources: 'user_project',
-    claudeRemoteIncludePartialMessages: false,
     claudeCodeExperimentalAgentTeamsEnabled: false,
     claudeLocalPermissionBridgeEnabled: true,
     claudeLocalPermissionBridgeWaitIndefinitely: true,
@@ -86,10 +84,6 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
         if (value === 'project' || value === 'user_project' || value === 'none') {
             next.claudeRemoteSettingSources = value;
         }
-    }
-
-    if (typeof record.claudeRemoteIncludePartialMessages === 'boolean') {
-        next.claudeRemoteIncludePartialMessages = record.claudeRemoteIncludePartialMessages;
     }
 
     if (typeof record.claudeCodeExperimentalAgentTeamsEnabled === 'boolean') {

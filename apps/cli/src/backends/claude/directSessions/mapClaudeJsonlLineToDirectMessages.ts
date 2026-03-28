@@ -55,13 +55,66 @@ export function mapClaudeJsonlLineToDirectMessages(params: Readonly<{
   lineValue: unknown;
 }>): DirectTranscriptRawMessageV1[] {
   const createdAtMs = extractEnvelopeTimestampMs(params.lineValue);
-  const parsed = parseRawJsonLinesObject(params.lineValue);
-  if (!parsed) return [];
+  const idPrefix = `claude:${params.fileRelPath}`;
+  const stableId = stableOffsetId(idPrefix, params.lineStartOffsetBytes);
+
+  const rawObject = (() => {
+    const value = params.lineValue;
+    if (!value) return null;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      try {
+        return JSON.parse(trimmed) as unknown;
+      } catch {
+        return null;
+      }
+    }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      return value;
+    }
+    return null;
+  })();
+
+  const rawType = (() => {
+    if (!rawObject || typeof rawObject !== 'object' || Array.isArray(rawObject)) return null;
+    const tag = (rawObject as any).type;
+    return typeof tag === 'string' ? tag : null;
+  })();
+
+  // Drop noisy internal/non-transcript events before schema validation so we don't surface them as opaque schema mismatches.
+  if (rawType && rawType !== 'user' && rawType !== 'assistant') {
+    return [];
+  }
+
+  const parsed = parseRawJsonLinesObject(rawObject);
+  if (!parsed) {
+    return [
+      {
+        id: stableId,
+        localId: stableId,
+        createdAtMs,
+        raw: {
+          role: 'agent',
+          content: {
+            type: 'output',
+            data: {
+              type: 'opaque',
+              reason: 'schema_mismatch',
+              source: {
+                fileRelPath: params.fileRelPath,
+                lineStartOffsetBytes: params.lineStartOffsetBytes,
+              },
+              original: rawObject ?? params.lineValue,
+            },
+          },
+        },
+      },
+    ];
+  }
 
   const normalized = normalizeClaudeToolUseNamesInRawJsonLines(parsed);
   const normalizedForOutput = ensureClaudeOutputMessageRole(normalized);
-  const idPrefix = `claude:${params.fileRelPath}`;
-  const stableId = stableOffsetId(idPrefix, params.lineStartOffsetBytes);
 
   if (
     normalized.type === 'user' &&

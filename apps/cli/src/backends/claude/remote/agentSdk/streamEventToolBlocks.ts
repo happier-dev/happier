@@ -16,6 +16,22 @@ export function extractTextDeltaFromStreamEvent(message: unknown): string | null
   return typeof delta.text === 'string' ? delta.text : null;
 }
 
+export function extractThinkingDeltaFromStreamEvent(message: unknown): string | null {
+  if (!message || typeof message !== 'object') return null;
+  const m = message as any;
+  if (m.type !== 'stream_event') return null;
+
+  const event = m.event;
+  if (!event || typeof event !== 'object') return null;
+  if (event.type !== 'content_block_delta') return null;
+
+  const delta = event.delta;
+  if (!delta || typeof delta !== 'object') return null;
+  if (delta.type !== 'thinking_delta') return null;
+
+  return typeof (delta as any).thinking === 'string' ? (delta as any).thinking : null;
+}
+
 export type StreamEventToolUseStart = { id: string; name: string; input: unknown };
 
 export function extractToolUseStartFromStreamEvent(message: unknown): StreamEventToolUseStart | null {

@@ -2,18 +2,8 @@ import { logger } from '@/ui/logger';
 import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
 
 import type { RawJSONLines } from '../types';
+import { INTERNAL_CLAUDE_EVENT_TYPES } from './internalClaudeEventTypes';
 import { parseRawJsonLinesObject } from './parseRawJsonLines';
-
-/**
- * Known internal Claude Code event types that should be silently skipped.
- * These are written to session JSONL files by Claude Code but are not
- * actual conversation messages - they're internal state/tracking events.
- */
-const INTERNAL_CLAUDE_EVENT_TYPES = new Set([
-  'file-history-snapshot',
-  'change',
-  'queue-operation',
-]);
 
 /**
  * Read and parse a Claude Code session JSONL file.

@@ -15,6 +15,7 @@ import type {
 import type { RawJSONLines } from '@/backends/claude/types'
 import type { PermissionMode } from '@/api/types'
 import { normalizeClaudeToolUseNamesInSdkMessage } from './normalizeClaudeToolUseNames'
+import { INTERNAL_CLAUDE_EVENT_TYPES } from './internalClaudeEventTypes'
 
 /**
  * Context for converting SDK messages to log format
@@ -87,6 +88,11 @@ export class SDKToLogConverter {
      * Convert SDK message to log format
      */
     convert(sdkMessage: SDKMessage): RawJSONLines | null {
+        const rawType = (sdkMessage as any)?.type;
+        if (typeof rawType === 'string' && INTERNAL_CLAUDE_EVENT_TYPES.has(rawType)) {
+            return null;
+        }
+
         const sdkUuidRaw = (sdkMessage as any)?.uuid;
         const sdkUuid = typeof sdkUuidRaw === 'string' && sdkUuidRaw.trim().length > 0 ? sdkUuidRaw.trim() : null;
         const uuid = sdkUuid ?? randomUUID()

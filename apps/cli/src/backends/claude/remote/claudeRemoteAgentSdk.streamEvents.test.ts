@@ -4,8 +4,15 @@ import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
 
 describe('claudeRemoteAgentSdk stream events', () => {
-    it('coalesces Agent SDK stream_event text deltas into synthetic assistant partial messages', async () => {
+    it('streams Agent SDK stream_event text deltas through StreamedTranscriptWriter (no synthetic partial messages)', async () => {
         const onMessage = vi.fn();
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(),
+            appendThinkingDelta: vi.fn(),
+            overrideAssistantText: vi.fn(),
+            overrideThinkingText: vi.fn(),
+            flushAll: vi.fn(async () => {}),
+        };
 
         const createQuery = vi.fn((_params: any) => {
             return {
@@ -56,7 +63,164 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        expect(createQuery).toHaveBeenCalledWith(expect.objectContaining({
+            options: expect.objectContaining({
+                includePartialMessages: true,
+            }),
+        }));
+        expect(onMessage.mock.calls.some(([msg]) => msg?.type === 'stream_event')).toBe(false);
+        expect(streamedTranscriptWriter.appendAssistantDelta).toHaveBeenCalledWith('Hel', { sidechainId: null });
+        expect(streamedTranscriptWriter.appendAssistantDelta).toHaveBeenCalledWith('lo', { sidechainId: null });
+        expect(streamedTranscriptWriter.overrideAssistantText).toHaveBeenCalledWith('Hello', { sidechainId: null });
+        expect(streamedTranscriptWriter.flushAll).toHaveBeenCalledWith({ reason: 'turn-end' });
+    });
+
+    it('streams Agent SDK thinking deltas and overrides the final thinking text when assembled assistant arrives', async () => {
+        const onMessage = vi.fn();
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(),
+            appendThinkingDelta: vi.fn(),
+            overrideAssistantText: vi.fn(),
+            overrideThinkingText: vi.fn(),
+            flushAll: vi.fn(async () => {}),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_t1',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'thinking_delta', thinking: 'I should ' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_t2',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'thinking_delta', thinking: 'respond.' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'assistant',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        message: {
+                            role: 'assistant',
+                            content: [
+                                { type: 'thinking', thinking: 'I should respond.' },
+                                { type: 'text', text: 'Done.' },
+                            ],
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        expect(streamedTranscriptWriter.appendThinkingDelta).toHaveBeenCalledWith('I should ', { sidechainId: null });
+        expect(streamedTranscriptWriter.appendThinkingDelta).toHaveBeenCalledWith('respond.', { sidechainId: null });
+        expect(streamedTranscriptWriter.overrideThinkingText).toHaveBeenCalledWith('I should respond.', { sidechainId: null });
+        expect(streamedTranscriptWriter.overrideAssistantText).toHaveBeenCalledWith('Done.', { sidechainId: null });
+        expect(streamedTranscriptWriter.flushAll).toHaveBeenCalledWith({ reason: 'turn-end' });
+    });
+
+    it('synthesizes an assistant message from stream_event text deltas when no assembled assistant arrives', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_1',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'Hel' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_2',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'lo' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_stop',
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -64,19 +228,10 @@ describe('claudeRemoteAgentSdk stream events', () => {
             createQuery,
         } as any);
 
-        expect(onMessage.mock.calls.some(([msg]) => msg?.type === 'stream_event')).toBe(false);
         expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'assistant',
-            happierPartial: true,
             message: expect.objectContaining({
-                content: [expect.objectContaining({ type: 'text', text: 'Hel' })],
-            }),
-        }));
-        expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
-            type: 'assistant',
-            happierPartial: true,
-            message: expect.objectContaining({
-                content: [expect.objectContaining({ type: 'text', text: 'lo' })],
+                content: [expect.objectContaining({ type: 'text', text: 'Hello' })],
             }),
         }));
     });
@@ -136,7 +291,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -147,7 +302,9 @@ describe('claudeRemoteAgentSdk stream events', () => {
         expect(onMessage.mock.calls.some(([msg]) => msg?.type === 'stream_event')).toBe(false);
         expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'assistant',
+            uuid: 'toolu_1',
             message: expect.objectContaining({
+                model: 'claude-3',
                 content: [expect.objectContaining({ type: 'tool_use', id: 'toolu_1', name: 'Bash' })],
             }),
         }));
@@ -279,7 +436,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -367,7 +524,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -449,7 +606,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -546,7 +703,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -625,7 +782,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
