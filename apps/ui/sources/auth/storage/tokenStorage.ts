@@ -1,9 +1,13 @@
-import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { getActiveServerId, getActiveServerUrl, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { digest } from '@/platform/digest';
 import { encodeBase64 } from '@/encryption/base64';
+import {
+    readNativeSecureStoreString,
+    removeNativeSecureStoreString,
+    writeNativeSecureStoreString,
+} from './nativeSecureStoreWithDevFallback';
 
 const AUTH_KEY = 'auth_credentials';
 const PENDING_EXTERNAL_AUTH_KEY = 'pending_external_auth';
@@ -306,7 +310,7 @@ async function readStoredJson<T>(
     }
 
     try {
-        const stored = await SecureStore.getItemAsync(key);
+        const stored = await readNativeSecureStoreString(key);
         if (!stored) return null;
         const parsed = safeParseJson(stored);
         return validator(parsed) ? parsed : null;
@@ -332,7 +336,7 @@ async function writeStoredJson(
     }
 
     try {
-        await SecureStore.setItemAsync(key, JSON.stringify(value));
+        await writeNativeSecureStoreString(key, JSON.stringify(value));
         return true;
     } catch (error) {
         console.error(`Error setting ${label}:`, error);
@@ -351,7 +355,7 @@ async function removeStoredValue(key: string, label: string): Promise<boolean> {
         }
     }
     try {
-        await SecureStore.deleteItemAsync(key);
+        await removeNativeSecureStoreString(key);
         return true;
     } catch (error) {
         console.error(`Error removing ${label}:`, error);
@@ -405,7 +409,7 @@ async function readCredentialRawByKey(key: string): Promise<string | null> {
     if (cached) return cached;
 
     try {
-        const stored = await SecureStore.getItemAsync(key);
+        const stored = await readNativeSecureStoreString(key);
         if (stored) credentialsCacheByKey.set(key, stored);
         return stored;
     } catch (error) {
@@ -426,7 +430,7 @@ async function writeCredentialRawByKey(key: string, raw: string): Promise<boolea
     }
 
     try {
-        await SecureStore.setItemAsync(key, raw);
+        await writeNativeSecureStoreString(key, raw);
         credentialsCacheByKey.set(key, raw);
         return true;
     } catch (error) {
@@ -447,7 +451,7 @@ async function removeCredentialByKey(key: string): Promise<boolean> {
     }
 
     try {
-        await SecureStore.deleteItemAsync(key);
+        await removeNativeSecureStoreString(key);
         credentialsCacheByKey.delete(key);
         return true;
     } catch (error) {
@@ -508,8 +512,8 @@ export const TokenStorage = {
 
         try {
             const [scopedStored, globalStored] = await Promise.all([
-                SecureStore.getItemAsync(key),
-                SecureStore.getItemAsync(globalKey),
+                readNativeSecureStoreString(key),
+                readNativeSecureStoreString(globalKey),
             ]);
             return Math.max(parse(scopedStored), parse(globalStored));
         } catch {
@@ -534,8 +538,8 @@ export const TokenStorage = {
 
         try {
             await Promise.all([
-                SecureStore.setItemAsync(key, raw),
-                SecureStore.setItemAsync(globalKey, raw),
+                writeNativeSecureStoreString(key, raw),
+                writeNativeSecureStoreString(globalKey, raw),
             ]);
             return true;
         } catch {
@@ -561,7 +565,7 @@ export const TokenStorage = {
         }
 
         try {
-            const stored = await SecureStore.getItemAsync(key);
+            const stored = await readNativeSecureStoreString(key);
             recoveryKeyReminderDismissedCacheByKey.set(key, stored ?? '0');
             return parseRecoveryKeyReminderDismissedRaw(stored);
         } catch {
@@ -600,7 +604,7 @@ export const TokenStorage = {
         }
 
         try {
-            await SecureStore.setItemAsync(key, raw);
+            await writeNativeSecureStoreString(key, raw);
             recoveryKeyReminderDismissedCacheByKey.set(key, raw);
             return true;
         } catch {
