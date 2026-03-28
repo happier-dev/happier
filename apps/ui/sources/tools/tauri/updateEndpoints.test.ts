@@ -10,15 +10,20 @@ describe('Tauri updater endpoints', () => {
     it('uses ui-desktop-* release tags for desktop update feeds', () => {
         const stableConfigPath = path.resolve(__dirname, '../../../src-tauri/tauri.conf.json');
         const previewConfigPath = path.resolve(__dirname, '../../../src-tauri/tauri.preview.conf.json');
+        const publicdevConfigPath = path.resolve(__dirname, '../../../src-tauri/tauri.publicdev.conf.json');
 
         const stableConfig = readJson(stableConfigPath);
         const previewConfig = readJson(previewConfigPath);
+        const publicdevConfig = readJson(publicdevConfigPath);
 
         expect(stableConfig.plugins.updater.endpoints).toEqual([
             'https://github.com/happier-dev/happier/releases/download/ui-desktop-stable/latest.json',
         ]);
         expect(previewConfig.plugins.updater.endpoints).toEqual([
             'https://github.com/happier-dev/happier/releases/download/ui-desktop-preview/latest.json',
+        ]);
+        expect(publicdevConfig.plugins.updater.endpoints).toEqual([
+            'https://github.com/happier-dev/happier/releases/download/ui-desktop-dev/latest.json',
         ]);
     });
 });

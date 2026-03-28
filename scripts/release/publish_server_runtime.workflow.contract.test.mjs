@@ -32,13 +32,13 @@ test('publish-server-runtime workflow publishes rolling server-preview tag via r
   assert.match(raw, /node scripts\/pipeline\/run\.mjs publish-server-runtime/);
 });
 
-test('publish-server-runtime supports publicdev and resolves auto source_ref from the selected channel', async () => {
+test('publish-server-runtime supports dev and resolves auto source_ref from the selected channel', async () => {
   const raw = await loadWorkflow('publish-server-runtime.yml');
 
-  assert.match(raw, /options:[\s\S]*?- preview[\s\S]*?- publicdev[\s\S]*?- stable/);
+  assert.match(raw, /options:[\s\S]*?- preview[\s\S]*?- dev[\s\S]*?- stable/);
   assert.match(
     raw,
-    /if \[ "\$src" = "auto" \]; then[\s\S]*?if \[ "\$channel" = "publicdev" \]; then[\s\S]*?src="dev"[\s\S]*?elif \[ "\$channel" = "preview" \]; then[\s\S]*?src="preview"[\s\S]*?src="main"/,
+    /if \[ "\$src" = "auto" \]; then[\s\S]*?if \[ "\$channel" = "dev" \] \|\| \[ "\$channel" = "publicdev" \]; then[\s\S]*?src="dev"[\s\S]*?elif \[ "\$channel" = "preview" \]; then[\s\S]*?src="preview"[\s\S]*?src="main"/,
   );
 });
 

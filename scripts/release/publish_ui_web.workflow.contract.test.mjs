@@ -31,13 +31,13 @@ test('publish-ui-web uses release bot GitHub App token for rolling tag updates',
   assert.match(raw, /RELEASE_BOT_PRIVATE_KEY/);
 });
 
-test('publish-ui-web supports publicdev and resolves auto source_ref from the selected channel', async () => {
+test('publish-ui-web supports dev and resolves auto source_ref from the selected channel', async () => {
   const raw = await loadWorkflow('publish-ui-web.yml');
 
-  assert.match(raw, /options:[\s\S]*?- preview[\s\S]*?- publicdev[\s\S]*?- stable/);
+  assert.match(raw, /options:[\s\S]*?- preview[\s\S]*?- dev[\s\S]*?- stable/);
   assert.match(
     raw,
-    /if \[ "\$src" = "auto" \]; then[\s\S]*?if \[ "\$channel" = "publicdev" \]; then[\s\S]*?src="dev"[\s\S]*?elif \[ "\$channel" = "preview" \]; then[\s\S]*?src="preview"[\s\S]*?src="main"/,
+    /if \[ "\$src" = "auto" \]; then[\s\S]*?if \[ "\$channel" = "dev" \] \|\| \[ "\$channel" = "publicdev" \]; then[\s\S]*?src="dev"[\s\S]*?elif \[ "\$channel" = "preview" \]; then[\s\S]*?src="preview"[\s\S]*?src="main"/,
   );
 });
 
@@ -56,7 +56,7 @@ test('publish-ui-web embeds build feature policy defaults and exports production
   );
   assert.match(
     raw,
-    /EXPO_UPDATES_CHANNEL:\s*\$\{\{\s*inputs\.channel\s*==\s*'stable'\s*&&\s*'production'\s*\|\|\s*inputs\.channel\s*==\s*'publicdev'\s*&&\s*'publicdev'\s*\|\|\s*'preview'\s*\}\}/,
-    'ui web publishing should set EXPO_UPDATES_CHANNEL so updates headers match stable, preview, and publicdev channels',
+    /EXPO_UPDATES_CHANNEL:\s*\$\{\{\s*inputs\.channel\s*==\s*'stable'\s*&&\s*'production'\s*\|\|\s*\(\(inputs\.channel\s*==\s*'dev'\s*\|\|\s*inputs\.channel\s*==\s*'publicdev'\)\s*&&\s*'publicdev'\)\s*\|\|\s*'preview'\s*\}\}/,
+    'ui web publishing should set EXPO_UPDATES_CHANNEL so updates headers match stable, preview, and dev channels',
   );
 });

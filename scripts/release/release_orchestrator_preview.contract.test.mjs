@@ -220,7 +220,7 @@ test('promote-ui native_submit uses the shared Expo submit script (handles previ
   const script = await loadFile('scripts/pipeline/expo/submit.mjs');
   assert.match(script, /\['ios', 'android'\]/);
   assert.match(script, /for \(const platform of platforms\)/);
-  assert.match(script, /environment === 'preview'/);
+  assert.match(script, /allowsBestEffortSubmit\(environment\)/);
   assert.match(script, /::warning::Expo submit failed for/);
 });
 
@@ -231,7 +231,7 @@ test('promote-ui preview OTA updates are non-interactive and provide an update m
 
   const script = await loadFile('scripts/pipeline/expo/ota-update.mjs');
   assert.match(script, /eas-cli@\$\{easCliVersion\}/);
-  assert.match(script, /resolveUpdateLane\(environment\)/);
+  assert.match(script, /resolveMobileAppEnvironmentConfig\(normalizedEnvironment\)\.updatesChannel/);
   assert.match(script, /--channel/);
   assert.match(script, /resolveExpoInteractivity/);
   assert.match(script, /--message/);

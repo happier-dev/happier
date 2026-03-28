@@ -1,6 +1,6 @@
 const APP_ENVIRONMENT_ALIASES = {
     development: 'internaldev',
-    dev: 'internaldev',
+    dev: 'publicdev',
     canary: 'internalpreview',
     stable: 'production',
     prod: 'production',

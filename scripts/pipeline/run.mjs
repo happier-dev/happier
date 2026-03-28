@@ -19,10 +19,13 @@ import {
   formatMobileReleaseEnvironment,
   isMobileReleaseEnvironment,
   MOBILE_RELEASE_ENVIRONMENT_CHOICES,
+  MOBILE_RELEASE_PROFILE_CHOICES,
   MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES,
   normalizeMobileReleaseEnvironment,
+  normalizeMobileReleaseProfile,
   resolveMobileNativeArtifactRelativePath,
   resolveMobilePipelineDeployEnvironment,
+  resolveMobileProfileInputPrefix,
   resolveMobileProfilePrefix,
   supportsMobileApkReleasePublishing,
   supportsMobileNativeSubmit,
@@ -2117,7 +2120,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     }
 
       const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
-      const profile = String(values.profile ?? '').trim();
+      const rawProfile = String(values.profile ?? '').trim();
+      const profile = normalizeMobileReleaseProfile(rawProfile) || rawProfile;
       const submitPath = String(values.path ?? '').trim();
       const interactive = String(values.interactive ?? '').trim();
       const dryRun = values['dry-run'] === true;
@@ -2405,7 +2409,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       fail(`--platform must be 'ios', 'android', or 'all' (got: ${platform})`);
     }
 
-    const profile = String(values.profile ?? '').trim();
+    const rawProfile = String(values.profile ?? '').trim();
+    const profile = normalizeMobileReleaseProfile(rawProfile) || rawProfile;
     if ((action === 'native' || action === 'native_submit') && !profile) {
       fail('--profile is required for native actions');
     }
@@ -2414,8 +2419,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     }
     if (action === 'native' || action === 'native_submit') {
       const expectedPrefix = resolveUiMobileProfilePrefix(environment);
+      const expectedPrefixLabel = resolveMobileProfileInputPrefix(environment);
       if (!profile.startsWith(expectedPrefix)) {
-        fail(`--profile must start with '${expectedPrefix}' for --environment '${environment}' (got: ${profile || '<empty>'}).`);
+        fail(`--profile must start with '${expectedPrefixLabel}' for --environment '${environmentArg}' (got: ${rawProfile || '<empty>'}).`);
       }
     }
 
@@ -2634,7 +2640,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         if (nativeBuildMode === 'local') {
           apkPath = localArtifactOutForPlatform('android', appVersion || '0.0.0');
           if (!apkPath.endsWith('.apk')) {
-            fail('Android APK workflows require an *-apk EAS profile (internalpreview-apk, publicdev-apk, preview-apk, or production-apk).');
+            fail('Android APK workflows require an *-apk EAS profile (internalpreview-apk, dev-apk, preview-apk, or production-apk).');
           }
         } else {
           runExpoDownloadAndroidApk({
@@ -3785,8 +3791,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           if (!['eas_cloud', 'eas_local'].includes(uiExpoBuilder)) {
             fail(`--ui-expo-builder must be one of: eas_cloud, eas_local (got: ${uiExpoBuilder})`);
           }
-          if (!['auto', 'internaldev', 'internaldev-store', 'internalpreview', 'internalpreview-apk', 'publicdev', 'publicdev-apk', 'preview', 'preview-apk', 'production', 'production-apk'].includes(uiExpoProfileRaw)) {
-            fail(`--ui-expo-profile must be one of: auto, internaldev, internaldev-store, internalpreview, internalpreview-apk, publicdev, publicdev-apk, preview, preview-apk, production, production-apk (got: ${uiExpoProfileRaw})`);
+          if (uiExpoProfileRaw !== 'auto' && !normalizeMobileReleaseProfile(uiExpoProfileRaw)) {
+            fail(`--ui-expo-profile must be one of: auto, ${MOBILE_RELEASE_PROFILE_CHOICES} (got: ${uiExpoProfileRaw})`);
           }
           if (!['ios', 'android', 'all'].includes(uiExpoPlatform)) {
             fail(`--ui-expo-platform must be one of: ios, android, all (got: ${uiExpoPlatform})`);
@@ -4001,7 +4007,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           if (dryRun) {
             const sourceRef = deployEnvironment === 'production' ? 'main' : 'dev';
             const deployPlan = computeDeployPlan(sourceRef);
-            const uiExpoProfile = uiExpoProfileRaw === 'auto' ? deployEnvironment : uiExpoProfileRaw;
+            const uiExpoProfile =
+              uiExpoProfileRaw === 'auto' ? deployEnvironment : normalizeMobileReleaseProfile(uiExpoProfileRaw) || uiExpoProfileRaw;
             const predicted = computeReleaseExecutionPlan({
               environment: deployEnvironment,
               dryRun: false,
@@ -4103,7 +4110,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
 
           // Expo actions (handled via promote-ui in GitHub; run directly here).
-          const uiExpoProfile = uiExpoProfileRaw === 'auto' ? deployEnvironment : uiExpoProfileRaw;
+          const uiExpoProfile =
+            uiExpoProfileRaw === 'auto' ? deployEnvironment : normalizeMobileReleaseProfile(uiExpoProfileRaw) || uiExpoProfileRaw;
           if (uiExpoAction === 'ota') {
             console.log(`[pipeline] release: expo ota (${deployEnvironment})`);
             runExpoOtaUpdate({

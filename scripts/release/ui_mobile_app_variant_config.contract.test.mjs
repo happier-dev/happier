@@ -11,6 +11,7 @@ const { getAppEnvironmentConfig, normalizeAppEnvironmentId } = require(
 
 test('appVariantConfig normalizes legacy mobile environment aliases into the new internal/public ring ids', () => {
   assert.equal(normalizeAppEnvironmentId('development'), 'internaldev');
+  assert.equal(normalizeAppEnvironmentId('dev'), 'publicdev');
   assert.equal(normalizeAppEnvironmentId('canary'), 'internalpreview');
   assert.equal(normalizeAppEnvironmentId('stable'), 'production');
 });

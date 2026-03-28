@@ -50,7 +50,11 @@ function normalizeSegments(filePath) {
 function main() {
     const args = parseArgs(process.argv.slice(2));
 
-    const channel = String(args.get('--channel') ?? '').trim();
+    const requestedChannel = String(args.get('--channel') ?? '').trim().toLowerCase();
+    const channel =
+        requestedChannel === 'dev' || requestedChannel === 'publicdev'
+            ? 'publicdev'
+            : requestedChannel;
     const version = String(args.get('--version') ?? '').trim();
     const pubDate = String(args.get('--pub-date') ?? '').trim();
     const notes = String(args.get('--notes') ?? '').trim();
@@ -62,7 +66,7 @@ function main() {
     // NOTE: `latest.json` uses the Tauri updater schema and doesn't include the channel; we still validate
     // it so CI can fail fast if a workflow is misconfigured.
     if (!channel || !['preview', 'publicdev', 'production', 'stable'].includes(channel)) {
-        fail('--channel must be one of: preview, publicdev, production, stable');
+        fail('--channel must be one of: preview, dev, production, stable');
     }
     if (!version) fail('--version is required');
     if (!pubDate) fail('--pub-date is required');

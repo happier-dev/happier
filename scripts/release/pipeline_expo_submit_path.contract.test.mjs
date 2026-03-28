@@ -66,7 +66,7 @@ test('expo submit uses --latest by default (cloud builds)', () => {
 
 test('expo submit supports --path for local binaries', () => {
   const out = runSubmit({ withPath: true });
-  assert.match(out, /APP_ENV=publicdev/);
+  assert.match(out, /APP_ENV=dev/);
   assert.match(out, /\ssubmit\b/);
   assert.match(out, /\s--path\b/);
   assert.match(out, /\s--profile publicdev\b/);

@@ -25,7 +25,7 @@ export const COMMAND_HELP_EXPO = {
       `--environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}>  Required.`,
       '--action <ota|native|native_submit> Required.',
       '--platform <ios|android|all>        Required.',
-      '--profile <name>                   Required for native/native_submit; must match the selected lane (internaldev*, internalpreview*, publicdev*, preview*, production*).',
+      '--profile <name>                   Required for native/native_submit; must match the selected lane (internaldev*, internalpreview*, dev*, preview*, production*).',
       '--publish-apk-release <auto|true|false> (default: auto).',
       '--native-build-mode <cloud|local>  (default: cloud).',
       '--native-local-runtime <host|dagger> (default: host).',
@@ -54,7 +54,7 @@ export const COMMAND_HELP_EXPO = {
     examples: [
       'node scripts/pipeline/run.mjs ui-mobile-release --environment internaldev --action ota --platform all',
       'node scripts/pipeline/run.mjs ui-mobile-release --environment internalpreview --action native --platform android --profile internalpreview-apk --native-build-mode local --native-local-runtime dagger',
-      'node scripts/pipeline/run.mjs ui-mobile-release --environment dev --action native_submit --platform all --profile publicdev',
+      'node scripts/pipeline/run.mjs ui-mobile-release --environment dev --action native_submit --platform all --profile dev',
       'node scripts/pipeline/run.mjs ui-mobile-release --environment preview --action ota --platform all',
       'node scripts/pipeline/run.mjs ui-mobile-release --environment production --action native --platform ios --profile production --native-build-mode local --native-local-runtime host',
     ],
@@ -172,7 +172,7 @@ export const COMMAND_HELP_EXPO = {
       'Submit defaults to interactive on a local TTY and non-interactive in CI or when output is piped.',
     ],
     examples: [
-      'node scripts/pipeline/run.mjs expo-submit --environment dev --platform all --profile publicdev',
+      'node scripts/pipeline/run.mjs expo-submit --environment dev --platform all --profile dev',
       'node scripts/pipeline/run.mjs expo-submit --environment production --platform ios --profile production --path dist/ui-mobile/happier-production-ios-v0.1.0.ipa',
     ],
   },

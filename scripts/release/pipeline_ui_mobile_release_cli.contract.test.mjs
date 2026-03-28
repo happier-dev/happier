@@ -20,7 +20,7 @@ test('pipeline CLI can orchestrate UI mobile native dev release in dry-run', asy
       '--platform',
       'android',
       '--profile',
-      'publicdev-apk',
+      'dev-apk',
       '--dry-run',
       '--secrets-source',
       'env',

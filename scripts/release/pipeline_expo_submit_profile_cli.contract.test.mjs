@@ -16,7 +16,7 @@ test('pipeline CLI supports --profile for dev expo-submit (dry-run)', () => {
       '--platform',
       'ios',
       '--profile',
-      'publicdev',
+      'dev',
       '--dry-run',
       '--secrets-source',
       'env',
@@ -37,5 +37,4 @@ test('pipeline CLI supports --profile for dev expo-submit (dry-run)', () => {
   assert.match(out, /scripts\/pipeline\/expo\/submit\.mjs/);
   assert.match(out, /--profile\b/);
   assert.match(out, /\[pipeline\] expo submit: environment=dev platform=ios/);
-  assert.match(out, /\bpublicdev\b/);
 });

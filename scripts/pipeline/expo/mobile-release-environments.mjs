@@ -8,6 +8,7 @@ const require = createRequire(import.meta.url);
 const { getAppEnvironmentConfig, normalizeAppEnvironmentId } = require('../../../apps/ui/appVariantConfig.cjs');
 
 /** @typedef {'internaldev' | 'internalpreview' | 'publicdev' | 'preview' | 'production'} MobileReleaseEnvironment */
+/** @typedef {'internaldev' | 'internaldev-store' | 'internalpreview' | 'internalpreview-apk' | 'publicdev' | 'publicdev-apk' | 'preview' | 'preview-apk' | 'production' | 'production-apk'} MobileReleaseProfile */
 
 /** @type {readonly MobileReleaseEnvironment[]} */
 export const MOBILE_RELEASE_ENVIRONMENTS = ['internaldev', 'internalpreview', 'publicdev', 'preview', 'production'];
@@ -15,6 +16,32 @@ export const MOBILE_RELEASE_ENVIRONMENT_INPUTS = ['internaldev', 'internalprevie
 export const MOBILE_RELEASE_ENVIRONMENT_CHOICES = MOBILE_RELEASE_ENVIRONMENT_INPUTS.join('|');
 export const MOBILE_STORE_SUBMIT_ENVIRONMENT_INPUTS = ['dev', 'preview', 'production'];
 export const MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES = MOBILE_STORE_SUBMIT_ENVIRONMENT_INPUTS.join('|');
+/** @type {readonly MobileReleaseProfile[]} */
+export const MOBILE_RELEASE_PROFILES = [
+  'internaldev',
+  'internaldev-store',
+  'internalpreview',
+  'internalpreview-apk',
+  'publicdev',
+  'publicdev-apk',
+  'preview',
+  'preview-apk',
+  'production',
+  'production-apk',
+];
+export const MOBILE_RELEASE_PROFILE_INPUTS = [
+  'internaldev',
+  'internaldev-store',
+  'internalpreview',
+  'internalpreview-apk',
+  'dev',
+  'dev-apk',
+  'preview',
+  'preview-apk',
+  'production',
+  'production-apk',
+];
+export const MOBILE_RELEASE_PROFILE_CHOICES = MOBILE_RELEASE_PROFILE_INPUTS.join('|');
 
 const mobileReleaseConfigs = {
   internaldev: {
@@ -121,6 +148,33 @@ export function formatMobileReleaseEnvironment(environment) {
 }
 
 /**
+ * @param {unknown} raw
+ * @returns {MobileReleaseProfile | ''}
+ */
+export function normalizeMobileReleaseProfile(raw) {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (!value) return '';
+  if (value === 'dev' || value === 'publicdev' || value === 'public-dev' || value === 'public_dev') {
+    return 'publicdev';
+  }
+  if (value === 'dev-apk' || value === 'publicdev-apk' || value === 'public-dev-apk' || value === 'public_dev_apk') {
+    return 'publicdev-apk';
+  }
+  if (value === 'stable') return 'production';
+  if (value === 'stable-apk') return 'production-apk';
+  return MOBILE_RELEASE_PROFILES.includes(/** @type {MobileReleaseProfile} */ (value))
+    ? /** @type {MobileReleaseProfile} */ (value)
+    : '';
+}
+
+/**
+ * @param {MobileReleaseProfile} profile
+ */
+export function formatMobileReleaseProfile(profile) {
+  return profile.startsWith('publicdev') ? profile.replace('publicdev', 'dev') : profile;
+}
+
+/**
  * @param {MobileReleaseEnvironment} environment
  */
 export function resolveMobileReleaseEnvironmentConfig(environment) {
@@ -140,6 +194,13 @@ export function resolveMobilePipelineDeployEnvironment(environment) {
  */
 export function resolveMobileProfilePrefix(environment) {
   return resolveMobileReleaseEnvironmentConfig(environment).profilePrefix;
+}
+
+/**
+ * @param {MobileReleaseEnvironment} environment
+ */
+export function resolveMobileProfileInputPrefix(environment) {
+  return formatMobileReleaseProfile(/** @type {MobileReleaseProfile} */ (resolveMobileProfilePrefix(environment)));
 }
 
 /**

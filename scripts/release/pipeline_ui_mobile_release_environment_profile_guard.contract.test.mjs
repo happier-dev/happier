@@ -50,7 +50,7 @@ test('ui-mobile-release accepts internaldev, internalpreview, and dev native pro
   for (const [environment, profile] of [
     ['internaldev', 'internaldev'],
     ['internalpreview', 'internalpreview-apk'],
-    ['dev', 'publicdev-apk'],
+    ['dev', 'dev-apk'],
   ]) {
     const out = execFileSync(
       process.execPath,

@@ -13,6 +13,7 @@ import {
   MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES,
   formatMobileReleaseEnvironment,
   normalizeMobileReleaseEnvironment,
+  normalizeMobileReleaseProfile,
   resolveMobileAppEnvironmentConfig,
   supportsMobileNativeSubmit,
 } from './mobile-release-environments.mjs';
@@ -276,7 +277,8 @@ function main() {
   }
 
   const submitPathRaw = String(values.path ?? '').trim();
-  const submitProfile = String(values.profile ?? '').trim() || environment;
+  const requestedProfile = String(values.profile ?? '').trim();
+  const submitProfile = normalizeMobileReleaseProfile(requestedProfile) || requestedProfile || environment;
   if (submitPathRaw && platformRaw === 'all') {
     fail("--platform 'all' cannot be used with --path (submit per-platform with explicit paths).");
   }
@@ -356,7 +358,7 @@ function main() {
     const submitArgs = submitPathAbs ? [...baseArgs, '--path', submitPathAbs] : [...baseArgs, '--latest'];
     if (nonInteractive) submitArgs.push('--non-interactive');
 
-    const appEnv = String(process.env.APP_ENV ?? '').trim() || environment;
+    const appEnv = String(process.env.APP_ENV ?? '').trim() || formatMobileReleaseEnvironment(environment);
     const result = run(opts, 'npx', submitArgs, {
       cwd: uiDir,
       env: {

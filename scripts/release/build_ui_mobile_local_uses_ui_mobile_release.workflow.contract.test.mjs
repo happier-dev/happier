@@ -12,9 +12,9 @@ test('build-ui-mobile-local workflow delegates local builds to ui-mobile-release
   assert.match(src, /--publish-apk-release false/);
   assert.match(src, /-\s+internaldev\b/);
   assert.match(src, /-\s+internalpreview\b/);
-  assert.match(src, /-\s+publicdev\b/);
+  assert.match(src, /-\s+dev\b/);
   assert.match(src, /-\s+internaldev-store\b/);
   assert.match(src, /-\s+internalpreview-apk\b/);
-  assert.match(src, /-\s+publicdev-apk\b/);
+  assert.match(src, /-\s+dev-apk\b/);
   assert.match(src, /-\s+ota\b/);
 });

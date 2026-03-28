@@ -81,6 +81,17 @@ test('pipeline CLI supports <command> --help', async () => {
 });
 
 test('pipeline CLI help reflects expanded Expo environment support', async () => {
+  const mobileReleaseHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'ui-mobile-release'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(mobileReleaseHelp, /internaldev\*, internalpreview\*, dev\*, preview\*, production\*/);
+  assert.match(mobileReleaseHelp, /--profile dev\b/);
+  assert.doesNotMatch(mobileReleaseHelp, /\bpublicdev\b/);
+
   const downloadHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'expo-download-apk'], {
     cwd: repoRoot,
     env: { ...process.env },
@@ -98,6 +109,16 @@ test('pipeline CLI help reflects expanded Expo environment support', async () =>
     timeout: 30_000,
   });
   assert.match(publishHelp, /internaldev\|internalpreview\|dev\|preview\|production/);
+
+  const submitHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'expo-submit'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(submitHelp, /--profile dev\b/);
+  assert.doesNotMatch(submitHelp, /\bpublicdev\b/);
 });
 
 test('pipeline CLI help reflects expanded Tauri environment support', async () => {
