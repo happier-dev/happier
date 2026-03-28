@@ -4,7 +4,7 @@ export { UI_FEATURE_REGISTRY, getUiFeatureDefinition } from './registry/uiFeatur
 export type { UiFeatureToggleDefinition } from './registry/uiFeatureToggles';
 export {
     listUiFeatureToggleDefinitions,
+    resolveUiFeatureToggleServerVisibilityScope,
     resolveUiFeatureToggleEnabled,
     buildUiFeatureToggleDefaults,
 } from './registry/uiFeatureToggles';
-

@@ -4,6 +4,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
     features?: Omit<
         Partial<RootLayoutFeatures['features']>,
         | 'attachments'
+        | 'channelBridges'
         | 'automations'
         | 'connectedServices'
         | 'updates'
@@ -19,6 +20,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
     > &
         Readonly<{
             attachments?: Partial<RootLayoutFeatures['features']['attachments']>;
+            channelBridges?: Partial<RootLayoutFeatures['features']['channelBridges']>;
             automations?: Partial<RootLayoutFeatures['features']['automations']>;
             connectedServices?: Partial<RootLayoutFeatures['features']['connectedServices']>;
             updates?: Partial<RootLayoutFeatures['features']['updates']>;
@@ -53,6 +55,10 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         },
         attachments: {
             uploads: { enabled: true },
+        },
+        channelBridges: {
+            enabled: true,
+            telegram: { enabled: true },
         },
         automations: {
             enabled: true,
@@ -190,6 +196,7 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextMachines: Partial<RootLayoutFeatures['features']['machines']> = nextFeatures.machines ?? {};
     const nextTerminal: Partial<RootLayoutFeatures['features']['terminal']> = nextFeatures.terminal ?? {};
     const nextAttachments: Partial<RootLayoutFeatures['features']['attachments']> = nextFeatures.attachments ?? {};
+    const nextChannelBridges: Partial<RootLayoutFeatures['features']['channelBridges']> = nextFeatures.channelBridges ?? {};
     const nextEncryption: Partial<RootLayoutFeatures['features']['encryption']> = nextFeatures.encryption ?? {};
     const nextE2ee: Partial<RootLayoutFeatures['features']['e2ee']> = nextFeatures.e2ee ?? {};
     const nextConnectedServices: Partial<RootLayoutFeatures['features']['connectedServices']> =
@@ -234,6 +241,14 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
             attachments: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.attachments,
                 ...nextAttachments,
+            },
+            channelBridges: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.channelBridges,
+                ...nextChannelBridges,
+                telegram: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.channelBridges.telegram,
+                    ...(nextChannelBridges.telegram ?? {}),
+                },
             },
             sharing: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.sharing,

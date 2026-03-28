@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveMachineTransferFeature } from "../machineTransferFeature";
+import { resolveChannelBridgesFeature } from "../channelBridgesFeature";
 import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
 import { resolveTerminalFeature } from "../terminalFeature";
 import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
@@ -123,6 +124,36 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.features.machines.transfer.directPeer.enabled).toBe(true);
         // Must be bounded even when env is unset (prevents implicit unlimited server-routed streaming).
         expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(2 * 1024 * 1024 * 1024);
+    });
+
+    it("enables channel bridges by default so the experimental UI toggle can appear", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveChannelBridgesFeature]);
+        expect(payload.features.channelBridges.enabled).toBe(true);
+        expect(payload.features.channelBridges.telegram.enabled).toBe(true);
+    });
+
+    it("disables channel bridges (and all providers) when the env toggle is off", () => {
+        const payload = resolveServerFeaturePayload(
+            {
+                HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED: "0",
+            } as NodeJS.ProcessEnv,
+            [resolveChannelBridgesFeature],
+        );
+
+        expect(payload.features.channelBridges.enabled).toBe(false);
+        expect(payload.features.channelBridges.telegram.enabled).toBe(false);
+    });
+
+    it("disables only telegram provider when the env toggle is off", () => {
+        const payload = resolveServerFeaturePayload(
+            {
+                HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED: "0",
+            } as NodeJS.ProcessEnv,
+            [resolveChannelBridgesFeature],
+        );
+
+        expect(payload.features.channelBridges.enabled).toBe(true);
+        expect(payload.features.channelBridges.telegram.enabled).toBe(false);
     });
 
     it("disables only generic server-routed transfer when the env toggle is off", () => {

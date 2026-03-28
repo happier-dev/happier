@@ -8,6 +8,7 @@ import { resolveFriendsFeature } from '../friendsFeature';
 import { resolveOAuthFeature } from '../oauthFeature';
 import { resolveAuthFeature } from '../authFeature';
 import { resolveConnectedServicesFeature } from '../connectedServicesFeature';
+import { resolveChannelBridgesFeature } from '../channelBridgesFeature';
 import { resolveUpdatesFeature } from '../updatesFeature';
 import { resolveAttachmentsUploadsFeature } from '../attachmentsUploadsFeature';
 import { resolveMachineTransferFeature } from '../machineTransferFeature';
@@ -28,6 +29,7 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (_env) => resolveSharingFeature(),
     (env) => resolveVoiceFeature(env),
     (env) => resolveConnectedServicesFeature(env),
+    (env) => resolveChannelBridgesFeature(env),
     (env) => resolveUpdatesFeature(env),
     (env) => resolveAttachmentsUploadsFeature(env),
     (env) => resolveMachineTransferFeature(env),

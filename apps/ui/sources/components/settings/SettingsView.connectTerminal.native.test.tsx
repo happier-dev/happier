@@ -76,7 +76,7 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (cb: () => void) => cb(),
+    useFocusEffect: (_cb: () => void) => {},
 }));
 
 vi.mock('expo-constants', () => ({
@@ -186,9 +186,17 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
 
+vi.mock('@/hooks/server/useFeatureDecision', () => ({
+    useFeatureDecision: () => null,
+}));
+
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: 'https://local.example.test', generation: 0 }),
     listServerProfiles: () => [],
+    subscribeActiveServer: (listener: any) => {
+        listener({ serverId: 'server-1', serverUrl: 'https://local.example.test', generation: 0 });
+        return () => {};
+    },
 }));
 
 describe('SettingsView (native connect terminal)', () => {

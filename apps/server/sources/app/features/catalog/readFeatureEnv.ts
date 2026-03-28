@@ -26,6 +26,11 @@ export type ConnectedServicesFeatureEnv = Readonly<{
   quotasEnabled: boolean;
 }>;
 
+export type ChannelBridgesFeatureEnv = Readonly<{
+  enabled: boolean;
+  telegramEnabled: boolean;
+}>;
+
 export type UpdatesFeatureEnv = Readonly<{
   otaEnabled: boolean;
 }>;
@@ -210,6 +215,13 @@ export function readConnectedServicesFeatureEnv(env: NodeJS.ProcessEnv): Connect
   return {
     enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.connectedServicesEnabled], true),
     quotasEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.connectedServicesQuotasEnabled], true),
+  };
+}
+
+export function readChannelBridgesFeatureEnv(env: NodeJS.ProcessEnv): ChannelBridgesFeatureEnv {
+  return {
+    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.channelBridgesEnabled], true),
+    telegramEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.channelBridgesTelegramEnabled], true),
   };
 }
 

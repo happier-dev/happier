@@ -3,6 +3,7 @@ import type { FeatureId } from '@happier-dev/protocol';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import type { FeatureDecisionScopeParams } from '@/hooks/server/useFeatureDecision';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { t } from '@/text';
 
@@ -17,8 +18,8 @@ function formatDecisionSubtitle(decision: ReturnType<typeof useFeatureDecision>)
     });
 }
 
-const FeatureDiagnosticsRow = React.memo(function FeatureDiagnosticsRow(props: { featureId: FeatureId }) {
-    const decision = useFeatureDecision(props.featureId);
+const FeatureDiagnosticsRow = React.memo(function FeatureDiagnosticsRow(props: { featureId: FeatureId; scope?: FeatureDecisionScopeParams }) {
+    const decision = useFeatureDecision(props.featureId, props.scope);
     return (
         <Item
             title={props.featureId}
@@ -28,14 +29,14 @@ const FeatureDiagnosticsRow = React.memo(function FeatureDiagnosticsRow(props: {
     );
 });
 
-export function FeatureDiagnosticsPanel(props: { featureIds: readonly FeatureId[] }) {
+export function FeatureDiagnosticsPanel(props: { featureIds: readonly FeatureId[]; scope?: FeatureDecisionScopeParams }) {
     return (
         <ItemGroup
             title={t('settingsFeatures.featureDiagnostics.title')}
             footer={t('settingsFeatures.featureDiagnostics.footer')}
         >
             {props.featureIds.map((featureId) => (
-                <FeatureDiagnosticsRow key={featureId} featureId={featureId} />
+                <FeatureDiagnosticsRow key={featureId} featureId={featureId} scope={props.scope} />
             ))}
         </ItemGroup>
     );

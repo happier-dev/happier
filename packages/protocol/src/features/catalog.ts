@@ -51,6 +51,18 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['connectedServices'],
     representation: 'server',
   },
+  channelBridges: {
+    description: 'Channel bridge integrations (Telegram/Discord/etc).',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
+  'channelBridges.telegram': {
+    description: 'Telegram channel bridge provider.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['channelBridges'],
+    representation: 'server',
+  },
   'updates.ota': {
     description: 'Expo over-the-air update checks and apply flows.',
     defaultFailMode: 'fail_closed',
