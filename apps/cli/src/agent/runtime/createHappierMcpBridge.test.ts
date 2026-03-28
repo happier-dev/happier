@@ -6,6 +6,12 @@ import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge'
 const { requireJavaScriptRuntimeExecutableMock } = vi.hoisted(() => ({
   requireJavaScriptRuntimeExecutableMock: vi.fn(async (): Promise<string> => process.execPath),
 }))
+const { startHappyServerMock } = vi.hoisted(() => ({
+  startHappyServerMock: vi.fn(async () => ({
+    url: 'http://127.0.0.1:12345',
+    stop: vi.fn(),
+  })),
+}))
 
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(() => false),
@@ -25,10 +31,7 @@ vi.mock('@/runtime/js/requireJavaScriptRuntimeExecutable', () => ({
 }))
 
 vi.mock('@/mcp/startHappyServer', () => ({
-  startHappyServer: vi.fn(async () => ({
-    url: 'http://127.0.0.1:12345',
-    stop: vi.fn(),
-  })),
+  startHappyServer: startHappyServerMock,
 }))
 
 describe('createHappierMcpBridge', () => {
@@ -37,6 +40,11 @@ describe('createHappierMcpBridge', () => {
     vi.mocked(existsSync).mockReturnValue(false)
     requireJavaScriptRuntimeExecutableMock.mockReset()
     requireJavaScriptRuntimeExecutableMock.mockResolvedValue(process.execPath)
+    startHappyServerMock.mockReset()
+    startHappyServerMock.mockResolvedValue({
+      url: 'http://127.0.0.1:12345',
+      stop: vi.fn(),
+    })
   })
 
   it('uses direct script mode by default', async () => {
@@ -176,5 +184,22 @@ describe('createHappierMcpBridge', () => {
     const session = {} as any
 
     await expect(createHappierMcpBridge(session)).rejects.toThrow(/HAPPIER_JS_RUNTIME_PATH/)
+  })
+
+  it('forwards credentials to the in-session Happier MCP server when provided', async () => {
+    vi.mocked(existsSync).mockImplementation((pathLike) => {
+      const path = String(pathLike)
+      return path.endsWith('/package-dist/backends/codex/happyMcpStdioBridge.mjs')
+    })
+
+    const session = {} as any
+    const credentials = {
+      token: 'token_1',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) },
+    }
+
+    await createHappierMcpBridge(session, { credentials })
+
+    expect(startHappyServerMock).toHaveBeenCalledWith(session, { credentials })
   })
 })

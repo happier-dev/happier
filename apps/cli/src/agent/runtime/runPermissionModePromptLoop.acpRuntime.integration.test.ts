@@ -187,7 +187,6 @@ describe('runPermissionModePromptLoop with real ACP runtime idle overrides', () 
       sessionId: 'happier-session-1',
       keepAlive() {},
       sendAgentMessage() {},
-      sendTranscriptDraftDelta() {},
       async sendAgentMessageCommitted() {},
       async sendUserTextMessageCommitted() {
         return undefined;

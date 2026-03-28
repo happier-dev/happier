@@ -1,6 +1,7 @@
 import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer'
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand'
 import type { McpServerConfig } from '@/agent'
+import type { Credentials } from '@/persistence'
 
 function isTruthyEnvFlag(raw: string | undefined): boolean {
   const normalized = (raw ?? '').trim().toLowerCase()
@@ -20,6 +21,7 @@ export async function createHappierMcpBridge(
   session: HappyMcpSessionClient,
   opts: {
     commandMode?: 'direct-script' | 'current-process'
+    credentials?: Credentials | null
   } = {},
 ): Promise<{
   happierMcpServer: { url: string; stop: () => void }
@@ -32,12 +34,15 @@ export async function createHappierMcpBridgeWithOptions(
   session: HappyMcpSessionClient,
   opts: {
     commandMode?: 'direct-script' | 'current-process'
+    credentials?: Credentials | null
   } = {},
 ): Promise<{
   happierMcpServer: { url: string; stop: () => void }
   mcpServers: Record<string, McpServerConfig>
 }> {
-  const happierMcpServer = await startHappyServer(session)
+  const happierMcpServer = await startHappyServer(session, {
+    credentials: opts.credentials ?? null,
+  })
   const commandMode = opts.commandMode ?? 'direct-script'
   const mcpServers: Record<string, McpServerConfig> = {
     happier: await resolveHappierMcpServerConfig(happierMcpServer.url, commandMode),
