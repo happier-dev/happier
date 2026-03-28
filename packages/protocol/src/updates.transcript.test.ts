@@ -61,22 +61,6 @@ describe('updates transcript vNext payloads', () => {
     expect(parsed.success).toBe(true);
   });
 
-  it('parses transcript-draft ephemerals', () => {
-    const parsed = EphemeralUpdateSchema.safeParse({
-      type: 'transcript-draft',
-      sessionId: 'sess_1',
-      localId: 'l1',
-      segmentKind: 'thinking',
-      sidechainId: null,
-      delta: { t: 'encrypted', c: 'cipher' },
-      createdAt: Date.now(),
-    });
-
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) return;
-    expect(parsed.data.type).toBe('transcript-draft');
-  });
-
   it('parses execution-run-updated ephemerals', () => {
     const parsed = EphemeralUpdateSchema.safeParse({
       type: 'execution-run-updated',

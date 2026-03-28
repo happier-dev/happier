@@ -236,8 +236,7 @@ export type ActionExecutorDeps = Readonly<{
   /**
    * Optional approvals routing policy hook.
    *
-   * When true, and when the ActionSpec is eligible (`requiresApprovalQueue`),
-   * the executor will create an approval request instead of executing the action.
+   * When true, the executor will create an approval request instead of executing the action.
    */
   isActionApprovalRequired?: (actionId: ActionId, ctx: ActionExecutorContext) => boolean;
 
@@ -577,9 +576,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
     try {
       if (approvalRequired && !isApprovalAction) {
-        if (!spec.requiresApprovalQueue) {
-          return { ok: false, errorCode: 'approval_not_supported', error: 'approval_not_supported' };
-        }
         if (!deps.approvalsCreate) {
           return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
         }
@@ -1049,7 +1045,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.sessionStop) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.stop' };
           }
-          const res = await deps.sessionStop({ sessionId });
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionStop({ sessionId, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 
@@ -1061,7 +1058,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const permissionMode = normalizeId((parsed.data as any).permissionMode);
           if (!permissionMode) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          const res = await deps.sessionPermissionModeSet({ sessionId, permissionMode });
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionPermissionModeSet({ sessionId, permissionMode, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 
@@ -1073,7 +1071,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const modelId = normalizeId((parsed.data as any).modelId);
           if (!modelId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          const res = await deps.sessionModelSet({ sessionId, modelId });
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionModelSet({ sessionId, modelId, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 
@@ -1083,7 +1082,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.sessionArchiveSet) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.archive' };
           }
-          const res = await deps.sessionArchiveSet({ sessionId, archived: actionId === 'session.archive' });
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionArchiveSet({
+            sessionId,
+            archived: actionId === 'session.archive',
+            ...(serverId ? { serverId } : {}),
+          });
           return { ok: true, result: res };
         }
 
@@ -1094,7 +1098,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.status.get' };
           }
           const live = (parsed.data as any).live === true;
-          const res = await deps.sessionStatusGet({ sessionId, live });
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionStatusGet({ sessionId, live, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 
@@ -1108,7 +1113,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const format = (parsed.data as any).format === 'raw' ? 'raw' : 'compact';
           const includeMeta = (parsed.data as any).includeMeta === true;
           const includeStructuredPayload = (parsed.data as any).includeStructuredPayload === true;
-          const res = await deps.sessionHistoryGet({ sessionId, limit, format, includeMeta, includeStructuredPayload });
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionHistoryGet({
+            sessionId,
+            limit,
+            format,
+            includeMeta,
+            includeStructuredPayload,
+            ...(serverId ? { serverId } : {}),
+          });
           return { ok: true, result: res };
         }
 
@@ -1119,7 +1132,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.wait.idle' };
           }
           const timeoutSeconds = typeof (parsed.data as any).timeoutSeconds === 'number' ? (parsed.data as any).timeoutSeconds : 300;
-          const res = await deps.sessionWaitIdle({ sessionId, timeoutSeconds });
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionWaitIdle({ sessionId, timeoutSeconds, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 
@@ -1486,7 +1500,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (existing.actionId === 'approval.request.create' || existing.actionId === 'approval.request.decide') {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
-
         const isRecoverableApproved = decision === 'approve'
           && existing.status === 'approved'
           && existing.decision?.kind === 'approve'

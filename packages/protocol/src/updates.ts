@@ -253,15 +253,6 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
     thinking: z.boolean().optional(),
   }).passthrough(),
   z.object({
-    type: z.literal('transcript-draft'),
-    sessionId: z.string(),
-    localId: z.string(),
-    segmentKind: z.enum(['assistant', 'thinking']),
-    sidechainId: z.string().nullable().optional(),
-    delta: SessionStoredMessageContentSchema,
-    createdAt: TimestampMsSchema,
-  }).passthrough(),
-  z.object({
     type: z.literal('execution-run-updated'),
     sessionId: z.string(),
     run: ExecutionRunPublicStateSchema,

@@ -128,14 +128,7 @@ export const ActionSpecSchema = z.object({
   title: z.string().min(1),
   description: z.string().min(1).optional(),
   safety: ActionSafetySchema,
-  /**
-   * When set, the action can be routed through the approval queue even if the
-   * action itself is marked as `safety='safe'`.
-   *
-   * This does not imply that the action always requires approvals; it only
-   * signals eligibility for approval request wrappers.
-   */
-  requiresApprovalQueue: z.boolean().optional(),
+  // UI placements where the action can appear when the relevant surface is enabled.
   placements: z.array(ActionUiPlacementSchema).default([]),
   // Optional stable slash command token for ui_slash_command.
   slash: z.object({
@@ -694,7 +687,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     id: 'review.start',
     title: 'Start review',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
     prompting: { voiceHotPath: true },
     slash: { tokens: ['/review', '/h.review'] },
@@ -916,7 +908,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Start execution run',
     description: 'Start a new execution run within a session.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'execution_run_start' },
     examples: {
@@ -1106,7 +1097,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Wait for execution run',
     description: 'Wait until an execution run reaches a terminal status (succeeded/failed/cancelled/timeout).',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'execution_run_wait' },
     examples: {
@@ -1472,7 +1462,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Send a message to a session',
     description: 'Send a user message to the AI coding assistant inside the specified session.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'sendSessionMessage', mcpToolName: 'session_message_send' },
@@ -1506,7 +1495,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Stop session',
     description: 'Request that the local daemon stops the specified session.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'session_stop' },
     examples: {
@@ -1560,7 +1548,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Set session permission mode',
     description: 'Update the permission intent (read_only/workspace_write/etc) for the specified session.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'session_permission_mode_set' },
     examples: {
@@ -1589,7 +1576,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Set session model',
     description: 'Set the model override for the specified session.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'session_model_set' },
     examples: {
@@ -1618,7 +1604,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Archive session',
     description: 'Archive the specified session.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'session_archive' },
     examples: {
@@ -1644,7 +1629,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Unarchive session',
     description: 'Unarchive the specified session.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'session_unarchive' },
     examples: {
@@ -1670,7 +1654,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Get session status',
     description: 'Get summary status for a session, optionally refreshing live agent state.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'session_status_get' },
     examples: {
@@ -1699,7 +1682,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Get session history',
     description: 'Fetch a slice of session history/transcript records.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'session_history_get' },
     examples: {
@@ -1739,7 +1721,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Wait for session idle',
     description: 'Wait until the session becomes idle or the timeout elapses.',
     safety: 'safe',
-    requiresApprovalQueue: true,
     placements: [],
     bindings: { mcpToolName: 'session_wait_idle' },
     examples: {

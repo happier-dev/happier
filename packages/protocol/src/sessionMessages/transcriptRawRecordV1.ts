@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { createSessionMessageMetaSchema } from './sessionMessageMeta.js';
+import type { SessionMessageMeta } from './sessionMessageMeta.js';
 
 const UsageDataSchema = z
   .object({
@@ -378,10 +379,34 @@ const RawAgentRecordSchema = z
   ])
   ;
 
+export type TranscriptRawRecordV1WithMeta<Meta> =
+  | (Record<string, unknown> & {
+      role: 'agent';
+      content: TranscriptRawAgentRecordV1;
+      meta?: Meta;
+    })
+  | (Record<string, unknown> & {
+      role: 'user';
+      content: {
+        type: 'text';
+        text: string;
+      } & Record<string, unknown>;
+      meta?: Meta;
+    });
+
 export function createTranscriptRawRecordV1Schema(
   zod: typeof z,
+): z.ZodType<TranscriptRawRecordV1WithMeta<SessionMessageMeta>>;
+export function createTranscriptRawRecordV1Schema<MetaSchema extends z.ZodTypeAny>(
+  zod: typeof z,
+  options: Readonly<{
+    metaSchema: MetaSchema;
+  }>,
+) : z.ZodType<TranscriptRawRecordV1WithMeta<z.infer<MetaSchema>>>;
+export function createTranscriptRawRecordV1Schema<MetaSchema extends z.ZodTypeAny>(
+  zod: typeof z,
   options?: Readonly<{
-    metaSchema?: z.ZodTypeAny;
+    metaSchema?: MetaSchema;
   }>,
 ) {
   const metaSchema = options?.metaSchema ?? createSessionMessageMetaSchema(zod);

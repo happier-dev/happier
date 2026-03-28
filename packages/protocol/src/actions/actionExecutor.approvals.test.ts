@@ -202,13 +202,13 @@ describe('createActionExecutor (approvals)', () => {
     expect((res as any).result?.artifactId).toBe('a1');
   });
 
-  it('rejects requiring approval for actions that are not eligible for approval routing', async () => {
+  it('routes any surfaced action through approvals when required by the caller policy', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
-
-    expect(getActionSpec('agents.backends.list').requiresApprovalQueue).not.toBe(true);
+    const agentsBackendsList = vi.fn(async () => ({ items: [] }));
 
     const executor = createExecutor({
       approvalsCreate,
+      agentsBackendsList,
       isActionApprovalRequired: (actionId) => actionId === 'agents.backends.list',
     } as any);
 
@@ -218,8 +218,37 @@ describe('createActionExecutor (approvals)', () => {
       { surface: 'cli' },
     );
 
-    expect(res).toEqual({ ok: false, errorCode: 'approval_not_supported', error: 'approval_not_supported' });
-    expect(approvalsCreate).not.toHaveBeenCalled();
+    expect(res.ok).toBe(true);
+    expect((res as any).result?.kind).toBe('approval_request_created');
+    expect((res as any).result?.artifactId).toBe('a1');
+    expect(agentsBackendsList).not.toHaveBeenCalled();
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        actionId: 'agents.backends.list',
+        createdBy: expect.objectContaining({ surface: 'cli' }),
+      }),
+    }));
+  });
+
+  it('allows approval.request.create for any action (except approval actions)', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    const executor = createExecutor({ approvalsCreate });
+
+    const res = await executor.execute('approval.request.create' as any, {
+      actionId: 'agents.backends.list',
+      actionArgs: {},
+      summary: 'List backends',
+      createdBy: { surface: 'system' },
+    });
+
+    expect(res.ok).toBe(true);
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        actionId: 'agents.backends.list',
+        summary: 'List backends',
+      }),
+    }));
   });
 
   it('creates an approval request via deps.approvalsCreate', async () => {
