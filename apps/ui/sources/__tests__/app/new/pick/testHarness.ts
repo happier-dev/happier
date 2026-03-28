@@ -83,9 +83,13 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
     });
 
     vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock();
+    });
 
     vi.mock('expo-router', async () => {
         const activeOptions = pickerCommonModuleMocksState.options;

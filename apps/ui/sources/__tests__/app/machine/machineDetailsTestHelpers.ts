@@ -1,7 +1,8 @@
 import { vi } from 'vitest';
+import type { Settings } from '@/sync/domains/settings/settings';
 
 type MachineDetailsModuleFactory = () => unknown | Promise<unknown>;
-type MachineDetailsStorageFactory = () => unknown | Promise<unknown>;
+type MachineDetailsStorageFactory = (importOriginal: <T>() => Promise<T>) => unknown | Promise<unknown>;
 
 type InstallMachineDetailsCommonModuleMocksOptions = Readonly<{
     reactNative?: MachineDetailsModuleFactory;
@@ -24,20 +25,18 @@ export function installMachineDetailsCommonModuleMocks(
     vi.mock('react-native-reanimated', () => ({}));
 
     vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            TurboModuleRegistry: { getEnforcing: () => ({}) },
-                            View: 'View',
-                            Text: 'Text',
-                            ScrollView: 'ScrollView',
-                            ActivityIndicator: 'ActivityIndicator',
-                            RefreshControl: 'RefreshControl',
-                            Pressable: 'Pressable',
-                            TextInput: 'TextInput',
-                        }
-    );
-});
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            TurboModuleRegistry: { getEnforcing: () => ({}) },
+            View: 'View',
+            Text: 'Text',
+            ScrollView: 'ScrollView',
+            ActivityIndicator: 'ActivityIndicator',
+            RefreshControl: 'RefreshControl',
+            Pressable: 'Pressable',
+            TextInput: 'TextInput',
+        });
+    });
 
     vi.mock('@expo/vector-icons', () => ({
         Ionicons: 'Ionicons',
@@ -101,16 +100,24 @@ export function installMachineDetailsCommonModuleMocks(
         }).module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: { getState: () => ({}) } as any,
-    useSessions: () => [],
-    useAllMachines: () => [],
-    useMachine: () => null,
-    useSetting: () => false,
-    useSettingMutable: () => [null, vi.fn()],
-    useSettings: () => ({}),
-});
-});
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        const activeOptions = machineDetailsModuleState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage(importOriginal);
+        }
+
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                storage: { getState: () => ({}) } as any,
+                useSessions: () => [],
+                useAllMachines: () => [],
+                useMachine: () => null,
+                useSetting: () => false,
+                useSettingMutable: () => [null, vi.fn()],
+                useSettings: () => ({ schemaVersion: 1 } as Settings),
+            },
+        });
+    });
 }

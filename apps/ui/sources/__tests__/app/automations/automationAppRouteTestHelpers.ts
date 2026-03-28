@@ -51,10 +51,18 @@ export function installAutomationAppRouteCommonModuleMocks(
         return createUnistylesMock();
     });
 
-    vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
-});
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        const activeOptions = automationAppRouteModuleState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage();
+        }
+
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {},
+        });
+    });
 
     vi.mock('@/modal', async () => {
         const activeOptions = automationAppRouteModuleState.options;
