@@ -1,5 +1,5 @@
 import type { Message, ToolCallMessage, UserTextMessage } from '@/sync/domains/messages/messageTypes';
-import { isPendingUserActionRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
 
 export type TranscriptTurnToolCallsGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
 
@@ -44,11 +44,7 @@ function isToolMessage(m: Message): m is ToolCallMessage {
 
 function isGroupableToolMessage(m: Message): m is ToolCallMessage {
     if (!isToolMessage(m)) return false;
-    return !isPendingUserActionRequest({
-        toolName: m.tool.name,
-        requestKind: m.tool.permission?.kind,
-        permissionStatus: m.tool.permission?.status,
-    });
+    return isToolCallMessageGroupableInTranscript(m);
 }
 
 function createEmptyLastTurnState(opts: Readonly<{

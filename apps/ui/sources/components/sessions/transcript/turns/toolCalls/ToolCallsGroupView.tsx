@@ -23,12 +23,16 @@ import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views
 function shouldRenderGroupedToolCallWithMessageView(
     message: ToolCallMessage,
     chromeMode: 'activity_feed' | 'cards',
+    groupExpanded: boolean,
 ): boolean {
     if (chromeMode === 'cards') {
         return true;
     }
     const hasStructuredMeta = Boolean(message.meta?.happier);
     if (isSubAgentTranscriptToolName(message.tool?.name ?? '')) {
+        if (groupExpanded) {
+            return true;
+        }
         if (hasStructuredMeta) {
             return true;
         }
@@ -62,13 +66,14 @@ export function resolveGroupedPreviewSidechainIds(params: Readonly<{
 function renderGroupedToolCallRowContent(params: Readonly<{
     message: ToolCallMessage;
     chromeMode: 'activity_feed' | 'cards';
+    groupExpanded: boolean;
     metadata: Metadata | null;
     sessionId: string;
     nestedMessageId: string | undefined;
     forcePermissionPromptsInTranscript?: boolean;
     interaction: TranscriptInteraction;
 }>): React.ReactNode {
-    if (shouldRenderGroupedToolCallWithMessageView(params.message, params.chromeMode)) {
+    if (shouldRenderGroupedToolCallWithMessageView(params.message, params.chromeMode, params.groupExpanded)) {
         return (
             <MessageView
                 message={params.message}
@@ -243,6 +248,7 @@ export const ToolCallsGroupView = React.memo((props: {
                                     {renderGroupedToolCallRowContent({
                                         message: m,
                                         chromeMode: normalizedChromeMode,
+                                        groupExpanded: false,
                                         metadata: props.metadata,
                                         sessionId: props.sessionId,
                                         nestedMessageId,
@@ -268,6 +274,7 @@ export const ToolCallsGroupView = React.memo((props: {
                                         {renderGroupedToolCallRowContent({
                                             message: m,
                                             chromeMode: normalizedChromeMode,
+                                            groupExpanded: expanded,
                                             metadata: props.metadata,
                                             sessionId: props.sessionId,
                                             nestedMessageId,

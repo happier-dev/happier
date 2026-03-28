@@ -29,6 +29,7 @@ function toolMessage(opts: {
     createdAt: number;
     state: 'running' | 'completed' | 'error';
     name?: string;
+    input?: Record<string, unknown>;
     requestKind?: 'permission' | 'user_action';
 }): ToolCallMessage {
     return {
@@ -40,7 +41,7 @@ function toolMessage(opts: {
             id: `call:${opts.id}`,
             name: opts.name ?? 'tool',
             state: opts.state,
-            input: {},
+            input: opts.input ?? {},
             createdAt: opts.createdAt,
             startedAt: opts.createdAt,
             completedAt: opts.state === 'running' ? null : opts.createdAt + 1,
@@ -208,6 +209,60 @@ describe('buildTranscriptTurns', () => {
         }
         if (turns[0]!.content[2]?.kind === 'tool_calls') {
             expect(turns[0]!.content[2].toolMessageIds).toEqual(['t2']);
+        }
+    });
+
+    it('keeps canonical turn-diff recap tools outside grouped tool-call sections', () => {
+        const chronological: Message[] = [
+            userMessage('u1', 1),
+            toolMessage({ id: 't1', createdAt: 2, state: 'completed' }),
+            toolMessage({
+                id: 'diff-1',
+                createdAt: 3,
+                state: 'completed',
+                name: 'Diff',
+                input: {
+                    unified_diff: [
+                        'diff --git a/apps/ui/a.ts b/apps/ui/a.ts',
+                        '--- a/apps/ui/a.ts',
+                        '+++ b/apps/ui/a.ts',
+                        '@@ -1,1 +1,1 @@',
+                        '-old',
+                        '+new',
+                    ].join('\n'),
+                    _happier: {
+                        sessionChangeScope: 'turn',
+                        turnId: 'turn-1',
+                        sessionId: 'session-1',
+                        provider: 'codex',
+                        source: 'canonical_diff_tool',
+                        confidence: 'exact',
+                        turnStatus: 'completed',
+                        seqRange: {
+                            startSeqInclusive: 1,
+                            endSeqInclusive: 3,
+                        },
+                    },
+                },
+            }),
+        ];
+        const messagesById = Object.fromEntries(chronological.map((m) => [m.id, m]));
+        const messageIdsOldestFirst = chronological.map((m) => m.id);
+
+        const turns = buildTranscriptTurns({
+            messageIdsOldestFirst,
+            messagesById,
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'all_tools_in_turn',
+        });
+
+        expect(turns).toHaveLength(1);
+        expect(turns[0]!.content.map((c) => c.kind)).toEqual(['tool_calls', 'message']);
+        if (turns[0]!.content[0]?.kind === 'tool_calls') {
+            expect(turns[0]!.content[0].toolMessageIds).toEqual(['t1']);
+        }
+        if (turns[0]!.content[1]?.kind === 'message') {
+            expect(turns[0]!.content[1].messageId).toBe('diff-1');
         }
     });
 });

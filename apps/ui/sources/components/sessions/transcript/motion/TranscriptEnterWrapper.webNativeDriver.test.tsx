@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
 
 
@@ -49,6 +49,7 @@ describe('TranscriptEnterWrapper (web native driver)', () => {
     await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
           <div />
         </TranscriptEnterWrapper>);
+    await flushHookEffects();
 
     expect(capturedTimingConfigs.length).toBeGreaterThan(0);
     for (const cfg of capturedTimingConfigs) {
@@ -62,6 +63,7 @@ describe('TranscriptEnterWrapper (web native driver)', () => {
     await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
           <div />
         </TranscriptEnterWrapper>);
+    await flushHookEffects();
 
     // The translateY timing uses `toValue: 0`. On web we skip it to avoid
     // temporarily overlapping neighboring rows and intercepting pointer events.

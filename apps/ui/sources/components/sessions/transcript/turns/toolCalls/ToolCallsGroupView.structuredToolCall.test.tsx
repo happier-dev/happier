@@ -120,6 +120,24 @@ function makeStructuredReviewToolMessage(): ToolCallMessage {
     });
 }
 
+function makeChildlessRunningSubAgentMessage(): ToolCallMessage {
+    return createToolCallMessageFixture({
+        id: 'tool-msg-running-childless',
+        createdAt: 1,
+        tool: {
+            id: 'subagent_run_2',
+            name: 'SubAgentRun',
+            state: 'running',
+            input: { intent: 'review' },
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: null,
+            description: 'Review the workspace',
+        },
+        children: [],
+    });
+}
+
 describe('ToolCallsGroupView (structured tool-call rendering)', () => {
     afterEach(standardCleanup);
 
@@ -191,5 +209,22 @@ describe('ToolCallsGroupView (structured tool-call rendering)', () => {
         expect(renderedMessageViews).toHaveLength(1);
         expect(renderedToolTimelineRows).toHaveLength(0);
         expect(renderedMessageViews[0]?.message?.tool?.name).toBe('SubAgentRun');
+    });
+
+    it('keeps expanded childless SubAgentRun rows on MessageView in activity feed mode before child transcript items arrive', async () => {
+        renderedMessageViews.length = 0;
+        renderedToolTimelineRows.length = 0;
+        toolChromeMode = 'activity_feed';
+        collapsedPreviewCount = 1;
+
+        await renderToolCallsGroupView({
+            status: 'running',
+            toolMessages: [makeChildlessRunningSubAgentMessage()],
+            expanded: true,
+        });
+
+        expect(renderedMessageViews).toHaveLength(1);
+        expect(renderedToolTimelineRows).toHaveLength(0);
+        expect(renderedMessageViews[0]?.message?.id).toBe('tool-msg-running-childless');
     });
 });
