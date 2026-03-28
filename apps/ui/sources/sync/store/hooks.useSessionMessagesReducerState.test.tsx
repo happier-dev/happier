@@ -25,7 +25,6 @@ describe('useSessionMessagesReducerState', () => {
                         messageIdsOldestFirst: [],
                         messagesById,
                         messagesMap: messagesById,
-                        draftsByLocalId: {},
                         reducerState,
                         latestThinkingMessageId: null,
                         latestThinkingMessageActivityAtMs: null,

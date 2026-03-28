@@ -23,8 +23,6 @@ import type { SessionListViewItem } from '../domains/session/listing/sessionList
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
 import { deriveSessionListMeaningfulActivityAt } from '../domains/session/listing/deriveSessionListActivity';
 import { computeHasUnreadActivity } from '../domains/messages/unread';
-import { buildTranscriptDraftMessages } from '../domains/messages/buildTranscriptDraftMessages';
-import { mergeTranscriptCommittedAndDraftMessages } from '../domains/messages/mergeTranscriptCommittedAndDraftMessages';
 import { resolveLastViewedSessionSeq } from '../domains/session/readCursor/resolveLastViewedSessionSeq';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
@@ -62,16 +60,6 @@ const emptyRecord: Record<string, any> = {};
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 const emptyActionDrafts: SessionActionDraft[] = [];
 
-function isAgentTextMessage(message: Message): message is AgentTextMessage {
-  return message.kind === 'agent-text';
-}
-
-function normalizeNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 export function useSessionMessages(
   sessionId: string
 ): { messages: Message[]; isLoaded: boolean } {
@@ -105,32 +93,15 @@ export function useSessionTranscriptIds(sessionId: string): { ids: string[]; isL
       const session = state.sessionMessages[sessionId];
       return {
         committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
-        committedMessagesById: session?.messagesById ?? (emptyRecord as Record<string, Message>),
-        draftsByLocalId: session?.draftsByLocalId ?? emptyRecord,
         messagesVersion: session?.messagesVersion ?? 0,
         isLoaded: session?.isLoaded ?? false,
       };
     })
   );
-
-  const ids = React.useMemo(() => {
-    const draftMessages = buildTranscriptDraftMessages({
-      draftsByLocalId: snapshot.draftsByLocalId as Record<string, {
-        text: string;
-        segmentKind: 'assistant' | 'thinking';
-        sidechainId: string | null;
-        updatedAtMs: number;
-      }>,
-      sidechainId: null,
-    }).filter(isAgentTextMessage);
-    return mergeTranscriptCommittedAndDraftMessages({
-      committedIds: snapshot.committedIds as string[],
-      committedMessagesById: snapshot.committedMessagesById,
-      draftMessages,
-    }).ids;
-  }, [snapshot.committedIds, snapshot.committedMessagesById, snapshot.draftsByLocalId, snapshot.messagesVersion]);
-
-  return React.useMemo(() => ({ ids, isLoaded: snapshot.isLoaded }), [ids, snapshot.isLoaded]);
+  return React.useMemo(
+    () => ({ ids: snapshot.committedIds as string[], isLoaded: snapshot.isLoaded }),
+    [snapshot.committedIds, snapshot.isLoaded, snapshot.messagesVersion],
+  );
 }
 
 export function useForkedTranscriptSnapshot(sessionId: string): ForkedTranscriptSnapshot | null {
@@ -146,28 +117,11 @@ export function useSessionMessagesById(sessionId: string): Record<string, Messag
       return {
         committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
         committedMessagesById: session?.messagesById ?? (emptyRecord as Record<string, Message>),
-        draftsByLocalId: session?.draftsByLocalId ?? emptyRecord,
         messagesVersion: session?.messagesVersion ?? 0,
       };
     })
   );
-
-  return React.useMemo(() => {
-    const draftMessages = buildTranscriptDraftMessages({
-      draftsByLocalId: snapshot.draftsByLocalId as Record<string, {
-        text: string;
-        segmentKind: 'assistant' | 'thinking';
-        sidechainId: string | null;
-        updatedAtMs: number;
-      }>,
-      sidechainId: null,
-    }).filter(isAgentTextMessage);
-    return mergeTranscriptCommittedAndDraftMessages({
-      committedIds: snapshot.committedIds as string[],
-      committedMessagesById: snapshot.committedMessagesById,
-      draftMessages,
-    }).messagesById;
-  }, [snapshot.committedIds, snapshot.committedMessagesById, snapshot.draftsByLocalId, snapshot.messagesVersion]);
+  return React.useMemo(() => snapshot.committedMessagesById, [snapshot.committedMessagesById, snapshot.messagesVersion]);
 }
 
 export function useSessionMessagesVersion(sessionId: string, enabled: boolean = true): number {
@@ -178,26 +132,6 @@ export function useSessionMessagesVersion(sessionId: string, enabled: boolean = 
       return session?.messagesVersion ?? 0;
     })
   );
-}
-
-export function useSessionTranscriptDraftMessages(sessionId: string, sidechainId?: string | null): Message[] {
-  const draftsByLocalId = getStorage()(
-    useShallow((state) => state.sessionMessages[sessionId]?.draftsByLocalId ?? emptyRecord)
-  );
-  const version = useSessionMessagesVersion(sessionId, true);
-  const normalizedSidechainId = typeof sidechainId === 'string' && sidechainId.trim().length > 0 ? sidechainId.trim() : null;
-
-  return React.useMemo(() => {
-    return buildTranscriptDraftMessages({
-      draftsByLocalId: draftsByLocalId as Record<string, {
-        text: string;
-        segmentKind: 'assistant' | 'thinking';
-        sidechainId: string | null;
-        updatedAtMs: number;
-      }>,
-      sidechainId: normalizedSidechainId,
-    });
-  }, [draftsByLocalId, normalizedSidechainId, version]);
 }
 
 export function useSessionMessagesReducerState(sessionId: string) {

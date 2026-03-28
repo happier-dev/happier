@@ -2,7 +2,6 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
-import { readStreamSegmentMetaV1 } from '../../reducer/helpers/streamSegmentMeta';
 import type { Message } from '../../domains/messages/messageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { Session } from '../../domains/state/storageTypes';
@@ -37,7 +36,6 @@ export type SessionMessages = {
     messagesById: Record<string, Message>;
     // Back-compat alias for older call sites (do not use in new code).
     messagesMap: Record<string, Message>;
-    draftsByLocalId: Record<string, { text: string; segmentKind: 'assistant' | 'thinking'; sidechainId: string | null; updatedAtMs: number }>;
     /**
      * IMPORTANT ARCHITECTURE NOTE:
      * `messagesById` is intentionally mutated in-place for streaming performance.
@@ -63,13 +61,6 @@ export type MessagesDomain = {
     sessionMessages: Record<string, SessionMessages>;
     isMutableToolCall: (sessionId: string, callId: string) => boolean;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[]; hasReadyEvent: boolean };
-    applyTranscriptDraftDelta: (sessionId: string, params: {
-        localId: string;
-        segmentKind: 'assistant' | 'thinking';
-        sidechainId: string | null;
-        deltaText: string;
-        createdAtMs: number;
-    }) => void;
     applyMessagesLoaded: (sessionId: string) => void;
     resetSessionMessages: (sessionId: string) => void;
 };
@@ -78,35 +69,6 @@ type MessagesDomainDependencies = {
     sessions: Record<string, Session>;
     sessionPending: Record<string, SessionPending>;
 };
-
-function resolveCommittedTranscriptDraftBase(params: Readonly<{
-    sessionMessages: SessionMessages;
-    localId: string;
-    segmentKind: 'assistant' | 'thinking';
-}>): Readonly<{ text: string; updatedAtMs: number | null }> {
-    const committedMessageId = params.sessionMessages.reducerState.localIds.get(params.localId) ?? null;
-    const isThinking = params.segmentKind === 'thinking';
-    const directMatch = committedMessageId ? params.sessionMessages.messagesById[committedMessageId] : null;
-    if (directMatch?.kind === 'agent-text' && Boolean(directMatch.isThinking) === isThinking && typeof directMatch.text === 'string') {
-        return {
-            text: directMatch.text,
-            updatedAtMs: readStreamSegmentMetaV1(directMatch.meta)?.updatedAtMs ?? null,
-        };
-    }
-
-    for (const message of Object.values(params.sessionMessages.messagesById)) {
-        if (message?.kind !== 'agent-text') continue;
-        if (message.localId !== params.localId) continue;
-        if (Boolean(message.isThinking) !== isThinking) continue;
-        if (typeof message.text !== 'string') continue;
-        return {
-            text: message.text,
-            updatedAtMs: readStreamSegmentMetaV1(message.meta)?.updatedAtMs ?? null,
-        };
-    }
-
-    return { text: '', updatedAtMs: null };
-}
 
 function mergeSortedMessageIdsOldestFirst(params: Readonly<{
     existingSortedIds: readonly string[];
@@ -184,18 +146,12 @@ function coerceSessionMessages(input: unknown): SessionMessages {
             ? Math.trunc(raw.messagesVersion)
             : 0;
 
-    const draftsByLocalId: Record<string, { text: string; segmentKind: 'assistant' | 'thinking'; sidechainId: string | null; updatedAtMs: number }> =
-        raw?.draftsByLocalId && typeof raw.draftsByLocalId === 'object' && !Array.isArray(raw.draftsByLocalId)
-            ? (raw.draftsByLocalId as Record<string, any>)
-            : {};
-
     const isLoaded = raw?.isLoaded === true;
 
     return {
         messageIdsOldestFirst,
         messagesById,
         messagesMap: messagesById,
-        draftsByLocalId,
         reducerState,
         latestThinkingMessageId,
         latestThinkingMessageActivityAtMs,
@@ -361,7 +317,6 @@ function createEmptySessionMessages(): SessionMessages {
         messageIdsOldestFirst: [],
         messagesById,
         messagesMap: messagesById,
-        draftsByLocalId: {},
         reducerState: createReducer(),
         reducerVersion: 0,
         latestThinkingMessageId: null,
@@ -556,17 +511,6 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     }
                 }
 
-                const draftsByLocalId = existingSession.draftsByLocalId;
-                let didClearTranscriptDraft = false;
-                for (const message of processedMessages) {
-                    const localId = 'localId' in message && typeof message.localId === 'string'
-                        ? message.localId.trim()
-                        : null;
-                    if (!localId || draftsByLocalId[localId] === undefined) continue;
-                    delete draftsByLocalId[localId];
-                    didClearTranscriptDraft = true;
-                }
-
                 // Update session with todos and latestUsage
                 // IMPORTANT: We extract latestUsage from the mutable reducerState and copy it to the Session object
                 // This ensures latestUsage is available immediately on load, even before messages are fully loaded
@@ -624,12 +568,11 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             messageIdsOldestFirst: nextIds,
                             messagesById,
                             messagesMap: messagesById,
-                            draftsByLocalId,
                             reducerState: existingSession.reducerState, // Explicitly include the mutated reducer state
                             reducerVersion: (existingSession.reducerVersion ?? 0) + 1,
                             latestThinkingMessageId,
                             latestThinkingMessageActivityAtMs,
-                            messagesVersion: existingSession.messagesVersion + ((processedMessages.length > 0 || didClearTranscriptDraft) ? 1 : 0),
+                            messagesVersion: existingSession.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
                             isLoaded: existingSession.isLoaded
                         }
                     },
@@ -638,59 +581,6 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             });
 
             return { changed: Array.from(changed), hasReadyEvent };
-        },
-        applyTranscriptDraftDelta: (sessionId, params) => {
-            const localId = typeof params.localId === 'string' ? params.localId.trim() : '';
-            if (!localId) return;
-            const deltaText = typeof params.deltaText === 'string' ? params.deltaText : '';
-            if (!deltaText) return;
-            const segmentKind = params.segmentKind === 'thinking' ? 'thinking' : 'assistant';
-            const sidechainId = typeof params.sidechainId === 'string' && params.sidechainId.trim()
-                ? params.sidechainId.trim()
-                : null;
-            const createdAtMs =
-                typeof params.createdAtMs === 'number' && Number.isFinite(params.createdAtMs) && params.createdAtMs >= 0
-                    ? Math.trunc(params.createdAtMs)
-                    : Date.now();
-
-            set((state) => {
-                const existingSession = coerceSessionMessages(state.sessionMessages[sessionId]);
-                const draftsByLocalId = existingSession.draftsByLocalId;
-                const prev = draftsByLocalId[localId];
-                const committedBase = resolveCommittedTranscriptDraftBase({
-                    sessionMessages: existingSession,
-                    localId,
-                    segmentKind,
-                });
-                if (committedBase.updatedAtMs !== null && committedBase.updatedAtMs >= createdAtMs) {
-                    return state;
-                }
-                const prevText =
-                    prev
-                    && prev.segmentKind === segmentKind
-                    && prev.sidechainId === sidechainId
-                    && typeof prev.text === 'string'
-                        ? prev.text
-                        : committedBase.text;
-                draftsByLocalId[localId] = {
-                    text: prevText + deltaText,
-                    segmentKind,
-                    sidechainId,
-                    updatedAtMs: createdAtMs,
-                };
-
-                return {
-                    ...state,
-                    sessionMessages: {
-                        ...state.sessionMessages,
-                        [sessionId]: {
-                            ...existingSession,
-                            draftsByLocalId,
-                            messagesVersion: existingSession.messagesVersion + 1,
-                        },
-                    },
-                };
-            });
         },
         applyMessagesLoaded: (sessionId: string) => set((state) => {
             const rawExistingSession = state.sessionMessages[sessionId];
@@ -750,7 +640,6 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             messageIdsOldestFirst,
                             messagesById,
                             messagesMap: messagesById,
-                            draftsByLocalId: {},
                             latestThinkingMessageId,
                             latestThinkingMessageActivityAtMs,
                             messagesVersion,
@@ -786,7 +675,6 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         messageIdsOldestFirst: [],
                         messagesById,
                         messagesMap: messagesById,
-                        draftsByLocalId: {},
                         reducerState: createReducer(),
                         reducerVersion: 0,
                         latestThinkingMessageId: null,

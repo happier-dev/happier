@@ -122,13 +122,6 @@ export interface MachinesDomainSlice {
 export interface MessagesDomainSlice {
     sessionMessages: Record<string, SessionMessages>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[]; hasReadyEvent: boolean };
-    applyTranscriptDraftDelta: (sessionId: string, params: {
-        localId: string;
-        segmentKind: 'assistant' | 'thinking';
-        sidechainId: string | null;
-        deltaText: string;
-        createdAtMs: number;
-    }) => void;
     applyMessagesLoaded: (sessionId: string) => void;
     resetSessionMessages: (sessionId: string) => void;
     isMutableToolCall: (sessionId: string, callId: string) => boolean;
