@@ -2,7 +2,7 @@ import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/prot
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { installPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 
 const machineRpcTargetAvailableState = { value: true };
 const cachedDirectRouteStatusState = { value: 'unknown' as 'unknown' | 'viable' | 'unavailable' };
@@ -34,9 +34,9 @@ function createServerFeaturesResponse(partial?: Readonly<{
 }
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    installPartialStorageModuleMock({
+    createPartialStorageModuleMock(importOriginal, {
         useSession: () => ({ active: true }),
-    })(importOriginal),
+    }),
 );
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({

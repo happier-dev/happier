@@ -6,13 +6,9 @@ import { Ionicons, Octicons } from '@expo/vector-icons';
 import { RepositoryTreeList } from '@/components/sessions/files/content/RepositoryTreeList';
 import { SearchResultsList } from '@/components/sessions/files/content/SearchResultsList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import {
-    FileBrowserToolbar,
-    FileBrowserToolbarIconButton,
-    resolveVisibleFileBrowserToolbarActionIds,
-} from '@/components/ui/filesystemBrowser/FileBrowserToolbar';
-import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { FileBrowserToolbarIconButton } from '@/components/ui/filesystemBrowser/FileBrowserToolbar';
+import { FilesystemBrowserToolbarChrome, type FilesystemBrowserToolbarAction } from '@/components/ui/filesystemBrowser/FilesystemBrowserToolbarChrome';
 import { RepositoryTreeDropOverlay } from '@/components/sessions/files/repositoryTree/RepositoryTreeDropOverlay';
 import { RepositoryTreeTransferStatusBar } from '@/components/sessions/files/repositoryTree/RepositoryTreeTransferStatusBar';
 import { WebDropTargetView } from '@/components/sessions/files/repositoryTree/WebDropTargetView';
@@ -65,17 +61,7 @@ type ToolbarActionId =
     | 'repository-tree-collapse-all'
     | 'repository-tree-close';
 
-type ToolbarActionConfig = Readonly<{
-    id: ToolbarActionId;
-    priority: number;
-    order: number;
-    icon: React.ReactNode;
-    menuIcon: React.ComponentProps<typeof Ionicons>['name'];
-    accessibilityLabel: string;
-    disabled?: boolean;
-    selected?: boolean;
-    onPress: () => void;
-}>;
+type ToolbarActionConfig = FilesystemBrowserToolbarAction;
 
 export const SessionRepositoryTreeBrowserView = React.memo((props: SessionRepositoryTreeBrowserViewProps) => {
     const { theme } = useUnistyles();
@@ -93,7 +79,6 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     const [treeReloadNonce, setTreeReloadNonce] = React.useState(0);
     const [uploadMenuOpen, setUploadMenuOpen] = React.useState(false);
     const [uploadDestinationDir, setUploadDestinationDir] = React.useState('');
-    const [toolbarWidth, setToolbarWidth] = React.useState<number | null>(null);
     const [searchResults, setSearchResults] = React.useState<FileItem[]>([]);
     const [isSearching, setIsSearching] = React.useState(false);
     const showSearchBar = props.showSearchBar !== false;
@@ -477,24 +462,20 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         theme.colors.textSecondary,
     ]);
 
-    const visibleToolbarActionIds = React.useMemo(
-        () => resolveVisibleFileBrowserToolbarActionIds({ toolbarWidth, actions: toolbarActions }),
-        [toolbarActions, toolbarWidth],
-    );
+    const buildOverflowItems = React.useCallback((hiddenActions: readonly ToolbarActionConfig[]) => {
+        const hiddenItems = hiddenActions
+            .filter((action) => action.id !== 'repository-tree-upload')
+            .map((action) => ({
+                id: action.id,
+                title: action.accessibilityLabel,
+                icon: action.menuIcon,
+                disabled: action.disabled,
+                onPress: action.onPress,
+            }));
+        if (!hiddenActions.some((action) => action.id === 'repository-tree-upload')) {
+            return hiddenItems;
+        }
 
-    const visibleToolbarActions = React.useMemo(
-        () => toolbarActions.filter((action) => visibleToolbarActionIds.has(action.id)).sort((left, right) => left.order - right.order),
-        [toolbarActions, visibleToolbarActionIds],
-    );
-
-    const hiddenToolbarActions = React.useMemo(
-        () => toolbarActions.filter((action) => !visibleToolbarActionIds.has(action.id)).sort((left, right) => left.order - right.order),
-        [toolbarActions, visibleToolbarActionIds],
-    );
-
-    const uploadShouldBeVisible = visibleToolbarActionIds.has('repository-tree-upload');
-
-    const overflowMenuItems = React.useMemo<ItemAction[]>(() => {
         const uploadOverflowItems: ItemAction[] = [
             {
                 id: 'repository-tree-upload-destination-select',
@@ -511,25 +492,9 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                 onPress: () => onSelectUploadMenuItem(item.id),
             })),
         ];
-        const hiddenItems = hiddenToolbarActions
-            .filter((action) => action.id !== 'repository-tree-upload')
-            .map((action) => ({
-            id: action.id,
-            title: action.accessibilityLabel,
-            icon: action.menuIcon,
-            disabled: action.disabled,
-            onPress: action.onPress,
-        }));
 
-        if (!uploadShouldBeVisible) {
-            return [
-                ...uploadOverflowItems,
-                ...hiddenItems,
-            ];
-        }
-
-        return hiddenItems;
-    }, [hiddenToolbarActions, onSelectUploadMenuItem, uploadActionsAvailable, uploadMenuConfig.items, uploadShouldBeVisible]);
+        return [...uploadOverflowItems, ...hiddenItems];
+    }, [onSelectUploadMenuItem, uploadActionsAvailable, uploadMenuConfig.items]);
 
     const renderToolbarIconButton = React.useCallback((action: ToolbarActionConfig) => {
         if (action.id === 'repository-tree-upload') {
@@ -573,36 +538,17 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     return (
         <View style={{ flex: 1 }}>
             {showSearchBar ? (
-                <FileBrowserToolbar
+                <FilesystemBrowserToolbarChrome
                     testID="repository-tree-toolbar"
                     searchTestID="repository-tree-search"
                     searchPlaceholder={t('files.searchPlaceholder')}
                     searchValue={searchQuery}
                     onSearchValueChange={setSearchQuery}
-                    onWidthChange={setToolbarWidth}
-                >
-                    {visibleToolbarActions.map(renderToolbarIconButton)}
-                    {overflowMenuItems.length > 0 ? (
-                        <ItemRowActions
-                            title={t('common.moreActions')}
-                            actions={overflowMenuItems}
-                            overflowTriggerTestID="repository-tree-toolbar-overflow"
-                            compactThreshold={Number.POSITIVE_INFINITY}
-                            compactActionIds={[]}
-                            renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => (
-                                <FileBrowserToolbarIconButton
-                                    testID={testID ?? 'repository-tree-toolbar-overflow'}
-                                    accessibilityLabel={accessibilityLabel ?? t('common.moreActions')}
-                                    accessibilityHint={accessibilityHint}
-                                    accessibilityState={{ expanded: open }}
-                                    onPress={toggle}
-                                >
-                                    <Ionicons name="ellipsis-horizontal" size={16} color={theme.colors.textSecondary} />
-                                </FileBrowserToolbarIconButton>
-                            )}
-                        />
-                    ) : null}
-                </FileBrowserToolbar>
+                    actions={toolbarActions}
+                    buildOverflowItems={buildOverflowItems}
+                    overflowTriggerTestID="repository-tree-toolbar-overflow"
+                    renderActionNode={renderToolbarIconButton}
+                />
             ) : null}
             {Platform.OS === 'web' ? (
                 <>
