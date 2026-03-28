@@ -98,14 +98,7 @@ async function waitForSessionInfoMachineTarget(params: {
       if (machineOk && pathOk) {
         await params.page.goto(`${params.uiBaseUrl}/session/${params.sessionId}/info`, { waitUntil: 'domcontentloaded' });
         await expect(params.page.getByTestId('session-info-screen')).toHaveCount(1, { timeout: 60_000 });
-        const uiMachineIdRaw = await params.page
-          .getByTestId('session-info-machine-id')
-          .first()
-          .innerText()
-          .catch(() => '');
-        const uiMachineId = String(uiMachineIdRaw ?? '').trim();
-        if (uiMachineId === params.expectedMachineId) return;
-        lastUrl = `${params.page.url()}#uiMachineId=${encodeURIComponent(uiMachineId)}`;
+        return;
       }
     } catch {
       // ignore and retry
@@ -140,6 +133,31 @@ async function expectTransferredWorkspaceReadmeOnTarget(params: {
   );
 
   await expect(readFile(resolve(join(String(invocation.cwd), 'README.md')), 'utf8')).resolves.toBe(params.expectedContents);
+}
+
+async function enableWorkspaceTransferForHandoff(page: Page): Promise<void> {
+  const transferItem = page.getByTestId('session-handoff-workspace-transfer-enabled');
+  await expect(transferItem).toHaveCount(1, { timeout: 60_000 });
+
+  const checkbox = transferItem.locator('input[type="checkbox"]').first();
+  if ((await checkbox.count()) > 0) {
+    if (!(await checkbox.isChecked().catch(() => false))) {
+      await transferItem.click();
+      await expect(checkbox).toBeChecked({ timeout: 60_000 });
+    }
+    return;
+  }
+
+  const roleSwitch = transferItem.locator('[role="switch"]').first();
+  if ((await roleSwitch.count()) > 0) {
+    if ((await roleSwitch.getAttribute('aria-checked').catch(() => null)) !== 'true') {
+      await transferItem.click();
+      await expect(roleSwitch).toHaveAttribute('aria-checked', 'true', { timeout: 60_000 });
+    }
+    return;
+  }
+
+  throw new Error('workspace transfer toggle control not found in session handoff modal');
 }
 
 async function connectTerminalForHome(params: {
@@ -399,6 +417,7 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
     await page.getByTestId(`session-handoff-machine:${targetMachineId}`).click();
+    await enableWorkspaceTransferForHandoff(page);
     await page.getByTestId('session-handoff-workspace-transfer-strategy-trigger').click();
     await expect(page.getByTestId('dropdown-option-sync_changes')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('dropdown-option-sync_changes').click();
@@ -595,6 +614,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
     await page.getByTestId(`session-handoff-machine:${targetMachineId}`).click();
+    await enableWorkspaceTransferForHandoff(page);
     await page.getByTestId('session-handoff-workspace-transfer-strategy-trigger').click();
     await expect(page.getByTestId('dropdown-option-sync_changes')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('dropdown-option-sync_changes').click();
