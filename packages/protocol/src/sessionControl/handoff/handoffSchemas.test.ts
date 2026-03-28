@@ -73,7 +73,7 @@ describe('session handoff schemas', () => {
       ignoredIncludeGlobs: ['dist/**'],
     });
 
-    expect(
+        expect(
       mod.SessionHandoffStatusSchema.safeParse({
         handoffId: 'handoff_1',
         status: 'pending',
@@ -93,6 +93,14 @@ describe('session handoff schemas', () => {
             files: 4,
             bytes: 5,
             blobs: 6,
+          },
+          applied: {
+            files: 2,
+            bytes: 3,
+          },
+          remaining: {
+            files: 8,
+            bytes: 29,
           },
           current: {
             relativePath: 'src/index.ts',

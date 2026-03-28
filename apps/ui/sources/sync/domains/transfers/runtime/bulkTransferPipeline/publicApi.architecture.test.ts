@@ -18,7 +18,6 @@ describe('bulkTransferPipeline (public API)', () => {
             'listDaemonPromptAssetTypes',
             'listDaemonPromptRegistryAdapters',
             'listDaemonPromptRegistrySources',
-            'resolveBulkTransferPolicyAndRoute',
             'scanDaemonPromptRegistrySource',
             'shouldPreferScopedMachineRpcForBulkTransfer',
             'uploadBulkJsonPayload',

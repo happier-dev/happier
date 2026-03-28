@@ -448,6 +448,8 @@ function createLoopbackMachineTransferChannels() {
             checkpoint: 'stage_target',
             planned: {},
             transferred: {},
+            applied: {},
+            remaining: {},
             current: {
               phaseDetail: 'importing_workspace',
             },
@@ -2557,16 +2559,18 @@ function createLoopbackMachineTransferChannels() {
 	          status: 'awaiting_recovery',
 	          phase: 'staging_target',
 	          jobId: prepareJobId,
-	          progress: {
-	            updatedAtMs: expect.any(Number),
-	            checkpoint: 'stage_target',
-	            planned: {},
-	            transferred: {},
-	            current: {
-	              phaseDetail: 'daemon_restart_missing_runner',
-	            },
-	            resumable: false,
-	          },
+          progress: {
+            updatedAtMs: expect.any(Number),
+            checkpoint: 'stage_target',
+            planned: {},
+            transferred: {},
+            applied: {},
+            remaining: {},
+            current: {
+              phaseDetail: 'daemon_restart_missing_runner',
+            },
+            resumable: false,
+          },
 	        },
 	      });
     } finally {
@@ -2674,6 +2678,14 @@ function createLoopbackMachineTransferChannels() {
             transferred: {
               files: 10,
               bytes: 100,
+            },
+            applied: {
+              files: 10,
+              bytes: 100,
+            },
+            remaining: {
+              files: 0,
+              bytes: 0,
             },
             current: {
               phaseDetail: 'workspace_replication:transfer_missing_blobs_to_target_cas',

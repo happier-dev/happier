@@ -533,6 +533,7 @@ init_daemon_diagnostic_placeholders() {
     host.daemon.status.txt \
     host.daemon.log.path.txt \
     host.daemon.log.tail.txt \
+    host.daemon.scope.json \
     guest.daemon.start.txt \
     guest.daemon.status.txt \
     guest.daemon.log.path.txt \
@@ -542,6 +543,67 @@ init_daemon_diagnostic_placeholders() {
       printf "%s\n" "(not collected)" > "${DAEMON_DIAG_DIR}/${name}"
     fi
   done
+}
+
+write_host_daemon_scope_diagnostics() {
+  local canonical_stack_cli_root="${1:-}"
+  local canonical_stack_active_server_id="${2:-}"
+  local host_home_rel="${3:-}"
+  local stack_access_key_src="${4:-}"
+  local effective_host_daemon_home="${5:-}"
+  local used_isolated_host_home="${6:-0}"
+  local requested_host_home_dir=""
+  local host_access_key_dst=""
+
+  if [[ -n "${host_home_rel}" ]]; then
+    requested_host_home_dir="$HOME/${host_home_rel}"
+    if [[ -n "${canonical_stack_active_server_id}" ]]; then
+      host_access_key_dst="${requested_host_home_dir}/servers/${canonical_stack_active_server_id}/access.key"
+    fi
+  fi
+
+  python3 - "${DAEMON_DIAG_DIR}/host.daemon.scope.json" \
+    "${canonical_stack_cli_root}" \
+    "${canonical_stack_active_server_id}" \
+    "${host_home_rel}" \
+    "${stack_access_key_src}" \
+    "${requested_host_home_dir}" \
+    "${host_access_key_dst}" \
+    "${effective_host_daemon_home}" \
+    "${used_isolated_host_home}" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+canonical_stack_cli_root = (sys.argv[2] or "").strip() or None
+canonical_stack_active_server_id = (sys.argv[3] or "").strip() or None
+host_home_rel = (sys.argv[4] or "").strip() or None
+stack_access_key_source = (sys.argv[5] or "").strip() or None
+requested_host_home_dir = (sys.argv[6] or "").strip() or None
+host_access_key_destination = (sys.argv[7] or "").strip() or None
+effective_host_daemon_home = (sys.argv[8] or "").strip() or None
+used_isolated_host_home = (sys.argv[9] or "").strip() == "1"
+
+path.write_text(
+    json.dumps(
+        {
+            "kind": "wsrepl_host_daemon_scope",
+            "canonicalStackCliRoot": canonical_stack_cli_root,
+            "canonicalStackActiveServerId": canonical_stack_active_server_id,
+            "hostHomeRel": host_home_rel,
+            "requestedHostHomeDir": requested_host_home_dir,
+            "stackAccessKeySource": stack_access_key_source,
+            "hostAccessKeyDestination": host_access_key_destination,
+            "effectiveHostDaemonHome": effective_host_daemon_home,
+            "usedIsolatedHostHome": used_isolated_host_home,
+        },
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
 }
 
 read_wsrepl_daemon_log_tail_lines() {
@@ -561,13 +623,15 @@ read_wsrepl_daemon_log_tail_lines() {
 capture_vm_connectivity_to_host_direct_peer_port_best_effort() {
   local out_file="${REPORT_ROOT}/vm.host-direct-peer.tcp.txt"
   local enabled="${WSREPL_QA_HOST_DIRECT_PEER_VM_CONNECTIVITY_CHECK:-1}"
-  if [[ "${enabled}" == "0" ]]; then
+  local host_port="${1:-}"
+  if [[ -z "${host_port}" && "${enabled}" == "0" ]]; then
     printf "%s\n" "(skipped: WSREPL_QA_HOST_DIRECT_PEER_VM_CONNECTIVITY_CHECK=0)" > "${out_file}"
     return 0
   fi
 
-  local host_port=""
-  host_port="$(resolve_wsrepl_host_direct_peer_bind_port)"
+  if [[ -z "${host_port}" ]]; then
+    host_port="$(resolve_wsrepl_host_direct_peer_bind_port)"
+  fi
 
   # Best-effort: do not fail the wrapper if the connectivity probe fails. The matrix itself
   # should fail closed if direct-peer is not viable.
@@ -722,7 +786,7 @@ start_host_daemon_watchdog_background() {
   local watchdog_cli_root=""
   local watchdog_active_server_id=""
   local watchdog_stack_hint=""
-  watchdog_stack_hint="$(resolve_stack_cli_home_and_active_server_id_for_ui_url || true)"
+  watchdog_stack_hint="$(resolve_stack_cli_home_and_active_server_id_for_ui_url "${host_server_url:-}" || true)"
   if [[ -n "${watchdog_stack_hint}" ]]; then
     watchdog_cli_root="$(printf "%s" "${watchdog_stack_hint}" | cut -d '|' -f 1)"
     watchdog_active_server_id="$(printf "%s" "${watchdog_stack_hint}" | cut -d '|' -f 2)"
@@ -1219,7 +1283,99 @@ PY
   "${cmd[@]}"
 }
 
+resolve_stack_cli_auth_scope_json_for_ui_url() {
+  local server_url_hint="${1:-}"
+  node --input-type=module - "${REPO_DIR}" "${server_url_hint}" <<'NODE' 2>/dev/null || true
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const repoDir = process.argv[2];
+const serverUrlHint = String(process.argv[3] ?? '').trim();
+const authPathsModuleUrl = pathToFileURL(path.join(repoDir, '.project/scripts/qa/resolveStackAuthPaths.mjs')).href;
+const matrixCredentialsModuleUrl = pathToFileURL(path.join(repoDir, '.project/scripts/qa/wsreplMatrixCredentials.mjs')).href;
+const { resolveQaStackName, resolveStackNameFromServerPort } = await import(authPathsModuleUrl);
+const { resolveStackCliAccessKeyCandidatesForUi } = await import(matrixCredentialsModuleUrl);
+
+const homeDir = String(process.env.HOME ?? '').trim() || os.homedir();
+const explicitStackName = String(process.env.HAPPIER_QA_STACK_NAME ?? '').trim();
+const explicitAccessKeyPath = String(process.env.HAPPIER_QA_ACCESS_KEY_PATH ?? '').trim();
+const uiUrl = String(process.env.HAPPIER_UI_URL ?? '').trim();
+const envServerUrl = String(process.env.HAPPIER_SERVER_URL ?? '').trim();
+
+function resolvePort(rawUrl) {
+  const raw = String(rawUrl ?? '').trim();
+  if (!raw) return 0;
+  try {
+    const parsed = new URL(raw);
+    const port = Number(parsed.port);
+    return Number.isFinite(port) ? port : 0;
+  } catch {
+    return 0;
+  }
+}
+
+let stackName = explicitStackName;
+if (!stackName && serverUrlHint) {
+  stackName = resolveStackNameFromServerPort({ serverPort: resolvePort(serverUrlHint), homeDir });
+}
+if (!stackName && envServerUrl) {
+  stackName = resolveStackNameFromServerPort({ serverPort: resolvePort(envServerUrl), homeDir });
+}
+if (!stackName) {
+  stackName = resolveQaStackName({ uiUrl, explicitStackName: '', homeDir });
+}
+
+const candidates = explicitAccessKeyPath
+  ? [explicitAccessKeyPath]
+  : resolveStackCliAccessKeyCandidatesForUi({
+      uiUrl,
+      explicitStackName: stackName,
+      explicitAccessKeyPath: '',
+      homeDir,
+    });
+
+const accessKeyPath = String(candidates[0] ?? '').trim();
+let cliRoot = '';
+let activeServerId = '';
+let activeServerDir = '';
+if (accessKeyPath) {
+  const serverDir = path.dirname(accessKeyPath);
+  const serversRoot = path.dirname(serverDir);
+  if (path.basename(serversRoot) === 'servers') {
+    cliRoot = path.dirname(serversRoot);
+    activeServerId = path.basename(serverDir);
+    activeServerDir = serverDir;
+  }
+}
+
+process.stdout.write(JSON.stringify({
+  kind: 'wsrepl_stack_auth_scope',
+  stackName,
+  accessKeyPath,
+  cliRoot,
+  activeServerId,
+  activeServerDir,
+  stackHomeDir: stackName ? path.join(homeDir, '.happier', 'stacks', stackName) : '',
+  candidates,
+}));
+NODE
+}
+
 resolve_stack_cli_access_key_path_for_ui_url() {
+  local server_url_hint="${1:-}"
+  local scope_json=""
+  scope_json="$(resolve_stack_cli_auth_scope_json_for_ui_url "${server_url_hint}")"
+  if [[ -n "${scope_json}" ]]; then
+    python3 - <<'PY' "${scope_json}" 2>/dev/null || true
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+print(str(payload.get("accessKeyPath") or "").strip())
+PY
+    return 0
+  fi
   local explicit="${HAPPIER_QA_ACCESS_KEY_PATH:-}"
   if [[ -n "${explicit}" ]]; then
     # For watchdog stack hint resolution we only need the path shape to recover
@@ -1244,7 +1400,33 @@ resolve_stack_cli_access_key_path_for_ui_url() {
 
   local stack_name="${HAPPIER_QA_STACK_NAME:-}"
   local server_port=""
-  if [[ -n "${HAPPIER_UI_URL:-}" ]]; then
+  if [[ -n "${server_url_hint}" ]]; then
+    server_port="$(python3 - <<'PY' "${server_url_hint}" 2>/dev/null || true
+import sys
+from urllib.parse import urlparse
+
+server = str(sys.argv[1] or "").strip()
+if not server:
+  raise SystemExit(0)
+srv = urlparse(server)
+print(srv.port or "")
+PY
+    )"
+  fi
+  if [[ -z "${server_port}" && -n "${HAPPIER_SERVER_URL:-}" ]]; then
+    server_port="$(python3 - <<'PY' "${HAPPIER_SERVER_URL}" 2>/dev/null || true
+import sys
+from urllib.parse import urlparse
+
+server = str(sys.argv[1] or "").strip()
+if not server:
+  raise SystemExit(0)
+srv = urlparse(server)
+print(srv.port or "")
+PY
+    )"
+  fi
+  if [[ -z "${server_port}" && -n "${HAPPIER_UI_URL:-}" ]]; then
     server_port="$(python3 - <<'PY' "${HAPPIER_UI_URL}" 2>/dev/null || true
 import sys
 from urllib.parse import urlparse, parse_qs, unquote
@@ -1361,14 +1543,15 @@ import sys
 from pathlib import Path
 
 cli_root = Path(sys.argv[1])
-candidates = []
-candidates.append(cli_root / "access.key")
+server_scoped_candidates = []
 servers_root = cli_root / "servers"
 if servers_root.exists():
   for entry in servers_root.iterdir():
     if not entry.is_dir():
       continue
-    candidates.append(entry / "access.key")
+    server_scoped_candidates.append(entry / "access.key")
+
+candidates = server_scoped_candidates if server_scoped_candidates else [cli_root / "access.key"]
 
 best = None
 for candidate in candidates:
@@ -1384,16 +1567,13 @@ print(best[1] if best else "")
 PY
 }
 
-resolve_stack_cli_home_and_active_server_id_for_ui_url() {
-  local access_key_path
-  access_key_path="$(resolve_stack_cli_access_key_path_for_ui_url)"
-  if [[ -z "${access_key_path}" || ! -f "${access_key_path}" ]]; then
+resolve_stack_cli_home_and_active_server_id_from_server_dir() {
+  local server_dir="${1:-}"
+  if [[ -z "${server_dir}" || ! -d "${server_dir}" ]]; then
     echo ""
     return 0
   fi
 
-  local server_dir
-  server_dir="$(dirname "${access_key_path}")"
   local server_id
   server_id="$(basename "${server_dir}")"
   local servers_root
@@ -1411,6 +1591,28 @@ resolve_stack_cli_home_and_active_server_id_for_ui_url() {
   fi
 
   echo "${cli_root}|${server_id}"
+}
+
+resolve_stack_cli_home_and_active_server_id_for_ui_url() {
+  local server_url_hint="${1:-}"
+  local active_server_dir="${HAPPIER_QA_ACTIVE_SERVER_DIR:-}"
+  if [[ -n "${active_server_dir}" ]]; then
+    local from_active_server_dir
+    from_active_server_dir="$(resolve_stack_cli_home_and_active_server_id_from_server_dir "${active_server_dir}")"
+    if [[ -n "${from_active_server_dir}" ]]; then
+      echo "${from_active_server_dir}"
+      return 0
+    fi
+  fi
+
+  local access_key_path
+  access_key_path="$(resolve_stack_cli_access_key_path_for_ui_url "${server_url_hint}")"
+  if [[ -z "${access_key_path}" ]]; then
+    echo ""
+    return 0
+  fi
+
+  resolve_stack_cli_home_and_active_server_id_from_server_dir "$(dirname "${access_key_path}")"
 }
 
 resolve_machine_transfer_server_routed_max_bytes_seed_from_server_features() {
@@ -1596,6 +1798,7 @@ PY
 restart_host_daemon_and_capture_logs() {
   local server_url="${1:-}"
   local restart_mode="${2:-restart}"
+  local selected_host_direct_peer_bind_port="${3:-}"
   local should_stop="1"
   if [[ "${restart_mode}" == "ensure" ]]; then
     should_stop="0"
@@ -1612,7 +1815,7 @@ restart_host_daemon_and_capture_logs() {
   local stack_cli_root=""
   local stack_active_server_id=""
   local stack_home_hint
-  stack_home_hint="$(resolve_stack_cli_home_and_active_server_id_for_ui_url)"
+  stack_home_hint="$(resolve_stack_cli_home_and_active_server_id_for_ui_url "${server_url}")"
   if [[ -n "${stack_home_hint}" ]]; then
     stack_cli_root="$(printf "%s" "${stack_home_hint}" | cut -d '|' -f 1)"
     stack_active_server_id="$(printf "%s" "${stack_home_hint}" | cut -d '|' -f 2)"
@@ -1625,15 +1828,18 @@ restart_host_daemon_and_capture_logs() {
   # the isolated home so the daemon registers under the same account as the UI.
   local host_home_rel="${WSREPL_QA_HOST_HOME_REL:-}"
   local stack_access_key_src=""
-  if [[ -n "${host_home_rel}" && -n "${stack_active_server_id}" ]]; then
-    stack_access_key_src="$(resolve_stack_cli_access_key_path_for_ui_url || true)"
-    if [[ -n "${stack_access_key_src}" && -f "${stack_access_key_src}" ]]; then
-      local host_home_dir="$HOME/${host_home_rel}"
+  local used_isolated_host_home="0"
+  if [[ -n "${host_home_rel}" ]]; then
+    local host_home_dir="$HOME/${host_home_rel}"
+    if [[ -n "${stack_active_server_id}" ]]; then
       local host_server_dir="${host_home_dir}/servers/${stack_active_server_id}"
       local host_access_key_dst="${host_server_dir}/access.key"
-      mkdir -p "${host_server_dir}"
-      cp "${stack_access_key_src}" "${host_access_key_dst}"
-      chmod 600 "${host_access_key_dst}" 2>/dev/null || true
+      stack_access_key_src="$(resolve_stack_cli_access_key_path_for_ui_url "${server_url}" || true)"
+      if [[ -n "${stack_access_key_src}" && -f "${stack_access_key_src}" ]]; then
+        mkdir -p "${host_server_dir}"
+        cp "${stack_access_key_src}" "${host_access_key_dst}"
+        chmod 600 "${host_access_key_dst}" 2>/dev/null || true
+      fi
       if [[ -n "${canonical_stack_cli_root}" ]]; then
         local canonical_settings_src="${canonical_stack_cli_root}/settings.json"
         local host_settings_dst="${host_home_dir}/settings.json"
@@ -1643,16 +1849,28 @@ restart_host_daemon_and_capture_logs() {
           chmod 600 "${host_settings_dst}" 2>/dev/null || true
         fi
       fi
-      stack_cli_root="${host_home_dir}"
+      if [[ -f "${host_access_key_dst}" ]]; then
+        stack_cli_root="${host_home_dir}"
+        used_isolated_host_home="1"
+      fi
     fi
+  fi
+  write_host_daemon_scope_diagnostics "${canonical_stack_cli_root}" "${canonical_stack_active_server_id}" "${host_home_rel}" "${stack_access_key_src}" "${stack_cli_root}" "${used_isolated_host_home}"
+  if [[ -n "${host_home_rel}" && "${used_isolated_host_home}" != "1" ]]; then
+    FAILURE_STAGE="host_daemon"
+    FAILURE_REASON="host_daemon_scope_resolution_failed"
+    echo "[wsrepl-qa] isolated host home requested via WSREPL_QA_HOST_HOME_REL=${host_home_rel}, but the wrapper could not resolve/copy the stack-scoped host daemon credentials. Refusing to start the host daemon against the default home." >&2
+    return 1
   fi
 
   # For host↔Lima direct-peer transfers, the guest can always resolve `host.lima.internal` but may not
   # be able to reach the host's LAN/VPN interface IPs. Publish `host.lima.internal` by default so the
   # host advertises at least one direct-peer endpoint candidate that is reachable from the Lima VM.
   local host_direct_peer_advertised_hosts="${WSREPL_QA_HOST_DIRECT_PEER_ADVERTISED_HOSTS:-host.lima.internal}"
-  local host_direct_peer_bind_port=""
-  host_direct_peer_bind_port="$(resolve_wsrepl_host_direct_peer_bind_port)"
+  local host_direct_peer_bind_port="${selected_host_direct_peer_bind_port}"
+  if [[ -z "${host_direct_peer_bind_port}" ]]; then
+    host_direct_peer_bind_port="$(resolve_wsrepl_host_direct_peer_bind_port)"
+  fi
   local host_direct_peer_feature_enabled="${WSREPL_QA_HOST_DIRECT_PEER_FEATURE_ENABLED:-true}"
   local host_direct_peer_server_enabled="${WSREPL_QA_HOST_DIRECT_PEER_SERVER_ENABLED:-true}"
   local server_routed_max_bytes_seed=""
@@ -1732,7 +1950,8 @@ PY
 
     local effective_server_routed_max_bytes="${HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES:-${run_server_routed_max_bytes_seed}}"
     local effective_host_direct_peer_feature_enabled="${HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED:-${run_host_direct_peer_feature_enabled}}"
-    local effective_host_direct_peer_bind_port="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT:-${run_host_direct_peer_bind_port}}"
+    # Prefer the wrapper-resolved port so stale ambient env cannot override the scanned port for this run.
+    local effective_host_direct_peer_bind_port="${run_host_direct_peer_bind_port:-${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT:-}}"
     local effective_host_direct_peer_advertised_hosts="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${run_host_direct_peer_advertised_hosts}}"
     local effective_host_direct_peer_server_enabled="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED:-${run_host_direct_peer_server_enabled}}"
 
@@ -2544,6 +2763,7 @@ payload = {
 	    "hostDaemonStatus": f"{report_root}/daemon/host.daemon.status.txt",
 	    "hostDaemonLogPath": f"{report_root}/daemon/host.daemon.log.path.txt",
 	    "hostDaemonLogTail": f"{report_root}/daemon/host.daemon.log.tail.txt",
+	    "hostDaemonScope": f"{report_root}/daemon/host.daemon.scope.json",
 	    "guestDaemonStart": f"{report_root}/daemon/guest.daemon.start.txt",
 	    "guestDaemonStatus": f"{report_root}/daemon/guest.daemon.status.txt",
 	    "guestDaemonLogPath": f"{report_root}/daemon/guest.daemon.log.path.txt",
@@ -2792,12 +3012,41 @@ wsrepl_is_tcp_port_listening() {
   fi
 
   local lsof_path=""
-  if command -v lsof >/dev/null 2>&1; then
-    lsof_path="$(command -v lsof)"
-  elif [[ -x /usr/sbin/lsof ]]; then
-    lsof_path="/usr/sbin/lsof"
-  elif [[ -x /bin/lsof ]]; then
-    lsof_path="/bin/lsof"
+  local system_lsof_path=""
+  local path_entry=""
+  local candidate_path=""
+  local old_ifs="${IFS}"
+  IFS=':'
+  for path_entry in ${PATH:-}; do
+    if [[ -z "${path_entry}" ]]; then
+      continue
+    fi
+    candidate_path="${path_entry}/lsof"
+    if [[ ! -x "${candidate_path}" ]]; then
+      continue
+    fi
+    case "${candidate_path}" in
+      /usr/sbin/lsof|/bin/lsof)
+        if [[ -z "${system_lsof_path}" ]]; then
+          system_lsof_path="${candidate_path}"
+        fi
+        ;;
+      *)
+        lsof_path="${candidate_path}"
+        break
+        ;;
+    esac
+  done
+  IFS="${old_ifs}"
+
+  if [[ -z "${lsof_path}" ]]; then
+    if [[ -n "${system_lsof_path}" ]]; then
+      lsof_path="${system_lsof_path}"
+    elif [[ -x /usr/sbin/lsof ]]; then
+      lsof_path="/usr/sbin/lsof"
+    elif [[ -x /bin/lsof ]]; then
+      lsof_path="/bin/lsof"
+    fi
   fi
 
   if [[ -n "${lsof_path}" ]]; then
@@ -3500,10 +3749,12 @@ if [[ -n "${host_server_url:-}" ]]; then
 fi
 server_routed_max_bytes_seed=""
 server_routed_max_bytes_seed="$(resolve_machine_transfer_server_routed_max_bytes_seed_from_server_features "${host_server_url}")"
+host_direct_peer_bind_port=""
+host_direct_peer_bind_port="$(resolve_wsrepl_host_direct_peer_bind_port)"
 
 echo "[wsrepl-qa] restart host daemon and capture logs..."
-restart_host_daemon_and_capture_logs "${host_server_url}"
-capture_vm_connectivity_to_host_direct_peer_port_best_effort || true
+restart_host_daemon_and_capture_logs "${host_server_url}" restart "${host_direct_peer_bind_port}"
+  capture_vm_connectivity_to_host_direct_peer_port_best_effort "${host_direct_peer_bind_port}" || true
 
 # Keep the host daemon under observation while the wrapper builds/installs the guest artifact
 # and while Playwright runs. If the host daemon is restarted or exits during long guest setup,
@@ -3912,10 +4163,10 @@ if [[ "${playwright_status}" == "0" ]]; then
     playwright_status=1
   fi
 fi
-if [[ "${playwright_status}" != "0" ]]; then
+  if [[ "${playwright_status}" != "0" ]]; then
   if should_retry_for_daemon_rpc_unavailable "${PLAYWRIGHT_OUTDIR}"; then
     echo "[wsrepl-qa] Playwright failed with daemon RPC unavailable; restarting daemons and retrying once..." >&2
-    restart_host_daemon_and_capture_logs "${host_server_url}"
+    restart_host_daemon_and_capture_logs "${host_server_url}" restart "${host_direct_peer_bind_port}"
     restart_guest_daemon_and_capture_logs "${guest_server_url}" "${server_routed_max_bytes_seed}"
 
     PLAYWRIGHT_ATTEMPT=2

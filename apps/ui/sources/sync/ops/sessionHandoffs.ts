@@ -34,6 +34,7 @@ import type { Metadata, Session } from '../domains/state/storageTypes';
 import { buildSessionHandoffRecoveryPlan, type SessionHandoffRecoveryPlan } from '../domains/sessionHandoff/recoveryPlan';
 import { waitForSessionHandoffTargetSessionActive } from '../domains/sessionHandoff/waitForSessionHandoffTargetSessionActive';
 import { readSessionHandoffSessionActivity } from '../domains/sessionHandoff/readSessionHandoffSessionActivity';
+import { resolveSessionHandoffRuntimeConfig } from '../domains/sessionHandoff/sessionHandoffRuntimeConfig';
 import { resolveSessionHandoffSourceMachineId as resolveCanonicalSessionHandoffSourceMachineId } from '../domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
 import { stabilizeSessionHandoffTargetBinding } from '../domains/sessionHandoff/stabilizeSessionHandoffTargetBinding';
 import { runSessionHandoffRetryLoop } from '../domains/sessionHandoff/runSessionHandoffRetryLoop';
@@ -166,62 +167,9 @@ const DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS = 300_000;
 const DEFAULT_TARGET_PREPARE_RETRY_INTERVAL_MS = 500;
 const DEFAULT_SOURCE_START_RETRY_TIMEOUT_MS = 15_000;
 const DEFAULT_SOURCE_START_RETRY_INTERVAL_MS = 500;
-const DEFAULT_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS = 90_000;
-const DEFAULT_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = 10_000;
-const DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS = 5_000;
-const DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS = 250;
-const DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS = 2;
 
 function defaultSleep(delayMs: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, delayMs));
-}
-
-function readSessionHandoffMachineRpcTimeoutMs(): number {
-    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS ?? '').trim();
-    if (!raw) return DEFAULT_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return DEFAULT_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS;
-    return Math.max(5_000, Math.min(300_000, parsed));
-}
-
-function readSessionHandoffMachineRpcPollTimeoutMs(): number {
-    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS ?? '').trim();
-    if (!raw) return DEFAULT_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return DEFAULT_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
-    return Math.max(1_000, Math.min(60_000, parsed));
-}
-
-function readSessionHandoffTargetPreparePollTimeoutMs(): number {
-    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_TARGET_PREPARE_POLL_TIMEOUT_MS ?? '').trim();
-    if (!raw) return DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS;
-    return Math.max(5_000, Math.min(600_000, parsed));
-}
-
-function readSessionHandoffPostCommitBindingStabilizationTimeoutMs(): number {
-    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS ?? '').trim();
-    if (!raw) return DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS;
-    return Math.max(500, Math.min(30_000, parsed));
-}
-
-function readSessionHandoffPostCommitBindingStabilizationIntervalMs(): number {
-    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS ?? '').trim();
-    if (!raw) return DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS;
-    return Math.max(50, Math.min(5_000, parsed));
-}
-
-function readSessionHandoffPostCommitBindingStablePolls(): number {
-    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS ?? '').trim();
-    if (!raw) return DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS;
-    return Math.max(1, Math.min(10, parsed));
 }
 
 function isMachineRpcTimeoutError(error: unknown): boolean {
@@ -351,7 +299,10 @@ function resolveSourceMachineId(options: Readonly<{
 }
 
 async function startSessionHandoffOnSource(options: StartSessionHandoffOptions): Promise<StartSessionHandoffAttemptResult> {
-    return await startSessionHandoffOnSourceWithMachineRpcTimeout(options, readSessionHandoffMachineRpcTimeoutMs());
+    return await startSessionHandoffOnSourceWithMachineRpcTimeout(
+        options,
+        resolveSessionHandoffRuntimeConfig().machineRpcTimeoutMs,
+    );
 }
 
 async function startSessionHandoffOnSourceWithMachineRpcTimeout(
@@ -439,8 +390,9 @@ export async function startSessionHandoffOnSourceWithRetry(
         typeof retryOptions?.timeoutMs === 'number' && retryOptions.timeoutMs >= 0
             ? retryOptions.timeoutMs
             : DEFAULT_SOURCE_START_RETRY_TIMEOUT_MS;
+    const runtimeConfig = resolveSessionHandoffRuntimeConfig();
     return await runSessionHandoffRetryLoop({
-        fallbackTimeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
+        fallbackTimeoutMs: runtimeConfig.machineRpcTimeoutMs,
         retryTimeoutMs: timeoutMs,
         intervalMs:
             typeof retryOptions?.intervalMs === 'number' && retryOptions.intervalMs >= 0
@@ -470,7 +422,10 @@ async function prepareTargetSessionHandoff(params: Readonly<{
     | Readonly<{ ok: true; response: SessionHandoffPrepareTargetResponse }>
     | Readonly<{ ok: false; errorCode: string; errorMessage: string }>
 > {
-    return await prepareTargetSessionHandoffWithMachineRpcTimeout(params, readSessionHandoffMachineRpcTimeoutMs());
+    return await prepareTargetSessionHandoffWithMachineRpcTimeout(
+        params,
+        resolveSessionHandoffRuntimeConfig().machineRpcTimeoutMs,
+    );
 }
 
 async function prepareTargetSessionHandoffWithMachineRpcTimeout(
@@ -576,8 +531,8 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
     let lastStatusKey = '';
     const serverId = normalizeId(params.serverId) || null;
     const pollMachineRpcTimeoutMs = Math.min(
-        readSessionHandoffMachineRpcTimeoutMs(),
-        readSessionHandoffMachineRpcPollTimeoutMs(),
+        runtimeConfig.machineRpcTimeoutMs,
+        runtimeConfig.machineRpcPollTimeoutMs,
     );
 
     const buildStatusKey = (status: SessionHandoffStatus): string => {
@@ -718,12 +673,13 @@ export async function prepareTargetSessionHandoffWithRetry(
         typeof retryOptions?.timeoutMs === 'number' && retryOptions.timeoutMs >= 0
             ? retryOptions.timeoutMs
             : DEFAULT_TARGET_PREPARE_RETRY_TIMEOUT_MS;
+    const runtimeConfig = resolveSessionHandoffRuntimeConfig();
     const pollTimeoutMs =
         typeof retryOptions?.pollTimeoutMs === 'number' && retryOptions.pollTimeoutMs >= 0
             ? retryOptions.pollTimeoutMs
-            : readSessionHandoffTargetPreparePollTimeoutMs();
+            : runtimeConfig.targetPreparePollTimeoutMs;
     const prepareAttempt = await runSessionHandoffRetryLoop({
-        fallbackTimeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
+        fallbackTimeoutMs: runtimeConfig.machineRpcTimeoutMs,
         retryTimeoutMs: timeoutMs,
         intervalMs:
             typeof retryOptions?.intervalMs === 'number' && retryOptions.intervalMs >= 0
@@ -768,6 +724,7 @@ async function commitSessionHandoff(params: Readonly<{
     | Readonly<{ ok: true; response: SessionHandoffCommitResponse }>
     | Readonly<{ ok: false; errorCode: string; errorMessage: string }>
 > {
+    const runtimeConfig = resolveSessionHandoffRuntimeConfig();
     try {
         const reverseSourceRootPath = normalizeId(params.workspaceReplicationReverseSourceRootPath);
         const reverseTargetRootPath = normalizeId(params.workspaceReplicationReverseTargetRootPath);
@@ -781,7 +738,7 @@ async function commitSessionHandoff(params: Readonly<{
             method: RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT,
             payload,
             serverId: normalizeId(params.serverId) || null,
-            timeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
+            timeoutMs: runtimeConfig.machineRpcTimeoutMs,
         });
         const errorResult = readRawSessionHandoffError(raw);
         if (errorResult) {
@@ -812,6 +769,7 @@ async function abortSessionHandoff(params: Readonly<{
     reason: string;
     serverId?: string | null;
 }>): Promise<void> {
+    const runtimeConfig = resolveSessionHandoffRuntimeConfig();
     const abortOnMachine = async (machineId: string): Promise<void> => {
         await machineRpcWithServerScope<unknown, unknown>({
             machineId,
@@ -821,7 +779,7 @@ async function abortSessionHandoff(params: Readonly<{
                 reason: params.reason,
             },
             serverId: normalizeId(params.serverId) || null,
-            timeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
+            timeoutMs: runtimeConfig.machineRpcTimeoutMs,
         });
     };
 
@@ -853,6 +811,7 @@ export async function startSessionHandoff(options: StartSessionHandoffOptions): 
 
 export async function completeSessionHandoff(options: CompleteSessionHandoffOptions): Promise<CompleteSessionHandoffResult> {
     const serverId = normalizeId(options.serverId) || null;
+    const runtimeConfig = resolveSessionHandoffRuntimeConfig();
     const serverSnapshot = await getServerFeaturesSnapshot({
         force: true,
         ...(serverId ? { serverId } : {}),
@@ -1223,9 +1182,9 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         readTargetMachineId: () => readMachineTargetForSession(options.sessionId)?.machineId ?? null,
         reapplyOptimisticBinding,
         targetMachineId: options.targetMachineId,
-        timeoutMs: readSessionHandoffPostCommitBindingStabilizationTimeoutMs(),
-        pollIntervalMs: readSessionHandoffPostCommitBindingStabilizationIntervalMs(),
-        requiredStablePolls: readSessionHandoffPostCommitBindingStablePolls(),
+        timeoutMs: runtimeConfig.postCommitBindingStabilizationTimeoutMs,
+        pollIntervalMs: runtimeConfig.postCommitBindingStabilizationIntervalMs,
+        requiredStablePolls: runtimeConfig.postCommitBindingStablePolls,
     });
     if (!stabilizedBinding.ok) {
         reapplyOptimisticBinding();
@@ -1238,9 +1197,9 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         readTargetMachineId: () => readMachineTargetForSession(options.sessionId)?.machineId ?? null,
         reapplyOptimisticBinding,
         targetMachineId: options.targetMachineId,
-        timeoutMs: readSessionHandoffPostCommitBindingStabilizationTimeoutMs(),
-        pollIntervalMs: readSessionHandoffPostCommitBindingStabilizationIntervalMs(),
-        requiredStablePolls: readSessionHandoffPostCommitBindingStablePolls(),
+        timeoutMs: runtimeConfig.postCommitBindingStabilizationTimeoutMs,
+        pollIntervalMs: runtimeConfig.postCommitBindingStabilizationIntervalMs,
+        requiredStablePolls: runtimeConfig.postCommitBindingStablePolls,
     });
     if (!finalStabilizedBinding.ok) {
         reapplyOptimisticBinding();

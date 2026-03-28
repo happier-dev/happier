@@ -4,7 +4,6 @@ import * as fsPromises from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 
 import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
-import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
 import fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -21,6 +20,18 @@ import {
   parseTransferRecipientPublicKeyBase64,
   decryptEncryptedTransferChunkEnvelope,
 } from './transferChunkEncryption';
+import {
+  resolveDirectPeerAdvertisedHosts,
+  resolveDirectPeerTransferBindHost,
+  resolveDirectPeerTransferBindPort,
+  resolveDirectPeerTransferChunkBytes,
+  resolveDirectPeerTransferExpirySkewMs,
+  resolveDirectPeerTransferMaxTotalChunks,
+  resolveDirectPeerTransferOpenBodyMaxBytes,
+  resolveDirectPeerTransferPublishedTransferRegistryMaxEntries,
+  resolveDirectPeerTransferRequestTimeoutOverrideMs as resolveDirectPeerTransferRequestTimeoutOverrideMsConfig,
+  resolveDirectPeerTransferTtlMs,
+} from './transferRuntimeConfig';
 import {
   createBufferTransferPayloadSource,
   readTransferPayloadChunk,
@@ -189,90 +200,43 @@ function extractDirectPeerRequestAuth(candidate: TransferEndpointCandidate): Rea
 }
 
 function readAdvertisedHosts(networkInterfacesFn: typeof networkInterfaces): string[] {
-  const configuredHosts = String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
-
-  const hosts = new Set<string>(configuredHosts);
-  for (const entries of Object.values(networkInterfacesFn())) {
-    for (const entry of entries ?? []) {
-      if (!entry || entry.internal) continue;
-      const family = String(entry.family);
-      if (family !== 'IPv4' && family !== 'IPv6') continue;
-      const address = typeof entry.address === 'string' ? entry.address.trim() : '';
-      if (!address) continue;
-      // Zone-qualified IPv6 addresses produce invalid URLs unless percent-encoded. Fail closed by
-      // omitting them from advertisements; callers can still override via env if needed.
-      if (family === 'IPv6' && address.includes('%')) continue;
-      hosts.add(address);
-    }
-  }
-  return Array.from(hosts);
+  return resolveDirectPeerAdvertisedHosts(networkInterfacesFn);
 }
 
 function readDirectPeerTtlMs(): number {
-  return parsePositiveInt(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_TTL_MS, DEFAULT_DIRECT_PEER_TTL_MS);
+  return resolveDirectPeerTransferTtlMs();
 }
 
 function readDirectPeerRequestTimeoutMs(): number {
-  return parsePositiveInt(
-    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_REQUEST_TIMEOUT_MS,
-    DEFAULT_DIRECT_PEER_REQUEST_TIMEOUT_MS,
-  );
+  return resolveDirectPeerTransferRequestTimeoutOverrideMs(undefined);
 }
 
 function resolveDirectPeerRequestTimeoutOverrideMs(timeoutMs: number | undefined): number {
-  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs)) {
-    return readDirectPeerRequestTimeoutMs();
-  }
-  const normalizedTimeoutMs = Math.trunc(timeoutMs);
-  return normalizedTimeoutMs > 0
-    ? normalizedTimeoutMs
-    : readDirectPeerRequestTimeoutMs();
+  return resolveDirectPeerTransferRequestTimeoutOverrideMsConfig(timeoutMs);
 }
 
 function readDirectPeerBindPort(): number {
-  return readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT') ?? 0;
+  return resolveDirectPeerTransferBindPort();
 }
 
 function readDirectPeerChunkBytes(): number {
-  return Math.min(clampTransferChunkBytes(parsePositiveInt(
-    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_CHUNK_BYTES,
-    DEFAULT_DIRECT_PEER_CHUNK_BYTES,
-  )), DIRECT_PEER_CHUNK_HARD_MAX_BYTES);
+  return resolveDirectPeerTransferChunkBytes();
 }
 
 function readDirectPeerExpirySkewMs(): number {
-  // Clock skew tolerance used only for candidate selection and local cleanup, not as an auth bypass.
-  return parseNonNegativeInt(
-    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_EXPIRY_SKEW_MS,
-    DEFAULT_DIRECT_PEER_EXPIRY_SKEW_MS,
-  );
+  return resolveDirectPeerTransferExpirySkewMs();
 }
 
 function readDirectPeerOpenBodyMaxBytes(): number {
-  return Math.min(
-    parsePositiveInt(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_OPEN_BODY_MAX_BYTES, DEFAULT_DIRECT_PEER_OPEN_BODY_MAX_BYTES),
-    DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES,
-  );
+  return resolveDirectPeerTransferOpenBodyMaxBytes();
 }
 
 function readDirectPeerMaxTotalChunks(): number {
-  return Math.min(
-    parsePositiveInt(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_MAX_TOTAL_CHUNKS, DEFAULT_DIRECT_PEER_MAX_TOTAL_CHUNKS),
-    DIRECT_PEER_MAX_TOTAL_CHUNKS_HARD_MAX,
-  );
+  return resolveDirectPeerTransferMaxTotalChunks();
 }
 
 function readDirectPeerPublishedTransferRegistryMaxEntries(): number {
-  return Math.min(
-    parsePositiveInt(
-      process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES,
-      DEFAULT_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES,
-    ),
-    DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_HARD_MAX_ENTRIES,
-  );
+  return resolveDirectPeerTransferPublishedTransferRegistryMaxEntries();
 }
 
 async function readJsonResponseWithBodyLimit(params: Readonly<{
@@ -1311,7 +1275,7 @@ export async function startDirectPeerTransferServer(params: Readonly<{
   await app.ready();
   const address = await app.listen({
     port: readDirectPeerBindPort(),
-    host: process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_HOST ?? DEFAULT_DIRECT_PEER_BIND_HOST,
+    host: resolveDirectPeerTransferBindHost(),
   });
   const port = Number.parseInt(String(address).split(':').pop() ?? '', 10);
   if (!Number.isFinite(port) || port <= 0) {

@@ -87,6 +87,14 @@ describe('SessionHandoffProgressModal', () => {
                             bytes: 1024,
                             blobs: 2,
                         },
+                        applied: {
+                            files: 1,
+                            bytes: 256,
+                        },
+                        remaining: {
+                            files: 3,
+                            bytes: 1024,
+                        },
                         current: {
                             relativePath: 'README.md',
                         },
@@ -105,10 +113,15 @@ describe('SessionHandoffProgressModal', () => {
             }),
         );
         expect(screen.findByTestId('session-handoff-progress-summary')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-stats')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-bar')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-percent')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-path')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-timeline')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-stat-planned')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-stat-transferred')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-stat-remaining')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-stat-applied')).toBeTruthy();
 
         const currentCheckpointRow = screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs');
         expect(currentCheckpointRow?.props.accessibilityState?.selected).toBe(true);
@@ -120,6 +133,58 @@ describe('SessionHandoffProgressModal', () => {
         expect(textContent).toContain('2.0 KB');
         expect(textContent).toContain('50%');
         expect(textContent).toContain('README.md');
+        expect(textContent).toContain('sessionHandoff.progress.planned');
+        expect(textContent).toContain('sessionHandoff.progress.transferred');
+        expect(textContent).toContain('sessionHandoff.progress.remaining');
+        expect(textContent).toContain('common.applied');
+    });
+
+    it('renders apply progress counts without a transfer progress bar during application', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                status={{
+                    handoffId: 'handoff_apply_progress_1',
+                    status: 'pending',
+                    phase: 'finalizing',
+                    progress: {
+                        updatedAtMs: 123,
+                        checkpoint: 'apply',
+                        planned: {
+                            totalFiles: 4,
+                            totalBytes: 4096,
+                        },
+                        transferred: {
+                            files: 4,
+                            bytes: 4096,
+                            blobs: 2,
+                        },
+                        applied: {
+                            files: 2,
+                            bytes: 2048,
+                        },
+                        remaining: {
+                            files: 0,
+                            bytes: 0,
+                        },
+                        current: {
+                            phaseDetail: 'applying_workspace',
+                        },
+                        resumable: true,
+                    },
+                    recoveryActions: [],
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-progress-stats')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-stat-applied')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-bar')).toBeNull();
+        expect(screen.findByTestId('session-handoff-progress-percent')).toBeNull();
+        expect(screen.getTextContent()).toContain('sessionHandoff.progress.apply');
+        expect(screen.getTextContent()).toContain('sessionHandoff.progress.remaining');
     });
 
     it('does not shrink the timeline back to minimal after the daemon has already emitted a full-timeline checkpoint', async () => {

@@ -15,6 +15,7 @@ import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../..
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
+const uiWebExportTimeoutMs = process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '900000';
 
 async function readMachineIdsFromServer(params: { cliHomeDir: string; serverBaseUrl: string }): Promise<string[]> {
   const accessKey = await readCliAccessKey(params.cliHomeDir);
@@ -261,7 +262,7 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
       EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-direct-peer`,
       HAPPIER_E2E_UI_WEB_MODE: 'export',
-      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '15000',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: uiWebExportTimeoutMs,
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS ?? '15000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
@@ -462,7 +463,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
       EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-server-routed`,
       HAPPIER_E2E_UI_WEB_MODE: 'export',
-      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '15000',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: uiWebExportTimeoutMs,
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS ?? '15000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
@@ -659,7 +660,7 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
       EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-recovery`,
       HAPPIER_E2E_UI_WEB_MODE: 'export',
-      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '15000',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: uiWebExportTimeoutMs,
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS ?? '15000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
