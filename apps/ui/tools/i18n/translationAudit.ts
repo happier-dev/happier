@@ -69,6 +69,7 @@ const ALLOW_SAME_STRING_VALUES = new Set<string>([
     'Gemini CLI',
     'Auggie CLI',
     'Tmux',
+    'Telegram',
     'Windows',
     'Windows Terminal',
     'Happier Voice',
