@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
+import { installConnectionStatusCommonModuleMocks } from './connectionStatusTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,54 +10,36 @@ let endpointStatus: import('@happier-dev/connection-supervisor').ManagedConnecti
 let socketStatus: import('./connectionHealthTypes').ConnectionSocketStatus = 'connected';
 let hasSyncError: boolean = false;
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                status: {
-                    connected: '#00ff00',
-                    connecting: '#ffcc00',
-                    actionRequired: '#ff9900',
-                    disconnected: '#999999',
-                    error: '#ff0000',
-                    default: '#999999',
-                },
-            },
-        },
-    });
-});
-
-vi.mock('@/components/settings/server/hooks/useActiveSelectionMachineGroups', () => ({
-    useActiveSelectionMachineGroups: () => ({
-        visibleMachineGroups: [{ status: 'idle', machines: [] }],
-    }),
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'server-a', generation: 1 }),
-    listServerProfiles: () => [{ id: 'server-a', name: 'Server A', serverUrl: 'https://api.example.test' }],
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useEndpointConnectivity: () => ({
-            status: endpointStatus,
-            reason: null,
-            attempt: 0,
-            nextRetryAt: null,
-            lastConnectedAt: null,
-            lastDisconnectedAt: null,
-            lastErrorMessage: null,
+installConnectionStatusCommonModuleMocks({
+    activeSelectionMachineGroups: () => ({
+        useActiveSelectionMachineGroups: () => ({
+            visibleMachineGroups: [{ status: 'idle', machines: [] }],
         }),
-        useSocketStatus: () => ({ status: socketStatus }),
-        useSyncError: () => (hasSyncError ? ({ message: 'boom', retryable: true, kind: 'network', at: Date.now() } as any) : null),
-        useAllMachines: () => [],
-        useMachineListByServerId: () => ({}),
-        useMachineListStatusByServerId: () => ({}),
-        useSetting: () => null,
-    });
+    }),
+    serverProfiles: () => ({
+        getActiveServerSnapshot: () => ({ serverId: 'server-a', generation: 1 }),
+        listServerProfiles: () => [{ id: 'server-a', name: 'Server A', serverUrl: 'https://api.example.test' }],
+    }),
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useEndpointConnectivity: () => ({
+                status: endpointStatus,
+                reason: null,
+                attempt: 0,
+                nextRetryAt: null,
+                lastConnectedAt: null,
+                lastDisconnectedAt: null,
+                lastErrorMessage: null,
+            }),
+            useSocketStatus: () => ({ status: socketStatus }),
+            useSyncError: () => (hasSyncError ? ({ message: 'boom', retryable: true, kind: 'network', at: Date.now() } as any) : null),
+            useAllMachines: () => [],
+            useMachineListByServerId: () => ({}),
+            useMachineListStatusByServerId: () => ({}),
+            useSetting: () => null,
+        });
+    },
 });
 
 describe('useConnectionHealth (endpoint connectivity integration)', () => {

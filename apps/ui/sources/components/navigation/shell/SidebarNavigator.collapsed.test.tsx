@@ -155,9 +155,10 @@ vi.mock('expo-router/drawer', () => ({
   },
 }));
 
-vi.mock('expo-router', () => ({
-  Stack: (props: any) => React.createElement('Stack', props, props.children),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: true }),
