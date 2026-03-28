@@ -264,14 +264,6 @@ export type EphemeralEvent = {
     sessionId: string;
     run: ExecutionRunPublicState;
 } | {
-    type: 'transcript-draft';
-    sessionId: string;
-    localId: string;
-    segmentKind: 'assistant' | 'thinking';
-    sidechainId?: string | null;
-    delta: any;
-    createdAt: number;
-} | {
     type: 'machine-activity';
     id: string;
     active: boolean;

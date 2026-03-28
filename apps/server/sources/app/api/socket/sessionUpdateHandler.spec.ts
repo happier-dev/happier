@@ -139,27 +139,4 @@ describe("sessionUpdateHandler", () => {
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, error: "invalid-params" }));
     });
 
-    it("drops transcript-draft deltas whose plain content cannot be JSON-stringified", async () => {
-        const socket = createFakeSocket();
-
-        registerSessionUpdateHandler(
-            "user-1",
-            socket as any,
-            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
-        );
-
-        const handler = getSocketHandler(socket, "transcript-draft");
-
-        const unserializableDelta = { t: "plain", v: { n: BigInt(1) } };
-        await handler({
-            sid: "s-1",
-            localId: "l1",
-            segmentKind: "assistant",
-            sidechainId: null,
-            delta: unserializableDelta,
-            createdAt: Date.now(),
-        });
-
-        expect(emitEphemeral).not.toHaveBeenCalled();
-    });
 });
