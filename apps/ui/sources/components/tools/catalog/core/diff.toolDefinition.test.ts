@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { KnownToolDefinition } from '../_types';
+
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
@@ -24,7 +26,7 @@ function getTitle(def: { title?: string | ((opts: { metadata: any; tool: any }) 
 describe('diff tool definition', () => {
     it('uses the file basename as subtitle for a single-file unified diff', async () => {
         const [{ coreDiffTools }] = await Promise.all([import('./diff')]);
-        const def = coreDiffTools.Diff;
+        const def: KnownToolDefinition = coreDiffTools.Diff;
 
         const tool = {
             name: 'Diff',
@@ -44,9 +46,9 @@ describe('diff tool definition', () => {
         expect(getTitle(def as any, tool)).toBe('tools.names.viewDiff');
     });
 
-    it('omits the subtitle for a multi-file unified diff and uses the turn-diff title', async () => {
+    it('omits the subtitle for a multi-file unified diff and keeps the generic diff title without turn metadata', async () => {
         const [{ coreDiffTools }] = await Promise.all([import('./diff')]);
-        const def = coreDiffTools.Diff;
+        const def: KnownToolDefinition = coreDiffTools.Diff;
 
         const tool = {
             name: 'Diff',
@@ -69,12 +71,12 @@ describe('diff tool definition', () => {
         };
 
         expect(def.extractSubtitle?.({ metadata: null, tool } as any)).toBeNull();
-        expect(getTitle(def as any, tool)).toBe('tools.names.turnDiff');
+        expect(getTitle(def as any, tool)).toBe('tools.names.viewDiff');
     });
 
-    it('omits the subtitle for CodexDiff when the unified diff contains multiple files', async () => {
+    it('omits the subtitle for CodexDiff when the unified diff contains multiple files without turn metadata', async () => {
         const [{ providerDiffTools }] = await Promise.all([import('../providers/diff')]);
-        const def = providerDiffTools.CodexDiff;
+        const def: KnownToolDefinition = providerDiffTools.CodexDiff;
 
         const tool = {
             name: 'CodexDiff',
@@ -97,7 +99,42 @@ describe('diff tool definition', () => {
         };
 
         expect(def.extractSubtitle?.({ metadata: null, tool } as any)).toBeNull();
+        expect(getTitle(def as any, tool)).toBe('tools.names.viewDiff');
+    });
+
+    it('uses a turn-diff recap subtitle when canonical turn-change metadata is present on a single-file diff', async () => {
+        const [{ coreDiffTools }] = await Promise.all([import('./diff')]);
+        const def: KnownToolDefinition = coreDiffTools.Diff;
+
+        const tool = {
+            name: 'Diff',
+            input: {
+                unified_diff: [
+                    'diff --git a/apps/ui/a.ts b/apps/ui/a.ts',
+                    '--- a/apps/ui/a.ts',
+                    '+++ b/apps/ui/a.ts',
+                    '@@ -1,1 +1,1 @@',
+                    '-old',
+                    '+new',
+                ].join('\n'),
+                _happier: {
+                    sessionChangeScope: 'turn',
+                    turnId: 'turn-1',
+                    sessionId: 'session-1',
+                    provider: 'codex',
+                    source: 'canonical_diff_tool',
+                    confidence: 'exact',
+                    turnStatus: 'completed',
+                    seqRange: {
+                        startSeqInclusive: 1,
+                        endSeqInclusive: 4,
+                    },
+                },
+            },
+        };
+
         expect(getTitle(def as any, tool)).toBe('tools.names.turnDiff');
+        expect(def.extractSubtitle?.({ metadata: null, tool } as any)).toBe('tools.desc.turnDiffRecap');
+        expect(def.extractDescription?.({ metadata: null, tool } as any)).toBe('tools.desc.turnDiffRecap');
     });
 });
-
