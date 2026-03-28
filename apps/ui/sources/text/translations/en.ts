@@ -2951,6 +2951,9 @@ export const en = {
         progress: {
             title: 'Handing off session',
             message: 'Preparing the target machine and moving the session state.',
+            planned: 'Planned',
+            transferred: 'Transferred',
+            remaining: 'Remaining',
             timeline: {
                 scanSource: 'Scan source',
                 plan: 'Plan changes',
