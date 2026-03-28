@@ -41,7 +41,11 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
                 anchorAlign: 'start',
             }}
             onRequestClose={props.onRequestClose}
-            backdrop={{ style: { backgroundColor: 'transparent' } }}
+            // On web, agent input popovers must NOT block outside pointer events: users should be
+            // able to switch between chips in one click (no "click outside to close first").
+            // Click-through prevention is handled at the selection layer by deferring popover
+            // closure until after the click event completes.
+            backdrop={{ style: { backgroundColor: 'transparent' }, blockOutsidePointerEvents: false }}
             containerStyle={{ paddingHorizontal: 0 }}
         >
             {({ maxHeight }) => (

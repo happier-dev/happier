@@ -25,7 +25,6 @@ export function createAutomationToggleActionChip(params: Readonly<{
         collapsedContentPopover: {
             title: params.label,
             label: params.label,
-            boundaryRef: null,
             icon: (tint: string) =>
                 normalizeNodeForView(<Ionicons name="flash-outline" size={16} color={tint} />),
             renderContent: () => (

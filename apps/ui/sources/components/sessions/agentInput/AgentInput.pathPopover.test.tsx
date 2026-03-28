@@ -170,6 +170,7 @@ type CapturedPopoverProps = Record<string, unknown> & {
 };
 
 const captured: { last: CapturedPopoverProps | null } = { last: null };
+const capturedOverlay: { last: Record<string, unknown> | null } = { last: null };
 
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: CapturedPopoverProps) => {
@@ -182,8 +183,10 @@ vi.mock('@/components/ui/popover', () => ({
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-    FloatingOverlay: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('FloatingOverlay', props, props.children),
+    FloatingOverlay: (props: Record<string, unknown> & { children?: React.ReactNode }) => {
+        capturedOverlay.last = props;
+        return React.createElement('FloatingOverlay', props, props.children);
+    },
 }));
 
 vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
@@ -230,6 +233,7 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
 describe('AgentInput (path popover)', () => {
     it('opens the shared content popover from the path chip when a path popover is provided', async () => {
         captured.last = null;
+        capturedOverlay.last = null;
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -266,6 +270,10 @@ describe('AgentInput (path popover)', () => {
         expect(contentPopoverProps?.boundaryRef).toBeNull();
         expect(contentPopoverProps?.maxHeightCap).toBe(540);
         expect(contentPopoverProps?.maxWidthCap).toBe(520);
+        // Content popovers should provide their own scroll container by default so list-like content
+        // can size reliably inside maxHeight constraints on native.
+        const overlayProps = capturedOverlay.last as { scrollEnabled?: boolean } | null;
+        expect(overlayProps?.scrollEnabled).toBe(true);
 
         act(() => screen.tree.unmount());
     });

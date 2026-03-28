@@ -9,15 +9,14 @@ import { Text } from "@/components/ui/text/Text";
 import { t } from "@/text";
 
 import { AgentInputChipPickerDetailPane } from "./AgentInputChipPickerDetailPane";
+import { shouldShowAgentInputChipPickerRail } from "./AgentInputChipPickerLayout";
 import { AgentInputChipPickerOptionSelector } from "./AgentInputChipPickerOptionSelector";
 import {
   agentInputChipPickerHasDetailPane,
   buildAgentInputChipPickerSections,
   type AgentInputChipPickerPanelProps,
 } from "./AgentInputChipPickerTypes";
-
-// Keep parity with OptionPickerOverlay's mobile single-column breakpoint.
-const DETAILED_PICKER_STACKED_WIDTH = 560;
+import { deferAgentInputPopoverClose } from "@/components/sessions/agentInput/selection/deferAgentInputPopoverClose";
 
 export {
   type AgentInputChipPickerOption,
@@ -88,16 +87,16 @@ export function AgentInputChipPickerPanel(
       // open so users can continue configuring the newly focused option.
       const canFocusOptionInPlace = typeof option.renderDetailContent === "function";
       if (!canFocusOptionInPlace && option.closeOnSelectImmediate !== false) {
-        props.onRequestClose();
+        deferAgentInputPopoverClose(props.onRequestClose);
       }
       return;
     }
   }, [props.onRequestClose, props.options]);
 
   const detailedLayout =
-    showDetailedSelector && windowWidth < DETAILED_PICKER_STACKED_WIDTH
-      ? "stacked"
-      : "split";
+    shouldShowAgentInputChipPickerRail(props.options, windowWidth)
+      ? "split"
+      : "stacked";
   const detailPaneStyle =
     detailedLayout === "split" ? styles.detailPaneSplit : null;
   const railWidth = props.railWidth ?? styles.railScroll.width;
@@ -133,7 +132,7 @@ export function AgentInputChipPickerPanel(
                     onPress={() => {
                       if (option.disabled) return;
                       props.onSelect(option.id);
-                      props.onRequestClose();
+                      deferAgentInputPopoverClose(props.onRequestClose);
                     }}
                   />
                 ))}
@@ -184,17 +183,17 @@ export function AgentInputChipPickerPanel(
                     option={focusedOption}
                     onApply={() => {
                       if (focusedOption.disabled) return;
-                      if (focusedOption.onApply) {
-                        focusedOption.onApply();
-                      } else {
-                        props.onSelect(focusedOption.id);
-                      }
-                      props.onRequestClose();
-                    }}
-                    applyLabel={props.applyLabel ?? t("common.use")}
-                    onSelectDetailOption={(id) => {
-                      props.onSelect(id);
-                    }}
+                    if (focusedOption.onApply) {
+                      focusedOption.onApply();
+                    } else {
+                      props.onSelect(focusedOption.id);
+                    }
+                    deferAgentInputPopoverClose(props.onRequestClose);
+                  }}
+                  applyLabel={props.applyLabel ?? t("common.use")}
+                  onSelectDetailOption={(id) => {
+                    props.onSelect(id);
+                  }}
                     onRequestClose={props.onRequestClose}
                   />
                 </View>

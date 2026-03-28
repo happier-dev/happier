@@ -11,14 +11,17 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', () => ({
-    SessionRepositoryTreeBrowserView: (props: any) =>
+vi.mock('@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent', () => ({
+    LinkFilePickerPopoverContent: (props: Record<string, unknown> & { onPickPath: (path: string) => void; onRequestClose: () => void }) =>
         React.createElement(
-            'SessionRepositoryTreeBrowserView',
+            'LinkFilePickerPopoverContent',
             props,
             React.createElement('Pressable', {
                 testID: 'pick-file',
-                onPress: () => props.onOpenFile('src/example.ts'),
+                onPress: () => {
+                    props.onPickPath('src/example.ts');
+                    props.onRequestClose();
+                },
             }),
         ),
 }));
@@ -69,5 +72,32 @@ describe('createLinkedFilesActionChip', () => {
         await contentScreen.pressByTestIdAsync('pick-file');
         expect(onPickPath).toHaveBeenCalledWith('src/example.ts');
         expect(requestClose).toHaveBeenCalled();
+    });
+
+    it('uses the @ icon for link-file chips', async () => {
+        const { createLinkedFilesActionChip } = await import('./createLinkedFilesActionChip');
+
+        const chip = createLinkedFilesActionChip({
+            sessionId: 's1',
+            disabled: false,
+            onPickPath: vi.fn(),
+        });
+
+        const screen = await renderScreen(
+            <React.Fragment>
+                {chip.render({
+                    chipStyle: () => ({}),
+                    showLabel: true,
+                    iconColor: '#123',
+                    textStyle: {},
+                    countTextStyle: {},
+                    chipAnchorRef: { current: null },
+                    popoverAnchorRef: { current: null },
+                })}
+            </React.Fragment>,
+        );
+
+        const icon = screen.findAllByType('Ionicons')[0];
+        expect(icon?.props.name).toBe('at');
     });
 });

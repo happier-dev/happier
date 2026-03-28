@@ -15,6 +15,10 @@ export function createPathActionChip(params: Readonly<{
     textStyle: any;
     onPress: () => void;
 }>): React.ReactNode {
+    const label = typeof params.currentPath === 'string' && params.currentPath.length > 0
+        ? params.currentPath
+        : t('newSession.selectPathTitle');
+
     return (
         <Pressable
             ref={params.anchorRef}
@@ -25,13 +29,13 @@ export function createPathActionChip(params: Readonly<{
             style={(state) => params.chipStyle(state.pressed)}
         >
             {normalizeNodeForView(<Ionicons name="folder-outline" size={18} color={params.tint} />)}
-            {params.showLabel ? (
-                <Text style={params.textStyle}>
-                    {typeof params.currentPath === 'string' && params.currentPath.length > 0
-                        ? params.currentPath
-                        : t('newSession.selectPathTitle')}
-                </Text>
-            ) : null}
+            {/*
+             * Path selection stays label-visible even when chip density is icon-only.
+             * This keeps the selected folder/path readable on mobile layouts.
+             */}
+            <Text numberOfLines={1} ellipsizeMode="middle" style={params.textStyle}>
+                {label}
+            </Text>
         </Pressable>
     );
 }

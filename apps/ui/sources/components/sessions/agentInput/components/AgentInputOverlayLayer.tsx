@@ -12,6 +12,7 @@ import { AgentInputAutocomplete } from './AgentInputAutocomplete';
 import { AgentInputContentPopover, type AgentInputContentPopoverConfig } from './AgentInputContentPopover';
 import { AgentInputActionMenuPopoverContent } from './AgentInputActionMenuPopoverContent';
 import { AgentInputChipPickerPopover } from './AgentInputChipPickerPopover';
+import { shouldShowAgentInputChipPickerRail } from './AgentInputChipPickerLayout';
 import { AgentInputSimpleOptionsPopover } from './AgentInputSimpleOptionsPopover';
 import { PermissionModePicker, type PermissionModePickerOption } from './PermissionModePicker';
 import type { AgentInputExtraActionChip, AgentInputPopoverAnchor } from '../agentInputContracts';
@@ -333,9 +334,9 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     onRequestClose={props.onAgentPickerRequestClose}
                     applyLabel={props.agentPickerApplyLabel}
                     detailPaneHeaderAccessory={props.agentPickerDetailPaneHeaderAccessory}
-                    // When the rail is hidden (single-option detail pane in running sessions),
-                    // keep the popover narrower so it doesn't feel overly wide.
-                    maxWidthCap={props.agentPickerOptions.length > 1 ? 720 : 570}
+                    // Keep the popover narrower when the detail rail is hidden so stacked layouts
+                    // don't waste horizontal space.
+                    maxWidthCap={shouldShowAgentInputChipPickerRail(props.agentPickerOptions, props.screenWidth) ? 720 : 570}
                     maxHeightCap={460}
                 />
             ) : null}

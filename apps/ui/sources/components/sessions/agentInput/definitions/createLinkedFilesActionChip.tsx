@@ -5,12 +5,11 @@ import { Pressable } from 'react-native';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputPopoverContent } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { AgentInputChipLabel } from '@/components/sessions/agentInput/components/AgentInputChipLabel';
-import { MachinePathBrowserView } from '@/components/ui/pathBrowser/MachinePathBrowserModal';
-import { SessionRepositoryTreeBrowserView } from '@/components/sessions/files/views/SessionRepositoryTreeBrowserView';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { t } from '@/text';
+import { LinkFilePickerPopoverContent } from '@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent';
 
-const LINK_FILE_ICON: React.ComponentProps<typeof Ionicons>['name'] = 'at-outline';
+const LINK_FILE_ICON: React.ComponentProps<typeof Ionicons>['name'] = 'at';
 
 function normalizeAbsoluteDirectoryForPrefix(raw: string): { normalized: string; prefix: string; isWindows: boolean } | null {
     const value = String(raw ?? '').trim();
@@ -66,7 +65,9 @@ function createBaseLinkFileChip(params: Readonly<{
             renderContent: params.popoverContent,
             maxHeightCap: params.maxHeightCap,
             maxWidthCap: params.maxWidthCap,
-            scrollEnabled: false,
+            // Important on native: without a scroll surface, popovers that render flex children (lists)
+            // can collapse to 0-height when the child doesn't provide an explicit intrinsic height.
+            scrollEnabled: true,
         },
         render: ({ chipStyle, iconColor, showLabel, textStyle, countTextStyle, chipAnchorRef, toggleCollapsedPopover }) => (
             <Pressable
@@ -105,18 +106,10 @@ export function createLinkedFilesActionChip(params: Readonly<{
         maxHeightCap: 520,
         maxWidthCap: 560,
         popoverContent: ({ requestClose }) => (
-            <SessionRepositoryTreeBrowserView
+            <LinkFilePickerPopoverContent
                 sessionId={params.sessionId}
-                density="panel"
+                onPickPath={params.onPickPath}
                 onRequestClose={requestClose}
-                onOpenFile={(fullPath) => {
-                    params.onPickPath(fullPath);
-                    requestClose();
-                }}
-                onOpenFilePinned={(fullPath) => {
-                    params.onPickPath(fullPath);
-                    requestClose();
-                }}
             />
         ),
     });
@@ -140,19 +133,14 @@ export function createNewSessionLinkedFilesActionChip(params: Readonly<{
         maxHeightCap: 520,
         maxWidthCap: 560,
         popoverContent: ({ requestClose, maxHeight }) => (
-            <MachinePathBrowserView
+            <LinkFilePickerPopoverContent
                 machineId={machineId}
                 serverId={params.serverId}
                 rootDirectoryPath={rootDirectoryPath}
-                includeFiles
-                selectionMode="file"
-                variant="popover"
-                interaction="immediate"
                 maxHeight={maxHeight}
                 onPickPath={(path) => {
                     // Align with session repo-browser behavior: link files relative to the selected root.
                     params.onPickPath(resolveRelativePathUnderDirectory(rootDirectoryPath, path));
-                    requestClose();
                 }}
                 onRequestClose={requestClose}
             />

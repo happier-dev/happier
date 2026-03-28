@@ -101,10 +101,13 @@ import type {
     AgentInputExtraActionChip,
 } from './agentInputContracts';
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 
 const ACTION_BAR_SCROLL_END_GUTTER_WIDTH = 24;
-const NATIVE_ACTION_CHIP_GAP_Y = 2;
+const NATIVE_ACTION_CHIP_GAP_Y = 1;
+const NATIVE_ACTION_BAR_SECTION_GAP_Y = 6;
 const WEB_ACTION_BAR_ROW_GAP_Y = 2;
+const WEB_ACTION_BAR_ROW_GAP_MOBILE_Y = 1;
 
 const AGENT_INPUT_TEST_IDS = {
     sessionInput: 'session-composer-input',
@@ -379,6 +382,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flex: 1,
         ...(Platform.OS === 'web' ? { gap: WEB_ACTION_BAR_ROW_GAP_Y } : {}),
     },
+    actionButtonsColumnMobile: {
+        flexDirection: 'column',
+        flex: 1,
+        ...(Platform.OS === 'web' ? { gap: WEB_ACTION_BAR_ROW_GAP_MOBILE_Y } : {}),
+    },
     actionButtonsColumnNarrow: {
         flexDirection: 'column',
         flex: 1,
@@ -391,7 +399,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     actionButtonsRowWithBelow: {
         // Match the vertical rhythm of wrapped chip rows on native.
-        marginBottom: Platform.OS === 'web' ? 0 : NATIVE_ACTION_CHIP_GAP_Y,
+        marginBottom: Platform.OS === 'web' ? 0 : NATIVE_ACTION_BAR_SECTION_GAP_Y,
     },
     pathRow: {
         flexDirection: 'row',
@@ -793,7 +801,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             return agentInputActionBarLayout;
         }
         // auto
-        return screenWidth < 420 ? 'scroll' : 'wrap';
+        // Treat sub-tablet widths as "mobile": prefer a horizontally scrollable action bar.
+        return isMobileLayoutWidth(screenWidth) ? 'scroll' : 'wrap';
     }, [agentInputActionBarLayout, screenWidth]);
 
     // In labels mode: always show; in icons mode: never show; in auto: show for 'always' policy chips.
@@ -2030,7 +2039,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                     {/* Action buttons below input */}
                     <View style={styles.actionButtonsContainer}>
-                        <View style={screenWidth < 420 ? styles.actionButtonsColumnNarrow : styles.actionButtonsColumn}>{[
+                        <View
+                            style={[
+                                screenWidth < 420 ? styles.actionButtonsColumnNarrow : styles.actionButtonsColumn,
+                                isMobileLayoutWidth(screenWidth) ? styles.actionButtonsColumnMobile : null,
+                            ]}
+                        >{[
                             // Row 1: Settings, Profile (FIRST), Agent, Abort, Source control status
                             <View
                                 key="row1"
@@ -2042,7 +2056,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             ref={actionBarScrollRef}
                                             horizontal
                                             showsHorizontalScrollIndicator={false}
-                                            scrollEnabled={Platform.OS === 'web' ? true : canActionBarScroll}
+                                            scrollEnabled={Platform.OS === 'web' ? true : actionBarShouldScroll}
                                             alwaysBounceHorizontal={false}
                                             directionalLockEnabled
                                             keyboardShouldPersistTaps="handled"

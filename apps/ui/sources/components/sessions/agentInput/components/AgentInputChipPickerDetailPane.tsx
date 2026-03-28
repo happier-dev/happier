@@ -9,6 +9,7 @@ import { ItemGroup } from "@/components/ui/lists/ItemGroup";
 import { ItemListStatic } from "@/components/ui/lists/ItemList";
 
 import type { AgentInputChipPickerOption } from "./AgentInputChipPickerTypes";
+import { deferAgentInputPopoverClose } from "@/components/sessions/agentInput/selection/deferAgentInputPopoverClose";
 
 export type AgentInputChipPickerDetailPaneProps = Readonly<{
   option: AgentInputChipPickerOption;
@@ -57,7 +58,7 @@ export function AgentInputChipPickerDetailPane(
                 onPress={() => {
                   if (entry.disabled) return;
                   props.onSelectDetailOption(entry.id);
-                  props.onRequestClose();
+                  deferAgentInputPopoverClose(props.onRequestClose);
                 }}
               />
             ))}

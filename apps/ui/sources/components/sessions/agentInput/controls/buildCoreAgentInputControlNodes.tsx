@@ -20,6 +20,7 @@ type ChipStyle = (pressed: boolean) => any;
 
 type SessionModeChipControlLike = Readonly<{
     label: string;
+    selectedId: string;
 }>;
 
 export function buildCoreAgentInputControlNodes(params: Readonly<{
@@ -103,6 +104,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         tint: params.tint,
         showLabel: params.showChipLabels,
         label: params.sessionModeChipPresentation?.label ?? params.sessionModeChipControl.label,
+        labelTestID: `agent-input-session-mode-chip-label:${params.sessionModeChipControl.selectedId}`,
         accessibilityLabel: params.sessionModeAccessibilityLabel,
         chipStyle: params.chipStyle,
         textStyle: params.textStyle,

@@ -39,7 +39,7 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
 
     return (
         <View style={[props.styles.pathRow, { flex: 1, minWidth: 0 }]} testID="agentInput-pathResumeRow">
-            <View style={[props.styles.actionButtonsLeft, { flex: 1, flexWrap: 'nowrap', minWidth: 0 }]}>
+            <View style={[props.styles.actionButtonsLeft, { flex: 1, minWidth: 0 }]}>
                 {leadingControls}
                 {hasPath ? (
                     <Pressable
@@ -50,8 +50,9 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
                         style={(p) => ([
                             props.styles.actionChip,
                             p.pressed ? props.styles.actionChipPressed : null,
-                            // Do not grow to fill the row; it should behave like other chips and stay left-aligned.
-                            { flexShrink: 1, minWidth: 0 },
+                            // Keep the path chip readable on mobile: let the row wrap it as a whole instead of
+                            // compressing the text into an icon-only sliver.
+                            { flexShrink: 0, minWidth: 0, maxWidth: '100%' },
                         ])}
                     >
                         {normalizeNodeForView(
@@ -86,7 +87,9 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
                             props.styles.actionChip,
                             !props.showChipLabels ? props.styles.actionChipIconOnly : null,
                             pressed ? props.styles.actionChipPressed : null,
-                            { flexShrink: 0 },
+                            // Prefer wrapping the chip onto a new line over shrinking it to fit the current line.
+                            // Still cap to the row width so extremely long IDs don't overflow horizontally.
+                            { flexShrink: 0, maxWidth: '100%' },
                         ])}
                         textStyle={props.styles.actionChipText}
                     />

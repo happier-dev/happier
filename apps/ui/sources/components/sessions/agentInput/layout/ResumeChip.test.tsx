@@ -50,4 +50,25 @@ describe('ResumeChip', () => {
         expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
         expect(screen.findByTestId('agent-input-resume-chip')).toBeTruthy();
     });
+
+    it('renders a single-line ellipsized label when showLabel is true', async () => {
+        const { ResumeChip } = await import('./ResumeChip');
+
+        const screen = await renderScreen(<ResumeChip
+            onPress={() => {}}
+            showLabel={true}
+            resumeSessionId={'sess-123'}
+            iconColor="#000"
+            labelTitle="Resume"
+            labelOptional="Optional"
+            pressableStyle={() => ({})}
+            textStyle={{}}
+        />);
+
+        const labels = screen.tree.root.findAll((node: any) => node?.type === 'Text');
+        const labelNode = labels.find((node: any) => String(node?.props?.children ?? '') === 'agentInput.resumeChip.withId');
+        expect(labelNode).toBeTruthy();
+        expect(labelNode?.props?.numberOfLines).toBe(1);
+        expect(labelNode?.props?.ellipsizeMode).toBe('tail');
+    });
 });

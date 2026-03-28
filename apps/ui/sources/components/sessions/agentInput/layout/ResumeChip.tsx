@@ -68,7 +68,11 @@ export function ResumeChip(props: ResumeChipProps) {
                 )
             )}
             {label ? (
-                <Text style={props.textStyle}>
+                <Text
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                    style={[props.textStyle, { flexShrink: 1, minWidth: 0 }]}
+                >
                     {label}
                 </Text>
             ) : null}

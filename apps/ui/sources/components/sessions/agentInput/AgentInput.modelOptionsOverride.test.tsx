@@ -15,6 +15,7 @@ const modalShowMock = vi.fn();
 const modalPromptMock = vi.fn();
 let lastPopoverProps: any = null;
 let mockAgentInputActionBarLayout: 'wrap' | 'collapsed' = 'wrap';
+let mockWindowWidth = 800;
 const supportsFreeformModelSelectionState = vi.hoisted(() => ({ value: false }));
 const storageSettings: Settings = {
     ...settingsDefaults,
@@ -42,9 +43,9 @@ installAgentInputCommonModuleMocks({
                 OS: 'ios',
                 select: (v: any) => v.ios,
             },
-            useWindowDimensions: () => ({ width: 800, height: 600 }),
+            useWindowDimensions: () => ({ width: mockWindowWidth, height: 600 }),
             Dimensions: {
-                get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                get: () => ({ width: mockWindowWidth, height: 600, scale: 1, fontScale: 1 }),
             },
         });
     },
@@ -219,6 +220,7 @@ vi.mock('@/components/ui/popover', () => ({
             ? props.children({ maxHeight: 600 })
             : props.children ?? null;
     },
+    usePopoverBoundaryRef: () => React.createRef(),
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
@@ -300,6 +302,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
         modalPromptMock.mockReset();
         modalShowMock.mockReset();
         mockAgentInputActionBarLayout = 'wrap';
+        mockWindowWidth = 800;
+        lastModelPickerOverlayProps = null;
+        lastPopoverProps = null;
     });
 
     it('prefers modelOptionsOverride over getModelOptionsForSession()', async () => {
@@ -767,6 +772,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(modeChip?.props.accessibilityLabel).toContain('Plan');
         expect(findIconNode(modeChip!, 'Ionicons', 'list-outline')).toBeTruthy();
         expect(findIconNode(modeChip!, 'Octicons', 'rocket')).toBeUndefined();
+        expect(screen.findByTestId('agent-input-session-mode-chip-label:plan')).toBeTruthy();
     });
 
     it('opens ACP mode picker popover instead of cycling when selectable options exceed threshold', async () => {
@@ -1196,6 +1202,46 @@ describe('AgentInput (modelOptionsOverride)', () => {
         });
 
         expect(onModelModeChange).toHaveBeenCalledWith('session-model');
+    });
+
+    it('caps the engine popover at 570px when the rail is hidden in stacked layout', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        mockWindowWidth = 520;
+        lastModelPickerOverlayProps = null;
+        lastPopoverProps = null;
+
+        const screen = await renderScreen(React.createElement(AgentInput, {
+                    value: 'hello',
+                    placeholder: 'placeholder',
+                    onChangeText: () => {},
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    agentType: 'codex',
+                    permissionMode: 'default',
+                    onPermissionModeChange: () => {},
+                    modelMode: 'default',
+                    onModelModeChange: () => {},
+                    agentPickerOptions: [
+                        {
+                            id: 'agent:codex',
+                            label: 'Codex',
+                            detailDescription: 'Frontier agentic coding model.',
+                        },
+                        {
+                            id: 'agent:claude',
+                            label: 'Claude',
+                            detailDescription: 'General-purpose assistant.',
+                        },
+                    ],
+                    agentPickerSelectedOptionId: 'agent:codex',
+                    onAgentPickerSelect: () => {},
+                } as any));
+
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
+
+        expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
+        expect(lastPopoverProps?.maxWidthCap).toBe(570);
     });
 
     it('uses the collapsed settings action as a launcher for the shared engine picker when agent picker options exist', async () => {

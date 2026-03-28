@@ -64,7 +64,7 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
                 <AgentInputPopoverSurface
                     testID={props.testID ?? 'agent-input-content-popover'}
                     maxHeight={maxHeight}
-                    scrollEnabled={props.scrollEnabled ?? false}
+                    scrollEnabled={props.scrollEnabled ?? true}
                     keyboardShouldPersistTaps={props.keyboardShouldPersistTaps}
                     edgeFades={props.edgeFades}
                     edgeIndicators={props.edgeIndicators}

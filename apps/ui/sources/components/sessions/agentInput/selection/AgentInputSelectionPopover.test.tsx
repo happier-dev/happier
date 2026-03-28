@@ -75,7 +75,10 @@ describe('AgentInputSelectionPopover', () => {
         });
         expect(capturedPopoverProps.current?.closeOnAnchorPress).toBe(false);
         expect(capturedPopoverProps.current?.containerStyle).toEqual({ paddingHorizontal: 0 });
-        expect(capturedPopoverProps.current?.backdrop).toEqual({ style: { backgroundColor: 'transparent' } });
+        expect(capturedPopoverProps.current?.backdrop).toEqual({
+            style: { backgroundColor: 'transparent' },
+            blockOutsidePointerEvents: false,
+        });
         expect(renderContent).toHaveBeenCalledWith({ maxHeight: 312 });
         expect(screen.findByTestId('content:312')).toBeTruthy();
 

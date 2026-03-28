@@ -9,6 +9,7 @@ export function createSessionModeActionChip(params: Readonly<{
     tint: string;
     showLabel: boolean;
     label: string;
+    labelTestID?: string;
     accessibilityLabel: string;
     chipStyle: (pressed: boolean) => any;
     textStyle: any;
@@ -34,7 +35,7 @@ export function createSessionModeActionChip(params: Readonly<{
                 <Ionicons name={(params.iconName ?? 'list-outline') as never} size={18} color={params.tint} />
             )}
             {params.showLabel ? (
-                <Text style={params.textStyle}>{params.label}</Text>
+                <Text testID={params.labelTestID} style={params.textStyle}>{params.label}</Text>
             ) : null}
         </Pressable>
     );

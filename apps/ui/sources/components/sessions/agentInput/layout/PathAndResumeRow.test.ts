@@ -33,6 +33,11 @@ function hasFlexGrowOne(value: unknown): boolean {
     return (value as { flexGrow?: number }).flexGrow === 1;
 }
 
+function hasFlexShrinkZero(value: unknown): boolean {
+    if (!value || typeof value !== 'object') return false;
+    return (value as { flexShrink?: number }).flexShrink === 0;
+}
+
 function toArray<T>(value: T | readonly T[] | undefined): readonly T[] {
     if (Array.isArray(value)) return value;
     if (value == null) return [];
@@ -85,6 +90,41 @@ describe('PathAndResumeRow', () => {
         const computed = styleFn?.({ pressed: false });
         const styleParts = Array.isArray(computed) ? computed : [computed];
         expect(styleParts.some(hasFlexGrowOne)).toBe(false);
+        expect(styleParts.some(hasFlexShrinkZero)).toBe(true);
+        expect(styleParts.some((value) => value && typeof value === 'object' && (value as { maxWidth?: unknown }).maxWidth === '100%')).toBe(true);
+    });
+
+    it('allows the row chips to wrap when there is not enough horizontal space', async () => {
+        const styles = {
+            pathRow: {},
+            actionButtonsLeft: { flexWrap: 'wrap' as const },
+            actionChip: {},
+            actionChipIconOnly: {},
+            actionChipPressed: {},
+            actionChipText: {},
+        };
+
+        const screen = await renderScreen(React.createElement(PathAndResumeRow, {
+            styles,
+            showChipLabels: true,
+            iconColor: '#000',
+            currentPath: '/Users/leeroy/Development/happy-local',
+            onPathClick: () => {},
+            emptyPathLabel: 'Select Path',
+            resumeSessionId: 'sess-123',
+            onResumeClick: () => {},
+            resumeLabelTitle: 'Resume session',
+            resumeLabelOptional: 'Resume: Optional',
+        }));
+
+        const row = screen.findByTestId('agentInput-pathResumeRow');
+        expect(row).toBeTruthy();
+
+        const actionButtonsLeft = toArray(row?.props?.children)[0];
+        const style = actionButtonsLeft?.props?.style;
+        const styleArray = Array.isArray(style) ? style : [style];
+        const flattened = Object.assign({}, ...styleArray.filter(Boolean));
+        expect(flattened.flexWrap).not.toBe('nowrap');
     });
 
     it('exposes the canonical path chip testID for new-session automation and routing flows', async () => {
