@@ -21,8 +21,24 @@ test('collectPolicyFindings detects direct policy violations in tests', () => {
     'deprecated-import:test-report-only:report-only',
     'no-console-in-tests:report-only',
     'no-exclusive-tests:enforce',
-    'no-hidden-skip-alias:report-only',
+    'no-hidden-skip-alias:enforce',
   ]);
+});
+
+test('collectPolicyFindings keeps hidden skip aliases report-only for provider real probes', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'packages/tests/suites/providers/claude.agentTeams.subagents.jsonl.realProbe.test.ts',
+      content: `
+        const maybeIt = gate ? it : it.skip;
+      `,
+    },
+  ]);
+
+  assert.deepEqual(
+    report.findings.map((finding) => `${finding.ruleId}:${finding.mode}`),
+    ['no-hidden-skip-alias:report-only'],
+  );
 });
 
 test('collectPolicyFindings bans @happier-dev/tests internals from non-test source', () => {
@@ -47,6 +63,45 @@ test('collectPolicyFindings ignores runtime console usage outside tests', () => 
   ]);
 
   assert.equal(report.findings.length, 0);
+});
+
+test('collectPolicyFindings enforces ad hoc UI inline mock families and reports canonical ones', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'apps/ui/sources/components/example.test.tsx',
+      content: `
+        vi.mock('expo-router', () => ({ useRouter: () => ({ push: () => undefined }) }));
+        vi.mock('@/modal', async () => {
+          const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+          return createModalModuleMock().module;
+        });
+      `,
+    },
+  ]);
+
+  const ids = report.findings.map((finding) => `${finding.ruleId}:${finding.mode}`).sort();
+  assert.deepEqual(ids, [
+    'no-ui-ad-hoc-inline-mock-family:enforce',
+    'ui-inline-mock-family-report:report-only',
+  ]);
+});
+
+test('collectPolicyFindings reports UI tree walking when canonical harness imports already exist', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'apps/ui/sources/components/example.test.tsx',
+      content: `
+        import { renderScreen } from '@/dev/testkit';
+        const screen = renderScreen(<Example />);
+        screen.root.findByProps({ testID: 'save-button' }).props.onPress();
+      `,
+    },
+  ]);
+
+  assert.deepEqual(
+    report.findings.map((finding) => `${finding.ruleId}:${finding.mode}`),
+    ['no-direct-ui-tree-walk-when-harness-exists:report-only'],
+  );
 });
 
 test('collectPolicyFindings enforces canonical helpers for detached background spawns in test policy files', () => {

@@ -6,6 +6,7 @@ import {
   isTestPolicyFile,
   stripStringsAndComments,
 } from './testPolicySurface.ts';
+import { collectInlineMockFamilyStats, type InlineMockFamilyName } from '../../../apps/ui/tools/migrations/inlineMockClassifier.ts';
 
 export interface PolicyFinding {
   ruleId: string;
@@ -20,6 +21,46 @@ export interface PolicyFindingReport {
 
 function hasPattern(content: string, pattern: RegExp): boolean {
   return pattern.test(content);
+}
+
+function isUiTestPolicyFile(filePath: string): boolean {
+  return isTestPolicyFile(filePath) && filePath.startsWith('apps/ui/sources/');
+}
+
+function isProviderProbeTestFile(filePath: string): boolean {
+  return filePath.startsWith('packages/tests/suites/providers/') || filePath.includes('.realProbe.');
+}
+
+function summarizeInlineMockFamilies(
+  familyStats: ReturnType<typeof collectInlineMockFamilyStats>,
+  selector: (stats: ReturnType<typeof collectInlineMockFamilyStats>[InlineMockFamilyName]) => number,
+): string {
+  const families = (Object.keys(familyStats) as InlineMockFamilyName[])
+    .map((family) => [family, selector(familyStats[family])] as const)
+    .filter(([, count]) => count > 0)
+    .map(([family, count]) => `${family}=${count}`);
+
+  return families.join(', ');
+}
+
+function shouldReportUiTreeWalk(file: InventoryFile, codeText: string): boolean {
+  if (!isUiTestPolicyFile(file.filePath)) {
+    return false;
+  }
+
+  const usesCanonicalHarness = (
+    file.content.includes('@/dev/testkit') ||
+    hasPattern(codeText, /\brenderScreen\(/) ||
+    hasPattern(codeText, /\bstandardCleanup\(/)
+  );
+  if (!usesCanonicalHarness) {
+    return false;
+  }
+
+  return hasPattern(
+    codeText,
+    /\.root\.(?:findAllByType|findByType|findAllByProps|findByProps|findAll|find)\(|\.props\.onPress\(|findAllByType\((?:'|")Pressable|findByType\((?:'|")Pressable/,
+  );
 }
 
 export function collectPolicyFindings(files: readonly InventoryFile[]): PolicyFindingReport {
@@ -54,7 +95,7 @@ export function collectPolicyFindings(files: readonly InventoryFile[]): PolicyFi
     if (testFile && hasPattern(codeText, /\b(?:const|let|var)\s+\w+\s*=\s*[^?\n]*\?\s*(?:it|test|describe)\s*:\s*(?:it|test|describe)\.skip\b/)) {
       findings.push({
         ruleId: 'no-hidden-skip-alias',
-        mode: 'report-only',
+        mode: isProviderProbeTestFile(file.filePath) ? 'report-only' : 'enforce',
         filePath: file.filePath,
         message: 'Hidden skip aliases are forbidden in test files.',
       });
@@ -85,6 +126,39 @@ export function collectPolicyFindings(files: readonly InventoryFile[]): PolicyFi
         filePath: file.filePath,
         message: 'Non-test source must not import @happier-dev/tests internals.',
       });
+    }
+
+    if (isUiTestPolicyFile(file.filePath)) {
+      const familyStats = collectInlineMockFamilyStats(file.content, { filePath: file.filePath });
+      const totalInlineMocks = summarizeInlineMockFamilies(familyStats, (stats) => stats.total);
+      const adHocInlineMocks = summarizeInlineMockFamilies(familyStats, (stats) => stats.adHoc);
+
+      if (adHocInlineMocks.length > 0) {
+        findings.push({
+          ruleId: 'no-ui-ad-hoc-inline-mock-family',
+          mode: 'enforce',
+          filePath: file.filePath,
+          message: `Ad hoc UI inline mock families must use the canonical testkit shape (${adHocInlineMocks}).`,
+        });
+      }
+
+      if (totalInlineMocks.length > 0) {
+        findings.push({
+          ruleId: 'ui-inline-mock-family-report',
+          mode: 'report-only',
+          filePath: file.filePath,
+          message: `UI inline mock families remain in this file (${totalInlineMocks}).`,
+        });
+      }
+
+      if (shouldReportUiTreeWalk(file, codeText)) {
+        findings.push({
+          ruleId: 'no-direct-ui-tree-walk-when-harness-exists',
+          mode: 'report-only',
+          filePath: file.filePath,
+          message: 'Direct UI tree walking should be removed once a canonical harness already exists in the file.',
+        });
+      }
     }
 
     for (const match of findDeprecatedImportMatches(file.filePath, file.content)) {
