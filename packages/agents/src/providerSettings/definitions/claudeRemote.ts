@@ -89,13 +89,6 @@ export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
       serializeCurrent: (value) => serializeClaudeSettingSourcesV2(value),
     },
   },
-  claudeRemoteIncludePartialMessages: {
-    schema: z.boolean(),
-    default: false,
-    description: 'Show partial assistant messages while Claude is responding',
-    storageScope: 'account',
-    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-  },
   claudeCodeExperimentalAgentTeamsEnabled: {
     schema: z.boolean(),
     default: false,
@@ -177,6 +170,16 @@ export function buildClaudeRemoteProviderSettingsShape(_zod: typeof z) {
 }
 
 export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const readBoolean = <T extends keyof typeof CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS>(key: T): boolean => {
+    const value = settings[key as string];
+    return typeof value === 'boolean' ? value : Boolean(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS[key]);
+  };
+
+  const readNumber = <T extends keyof typeof CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS>(key: T): number => {
+    const value = settings[key as string];
+    return typeof value === 'number' ? value : Number(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS[key]);
+  };
+
   const normalizedV2 = normalizeClaudeSettingSourcesV2(settings.claudeRemoteSettingSourcesV2);
   const normalizedLegacy =
     typeof settings.claudeRemoteSettingSources === 'string'
@@ -192,20 +195,17 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
   const legacyFromV2 = tryMapSettingSourcesV2ToLegacy(effectiveV2);
 
   return {
-    claudeRemoteAgentSdkEnabled: Boolean(settings.claudeRemoteAgentSdkEnabled),
+    claudeRemoteAgentSdkEnabled: readBoolean('claudeRemoteAgentSdkEnabled'),
     claudeRemoteSettingSourcesV2: effectiveV2,
     ...(legacyFromV2 ? { claudeRemoteSettingSources: legacyFromV2 } : {}),
-    claudeRemoteIncludePartialMessages: Boolean(settings.claudeRemoteIncludePartialMessages),
-    claudeCodeExperimentalAgentTeamsEnabled: Boolean(settings.claudeCodeExperimentalAgentTeamsEnabled),
-    claudeLocalPermissionBridgeEnabled: Boolean(settings.claudeLocalPermissionBridgeEnabled),
-    claudeLocalPermissionBridgeWaitIndefinitely: Boolean(settings.claudeLocalPermissionBridgeWaitIndefinitely),
-    claudeLocalPermissionBridgeTimeoutSeconds: typeof settings.claudeLocalPermissionBridgeTimeoutSeconds === 'number'
-      ? settings.claudeLocalPermissionBridgeTimeoutSeconds
-      : 600,
-    claudeRemoteEnableFileCheckpointing: Boolean(settings.claudeRemoteEnableFileCheckpointing),
+    claudeCodeExperimentalAgentTeamsEnabled: readBoolean('claudeCodeExperimentalAgentTeamsEnabled'),
+    claudeLocalPermissionBridgeEnabled: readBoolean('claudeLocalPermissionBridgeEnabled'),
+    claudeLocalPermissionBridgeWaitIndefinitely: readBoolean('claudeLocalPermissionBridgeWaitIndefinitely'),
+    claudeLocalPermissionBridgeTimeoutSeconds: readNumber('claudeLocalPermissionBridgeTimeoutSeconds'),
+    claudeRemoteEnableFileCheckpointing: readBoolean('claudeRemoteEnableFileCheckpointing'),
     claudeRemoteMaxThinkingTokens: typeof settings.claudeRemoteMaxThinkingTokens === 'number' ? settings.claudeRemoteMaxThinkingTokens : null,
-    claudeRemoteDisableTodos: Boolean(settings.claudeRemoteDisableTodos),
-    claudeRemoteStrictMcpServerConfig: Boolean(settings.claudeRemoteStrictMcpServerConfig),
+    claudeRemoteDisableTodos: readBoolean('claudeRemoteDisableTodos'),
+    claudeRemoteStrictMcpServerConfig: readBoolean('claudeRemoteStrictMcpServerConfig'),
     claudeRemoteAdvancedOptionsJson: normalizeClaudeRemoteAdvancedOptionsJson(settings.claudeRemoteAdvancedOptionsJson),
   };
 }
