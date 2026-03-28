@@ -117,6 +117,11 @@ function normalizePlanBoundedCompletion(params: Readonly<{
     };
   }
 
+  const recommendedBackendId =
+    typeof parsedModel.data.recommendedBackendId === 'string' && parsedModel.data.recommendedBackendId.trim().length > 0
+      ? parsedModel.data.recommendedBackendId.trim()
+      : undefined;
+
   const payload = PlanOutputV1Schema.parse({
     runRef: {
       runId: params.runId,
@@ -128,7 +133,7 @@ function normalizePlanBoundedCompletion(params: Readonly<{
     sections: parsedModel.data.sections,
     risks: parsedModel.data.risks,
     milestones: parsedModel.data.milestones,
-    recommendedBackendId: parsedModel.data.recommendedBackendId,
+    recommendedBackendId,
     generatedAtMs: params.finishedAtMs,
   });
 

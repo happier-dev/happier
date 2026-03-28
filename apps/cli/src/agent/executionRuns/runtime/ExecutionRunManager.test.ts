@@ -545,7 +545,6 @@ describe('ExecutionRunManager (review intent)', () => {
         sendAgentMessageCommitted: async (provider, body, opts) => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
         },
-        sendTranscriptDraftDelta: () => {},
       },
       getNowMs: () => 1_700_000_000_000,
     });
@@ -617,7 +616,6 @@ describe('ExecutionRunManager (review intent)', () => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
           throw new Error('commit failed');
         },
-        sendTranscriptDraftDelta: () => {},
       },
       getNowMs: () => 1_700_000_000_000,
     });
@@ -980,13 +978,6 @@ describe('ExecutionRunManager (memory_hints intent)', () => {
 describe('ExecutionRunManager (streaming sidechain)', () => {
   it('emits streaming sidechain chunks for model-output when ioMode=streaming', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
-    const drafts: Array<{
-      provider: string;
-      localId: string;
-      segmentKind: string;
-      sidechainId: string | null;
-      deltaText: string;
-    }> = [];
     const commits: Array<{
       provider: string;
       body: unknown;
@@ -1032,15 +1023,6 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
         sendAgentMessageCommitted: async (provider, body, opts) => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
         },
-        sendTranscriptDraftDelta: (provider, params) => {
-          drafts.push({
-            provider,
-            localId: params.localId,
-            segmentKind: params.segmentKind,
-            sidechainId: params.sidechainId,
-            deltaText: params.deltaText,
-          });
-        },
       },
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1059,15 +1041,13 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
     await manager.waitForTerminal(started.runId);
     expect(manager.get(started.runId)?.status).toBe('succeeded');
 
-    const sidechainDrafts = drafts.filter((row) => row.sidechainId === started.sidechainId && row.segmentKind === 'assistant');
-    expect(sidechainDrafts.length).toBeGreaterThanOrEqual(1);
-    const concatenatedDrafts = sidechainDrafts.map((row) => row.deltaText).join('');
-    expect(concatenatedDrafts).toContain('Plan in progress');
-
     const sidechainCommits = commits.filter(
       (row) => (row.body as any)?.type === 'message' && (row.body as any)?.sidechainId === started.sidechainId,
     );
     expect(sidechainCommits.length).toBeGreaterThanOrEqual(1);
+    const concatenatedStreamingText = sidechainCommits.map((row) => String((row.body as any)?.message ?? '')).join('');
+    expect(concatenatedStreamingText).toContain('Plan in progress');
+    expect((sidechainCommits[0]?.meta as any)?.happierStreamSegmentV1?.segmentState).toBe('streaming');
     const finalCommit = sidechainCommits[sidechainCommits.length - 1]!;
     expect((finalCommit.meta as any)?.happierStreamSegmentV1?.segmentState).toBe('complete');
 
@@ -1079,13 +1059,6 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
 
   it('streams review progress without leaking the trailing strict JSON payload', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
-    const drafts: Array<{
-      provider: string;
-      localId: string;
-      segmentKind: string;
-      sidechainId: string | null;
-      deltaText: string;
-    }> = [];
     const commits: Array<{
       provider: string;
       body: unknown;
@@ -1132,15 +1105,6 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
         sendAgentMessageCommitted: async (provider, body, opts) => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
         },
-        sendTranscriptDraftDelta: (provider, params) => {
-          drafts.push({
-            provider,
-            localId: params.localId,
-            segmentKind: params.segmentKind,
-            sidechainId: params.sidechainId,
-            deltaText: params.deltaText,
-          });
-        },
       },
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1159,12 +1123,14 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
     await manager.waitForTerminal(started.runId);
     expect(manager.get(started.runId)?.status).toBe('succeeded');
 
-    const sidechainDrafts = drafts.filter((row) => row.sidechainId === started.sidechainId && row.segmentKind === 'assistant');
-    expect(sidechainDrafts.length).toBeGreaterThanOrEqual(1);
+    const sidechainCommits = commits.filter(
+      (row) => (row.body as any)?.type === 'message' && (row.body as any)?.sidechainId === started.sidechainId,
+    );
+    expect(sidechainCommits.length).toBeGreaterThanOrEqual(1);
 
-    const concatenatedDrafts = sidechainDrafts.map((row) => row.deltaText).join('');
-    expect(concatenatedDrafts).toContain('Working');
-    expect(concatenatedDrafts).not.toContain('"findings"');
+    const concatenatedStreamingText = sidechainCommits.map((row) => String((row.body as any)?.message ?? '')).join('');
+    expect(concatenatedStreamingText).toContain('Working');
+    expect(concatenatedStreamingText).not.toContain('"findings"');
 
     // A final summary message is still allowed so users get a clear terminal note.
     const finalNonStreaming = sent.find(
@@ -1477,13 +1443,6 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
   it('streams sidechain output for long-lived runs when ioMode=streaming and avoids emitting a duplicate non-streaming message', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
-    const drafts: Array<{
-      provider: string;
-      localId: string;
-      segmentKind: string;
-      sidechainId: string | null;
-      deltaText: string;
-    }> = [];
     const commits: Array<{
       provider: string;
       body: unknown;
@@ -1519,15 +1478,6 @@ describe('ExecutionRunManager (long-lived runs)', () => {
         sendAgentMessageCommitted: async (provider, body, opts) => {
           commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
         },
-        sendTranscriptDraftDelta: (provider, params) => {
-          drafts.push({
-            provider,
-            localId: params.localId,
-            segmentKind: params.segmentKind,
-            sidechainId: params.sidechainId,
-            deltaText: params.deltaText,
-          });
-        },
       },
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1547,7 +1497,9 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
     await expect
       .poll(
-        () => drafts.filter((row) => row.sidechainId === started.sidechainId && row.segmentKind === 'assistant').length,
+        () => commits.filter(
+          (row) => (row.body as any)?.type === 'message' && (row.body as any)?.sidechainId === started.sidechainId,
+        ).length,
         { timeout: 1_000 },
       )
       .toBeGreaterThanOrEqual(1);

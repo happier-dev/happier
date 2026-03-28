@@ -41,6 +41,40 @@ describe('PlanProfile', () => {
     expect((res.toolResultMeta as any)?.happier?.kind).toBe('plan_output.v1');
   });
 
+  it('treats an empty recommendedBackendId as omitted instead of failing the run', () => {
+    const start = {
+      sessionId: 'sess_1',
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'plan',
+      backendId: 'codex',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'plan this',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      startedAtMs: 1,
+    } as const;
+
+    const res = PlanProfile.onBoundedComplete({
+      start,
+      rawText: [
+        'Sure, here is the plan.',
+        '{',
+        '  \"summary\": \"Ok\",',
+        '  \"sections\": [{ \"title\": \"Approach\", \"items\": [\"Step 1\"] }],',
+        '  \"recommendedBackendId\": \"\"',
+        '}',
+      ].join('\n'),
+      finishedAtMs: 2,
+    });
+
+    expect(res.status).toBe('succeeded');
+    expect((res.structuredMeta as any)?.payload?.recommendedBackendId).toBeUndefined();
+  });
+
   it('fails deterministically when model output is not strict JSON', () => {
     const start = {
       sessionId: 'sess_1',
