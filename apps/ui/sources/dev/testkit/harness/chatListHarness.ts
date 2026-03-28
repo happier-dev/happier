@@ -8,7 +8,6 @@ import { createStorageModuleMock, createStorageStoreMock } from '../mocks/storag
 import { renderScreen, type RenderScreenResult } from '../render/renderScreen';
 import type { RenderWithAppProvidersOptions } from '../render/renderWithAppProviders';
 import { createReducer } from '@/sync/reducer/reducer';
-import { mergeTranscriptCommittedAndDraftMessages } from '@/sync/domains/messages/mergeTranscriptCommittedAndDraftMessages';
 
 export type ChatListHarness = RenderScreenResult & Readonly<{
     findMessageRow: (testID: string) => ReactTestInstance | null;
@@ -163,7 +162,6 @@ type LegacyChatListHarnessState = {
     sessionMessagesState: SessionMessagesState;
     sessionPendingState: SessionPendingState;
     sessionActionDraftsState: any[];
-    sessionTranscriptDraftMessagesState: any[];
     sessionState: any;
     settingValues: Record<string, any>;
     flatListRefValue: any;
@@ -174,7 +172,6 @@ export const legacyChatListHarnessState: LegacyChatListHarnessState = {
     sessionMessagesState: { messages: [], isLoaded: true },
     sessionPendingState: { messages: [], discarded: [], isLoaded: true },
     sessionActionDraftsState: [],
-    sessionTranscriptDraftMessagesState: [],
     sessionState: null,
     settingValues: {},
     flatListRefValue: null,
@@ -214,7 +211,6 @@ function createFlashListChatListMessagesSnapshot() {
                 messageIdsOldestFirst: Object.keys(messagesById),
                 messagesById,
                 messagesMap: messagesById,
-                draftsByLocalId: {},
                 reducerState: createReducer(),
                 reducerVersion: 0,
                 latestThinkingMessageId: null,
@@ -590,10 +586,7 @@ export async function withRenderedFlashListChatListWebScroller<T>(
 
 function createLegacyChatListMessagesSnapshot() {
     const sessionId = String(legacyChatListHarnessState.sessionState?.id ?? 'session-1');
-    const allMessages = [
-        ...(legacyChatListHarnessState.sessionMessagesState.messages ?? []),
-        ...(legacyChatListHarnessState.sessionTranscriptDraftMessagesState ?? []),
-    ];
+    const allMessages = [...(legacyChatListHarnessState.sessionMessagesState.messages ?? [])];
     const messagesById = Object.fromEntries(
         allMessages.map((message: any) => [message.id, message]),
     );
@@ -605,7 +598,6 @@ function createLegacyChatListMessagesSnapshot() {
                 messageIdsOldestFirst,
                 messagesById,
                 messagesMap: messagesById,
-                draftsByLocalId: {},
                 reducerState: createReducer(),
                 reducerVersion: 0,
                 latestThinkingMessageId: null,
@@ -625,7 +617,6 @@ export function resetLegacyChatListHarness(options: {
     legacyChatListHarnessState.sessionMessagesState = { messages: [], isLoaded: true };
     legacyChatListHarnessState.sessionPendingState = { messages: [], discarded: [], isLoaded: true };
     legacyChatListHarnessState.sessionActionDraftsState = [];
-    legacyChatListHarnessState.sessionTranscriptDraftMessagesState = [];
     legacyChatListHarnessState.sessionState = {
         id: 'session-1',
         seq: 0,
@@ -757,35 +748,22 @@ export async function createLegacyChatListStorageMock(
             useSession: () => legacyChatListHarnessState.sessionState,
             useSessionTranscriptIds: () => {
                 const committedMessages = legacyChatListHarnessState.sessionMessagesState.messages ?? [];
-                const merged = mergeTranscriptCommittedAndDraftMessages({
-                    committedIds: committedMessages.map((message: any) => message.id),
-                    committedMessagesById: Object.fromEntries(committedMessages.map((message: any) => [message.id, message])),
-                    draftMessages: (legacyChatListHarnessState.sessionTranscriptDraftMessagesState ?? []).filter((message: any) => message?.kind === 'agent-text'),
-                });
                 return {
-                    ids: merged.ids,
+                    ids: committedMessages.map((message: any) => message.id),
                     isLoaded: legacyChatListHarnessState.sessionMessagesState.isLoaded,
                 };
             },
             useSessionMessagesById: () => {
                 const committedMessages = legacyChatListHarnessState.sessionMessagesState.messages ?? [];
-                return mergeTranscriptCommittedAndDraftMessages({
-                    committedIds: committedMessages.map((message: any) => message.id),
-                    committedMessagesById: Object.fromEntries(committedMessages.map((message: any) => [message.id, message])),
-                    draftMessages: (legacyChatListHarnessState.sessionTranscriptDraftMessagesState ?? []).filter((message: any) => message?.kind === 'agent-text'),
-                }).messagesById;
+                return Object.fromEntries(committedMessages.map((message: any) => [message.id, message]));
             },
             useForkedTranscriptSnapshot: () => null,
             useSessionPendingMessages: () => legacyChatListHarnessState.sessionPendingState,
             useSessionActionDrafts: () => legacyChatListHarnessState.sessionActionDraftsState,
-            useSessionTranscriptDraftMessages: () => legacyChatListHarnessState.sessionTranscriptDraftMessagesState,
             useSessionLatestThinkingMessageId: () => null,
             useSessionLatestThinkingMessageActivityAtMs: () => null,
             useMessage: (_sessionId: string, messageId: string) =>
-                [
-                    ...(legacyChatListHarnessState.sessionMessagesState.messages ?? []),
-                    ...(legacyChatListHarnessState.sessionTranscriptDraftMessagesState ?? []),
-                ].find((message: any) => message.id === messageId) ?? null,
+                (legacyChatListHarnessState.sessionMessagesState.messages ?? []).find((message: any) => message.id === messageId) ?? null,
             useSetting: (key: string) => legacyChatListHarnessState.settingValues[key],
             getStorage: () => createStorageStoreMock(createLegacyChatListMessagesSnapshot()),
         },

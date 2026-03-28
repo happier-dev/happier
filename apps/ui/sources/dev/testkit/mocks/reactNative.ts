@@ -2,7 +2,7 @@ import type { PlainObject } from './_shared';
 import { isPlainObject, mergeObjects } from './_shared';
 
 export type TestReactNativeOverrides = Record<string, unknown>;
-type ReactNativeStubModule = typeof import('@/dev/reactNativeStub');
+type ReactNativeStubModule = typeof import('../../reactNativeStub');
 type DeepMutable<T> = T extends (...args: infer TArgs) => infer TResult
     ? (...args: TArgs) => TResult
     : T extends readonly (infer TValue)[]
@@ -40,7 +40,7 @@ function mergeObjectsPreservingDescriptors<T extends PlainObject>(
 export async function createReactNativeWebMock(
     overrides?: TestReactNativeOverrides,
 ): Promise<DeepMutable<ReactNativeStubModule> & TestReactNativeOverrides> {
-    const stub = await import('@/dev/reactNativeStub');
+    const stub = await import('../../reactNativeStub');
     const { Platform: platformOverrides, AppState: appStateOverrides, ...restOverrides } = overrides ?? {};
     const mergedModule = mergeObjects(stub as PlainObject, restOverrides as PlainObject | undefined);
     const basePlatform = {

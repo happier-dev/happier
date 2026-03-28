@@ -36,7 +36,6 @@ export function createSessionMessagesFixture(overrides: Partial<SessionMessages>
         messageIdsOldestFirst: [],
         messagesById,
         messagesMap: overrides.messagesMap ?? messagesById,
-        draftsByLocalId: {},
         reducerState: createReducer(),
         reducerVersion: 0,
         latestThinkingMessageId: null,
