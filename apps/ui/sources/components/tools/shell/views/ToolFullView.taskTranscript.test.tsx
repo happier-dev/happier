@@ -71,7 +71,6 @@ installToolShellCommonModuleMocks({
                 // Narrow boundary fixture: these tests only care about boolean local settings.
                 useLocalSetting: (() => false) as any,
                 useSetting: () => false,
-                useSessionTranscriptDraftMessages: () => [],
             },
         });
     },

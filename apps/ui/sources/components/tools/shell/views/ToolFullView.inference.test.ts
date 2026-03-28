@@ -32,7 +32,6 @@ installToolShellCommonModuleMocks({
             overrides: {
                 useLocalSetting: <K extends keyof typeof localSettingsDefaults>(name: K) => localSettingsDefaults[name],
                 useSetting: <K extends keyof typeof settingsDefaults>(name: K) => settingsDefaults[name],
-                useSessionTranscriptDraftMessages: () => [],
             },
         });
     },

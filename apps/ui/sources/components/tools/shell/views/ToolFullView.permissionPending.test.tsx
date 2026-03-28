@@ -61,7 +61,6 @@ installToolShellCommonModuleMocks({
                     if (key === 'toolViewShowDebugByDefault') return false;
                     return false;
                 },
-                useSessionTranscriptDraftMessages: () => [],
             },
         }),
 });

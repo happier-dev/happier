@@ -13,7 +13,6 @@ import { StructuredResultView } from '@/components/tools/renderers/system/Struct
 import { normalizeToolCallForRendering } from '@/components/tools/normalization/core/normalizeToolCallForRendering';
 import { PermissionFooter } from '../permissions/PermissionFooter';
 import { useSetting } from '@/sync/domains/state/storage';
-import { useSessionTranscriptDraftMessages } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
@@ -96,7 +95,6 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
 
     const normalizedSessionId = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null;
     const sidechainId = transcriptSidechainId;
-    const draftMessages = useSessionTranscriptDraftMessages(normalizedSessionId ?? '', sidechainId);
     const canRenderTaskTranscript =
         normalizedSessionId !== null &&
         isSubAgentTranscriptToolName(normalizedToolName) &&
@@ -196,7 +194,6 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                         <ChainTranscriptList
                             sessionId={normalizedSessionId}
                             messages={messages}
-                            draftMessages={draftMessages}
                             metadata={metadata || null}
                             interaction={transcriptInteraction}
                             forcePermissionPromptsInTranscript={forcePermissionFooterInTranscript}
