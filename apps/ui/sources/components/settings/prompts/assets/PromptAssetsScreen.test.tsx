@@ -181,9 +181,9 @@ installPromptAssetsCommonModuleMocks({
             },
         });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
             useArtifacts: () => ([
                 { id: 'bundle-1', title: 'Refactor', header: { kind: 'prompt_bundle.v2', title: 'Refactor' } },
                 { id: 'doc-1', title: 'review/code', header: { kind: 'prompt_doc.v2', title: 'review/code' } },

@@ -1,12 +1,16 @@
 import { vi } from 'vitest';
 
 type AuthHookModuleFactory = () => unknown | Promise<unknown>;
+type AuthHookImportOriginal = <T = unknown>() => Promise<T>;
+type AuthHookStorageModuleFactory = (
+    importOriginal: AuthHookImportOriginal,
+) => unknown | Promise<unknown>;
 
 type InstallAuthHookCommonModuleMocksOptions = Readonly<{
     modal?: AuthHookModuleFactory;
     reactNative?: AuthHookModuleFactory;
     router?: AuthHookModuleFactory;
-    storage?: AuthHookModuleFactory;
+    storage?: AuthHookStorageModuleFactory;
     text?: AuthHookModuleFactory;
 }>;
 
@@ -15,7 +19,7 @@ const authHookModuleState = vi.hoisted(() => ({
         modal: undefined as AuthHookModuleFactory | undefined,
         reactNative: undefined as AuthHookModuleFactory | undefined,
         router: undefined as AuthHookModuleFactory | undefined,
-        storage: undefined as AuthHookModuleFactory | undefined,
+        storage: undefined as AuthHookStorageModuleFactory | undefined,
         text: undefined as AuthHookModuleFactory | undefined,
     },
 }));
@@ -32,9 +36,14 @@ export function installAuthHookCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
+        const activeOptions = authHookModuleState.options;
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
+
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock();
+    });
 
     vi.mock('@/modal', async () => {
         const activeOptions = authHookModuleState.options;
@@ -56,10 +65,15 @@ export function installAuthHookCommonModuleMocks(
         return createExpoRouterMock().module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
-});
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        const activeOptions = authHookModuleState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage(importOriginal);
+        }
+
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {});
+    });
 
     vi.mock('@/text', async () => {
         const activeOptions = authHookModuleState.options;

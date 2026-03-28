@@ -25,6 +25,8 @@ type DevGlobal = typeof globalThis & {
     __DEV__?: boolean;
 };
 
+const EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK = 'EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK';
+
 function createIosSecureStoreEntitlementError(): Error {
     return new Error("Calling the 'setValueWithKeyAsync' function has failed\n→ Caused by: A required entitlement isn't present.");
 }
@@ -64,6 +66,7 @@ installTokenStorageWebPlatformMocks({
 
 describe('TokenStorage (native secure-store entitlement fallback)', () => {
     let originalDev: boolean | undefined;
+    let originalFallbackEnv: string | undefined;
     const devGlobal = globalThis as DevGlobal;
 
     beforeEach(() => {
@@ -81,6 +84,8 @@ describe('TokenStorage (native secure-store entitlement fallback)', () => {
         secureStoreState.deleteItemAsync.mockRejectedValue(createIosSecureStoreEntitlementError());
         installServerProfilesMock();
         originalDev = devGlobal.__DEV__;
+        originalFallbackEnv = process.env[EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK];
+        delete process.env[EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK];
         devGlobal.__DEV__ = true;
     });
 
@@ -93,6 +98,11 @@ describe('TokenStorage (native secure-store entitlement fallback)', () => {
             delete devGlobal.__DEV__;
         } else {
             devGlobal.__DEV__ = originalDev;
+        }
+        if (originalFallbackEnv === undefined) {
+            delete process.env[EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK];
+        } else {
+            process.env[EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK] = originalFallbackEnv;
         }
     });
 
@@ -122,7 +132,11 @@ describe('TokenStorage (native secure-store entitlement fallback)', () => {
     });
 
     it('does not fall back to MMKV outside dev mode', async () => {
+        process.env[EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK] = '0';
         devGlobal.__DEV__ = false;
+
+        const { Platform } = await import('react-native');
+        expect(Platform.OS).toBe('ios');
 
         const { TokenStorage } = await import('./tokenStorage');
         await expect(TokenStorage.setCredentials({ token: 'token-prod', secret: 'secret-prod' })).resolves.toBe(false);

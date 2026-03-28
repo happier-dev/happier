@@ -53,9 +53,9 @@ installPromptTemplatesCommonModuleMocks({
             },
         }).module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
             useSetting: (key: string) => {
                 if (key === 'promptInvocationsV1') {
                     return {

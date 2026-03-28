@@ -60,25 +60,28 @@ export function installSkillBundleCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    TextInput: 'TextInput',
-                    ScrollView: 'ScrollView',
-                    Platform: {
-                        OS: 'web',
-                        select: ({
-                            web,
-                            default: defaultValue,
-                        }: {
-                            web?: unknown;
-                            default?: unknown;
-                        }) => web ?? defaultValue,
-                    },
-                }
-    );
-});
+        const activeOptions = skillBundleModuleState.options;
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
+
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            TextInput: 'TextInput',
+            ScrollView: 'ScrollView',
+            Platform: {
+                OS: 'web',
+                select: ({
+                    web,
+                    default: defaultValue,
+                }: {
+                    web?: unknown;
+                    default?: unknown;
+                }) => web ?? defaultValue,
+            },
+        });
+    });
 
     vi.mock('react-native-unistyles', async () => {
         const activeOptions = skillBundleModuleState.options;
@@ -133,8 +136,8 @@ export function installSkillBundleCommonModuleMocks(
             return await activeOptions.storage(importOriginal);
         }
 
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
             useArtifacts: () => [],
             useAllMachines: () => [],
             useMachineListByServerId: () => ({}),

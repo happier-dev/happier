@@ -54,25 +54,28 @@ export function installPromptRegistriesCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    ScrollView: 'ScrollView',
-                    TextInput: 'TextInput',
-                    Platform: {
-                        OS: 'web',
-                        select: ({
-                            web,
-                            default: defaultValue,
-                        }: {
-                            web?: unknown;
-                            default?: unknown;
-                        }) => web ?? defaultValue,
-                    },
-                }
-    );
-});
+        const activeOptions = promptRegistriesModuleState.options;
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
+
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            ScrollView: 'ScrollView',
+            TextInput: 'TextInput',
+            Platform: {
+                OS: 'web',
+                select: ({
+                    web,
+                    default: defaultValue,
+                }: {
+                    web?: unknown;
+                    default?: unknown;
+                }) => web ?? defaultValue,
+            },
+        });
+    });
 
     vi.mock('react-native-unistyles', async () => {
         const activeOptions = promptRegistriesModuleState.options;
@@ -129,8 +132,8 @@ export function installPromptRegistriesCommonModuleMocks(
             return await activeOptions.storage(importOriginal);
         }
 
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
             useArtifacts: () => [],
             useAllMachines: () => [],
             useMachineListByServerId: () => ({}),

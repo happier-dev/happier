@@ -292,7 +292,7 @@ async function recoverLateSpawnedVoiceConversationSessionId(params: Readonly<{
     if (recoveredSessionId) return recoveredSessionId;
 
     for (const candidateSessionId of listLateSpawnedVoiceConversationCandidateIds(params)) {
-      await sync.ensureSessionVisibleForMessageRoute(candidateSessionId, { forceRefresh: true } as any).catch(() => {});
+      await Promise.resolve(sync.ensureSessionVisibleForMessageRoute(candidateSessionId, { forceRefresh: true } as any)).catch(() => {});
       const candidateSession = (storage.getState() as any)?.sessions?.[candidateSessionId] ?? null;
       if (matchesLateSpawnedVoiceConversationTarget(candidateSession, params)) {
         return candidateSessionId;
@@ -326,7 +326,7 @@ async function resolveSessionRootTarget(sessionId: string): Promise<Readonly<{ m
   const existingTarget = readTarget();
   if (existingTarget) return existingTarget;
 
-  await sync.ensureSessionVisibleForMessageRoute(sessionId).catch(() => {});
+  await Promise.resolve(sync.ensureSessionVisibleForMessageRoute(sessionId)).catch(() => {});
   return readTarget();
 }
 

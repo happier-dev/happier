@@ -69,9 +69,9 @@ installPromptLibrarySettingsCommonModuleMocks({
         });
         return routerMock.module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
             useArtifacts: () => useArtifactsMock(),
             useAllMachines: () => [],
             useSettingMutable: (key: string) => {

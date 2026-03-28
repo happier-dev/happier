@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PromptRegistryListAdaptersResponseV1, PromptRegistryScanSourceResponseV1 } from '@happier-dev/protocol';
 import type { PromptRegistrySkillImportResult } from '@/sync/ops/promptLibrary/promptRegistrySkillImports';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import { changeTextTestInstance, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import {
     installPromptRegistriesCommonModuleMocks,
@@ -101,7 +101,7 @@ installPromptRegistriesCommonModuleMocks({
             confirm: vi.fn(async () => true),
         },
     }).module,
-    storage: async () => createStorageModuleStub({
+    storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
         useAllMachines: () => machinesState.value,
         useSettingMutable: (key: string) => {
             if (key === 'promptRegistrySourcesV1') {

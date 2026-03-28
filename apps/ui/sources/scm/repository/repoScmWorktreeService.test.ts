@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
 import { installRepositoryScmCommonModuleMocks } from './repositoryScmTestHelpers';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 
 const machineScmWorktreeCreateMock = vi.hoisted(() => vi.fn());
 const machineScmWorktreePruneMock = vi.hoisted(() => vi.fn());
@@ -14,14 +15,11 @@ vi.mock('@/sync/ops/scm/machineScm', () => ({
 }));
 
 installRepositoryScmCommonModuleMocks({
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: {
-                getState: storageGetStateMock,
-            },
-        });
-    },
+    storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
+        storage: {
+            getState: storageGetStateMock,
+        },
+    }),
 });
 
 describe('repoScmWorktreeService', () => {

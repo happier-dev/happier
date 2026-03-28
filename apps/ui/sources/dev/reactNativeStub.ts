@@ -48,6 +48,9 @@ export const InteractionManager = {
         return { cancel: () => {} };
     },
 } as const;
+export const Keyboard = {
+    addListener: () => ({ remove: () => {} }),
+} as const;
 export const Linking = {
     canOpenURL: async () => true,
     openURL: async () => {},

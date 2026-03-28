@@ -12,9 +12,9 @@ import {
 const setPromptStacksMock = vi.fn();
 
 installPromptStacksCommonModuleMocks({
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
             useArtifacts: () => ([
                 {
                     id: 'doc-1',

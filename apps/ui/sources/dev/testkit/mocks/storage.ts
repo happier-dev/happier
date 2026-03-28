@@ -1,3 +1,5 @@
+import { vi } from 'vitest';
+
 import type { StorageState } from '@/sync/store/types';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { StoreApi, UseBoundStore } from 'zustand';
@@ -27,6 +29,8 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
     // (via `useMemo`/`useEffect`) don't thrash in unit tests unless a caller opts in to custom data.
     const allMachines = [] as ReturnType<StorageModule['useAllMachines']>;
     const allSessions = [] as ReturnType<StorageModule['useAllSessions']>;
+    const useSetting = createUseSettingMock();
+    const useSettingMutable = createUseSettingMutableMock(useSetting);
     const store = createStorageStoreMock({
         sessions: {},
         machines: {},
@@ -37,9 +41,13 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
     const defaults = {
         storage: store,
         useSettings: () => ({} as Settings),
-        useSetting: createUseSettingMock(),
+        useSetting,
+        useSettingMutable,
         useAllMachines: () => allMachines,
         useAllSessions: () => allSessions,
+        useArtifacts: () => [],
+        useMachineListByServerId: () => ({}),
+        useMachineListStatusByServerId: () => ({}),
     } satisfies Partial<StorageModule>;
 
     // Stub helpers intentionally allow partial boundary-shaped fixtures without forcing
@@ -62,6 +70,12 @@ export function createUseSettingMock(options: CreateUseSettingMockOptions = {}):
         }
         return fallback?.(key);
     }) as StorageModule['useSetting'];
+}
+
+export function createUseSettingMutableMock(
+    useSetting: StorageModule['useSetting'],
+): StorageModule['useSettingMutable'] {
+    return ((key: keyof Settings) => [useSetting(key), vi.fn()]) as StorageModule['useSettingMutable'];
 }
 
 export function installPartialStorageModuleMock(overrides: object) {

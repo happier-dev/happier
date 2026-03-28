@@ -59,6 +59,7 @@ describe('useNavigateToSession (multi-server)', () => {
         });
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_123', expect.any(Object));
+        expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 
     it('requests switch orchestration when serverId is provided', async () => {

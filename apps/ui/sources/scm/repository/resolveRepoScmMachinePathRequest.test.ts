@@ -1,18 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installRepositoryScmCommonModuleMocks } from './repositoryScmTestHelpers';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 
 const storageGetStateMock = vi.hoisted(() => vi.fn());
 
 installRepositoryScmCommonModuleMocks({
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: {
-                getState: storageGetStateMock,
-            },
-        });
-    },
+    storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
+        storage: {
+            getState: storageGetStateMock,
+        },
+    }),
 });
 
 describe('resolveRepoScmMachinePathRequest', () => {

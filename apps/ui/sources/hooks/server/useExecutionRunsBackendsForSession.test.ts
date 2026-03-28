@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 
 import { installServerHookCommonModuleMocks } from './serverHookModuleTestHelpers';
 
@@ -21,7 +21,7 @@ const activeServerSnapshotState = vi.hoisted(() => ({
 }));
 
 installServerHookCommonModuleMocks({
-  storage: () => createStorageModuleStub({
+  storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
     useSession: () => sessionState.value,
   }),
 });

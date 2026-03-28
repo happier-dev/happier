@@ -1,20 +1,29 @@
 import { vi } from 'vitest';
 
 type ServerHookModuleFactory = () => unknown | Promise<unknown>;
+type ServerHookImportOriginal = <T = unknown>() => Promise<T>;
+type ServerHookStorageModuleFactory = (
+    importOriginal: ServerHookImportOriginal,
+) => unknown | Promise<unknown>;
 
 type InstallServerHookCommonModuleMocksOptions = Readonly<{
-    storage?: ServerHookModuleFactory;
+    storage?: ServerHookStorageModuleFactory;
 }>;
 
 const serverHookModuleState = vi.hoisted(() => ({
     options: {
-        storage: undefined as ServerHookModuleFactory | undefined,
+        storage: undefined as ServerHookStorageModuleFactory | undefined,
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const activeOptions = serverHookModuleState.options;
+    if (activeOptions.storage) {
+        return await activeOptions.storage(importOriginal);
+    }
+
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {});
 });
 
 export function installServerHookCommonModuleMocks(

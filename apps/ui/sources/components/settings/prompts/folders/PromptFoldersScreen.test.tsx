@@ -44,9 +44,9 @@ installPromptLibrarySettingsCommonModuleMocks({
             },
         }).module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
             useArtifacts: () => artifactsState.value,
             useSettingMutable: (key: string) => {
                 if (key === 'promptFoldersV1') {
