@@ -188,7 +188,9 @@ function parseInboundFromUpdate(params: Readonly<{
   const rawMessage = asRecord(update.message);
   if (!rawMessage) return null;
 
-  const text = typeof rawMessage.text === 'string' ? rawMessage.text.trim() : '';
+  const rawText = typeof rawMessage.text === 'string' ? rawMessage.text.trim() : '';
+  const rawCaption = typeof rawMessage.caption === 'string' ? rawMessage.caption.trim() : '';
+  const text = rawText || rawCaption;
   if (!text) return null;
 
   const chat = asRecord(rawMessage.chat);
@@ -225,7 +227,7 @@ function parseInboundFromUpdate(params: Readonly<{
       : null;
 
   if (params.requireTopics) {
-    if (chatType === 'supergroup' && threadId === null) {
+    if (!isPrivateChat && (chatType !== 'supergroup' || threadId === null)) {
       return null;
     }
   }

@@ -75,6 +75,70 @@ describe('createTelegramChannelAdapter', () => {
     ]);
   });
 
+  it('parses inbound messages from captions when text is missing', async () => {
+    const api = {
+      getMe: vi.fn(async () => ({ id: 777, username: 'happier_bot' })),
+      getUpdates: vi.fn(async () => ([
+        {
+          update_id: 101,
+          message: {
+            message_id: 5001,
+            caption: 'caption says hello',
+            chat: { id: 1234, type: 'private' },
+            from: { id: 42, is_bot: false, first_name: 'Ada' },
+          },
+        },
+      ])),
+      sendMessage: vi.fn(async () => undefined),
+    };
+
+    const adapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+    });
+
+    const inbound = await adapter.pullInboundMessages();
+    expect(inbound).toEqual([
+      {
+        providerId: 'telegram',
+        conversationId: '1234',
+        threadId: null,
+        senderId: '42',
+        conversationKind: 'dm',
+        text: 'caption says hello',
+        messageId: '5001',
+      },
+    ]);
+  });
+
+  it('rejects plain groups when requireTopics is enabled', async () => {
+    const api = {
+      getMe: vi.fn(async () => ({ id: 777, username: 'happier_bot' })),
+      getUpdates: vi.fn(async () => ([
+        {
+          update_id: 101,
+          message: {
+            message_id: 5001,
+            text: 'hello from plain group',
+            chat: { id: -555, type: 'group' },
+            from: { id: 42, is_bot: false, first_name: 'Ada' },
+          },
+        },
+      ])),
+      sendMessage: vi.fn(async () => undefined),
+    };
+
+    const adapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+      allowAllSharedChats: true,
+      requireTopics: true,
+    });
+
+    const inbound = await adapter.pullInboundMessages();
+    expect(inbound).toEqual([]);
+  });
+
   it('ignores non-private chats by default unless allowlisted or allowAllSharedChats is enabled', async () => {
     const api = {
       getMe: vi.fn(async () => ({ id: 777, username: 'happier_bot' })),
