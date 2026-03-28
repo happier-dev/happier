@@ -2,6 +2,7 @@ import axios from 'axios';
 
 import { ChannelBridgePermanentDeliveryError } from '@/channels/core/channelBridgeWorker';
 import type { ChannelBridgeAdapter, ChannelBridgeInboundMessage } from '@/channels/core/channelBridgeWorker';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
 
 import type {
@@ -66,13 +67,29 @@ export class TelegramApiError extends Error {
   }
 }
 
+function createTelegramTransportError(method: TelegramApiMethod, error: unknown): Error {
+  const serialized = serializeAxiosErrorForLog(error);
+  const safeDetails = {
+    code: typeof serialized.code === 'string' ? serialized.code : undefined,
+    status: typeof serialized.status === 'number' ? serialized.status : undefined,
+    method: typeof serialized.method === 'string' ? serialized.method : undefined,
+    url: typeof serialized.url === 'string' ? serialized.url : undefined,
+  };
+  return new Error(`Telegram ${method} transport error: ${JSON.stringify(safeDetails)}`);
+}
+
 function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
   return {
     getMe: async () => {
-      const response = await axios.post(telegramApiUrl(botToken, 'getMe'), {}, {
-        timeout: 10_000,
-        validateStatus: () => true,
-      });
+      let response: any;
+      try {
+        response = await axios.post(telegramApiUrl(botToken, 'getMe'), {}, {
+          timeout: 10_000,
+          validateStatus: () => true,
+        });
+      } catch (error) {
+        throw createTelegramTransportError('getMe', error);
+      }
       if (response.status !== 200 || !response.data || response.data.ok !== true || !response.data.result) {
         throw new TelegramApiError({
           method: 'getMe',
@@ -87,15 +104,20 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
       };
     },
     getUpdates: async ({ offset, limit }) => {
-      const response = await axios.post(telegramApiUrl(botToken, 'getUpdates'), {
-        ...(typeof offset === 'number' ? { offset } : {}),
-        limit,
-        timeout: TELEGRAM_GET_UPDATES_LONG_POLL_TIMEOUT_SECONDS,
-        allowed_updates: ['message'],
-      }, {
-        timeout: TELEGRAM_GET_UPDATES_HTTP_TIMEOUT_MS,
-        validateStatus: () => true,
-      });
+      let response: any;
+      try {
+        response = await axios.post(telegramApiUrl(botToken, 'getUpdates'), {
+          ...(typeof offset === 'number' ? { offset } : {}),
+          limit,
+          timeout: TELEGRAM_GET_UPDATES_LONG_POLL_TIMEOUT_SECONDS,
+          allowed_updates: ['message'],
+        }, {
+          timeout: TELEGRAM_GET_UPDATES_HTTP_TIMEOUT_MS,
+          validateStatus: () => true,
+        });
+      } catch (error) {
+        throw createTelegramTransportError('getUpdates', error);
+      }
       if (response.status !== 200 || !response.data || response.data.ok !== true || !Array.isArray(response.data.result)) {
         throw new TelegramApiError({
           method: 'getUpdates',
@@ -110,14 +132,19 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
       const messageThreadId = Number.isSafeInteger(parsedThreadId) && parsedThreadId > 0
         ? parsedThreadId
         : null;
-      const response = await axios.post(telegramApiUrl(botToken, 'sendMessage'), {
-        chat_id: chatId,
-        text,
-        ...(messageThreadId !== null ? { message_thread_id: messageThreadId } : {}),
-      }, {
-        timeout: 10_000,
-        validateStatus: () => true,
-      });
+      let response: any;
+      try {
+        response = await axios.post(telegramApiUrl(botToken, 'sendMessage'), {
+          chat_id: chatId,
+          text,
+          ...(messageThreadId !== null ? { message_thread_id: messageThreadId } : {}),
+        }, {
+          timeout: 10_000,
+          validateStatus: () => true,
+        });
+      } catch (error) {
+        throw createTelegramTransportError('sendMessage', error);
+      }
       if (response.status !== 200 || !response.data || response.data.ok !== true) {
         const apiError = new TelegramApiError({
           method: 'sendMessage',

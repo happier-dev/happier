@@ -120,6 +120,41 @@ describe('createTelegramChannelAdapter', () => {
     ]);
   });
 
+  it('redacts bot token when axios throws a transport error', async () => {
+    const botToken = 'secret-token-123';
+    const axiosPostSpy = vi.spyOn(axios, 'post');
+
+    axiosPostSpy.mockImplementation(async (urlRaw: unknown) => {
+      const url = String(urlRaw);
+      if (url.includes('/getUpdates')) {
+        return {
+          status: 200,
+          data: { ok: true, result: [] },
+        } as any;
+      }
+
+      const error = new Error(`Network failure calling ${url}`);
+      (error as any).isAxiosError = true;
+      (error as any).config = { url };
+      throw error;
+    });
+
+    try {
+      const adapter = createTelegramChannelAdapter({
+        botToken,
+      });
+
+      await adapter.pullInboundMessages();
+      throw new Error('Expected pullInboundMessages to fail');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toContain(botToken);
+      expect(message).toContain('botREDACTED');
+    } finally {
+      axiosPostSpy.mockRestore();
+    }
+  });
+
   it('allows non-private chats when allowAllSharedChats is enabled', async () => {
     const api = {
       getMe: vi.fn(async () => ({ id: 777, username: 'happier_bot' })),
