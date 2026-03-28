@@ -1,0 +1,8 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    file: F4.connectedMachineModeControl.yaml
+- runFlow:
+    file: F8.connectedMachineKeyboardAndNavigationSmoke.yaml
+- runFlow:
+    file: F9.connectedMachineAgentInputChipsAndPopovers.yaml

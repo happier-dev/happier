@@ -2,6 +2,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
 
 - runFlow:
     file: _shared/connectDevClientIfNeeded.yaml
@@ -15,44 +16,5 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     file: _shared/gotoNewSessionComposer.yaml
 
-# Profile (model/effort presets) popover should open and be dismissible.
-- assertVisible:
-    id: agent-input-profile-chip
-- tapOn:
-    id: agent-input-profile-chip
-- assertVisible:
-    id: 'profiles-list-row:default-environment'
-- tapOn:
-    point: 10%,10%
-
-# Agent chip picker popover should open and be dismissible.
-- assertVisible:
-    id: agent-input-agent-chip
-- tapOn:
-    id: agent-input-agent-chip
-- assertVisible:
-    id: 'agent-input-chip-picker.option:agent:codex'
-- tapOn:
-    point: 10%,10%
-
-# Permission mode chip should open a simple options list and allow selection.
-- assertVisible:
-    id: agent-input-permission-chip
-- tapOn:
-    id: agent-input-permission-chip
-- assertVisible:
-    id: 'agent-input-simple-option:yolo'
-- tapOn:
-    id: 'agent-input-simple-option:yolo'
-- tapOn:
-    point: 10%,10%
-
-# Session mode chip should open the mode selector surface.
-- assertVisible:
-    id: agent-input-session-mode-chip
-- tapOn:
-    id: agent-input-session-mode-chip
-- assertVisible:
-    id: 'agent-input-session-mode-option:plan'
-- tapOn:
-    point: 10%,10%
+- runFlow:
+    file: _shared/assertAgentInputChipsAndPopovers.yaml

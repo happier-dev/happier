@@ -17,9 +17,9 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
             - tapOn: "New development server"
 
 - assertVisible: "Connect"
-- tapOn:
-    point: 50%,44%
+- tapOn: "http://localhost:8081"
 - eraseText
-- inputText: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-- tapOn:
-    point: 50%,51%
+- setClipboard: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
+- pasteText
+- hideKeyboard
+- tapOn: "Connect"

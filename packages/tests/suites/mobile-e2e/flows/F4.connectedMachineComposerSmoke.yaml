@@ -1,0 +1,10 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: false
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: _shared/gotoNewSessionComposer.yaml

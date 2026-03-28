@@ -1,17 +1,10 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
 - launchApp:
-    clearState: true
-    clearKeychain: true
+    clearState: false
 
 - runFlow:
     file: _shared/connectDevClientIfNeeded.yaml
-
-- runFlow:
-    file: _shared/configureServerIfNeeded.yaml
-
-- runFlow:
-    file: _shared/loginCreateAccount.yaml
 
 - runFlow:
     file: _shared/gotoNewSessionComposer.yaml
@@ -24,6 +17,5 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - assertVisible:
     id: 'agent-input-session-mode-chip-label:plan'
 
-# Dismiss overlay.
 - tapOn:
     point: 10%,10%

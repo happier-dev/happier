@@ -1,0 +1,30 @@
+# Open the Expo Dev Client launcher deep link first. This avoids brittle manual
+# entry on Android and iOS while keeping the manual form as a fallback when the
+# deep link is ignored or the Dev Client stays on its bootstrap surface.
+#
+# Preconditions:
+# - `${HAPPIER_E2E_DEV_CLIENT_LAUNCH_URL}` is set (passed via Maestro `-e`).
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- openLink: ${HAPPIER_E2E_DEV_CLIENT_LAUNCH_URL}
+- extendedWaitUntil:
+    visible: "(Open in .*|DEVELOPMENT SERVERS|Development servers|New development server|Connect|Error loading app|This is the developer menu.*|Continue|Go home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    timeout: 300000
+- runFlow:
+    file: acceptIosOpenInPromptMaybe.yaml
+- waitForAnimationToEnd:
+    timeout: 5000
+- extendedWaitUntil:
+    visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Connect|Error loading app|This is the developer menu.*|Continue|Go home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    timeout: 300000
+- runFlow:
+    file: dismissDeveloperMenuMaybe.yaml
+- runFlow:
+    file: dismissExpoDevMenuOverlayMaybe.yaml
+- runFlow:
+    when:
+      visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Connect)"
+    commands:
+      - runFlow:
+          file: connectUsingManualEntry.yaml

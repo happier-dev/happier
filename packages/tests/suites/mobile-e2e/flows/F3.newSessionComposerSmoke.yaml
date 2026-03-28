@@ -2,6 +2,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
 
 - runFlow:
     file: _shared/connectDevClientIfNeeded.yaml

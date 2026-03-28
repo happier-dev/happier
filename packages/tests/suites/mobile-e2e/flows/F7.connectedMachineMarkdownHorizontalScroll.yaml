@@ -1,22 +1,14 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
 - launchApp:
-    clearState: true
-    clearKeychain: true
+    clearState: false
 
 - runFlow:
     file: _shared/connectDevClientIfNeeded.yaml
 
 - runFlow:
-    file: _shared/configureServerIfNeeded.yaml
-
-- runFlow:
-    file: _shared/loginCreateAccount.yaml
-
-- runFlow:
     file: _shared/gotoNewSessionComposer.yaml
 
-# Create a real session by sending a message that contains a wide table and a wide code fence.
 - tapOn:
     id: new-session-composer-input
 - inputText: |
@@ -33,19 +25,16 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - tapOn:
     id: new-session-composer-send
 
-# Wait for the transcript to render the markdown content before swiping.
 - extendedWaitUntil:
     visible: "Wide markdown scroll repro:"
     timeout: 240000
 
-# Table horizontal scroll (sentinel is offscreen to the right).
 - swipe:
     direction: LEFT
     element:
       id: markdown-table-scroll
 - assertVisible: "TABLE_SENTINEL_RIGHT"
 
-# Code block horizontal scroll (sentinel is offscreen to the right).
 - swipe:
     direction: LEFT
     element:

@@ -1,14 +1,13 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
 - launchApp:
-    clearState: true
-    clearKeychain: true
+    clearState: false
 
 - runFlow:
     file: _shared/connectDevClientIfNeeded.yaml
 
 - runFlow:
-    file: _shared/configureServerIfNeeded.yaml
+    file: _shared/gotoNewSessionComposer.yaml
 
 - runFlow:
-    file: _shared/loginCreateAccount.yaml
+    file: _shared/assertAgentInputChipsAndPopovers.yaml
