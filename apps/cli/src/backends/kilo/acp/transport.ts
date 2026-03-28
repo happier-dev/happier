@@ -27,6 +27,7 @@ import {
   findToolNameFromInputFields,
   type ToolPatternWithInputFields,
 } from '@/agent/transport/utils/toolPatternInference';
+import { pickPermissionOptionId as pickAcpPermissionOptionId } from '@/agent/acp/permissions/permissionMapping';
 
 export const KILO_TIMEOUTS = {
   // Kilo may run plugin installs/config probes on first ACP start. Be conservative.
@@ -119,6 +120,19 @@ export class KiloTransport implements TransportHandler {
 
   getToolPatterns(): ToolPattern[] {
     return [...KILO_TOOL_PATTERNS];
+  }
+
+  pickPermissionOptionId(
+    options: ReadonlyArray<Readonly<{ optionId?: string; name?: string; kind?: unknown }>>,
+    decision: string,
+  ): string | null | undefined {
+    if (decision.trim().toLowerCase() !== 'approved') return undefined;
+
+    // Kilo/OpenCode-family ACP permission prompts have been observed to stall tool completion when
+    // selecting the "allow once" option. Prefer the "allow always" option when available.
+    const allowAlways = pickAcpPermissionOptionId(options, 'approved_for_session');
+    if (!allowAlways) return undefined;
+    return allowAlways;
   }
 
   determineToolName(

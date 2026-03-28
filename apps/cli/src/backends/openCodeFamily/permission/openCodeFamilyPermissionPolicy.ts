@@ -1,11 +1,12 @@
 import type { PermissionMode } from '@/api/types';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 
 export type OpenCodePermissionValue = 'allow' | 'deny' | 'ask';
 
 const OPENCODE_READ_PERMISSIONS = ['read', 'glob', 'grep', 'list', 'ls'] as const;
 const OPENCODE_EDIT_PERMISSIONS = ['edit', 'write'] as const;
-const OPENCODE_ALWAYS_ALLOW_PERMISSIONS = ['change_title', 'save_memory', 'think'] as const;
+const OPENCODE_ALWAYS_ALLOW_PERMISSIONS = [...CHANGE_TITLE_TOOL_NAME_ALIASES, 'save_memory', 'think'] as const;
 const OPENCODE_GUARD_PERMISSIONS = ['external_directory', 'doom_loop'] as const;
 const OPENCODE_OTHER_COMMON_PERMISSIONS = ['bash', 'task'] as const;
 

@@ -3,6 +3,7 @@ import type { PermissionMode } from '@/api/types';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { resolveAppendSystemPromptBaseOverride } from '@/agent/runtime/permission/appendSystemPromptField';
 import {
   initializePermissionModeStateSync,
 } from '@/agent/runtime/permission/permissionModeStateSync';
@@ -286,8 +287,8 @@ export async function runPermissionModePromptLoop(opts: {
         refreshMetadataBeforeRead: !didReplaySeedBootstrap,
       });
       didReplaySeedBootstrap = true;
-      const explicitBaseOverride = shouldApplyFreshSessionSystemPrompt && Object.prototype.hasOwnProperty.call(message.mode, 'appendSystemPrompt')
-        ? (typeof message.mode.appendSystemPrompt === 'string' ? message.mode.appendSystemPrompt : null)
+      const explicitBaseOverride = shouldApplyFreshSessionSystemPrompt
+        ? resolveAppendSystemPromptBaseOverride(message.mode)
         : undefined;
       const freshSessionSystemPrompt = shouldApplyFreshSessionSystemPrompt
         ? await opts.resolveFreshSessionSystemPrompt?.({

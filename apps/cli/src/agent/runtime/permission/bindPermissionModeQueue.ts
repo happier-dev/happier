@@ -1,6 +1,7 @@
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
+import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permission/appendSystemPromptField';
 import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 
@@ -25,17 +26,6 @@ export type InFlightSteerController = Readonly<{
    */
   steerText: (text: string) => Promise<void>;
 }>;
-
-function resolveAppendSystemPromptModeOverride(
-  metadata: UserMessage['meta'] | undefined,
-): { appendSystemPrompt?: string | null } {
-  if (!metadata || !Object.prototype.hasOwnProperty.call(metadata, 'appendSystemPrompt')) {
-    return {};
-  }
-  return {
-    appendSystemPrompt: typeof metadata.appendSystemPrompt === 'string' ? metadata.appendSystemPrompt : null,
-  };
-}
 
 export function registerPermissionModeMessageQueueBinding(opts: {
   session: {

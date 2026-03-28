@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 
 export const SESSION_REQUESTED_DIRECTORY_ENV = 'HAPPIER_SESSION_REQUESTED_DIRECTORY' as const;
+export const STACK_INVOKED_CWD_ENV = 'HAPPIER_STACK_INVOKED_CWD' as const;
 
 function normalizeNonEmptyString(value: string | undefined | null): string | null {
     const normalized = typeof value === 'string' ? value.trim() : '';
@@ -50,6 +51,11 @@ export function resolveRequestedSessionDirectory(params?: Readonly<{
     const requestedDirectory = consumeRequestedSessionDirectoryFromEnvironment(env);
     if (requestedDirectory) {
         return requestedDirectory;
+    }
+
+    const stackInvokedCwd = normalizeNonEmptyString(env[STACK_INVOKED_CWD_ENV]);
+    if (stackInvokedCwd) {
+        return stackInvokedCwd;
     }
 
     return resolveLogicalPwd({ env, cwd }) ?? cwd;

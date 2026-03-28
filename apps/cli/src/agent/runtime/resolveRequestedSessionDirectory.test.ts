@@ -35,6 +35,18 @@ describe('resolveRequestedSessionDirectory', () => {
         expect(resolveRequestedSessionDirectory({ env, cwd })).toBe(cwd);
     });
 
+    it('prefers the stack-invoked cwd when present', () => {
+        const env: NodeJS.ProcessEnv = {
+            HAPPIER_STACK_INVOKED_CWD: '/tmp/happier-stack-invoked-cwd',
+            PWD: '/tmp/happier-wrapper-cwd',
+        };
+
+        expect(resolveRequestedSessionDirectory({
+            env,
+            cwd: '/tmp/happier-wrapper-cwd',
+        })).toBe('/tmp/happier-stack-invoked-cwd');
+    });
+
     it('returns null when the requested directory env seed is blank', () => {
         const env: NodeJS.ProcessEnv = { [SESSION_REQUESTED_DIRECTORY_ENV]: '   ' };
 

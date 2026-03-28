@@ -33,6 +33,11 @@ import { createCurrentSessionTranscriptPort } from '@/api/session/createCurrentS
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import { formatGeminiErrorForUi } from '@/backends/gemini/utils/formatGeminiErrorForUi';
 import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permission/permissionModeMetadata';
+import {
+  resolveAppendSystemPromptBaseOverride,
+  resolveAppendSystemPromptModeOverride,
+  resolveAppendSystemPromptQueueKeyValue,
+} from '@/agent/runtime/permission/appendSystemPromptField';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
@@ -257,7 +262,7 @@ export async function runGemini(opts: {
   const messageQueue = new MessageQueue2<GeminiMode>((mode) => hashObject({
     permissionMode: mode.permissionMode,
     model: mode.model,
-    appendSystemPrompt: mode.appendSystemPrompt,
+    appendSystemPrompt: resolveAppendSystemPromptQueueKeyValue(mode),
     replaySeedAllowed: mode.replaySeedAllowed !== false,
   }));
 
@@ -333,15 +338,11 @@ export async function runGemini(opts: {
     }
 
     const originalUserMessage = message.content.text;
-    const explicitAppendSystemPrompt = message.meta?.hasOwnProperty('appendSystemPrompt')
-      ? (typeof message.meta.appendSystemPrompt === 'string' ? message.meta.appendSystemPrompt : null)
-      : undefined;
-
     const mode: GeminiMode = {
       permissionMode: messagePermissionMode || 'default',
       model: messageModel,
       originalUserMessage, // Store original message separately
-      appendSystemPrompt: explicitAppendSystemPrompt,
+      ...resolveAppendSystemPromptModeOverride(message.meta),
       localId: message.localId ?? null,
       replaySeedAllowed: parseSpecialCommand(originalUserMessage).type === null,
     };
@@ -838,9 +839,7 @@ export async function runGemini(opts: {
 
         if (shouldPrependAppendSystemPromptOnNextFreshSessionPrompt) {
           const systemPromptText = await resolveFreshSessionSystemPrompt(
-            Object.prototype.hasOwnProperty.call(message.mode ?? {}, 'appendSystemPrompt')
-              ? (typeof message.mode?.appendSystemPrompt === 'string' ? message.mode.appendSystemPrompt : null)
-              : undefined,
+            resolveAppendSystemPromptBaseOverride(message.mode),
           );
           const builtPrompt = buildGeminiPromptForMessage({
             isFirstMessage: true,

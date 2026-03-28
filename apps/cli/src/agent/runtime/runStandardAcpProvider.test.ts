@@ -355,6 +355,24 @@ describe('runStandardAcpProvider', () => {
     expect(capturedMcpServers).toEqual({});
   });
 
+  it('uses the Happier session id, not the vendor runtime session id, for shell-bridge prompt instructions', async () => {
+    const harness = createHarness();
+
+    harness.runtime.getSessionId = vi.fn(() => 'vendor-session-123');
+
+    let resolvedPrompt = '';
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      resolveFreshSessionSystemPrompt?: (args: { baseOverride?: string | null }) => Promise<string>;
+    }>) => {
+      resolvedPrompt = await params.resolveFreshSessionSystemPrompt?.({ baseOverride: 'BASE' }) ?? '';
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(resolvedPrompt).toContain("'--session-id' 'session-1'");
+    expect(resolvedPrompt).not.toContain('vendor-session-123');
+  });
+
   it('in-flight steer controller calls steerPrompt with correct receiver', async () => {
     const harness = createHarness();
 

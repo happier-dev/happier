@@ -72,7 +72,6 @@ import { buildAcpSpawnSpec } from './acpSpawn';
 import { killProcessTree } from './killProcessTree';
 import {
   pickPermissionOutcome,
-  type PermissionOptionLike,
 } from './permissions/permissionMapping';
 import {
   extractPermissionInputWithFallback,
@@ -1031,7 +1030,7 @@ export class AcpBackend implements AgentBackend {
                   optionId: overrideOptionId,
                 });
               }
-              return pickPermissionOutcome(options as PermissionOptionLike[], resolvedDecision);
+              return pickPermissionOutcome(options, resolvedDecision);
             })();
             if (outcome.outcome === 'selected') {
               this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
@@ -1072,7 +1071,7 @@ export class AcpBackend implements AgentBackend {
         }
 
         // Auto-approve once if no permission handler.
-        const outcome = pickPermissionOutcome(options as PermissionOptionLike[], 'approved');
+        const outcome = pickPermissionOutcome(options, 'approved');
         if (outcome.outcome === 'selected') {
           this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
         } else {

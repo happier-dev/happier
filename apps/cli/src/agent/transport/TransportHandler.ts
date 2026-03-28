@@ -237,4 +237,26 @@ export interface TransportHandler {
    * response completion until either assistant chunks arrive or this extra quiet period expires.
    */
   getIdleWithoutAssistantMessageTimeoutMs?(): number;
+
+  /**
+   * Optional override for ACP permission option selection.
+   *
+   * Some ACP agents expose permission options that are semantically equivalent but can differ in
+   * reliability. For example, one option may be buggy in a specific vendor version. This hook lets
+   * a provider transport select a safer option **without** hard-coding provider rules in core.
+   *
+   * Return:
+   * - `undefined` to use the default generic mapping
+   * - a string optionId that exists in `options` to select it
+   * - `null` to cancel the permission prompt (fail-closed)
+   */
+  pickPermissionOptionId?(
+    options: ReadonlyArray<Readonly<{ optionId?: string; name?: string; kind?: unknown }>>,
+    decision: string,
+    context: Readonly<{
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+    }>,
+  ): string | null | undefined;
 }

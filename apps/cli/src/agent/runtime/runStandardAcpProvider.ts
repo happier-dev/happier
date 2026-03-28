@@ -400,6 +400,10 @@ export async function runStandardAcpProvider(
     });
 
   const initialResumeId = typeof opts.resume === 'string' ? opts.resume.trim() : '';
+  const toolDelivery = resolveAgentToolsDelivery(policyAgentId);
+  const toolDeliverySessionId = toolDelivery === 'shell_bridge'
+    ? session.sessionId
+    : runtime.getSessionId();
 
   try {
     await runPermissionModePromptLoopFn({
@@ -440,8 +444,8 @@ export async function runStandardAcpProvider(
             env: process.env,
           }).state === 'enabled',
           providerId: policyAgentId,
-          toolDelivery: resolveAgentToolsDelivery(policyAgentId),
-          toolDeliverySessionId: runtime.getSessionId(),
+          toolDelivery,
+          toolDeliverySessionId,
           toolDeliveryDirectory: runtimeDirectory,
           memoryMachineId: machineId,
           memoryRecallGuidanceEnabled,

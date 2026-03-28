@@ -28,6 +28,11 @@ import { DeferredApiSessionClient } from '@/agent/runtime/startup/DeferredApiSes
 import { configuration } from '@/configuration';
 import { isExperimentalCodexAcpEnabled } from '@/backends/codex/experiments';
 import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permission/permissionModeMetadata';
+import {
+    resolveAppendSystemPromptBaseOverride,
+    resolveAppendSystemPromptModeOverride,
+    resolveAppendSystemPromptQueueKeyValue,
+} from '@/agent/runtime/permission/appendSystemPromptField';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { pushMessageToQueueWithSpecialCommands } from '@/agent/runtime/queueSpecialCommands';
 import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permission/permissionModeCanonical';
@@ -241,7 +246,7 @@ export async function runCodex(opts: {
             permissionMode: mode.permissionMode,
             // Intentionally ignore model in the mode hash: Codex cannot reliably switch models mid-session
             // without losing in-memory context.
-            appendSystemPrompt: mode.appendSystemPrompt,
+            appendSystemPrompt: resolveAppendSystemPromptQueueKeyValue(mode),
         }),
     );
     const messageBuffer = new MessageBuffer();
@@ -596,9 +601,7 @@ export async function runCodex(opts: {
         const enhancedMode: EnhancedMode = {
             permissionMode: messagePermissionMode || 'default',
             permissionModeUpdatedAt: currentPermissionModeUpdatedAt,
-            appendSystemPrompt: message.meta?.hasOwnProperty('appendSystemPrompt')
-                ? (typeof message.meta.appendSystemPrompt === 'string' ? message.meta.appendSystemPrompt : null)
-                : undefined,
+            ...resolveAppendSystemPromptModeOverride(message.meta),
             localId: message.localId ?? null,
             model: messageModel,
         };
@@ -1679,9 +1682,7 @@ export async function runCodex(opts: {
                     }
                     const systemPromptText = startedFreshSessionForTurn
                         ? await resolveFreshSessionSystemPrompt(
-                            Object.prototype.hasOwnProperty.call(message.mode, 'appendSystemPrompt')
-                                ? (typeof message.mode.appendSystemPrompt === 'string' ? message.mode.appendSystemPrompt : null)
-                                : undefined,
+                            resolveAppendSystemPromptBaseOverride(message.mode),
                         )
                         : undefined;
                     await codexRuntime.sendPrompt(
@@ -1713,9 +1714,7 @@ export async function runCodex(opts: {
                     if (!wasCreated) {
                     const systemPromptText = first
                         ? await resolveFreshSessionSystemPrompt(
-                            Object.prototype.hasOwnProperty.call(message.mode, 'appendSystemPrompt')
-                                ? (typeof message.mode.appendSystemPrompt === 'string' ? message.mode.appendSystemPrompt : null)
-                                : undefined,
+                            resolveAppendSystemPromptBaseOverride(message.mode),
                         )
                         : undefined;
                     const startConfig: CodexSessionConfig = buildCodexMcpStartConfigForMessage({

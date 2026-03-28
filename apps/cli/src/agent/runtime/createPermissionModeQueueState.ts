@@ -3,6 +3,7 @@ import type { PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
 import { registerPermissionModeMessageQueueBinding, type InFlightSteerController } from '@/agent/runtime/permission/bindPermissionModeQueue';
+import { resolveAppendSystemPromptQueueKeyValue } from '@/agent/runtime/permission/appendSystemPromptField';
 import { readPermissionModeUpdatedAtFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeStateSync';
 import {
   combinePermissionModeQueuedPrompts,
@@ -32,9 +33,7 @@ export function createPermissionModeQueueState(opts: {
     (mode) =>
       hashObject({
         permissionMode: resolveQueueKey ? resolveQueueKey(mode.permissionMode) : mode.permissionMode,
-        appendSystemPrompt: Object.prototype.hasOwnProperty.call(mode, 'appendSystemPrompt')
-          ? (mode.appendSystemPrompt ?? null)
-          : '__unset__',
+        appendSystemPrompt: resolveAppendSystemPromptQueueKeyValue(mode),
       }),
     {
       batcher: (messages) => combinePermissionModeQueuedPrompts(messages),

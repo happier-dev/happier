@@ -33,6 +33,7 @@ import {
   findToolNameFromInputFields,
   type ToolPatternWithInputFields,
 } from '@/agent/transport/utils/toolPatternInference';
+import { pickPermissionOptionId as pickAcpPermissionOptionId } from '@/agent/acp/permissions/permissionMapping';
 import { normalizeOpenCodeAcpPermissionRulesetActions } from './permissionRulesetCompat';
 
 export const OPENCODE_TIMEOUTS = {
@@ -269,6 +270,19 @@ export class OpenCodeTransport implements TransportHandler {
     // TransportHandler expects a mutable array type; keep our source list readonly and
     // return a shallow copy to satisfy the signature without risking accidental mutation.
     return [...OPENCODE_TOOL_PATTERNS];
+  }
+
+  pickPermissionOptionId(
+    options: ReadonlyArray<Readonly<{ optionId?: string; name?: string; kind?: unknown }>>,
+    decision: string,
+  ): string | null | undefined {
+    if (decision.trim().toLowerCase() !== 'approved') return undefined;
+
+    // OpenCode-family ACP permission prompts have been observed to stall tool completion when
+    // selecting the "allow once" option. Prefer the "allow always" option when available.
+    const allowAlways = pickAcpPermissionOptionId(options, 'approved_for_session');
+    if (!allowAlways) return undefined;
+    return allowAlways;
   }
 
   determineToolName(

@@ -481,6 +481,7 @@ describe('runCodex app-server startup plan mode', () => {
     });
 
     const { runCodex } = await import('./runCodex');
+    const { resolveEffectiveCodingPromptText } = await import('@/agent/prompting/coding/resolveEffectiveCodingPrompt');
     const outcome = await runCodex({
       credentials: { token: 'test' } as Credentials,
       startedBy: 'terminal',
@@ -496,6 +497,12 @@ describe('runCodex app-server startup plan mode', () => {
     if (!outcome.ok) {
       throw outcome.error;
     }
+
+    expect(resolveEffectiveCodingPromptText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseOverride: undefined,
+      }),
+    );
 
     const requestLog = (await readFile(requestLogPath, 'utf8'))
       .trim()
