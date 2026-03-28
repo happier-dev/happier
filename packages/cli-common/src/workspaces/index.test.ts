@@ -1,5 +1,5 @@
-import { bundleWorkspacePackage } from './index';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { atomicReplaceDirSync, bundleWorkspacePackage } from './index';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -66,5 +66,55 @@ describe('bundleWorkspacePackage', () => {
     const siblingNames = readdirSync(destParent);
     expect(siblingNames.some((name) => name.startsWith('.protocol.__sync_tmp__.'))).toBe(false);
     expect(siblingNames.some((name) => name.startsWith('.protocol.__sync_backup__.'))).toBe(false);
+  });
+});
+
+describe('atomicReplaceDirSync', () => {
+  let rootDir: string | undefined;
+
+  afterEach(() => {
+    if (rootDir) {
+      rmSync(rootDir, { recursive: true, force: true });
+      rootDir = undefined;
+    }
+  });
+
+  it('retries a staged swap when the destination briefly reappears during the rename', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-atomic-replace-'));
+
+    const destDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol');
+    const tempFileName = 'next.txt';
+    const previousFileName = 'previous.txt';
+
+    mkdirSync(destDir, { recursive: true });
+    writeFileSync(resolve(destDir, previousFileName), 'old');
+
+    let stagedDir = '';
+    let renameFailures = 0;
+
+    atomicReplaceDirSync({
+      destDir,
+      buildInto(tempDir) {
+        stagedDir = tempDir;
+        mkdirSync(tempDir, { recursive: true });
+        writeFileSync(resolve(tempDir, tempFileName), 'new');
+      },
+      fsOps: {
+        renameSync(source, target) {
+          if (source === stagedDir && target === destDir && renameFailures === 0) {
+            renameFailures += 1;
+            const error = new Error('ENOTEMPTY');
+            Reflect.set(error, 'code', 'ENOTEMPTY');
+            throw error;
+          }
+
+          return renameSync(source, target);
+        },
+      },
+    });
+
+    expect(renameFailures).toBe(1);
+    expect(readFileSync(resolve(destDir, tempFileName), 'utf8')).toBe('new');
+    expect(existsSync(resolve(destDir, previousFileName))).toBe(false);
   });
 });

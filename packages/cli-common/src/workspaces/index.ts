@@ -48,6 +48,11 @@ function isRetryableRmError(err: unknown): boolean {
   return code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
 }
 
+function isRetryableRenameError(err: unknown): boolean {
+  const code = err && typeof err === 'object' ? Reflect.get(err, 'code') : null;
+  return code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
+}
+
 export function sanitizeBundledPackageJson(raw: any): any {
   const {
     name,
@@ -131,10 +136,21 @@ function resetDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }
 
-function atomicReplaceDirSync(params: Readonly<{
+export function atomicReplaceDirSync(params: Readonly<{
   destDir: string;
   buildInto: (tempDir: string) => void;
+  fsOps?: Readonly<{
+    existsSync?: typeof existsSync;
+    mkdirSync?: typeof mkdirSync;
+    renameSync?: typeof renameSync;
+    rmSync?: typeof rmSync;
+  }>;
 }>): void {
+  const fsOps = params.fsOps ?? {};
+  const exists = fsOps.existsSync ?? existsSync;
+  const mkdir = fsOps.mkdirSync ?? mkdirSync;
+  const rename = fsOps.renameSync ?? renameSync;
+  const rm = fsOps.rmSync ?? rmSync;
   const parentDir = dirname(params.destDir);
   const baseName = basename(params.destDir);
   const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -149,14 +165,34 @@ function atomicReplaceDirSync(params: Readonly<{
   try {
     params.buildInto(tempDir);
 
-    if (existsSync(params.destDir)) {
-      renameSync(params.destDir, backupDir);
-      didRenameDestToBackup = true;
+    if (exists(params.destDir)) {
+      try {
+        rename(params.destDir, backupDir);
+        didRenameDestToBackup = true;
+      } catch (error) {
+        if (!isRetryableRenameError(error)) throw error;
+        rmDirSafeSync(params.destDir, { rmSyncImpl: rm });
+      }
     }
-    renameSync(tempDir, params.destDir);
 
-    if (didRenameDestToBackup) {
-      rmDirSafeSync(backupDir);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        rename(tempDir, params.destDir);
+        if (didRenameDestToBackup) {
+          rmDirSafeSync(backupDir, { rmSyncImpl: rm });
+        }
+        return;
+      } catch (error) {
+        if (!isRetryableRenameError(error) || attempt === 3) throw error;
+        try {
+          if (exists(params.destDir)) {
+            rmDirSafeSync(params.destDir, { rmSyncImpl: rm });
+          }
+        } catch {
+          // ignore
+        }
+        sleepSync(25);
+      }
     }
   } catch (error) {
     // Best-effort cleanup and rollback. Never leave a half-populated destination.
