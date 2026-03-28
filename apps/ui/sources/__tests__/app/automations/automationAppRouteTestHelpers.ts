@@ -52,14 +52,9 @@ export function installAutomationAppRouteCommonModuleMocks(
     });
 
     vi.mock('@/sync/domains/state/storage', async () => {
-        const activeOptions = automationAppRouteModuleState.options;
-        if (activeOptions.storage) {
-            return await activeOptions.storage();
-        }
-
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
-    });
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({});
+});
 
     vi.mock('@/modal', async () => {
         const activeOptions = automationAppRouteModuleState.options;

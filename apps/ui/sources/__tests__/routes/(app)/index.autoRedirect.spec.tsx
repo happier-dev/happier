@@ -47,13 +47,13 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                Platform: {
-                    OS: 'ios',
-                    select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? spec.ios : undefined),
-                },
-                Linking: { openURL: shared.openURL },
-                useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
-            }
+                        Platform: {
+                            OS: 'ios',
+                            select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? spec.ios : undefined),
+                        },
+                        Linking: { openURL: shared.openURL },
+                        useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
+                    }
     );
 });
 

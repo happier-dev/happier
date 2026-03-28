@@ -2,7 +2,6 @@ import * as React from 'react';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 
@@ -14,7 +13,6 @@ const sessionReadLogTailMock = vi.fn(async (_sessionId?: string, _options?: unkn
     tail: 'tail line',
 }));
 
-let devModeEnabled = false;
 let sessionLogPath: string | null = null;
 
 installSessionRouteCommonModuleMocks({
@@ -46,9 +44,6 @@ installSessionRouteCommonModuleMocks({
                               id: 'session-1',
                               metadata: null,
                           }) as unknown) as typeof import('@/sync/domains/state/storage')['useSession'],
-                // Boundary fixture: this route only checks the dev-mode toggle.
-                useLocalSetting: (<K extends keyof LocalSettings>(name: K) =>
-                    (name === 'devModeEnabled' ? devModeEnabled : null) as unknown as LocalSettings[K]) as typeof import('@/sync/domains/state/storage')['useLocalSetting'],
                 useIsDataReady: () => true,
             },
         });
@@ -82,12 +77,11 @@ vi.mock('@/sync/ops', () => ({
 
 describe('Session log screen', () => {
     beforeEach(() => {
-        devModeEnabled = false;
         sessionLogPath = null;
         sessionReadLogTailMock.mockClear();
     });
 
-    it('does not fetch log tail when developer mode is disabled', async () => {
+    it('does not fetch log tail when log path is unavailable', async () => {
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
         await renderScreen(React.createElement(SessionLogScreen));
@@ -95,8 +89,7 @@ describe('Session log screen', () => {
         expect(sessionReadLogTailMock).not.toHaveBeenCalled();
     });
 
-    it('fetches session log tail when developer mode is enabled and log path exists', async () => {
-        devModeEnabled = true;
+    it('fetches session log tail when log path exists', async () => {
         sessionLogPath = '/tmp/.happier/logs/session.log';
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 

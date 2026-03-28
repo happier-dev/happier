@@ -65,21 +65,6 @@ installPickerCommonModuleMocks({
         }),
 });
 
-vi.mock('@react-navigation/native', () => ({
-    CommonActions: {
-        setParams: (params: any) => ({ type: 'SET_PARAMS', payload: { params } }),
-    },
-}));
-
-vi.mock('@expo/vector-icons', async () => {
-    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-    return createExpoVectorIconsMock();
-});
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: ItemGroupProps) => React.createElement(React.Fragment, null, children),
-}));
-
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 900 },
 }));

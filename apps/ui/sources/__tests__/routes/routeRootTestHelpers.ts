@@ -39,14 +39,9 @@ export function installRouteRootCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = routeRootModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('@/modal', async () => {
         const activeOptions = routeRootModuleState.options;
@@ -94,6 +89,10 @@ export function installRouteRootCommonModuleMocks(
             return await activeOptions.storage(importOriginal);
         }
 
-        return importOriginal();
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {},
+        });
     });
 }

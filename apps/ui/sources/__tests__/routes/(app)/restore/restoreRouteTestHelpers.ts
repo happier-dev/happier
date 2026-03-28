@@ -44,12 +44,9 @@ export function installRestoreRouteCommonModuleMocks(
     vi.mock('react-native-reanimated', () => ({}));
 
     vi.mock('react-native', async () => {
-        if (restoreRouteTestState.options.reactNative) {
-            return await restoreRouteTestState.options.reactNative();
-        }
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('expo-router', async () => {
         if (restoreRouteTestState.options.router) {

@@ -56,8 +56,11 @@ type PickerStorageModuleFactory = (importOriginal: <T>() => Promise<T>) => unkno
 
 type PickerCommonModuleMocksOptions = Readonly<{
     expoRouter?: PickerModuleFactory;
+    itemList?: PickerModuleFactory;
     modal?: PickerModuleFactory;
+    reactNavigationNative?: PickerModuleFactory;
     reactNative?: PickerModuleFactory;
+    vectorIcons?: PickerModuleFactory;
     storage?: PickerStorageModuleFactory;
     text?: PickerModuleFactory;
     unistyles?: PickerModuleFactory;
@@ -80,13 +83,9 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
     });
 
     vi.mock('react-native', async () => {
-        const activeOptions = pickerCommonModuleMocksState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('expo-router', async () => {
         const activeOptions = pickerCommonModuleMocksState.options;
@@ -95,6 +94,41 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
         }
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock().module;
+    });
+
+    vi.mock('@react-navigation/native', async () => {
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.reactNavigationNative) {
+            return await activeOptions.reactNavigationNative();
+        }
+
+        return {
+            CommonActions: {
+                setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
+            },
+        };
+    });
+
+    vi.mock('@expo/vector-icons', async () => {
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.vectorIcons) {
+            return await activeOptions.vectorIcons();
+        }
+
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        return createExpoVectorIconsMock();
+    });
+
+    vi.mock('@/components/ui/lists/ItemList', async () => {
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.itemList) {
+            return await activeOptions.itemList();
+        }
+
+        return {
+            ItemList: ({ children }: React.PropsWithChildren<Record<string, never>>) =>
+                React.createElement(React.Fragment, null, children),
+        };
     });
 
     vi.mock('react-native-unistyles', async () => {

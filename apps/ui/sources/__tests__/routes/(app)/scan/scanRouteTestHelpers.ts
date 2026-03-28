@@ -39,16 +39,13 @@ export function installScanRouteCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = scanRouteModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-        });
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                }
+    );
+});
 
     vi.mock('@/text', async () => {
         const activeOptions = scanRouteModuleState.options;

@@ -39,21 +39,18 @@ export function installTerminalRouteCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = terminalRouteModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-            Platform: {
-                OS: 'web',
-                select: (options: Record<string, unknown>) =>
-                    options.web ?? options.default ?? options.ios ?? options.android,
-            },
-        });
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                    Platform: {
+                        OS: 'web',
+                        select: (options: Record<string, unknown>) =>
+                            options.web ?? options.default ?? options.ios ?? options.android,
+                    },
+                }
+    );
+});
 
     vi.mock('expo-router', async () => {
         const activeOptions = terminalRouteModuleState.options;

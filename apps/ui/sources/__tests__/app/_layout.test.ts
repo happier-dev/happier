@@ -146,38 +146,38 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    View: (props: NativeChildrenProps) => React.createElement('View', props, props.children),
-                    ScrollView: (props: NativeChildrenProps) => React.createElement('ScrollView', props, props.children),
-                    Pressable: (props: NativeChildrenProps) => React.createElement('Pressable', props, props.children),
-                    TextInput: (props: NativeChildrenProps) => React.createElement('TextInput', props, props.children),
-                    ActivityIndicator: (props: NativeChildrenProps) => React.createElement('ActivityIndicator', props, props.children),
-                    Platform: {
-                        get OS() {
-                            return platformState.os;
-                        },
-                        select: <T,>(options: PlatformSelectOptions<T>) => (
-                            platformState.os === 'web'
-                                ? options.web ?? options.default
-                                : options.ios ?? options.default
-                        ),
-                    },
-                    Dimensions: {
-                        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
-                    },
-                    InteractionManager: {
-                        runAfterInteractions: (fn: () => void) => fn(),
-                    },
-                    StyleSheet: {
-                        create: <T,>(styles: T) => styles,
-                    },
-                    useWindowDimensions: () => ({ width: 800, height: 600 }),
-                    processColor: <T,>(value: T) => value,
-                    AppState: {
-                        addEventListener: () => ({ remove: () => {} }),
-                    },
-                    TouchableOpacity: (props: NativeChildrenProps) => React.createElement('TouchableOpacity', props, props.children),
-                    Text: (props: NativeChildrenProps) => React.createElement('Text', props, props.children),
-                }
+                                    View: (props: NativeChildrenProps) => React.createElement('View', props, props.children),
+                                    ScrollView: (props: NativeChildrenProps) => React.createElement('ScrollView', props, props.children),
+                                    Pressable: (props: NativeChildrenProps) => React.createElement('Pressable', props, props.children),
+                                    TextInput: (props: NativeChildrenProps) => React.createElement('TextInput', props, props.children),
+                                    ActivityIndicator: (props: NativeChildrenProps) => React.createElement('ActivityIndicator', props, props.children),
+                                    Platform: {
+                                        get OS() {
+                                            return platformState.os;
+                                        },
+                                        select: <T,>(options: PlatformSelectOptions<T>) => (
+                                            platformState.os === 'web'
+                                                ? options.web ?? options.default
+                                                : options.ios ?? options.default
+                                        ),
+                                    },
+                                    Dimensions: {
+                                        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+                                    },
+                                    InteractionManager: {
+                                        runAfterInteractions: (fn: () => void) => fn(),
+                                    },
+                                    StyleSheet: {
+                                        create: <T,>(styles: T) => styles,
+                                    },
+                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                    processColor: <T,>(value: T) => value,
+                                    AppState: {
+                                        addEventListener: () => ({ remove: () => {} }),
+                                    },
+                                    TouchableOpacity: (props: NativeChildrenProps) => React.createElement('TouchableOpacity', props, props.children),
+                                    Text: (props: NativeChildrenProps) => React.createElement('Text', props, props.children),
+                                }
     );
 });
 

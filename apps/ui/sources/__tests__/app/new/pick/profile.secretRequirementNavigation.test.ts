@@ -36,10 +36,14 @@ async function installProfileSecretRequirementModuleMocks() {
     vi.doMock('@/text', async () =>
         (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
-    vi.doMock('react-native', async () =>
-        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
-            Platform: { OS: 'ios' },
-        }));
+    vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: { OS: 'ios' },
+                        }
+    );
+});
 
     vi.doMock('react-native-unistyles', async () =>
         (await import('@/dev/testkit')).createUnistylesMock({

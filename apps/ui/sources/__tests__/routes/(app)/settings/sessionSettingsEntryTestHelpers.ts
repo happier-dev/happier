@@ -68,12 +68,9 @@ export function installSessionSettingsEntryModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        if (sessionSettingsEntryState.options.reactNative) {
-            return await sessionSettingsEntryState.options.reactNative();
-        }
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('@expo/vector-icons', () => ({
         Ionicons: 'Ionicons',

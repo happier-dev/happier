@@ -29,14 +29,9 @@ export function installPublicShareViewerCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = publicShareViewerModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('expo-router', async () => {
         const activeOptions = publicShareViewerModuleState.options;

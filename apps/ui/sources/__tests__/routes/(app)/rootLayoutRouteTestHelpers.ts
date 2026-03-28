@@ -55,23 +55,20 @@ export function installRootLayoutRouteCommonModuleMocks(
     });
 
     vi.mock('react-native', async () => {
-        const activeOptions = rootLayoutRouteModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'ios',
-                select: <T,>(choices: { ios?: T; default?: T; web?: T }) =>
-                    choices?.ios ?? choices?.default ?? choices?.web,
-            },
-            AppState: {
-                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-            },
-        });
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'ios',
+                        select: <T,>(choices: { ios?: T; default?: T; web?: T }) =>
+                            choices?.ios ?? choices?.default ?? choices?.web,
+                    },
+                    AppState: {
+                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                    },
+                }
+    );
+});
 
     vi.mock('react-native-unistyles', async () => {
         const activeOptions = rootLayoutRouteModuleState.options;
@@ -99,6 +96,10 @@ export function installRootLayoutRouteCommonModuleMocks(
             return await activeOptions.storage(importOriginal);
         }
 
-        return importOriginal();
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {},
+        });
     });
 }

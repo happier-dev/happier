@@ -41,14 +41,14 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
-                AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-                Platform: {
-                    OS: 'web',
-                    select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? spec.web : undefined),
-                },
-                Linking: { openURL: mockState.openURL },
-            }
+                        useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
+                        AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
+                        Platform: {
+                            OS: 'web',
+                            select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? spec.web : undefined),
+                        },
+                        Linking: { openURL: mockState.openURL },
+                    }
     );
 });
 

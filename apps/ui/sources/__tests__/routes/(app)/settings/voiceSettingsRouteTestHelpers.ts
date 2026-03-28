@@ -112,14 +112,11 @@ export function installVoiceSettingsRouteModuleMocks(
         Switch: (props: any) => React.createElement('Switch', props),
     }));
 
-    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-        if (voiceSettingsRouteModuleState.options.storageModule) {
-            return await voiceSettingsRouteModuleState.options.storageModule(importOriginal as MockImportOriginal);
-        }
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: () => null,
-            useSettings: () => ({}),
-        });
-    });
+    vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useSetting: () => null,
+    useSettings: () => ({}),
+});
+});
 }

@@ -16,9 +16,13 @@ describe('/friends redirect', () => {
         const replace = vi.fn();
         const back = vi.fn();
 
-        vi.doMock('expo-router', () => ({
-            useRouter: () => ({ replace, back }),
-        }));
+        vi.doMock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { replace, back },
+    });
+    return expoRouterMock.module;
+});
 
         vi.doMock('@/hooks/friends/useRequireFriendsEnabled', () => ({
             useRequireFriendsEnabled: () => true,

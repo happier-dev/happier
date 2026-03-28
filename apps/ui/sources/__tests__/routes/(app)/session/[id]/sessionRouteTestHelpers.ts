@@ -25,14 +25,9 @@ export function installSessionRouteCommonModuleMocks(
     sessionRouteModuleState.options = options;
 
     vi.mock('react-native', async () => {
-        const activeOptions = sessionRouteModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('expo-router', async () => {
         const activeOptions = sessionRouteModuleState.options;
