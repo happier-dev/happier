@@ -136,18 +136,19 @@ async function cmdList(): Promise<void> {
   }
 
   console.log(chalk.bold('\nTelegram (effective runtime: env > settings.json)'));
-  console.log(`  botToken: ${maskSecret(effective.telegram.botToken)}`);
-  if (effective.telegram.allowAllSharedChats) {
+  const telegramEffective = effective.providers.telegram;
+  console.log(`  botToken: ${maskSecret(telegramEffective.botToken)}`);
+  if (telegramEffective.allowAllSharedChats) {
     console.log('  allowedChatIds: (allow all shared chats - DANGEROUS)');
   } else {
     console.log(
-      `  allowedChatIds: ${effective.telegram.allowedChatIds.length > 0 ? effective.telegram.allowedChatIds.join(', ') : '(dm-only)'}`,
+      `  allowedChatIds: ${telegramEffective.allowedChatIds.length > 0 ? telegramEffective.allowedChatIds.join(', ') : '(dm-only)'}`,
     );
   }
-  console.log(`  requireTopics: ${effective.telegram.requireTopics ? 'true' : 'false'}`);
-  console.log(`  webhook.enabled: ${effective.telegram.webhookEnabled ? 'true' : 'false'}`);
-  console.log(`  webhook.host: ${effective.telegram.webhookHost}`);
-  console.log(`  webhook.port: ${effective.telegram.webhookPort}`);
+  console.log(`  requireTopics: ${telegramEffective.requireTopics ? 'true' : 'false'}`);
+  console.log(`  webhook.enabled: ${telegramEffective.webhookEnabled ? 'true' : 'false'}`);
+  console.log(`  webhook.host: ${telegramEffective.webhookHost}`);
+  console.log(`  webhook.port: ${telegramEffective.webhookPort}`);
 
   try {
     const store = createLocalChannelBindingStore({ accountId });

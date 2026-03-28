@@ -1,6 +1,7 @@
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { createTelegramChannelAdapter } from '@/channels/providers/telegram/telegramAdapter';
 import { createTelegramPollingCursorStore } from '@/channels/providers/telegram/telegramPollingCursorStore';
+import { createTelegramWebhookUpdateStore } from '@/channels/providers/telegram/telegramWebhookUpdateStore';
 import {
   startTelegramWebhookRelay,
   type TelegramWebhookRelayHandle,
@@ -22,10 +23,10 @@ async function stopRelayBestEffort(relayHandle: TelegramWebhookRelayHandle | nul
 export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
   'telegram',
   ChannelBridgeRuntimeConfig,
-  ChannelBridgeRuntimeConfig['telegram']
+  ChannelBridgeRuntimeConfig['providers']['telegram']
 > = {
   providerId: 'telegram',
-  readConfig: (root) => root.telegram,
+  readConfig: (root) => root.providers.telegram,
   createRuntime: async ({ config, context }) => {
     const botToken = config.botToken;
     if (!botToken) return null;
@@ -47,6 +48,9 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
     const pollingCursorStore = context.accountId
       ? createTelegramPollingCursorStore({ accountId: context.accountId, botToken })
       : null;
+    const webhookUpdateStore = webhookModeRequested && context.accountId
+      ? createTelegramWebhookUpdateStore({ accountId: context.accountId, botToken })
+      : null;
 
     let relayHandle: TelegramWebhookRelayHandle | null = null;
     let adapter = createTelegramChannelAdapter({
@@ -56,6 +60,7 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
       requireTopics,
       webhookMode: webhookModeRequested,
       pollingCursorStore: pollingCursorStore ?? undefined,
+      webhookUpdateStore: webhookUpdateStore ?? undefined,
     });
 
     if (webhookModeRequested) {

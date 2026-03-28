@@ -27,7 +27,7 @@ function formatInboundMode(binding: ChannelSessionBinding): string {
   return `${mode}${missing}`;
 }
 
-function isTelegramConfigured(runtime: ReturnType<typeof resolveChannelBridgeRuntimeConfig>['telegram']): boolean {
+function isTelegramConfigured(runtime: ReturnType<typeof resolveChannelBridgeRuntimeConfig>['providers']['telegram']): boolean {
   return (
     runtime.botToken.trim().length > 0
     || runtime.webhookEnabled
@@ -60,12 +60,13 @@ export async function runChannelBridgeDoctorSection(params: Readonly<{
 
   let hasCriticalFailures = false;
 
-  if (!isTelegramConfigured(runtime.telegram)) {
+  const telegram = runtime.providers.telegram;
+  if (!isTelegramConfigured(telegram)) {
     console.log(chalk.gray('Telegram bridge not configured for active scope'));
     return { hasCriticalFailures };
   }
 
-  const tokenMissing = runtime.telegram.botToken.trim().length === 0;
+  const tokenMissing = telegram.botToken.trim().length === 0;
   if (tokenMissing) {
     console.log(chalk.red('❌ Telegram bridge configuration present but bot token is missing (bridge will not start)'));
     hasCriticalFailures = true;
@@ -73,28 +74,29 @@ export async function runChannelBridgeDoctorSection(params: Readonly<{
     console.log(chalk.green('✓ Telegram bridge configured (bot token present)'));
   }
 
-  if (runtime.telegram.allowAllSharedChats) {
+  if (telegram.allowAllSharedChats) {
     console.log(chalk.yellow('⚠️  allowAllSharedChats=true (any shared chat can be attached; high risk)'));
   }
 
   const allowedChatIdsLabel = (() => {
-    if (runtime.telegram.allowAllSharedChats) {
+    if (telegram.allowAllSharedChats) {
       return '(allow all shared chats - UNSAFE)';
     }
-    if (runtime.telegram.allowedChatIds.length > 0) {
-      return runtime.telegram.allowedChatIds.join(', ');
+    if (telegram.allowedChatIds.length > 0) {
+      return telegram.allowedChatIds.join(', ');
     }
     return '(dm-only)';
   })();
 
   console.log(`  allowedChatIds: ${allowedChatIdsLabel}`);
-  console.log(`  requireTopics: ${runtime.telegram.requireTopics ? 'true' : 'false'}`);
-  console.log(`  webhook.enabled: ${runtime.telegram.webhookEnabled ? 'true' : 'false'}`);
-  console.log(`  webhook.host: ${runtime.telegram.webhookHost}`);
-  console.log(`  webhook.port: ${runtime.telegram.webhookPort}`);
+  console.log(`  requireTopics: ${telegram.requireTopics ? 'true' : 'false'}`);
+  console.log(`  webhook.enabled: ${telegram.webhookEnabled ? 'true' : 'false'}`);
+  console.log(`  webhook.host: ${telegram.webhookHost}`);
+  console.log(`  webhook.port: ${telegram.webhookPort}`);
 
-  if (runtime.telegram.webhookEnabled && runtime.telegram.webhookSecret.trim().length === 0) {
-    console.log(chalk.yellow('⚠️  webhook.enabled=true but webhook.secret is missing (daemon will fall back to polling)'));
+  if (telegram.webhookEnabled && telegram.webhookSecret.trim().length === 0) {
+    console.log(chalk.red('❌ webhook.enabled=true but webhook.secret is missing (bridge will not start)'));
+    hasCriticalFailures = true;
   }
 
   if (!accountId) {
@@ -134,4 +136,3 @@ export async function runChannelBridgeDoctorSection(params: Readonly<{
 
   return { hasCriticalFailures };
 }
-

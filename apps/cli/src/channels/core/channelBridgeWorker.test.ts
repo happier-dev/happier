@@ -771,6 +771,8 @@ describe('executeChannelBridgeTick', () => {
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
+      senderId: 'user-1',
+      conversationKind: 'dm',
       text: '/sessions',
       messageId: 'm-sessions',
     });
@@ -778,6 +780,8 @@ describe('executeChannelBridgeTick', () => {
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
+      senderId: 'user-1',
+      conversationKind: 'dm',
       text: '/detach',
       messageId: 'm-detach',
     });
@@ -796,6 +800,37 @@ describe('executeChannelBridgeTick', () => {
     expect(remaining).toHaveLength(0);
   });
 
+  it('blocks /sessions in non-DM conversations', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+
+    const { deps } = createDepsHarness({
+      sessions: [{ sessionId: 'sess-1', label: 'build-docs' }],
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: '99',
+      senderId: 'user-1',
+      conversationKind: 'group',
+      text: '/sessions',
+      messageId: 'm-sessions-group',
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(harness.sent.some((row) => row.text.includes('For safety, /sessions is only available in direct messages.'))).toBe(
+      true,
+    );
+    expect(harness.sent.some((row) => row.text.includes('Recent sessions'))).toBe(false);
+  });
+
   it('warns and replies when /sessions fails to list sessions', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
@@ -810,6 +845,8 @@ describe('executeChannelBridgeTick', () => {
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
+      senderId: 'user-1',
+      conversationKind: 'dm',
       text: '/sessions',
       messageId: 'm-sessions-fail',
     });
@@ -843,6 +880,7 @@ describe('executeChannelBridgeTick', () => {
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
+      senderId: 'user-1',
       text: '/session',
       messageId: 'm-session-bound',
     });
@@ -854,6 +892,39 @@ describe('executeChannelBridgeTick', () => {
     });
 
     expect(harness.sent.some((row) => row.text.includes('Attached session: sess-bound'))).toBe(true);
+  });
+
+  it('denies /session command for attached conversations when sender is not authorized', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+    const { deps } = createDepsHarness();
+
+    await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: '99',
+      sessionId: 'sess-bound',
+      lastForwardedSeq: 3,
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: '99',
+      senderId: 'user-2',
+      text: '/session',
+      messageId: 'm-session-bound-unauthorized',
+    });
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(harness.sent.some((row) => row.text.includes('not authorized'))).toBe(true);
+    expect(harness.sent.some((row) => row.text.includes('Attached session: sess-bound'))).toBe(false);
   });
 
   it('supports /session command for non-attached conversations', async () => {
@@ -1247,6 +1318,8 @@ describe('executeChannelBridgeTick', () => {
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
+      senderId: 'user-1',
+      conversationKind: 'dm',
       text: '/sessions',
       messageId: 'm-sessions-truncated',
     });
@@ -1691,6 +1764,8 @@ describe('executeChannelBridgeTick', () => {
       providerId: 'telegram',
       conversationId: '-1009',
       threadId: null,
+      senderId: 'user-1',
+      conversationKind: 'dm',
       text: '/sessions',
       messageId: 'authz-throws',
     });
@@ -2823,6 +2898,8 @@ describe('startChannelBridgeWorker', () => {
       providerId: 'telegram',
       conversationId: '-2001',
       threadId: null,
+      senderId: 'user-1',
+      conversationKind: 'dm',
       text: '/sessions',
       messageId: 'startup-sessions',
     });

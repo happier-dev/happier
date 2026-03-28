@@ -27,6 +27,8 @@ export type ChannelBridgeConversationRef = Readonly<{
   threadId: string | null;
 }>;
 
+export type ChannelBridgeConversationKind = 'dm' | 'group' | 'channel' | 'unknown';
+
 /**
  * Inbound message event produced by an adapter.
  *
@@ -34,6 +36,7 @@ export type ChannelBridgeConversationRef = Readonly<{
  */
 export type ChannelBridgeInboundMessage = ChannelBridgeConversationRef & Readonly<{
   senderId?: string | null;
+  conversationKind?: ChannelBridgeConversationKind | null;
   text: string;
   messageId: string;
 }>;
@@ -43,6 +46,7 @@ export type ChannelBridgeActorContext = Readonly<{
   conversationId: string;
   threadId: string | null;
   senderId: string | null;
+  conversationKind: ChannelBridgeConversationKind;
 }>;
 
 /**
@@ -181,6 +185,17 @@ function normalizeSenderId(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeConversationKind(raw: unknown): ChannelBridgeConversationKind {
+  switch (raw) {
+    case 'dm':
+    case 'group':
+    case 'channel':
+      return raw;
+    default:
+      return 'unknown';
+  }
 }
 
 export class ChannelBridgePermanentDeliveryError extends Error {
@@ -617,18 +632,26 @@ async function authorizeCommand(params: Readonly<{
   event: ChannelBridgeInboundMessage;
   deps: ChannelBridgeDeps;
 }>): Promise<Readonly<{ allowed: boolean; message: string | null }>> {
-  const authorize = params.deps.authorizeCommand;
-  if (!authorize) {
-    return { allowed: true, message: null };
-  }
-
   const senderId = normalizeSenderId(params.event.senderId);
   const actor: ChannelBridgeActorContext = {
     providerId: params.event.providerId,
     conversationId: params.event.conversationId,
     threadId: params.event.threadId,
     senderId,
+    conversationKind: normalizeConversationKind(params.event.conversationKind),
   };
+
+  if (params.commandName === 'sessions' && actor.conversationKind !== 'dm') {
+    return {
+      allowed: false,
+      message: 'For safety, /sessions is only available in direct messages.',
+    };
+  }
+
+  const authorize = params.deps.authorizeCommand;
+  if (!authorize) {
+    return { allowed: true, message: null };
+  }
 
   try {
     const result = await withTimeout(
@@ -743,6 +766,15 @@ async function handleCommand(params: Readonly<{
 
     if (!existing) {
       await replyForCommand('No session is attached here. Use /attach <session-id-or-prefix>.');
+      return;
+    }
+
+    const controlAuthz = authorizeBindingControl({
+      binding: existing,
+      senderId: normalizeSenderId(event.senderId),
+    });
+    if (!controlAuthz.allowed) {
+      await replyForCommand(controlAuthz.message ?? 'You are not authorized to view this binding.');
       return;
     }
     await replyForCommand(`Attached session: ${existing.sessionId}`);
@@ -1181,7 +1213,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
 
           const failureReplyKey: ChannelBridgeInboundMessage = {
             ...event,
-            messageId: `forward-failure:${String(event.messageId ?? '').trim()}`,
+            messageId: `forward-failure:${String(event.messageId ?? '').trim()}:${giveUp ? 'give-up' : 'retrying'}`,
           };
 
           if (!deduper.hasSeen(failureReplyKey)) {

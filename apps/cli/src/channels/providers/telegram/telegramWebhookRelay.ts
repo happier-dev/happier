@@ -4,8 +4,10 @@ import fastify from 'fastify';
 
 import { isLoopbackHostname } from '@/server/serverUrlClassification';
 import { logger } from '@/ui/logger';
-
-const MAX_WEBHOOK_SECRET_TOKEN_LENGTH = 256;
+import {
+  assertTelegramWebhookSecretToken,
+  TELEGRAM_WEBHOOK_SECRET_TOKEN_MAX_LENGTH,
+} from './telegramWebhookSecretToken';
 
 function secureCompareToken(providedToken: string, expectedToken: string): boolean {
   const providedBytes = Buffer.from(providedToken, 'utf8');
@@ -31,16 +33,11 @@ export async function startTelegramWebhookRelay(params: Readonly<{
   secretToken: string;
   onUpdate: (update: unknown) => void | Promise<void>;
 }>): Promise<TelegramWebhookRelayHandle> {
-  const secretToken = String(params.secretToken ?? '').trim();
-  if (!secretToken) {
-    throw new Error('Webhook secret token is required');
-  }
-  if (secretToken.length > MAX_WEBHOOK_SECRET_TOKEN_LENGTH) {
-    throw new Error('Webhook secret token is too long');
-  }
-  if (!/^[A-Za-z0-9_-]+$/.test(secretToken)) {
-    throw new Error('Webhook secret token must match [A-Za-z0-9_-]');
-  }
+  const secretToken = assertTelegramWebhookSecretToken(params.secretToken, {
+    empty: 'Webhook secret token is required',
+    invalid: 'Webhook secret token must match [A-Za-z0-9_-]',
+    tooLong: 'Webhook secret token is too long',
+  });
 
   const host = String(params.host ?? '127.0.0.1').trim() || '127.0.0.1';
   if (!isLoopbackHostname(host)) {
@@ -69,7 +66,7 @@ export async function startTelegramWebhookRelay(params: Readonly<{
             ? providedHeader[0] ?? ''
             : '';
       const trimmedProvidedToken = providedToken.trim();
-      if (trimmedProvidedToken.length > MAX_WEBHOOK_SECRET_TOKEN_LENGTH) {
+      if (trimmedProvidedToken.length > TELEGRAM_WEBHOOK_SECRET_TOKEN_MAX_LENGTH) {
         return reply.status(431).send({ ok: false, error: 'Request Header Fields Too Large' });
       }
       if (!secureCompareToken(trimmedProvidedToken, secretToken)) {

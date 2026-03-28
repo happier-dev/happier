@@ -4,6 +4,11 @@ import { ChannelBridgePermanentDeliveryError } from '@/channels/core/channelBrid
 import type { ChannelBridgeAdapter, ChannelBridgeInboundMessage } from '@/channels/core/channelBridgeWorker';
 import { logger } from '@/ui/logger';
 
+import type {
+  TelegramWebhookUpdateStore,
+  TelegramWebhookUpdateStoreSnapshot,
+} from './telegramWebhookUpdateStore';
+
 type TelegramSelfUser = Readonly<{ id: number; username: string | null }>;
 type TelegramApiMethod = 'getMe' | 'getUpdates' | 'sendMessage';
 
@@ -11,6 +16,19 @@ type TelegramApiClient = Readonly<{
   getMe: () => Promise<TelegramSelfUser>;
   getUpdates: (params: Readonly<{ offset: number | null; limit: number }>) => Promise<readonly unknown[]>;
   sendMessage: (params: Readonly<{ chatId: string; threadId: string | null; text: string }>) => Promise<void>;
+}>;
+
+type TelegramWebhookQueuedUpdate = Readonly<{
+  id: number;
+  update: unknown;
+  updateId: number | null;
+}>;
+
+type TelegramWebhookQueueState = Readonly<{
+  lastHandledWebhookUpdateId: number | null;
+  nextQueuedWebhookId: number;
+  queuedWebhookUpdates: TelegramWebhookQueuedUpdate[];
+  queuedUpdateIds: ReadonlySet<number>;
 }>;
 
 const TELEGRAM_GET_UPDATES_LONG_POLL_TIMEOUT_SECONDS = 25;
@@ -165,6 +183,15 @@ function parseInboundFromUpdate(params: Readonly<{
     }
   }
 
+  const conversationKind =
+    isPrivateChat
+      ? 'dm'
+      : chatType === 'channel'
+        ? 'channel'
+        : chatType === 'group' || chatType === 'supergroup'
+          ? 'group'
+          : 'unknown';
+
   const threadId =
     typeof rawMessage.message_thread_id === 'number' && Number.isFinite(rawMessage.message_thread_id)
       ? String(Math.trunc(rawMessage.message_thread_id))
@@ -195,6 +222,7 @@ function parseInboundFromUpdate(params: Readonly<{
     conversationId,
     threadId,
     senderId: senderId === null ? null : String(senderId),
+    conversationKind,
     text,
     messageId,
   };
@@ -227,6 +255,82 @@ function inboundMessageKey(message: Readonly<{
   return JSON.stringify([message.providerId, message.conversationId, message.threadId, message.messageId]);
 }
 
+function cloneWebhookQueueState(state: TelegramWebhookQueueState): TelegramWebhookQueueState {
+  return {
+    lastHandledWebhookUpdateId: state.lastHandledWebhookUpdateId,
+    nextQueuedWebhookId: state.nextQueuedWebhookId,
+    queuedWebhookUpdates: state.queuedWebhookUpdates.map((row) => ({
+      id: row.id,
+      update: row.update,
+      updateId: row.updateId,
+    })),
+    queuedUpdateIds: new Set(state.queuedUpdateIds),
+  };
+}
+
+function normalizeWebhookQueueSnapshot(snapshot: TelegramWebhookUpdateStoreSnapshot | null): TelegramWebhookQueueState {
+  if (!snapshot) {
+    return {
+      lastHandledWebhookUpdateId: null,
+      nextQueuedWebhookId: 1,
+      queuedWebhookUpdates: [],
+      queuedUpdateIds: new Set<number>(),
+    };
+  }
+
+  const queuedWebhookUpdates: TelegramWebhookQueuedUpdate[] = [];
+  const queuedUpdateIds = new Set<number>();
+  let maxQueuedWebhookId = 0;
+
+  for (const row of snapshot.queuedWebhookUpdates) {
+    const id = Number.isFinite(row.id) ? Math.max(1, Math.trunc(row.id)) : null;
+    if (id === null) {
+      continue;
+    }
+    const updateId = parseUpdateId(row.update);
+    queuedWebhookUpdates.push({
+      id,
+      update: row.update,
+      updateId,
+    });
+    if (updateId !== null) {
+      queuedUpdateIds.add(updateId);
+    }
+    if (id > maxQueuedWebhookId) {
+      maxQueuedWebhookId = id;
+    }
+  }
+
+  queuedWebhookUpdates.sort((left, right) => left.id - right.id);
+
+  const nextQueuedWebhookId = Math.max(
+    1,
+    Math.trunc(snapshot.nextQueuedWebhookId),
+    maxQueuedWebhookId + 1,
+  );
+
+  return {
+    lastHandledWebhookUpdateId:
+      typeof snapshot.lastHandledWebhookUpdateId === 'number' && Number.isFinite(snapshot.lastHandledWebhookUpdateId)
+        ? Math.max(0, Math.trunc(snapshot.lastHandledWebhookUpdateId))
+        : null,
+    nextQueuedWebhookId,
+    queuedWebhookUpdates,
+    queuedUpdateIds,
+  };
+}
+
+function webhookQueueSnapshotToStore(snapshot: TelegramWebhookQueueState): TelegramWebhookUpdateStoreSnapshot {
+  return {
+    lastHandledWebhookUpdateId: snapshot.lastHandledWebhookUpdateId,
+    nextQueuedWebhookId: snapshot.nextQueuedWebhookId,
+    queuedWebhookUpdates: snapshot.queuedWebhookUpdates.map((row) => ({
+      id: row.id,
+      update: row.update,
+    })),
+  };
+}
+
 export function createTelegramChannelAdapter(params: Readonly<{
   botToken: string;
   api?: TelegramApiClient;
@@ -239,7 +343,8 @@ export function createTelegramChannelAdapter(params: Readonly<{
     load: () => Promise<number | null>;
     save: (offset: number) => Promise<void>;
   }>;
-}>): ChannelBridgeAdapter & Readonly<{ enqueueWebhookUpdate: (update: unknown) => void }> {
+  webhookUpdateStore?: TelegramWebhookUpdateStore;
+}>): ChannelBridgeAdapter & Readonly<{ enqueueWebhookUpdate: (update: unknown) => void | Promise<void> }> {
   const api = params.api ?? createDefaultTelegramApiClient(params.botToken);
   const webhookMode = params.webhookMode === true;
   const updateLimit =
@@ -250,11 +355,6 @@ export function createTelegramChannelAdapter(params: Readonly<{
   const allowAllSharedChats = params.allowAllSharedChats === true;
   const requireTopics = params.requireTopics === true;
   const MAX_WEBHOOK_QUEUE_SIZE = 2_000;
-
-  type QueuedWebhookUpdate = {
-    id: number;
-    update: unknown;
-  };
 
   type PendingWebhookAck = {
     queueIds: Set<number>;
@@ -282,11 +382,14 @@ export function createTelegramChannelAdapter(params: Readonly<{
   let pollingCursorLoaded = false;
   let lastPersistedPollingOffset: number | null = null;
   let pollingCursorSaveQueue = Promise.resolve();
-  const queuedWebhookUpdates: QueuedWebhookUpdate[] = [];
-  let nextQueuedWebhookId = 1;
+  let webhookQueueState: TelegramWebhookQueueState | null = null;
+  let webhookQueueLoaded = false;
+  let webhookQueueLoadPromise: Promise<void> | null = null;
+  let webhookQueueMutationQueue = Promise.resolve();
   let droppedWebhookUpdates = 0;
   const pendingWebhookAcksByMessageKey = new Map<string, PendingWebhookAck>();
   let pendingPollingBatchAck: PendingPollingBatchAck | null = null;
+  const webhookUpdateStore = params.webhookUpdateStore ?? null;
 
   async function ensurePollingCursorLoaded(): Promise<void> {
     if (pollingCursorLoaded) return;
@@ -319,6 +422,166 @@ export function createTelegramChannelAdapter(params: Readonly<{
     await pollingCursorSaveQueue;
   }
 
+  function withWebhookQueueMutation<T>(work: () => Promise<T>): Promise<T> {
+    const run = webhookQueueMutationQueue.then(work, work);
+    webhookQueueMutationQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  function getWebhookQueueState(): TelegramWebhookQueueState {
+    if (!webhookQueueState) {
+      throw new Error('Telegram webhook queue is not loaded');
+    }
+    return webhookQueueState;
+  }
+
+  function setWebhookQueueState(nextState: TelegramWebhookQueueState): void {
+    webhookQueueState = cloneWebhookQueueState(nextState);
+  }
+
+  async function ensureWebhookQueueLoaded(): Promise<void> {
+    if (webhookQueueLoaded) return;
+    if (webhookQueueLoadPromise) {
+      await webhookQueueLoadPromise;
+      return;
+    }
+
+    webhookQueueLoadPromise = (async () => {
+      try {
+        if (!webhookUpdateStore) {
+          setWebhookQueueState(normalizeWebhookQueueSnapshot(null));
+          return;
+        }
+
+        const loaded = await webhookUpdateStore.load();
+        setWebhookQueueState(normalizeWebhookQueueSnapshot(loaded));
+      } catch (error) {
+        logger.warn('[channelBridge] Failed to load Telegram webhook queue; continuing with empty queue', error);
+        setWebhookQueueState(normalizeWebhookQueueSnapshot(null));
+      } finally {
+        webhookQueueLoaded = true;
+        webhookQueueLoadPromise = null;
+      }
+    })();
+
+    await webhookQueueLoadPromise;
+  }
+
+  async function saveWebhookQueueState(nextState: TelegramWebhookQueueState): Promise<void> {
+    if (!webhookUpdateStore) return;
+    await webhookUpdateStore.save(webhookQueueSnapshotToStore(nextState));
+  }
+
+  function queueWebhookUpdateIdExists(state: TelegramWebhookQueueState, updateId: number): boolean {
+    return state.queuedUpdateIds.has(updateId);
+  }
+
+  function removeQueuedWebhookUpdatesById(state: TelegramWebhookQueueState, ids: ReadonlySet<number>): TelegramWebhookQueueState {
+    if (ids.size === 0) return state;
+
+    const nextQueuedWebhookUpdates: TelegramWebhookQueuedUpdate[] = [];
+    const nextQueuedUpdateIds = new Set<number>(state.queuedUpdateIds);
+    let lastHandledWebhookUpdateId = state.lastHandledWebhookUpdateId;
+
+    for (const row of state.queuedWebhookUpdates) {
+      if (!ids.has(row.id)) {
+        nextQueuedWebhookUpdates.push(row);
+        continue;
+      }
+
+      if (row.updateId !== null) {
+        nextQueuedUpdateIds.delete(row.updateId);
+        lastHandledWebhookUpdateId =
+          lastHandledWebhookUpdateId === null
+            ? row.updateId
+            : Math.max(lastHandledWebhookUpdateId, row.updateId);
+      }
+    }
+
+    return {
+      lastHandledWebhookUpdateId,
+      nextQueuedWebhookId: state.nextQueuedWebhookId,
+      queuedWebhookUpdates: nextQueuedWebhookUpdates,
+      queuedUpdateIds: nextQueuedUpdateIds,
+    };
+  }
+
+  function dropOldestWebhookUpdate(state: TelegramWebhookQueueState): Readonly<{
+    state: TelegramWebhookQueueState;
+    droppedQueueIds: ReadonlySet<number>;
+  }> {
+    if (state.queuedWebhookUpdates.length === 0) {
+      return {
+        state,
+        droppedQueueIds: new Set<number>(),
+      };
+    }
+    const [oldest, ...rest] = state.queuedWebhookUpdates;
+    const nextQueuedUpdateIds = new Set<number>(state.queuedUpdateIds);
+    if (oldest?.updateId !== null) {
+      nextQueuedUpdateIds.delete(oldest.updateId);
+    }
+    return {
+      state: {
+        lastHandledWebhookUpdateId: state.lastHandledWebhookUpdateId,
+        nextQueuedWebhookId: state.nextQueuedWebhookId,
+        queuedWebhookUpdates: rest,
+        queuedUpdateIds: nextQueuedUpdateIds,
+      },
+      droppedQueueIds: oldest ? new Set([oldest.id]) : new Set<number>(),
+    };
+  }
+
+  function appendWebhookUpdate(state: TelegramWebhookQueueState, update: unknown): Readonly<{
+    state: TelegramWebhookQueueState;
+    droppedQueueIds: ReadonlySet<number>;
+  }> {
+    const updateId = parseUpdateId(update);
+    if (updateId !== null) {
+      if (state.lastHandledWebhookUpdateId !== null && updateId <= state.lastHandledWebhookUpdateId) {
+        return { state, droppedQueueIds: new Set<number>() };
+      }
+      if (queueWebhookUpdateIdExists(state, updateId)) {
+        return { state, droppedQueueIds: new Set<number>() };
+      }
+    }
+
+    let nextState: TelegramWebhookQueueState = {
+      lastHandledWebhookUpdateId: state.lastHandledWebhookUpdateId,
+      nextQueuedWebhookId: state.nextQueuedWebhookId + 1,
+      queuedWebhookUpdates: [
+        ...state.queuedWebhookUpdates,
+        {
+          id: state.nextQueuedWebhookId,
+          update,
+          updateId,
+        },
+      ],
+      queuedUpdateIds: updateId === null ? new Set(state.queuedUpdateIds) : new Set(state.queuedUpdateIds).add(updateId),
+    };
+
+    let droppedQueueIds = new Set<number>();
+    if (nextState.queuedWebhookUpdates.length > MAX_WEBHOOK_QUEUE_SIZE) {
+      const dropped = dropOldestWebhookUpdate(nextState);
+      nextState = dropped.state;
+      droppedQueueIds = new Set(dropped.droppedQueueIds);
+    }
+
+    return {
+      state: nextState,
+      droppedQueueIds,
+    };
+  }
+
+  async function persistWebhookQueueOrWarn(state: TelegramWebhookQueueState): Promise<void> {
+    if (!webhookUpdateStore) return;
+    try {
+      await saveWebhookQueueState(state);
+    } catch (error) {
+      logger.warn('[channelBridge] Failed to persist Telegram webhook queue; continuing without persistence', error);
+    }
+  }
+
   function dropPendingWebhookAckIds(ids: ReadonlySet<number>): void {
     if (ids.size === 0) return;
 
@@ -330,17 +593,6 @@ export function createTelegramChannelAdapter(params: Readonly<{
         pendingWebhookAcksByMessageKey.delete(key);
       }
     }
-  }
-
-  function removeQueuedWebhookUpdatesById(ids: ReadonlySet<number>): void {
-    if (ids.size === 0) return;
-
-    for (let index = queuedWebhookUpdates.length - 1; index >= 0; index -= 1) {
-      if (ids.has(queuedWebhookUpdates[index]!.id)) {
-        queuedWebhookUpdates.splice(index, 1);
-      }
-    }
-    dropPendingWebhookAckIds(ids);
   }
 
   async function ensureSelfIdentity(): Promise<void> {
@@ -367,22 +619,33 @@ export function createTelegramChannelAdapter(params: Readonly<{
 
   return {
     providerId: 'telegram',
-    enqueueWebhookUpdate: (update: unknown) => {
-      if (queuedWebhookUpdates.length >= MAX_WEBHOOK_QUEUE_SIZE) {
-        const dropped = queuedWebhookUpdates.shift();
-        if (dropped) {
-          droppedWebhookUpdates += 1;
-          dropPendingWebhookAckIds(new Set([dropped.id]));
-        }
+    enqueueWebhookUpdate: (update: unknown) => withWebhookQueueMutation(async () => {
+      await ensureWebhookQueueLoaded();
+      const currentState = getWebhookQueueState();
+      const appended = appendWebhookUpdate(currentState, update);
+      if (appended.state === currentState) {
+        return;
       }
-      queuedWebhookUpdates.push({
-        id: nextQueuedWebhookId,
-        update,
-      });
-      nextQueuedWebhookId += 1;
-    },
+
+      await saveWebhookQueueState(appended.state);
+      setWebhookQueueState(appended.state);
+      if (appended.droppedQueueIds.size > 0) {
+        dropPendingWebhookAckIds(appended.droppedQueueIds);
+        droppedWebhookUpdates += appended.droppedQueueIds.size;
+      }
+    }),
     pullInboundMessages: async () => {
       if (webhookMode) {
+        const snapshot = await withWebhookQueueMutation(async () => {
+          await ensureWebhookQueueLoaded();
+          const currentState = getWebhookQueueState();
+          return currentState.queuedWebhookUpdates.map((row) => ({
+            id: row.id,
+            update: row.update,
+            updateId: row.updateId,
+          }));
+        });
+
         if (droppedWebhookUpdates > 0) {
           logger.warn(
             `[channelBridge] Telegram webhook queue overflow: dropped ${droppedWebhookUpdates} oldest update(s)`,
@@ -390,7 +653,6 @@ export function createTelegramChannelAdapter(params: Readonly<{
           droppedWebhookUpdates = 0;
         }
 
-        const snapshot = queuedWebhookUpdates.slice();
         await ensureSelfIdentity();
 
         const parsed: ChannelBridgeInboundMessage[] = [];
@@ -413,15 +675,25 @@ export function createTelegramChannelAdapter(params: Readonly<{
           const pending = pendingWebhookAcksByMessageKey.get(key) ?? { queueIds: new Set<number>(), maxUpdateId: null };
           pending.queueIds.add(row.id);
 
-          const updateId = parseUpdateId(row.update);
-          if (updateId !== null) {
-            pending.maxUpdateId = pending.maxUpdateId === null ? updateId : Math.max(pending.maxUpdateId, updateId);
+          if (row.updateId !== null) {
+            pending.maxUpdateId = pending.maxUpdateId === null ? row.updateId : Math.max(pending.maxUpdateId, row.updateId);
           }
 
           pendingWebhookAcksByMessageKey.set(key, pending);
         }
 
-        removeQueuedWebhookUpdatesById(consumedWithoutAck);
+        if (consumedWithoutAck.size > 0) {
+          await withWebhookQueueMutation(async () => {
+            await ensureWebhookQueueLoaded();
+            const currentState = getWebhookQueueState();
+            const nextState = removeQueuedWebhookUpdatesById(currentState, consumedWithoutAck);
+            if (nextState !== currentState) {
+              setWebhookQueueState(nextState);
+              await persistWebhookQueueOrWarn(nextState);
+            }
+            dropPendingWebhookAckIds(consumedWithoutAck);
+          });
+        }
         return parsed;
       }
 
@@ -492,7 +764,6 @@ export function createTelegramChannelAdapter(params: Readonly<{
       }
 
       const consumedIds = new Set<number>();
-      let maxAckedUpdateId: number | null = null;
 
       for (const message of messages) {
         const key = inboundMessageKey(message);
@@ -505,21 +776,26 @@ export function createTelegramChannelAdapter(params: Readonly<{
           consumedIds.add(queueId);
         }
 
-        if (pending.maxUpdateId !== null) {
-          maxAckedUpdateId = maxAckedUpdateId === null
-            ? pending.maxUpdateId
-            : Math.max(maxAckedUpdateId, pending.maxUpdateId);
-        }
-
         pendingWebhookAcksByMessageKey.delete(key);
       }
 
-      removeQueuedWebhookUpdatesById(consumedIds);
+      if (consumedIds.size > 0) {
+        await withWebhookQueueMutation(async () => {
+          await ensureWebhookQueueLoaded();
+          const currentState = getWebhookQueueState();
+          const nextState = removeQueuedWebhookUpdatesById(currentState, consumedIds);
+          if (nextState !== currentState) {
+            setWebhookQueueState(nextState);
+            await persistWebhookQueueOrWarn(nextState);
+          }
+          dropPendingWebhookAckIds(consumedIds);
 
-      if (maxAckedUpdateId !== null) {
-        const nextOffset = maxAckedUpdateId + 1;
-        updateOffset = updateOffset === null ? nextOffset : Math.max(updateOffset, nextOffset);
-        await persistPollingOffset(updateOffset);
+          if (nextState.lastHandledWebhookUpdateId !== null) {
+            const nextOffset = nextState.lastHandledWebhookUpdateId + 1;
+            updateOffset = updateOffset === null ? nextOffset : Math.max(updateOffset, nextOffset);
+            await persistPollingOffset(updateOffset);
+          }
+        });
       }
     },
     sendMessage: async (message) => {

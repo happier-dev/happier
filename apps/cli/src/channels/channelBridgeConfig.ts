@@ -1,91 +1,21 @@
 import { isLoopbackHostname } from '@/server/serverUrlClassification';
+import { readTelegramWebhookSecretToken } from '@/channels/providers/telegram/telegramWebhookSecretToken';
+import {
+  asRecord,
+  firstParsed,
+  parseBoolean,
+  parseCsv,
+  parseInteger,
+  parseStrictInteger,
+  parseStringArray,
+  readTrimmedString,
+} from '@/channels/channelBridgeConfigParsing';
+import { resolveChannelBridgeSettingsScopes } from '@/channels/channelBridgeSettingsScopes';
 
 type RecordLike = Record<string, unknown>;
 
-function asRecord(value: unknown): RecordLike | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as RecordLike;
-}
-
-function parseBoolean(value: unknown): boolean | null {
-  if (typeof value === 'boolean') return value;
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  if (normalized.length === 0) return null;
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
-  return null;
-}
-
-function parseStrictInteger(raw: string, min: number, max: number): number | null {
-  const trimmed = raw.trim();
-  if (!/^[-]?\d+$/.test(trimmed)) return null;
-  const parsed = Number.parseInt(trimmed, 10);
-  if (!Number.isFinite(parsed) || parsed < min || parsed > max) return null;
-  return Math.trunc(parsed);
-}
-
-function parseInteger(value: unknown, min: number, max: number): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    const candidate = Math.trunc(value);
-    if (candidate < min || candidate > max) return null;
-    return candidate;
-  }
-  if (typeof value === 'string') {
-    return parseStrictInteger(value, min, max);
-  }
-  return null;
-}
-
-function parseCsv(raw: string): string[] {
-  return raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
-function parseStringArray(value: unknown): string[] | null {
-  if (typeof value === 'string') {
-    const parsed = parseCsv(value);
-    return parsed.length > 0 ? parsed : null;
-  }
-  if (!Array.isArray(value)) return null;
-  const out = value
-    .map((entry) => {
-      if (typeof entry === 'string') return entry.trim();
-      if (typeof entry === 'number' && Number.isFinite(entry)) return String(Math.trunc(entry));
-      return '';
-    })
-    .filter((entry) => entry.length > 0);
-  if (out.length === 0 && value.length > 0) {
-    return null;
-  }
-  return out;
-}
-
-function readTrimmedString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-const TELEGRAM_WEBHOOK_SECRET_TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
-
 function readWebhookSecretToken(value: unknown): string | null {
-  const token = readTrimmedString(value);
-  if (!token) return null;
-  if (!TELEGRAM_WEBHOOK_SECRET_TOKEN_PATTERN.test(token)) return null;
-  return token;
-}
-
-function firstParsed<T>(values: readonly unknown[], parse: (value: unknown) => T | null): T | null {
-  for (const value of values) {
-    const parsed = parse(value);
-    if (parsed !== null) {
-      return parsed;
-    }
-  }
-  return null;
+  return readTelegramWebhookSecretToken(value);
 }
 
 type TelegramChannelBridgeRuntimeConfig = Readonly<{
@@ -101,7 +31,9 @@ type TelegramChannelBridgeRuntimeConfig = Readonly<{
 
 export type ChannelBridgeRuntimeConfig = Readonly<{
   tickMs: number;
-  telegram: TelegramChannelBridgeRuntimeConfig;
+  providers: Readonly<{
+    telegram: TelegramChannelBridgeRuntimeConfig;
+  }>;
 }>;
 
 export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
@@ -111,23 +43,14 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
   accountId?: string | null;
 }>): ChannelBridgeRuntimeConfig {
   const env = params.env ?? process.env;
-  const settingsRoot = asRecord(params.settings);
-  const channelBridgeGlobal = asRecord(settingsRoot?.channelBridge);
-
-  const byServerId = asRecord(channelBridgeGlobal?.byServerId);
-  const scopedServerId = readTrimmedString(params.serverId) ?? '';
-  const scopedAccountId = readTrimmedString(params.accountId) ?? '';
-
-  const channelBridgeServer =
-    scopedServerId.length > 0 && byServerId
-      ? asRecord(byServerId[scopedServerId])
-      : null;
-
-  const byAccountId = asRecord(channelBridgeServer?.byAccountId);
-  const channelBridgeAccount =
-    scopedAccountId.length > 0 && byAccountId
-      ? asRecord(byAccountId[scopedAccountId])
-      : null;
+  const scopes = resolveChannelBridgeSettingsScopes({
+    settings: params.settings,
+    serverId: params.serverId,
+    accountId: params.accountId,
+  });
+  const channelBridgeGlobal = scopes.channelBridgeGlobal;
+  const channelBridgeServer = scopes.channelBridgeServer;
+  const channelBridgeAccount = scopes.channelBridgeAccount;
 
   const providersGlobal = asRecord(channelBridgeGlobal?.providers);
   const providersServer = asRecord(channelBridgeServer?.providers);
@@ -272,15 +195,17 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
 
   return {
     tickMs,
-    telegram: {
-      botToken,
-      allowedChatIds,
-      allowAllSharedChats,
-      requireTopics,
-      webhookEnabled,
-      webhookSecret,
-      webhookHost,
-      webhookPort,
+    providers: {
+      telegram: {
+        botToken,
+        allowedChatIds,
+        allowAllSharedChats,
+        requireTopics,
+        webhookEnabled,
+        webhookSecret,
+        webhookHost,
+        webhookPort,
+      },
     },
   };
 }

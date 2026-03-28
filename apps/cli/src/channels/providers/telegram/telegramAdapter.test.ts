@@ -68,6 +68,7 @@ describe('createTelegramChannelAdapter', () => {
         conversationId: '-100555',
         threadId: '9001',
         senderId: '42',
+        conversationKind: 'group',
         text: 'hello from topic',
         messageId: '5001',
       },
@@ -112,6 +113,7 @@ describe('createTelegramChannelAdapter', () => {
         conversationId: '1234',
         threadId: null,
         senderId: '42',
+        conversationKind: 'dm',
         text: 'hello from dm',
         messageId: '5001',
       },
@@ -148,6 +150,7 @@ describe('createTelegramChannelAdapter', () => {
         conversationId: '-100555',
         threadId: null,
         senderId: '42',
+        conversationKind: 'group',
         text: 'hello from group',
         messageId: '5001',
       },
@@ -209,6 +212,7 @@ describe('createTelegramChannelAdapter', () => {
         conversationId: '1234',
         threadId: null,
         senderId: '456',
+        conversationKind: 'dm',
         text: '/sessions',
         messageId: '88',
       },
@@ -257,10 +261,80 @@ describe('createTelegramChannelAdapter', () => {
         conversationId: '1234',
         threadId: null,
         senderId: '456',
+        conversationKind: 'dm',
         text: 'retry me',
         messageId: '9001',
       },
     ]);
+  });
+
+  it('persists webhook updates across adapter restarts and ignores duplicate webhook deliveries while queued', async () => {
+    type TelegramWebhookUpdateStoreSnapshot = Readonly<{
+      lastHandledWebhookUpdateId: number | null;
+      nextQueuedWebhookId: number;
+      queuedWebhookUpdates: readonly Readonly<{
+        id: number;
+        update: unknown;
+      }>[];
+    }>;
+
+    let storedSnapshot: TelegramWebhookUpdateStoreSnapshot | null = null;
+    const webhookUpdateStore = {
+      load: vi.fn(async () => storedSnapshot),
+      save: vi.fn(async (snapshot: TelegramWebhookUpdateStoreSnapshot) => {
+        storedSnapshot = snapshot;
+      }),
+    };
+
+    const api = {
+      getMe: vi.fn(async () => ({ id: 9, username: 'happier_bot' })),
+      getUpdates: vi.fn(async () => []),
+      sendMessage: vi.fn(async () => undefined),
+    };
+
+    const webhookUpdate = {
+      update_id: 901,
+      message: {
+        message_id: 88,
+        text: '/sessions',
+        chat: { id: 1234, type: 'private' },
+        from: { id: 456, is_bot: false, first_name: 'Grace' },
+      },
+    };
+
+    const firstAdapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+      webhookMode: true,
+      webhookUpdateStore: webhookUpdateStore as never,
+    } as never);
+
+    await firstAdapter.enqueueWebhookUpdate(webhookUpdate);
+    const firstInbound = await firstAdapter.pullInboundMessages();
+    expect(firstInbound).toEqual([
+      {
+        providerId: 'telegram',
+        conversationId: '1234',
+        threadId: null,
+        senderId: '456',
+        conversationKind: 'dm',
+        text: '/sessions',
+        messageId: '88',
+      },
+    ]);
+    expect(webhookUpdateStore.save).toHaveBeenCalledTimes(1);
+
+    const secondAdapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+      webhookMode: true,
+      webhookUpdateStore: webhookUpdateStore as never,
+    } as never);
+
+    await expect(secondAdapter.pullInboundMessages()).resolves.toEqual(firstInbound);
+
+    await secondAdapter.enqueueWebhookUpdate(webhookUpdate);
+    await expect(secondAdapter.pullInboundMessages()).resolves.toEqual(firstInbound);
   });
 
   it('bounds webhook queue size to prevent unbounded growth', async () => {

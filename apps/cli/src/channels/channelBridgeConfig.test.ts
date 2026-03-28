@@ -3,6 +3,33 @@ import { describe, expect, it } from 'vitest';
 import { resolveChannelBridgeRuntimeConfig } from './channelBridgeConfig';
 
 describe('resolveChannelBridgeRuntimeConfig', () => {
+  it('exposes provider configs under config.providers.<providerId>', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {},
+      settings: {
+        channelBridge: {
+          tickMs: 3_100,
+          providers: {
+            telegram: {
+              botToken: 'settings-bot-token',
+              allowedChatIds: ['-100111', '-100222'],
+              requireTopics: true,
+              webhook: {
+                enabled: true,
+                secret: 'settings-secret',
+                host: '0.0.0.0',
+                port: 9_001,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.tickMs).toBe(3_100);
+    expect((config as any).providers?.telegram).toBeTruthy();
+  });
+
   it('uses settings.json bridge values when env is not set', () => {
     const config = resolveChannelBridgeRuntimeConfig({
       env: {},
@@ -27,14 +54,14 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     });
 
     expect(config.tickMs).toBe(3_100);
-    expect(config.telegram.botToken).toBe('settings-bot-token');
-    expect(config.telegram.allowedChatIds).toEqual(['-100111', '-100222']);
-    expect(config.telegram.allowAllSharedChats).toBe(false);
-    expect(config.telegram.requireTopics).toBe(true);
-    expect(config.telegram.webhookEnabled).toBe(true);
-    expect(config.telegram.webhookSecret).toBe('settings-secret');
-    expect(config.telegram.webhookHost).toBe('127.0.0.1');
-    expect(config.telegram.webhookPort).toBe(9_001);
+    expect(config.providers.telegram.botToken).toBe('settings-bot-token');
+    expect(config.providers.telegram.allowedChatIds).toEqual(['-100111', '-100222']);
+    expect(config.providers.telegram.allowAllSharedChats).toBe(false);
+    expect(config.providers.telegram.requireTopics).toBe(true);
+    expect(config.providers.telegram.webhookEnabled).toBe(true);
+    expect(config.providers.telegram.webhookSecret).toBe('settings-secret');
+    expect(config.providers.telegram.webhookHost).toBe('127.0.0.1');
+    expect(config.providers.telegram.webhookPort).toBe(9_001);
   });
 
   it('reads secret fields from telegram.secrets local-only block', () => {
@@ -61,11 +88,11 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.botToken).toBe('secret-bot-token');
-    expect(config.telegram.webhookSecret).toBe('secret-webhook-token');
-    expect(config.telegram.allowedChatIds).toEqual(['-100111']);
-    expect(config.telegram.allowAllSharedChats).toBe(false);
-    expect(config.telegram.requireTopics).toBe(true);
+    expect(config.providers.telegram.botToken).toBe('secret-bot-token');
+    expect(config.providers.telegram.webhookSecret).toBe('secret-webhook-token');
+    expect(config.providers.telegram.allowedChatIds).toEqual(['-100111']);
+    expect(config.providers.telegram.allowAllSharedChats).toBe(false);
+    expect(config.providers.telegram.requireTopics).toBe(true);
   });
 
   it('applies env overrides and falls back to settings for invalid env webhook port', () => {
@@ -101,14 +128,14 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     });
 
     expect(config.tickMs).toBe(700);
-    expect(config.telegram.botToken).toBe('env-token');
-    expect(config.telegram.allowedChatIds).toEqual(['-100333', '-100444']);
-    expect(config.telegram.allowAllSharedChats).toBe(false);
-    expect(config.telegram.requireTopics).toBe(false);
-    expect(config.telegram.webhookEnabled).toBe(true);
-    expect(config.telegram.webhookSecret).toBe('env-secret');
-    expect(config.telegram.webhookHost).toBe('127.0.0.9');
-    expect(config.telegram.webhookPort).toBe(9_001);
+    expect(config.providers.telegram.botToken).toBe('env-token');
+    expect(config.providers.telegram.allowedChatIds).toEqual(['-100333', '-100444']);
+    expect(config.providers.telegram.allowAllSharedChats).toBe(false);
+    expect(config.providers.telegram.requireTopics).toBe(false);
+    expect(config.providers.telegram.webhookEnabled).toBe(true);
+    expect(config.providers.telegram.webhookSecret).toBe('env-secret');
+    expect(config.providers.telegram.webhookHost).toBe('127.0.0.9');
+    expect(config.providers.telegram.webhookPort).toBe(9_001);
   });
 
   it('does not override settings bot token when env bot token is empty/whitespace', () => {
@@ -127,7 +154,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.botToken).toBe('settings-token');
+    expect(config.providers.telegram.botToken).toBe('settings-token');
   });
 
   it('applies a valid env webhook port override', () => {
@@ -148,7 +175,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.webhookPort).toBe(8_877);
+    expect(config.providers.telegram.webhookPort).toBe(8_877);
   });
 
   it('reads allowAllSharedChats from env', () => {
@@ -159,7 +186,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       settings: {},
     });
 
-    expect(config.telegram.allowAllSharedChats).toBe(true);
+    expect(config.providers.telegram.allowAllSharedChats).toBe(true);
   });
 
   it('falls back to settings allowedChatIds when env CSV is effectively empty', () => {
@@ -178,7 +205,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.allowedChatIds).toEqual(['-100settings']);
+    expect(config.providers.telegram.allowedChatIds).toEqual(['-100settings']);
   });
 
   it('falls back to lower scope when account allowedChatIds is malformed', () => {
@@ -215,7 +242,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.allowedChatIds).toEqual(['-100-server']);
+    expect(config.providers.telegram.allowedChatIds).toEqual(['-100-server']);
   });
 
   it('falls back to lower scope when account allowedChatIds string normalizes empty', () => {
@@ -247,7 +274,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.allowedChatIds).toEqual(['-100-server']);
+    expect(config.providers.telegram.allowedChatIds).toEqual(['-100-server']);
   });
 
   it('falls back to lower scope when higher-scope string secrets are blank', () => {
@@ -293,8 +320,8 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.botToken).toBe('server-token');
-    expect(config.telegram.webhookSecret).toBe('server-secret');
+    expect(config.providers.telegram.botToken).toBe('server-token');
+    expect(config.providers.telegram.webhookSecret).toBe('server-secret');
   });
 
   it('falls back to settings webhook secret when env secret token is invalid', () => {
@@ -315,7 +342,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.webhookSecret).toBe('settings-secret');
+    expect(config.providers.telegram.webhookSecret).toBe('settings-secret');
   });
 
   it('treats invalid settings webhook secret token as missing', () => {
@@ -333,7 +360,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.webhookSecret).toBe('');
+    expect(config.providers.telegram.webhookSecret).toBe('');
   });
 
   it('ignores non-loopback env webhook host and keeps settings host', () => {
@@ -354,7 +381,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.webhookHost).toBe('127.0.0.1');
+    expect(config.providers.telegram.webhookHost).toBe('127.0.0.1');
   });
 
   it('rejects webhook port zero and falls back to default', () => {
@@ -375,7 +402,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.webhookPort).toBe(8_787);
+    expect(config.providers.telegram.webhookPort).toBe(8_787);
   });
 
   it('resolves account-scoped bridge config with server/global fallback', () => {
@@ -424,12 +451,12 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     });
 
     expect(config.tickMs).toBe(1_800);
-    expect(config.telegram.botToken).toBe('account-token');
-    expect(config.telegram.allowedChatIds).toEqual(['-100-server']);
-    expect(config.telegram.requireTopics).toBe(true);
-    expect(config.telegram.webhookEnabled).toBe(false);
-    expect(config.telegram.webhookHost).toBe('127.0.0.1');
-    expect(config.telegram.webhookPort).toBe(8_787);
+    expect(config.providers.telegram.botToken).toBe('account-token');
+    expect(config.providers.telegram.allowedChatIds).toEqual(['-100-server']);
+    expect(config.providers.telegram.requireTopics).toBe(true);
+    expect(config.providers.telegram.webhookEnabled).toBe(false);
+    expect(config.providers.telegram.webhookHost).toBe('127.0.0.1');
+    expect(config.providers.telegram.webhookPort).toBe(8_787);
   });
 
   it('falls back to global settings when scoped bridge config is missing', () => {
@@ -452,9 +479,9 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     });
 
     expect(config.tickMs).toBe(4_200);
-    expect(config.telegram.botToken).toBe('global-token');
-    expect(config.telegram.allowedChatIds).toEqual([]);
-    expect(config.telegram.requireTopics).toBe(true);
+    expect(config.providers.telegram.botToken).toBe('global-token');
+    expect(config.providers.telegram.allowedChatIds).toEqual([]);
+    expect(config.providers.telegram.requireTopics).toBe(true);
   });
 
   it('keeps settings allowedChatIds when env override is empty', () => {
@@ -473,7 +500,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.allowedChatIds).toEqual(['-100111']);
+    expect(config.providers.telegram.allowedChatIds).toEqual(['-100111']);
   });
 
   it('accepts numeric allowedChatIds from settings arrays', () => {
@@ -490,6 +517,6 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
       },
     });
 
-    expect(config.telegram.allowedChatIds).toEqual(['-1001234567890']);
+    expect(config.providers.telegram.allowedChatIds).toEqual(['-1001234567890']);
   });
 });
