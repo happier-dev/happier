@@ -75,16 +75,6 @@ export function registerExecutionRunHandlers(
         body: ACPMessageData,
         opts: { localId: string; meta?: Record<string, unknown> },
       ) => Promise<void>;
-      sendTranscriptDraftDelta: (
-        provider: ACPProvider,
-        params: {
-          localId: string;
-          segmentKind: 'assistant' | 'thinking';
-          sidechainId: string | null;
-          deltaText: string;
-          createdAtMs: number;
-        },
-      ) => void;
     }>;
     transcriptWriter?: Readonly<{
       appendUserText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
