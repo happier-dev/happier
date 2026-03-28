@@ -385,6 +385,41 @@ describe('SettingsView', () => {
         expect(screen.findRowByTitle('settings.channelBridges')).toBeNull();
     });
 
+    it('hides Channel Bridges in Settings when Telegram is not enabled at runtime', async () => {
+        useFeatureDecisionMock.mockImplementation((featureId: string) => {
+            if (featureId === 'channelBridges') {
+                return {
+                    featureId: 'channelBridges',
+                    state: 'enabled',
+                    blockedBy: null,
+                    blockerCode: 'none',
+                    diagnostics: [],
+                    evaluatedAt: 0,
+                    scope: { scopeKind: 'runtime' },
+                };
+            }
+
+            if (featureId === 'channelBridges.telegram') {
+                return {
+                    featureId: 'channelBridges.telegram',
+                    state: 'disabled',
+                    blockedBy: 'server',
+                    blockerCode: 'feature_disabled',
+                    diagnostics: [],
+                    evaluatedAt: 0,
+                    scope: { scopeKind: 'runtime' },
+                };
+            }
+
+            return null;
+        });
+
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
+
+        expect(screen.findRowByTitle('settings.channelBridges')).toBeNull();
+    });
+
     it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(React.createElement(SettingsView));

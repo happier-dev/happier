@@ -13,7 +13,7 @@ export function useChannelBridgesRuntimeVisibility() {
     const supported = channelBridgesDecision?.state !== 'unsupported';
     const needsLocalEnablement = channelBridgesDecision?.blockedBy === 'local_policy';
     const telegramEnabled = telegramDecision?.state === 'enabled';
-    const showSettingsEntry = channelBridgesDecision?.state === 'enabled';
+    const showSettingsEntry = channelBridgesDecision?.state === 'enabled' && telegramEnabled;
 
     return {
         channelBridgesDecision,
