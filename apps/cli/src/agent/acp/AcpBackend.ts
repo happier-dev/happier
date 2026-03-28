@@ -1013,7 +1013,26 @@ export class AcpBackend implements AgentBackend {
               || result.decision === 'approved_for_session'
               || result.decision === 'approved_execpolicy_amendment';
 
-            const outcome = pickPermissionOutcome(options as PermissionOptionLike[], result.decision);
+            const resolvedDecision = String(result.decision);
+            const overrideOptionId = this.transport.pickPermissionOptionId?.(
+              options,
+              resolvedDecision,
+              { toolCallId, toolName, input },
+            );
+            const outcome = (() => {
+              if (overrideOptionId === null) return { outcome: 'cancelled' as const };
+              if (typeof overrideOptionId === 'string' && overrideOptionId.trim().length > 0) {
+                if (options.some((opt) => opt.optionId === overrideOptionId)) {
+                  return { outcome: 'selected' as const, optionId: overrideOptionId };
+                }
+                logger.debug('[AcpBackend] Transport returned unknown permission optionId override; falling back to default mapping', {
+                  toolCallId,
+                  toolName,
+                  optionId: overrideOptionId,
+                });
+              }
+              return pickPermissionOutcome(options as PermissionOptionLike[], resolvedDecision);
+            })();
             if (outcome.outcome === 'selected') {
               this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
             } else {
