@@ -139,6 +139,43 @@ describe('createTelegramChannelAdapter', () => {
     expect(inbound).toEqual([]);
   });
 
+  it('parses channel_post updates and uses sender_chat id as sender identity', async () => {
+    const api = {
+      getMe: vi.fn(async () => ({ id: 777, username: 'happier_bot' })),
+      getUpdates: vi.fn(async () => ([
+        {
+          update_id: 101,
+          channel_post: {
+            message_id: 5001,
+            text: 'hello from channel',
+            chat: { id: -100999, type: 'channel' },
+            sender_chat: { id: -100999, type: 'channel', title: 'News Channel' },
+          },
+        },
+      ])),
+      sendMessage: vi.fn(async () => undefined),
+    };
+
+    const adapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+      allowAllSharedChats: true,
+    });
+
+    const inbound = await adapter.pullInboundMessages();
+    expect(inbound).toEqual([
+      {
+        providerId: 'telegram',
+        conversationId: '-100999',
+        threadId: null,
+        senderId: '-100999',
+        conversationKind: 'channel',
+        text: 'hello from channel',
+        messageId: '5001',
+      },
+    ]);
+  });
+
   it('ignores non-private chats by default unless allowlisted or allowAllSharedChats is enabled', async () => {
     const api = {
       getMe: vi.fn(async () => ({ id: 777, username: 'happier_bot' })),

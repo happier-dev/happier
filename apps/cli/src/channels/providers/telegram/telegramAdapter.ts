@@ -110,7 +110,7 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
           ...(typeof offset === 'number' ? { offset } : {}),
           limit,
           timeout: TELEGRAM_GET_UPDATES_LONG_POLL_TIMEOUT_SECONDS,
-          allowed_updates: ['message'],
+          allowed_updates: ['message', 'channel_post'],
         }, {
           timeout: TELEGRAM_GET_UPDATES_HTTP_TIMEOUT_MS,
           validateStatus: () => true,
@@ -185,7 +185,7 @@ function parseInboundFromUpdate(params: Readonly<{
 }>): ChannelBridgeInboundMessage | null {
   const update = asRecord(params.update);
   if (!update) return null;
-  const rawMessage = asRecord(update.message);
+  const rawMessage = asRecord(update.message) ?? asRecord(update.channel_post);
   if (!rawMessage) return null;
 
   const rawText = typeof rawMessage.text === 'string' ? rawMessage.text.trim() : '';
@@ -233,10 +233,23 @@ function parseInboundFromUpdate(params: Readonly<{
   }
 
   const sender = asRecord(rawMessage.from);
-  const senderId =
+  const senderChat = asRecord(rawMessage.sender_chat);
+  const senderIdFrom =
     sender && typeof sender.id === 'number' && Number.isFinite(sender.id) ? Math.trunc(sender.id) : null;
+  const senderChatId =
+    senderChat && typeof senderChat.id === 'number' && Number.isFinite(senderChat.id)
+      ? Math.trunc(senderChat.id)
+      : senderChat && typeof senderChat.id === 'string'
+        ? senderChat.id.trim()
+        : null;
+  const senderId =
+    senderIdFrom !== null
+      ? String(senderIdFrom)
+      : senderChatId !== null
+        ? String(senderChatId)
+        : null;
   const senderIsBot = sender?.is_bot === true;
-  if (senderIsBot && senderId !== null && params.selfBotId !== null && senderId === params.selfBotId) {
+  if (senderIsBot && senderIdFrom !== null && params.selfBotId !== null && senderIdFrom === params.selfBotId) {
     return null;
   }
 
@@ -250,7 +263,7 @@ function parseInboundFromUpdate(params: Readonly<{
     providerId: 'telegram',
     conversationId,
     threadId,
-    senderId: senderId === null ? null : String(senderId),
+    senderId,
     conversationKind,
     text,
     messageId,
