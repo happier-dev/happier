@@ -75,12 +75,6 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
                     ],
                 },
                 {
-                    key: 'claudeRemoteIncludePartialMessages',
-                    kind: 'boolean',
-                    title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteIncludePartialMessages.title' },
-                    subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteIncludePartialMessages.subtitle' },
-                },
-                {
                     key: 'claudeLocalPermissionBridgeEnabled',
                     kind: 'boolean',
                     title: { key: 'settingsProviders.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.title' },

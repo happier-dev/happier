@@ -27,7 +27,8 @@ vi.mock('react-native', async () => {
     );
 });
 
-vi.mock('@expo/vector-icons', () => ({
+vi.mock('@expo/vector-icons', async () => ({
+    ...(await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock(),
     Octicons: () => null,
 }));
 
