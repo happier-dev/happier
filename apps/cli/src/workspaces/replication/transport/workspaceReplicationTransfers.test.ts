@@ -160,6 +160,7 @@ describe('workspaceReplicationTransfers', () => {
       transferId: 'blob_pack_transfer_123',
       endpointCandidates: [],
       destinationPath: '/tmp/received.bin',
+      timeoutMs: 12_345,
     })).resolves.toEqual({
       destinationPath: '/tmp/blob-pack.bin',
       manifestHash: 'sha256:pack_123',
@@ -169,6 +170,7 @@ describe('workspaceReplicationTransfers', () => {
       transferId: 'blob_pack_transfer_123',
       endpointCandidates: [],
       destinationPath: '/tmp/received.bin',
+      timeoutMs: 12_345,
     });
 
     await expect(transfers.requestServerRoutedBlobPackToFile({

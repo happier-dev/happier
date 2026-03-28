@@ -50,6 +50,7 @@ export type WorkspaceReplicationTransfers = Readonly<{
     endpointCandidates: readonly TransferEndpointCandidate[];
     destinationPath: string;
     openBody?: unknown;
+    timeoutMs?: number;
   }>) => Promise<TransferPayloadFileResult>;
   requestServerRoutedBlobPackToFile: (input: Readonly<{
     transferId: string;
@@ -103,6 +104,7 @@ export function createWorkspaceReplicationTransfers(
         endpointCandidates: input.endpointCandidates,
         destinationPath: input.destinationPath,
         ...(input.openBody !== undefined ? { openBody: input.openBody } : {}),
+        ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
       }),
     requestServerRoutedBlobPackToFile: async (input) =>
       await requestServerRoutedBlobPackToFile({

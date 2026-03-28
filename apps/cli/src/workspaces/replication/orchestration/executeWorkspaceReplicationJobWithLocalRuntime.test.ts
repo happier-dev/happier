@@ -973,6 +973,152 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
         }
     });
 
+    it('does not false-diverge on administrative paths when the source offer manifest intentionally includes them', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-admin-paths-target-'));
+        const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-admin-paths-target-workspace-'));
+
+        try {
+            const { createWorkspaceReplicationBaselineStore } = await import('../baseline/workspaceReplicationBaselineStore');
+            const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+            const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+            const { writeWorkspaceReplicationSourceOfferToFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+            const { executeWorkspaceReplicationJobWithLocalRuntime } = await import('./executeWorkspaceReplicationJobWithLocalRuntime');
+
+            await mkdir(join(targetWorkspaceRoot, '.git', 'refs'), { recursive: true });
+            await writeFile(join(targetWorkspaceRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf8');
+            await writeFile(join(targetWorkspaceRoot, '.git', 'refs', 'main'), 'abc123\n', 'utf8');
+            await writeFile(join(targetWorkspaceRoot, 'README.md'), 'hello\n', 'utf8');
+
+            const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+            const scope = {
+                sourceMachineId: 'machine-source',
+                sourceWorkspaceRoot: '/source',
+                targetMachineId: 'machine-target',
+                targetWorkspaceRoot,
+                mode: 'one_way_safe' as const,
+            };
+            const relationship = await relationships.ensureRelationship(scope);
+
+            const offer: WorkspaceReplicationSourceOffer = {
+                offerId: 'offer_admin_paths_1',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_admin_paths_1',
+                sourceFingerprint: sha256DigestOfString('offer-admin-paths'),
+                manifest: {
+                    entries: [
+                        {
+                            kind: 'directory',
+                            relativePath: '.git',
+                        },
+                        {
+                            kind: 'file',
+                            relativePath: '.git/HEAD',
+                            digest: sha256DigestOfString('ref: refs/heads/main\n'),
+                            sizeBytes: Buffer.byteLength('ref: refs/heads/main\n'),
+                            executable: false,
+                        },
+                        {
+                            kind: 'directory',
+                            relativePath: '.git/refs',
+                        },
+                        {
+                            kind: 'file',
+                            relativePath: '.git/refs/main',
+                            digest: sha256DigestOfString('abc123\n'),
+                            sizeBytes: Buffer.byteLength('abc123\n'),
+                            executable: false,
+                        },
+                        {
+                            kind: 'file',
+                            relativePath: 'README.md',
+                            digest: sha256DigestOfString('hello\n'),
+                            sizeBytes: Buffer.byteLength('hello\n'),
+                            executable: false,
+                        },
+                    ],
+                    fingerprint: sha256DigestOfString('manifest-admin-paths'),
+                },
+                blobIndex: [],
+            };
+
+            const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
+            await baselineStore.save({
+                scope,
+                baseline: {
+                    manifestFingerprint: offer.manifest.fingerprint!,
+                    manifest: offer.manifest,
+                    savedAtMs: 1,
+                },
+            });
+
+            const offerTempDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-admin-paths-offer-'));
+            const offerPath = join(offerTempDir, 'source-offer.txt');
+            await writeWorkspaceReplicationSourceOfferToFile({
+                offer,
+                filePath: offerPath,
+            });
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_admin_paths_1',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_admin_paths_1',
+                offerId: offer.offerId,
+                mode: 'one_way_safe',
+                correlationId: 'corr_admin_paths_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'pending',
+                    phase: 'negotiate_missing_digests',
+                    checkpoint: 'job_created',
+                    progressCounters: {
+                        plannedFiles: 0,
+                        plannedBytes: 0,
+                        transferredFiles: 0,
+                        transferredBytes: 0,
+                        appliedFiles: 0,
+                        appliedBytes: 0,
+                    },
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            const result = await executeWorkspaceReplicationJobWithLocalRuntime({
+                activeServerDir,
+                jobStore,
+                relationships,
+                jobId: 'job_admin_paths_1',
+                now: () => 42,
+                relationshipScope: scope,
+                resolveSourceOfferById: async () => {
+                    const { readWorkspaceReplicationSourceOfferFromFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+                    return await readWorkspaceReplicationSourceOfferFromFile({
+                        transferId: 'offer_transfer_admin_paths_1',
+                        filePath: offerPath,
+                    });
+                },
+                requestBlobPackToFile: vi.fn(async () => undefined),
+                apply: {
+                    targetPath: targetWorkspaceRoot,
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                },
+            });
+
+            expect(result.status).toMatchObject({
+                status: 'completed',
+                checkpoint: 'baseline_committed',
+            });
+            expect(result.status.blockingDivergenceCandidates).toEqual([]);
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
+
     it('marks the job awaiting_recovery when a one_way_safe sync_changes target diverges after the initial safety check (no overwrite after mid-transfer edits)', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-midtransfer-divergence-target-'));
         const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-midtransfer-divergence-source-'));
@@ -1333,6 +1479,151 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
         } finally {
             await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
             await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+            await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
+
+    it('does not treat git administrative paths as target divergence when the source manifest includes them', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-git-admin-'));
+        const sourceWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-git-admin-source-workspace-'));
+        const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-git-admin-target-workspace-'));
+
+        try {
+            const { createWorkspaceReplicationBaselineStore } = await import('../baseline/workspaceReplicationBaselineStore');
+            const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+            const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+            const { writeWorkspaceReplicationSourceOfferToFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+            const { executeWorkspaceReplicationJobWithLocalRuntime } = await import('./executeWorkspaceReplicationJobWithLocalRuntime');
+
+            const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+            const scope = {
+                sourceMachineId: 'machine-source',
+                sourceWorkspaceRoot,
+                targetMachineId: 'machine-target',
+                targetWorkspaceRoot,
+                mode: 'one_way_safe' as const,
+            };
+            const relationship = await relationships.ensureRelationship(scope);
+
+            const gitHeadContents = 'ref: refs/heads/main\n';
+            const gitHeadDigest = sha256DigestOfString(gitHeadContents);
+            const readmeContents = 'baseline\n';
+            const readmeDigest = sha256DigestOfString(readmeContents);
+
+            await mkdir(join(sourceWorkspaceRoot, '.git'), { recursive: true });
+            await mkdir(join(targetWorkspaceRoot, '.git'), { recursive: true });
+            await writeFile(join(sourceWorkspaceRoot, '.git', 'HEAD'), gitHeadContents, 'utf8');
+            await writeFile(join(targetWorkspaceRoot, '.git', 'HEAD'), gitHeadContents, 'utf8');
+            await writeFile(join(sourceWorkspaceRoot, 'README.md'), readmeContents, 'utf8');
+            await writeFile(join(targetWorkspaceRoot, 'README.md'), readmeContents, 'utf8');
+
+            const manifest = {
+                entries: [
+                    { kind: 'directory', relativePath: '.git' } as const,
+                    {
+                        kind: 'file',
+                        relativePath: '.git/HEAD',
+                        digest: gitHeadDigest,
+                        sizeBytes: Buffer.byteLength(gitHeadContents),
+                        executable: false,
+                    } as const,
+                    {
+                        kind: 'file',
+                        relativePath: 'README.md',
+                        digest: readmeDigest,
+                        sizeBytes: Buffer.byteLength(readmeContents),
+                        executable: false,
+                    } as const,
+                ],
+                fingerprint: sha256DigestOfString('git-admin-manifest'),
+            };
+
+            const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
+            await baselineStore.save({
+                scope,
+                baseline: {
+                    manifestFingerprint: manifest.fingerprint,
+                    manifest,
+                    savedAtMs: 1,
+                },
+            });
+
+            const offer: WorkspaceReplicationSourceOffer = {
+                offerId: 'offer_git_admin',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_git_admin',
+                sourceFingerprint: manifest.fingerprint,
+                manifest,
+                blobIndex: [
+                    { digest: gitHeadDigest, sizeBytes: Buffer.byteLength(gitHeadContents) },
+                    { digest: readmeDigest, sizeBytes: Buffer.byteLength(readmeContents) },
+                ],
+            };
+
+            const offerTempDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-git-admin-offer-'));
+            const offerPath = join(offerTempDir, 'source-offer.txt');
+            await writeWorkspaceReplicationSourceOfferToFile({
+                offer,
+                filePath: offerPath,
+            });
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_git_admin_1',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_git_admin',
+                offerId: offer.offerId,
+                mode: 'one_way_safe',
+                correlationId: 'corr_git_admin_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'pending',
+                    phase: 'negotiate_missing_digests',
+                    checkpoint: 'job_created',
+                    progressCounters: {
+                        plannedFiles: 0,
+                        plannedBytes: 0,
+                        transferredFiles: 0,
+                        transferredBytes: 0,
+                        appliedFiles: 0,
+                        appliedBytes: 0,
+                    },
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            const requestBlobPackToFile = vi.fn(async () => undefined);
+            const result = await executeWorkspaceReplicationJobWithLocalRuntime({
+                activeServerDir,
+                jobStore,
+                relationships,
+                jobId: 'job_git_admin_1',
+                now: () => 42,
+                relationshipScope: scope,
+                resolveSourceOfferById: async () => {
+                    const { readWorkspaceReplicationSourceOfferFromFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+                    return await readWorkspaceReplicationSourceOfferFromFile({
+                        transferId: 'offer_transfer_git_admin',
+                        filePath: offerPath,
+                    });
+                },
+                requestBlobPackToFile,
+                apply: {
+                    targetPath: targetWorkspaceRoot,
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                },
+            });
+
+            expect(result.status.status).toBe('completed');
+            expect(result.status.blockingDivergenceCandidates).toEqual([]);
+            expect(requestBlobPackToFile).not.toHaveBeenCalled();
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
             await rm(sourceWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
             await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
         }

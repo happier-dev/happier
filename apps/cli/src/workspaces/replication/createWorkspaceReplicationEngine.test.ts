@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import type { WorkspaceManifest } from '@happier-dev/protocol';
+
 import type { WorkspaceReplicationBaselineStore } from './baseline/workspaceReplicationBaselineStore';
 import type { WorkspaceReplicationCasStore } from './cas/workspaceReplicationCasStore';
 import type { WorkspaceReplicationJobRecord, WorkspaceReplicationJobStore } from './jobs/workspaceReplicationJobStore';
@@ -12,6 +14,7 @@ import type {
     WorkspaceReplicationRelationshipStore,
 } from './relationships/workspaceReplicationRelationshipStore';
 import type { WorkspaceReplicationSourceOfferStore } from './transport/workspaceReplicationSourceOfferStore';
+import type { WorkspaceReplicationEngineDependencies } from './workspaceReplicationTypes';
 import {
     buildWorkspaceReplicationDirectionId,
 } from './relationships/workspaceReplicationRelationshipStore';
@@ -261,6 +264,105 @@ describe('createWorkspaceReplicationEngine', () => {
         expect(executeJobInBackground).toHaveBeenCalled();
     });
 
+    it('derives the target scan safe-filter policy from source manifests that include administrative paths', async () => {
+        const activeServerDir = '/tmp/happier-active-server';
+        const localMachineId = 'machine_local';
+        const stores = {
+            cas: createStubCasStore(),
+            relationships: createStubRelationshipStore(),
+            baselines: createStubBaselineStore(),
+            jobs: createStubJobStore(),
+            sourceOffers: createStubSourceOfferStore(),
+        };
+        const scannedTargetManifest: Awaited<ReturnType<NonNullable<WorkspaceReplicationEngineDependencies['scanManifestIntoCas']>>> = {
+            entries: [
+                {
+                    kind: 'directory',
+                    relativePath: '.git',
+                },
+                {
+                    kind: 'file',
+                    relativePath: '.git/HEAD',
+                    digest: 'sha256:head',
+                    sizeBytes: 20,
+                    executable: false,
+                },
+                {
+                    kind: 'file',
+                    relativePath: 'README.md',
+                    digest: 'sha256:readme',
+                    sizeBytes: 6,
+                    executable: false,
+                },
+            ],
+            fingerprint: 'sha256:target',
+        };
+        const scanManifestIntoCasSpy = vi.fn();
+        const scanManifestIntoCas: NonNullable<WorkspaceReplicationEngineDependencies['scanManifestIntoCas']> =
+            async (params) => {
+                scanManifestIntoCasSpy(params);
+                return scannedTargetManifest;
+            };
+
+        const { createWorkspaceReplicationEngine } = await import('./createWorkspaceReplicationEngine');
+        const engine = createWorkspaceReplicationEngine(
+            { activeServerDir, localMachineId },
+            {
+                createCasStore: () => stores.cas,
+                createRelationshipStore: () => stores.relationships,
+                createBaselineStore: () => stores.baselines,
+                createJobStore: () => stores.jobs,
+                createSourceOfferStore: () => stores.sourceOffers,
+                scanManifestIntoCas,
+            },
+        );
+
+        const directionScope: WorkspaceReplicationDirectionScope = {
+            sourceMachineId: 'source',
+            sourceWorkspaceRoot: '/source',
+            targetMachineId: 'target',
+            targetWorkspaceRoot: '/target',
+            mode: 'one_way_safe',
+        };
+
+        await engine.plan({
+            scope: directionScope,
+            sourceManifest: {
+                entries: [
+                    {
+                        kind: 'directory',
+                        relativePath: '.git',
+                    },
+                    {
+                        kind: 'file',
+                        relativePath: '.git/HEAD',
+                        digest: 'sha256:head',
+                        sizeBytes: 20,
+                        executable: false,
+                    },
+                    {
+                        kind: 'file',
+                        relativePath: 'README.md',
+                        digest: 'sha256:readme',
+                        sizeBytes: 6,
+                        executable: false,
+                    },
+                ],
+                fingerprint: 'sha256:source',
+            },
+            targetWorkspaceRoot: '/target',
+        });
+
+        expect(scanManifestIntoCasSpy).toHaveBeenCalledWith(expect.objectContaining({
+            activeServerDir,
+            relationshipId: relationshipRecord.relationshipId,
+            workspaceRoot: '/target',
+            safeFilterPolicy: {
+                excludeAdministrativePaths: false,
+            },
+        }));
+    });
+
     it('reuses an existing in-flight job when correlationId matches (daemon-restart resumability)', async () => {
         const activeServerDir = '/tmp/happier-active-server';
         const localMachineId = 'machine_local';
@@ -348,6 +450,92 @@ describe('createWorkspaceReplicationEngine', () => {
             },
         });
         expect(executeJobInBackground).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job_existing' }));
+    });
+
+    it('plans with an administrative-path-aware target scan when the source manifest includes git metadata', async () => {
+        const activeServerDir = '/tmp/happier-active-server';
+        const localMachineId = 'machine_local';
+        const stores = {
+            cas: createStubCasStore(),
+            relationships: createStubRelationshipStore(),
+            baselines: createStubBaselineStore(),
+            jobs: createStubJobStore(),
+            sourceOffers: createStubSourceOfferStore(),
+        };
+        const scannedTargetManifest = {
+            entries: [
+                { kind: 'directory' as const, relativePath: '.git' },
+                {
+                    kind: 'file' as const,
+                    relativePath: '.git/HEAD',
+                    digest: 'sha256:head',
+                    sizeBytes: 23,
+                    executable: false,
+                },
+                {
+                    kind: 'file' as const,
+                    relativePath: 'README.md',
+                    digest: 'sha256:readme',
+                    sizeBytes: 7,
+                    executable: false,
+                },
+            ],
+            fingerprint: 'sha256:target',
+        };
+        const scanManifestIntoCas: NonNullable<WorkspaceReplicationEngineDependencies['scanManifestIntoCas']> =
+            vi.fn(async (_params) => scannedTargetManifest);
+
+        const { createWorkspaceReplicationEngine } = await import('./createWorkspaceReplicationEngine');
+        const engine = createWorkspaceReplicationEngine(
+            { activeServerDir, localMachineId },
+            {
+                createCasStore: () => stores.cas,
+                createRelationshipStore: () => stores.relationships,
+                createBaselineStore: () => stores.baselines,
+                createJobStore: () => stores.jobs,
+                createSourceOfferStore: () => stores.sourceOffers,
+                scanManifestIntoCas,
+            },
+        );
+
+        await engine.plan({
+            scope: {
+                sourceMachineId: 'source',
+                sourceWorkspaceRoot: '/source',
+                targetMachineId: 'target',
+                targetWorkspaceRoot: '/target',
+                mode: 'one_way_safe',
+            },
+            sourceManifest: {
+                entries: [
+                    { kind: 'directory', relativePath: '.git' },
+                    {
+                        kind: 'file',
+                        relativePath: '.git/HEAD',
+                        digest: 'sha256:head',
+                        sizeBytes: 23,
+                        executable: false,
+                    },
+                    {
+                        kind: 'file',
+                        relativePath: 'README.md',
+                        digest: 'sha256:readme',
+                        sizeBytes: 7,
+                        executable: false,
+                    },
+                ],
+                fingerprint: 'sha256:source',
+            },
+            targetWorkspaceRoot: '/target',
+        });
+
+        expect(scanManifestIntoCas).toHaveBeenCalledWith({
+            activeServerDir,
+            relationshipId: relationshipRecord.relationshipId,
+            workspaceRoot: '/target',
+            safeFilterPolicy: { excludeAdministrativePaths: false },
+            scmRegistry: undefined,
+        });
     });
 
     it('fails closed when correlationId reuses an in-flight job with a different durable resume context', async () => {

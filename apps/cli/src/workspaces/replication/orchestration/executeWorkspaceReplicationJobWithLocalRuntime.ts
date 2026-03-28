@@ -8,6 +8,7 @@ import type {
     ScmSourceControllerWorkspaceTransferConflictPolicy,
     ScmSourceControllerWorkspaceTransferStrategy,
 } from '@/scm/sourceController/workspaceTransfer';
+import { inferWorkspaceManifestSafeFilterPolicyFromEntries } from '@/scm/sourceController/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import { createWorkspaceReplicationBaselineStore } from '../baseline/workspaceReplicationBaselineStore';
@@ -93,6 +94,10 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
       activeServerDir: params.activeServerDir,
       relationshipId: offer.relationshipId,
       workspaceRoot: params.apply.targetPath,
+      safeFilterPolicy: inferWorkspaceManifestSafeFilterPolicyFromEntries(
+        offer.manifest.entries,
+        params.apply.registry,
+      ),
       scmRegistry: params.apply.registry,
     });
   }
