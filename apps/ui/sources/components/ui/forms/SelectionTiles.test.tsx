@@ -96,6 +96,34 @@ describe('SelectionTiles', () => {
         expect(renderOptionFooter).toHaveBeenCalled();
     });
 
+    it('lets footer switches trigger their own change handlers', async () => {
+        const onChange = vi.fn();
+        const onFooterChange = vi.fn();
+        const { SelectionTiles } = await import('./SelectionTiles');
+        const { Pressable } = await import('react-native');
+
+        const screen = await renderScreen(<SelectionTiles
+            options={[
+                { id: 'mcp', title: 'MCP' },
+            ]}
+            value={['mcp']}
+            onChange={onChange}
+            renderOptionFooter={({ selected }) => selected ? (
+                <Pressable testID="footer-switch" onPress={onFooterChange}>
+                </Pressable>
+            ) : null}
+            testIdPrefix="footer-switch-select"
+            selectionMode="multiple"
+        />);
+
+        await act(async () => {
+            await pressTestInstanceAsync(screen.findByTestId('footer-switch'), 'footer-switch');
+        });
+
+        expect(onFooterChange).toHaveBeenCalledTimes(1);
+        expect(onChange).not.toHaveBeenCalled();
+    });
+
     it('supports multiple selection mode and toggles selected values', async () => {
         const onChange = vi.fn();
         const { SelectionTiles } = await import('./SelectionTiles');
@@ -198,7 +226,7 @@ describe('SelectionTiles', () => {
             });
         });
 
-        const optionA = tree.findByProps({ testID: 'medium-grid:a' });
+        const optionA = tree.findAll((node) => node.props?.testID === 'medium-grid:a' && typeof node.props?.style === 'function')[0];
         const resolvedStyle = optionA.props.style({ pressed: false });
         const flattenedStyle = Object.assign(
             {},
@@ -228,7 +256,7 @@ describe('SelectionTiles', () => {
                     testIdPrefix="fallback-grid"
                 />)).tree;
 
-        const optionA = tree.findByProps({ testID: 'fallback-grid:a' });
+        const optionA = tree.findAll((node) => node.props?.testID === 'fallback-grid:a' && typeof node.props?.style === 'function')[0];
         const resolvedStyle = optionA.props.style({ pressed: false });
         const flattenedStyle = Object.assign(
             {},
@@ -271,7 +299,7 @@ describe('SelectionTiles', () => {
             });
         });
 
-        const optionA = tree.findByProps({ testID: 'forced-grid:a' });
+        const optionA = tree.findAll((node) => node.props?.testID === 'forced-grid:a' && typeof node.props?.style === 'function')[0];
         const resolvedStyle = optionA.props.style({ pressed: false });
         const flattenedStyle = Object.assign(
             {},

@@ -153,59 +153,64 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
                 const footer = props.renderOptionFooter?.({ option, selected, disabled });
 
                 return (
-                    <Pressable
+                    <View
                         key={option.id}
-                        testID={props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined}
-                        accessibilityRole={selectionAccessibilityRole}
-                        accessibilityState={props.selectionMode === 'multiple'
-                            ? { checked: selected, disabled }
-                            : { selected, disabled }}
-                        disabled={disabled}
-                        onPress={() => {
-                            if (disabled) {
-                                return;
-                            }
-                            handleToggle(props, option.id);
-                        }}
-                        style={({ pressed }) => [
+                        style={[
                             styles.tile,
-                            compact ? styles.tileCompact : null,
-                            compact && !hasSubtitle ? styles.tileCompactWithoutSubtitle : null,
                             tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
-                            {
-                                borderColor,
-                                opacity: disabled ? 0.5 : (pressed ? 0.85 : 1),
-                            },
+                            { borderColor },
                         ]}
                     >
-                        <View style={[styles.headerRow, compact && !hasSubtitle ? styles.headerRowCentered : null]}>
-                            <View style={[styles.titleRow, compact && !hasSubtitle ? styles.titleRowCentered : null]}>
-                                <View style={[styles.iconSlot, compact ? styles.iconSlotCompact : null]}>
-                                    <Ionicons
-                                        name={iconName}
-                                        size={compact ? 16 : 29}
-                                        color={iconColor}
-                                    />
+                        <Pressable
+                            testID={props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined}
+                            accessibilityRole={selectionAccessibilityRole}
+                            accessibilityState={props.selectionMode === 'multiple'
+                                ? { checked: selected, disabled }
+                                : { selected, disabled }}
+                            disabled={disabled}
+                            onPress={() => {
+                                if (disabled) {
+                                    return;
+                                }
+                                handleToggle(props, option.id);
+                            }}
+                            style={({ pressed }) => [
+                                styles.tilePressable,
+                                compact ? styles.tileCompact : null,
+                                compact && !hasSubtitle ? styles.tileCompactWithoutSubtitle : null,
+                                tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
+                                { opacity: disabled ? 0.5 : (pressed ? 0.85 : 1) },
+                            ]}
+                        >
+                            <View style={[styles.headerRow, compact && !hasSubtitle ? styles.headerRowCentered : null]}>
+                                <View style={[styles.titleRow, compact && !hasSubtitle ? styles.titleRowCentered : null]}>
+                                    <View style={[styles.iconSlot, compact ? styles.iconSlotCompact : null]}>
+                                        <Ionicons
+                                            name={iconName}
+                                            size={compact ? 16 : 29}
+                                            color={iconColor}
+                                        />
+                                    </View>
+                                    <View style={[styles.textContainer, compact && !hasSubtitle ? styles.textContainerCentered : null]}>
+                                        <Text style={[styles.title, compact ? styles.titleCompact : null]} numberOfLines={2}>{option.title}</Text>
+                                        {option.subtitle ? (
+                                            <Text style={[styles.subtitle, compact ? styles.subtitleCompact : null]} numberOfLines={4}>{option.subtitle}</Text>
+                                        ) : null}
+                                    </View>
                                 </View>
-                                <View style={[styles.textContainer, compact && !hasSubtitle ? styles.textContainerCentered : null]}>
-                                    <Text style={[styles.title, compact ? styles.titleCompact : null]} numberOfLines={2}>{option.title}</Text>
-                                    {option.subtitle ? (
-                                        <Text style={[styles.subtitle, compact ? styles.subtitleCompact : null]} numberOfLines={4}>{option.subtitle}</Text>
-                                    ) : null}
-                                </View>
+                                {option.badge ? (
+                                    <View style={styles.badge}>
+                                        <Text style={styles.badgeText} numberOfLines={1}>{option.badge}</Text>
+                                    </View>
+                                ) : null}
                             </View>
-                            {option.badge ? (
-                                <View style={styles.badge}>
-                                    <Text style={styles.badgeText} numberOfLines={1}>{option.badge}</Text>
-                                </View>
-                            ) : null}
-                        </View>
+                        </Pressable>
                         {footer != null && footer !== false ? (
                             <View style={[styles.footer, compact ? styles.footerCompact : null]}>
                                 {footer}
                             </View>
                         ) : null}
-                    </Pressable>
+                    </View>
                 );
             })}
         </View>
@@ -221,6 +226,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         borderRadius: 12,
         borderWidth: 2,
+        overflow: 'hidden',
+    },
+    tilePressable: {
         paddingHorizontal: 12,
         paddingVertical: 14,
         minHeight: 92,

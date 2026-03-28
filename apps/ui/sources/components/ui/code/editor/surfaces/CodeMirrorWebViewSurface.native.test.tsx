@@ -11,11 +11,11 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            View: 'View',
-            PixelRatio: {
-                getFontScale: () => 1,
-            },
-        }
+                    View: 'View',
+                    PixelRatio: {
+                        getFontScale: () => 1,
+                    },
+                }
     );
 });
 

@@ -10,6 +10,7 @@ import {
     PATH_BROWSER_MODAL_TEST_ID,
 } from './pathBrowserTestIds';
 import { flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -164,13 +165,13 @@ vi.mock('@/components/ui/popover', () => ({
     },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
+vi.mock('@/modal', () => createModalModuleMock({
+    spies: {
         prompt: (...args: any[]) => modalPromptMock(...args),
         alert: (...args: any[]) => modalAlertMock(...args),
-        confirm: vi.fn(),
+        confirm: vi.fn(async () => false),
     },
-}));
+}).module);
 
 vi.mock('@/sync/ops/machines', () => ({
     machineCreateDirectory: (machineId: string, path: string, options?: unknown) => machineCreateDirectoryMock(machineId, path, options),

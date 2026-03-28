@@ -28,13 +28,8 @@ import { machineCreateDirectory } from '@/sync/ops/machines';
 import { machineRipgrep } from '@/sync/ops/machineRipgrep';
 import { t } from '@/text';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import {
-    FileBrowserToolbar,
-    FileBrowserToolbarIconButton,
-    resolveVisibleFileBrowserToolbarActionIds,
-} from '@/components/ui/filesystemBrowser/FileBrowserToolbar';
-import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { FilesystemBrowserToolbarChrome, type FilesystemBrowserToolbarAction } from '@/components/ui/filesystemBrowser/FilesystemBrowserToolbarChrome';
 
 import {
     getPathBrowserRowTestId,
@@ -363,7 +358,6 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const usesRootsListing = rootDirectoryPath === '';
     const [searchQuery, setSearchQuery] = React.useState('');
     const [showHidden, setShowHidden] = React.useState(true);
-    const [toolbarWidth, setToolbarWidth] = React.useState<number | null>(null);
     const [treeReloadNonce, setTreeReloadNonce] = React.useState(0);
     const [deepSearchReloadNonce, setDeepSearchReloadNonce] = React.useState(0);
     const [deepSearchNodes, setDeepSearchNodes] = React.useState<FilesystemBrowserNode[] | null>(null);
@@ -1028,22 +1022,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         return actions;
     }, [canClearSearch, filterSelected, refresh, theme.colors.textLink, theme.colors.textSecondary]);
 
-    const visibleToolbarActionIds = React.useMemo(
-        () => resolveVisibleFileBrowserToolbarActionIds({ toolbarWidth, actions: toolbarActions }),
-        [toolbarActions, toolbarWidth],
-    );
-
-    const visibleToolbarActions = React.useMemo(() => (
-        toolbarActions
-            .filter((action) => visibleToolbarActionIds.has(action.id))
-            .sort((left, right) => left.order - right.order)
-    ), [toolbarActions, visibleToolbarActionIds]);
-
-    const hiddenToolbarActions = React.useMemo(() => (
-        toolbarActions.filter((action) => !visibleToolbarActionIds.has(action.id))
-    ), [toolbarActions, visibleToolbarActionIds]);
-
-    const moreActions = React.useMemo((): ItemAction[] => {
+    const buildOverflowItems = React.useCallback((hiddenActions: readonly FilesystemBrowserToolbarAction[]) => {
         const items: ItemAction[] = [
             {
                 id: 'path-browser-collapse-all',
@@ -1073,7 +1052,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             });
         }
 
-        for (const hiddenAction of hiddenToolbarActions) {
+        for (const hiddenAction of hiddenActions) {
             items.push({
                 id: hiddenAction.id,
                 title: hiddenAction.accessibilityLabel,
@@ -1084,7 +1063,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         }
 
         return items;
-    }, [collapseAll, createFolderInDirectory, expandedPaths.length, hiddenToolbarActions, isCreatingFolder, props, selectedDirectoryPath]);
+    }, [collapseAll, createFolderInDirectory, expandedPaths.length, isCreatingFolder, props.onRequestClose, selectedDirectoryPath]);
 
         return (
             <View
@@ -1135,44 +1114,16 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             ) : null}
 
             <View style={styles.body}>
-                <FileBrowserToolbar
+                <FilesystemBrowserToolbarChrome
+                    testID="path-browser-toolbar"
                     searchTestID="path-browser-search"
                     searchPlaceholder={t('files.searchPlaceholder')}
                     searchValue={searchQuery}
                     onSearchValueChange={setSearchQuery}
-                    onWidthChange={setToolbarWidth}
-                >
-                    {visibleToolbarActions.map((action) => (
-                        <FileBrowserToolbarIconButton
-                            key={action.id}
-                            testID={action.id}
-                            accessibilityLabel={action.accessibilityLabel}
-                            onPress={action.onPress}
-                            selected={action.selected}
-                            disabled={action.disabled}
-                        >
-                            {action.icon}
-                        </FileBrowserToolbarIconButton>
-                    ))}
-                    <ItemRowActions
-                        title={t('common.moreActions')}
-                        actions={moreActions}
-                        overflowTriggerTestID="path-browser-more"
-                        compactThreshold={Number.POSITIVE_INFINITY}
-                        compactActionIds={[]}
-                        renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => (
-                            <FileBrowserToolbarIconButton
-                                testID={testID ?? 'path-browser-more'}
-                                accessibilityLabel={accessibilityLabel ?? t('common.moreActions')}
-                                accessibilityHint={accessibilityHint}
-                                accessibilityState={{ expanded: open }}
-                                onPress={toggle}
-                            >
-                                <Ionicons name="ellipsis-horizontal" size={16} color={theme.colors.textSecondary} />
-                            </FileBrowserToolbarIconButton>
-                        )}
-                    />
-                </FileBrowserToolbar>
+                    actions={toolbarActions}
+                    buildOverflowItems={buildOverflowItems}
+                    overflowTriggerTestID="path-browser-more"
+                />
 
                 <FilesystemBrowser
                     nodes={nodes}
