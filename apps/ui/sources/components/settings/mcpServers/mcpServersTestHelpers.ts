@@ -68,14 +68,9 @@ export function installMcpServersCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = mcpServersModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('@expo/vector-icons', () => ({
         Ionicons: 'Ionicons',
@@ -134,15 +129,10 @@ export function installMcpServersCommonModuleMocks(
         };
     });
 
-    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-        const activeOptions = mcpServersModuleState.options;
-        if (activeOptions.storage) {
-            return await activeOptions.storage(importOriginal);
-        }
-
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
-    });
+    vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({});
+});
 
     vi.mock('@/components/ui/text/Text', () => ({
         Text: 'Text',

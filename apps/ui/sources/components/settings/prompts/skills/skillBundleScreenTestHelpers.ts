@@ -60,28 +60,25 @@ export function installSkillBundleCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = skillBundleModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-            TextInput: 'TextInput',
-            ScrollView: 'ScrollView',
-            Platform: {
-                OS: 'web',
-                select: ({
-                    web,
-                    default: defaultValue,
-                }: {
-                    web?: unknown;
-                    default?: unknown;
-                }) => web ?? defaultValue,
-            },
-        });
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                    TextInput: 'TextInput',
+                    ScrollView: 'ScrollView',
+                    Platform: {
+                        OS: 'web',
+                        select: ({
+                            web,
+                            default: defaultValue,
+                        }: {
+                            web?: unknown;
+                            default?: unknown;
+                        }) => web ?? defaultValue,
+                    },
+                }
+    );
+});
 
     vi.mock('react-native-unistyles', async () => {
         const activeOptions = skillBundleModuleState.options;
@@ -130,13 +127,8 @@ export function installSkillBundleCommonModuleMocks(
         return createModalModuleMock().module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-        const activeOptions = skillBundleModuleState.options;
-        if (activeOptions.storage) {
-            return await activeOptions.storage(importOriginal);
-        }
-
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
-    });
+    vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({});
+});
 }
