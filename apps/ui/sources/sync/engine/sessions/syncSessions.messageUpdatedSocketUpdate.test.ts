@@ -70,11 +70,13 @@ function buildHarness(
     params: Parameters<typeof handleMessageUpdatedSocketUpdate>[0];
     applyMessages: ReturnType<typeof vi.fn>;
     applySessions: ReturnType<typeof vi.fn>;
+    fetchSessions: ReturnType<typeof vi.fn>;
     onMessageGapDetected: ReturnType<typeof vi.fn>;
     markSessionMaterializedMaxSeq: ReturnType<typeof vi.fn>;
 } {
     const applyMessages = vi.fn();
     const applySessions = vi.fn();
+    const fetchSessions = vi.fn();
     const onMessageGapDetected = vi.fn();
     const markSessionMaterializedMaxSeq = vi.fn();
     const params: Parameters<typeof handleMessageUpdatedSocketUpdate>[0] = {
@@ -89,7 +91,7 @@ function buildHarness(
         }),
         getSession: () => buildSession('s1'),
         applySessions,
-        fetchSessions: vi.fn(),
+        fetchSessions,
         applyMessages,
         isMutableToolCall: () => false,
         invalidateScmStatus: () => {},
@@ -99,7 +101,7 @@ function buildHarness(
         onMessageGapDetected,
         ...overrides,
     };
-    return { params, applyMessages, applySessions, onMessageGapDetected, markSessionMaterializedMaxSeq };
+    return { params, applyMessages, applySessions, fetchSessions, onMessageGapDetected, markSessionMaterializedMaxSeq };
 }
 
 describe('handleMessageUpdatedSocketUpdate', () => {
@@ -149,6 +151,20 @@ describe('handleMessageUpdatedSocketUpdate', () => {
         }
     });
 
+    it('applies decrypted message updates even when the session is not yet hydrated, while still refreshing sessions', async () => {
+        const { params, applyMessages, applySessions, markSessionMaterializedMaxSeq, fetchSessions } = buildHarness({
+            getSession: () => undefined,
+        });
+
+        await handleMessageUpdatedSocketUpdate(params);
+
+        expect(fetchSessions).toHaveBeenCalledTimes(1);
+        expect(applyMessages).toHaveBeenCalledTimes(1);
+        expect(applyMessages.mock.calls[0]?.[0]).toBe('s1');
+        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
+        expect(applySessions).not.toHaveBeenCalled();
+    });
+
     it('triggers catch-up when a gap is detected for a loaded transcript', async () => {
         const { params, onMessageGapDetected, markSessionMaterializedMaxSeq } = buildHarness({
             updateData: buildUpdate({ sid: 's1', messageId: 'm5', messageSeq: 5 }),
@@ -162,4 +178,3 @@ describe('handleMessageUpdatedSocketUpdate', () => {
         expect(onMessageGapDetected).toHaveBeenCalledWith('s1', { prevMaterializedMaxSeq: 1, messageSeq: 5 });
     });
 });
-

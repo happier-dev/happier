@@ -4,8 +4,8 @@ import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 describe('followUpSpawnedSessionWithServerScope', () => {
-    it('attaches a recoverable follow-up payload when active-scope hydration fails before the first message send', async () => {
-        const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean }>) => {});
+    it('attaches a recoverable follow-up payload when active-scope sendMessage fails before the first message send', async () => {
+        const ensureSessionVisibleForMessageRoute = vi.fn(async () => {});
 
         const { createFollowUpSpawnedSessionWithServerScope, readRecoverableFollowUpPayload } = await import('./followUpSpawnedSession');
         const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
@@ -15,7 +15,9 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             }),
             activeSync: {
                 refreshSessions: async () => {},
-                sendMessage: async () => {},
+                sendMessage: async () => {
+                    throw new Error('active send failed');
+                },
             },
             ensureSessionVisibleForMessageRoute,
             getStoredSession: () => null,
@@ -39,7 +41,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         }
 
         expect(thrown).toBeInstanceOf(Error);
-        expect((thrown as Error).message).toBe('Created session is not available locally yet');
+        expect((thrown as Error).message).toBe('active send failed');
         expect(readRecoverableFollowUpPayload(thrown)).toEqual({
             draftText: 'Investigate this bug\n\n[attachments block]',
             displayText: 'Investigate this bug',
@@ -50,7 +52,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             },
             profileId: 'profile-work',
         });
-        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
+        expect(ensureSessionVisibleForMessageRoute).not.toHaveBeenCalled();
     });
 
     it('hydrates scoped sessions through sync bookkeeping instead of writing directly to storage state', async () => {
@@ -202,11 +204,10 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         expect(sendMessage).not.toHaveBeenCalled();
     });
 
-    it('sends the active-scope initial message immediately after hydration', async () => {
+    it('sends the active-scope initial message without pre-hydrating the session first', async () => {
         const refreshSessions = vi.fn(async () => {});
         const sendMessage = vi.fn(async () => {});
-        const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _options?: Readonly<{ forceRefresh?: boolean }>) => {});
-        let storedSession: Session | null = null;
+        const ensureSessionVisibleForMessageRoute = vi.fn(async () => {});
 
         const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
         const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
@@ -218,23 +219,8 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 refreshSessions,
                 sendMessage,
             },
-            ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => {
-                await ensureSessionVisibleForMessageRoute(sessionId, options);
-                storedSession = {
-                    id: 'sess_target',
-                    createdAt: 1,
-                    updatedAt: 2,
-                    seq: 0,
-                    active: true,
-                    activeAt: 2,
-                    encryptionMode: 'plain',
-                    metadataVersion: 0,
-                    metadata: null,
-                    agentStateVersion: 1,
-                    agentState: null,
-                } as Session;
-            },
-            getStoredSession: () => storedSession,
+            ensureSessionVisibleForMessageRoute,
+            getStoredSession: () => null,
         });
 
         await followUpSpawnedSessionWithServerScope({
@@ -242,8 +228,8 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             initialMessageText: 'hello from active server',
         });
 
-        expect(refreshSessions).toHaveBeenCalledTimes(1);
-        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
+        expect(refreshSessions).not.toHaveBeenCalled();
+        expect(ensureSessionVisibleForMessageRoute).not.toHaveBeenCalled();
         expect(sendMessage).toHaveBeenCalledWith(
             'sess_target',
             'hello from active server',
@@ -357,10 +343,8 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             profileId: 'profile-work',
         });
 
-        expect(refreshSessions.mock.invocationCallOrder[0]).toBeLessThan(ensureSessionVisibleForMessageRoute.mock.invocationCallOrder[0]);
-        expect(ensureSessionVisibleForMessageRoute.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]);
-        expect(refreshSessions).toHaveBeenCalledTimes(1);
-        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
+        expect(refreshSessions).not.toHaveBeenCalled();
+        expect(ensureSessionVisibleForMessageRoute).not.toHaveBeenCalled();
         expect(sendMessage).toHaveBeenCalledWith(
             'sess_target',
             'hello from active server',

@@ -169,13 +169,6 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
             const trimmedInitialMessage = String(params.initialMessageText ?? '').trim();
 
             if (context.scope === 'active') {
-                await activeSync.refreshSessions();
-                await ensureSessionHydratedForNavigation({
-                    sessionId,
-                    getStoredSession,
-                    ensureSessionVisibleForMessageRoute,
-                });
-
                 if (trimmedInitialMessage.length > 0) {
                     await activeSync.sendMessage(
                         sessionId,
@@ -184,8 +177,15 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                         params.metaOverrides ?? undefined,
                         params.profileId ? { profileId: params.profileId } : undefined,
                     );
+                    return;
                 }
 
+                await activeSync.refreshSessions();
+                await ensureSessionHydratedForNavigation({
+                    sessionId,
+                    getStoredSession,
+                    ensureSessionVisibleForMessageRoute,
+                });
                 return;
             }
 

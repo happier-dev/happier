@@ -237,14 +237,17 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(onMessageGapDetected).not.toHaveBeenCalled();
     });
 
-    it('fetches sessions when decrypted message arrives for an unknown session', async () => {
-        const { params, applySessions, fetchSessions } = buildHarness({
+    it('applies decrypted messages even when the session is not yet hydrated, while still refreshing sessions', async () => {
+        const { params, applyMessages, fetchSessions, markSessionMaterializedMaxSeq, applySessions } = buildHarness({
             getSession: () => undefined,
         });
 
         await handleNewMessageSocketUpdate(params);
 
         expect(fetchSessions).toHaveBeenCalledTimes(1);
+        expect(applyMessages).toHaveBeenCalledTimes(1);
+        expect(applyMessages.mock.calls[0]?.[0]).toBe('s1');
+        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
         expect(applySessions).not.toHaveBeenCalled();
     });
 

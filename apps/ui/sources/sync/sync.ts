@@ -908,15 +908,21 @@ class Sync {
         metaOverrides?: Record<string, unknown>,
         options?: Readonly<{ profileId?: string | null }>
     ) {
-        storage.getState().markSessionOptimisticThinking(sessionId);
-
-        // Get session data from storage
-        const session = storage.getState().sessions[sessionId];
+        let session = storage.getState().sessions[sessionId] ?? null;
+        if (!session) {
+            try {
+                await this.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true });
+            } catch {
+                // Best effort only. Fall through to the missing-session error below if the hydrate did not land.
+            }
+            session = storage.getState().sessions[sessionId] ?? null;
+        }
         if (!session) {
             storage.getState().clearSessionOptimisticThinking(sessionId);
-            console.error(`Session ${sessionId} not found in storage`);
-            return;
+            throw new Error(`Session ${sessionId} not found in storage`);
         }
+
+        storage.getState().markSessionOptimisticThinking(sessionId);
 
         const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 

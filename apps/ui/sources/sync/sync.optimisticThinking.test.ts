@@ -138,6 +138,48 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
     });
 
+    it('hydrates a missing active session before sending the user message', async () => {
+        const sessionId = 's_missing_then_hydrated';
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const emitWithAck = vi.fn(async () => ({
+            ok: true,
+            id: 'm1',
+            seq: 1,
+            localId: null,
+            didWrite: true,
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        const ensureSessionVisibleForMessageRouteSpy = vi
+            .spyOn(sync as any, 'ensureSessionVisibleForMessageRoute')
+            .mockImplementation(async () => {
+                storage.getState().applySessions([createSession({ sessionId })]);
+                return true;
+            });
+
+        await sync.sendMessage(sessionId, 'hello after hydrate');
+
+        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledWith(sessionId, { forceRefresh: true });
+        expect(emitWithAck).toHaveBeenCalledWith(
+            'message',
+            expect.objectContaining({
+                sid: sessionId,
+            }),
+            expect.anything(),
+        );
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
+    });
+
     it('prefers session runtime RPC for active sessions so steering-capable agents receive the user message directly', async () => {
         const sessionId = 's_active_runtime_rpc';
         storage.getState().applySessions([createSession({ sessionId })]);
