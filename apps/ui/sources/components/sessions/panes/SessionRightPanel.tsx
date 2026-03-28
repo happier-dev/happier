@@ -238,7 +238,7 @@ const RightTabSurface = React.memo((props: Readonly<{ isActive: boolean; testID?
                 StyleSheet.absoluteFillObject,
                 {
                     opacity: active ? 1 : 0,
-                    visibility: Platform.OS === 'web' ? (active ? 'visible' : 'hidden') : 'visible',
+                    display: Platform.OS === 'web' ? (active ? 'flex' : 'none') : 'flex',
                 },
             ]}
         >
