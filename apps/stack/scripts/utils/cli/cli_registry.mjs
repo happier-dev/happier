@@ -258,8 +258,8 @@ export function gethstackRegistry() {
       scriptRelPath: 'scripts/remote_cmd.mjs',
       rootUsage:
         [
-          'hstack remote daemon setup --ssh <user@host> [--preview|--stable] [--channel <stable|preview>] [--service <user|none>] [--server-url=<url>] [--webapp-url=<url>] [--public-server-url=<url>] [--json]',
-          'hstack remote server setup --ssh <user@host> [--preview|--stable] [--channel <stable|preview>] [--mode <user|system>] [--env KEY=VALUE]... [--json]',
+          'hstack remote daemon setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>] [--service <user|none>] [--server-url=<url>] [--webapp-url=<url>] [--public-server-url=<url>] [--json]',
+          'hstack remote server setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>] [--mode <user|system>] [--env KEY=VALUE]... [--json]',
         ],
       description: 'Remote setup helpers (SSH daemon/server setup)',
     },

@@ -41,6 +41,11 @@ function expectedFixtureForTarget(target) {
           .replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview')
           .replace('$Channel = "stable"', '$Channel = "preview"');
       }
+      if (spec.transform === 'publicdev-default-channel') {
+        return base
+          .replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-dev')
+          .replace('$Channel = "stable"', '$Channel = "dev"');
+      }
       return base;
     }
   }
@@ -73,12 +78,16 @@ test('syncInstallers copies all installer artifacts to website public directory'
   }
 });
 
-test('syncInstallers publishes preview shortcut endpoints', () => {
+test('syncInstallers publishes preview and dev shortcut endpoints', () => {
   const targets = publishedTargets();
   assert.ok(targets.includes('install-preview'), 'expected install-preview to be published');
+  assert.ok(targets.includes('install-dev'), 'expected install-dev to be published');
   assert.ok(targets.includes('self-host-preview'), 'expected self-host-preview to be published');
+  assert.ok(targets.includes('self-host-dev'), 'expected self-host-dev to be published');
   assert.ok(targets.includes('install-preview.ps1'), 'expected install-preview.ps1 to be published');
+  assert.ok(targets.includes('install-dev.ps1'), 'expected install-dev.ps1 to be published');
   assert.ok(targets.includes('self-host-preview.ps1'), 'expected self-host-preview.ps1 to be published');
+  assert.ok(targets.includes('self-host-dev.ps1'), 'expected self-host-dev.ps1 to be published');
 });
 
 test('syncInstallers normalizes target file modes even when contents are already in sync', async () => {

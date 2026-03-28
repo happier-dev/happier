@@ -10,14 +10,18 @@ import { parseArgs, resolveRepoRoot } from './lib/binary-release.mjs';
 export const INSTALLER_PUBLISH_SPECS = [
   { source: 'install.sh', targets: ['install.sh', 'install'] },
   { source: 'install.sh', targets: ['install-preview.sh', 'install-preview'], transform: 'preview-default-channel' },
+  { source: 'install.sh', targets: ['install-dev.sh', 'install-dev'], transform: 'publicdev-default-channel' },
   { source: 'install-server', targets: ['install-server'] },
   { source: 'install-server.sh', targets: ['install-server.sh'] },
   { source: 'self-host.sh', targets: ['self-host.sh', 'self-host'] },
   { source: 'self-host.sh', targets: ['self-host-preview.sh', 'self-host-preview'], transform: 'preview-default-channel' },
+  { source: 'self-host.sh', targets: ['self-host-dev.sh', 'self-host-dev'], transform: 'publicdev-default-channel' },
   { source: 'install.ps1', targets: ['install.ps1'] },
   { source: 'install.ps1', targets: ['install-preview.ps1'], transform: 'preview-default-channel' },
+  { source: 'install.ps1', targets: ['install-dev.ps1'], transform: 'publicdev-default-channel' },
   { source: 'self-host.ps1', targets: ['self-host.ps1'] },
   { source: 'self-host.ps1', targets: ['self-host-preview.ps1'], transform: 'preview-default-channel' },
+  { source: 'self-host.ps1', targets: ['self-host-dev.ps1'], transform: 'publicdev-default-channel' },
   { source: 'happier-release.pub', targets: ['happier-release.pub'] },
 ];
 
@@ -51,6 +55,18 @@ function applyTransform(contents, transform) {
         if (!line.includes('$Channel')) return line;
         if (!line.includes('"stable"')) return line;
         return line.replace('"stable"', '"preview"');
+      })
+      .join('\n');
+    return Buffer.from(ps1Updated, 'utf8');
+  }
+  if (transform === 'publicdev-default-channel') {
+    const shellUpdated = raw.replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-dev');
+    const lines = shellUpdated.split('\n');
+    const ps1Updated = lines
+      .map((line) => {
+        if (!line.includes('$Channel')) return line;
+        if (!line.includes('"stable"')) return line;
+        return line.replace('"stable"', '"dev"');
       })
       .join('\n');
     return Buffer.from(ps1Updated, 'utf8');

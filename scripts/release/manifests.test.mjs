@@ -46,3 +46,17 @@ test('buildManifestRecord includes required fields and defaults', () => {
   assert.equal(record.critical, false);
   assert.equal(typeof record.publishedAt, 'string');
 });
+
+test('buildManifestRecord accepts publicdev as a rolling prerelease channel', () => {
+  const record = buildManifestRecord({
+    product: 'happier',
+    channel: 'publicdev',
+    version: '0.1.0-publicdev.1',
+    os: 'linux',
+    arch: 'x64',
+    url: 'https://example.com/happier-v0.1.0-publicdev.1-linux-x64.tar.gz',
+    sha256: 'def456',
+  });
+
+  assert.equal(record.channel, 'publicdev');
+});

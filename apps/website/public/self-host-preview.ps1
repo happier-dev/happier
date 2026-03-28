@@ -1,5 +1,4 @@
 param(
-  [ValidateSet("stable", "preview")]
   [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "preview" }),
 
   [ValidateSet("user", "system")]
@@ -7,6 +6,23 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Normalize-Channel {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Raw
+  )
+  $value = $Raw.Trim().ToLowerInvariant()
+  if (-not $value) { return "stable" }
+  switch ($value) {
+    "stable" { return "stable" }
+    "preview" { return "preview" }
+    "dev" { return "publicdev" }
+    "publicdev" { return "publicdev" }
+    default { throw "Invalid HAPPIER_CHANNEL '$Raw'. Expected stable, preview, or dev." }
+  }
+}
+
+$Channel = Normalize-Channel -Raw ([string]$Channel)
 
 $Repo = if ($env:HAPPIER_GITHUB_REPO) { $env:HAPPIER_GITHUB_REPO } else { "happier-dev/happier" }
 $Token = if ($env:HAPPIER_GITHUB_TOKEN) { $env:HAPPIER_GITHUB_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { "" }
@@ -78,7 +94,7 @@ function Resolve-MinisignPublicKey {
   Invoke-WebRequest -Uri $MinisignPubKeyUrl -OutFile $TargetPath
 }
 
-$tag = if ($Channel -eq "preview") { "stack-preview" } else { "stack-stable" }
+$tag = if ($Channel -eq "preview") { "stack-preview" } elseif ($Channel -eq "publicdev") { "stack-dev" } else { "stack-stable" }
 Write-Host "Fetching $tag release metadata..."
 try {
   $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
@@ -86,6 +102,9 @@ try {
 catch {
   if ($Channel -eq "preview") {
     throw "No stable releases found for Happier Stack."
+  }
+  if ($Channel -eq "publicdev") {
+    throw "No dev releases found for Happier Stack."
   }
   throw "No preview releases found for Happier Stack."
 }
@@ -178,4 +197,3 @@ try {
 finally {
   Remove-Item -Path $tmpDir.FullName -Recurse -Force -ErrorAction SilentlyContinue
 }
-

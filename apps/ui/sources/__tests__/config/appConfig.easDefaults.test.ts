@@ -62,10 +62,12 @@ describe('app.config.js', () => {
         expect(exp.extra?.eas?.projectId).toBe(DEFAULT_EAS_PROJECT_ID);
         expect(exp.updates?.url).toBe(DEFAULT_UPDATES_URL);
         expect(exp.extra?.app?.variant).toBe('development');
+        expect(exp.extra?.app?.identityVariant).toBe('internaldev');
         expect(exp.owner).toBe('happier-dev');
         expect(exp.slug).toBe('happier');
-        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.development');
-        expect(exp.android?.package).toBe('dev.happier.app.dev');
+        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.internaldev');
+        expect(exp.android?.package).toBe('dev.happier.app.internaldev');
+        expect(exp.scheme).toBe('happier-internaldev');
     });
 
     it('exposes variant under extra.app when APP_ENV is set', () => {
@@ -75,6 +77,47 @@ describe('app.config.js', () => {
         });
 
         expect(exp.extra?.app?.variant).toBe('preview');
+        expect(exp.extra?.app?.identityVariant).toBe('preview');
+    });
+
+    it('maps the publicdev environment to the public dev identity while keeping preview-like public behavior', () => {
+        const { exp, featurePolicyEnv } = withCleanEnv(() => {
+            process.env.APP_ENV = 'publicdev';
+            const exp = getPublicConfig();
+            return {
+                exp,
+                featurePolicyEnv: process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV,
+            };
+        });
+
+        expect(exp.extra?.app?.variant).toBe('preview');
+        expect(exp.extra?.app?.identityVariant).toBe('publicdev');
+        expect(exp.name).toBe('Happier (dev)');
+        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.publicdev');
+        expect(exp.android?.package).toBe('dev.happier.app.publicdev');
+        expect(exp.scheme).toBe('happier-publicdev');
+        expect(featurePolicyEnv).toBe('preview');
+        expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('publicdev');
+    });
+
+    it('maps the internalpreview environment to the internal preview identity', () => {
+        const { exp, featurePolicyEnv } = withCleanEnv(() => {
+            process.env.APP_ENV = 'internalpreview';
+            const exp = getPublicConfig();
+            return {
+                exp,
+                featurePolicyEnv: process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV,
+            };
+        });
+
+        expect(exp.extra?.app?.variant).toBe('preview');
+        expect(exp.extra?.app?.identityVariant).toBe('internalpreview');
+        expect(exp.name).toBe('Happier (internal preview)');
+        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.internalpreview');
+        expect(exp.android?.package).toBe('dev.happier.app.internalpreview');
+        expect(exp.scheme).toBe('happier-internalpreview');
+        expect(featurePolicyEnv).toBe('preview');
+        expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('internalpreview');
     });
 
     it('allows overriding extra.app.variant without changing production identity config', () => {
@@ -108,6 +151,11 @@ describe('app.config.js', () => {
         });
 
         expect(envValue).toBe('production');
+    });
+
+    it('uses Expo fingerprint runtime policy so OTA compatibility follows native-compatible changes', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        expect(exp.runtimeVersion).toEqual({ policy: 'fingerprint' });
     });
 
     it('uses EXPO_PUBLIC_EAS_PROJECT_ID with highest precedence for updates linkage', () => {

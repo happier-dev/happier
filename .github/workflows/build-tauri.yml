@@ -8,12 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Environment — Controls config (preview|production)"
+        description: "Environment — Controls config (preview|publicdev|production)"
         required: true
         type: choice
         default: preview
         options:
           - preview
+          - publicdev
           - production
       source_ref:
         description: "Source ref — Branch, tag, or SHA to build"
@@ -248,6 +249,8 @@ jobs:
           fi
           if [ "${{ inputs.environment }}" = "preview" ]; then
             build_version="${ui_version}-preview.${GITHUB_RUN_NUMBER}"
+          elif [ "${{ inputs.environment }}" = "publicdev" ]; then
+            build_version="${ui_version}-dev.${GITHUB_RUN_NUMBER}"
           else
             build_version="${ui_version}"
           fi
@@ -381,6 +384,24 @@ jobs:
       assets_artifact: ui-desktop-assets
       assets_artifact_path: dist/ui-desktop-assets
       assets_dir: dist/ui-desktop-assets/ui-desktop-preview
+      clobber: true
+
+  publish_publicdev:
+    if: ${{ inputs.publish_release == true && inputs.environment == 'publicdev' }}
+    needs: [prepare_assets]
+    uses: ./.github/workflows/publish-ui-release.yml
+    secrets: inherit
+    with:
+      tag: ui-desktop-dev
+      title: Happier UI Desktop Dev
+      target_sha: ${{ needs.prepare_assets.outputs.target_sha }}
+      prerelease: true
+      rolling_tag: true
+      generate_notes: false
+      notes: Rolling dev build.
+      assets_artifact: ui-desktop-assets
+      assets_artifact_path: dist/ui-desktop-assets
+      assets_dir: dist/ui-desktop-assets/ui-desktop-dev
       clobber: true
 
   publish_stable_release:

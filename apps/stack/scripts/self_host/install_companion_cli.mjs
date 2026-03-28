@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import {
   getFirstPartyComponentCatalogEntry,
   installVersionedPayload,
+  resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
 import { planArchiveExtraction } from '@happier-dev/release-runtime/extractPlan';
@@ -54,6 +55,7 @@ function runCheckedCommand(command, args, context) {
 
 export async function installCompanionCliFromBundle({
   bundle,
+  channel = 'stable',
   processEnv = process.env,
   pubkeyFile = resolveMinisignPublicKeyText(processEnv),
   userAgent = 'happier-self-host-installer',
@@ -99,6 +101,7 @@ export async function installCompanionCliFromBundle({
       componentId: 'happier-cli',
       versionId: version,
       payloadRoot: dirname(extractedBinaryPath),
+      channel,
       processEnv,
     });
 
@@ -120,12 +123,16 @@ export async function maybeInstallCompanionCli({
   processEnv = process.env,
 }) {
   if (!withCli) return { installed: false, reason: 'disabled' };
-  if (commandExists('happier')) {
+  const componentVariant = resolveFirstPartyComponentPublicReleaseVariant({
+    componentId: 'happier-cli',
+    channel,
+  });
+  if (componentVariant.installShims.some((shimName) => commandExists(shimName))) {
     return { installed: false, reason: 'already-installed' };
   }
 
   const component = getFirstPartyComponentCatalogEntry('happier-cli');
-  const tag = channel === 'preview' ? component.releaseTagPreview : component.releaseTagStable;
+  const tag = componentVariant.releaseTag;
   const release = await fetchGitHubReleaseByTag({
     githubRepo,
     tag,
@@ -141,6 +148,7 @@ export async function maybeInstallCompanionCli({
 
   return installCompanionCliFromBundle({
     bundle,
+    channel,
     processEnv,
     pubkeyFile: resolveMinisignPublicKeyText(processEnv),
     userAgent: 'happier-self-host-installer',

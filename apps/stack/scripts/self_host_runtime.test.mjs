@@ -10,6 +10,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import {
   parseSelfHostInvocation,
   pickReleaseAsset,
+  resolveSelfHostReleaseTargets,
   resolveMinisignPublicKeyText,
   resolveSelfHostAutoUpdateDefault,
   resolveSelfHostAutoUpdateIntervalMinutes,
@@ -973,6 +974,15 @@ test('resolveSelfHostDefaults uses user-mode paths by default', () => {
   assert.equal(cfg.configDir, '/home/me/.happier/self-host/config');
 });
 
+test('resolveSelfHostDefaults isolates publicdev into a side-by-side self-host root and service name', () => {
+  const cfg = resolveSelfHostDefaults({ platform: 'linux', mode: 'user', channel: 'publicdev', homeDir: '/home/me' });
+  assert.equal(cfg.installRoot, '/home/me/.happier/self-host-dev');
+  assert.equal(cfg.configDir, '/home/me/.happier/self-host-dev/config');
+  assert.equal(cfg.dataDir, '/home/me/.happier/self-host-dev/data');
+  assert.equal(cfg.logDir, '/home/me/.happier/self-host-dev/logs');
+  assert.equal(cfg.serviceName, 'happier-server-dev');
+});
+
 test('resolveMinisignPublicKeyText prefers inline override and otherwise returns bundled key', () => {
   const bundled = resolveMinisignPublicKeyText({});
   assert.match(bundled, /minisign public key/i);
@@ -1094,14 +1104,14 @@ test('renderUpdaterSystemdUnit runs self-host update without restart loops', () 
   const unit = renderUpdaterSystemdUnit({
     updaterLabel: 'happier-server-updater',
     hstackPath: '/home/me/.happier/bin/hstack',
-    channel: 'preview',
+    channel: 'publicdev',
     mode: 'user',
     workingDirectory: '/home/me/.happier/self-host',
     stdoutPath: '/home/me/.happier/self-host/logs/updater.out.log',
     stderrPath: '/home/me/.happier/self-host/logs/updater.err.log',
     wantedBy: 'default.target',
   });
-  assert.match(unit, /ExecStart=\/home\/me\/\.happier\/bin\/hstack self-host update --channel=preview --mode=user --non-interactive/);
+  assert.match(unit, /ExecStart=\/home\/me\/\.happier\/bin\/hstack self-host update --channel=dev --mode=user --non-interactive/);
   assert.match(unit, /Restart=no/);
   assert.match(unit, /WantedBy=default\.target/);
 });
@@ -1173,7 +1183,7 @@ test('renderUpdaterScheduledTaskWrapperPs1 runs self-host update without node de
   const wrapper = renderUpdaterScheduledTaskWrapperPs1({
     updaterLabel: 'happier-server-updater',
     hstackPath: 'C:\\\\Users\\\\me\\\\.happier\\\\bin\\\\hstack.exe',
-    channel: 'preview',
+    channel: 'publicdev',
     mode: 'user',
     workingDirectory: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host',
     stdoutPath: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\logs\\\\updater.out.log',
@@ -1182,8 +1192,44 @@ test('renderUpdaterScheduledTaskWrapperPs1 runs self-host update without node de
 
   assert.match(
     wrapper,
-    /hstack\.exe"\s+"self-host"\s+"update"\s+"--channel=preview"\s+"--mode=user"\s+"--non-interactive"/i
+    /hstack\.exe"\s+"self-host"\s+"update"\s+"--channel=dev"\s+"--mode=user"\s+"--non-interactive"/i
   );
+});
+
+test('renderSelfHostStatusText reports dev as the public channel label for the publicdev ring', () => {
+  const text = renderSelfHostStatusText(
+    {
+      channel: 'publicdev',
+      mode: 'user',
+      serviceName: 'happier-server-dev',
+      serverUrl: 'http://127.0.0.1:3005',
+      healthy: true,
+      service: { active: true, enabled: true },
+      versions: { server: '1.2.3-dev.1', uiWeb: '9.9.9-dev.2' },
+      autoUpdate: {
+        label: 'happier-server-dev-updater',
+        job: { active: true, enabled: true },
+        configured: { enabled: true, intervalMinutes: 60 },
+      },
+      updatedAt: '2026-02-15T00:00:00.000Z',
+    },
+    { colors: false },
+  );
+
+  assert.match(text, /channel:\s*dev/);
+  assert.match(text, /service:\s*happier-server-dev/);
+});
+
+test('resolveSelfHostReleaseTargets maps the publicdev ring to dev rolling tags', () => {
+  const targets = resolveSelfHostReleaseTargets('publicdev');
+  assert.equal(targets.serverTag, 'server-dev');
+  assert.deepEqual(targets.uiWebTags, ['ui-web-dev', 'ui-web-preview', 'ui-web-stable']);
+});
+
+test('resolveSelfHostReleaseTargets preserves stable release tags without fallback churn', () => {
+  const targets = resolveSelfHostReleaseTargets('stable');
+  assert.equal(targets.serverTag, 'server-stable');
+  assert.deepEqual(targets.uiWebTags, ['ui-web-stable']);
 });
 
 test('buildUpdaterScheduledTaskCreateArgs uses DAILY schedule when at is provided', () => {

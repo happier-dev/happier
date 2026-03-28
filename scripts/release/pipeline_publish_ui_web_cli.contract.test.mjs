@@ -7,14 +7,18 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI can publish ui-web rolling release in dry-run', async () => {
+for (const { channel, rollingTag } of [
+  { channel: 'preview', rollingTag: 'ui-web-preview' },
+  { channel: 'dev', rollingTag: 'ui-web-dev' },
+]) {
+  test(`pipeline CLI can publish ui-web rolling release for ${channel} in dry-run`, async () => {
   const out = execFileSync(
     process.execPath,
     [
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'publish-ui-web',
       '--channel',
-      'preview',
+      channel,
       '--allow-stable',
       'false',
       '--run-contracts',
@@ -34,6 +38,7 @@ test('pipeline CLI can publish ui-web rolling release in dry-run', async () => {
     },
   );
 
-  assert.match(out, /\[pipeline\] ui-web: channel=preview tag=ui-web-preview/);
+  assert.match(out, new RegExp(`\\[pipeline\\] ui-web: channel=${channel} tag=${rollingTag}`));
   assert.match(out, /scripts\/pipeline\/release\/publish-ui-web\.mjs/);
-});
+  });
+}

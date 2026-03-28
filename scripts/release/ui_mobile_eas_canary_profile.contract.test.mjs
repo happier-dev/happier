@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
-test('apps/ui/eas.json defines canary profiles for release-like private OTA testing', () => {
+test('apps/ui/eas.json defines internalpreview profiles for release-like private OTA testing', () => {
   const easPath = path.join(repoRoot, 'apps', 'ui', 'eas.json');
   const raw = fs.readFileSync(easPath, 'utf8');
   const eas = JSON.parse(raw);
@@ -13,28 +13,28 @@ test('apps/ui/eas.json defines canary profiles for release-like private OTA test
   const build = eas?.build ?? null;
   assert.equal(typeof build, 'object');
 
-  const canary = build?.canary ?? null;
-  assert.equal(typeof canary, 'object');
-  assert.equal(canary.extends, 'base');
-  assert.equal(canary.environment, 'preview');
-  assert.equal(canary.distribution, 'internal');
-  assert.equal(canary.channel, 'canary');
-  assert.equal(canary?.env?.APP_ENV, 'preview');
-  assert.equal(canary?.env?.EXPO_UPDATES_CHANNEL, 'canary');
-  assert.equal(canary?.env?.EXPO_APP_NAME, 'Happier (canary)');
-  assert.equal(canary?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.canary');
-  assert.equal(canary?.env?.EXPO_APP_SCHEME, 'happier-canary');
+  const internalpreview = build?.internalpreview ?? null;
+  assert.equal(typeof internalpreview, 'object');
+  assert.equal(internalpreview.extends, 'base');
+  assert.equal(internalpreview.environment, 'preview');
+  assert.equal(internalpreview.distribution, 'internal');
+  assert.equal(internalpreview.channel, 'internalpreview');
+  assert.equal(internalpreview?.env?.APP_ENV, 'internalpreview');
+  assert.equal(internalpreview?.env?.EXPO_UPDATES_CHANNEL, 'internalpreview');
+  assert.equal(internalpreview?.env?.EXPO_APP_NAME, 'Happier (internal preview)');
+  assert.equal(internalpreview?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.internalpreview');
+  assert.equal(internalpreview?.env?.EXPO_APP_SCHEME, 'happier-internalpreview');
 
-  const canaryApk = build?.['canary-apk'] ?? null;
-  assert.equal(typeof canaryApk, 'object');
-  assert.equal(canaryApk.extends, 'base');
-  assert.equal(canaryApk.environment, 'preview');
-  assert.equal(canaryApk.distribution, 'internal');
-  assert.equal(canaryApk.channel, 'canary');
-  assert.equal(canaryApk?.android?.buildType, 'apk');
-  assert.equal(canaryApk?.env?.APP_ENV, 'preview');
-  assert.equal(canaryApk?.env?.EXPO_UPDATES_CHANNEL, 'canary');
-  assert.equal(canaryApk?.env?.EXPO_APP_NAME, 'Happier (canary)');
-  assert.equal(canaryApk?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.canary');
-  assert.equal(canaryApk?.env?.EXPO_APP_SCHEME, 'happier-canary');
+  const internalpreviewApk = build?.['internalpreview-apk'] ?? null;
+  assert.equal(typeof internalpreviewApk, 'object');
+  assert.equal(internalpreviewApk.extends, 'base');
+  assert.equal(internalpreviewApk.environment, 'preview');
+  assert.equal(internalpreviewApk.distribution, 'internal');
+  assert.equal(internalpreviewApk.channel, 'internalpreview');
+  assert.equal(internalpreviewApk?.android?.buildType, 'apk');
+  assert.equal(internalpreviewApk?.env?.APP_ENV, 'internalpreview');
+  assert.equal(internalpreviewApk?.env?.EXPO_UPDATES_CHANNEL, 'internalpreview');
+  assert.equal(internalpreviewApk?.env?.EXPO_APP_NAME, 'Happier (internal preview)');
+  assert.equal(internalpreviewApk?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.internalpreview');
+  assert.equal(internalpreviewApk?.env?.EXPO_APP_SCHEME, 'happier-internalpreview');
 });

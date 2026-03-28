@@ -20,9 +20,10 @@ test('promote-ui publishes mobile assets under ui-mobile-* GitHub release tags',
 
   assert.match(raw, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
 
-  const script = await loadFile('scripts/pipeline/expo/publish-apk-release.mjs');
-  assert.match(script, /ui-mobile-v\$\{appVersion\}/);
-  assert.match(script, /ui-mobile-preview/);
+  const metadata = await loadFile('scripts/pipeline/expo/mobile-release-environments.mjs');
+  assert.match(metadata, /ui-mobile-v\$\{appVersion\}/);
+  assert.match(metadata, /getReleaseRingCatalogEntry\('preview'\)\.rollingReleaseSuffix/);
+  assert.match(metadata, /getReleaseRingCatalogEntry\('publicdev'\)\.rollingReleaseSuffix/);
 
   assert.doesNotMatch(raw, /echo "tag=ui-v/);
   assert.doesNotMatch(raw, /echo "tag=ui-preview"/);
@@ -39,9 +40,10 @@ test('promote-ui labels mobile releases as UI Mobile for clarity', async () => {
 
   assert.match(raw, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
 
-  const script = await loadFile('scripts/pipeline/expo/publish-apk-release.mjs');
-  assert.match(script, /Happier UI Mobile v\$\{appVersion\}/);
-  assert.match(script, /Happier UI Mobile Preview/);
+  const metadata = await loadFile('scripts/pipeline/expo/mobile-release-environments.mjs');
+  assert.match(metadata, /Happier UI Mobile v\$\{appVersion\}/);
+  assert.match(metadata, /Happier UI Mobile Preview/);
+  assert.match(metadata, /Happier UI Mobile Dev/);
 
   assert.doesNotMatch(raw, /echo "title=Happier UI v/);
   assert.doesNotMatch(raw, /echo "title=Happier UI Preview"/);

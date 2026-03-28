@@ -1,6 +1,7 @@
 import './utils/env/env.mjs';
 
 import { pathToFileURL } from 'node:url';
+import { getReleaseRingCatalogEntry, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 
@@ -37,6 +38,12 @@ function safeBashSingleQuote(s) {
   // Wrap in single quotes and escape embedded single quotes safely.
   // bash: 'foo'\''bar'
   return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
+}
+
+function displayChannel(channel) {
+  const normalized = normalizePublicReleaseRingId(channel);
+  if (!normalized) return String(channel ?? '').trim() || 'stable';
+  return getReleaseRingCatalogEntry(normalized).publicLabel;
 }
 
 function parseJsonLinesBestEffort(stdout) {
@@ -80,12 +87,12 @@ async function runLocalJson({ args }) {
 function usageText() {
   return [
     '[remote] usage:',
-    '  hstack remote daemon setup --ssh <user@host> [--preview|--stable] [--channel <stable|preview>]',
+    '  hstack remote daemon setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
     '    [--service <user|none>]',
     '    [--server-url=<url>] [--webapp-url=<url>] [--public-server-url=<url>]',
     '    [--json]',
     '',
-    '  hstack remote server setup --ssh <user@host> [--preview|--stable] [--channel <stable|preview>]',
+    '  hstack remote server setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
     '    [--mode <user|system>]',
     '    [--self-host-server-binary <path>]',
     '    [--env KEY=VALUE]...',
@@ -125,11 +132,12 @@ export function splitRemoteServerSetupEnvValues(envValues) {
 export function buildRemoteSelfHostInstallCommand({ channel, mode, envValues }) {
   const installUrl = 'https://happier.dev/install';
   const remoteHstack = '$HOME/.happier/bin/hstack';
+  const channelLabel = displayChannel(channel);
 
   // Always disable auto-service setup in the installer so this command controls remote service behavior.
   const installCmd = [
     `curl -fsSL ${installUrl} |`,
-    `HAPPIER_PRODUCT=stack HAPPIER_CHANNEL=${channel} HAPPIER_INSTALL_DIR=$HOME/.happier HAPPIER_BIN_DIR=$HOME/.happier/bin HAPPIER_NO_PATH_UPDATE=1 HAPPIER_NONINTERACTIVE=1 bash`,
+    `HAPPIER_PRODUCT=stack HAPPIER_CHANNEL=${channelLabel} HAPPIER_INSTALL_DIR=$HOME/.happier HAPPIER_BIN_DIR=$HOME/.happier/bin HAPPIER_NO_PATH_UPDATE=1 HAPPIER_NONINTERACTIVE=1 bash`,
   ].join(' ');
 
   const split = splitRemoteServerSetupEnvValues(envValues);
@@ -147,7 +155,7 @@ export function buildRemoteSelfHostInstallCommand({ channel, mode, envValues }) 
     remoteHstack,
     'self-host',
     'install',
-    `--channel=${channel}`,
+    `--channel=${channelLabel}`,
     `--mode=${mode}`,
     '--without-cli',
     '--non-interactive',
@@ -161,16 +169,17 @@ export function buildRemoteSelfHostInstallCommand({ channel, mode, envValues }) 
 
 function resolveChannel(argv) {
   if (argv.includes('--preview')) return 'preview';
+  if (argv.includes('--dev')) return 'publicdev';
   if (argv.includes('--stable')) return 'stable';
   const picked = argv.find((a) => a === '--channel' || a.startsWith('--channel='));
   if (!picked) return 'stable';
   if (picked === '--channel') {
     const idx = argv.indexOf('--channel');
     const v = String(argv[idx + 1] ?? '').trim();
-    return v || 'stable';
+    return normalizePublicReleaseRingId(v) || v || 'stable';
   }
   const v = String(picked.slice('--channel='.length)).trim();
-  return v || 'stable';
+  return normalizePublicReleaseRingId(v) || v || 'stable';
 }
 
 function resolveService(argv) {
@@ -235,7 +244,7 @@ async function runRemoteDaemonSetup(argvRaw) {
   }
 
   const channel = resolveChannel(argv0);
-  if (channel !== 'stable' && channel !== 'preview') {
+  if (channel !== 'stable' && channel !== 'preview' && channel !== 'publicdev') {
     throw new Error(`[remote] invalid --channel value: ${channel}`);
   }
 
@@ -268,7 +277,7 @@ async function runRemoteDaemonSetup(argvRaw) {
   // Always disable auto-service setup in the installer so this command controls service behavior.
   const installCmd = [
     `curl -fsSL ${installUrl} |`,
-    `HAPPIER_CHANNEL=${channel} HAPPIER_WITH_DAEMON=0 HAPPIER_NONINTERACTIVE=1 bash`,
+    `HAPPIER_CHANNEL=${displayChannel(channel)} HAPPIER_WITH_DAEMON=0 HAPPIER_NONINTERACTIVE=1 bash`,
   ].join(' ');
 
   await runSsh({ target: ssh.value, command: installCmd });
@@ -317,7 +326,7 @@ async function runRemoteDaemonSetup(argvRaw) {
       : [
           '✓ Remote daemon setup complete',
           `- ssh: ${ssh.value}`,
-          `- channel: ${channel}`,
+          `- channel: ${displayChannel(channel)}`,
           `- service: ${service}`,
           `- publicKey: ${publicKey}`,
         ].join('\n'),
@@ -337,7 +346,7 @@ async function runRemoteServerSetup(argvRaw) {
   }
 
   const channel = resolveChannel(argv0);
-  if (channel !== 'stable' && channel !== 'preview') {
+  if (channel !== 'stable' && channel !== 'preview' && channel !== 'publicdev') {
     throw new Error(`[remote] invalid --channel value: ${channel}`);
   }
 
@@ -368,7 +377,7 @@ async function runRemoteServerSetup(argvRaw) {
       : [
           '✓ Remote server setup complete',
           `- ssh: ${ssh.value}`,
-          `- channel: ${channel}`,
+          `- channel: ${displayChannel(channel)}`,
           `- mode: ${mode}`,
           `- env: ${envValues.length ? envValues.join(', ') : '(none)'}`,
         ].join('\n'),

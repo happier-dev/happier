@@ -1,3 +1,8 @@
+import {
+  getReleaseRingCatalogEntry,
+  normalizePublicReleaseRingId,
+} from '@happier-dev/release-runtime/releaseRings';
+
 function parseArgs(argv) {
   const kv = new Map();
   const flags = new Set();
@@ -25,9 +30,10 @@ function parseArgs(argv) {
 }
 
 function normalizeChannel(raw) {
-  const channel = String(raw ?? '').trim() || 'stable';
-  if (channel !== 'stable' && channel !== 'preview') {
-    throw new Error(`Invalid --channel '${channel}'. Expected stable|preview.`);
+  const requested = String(raw ?? '').trim() || 'stable';
+  const channel = normalizePublicReleaseRingId(requested);
+  if (!channel) {
+    throw new Error(`Invalid --channel '${requested}'. Expected stable|preview|dev.`);
   }
   return channel;
 }
@@ -43,8 +49,12 @@ function parseBooleanFlag(raw, fallback) {
 export function parseRunnerInvocation(argv = []) {
   const { kv, flags, positionals } = parseArgs(Array.isArray(argv) ? argv : []);
   const channel = normalizeChannel(kv.get('--channel'));
-  const serverTag = String(kv.get('--tag') ?? '').trim() || (channel === 'preview' ? 'server-preview' : 'server-stable');
-  const uiWebTag = String(kv.get('--ui-tag') ?? '').trim() || (channel === 'preview' ? 'ui-web-preview' : 'ui-web-stable');
+  const suffix = getReleaseRingCatalogEntry(channel).rollingReleaseSuffix;
+  if (!suffix) {
+    throw new Error(`Missing rolling release suffix for channel '${channel}'.`);
+  }
+  const serverTag = String(kv.get('--tag') ?? '').trim() || `server-${suffix}`;
+  const uiWebTag = String(kv.get('--ui-tag') ?? '').trim() || `ui-web-${suffix}`;
 
   const withUiWeb =
     !(flags.has('--without-ui') || parseBooleanFlag(kv.get('--with-ui'), true) === false);
@@ -57,4 +67,3 @@ export function parseRunnerInvocation(argv = []) {
     positionals,
   };
 }
-

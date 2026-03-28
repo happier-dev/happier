@@ -11,6 +11,7 @@ test('build-tauri workflow names updater assets as happier-ui-desktop-*', () => 
 
   const script = fs.readFileSync(path.join(repoRoot, 'scripts', 'pipeline', 'tauri', 'collect-updater-artifacts.mjs'), 'utf8');
   assert.match(script, /happier-ui-desktop-preview-\$\{platformKey\}/);
+  assert.match(script, /happier-ui-desktop-dev-\$\{platformKey\}/);
   assert.match(script, /happier-ui-desktop-\$\{platformKey\}-v\$\{uiVersion\}/);
 
   assert.doesNotMatch(script, /happier-ui-preview-/);

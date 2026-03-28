@@ -7,6 +7,17 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
+import {
+  formatPublicReleaseChannel,
+  formatPublicReleaseChannelChoices,
+  getPublicReleaseRingEntry,
+  normalizePublicReleaseChannel,
+  resolveEmbeddedPolicyForChannel,
+  resolveRollingPrerelease,
+  resolveRollingReleaseLabel,
+  resolveRollingReleaseTagSuffix,
+  resolveRollingVersionSuffix,
+} from './lib/public-release-rings.mjs';
 import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
 import { resolveGitHubRepoSlug } from '../github/resolve-github-repo-slug.mjs';
 
@@ -109,22 +120,6 @@ function readCliVersion(repoRoot) {
 }
 
 /**
- * Derive a stable preview prerelease suffix matching CI conventions.
- * @returns {string}
- */
-function resolvePreviewSuffix() {
-  const runRaw = String(process.env.GITHUB_RUN_NUMBER ?? '').trim();
-  const attemptRaw = String(process.env.GITHUB_RUN_ATTEMPT ?? '').trim();
-
-  const runNumber = runRaw ? Number(runRaw) : NaN;
-  const attemptNumber = attemptRaw ? Number(attemptRaw) : NaN;
-
-  const run = Number.isFinite(runNumber) ? Math.max(0, Math.floor(runNumber)) : Math.floor(Date.now() / 1000);
-  const attempt = Number.isFinite(attemptNumber) ? Math.max(1, Math.floor(attemptNumber)) : Math.max(1, Math.floor(process.pid));
-  return `preview.${run}.${attempt}`;
-}
-
-/**
  * @param {string} repoRoot
  * @param {{ dryRun: boolean }} opts
  */
@@ -179,10 +174,11 @@ async function main() {
     allowPositionals: false,
   });
 
-  const channel = String(values.channel ?? '').trim();
-  if (!channel) fail('--channel is required');
-  if (channel !== 'preview' && channel !== 'stable') {
-    fail(`--channel must be 'preview' or 'stable' (got: ${channel})`);
+  const requestedChannel = String(values.channel ?? '').trim();
+  if (!requestedChannel) fail('--channel is required');
+  const channel = normalizePublicReleaseChannel(requestedChannel);
+  if (!channel) {
+    fail(`--channel must be ${JSON.stringify(formatPublicReleaseChannelChoices())} (got: ${requestedChannel})`);
   }
   const allowStable = parseBool(values['allow-stable'], '--allow-stable');
   if (channel === 'stable' && !allowStable) {
@@ -196,16 +192,17 @@ async function main() {
 
   const opts = { dryRun };
 
-  const embeddedPolicy = channel === 'stable' ? 'production' : 'preview';
+  const releaseRing = getPublicReleaseRingEntry(channel);
+  const embeddedPolicy = resolveEmbeddedPolicyForChannel(channel);
 
-  const rollingTag = channel === 'preview' ? 'cli-preview' : 'cli-stable';
-  const rollingTitle = channel === 'preview' ? 'Happier CLI Preview' : 'Happier CLI Stable';
-  const prerelease = channel === 'preview' ? 'true' : 'false';
-  const notesBase = channel === 'preview' ? 'Rolling preview CLI binaries.' : 'Rolling stable CLI binaries.';
+  const rollingTag = `cli-${resolveRollingReleaseTagSuffix(channel)}`;
+  const rollingTitle = `Happier CLI ${resolveRollingReleaseLabel(channel)}`;
+  const prerelease = resolveRollingPrerelease(channel);
+  const notesBase = `Rolling ${releaseRing.publicLabel} CLI binaries.`;
 
   const targetSha = run(opts, 'git', ['rev-parse', 'HEAD'], { cwd: repoRoot, stdio: 'pipe' }).trim() || 'UNKNOWN_SHA';
 
-  console.log(`[pipeline] cli-binaries: channel=${channel} tag=${rollingTag}`);
+  console.log(`[pipeline] cli-binaries: channel=${formatPublicReleaseChannel(channel)} tag=${rollingTag}`);
 
   await preflightMinisignKey(opts);
 
@@ -224,13 +221,13 @@ async function main() {
   const cliPkgJson = withinRepo(repoRoot, path.join('apps', 'cli', 'package.json'));
   const originalVersion = readCliVersion(repoRoot);
   const base = normalizeBase(originalVersion);
-  const version = channel === 'preview' ? `${base}-${resolvePreviewSuffix()}` : originalVersion;
+  const version = channel === 'stable' ? originalVersion : `${base}-${resolveRollingVersionSuffix(channel)}`;
   const notes = withCurrentVersionLine(notesBase, version);
 
   /** @type {null | (() => void)} */
   let restoreVersion = null;
   try {
-    if (channel === 'preview') {
+    if (channel !== 'stable') {
       if (dryRun) {
         console.log(`[dry-run] patch ${path.relative(repoRoot, cliPkgJson)} version -> ${version}`);
       } else {
@@ -355,7 +352,7 @@ async function main() {
 
     const versionTag = `cli-v${version}`;
     const versionTitle = `Happier CLI v${version}`;
-    const versionNotes = channel === 'preview' ? `CLI preview build v${version}.` : `CLI stable release v${version}.`;
+    const versionNotes = `CLI ${releaseRing.publicLabel} build v${version}.`;
 
     run(
       opts,

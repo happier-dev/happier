@@ -5,37 +5,19 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { maybeUploadSentryExpoSourceMaps } from './sentry-upload-sourcemaps.mjs';
 import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
+import { applyExpoNodeHeapEnv } from '../../expo/expoNodeHeapEnv.mjs';
 import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
+import {
+  MOBILE_RELEASE_ENVIRONMENT_CHOICES,
+  formatMobileReleaseEnvironment,
+  normalizeMobileReleaseEnvironment,
+  resolveMobileBuildNodeEnvironment,
+  resolveMobileAppEnvironmentConfig,
+} from './mobile-release-environments.mjs';
 
 function fail(message) {
   console.error(message);
   process.exit(1);
-}
-
-/**
- * @param {string} environment
- * @returns {'development' | 'preview' | 'production'}
- */
-function resolveAppEnvironment(environment) {
-  if (environment === 'production') return 'production';
-  if (environment === 'development') return 'development';
-  return 'preview';
-}
-
-/**
- * @param {string} environment
- * @returns {'development' | 'canary' | 'preview' | 'production'}
- */
-function resolveUpdateLane(environment) {
-  if (
-    environment === 'development' ||
-    environment === 'canary' ||
-    environment === 'preview' ||
-    environment === 'production'
-  ) {
-    return environment;
-  }
-  return 'preview';
 }
 
 /**
@@ -68,12 +50,12 @@ function run(opts, cmd, args, extra) {
 function resolvePreviewMessage(environment, rawMessage, opts) {
   const explicit = String(rawMessage ?? '').trim();
   if (explicit) return explicit;
-  if (environment !== 'development' && environment !== 'canary' && environment !== 'preview') return '';
+  if (environment !== 'internaldev' && environment !== 'internalpreview' && environment !== 'publicdev' && environment !== 'preview') return '';
 
   const sha = String(process.env.GITHUB_SHA ?? '').trim() || run(opts, 'git', ['rev-parse', 'HEAD'], { stdio: 'pipe' }).trim();
   const runId = String(process.env.GITHUB_RUN_ID ?? '').trim();
   const attempt = String(process.env.GITHUB_RUN_ATTEMPT ?? '').trim();
-  const laneLabel = environment === 'preview' ? 'preview' : environment;
+  const laneLabel = formatMobileReleaseEnvironment(environment);
   if (runId && attempt) {
     return `Happier OTA ${laneLabel} ${sha} (run ${runId} attempt ${attempt})`;
   }
@@ -97,9 +79,9 @@ function main() {
   });
 
   const environment = String(values.environment ?? '').trim();
-  if (!environment) fail('--environment is required');
-  if (environment !== 'development' && environment !== 'canary' && environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'development', 'canary', 'preview', or 'production' (got: ${environment})`);
+  const normalizedEnvironment = normalizeMobileReleaseEnvironment(environment);
+  if (!normalizedEnvironment) {
+    fail(`--environment must be ${JSON.stringify(MOBILE_RELEASE_ENVIRONMENT_CHOICES)} (got: ${environment || '<empty>'})`);
   }
 
   const dryRun = values['dry-run'] === true;
@@ -121,9 +103,9 @@ function main() {
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
 
-  console.log(`[pipeline] expo ota: environment=${environment}`);
+  console.log(`[pipeline] expo ota: environment=${formatMobileReleaseEnvironment(normalizedEnvironment)}`);
 
-  if (environment === 'production') {
+  if (normalizedEnvironment === 'production') {
     run(opts, 'yarn', ['--cwd', 'apps/ui', 'ota:production'], {
       cwd: repoRoot,
       env: { ...process.env, APP_ENV: process.env.APP_ENV ?? 'production' },
@@ -132,22 +114,27 @@ function main() {
   }
 
   const uiDir = path.join(repoRoot, 'apps', 'ui');
-  const appEnvironment = resolveAppEnvironment(environment);
-  const updateLane = resolveUpdateLane(environment);
-  const easCommandEnv = withEasGitCaseSensitiveEnv({
-    ...process.env,
-    APP_ENV: process.env.APP_ENV ?? appEnvironment,
-    NODE_ENV: process.env.NODE_ENV ?? appEnvironment,
-    EXPO_UPDATES_CHANNEL: process.env.EXPO_UPDATES_CHANNEL ?? updateLane,
-  });
+  const appEnvironment = normalizedEnvironment;
+  const updateLane = resolveMobileAppEnvironmentConfig(normalizedEnvironment).updatesChannel;
+  const nodeEnvironment = resolveMobileBuildNodeEnvironment(normalizedEnvironment);
+  const easCommandEnv = withEasGitCaseSensitiveEnv(
+    applyExpoNodeHeapEnv({
+      ...process.env,
+      APP_ENV: process.env.APP_ENV ?? appEnvironment,
+      NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment,
+      EXPO_UPDATES_CHANNEL: process.env.EXPO_UPDATES_CHANNEL ?? updateLane,
+    }, {
+      envKey: 'HAPPIER_PIPELINE_EXPO_MAX_OLD_SPACE_SIZE_MB',
+    }),
+  );
   run(opts, 'yarn', ['tsx', 'sources/scripts/parseChangelog.ts'], {
     cwd: uiDir,
-    env: { ...process.env, APP_ENV: process.env.APP_ENV ?? appEnvironment, NODE_ENV: process.env.NODE_ENV ?? appEnvironment },
+    env: { ...process.env, APP_ENV: process.env.APP_ENV ?? appEnvironment, NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment },
   });
   run(opts, 'yarn', ['typecheck'], { cwd: uiDir });
 
-  const message = resolvePreviewMessage(environment, values.message, opts);
-  if (!message) fail(`Missing Expo update message for ${environment} OTA update.`);
+  const message = resolvePreviewMessage(normalizedEnvironment, values.message, opts);
+  if (!message) fail(`Missing Expo update message for ${normalizedEnvironment} OTA update.`);
 
   run(
     opts,

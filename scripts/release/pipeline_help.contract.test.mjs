@@ -88,7 +88,7 @@ test('pipeline CLI help reflects expanded Expo environment support', async () =>
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 30_000,
   });
-  assert.match(downloadHelp, /development\|canary\|preview\|production/);
+  assert.match(downloadHelp, /internaldev\|internalpreview\|dev\|preview\|production/);
 
   const publishHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'expo-publish-apk-release'], {
     cwd: repoRoot,
@@ -97,7 +97,20 @@ test('pipeline CLI help reflects expanded Expo environment support', async () =>
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 30_000,
   });
-  assert.match(publishHelp, /development\|canary\|preview\|production/);
+  assert.match(publishHelp, /internaldev\|internalpreview\|dev\|preview\|production/);
+});
+
+test('pipeline CLI help reflects expanded Tauri environment support', async () => {
+  for (const command of ['tauri-prepare-assets', 'tauri-build-updater-artifacts', 'tauri-collect-updater-artifacts']) {
+    const help = execFileSync(process.execPath, [pipelineCli, 'help', command], {
+      cwd: repoRoot,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    });
+    assert.match(help, /dev\|preview\|production/);
+  }
 });
 
 test('pipeline help covers every supported subcommand', async () => {

@@ -4,6 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import {
+  MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES,
+  formatMobileReleaseEnvironment,
+  normalizeMobileReleaseEnvironment,
+  resolveMobileReleaseMetadata,
+  supportsMobileApkReleasePublishing,
+} from './mobile-release-environments.mjs';
 
 function fail(message) {
   console.error(message);
@@ -56,10 +63,10 @@ function main() {
     allowPositionals: false,
   });
 
-  const environment = String(values.environment ?? '').trim();
-  if (!environment) fail('--environment is required');
-  if (environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'preview' or 'production' (got: ${environment})`);
+  const requestedEnvironment = String(values.environment ?? '').trim();
+  const environment = normalizeMobileReleaseEnvironment(requestedEnvironment);
+  if (!environment || !supportsMobileApkReleasePublishing(environment)) {
+    fail(`--environment must be ${JSON.stringify(MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES)} (got: ${requestedEnvironment || '<empty>'})`);
   }
 
   const apkPath = String(values['apk-path'] ?? '').trim();
@@ -80,17 +87,17 @@ function main() {
   const appVersion = String(pkg.version ?? '').trim();
   if (!appVersion) fail('Unable to resolve apps/ui version');
 
-  const isPreview = environment === 'preview';
-  const tag = isPreview ? 'ui-mobile-preview' : `ui-mobile-v${appVersion}`;
-  const title = isPreview ? 'Happier UI Mobile Preview' : `Happier UI Mobile v${appVersion}`;
-  const prerelease = isPreview ? 'true' : 'false';
-  const rollingTag = isPreview ? 'true' : 'false';
-  const pruneAssets = isPreview ? 'true' : 'false';
-  const generateNotes = isPreview ? 'false' : 'true';
-  const notes = isPreview ? 'Rolling preview build.' : '';
+  const releaseMeta = resolveMobileReleaseMetadata({ environment, appVersion });
+  const tag = releaseMeta.tag;
+  const title = releaseMeta.title;
+  const prerelease = releaseMeta.prerelease ? 'true' : 'false';
+  const rollingTag = releaseMeta.rollingTag ? 'true' : 'false';
+  const pruneAssets = releaseMeta.rollingTag ? 'true' : 'false';
+  const generateNotes = releaseMeta.generateNotes ? 'true' : 'false';
+  const notes = releaseMeta.notes;
   const releaseMessage = String(values['release-message'] ?? '').trim();
 
-  console.log(`[pipeline] ui-mobile apk release: environment=${environment} tag=${tag} version=${appVersion}`);
+  console.log(`[pipeline] ui-mobile apk release: environment=${formatMobileReleaseEnvironment(environment)} tag=${tag} version=${appVersion}`);
 
   run(
     opts,
@@ -126,4 +133,3 @@ function main() {
 }
 
 main();
-

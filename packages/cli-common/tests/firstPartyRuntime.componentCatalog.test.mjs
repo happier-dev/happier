@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   getFirstPartyComponentCatalogEntry,
   listFirstPartyComponentCatalogEntries,
+  resolveFirstPartyComponentPublicReleaseVariant,
 } from '../dist/firstPartyRuntime/index.js';
 
 test('first-party runtime catalog exposes the expected component identities', () => {
@@ -28,4 +29,23 @@ test('catalog rejects unknown component ids', () => {
     () => getFirstPartyComponentCatalogEntry('unknown-component'),
     /Unknown first-party component/i,
   );
+});
+
+test('cli public release variants resolve rolling tags and side-by-side install metadata', () => {
+  const preview = resolveFirstPartyComponentPublicReleaseVariant({
+    componentId: 'happier-cli',
+    channel: 'preview',
+  });
+  const publicdev = resolveFirstPartyComponentPublicReleaseVariant({
+    componentId: 'happier-cli',
+    channel: 'publicdev',
+  });
+
+  assert.equal(preview.releaseTag, 'cli-preview');
+  assert.equal(preview.installRootName, 'cli-preview');
+  assert.deepEqual(preview.installShims, ['hprev']);
+
+  assert.equal(publicdev.releaseTag, 'cli-dev');
+  assert.equal(publicdev.installRootName, 'cli-dev');
+  assert.deepEqual(publicdev.installShims, ['hdev']);
 });

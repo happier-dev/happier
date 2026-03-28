@@ -16,6 +16,7 @@ import {
   execOrThrow,
   resolveYarnCommand,
 } from '@happier-dev/cli-common/componentArtifacts';
+import { listPublicReleaseRingCatalogEntries, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 export {
   commandExists,
@@ -25,7 +26,7 @@ export {
   resolveYarnCommand,
 };
 
-export const RELEASE_CHANNELS = new Set(['stable', 'preview']);
+export const RELEASE_CHANNELS = new Set(listPublicReleaseRingCatalogEntries().map((entry) => entry.id));
 
 export const CLI_STACK_TARGETS = CLI_BINARY_TARGETS;
 export const SERVER_TARGETS = SERVER_BINARY_TARGETS;
@@ -257,10 +258,11 @@ export function resolveTargets({ availableTargets, requested }) {
 export function normalizeChannel(raw) {
   const value = String(raw ?? '').trim();
   if (!value) return 'stable';
-  if (!RELEASE_CHANNELS.has(value)) {
-    throw new Error(`[release] invalid channel: ${value} (expected stable|preview)`);
+  const normalized = normalizePublicReleaseRingId(value);
+  if (!normalized || !RELEASE_CHANNELS.has(normalized)) {
+    throw new Error(`[release] invalid channel: ${value} (expected stable|preview|dev)`);
   }
-  return value;
+  return normalized;
 }
 
 export function resolveRepoRoot() {

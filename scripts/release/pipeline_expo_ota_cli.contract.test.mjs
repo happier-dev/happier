@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI can run Expo OTA update in dry-run for supported non-production lanes', async () => {
-  for (const environment of ['development', 'canary', 'preview']) {
+test('pipeline CLI can run Expo OTA update in dry-run for supported non-stable lanes', async () => {
+  for (const environment of ['internaldev', 'internalpreview', 'dev', 'preview']) {
     const out = execFileSync(
       process.execPath,
       [
@@ -46,11 +46,11 @@ test('pipeline CLI allows interactive local override for Expo OTA dry-runs', asy
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'expo-ota',
       '--environment',
-      'development',
+      'internaldev',
       '--interactive',
       'true',
       '--message',
-      'development OTA test message',
+      'internaldev OTA test message',
       '--dry-run',
       '--secrets-source',
       'env',
@@ -67,7 +67,7 @@ test('pipeline CLI allows interactive local override for Expo OTA dry-runs', asy
     },
   );
 
-  assert.match(out, /\[pipeline\] expo ota: environment=development/);
+  assert.match(out, /\[pipeline\] expo ota: environment=internaldev/);
   assert.doesNotMatch(out, /\s--non-interactive\b/);
 });
 
@@ -78,11 +78,11 @@ test('pipeline CLI allows interactive local Expo OTA dry-runs without EXPO_TOKEN
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'expo-ota',
       '--environment',
-      'development',
+      'internaldev',
       '--interactive',
       'true',
       '--message',
-      'development OTA test message',
+      'internaldev OTA test message',
       '--dry-run',
       '--secrets-source',
       'env',
@@ -99,7 +99,7 @@ test('pipeline CLI allows interactive local Expo OTA dry-runs without EXPO_TOKEN
     },
   );
 
-  assert.match(out, /\[pipeline\] expo ota: environment=development/);
+  assert.match(out, /\[pipeline\] expo ota: environment=internaldev/);
   assert.doesNotMatch(out, /\s--non-interactive\b/);
 });
 
@@ -110,11 +110,11 @@ test('pipeline CLI forwards explicit interactive setting to Expo OTA', async () 
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'expo-ota',
       '--environment',
-      'development',
+      'internaldev',
       '--interactive',
       'false',
       '--message',
-      'development OTA test message',
+      'internaldev OTA test message',
       '--dry-run',
       '--secrets-source',
       'env',

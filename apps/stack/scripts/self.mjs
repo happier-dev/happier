@@ -4,6 +4,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { compareVersions, installRuntimeFromNpm, readNpmDistTagVersion, resolveNpmPackageNameOverride } from '@happier-dev/cli-common/update';
 
 import { parseArgs } from './utils/cli/args.mjs';
@@ -67,8 +68,13 @@ async function getInvokerVersion({ rootDir }) {
 
 function parseSelfChannel({ flags, kv }) {
   if (flags.has('--preview')) return 'preview';
+  if (flags.has('--dev')) return 'publicdev';
   const raw = String(kv.get('--channel') ?? '').trim();
-  return raw === 'preview' ? 'preview' : 'stable';
+  return normalizePublicReleaseRingId(raw) || 'stable';
+}
+
+function resolveStackSelfNpmDistTag(channel) {
+  return channel === 'stable' ? 'latest' : 'next';
 }
 
 async function fetchLatestVersion({ packageName, distTag, cwd }) {
@@ -82,7 +88,7 @@ async function cmdStatus({ rootDir, argv }) {
   const json = wantsJson(argv, { flags });
   const doCheck = !flags.has('--no-check');
   const channel = parseSelfChannel({ flags, kv: kvArgs });
-  const distTag = channel === 'preview' ? 'next' : 'latest';
+  const distTag = resolveStackSelfNpmDistTag(channel);
 
   const { updateJson, cacheDir } = cachePaths();
   const invoker = await readJsonIfExists(join(rootDir, 'package.json'), { defaultValue: null });
@@ -162,7 +168,7 @@ async function cmdUpdate({ rootDir, argv }) {
     fallback: String(invoker?.name ?? '').trim(),
   });
   if (!pkgName) throw new Error('[self] unable to resolve package name (missing package.json name)');
-  const spec = to ? `${pkgName}@${to}` : `${pkgName}@${channel === 'preview' ? 'next' : 'latest'}`;
+  const spec = to ? `${pkgName}@${to}` : `${pkgName}@${resolveStackSelfNpmDistTag(channel)}`;
 
   // Ensure runtime dir exists.
   await mkdir(runtimeDir, { recursive: true });
@@ -190,7 +196,7 @@ async function cmdUpdate({ rootDir, argv }) {
 
   // Refresh cache best-effort.
   try {
-    const latest = await fetchLatestVersion({ packageName: pkgName, distTag: channel === 'preview' ? 'next' : 'latest', cwd: rootDir });
+    const latest = await fetchLatestVersion({ packageName: pkgName, distTag: resolveStackSelfNpmDistTag(channel), cwd: rootDir });
     const runtimeVersion = await getRuntimeInstalledVersion();
     const invokerVersion = await getInvokerVersion({ rootDir });
     const current = runtimeVersion || invokerVersion;
@@ -223,7 +229,7 @@ async function cmdCheck({ rootDir, argv }) {
   const json = wantsJson(argv, { flags });
   const quiet = flags.has('--quiet');
   const channel = parseSelfChannel({ flags, kv: kvArgs });
-  const distTag = channel === 'preview' ? 'next' : 'latest';
+  const distTag = resolveStackSelfNpmDistTag(channel);
 
   const { updateJson, cacheDir } = cachePaths();
   const runtimeVersion = await getRuntimeInstalledVersion();
@@ -397,9 +403,9 @@ async function main() {
   const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
   const json = wantsJson(helpScopeArgv, { flags });
   const usageByCmd = new Map([
-    ['status', 'hstack self status [--preview|--channel=preview] [--no-check] [--json]'],
-    ['update', 'hstack self update [--preview|--channel=preview] [--to=<version>] [--json]'],
-    ['check', 'hstack self check [--preview|--channel=preview] [--quiet] [--json]'],
+    ['status', 'hstack self status [--preview|--dev|--channel=<preview|dev>] [--no-check] [--json]'],
+    ['update', 'hstack self update [--preview|--dev|--channel=<preview|dev>] [--to=<version>] [--json]'],
+    ['check', 'hstack self check [--preview|--dev|--channel=<preview|dev>] [--quiet] [--json]'],
     ['use-cli', 'hstack self use-cli default|main|dev|/abs/path/to/apps/stack [--json]'],
   ]);
 
@@ -418,20 +424,21 @@ async function main() {
   if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
-      data: { commands: ['status', 'update', 'check', 'use-cli'], flags: ['--preview', '--channel=preview', '--no-check', '--to=<version>', '--quiet'] },
+      data: { commands: ['status', 'update', 'check', 'use-cli'], flags: ['--preview', '--dev', '--channel=<preview|dev>', '--no-check', '--to=<version>', '--quiet'] },
       text: [
         banner('self', { subtitle: 'Runtime install + self-update.' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hstack self')} status [--preview|--channel=preview] [--no-check] [--json]`,
-        `  ${cyan('hstack self')} update [--preview|--channel=preview] [--to=<version>] [--json]`,
-        `  ${cyan('hstack self')} check [--preview|--channel=preview] [--quiet] [--json]`,
+        `  ${cyan('hstack self')} status [--preview|--dev|--channel=<preview|dev>] [--no-check] [--json]`,
+        `  ${cyan('hstack self')} update [--preview|--dev|--channel=<preview|dev>] [--to=<version>] [--json]`,
+        `  ${cyan('hstack self')} check [--preview|--dev|--channel=<preview|dev>] [--quiet] [--json]`,
         `  ${cyan('hstack self')} use-cli default|main|dev|/abs/path/to/apps/stack [--json]`,
         '',
         sectionTitle('channels:'),
         bullets([
           kv('stable:', dim('npm dist-tag latest')),
           kv('preview:', dim('npm dist-tag next')),
+          kv('dev:', dim('npm dist-tag next')),
         ]),
       ].join('\n'),
     });

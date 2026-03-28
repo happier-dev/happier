@@ -18,6 +18,13 @@ test('parseRunnerInvocation resolves preview tags from channel', () => {
   assert.equal(parsed.uiWebTag, 'ui-web-preview');
 });
 
+test('parseRunnerInvocation resolves dev user input to publicdev tags', () => {
+  const parsed = parseRunnerInvocation(['--channel', 'dev']);
+  assert.equal(parsed.channel, 'publicdev');
+  assert.equal(parsed.serverTag, 'server-dev');
+  assert.equal(parsed.uiWebTag, 'ui-web-dev');
+});
+
 test('parseRunnerInvocation honors explicit tag overrides', () => {
   const parsed = parseRunnerInvocation(['--tag', 'server-preview', '--ui-tag', 'ui-web-preview']);
   assert.equal(parsed.serverTag, 'server-preview');
@@ -28,4 +35,3 @@ test('parseRunnerInvocation supports --without-ui', () => {
   const parsed = parseRunnerInvocation(['--without-ui']);
   assert.equal(parsed.withUiWeb, false);
 });
-

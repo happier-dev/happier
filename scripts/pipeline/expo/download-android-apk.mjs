@@ -4,6 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import {
+  MOBILE_RELEASE_ENVIRONMENT_CHOICES,
+  formatMobileReleaseEnvironment,
+  normalizeMobileReleaseEnvironment,
+  resolveMobileNativeArtifactRelativePath,
+} from './mobile-release-environments.mjs';
 
 function fail(message) {
   console.error(message);
@@ -165,10 +171,10 @@ async function main() {
     allowPositionals: false,
   });
 
-  const environment = String(values.environment ?? '').trim();
-  if (!environment) fail('--environment is required');
-  if (environment !== 'development' && environment !== 'canary' && environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'development', 'canary', 'preview', or 'production' (got: ${environment})`);
+  const requestedEnvironment = String(values.environment ?? '').trim();
+  const environment = normalizeMobileReleaseEnvironment(requestedEnvironment);
+  if (!environment) {
+    fail(`--environment must be ${JSON.stringify(MOBILE_RELEASE_ENVIRONMENT_CHOICES)} (got: ${requestedEnvironment || '<empty>'})`);
   }
 
   const dryRun = values['dry-run'] === true;
@@ -195,7 +201,7 @@ async function main() {
   const appVersion = String(pkg.version ?? '').trim();
   if (!appVersion) fail('Unable to resolve app version from apps/ui/package.json');
 
-  console.log(`[pipeline] expo download apk: environment=${environment}`);
+  console.log(`[pipeline] expo download apk: environment=${formatMobileReleaseEnvironment(environment)}`);
 
   let artifactUrl = '';
   const shouldParseBuildJson = buildJsonExists && !dryRun;
@@ -230,14 +236,13 @@ async function main() {
 
   fs.mkdirSync(outDirAbs, { recursive: true });
 
-  const assetRel =
-    environment === 'production'
-      ? path.join(outDirRel, `happier-production-android-v${appVersion}.apk`)
-      : environment === 'preview'
-        ? path.join(outDirRel, 'happier-preview-android.apk')
-        : environment === 'canary'
-          ? path.join(outDirRel, 'happier-canary-android.apk')
-          : path.join(outDirRel, 'happier-development-android.apk');
+  const assetRel = resolveMobileNativeArtifactRelativePath({
+    environment,
+    platform: 'android',
+    appVersion,
+    outDir: outDirRel,
+    profile: `${environment}-apk`,
+  });
   const assetAbs = path.resolve(repoRoot, assetRel);
 
   if (!dryRun) {

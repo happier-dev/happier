@@ -1,0 +1,20 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Happier (dev)",
+  "identifier": "dev.happier.app.publicdev",
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFCRTk2MjE4RjNCMEYxRUYKUldUdjhiRHpHR0xwcTFIUjMvb1FBbW5HOUFYSkd5aGlHa204MWZuRk50ekF5WVZQdU1mVkRWWnkK",
+      "endpoints": [
+        "https://github.com/happier-dev/happier/releases/download/ui-desktop-dev/latest.json"
+      ]
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Happier (dev)"
+      }
+    ]
+  }
+}

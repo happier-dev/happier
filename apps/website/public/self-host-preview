@@ -129,16 +129,44 @@ json_lookup_asset_url() {
   '
 }
 
+normalize_channel() {
+  local raw="${1:-}"
+  case "${raw}" in
+    ""|stable) echo "stable" ;;
+    preview) echo "preview" ;;
+    publicdev|dev) echo "publicdev" ;;
+    *) echo "${raw}" ;;
+  esac
+}
+
+rolling_suffix_for_channel() {
+  case "$1" in
+    stable) echo "stable" ;;
+    preview) echo "preview" ;;
+    publicdev) echo "dev" ;;
+    *) return 1 ;;
+  esac
+}
+
+display_channel_label() {
+  case "$1" in
+    publicdev|dev) echo "dev" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 action_version() {
-  if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
-    echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
+  if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" && "${CHANNEL}" != "publicdev" ]]; then
+    echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable, preview, or dev." >&2
     return 1
   fi
 
-  local tag="stack-stable"
-  if [[ "${CHANNEL}" == "preview" ]]; then
-    tag="stack-preview"
-  fi
+  local suffix=""
+  suffix="$(rolling_suffix_for_channel "${CHANNEL}")" || {
+    echo "Unsupported channel for self-host installer version check: ${CHANNEL}" >&2
+    return 1
+  }
+  local tag="stack-${suffix}"
 
   local uname_os=""
   uname_os="$(uname -s)"
@@ -190,7 +218,7 @@ action_version() {
   fi
 
   say "Happier Stack installer version check"
-  say "- channel: ${CHANNEL}"
+  say "- channel: $(display_channel_label "${CHANNEL}")"
   say "- mode: ${MODE}"
   say "- platform: ${os}-${arch}"
   say "- version: ${version}"
@@ -225,16 +253,23 @@ Preview channel:
   curl -fsSL https://happier.dev/self-host | HAPPIER_CHANNEL=preview bash
   curl -fsSL https://happier.dev/self-host-preview | bash
 
+Public dev channel:
+  curl -fsSL https://happier.dev/self-host | bash -s -- --channel dev
+  curl -fsSL https://happier.dev/self-host | HAPPIER_CHANNEL=dev bash
+  curl -fsSL https://happier.dev/self-host-dev | bash
+
 Windows (PowerShell):
   irm https://happier.dev/self-host-preview.ps1 | iex
+  irm https://happier.dev/self-host-dev.ps1 | iex
 
 Options:
   --mode <user|system>
   --user
   --system
-  --channel <stable|preview>
+  --channel <stable|preview|dev>
   --stable
   --preview
+  --dev
   --check
   --version
   --reinstall
@@ -315,6 +350,10 @@ while [[ $# -gt 0 ]]; do
       CHANNEL="preview"
       shift 1
       ;;
+    --dev)
+      CHANNEL="dev"
+      shift 1
+      ;;
     --check)
       ACTION="check"
       shift 1
@@ -365,6 +404,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+CHANNEL="$(normalize_channel "${CHANNEL}")"
+
 if [[ "${DEBUG_MODE}" == "1" ]]; then
   VERBOSE_MODE="1"
   set -x
@@ -375,8 +416,8 @@ if [[ "${MODE}" != "user" && "${MODE}" != "system" ]]; then
   exit 1
 fi
 
-if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
-  echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
+if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" && "${CHANNEL}" != "publicdev" ]]; then
+  echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable, preview, or dev." >&2
   exit 1
 fi
 
@@ -393,7 +434,13 @@ case "${UNAME}" in
   *)
     echo "Happier Self-Host guided installer currently supports macOS and Linux only." >&2
     echo "On Windows, run the PowerShell installer instead:" >&2
-    echo "  irm https://happier.dev/self-host-preview.ps1 | iex" >&2
+    if [[ "${CHANNEL}" == "publicdev" ]]; then
+      echo "  irm https://happier.dev/self-host-dev.ps1 | iex" >&2
+    elif [[ "${CHANNEL}" == "preview" ]]; then
+      echo "  irm https://happier.dev/self-host-preview.ps1 | iex" >&2
+    else
+      echo "  irm https://happier.dev/self-host.ps1 | iex" >&2
+    fi
     exit 1
     ;;
 esac
@@ -438,10 +485,7 @@ case "${ARCH}" in
     ;;
 esac
 
-TAG="stack-stable"
-if [[ "${CHANNEL}" == "preview" ]]; then
-  TAG="stack-preview"
-fi
+TAG="stack-$(rolling_suffix_for_channel "${CHANNEL}")"
 
 resolve_hstack_path() {
   if command -v hstack >/dev/null 2>&1; then
@@ -460,12 +504,24 @@ resolve_hstack_path() {
 }
 
 print_self_host_log_guidance() {
+  local self_host_suffix=""
+  self_host_suffix="$(rolling_suffix_for_channel "${CHANNEL}")"
   if [[ "${MODE}" == "system" ]]; then
-    SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-/var/log/happier}"
-    SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+    if [[ "${CHANNEL}" == "stable" ]]; then
+      SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-/var/log/happier}"
+      SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+    else
+      SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-/var/log/happier-${self_host_suffix}}"
+      SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server-${self_host_suffix}}"
+    fi
   else
-    SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-${HAPPIER_HOME}/self-host/logs}"
-    SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+    if [[ "${CHANNEL}" == "stable" ]]; then
+      SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-${HAPPIER_HOME}/self-host/logs}"
+      SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+    else
+      SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-${HAPPIER_HOME}/self-host-${self_host_suffix}/logs}"
+      SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server-${self_host_suffix}}"
+    fi
   fi
   say "  - ${SELF_HOST_LOG_DIR}/server.err.log"
   say "  - ${SELF_HOST_LOG_DIR}/server.out.log"
@@ -483,12 +539,18 @@ action_check() {
   hstack="$(resolve_hstack_path 2>/dev/null || true)"
   if [[ -z "${hstack}" ]]; then
     warn "hstack is not installed."
-    warn "Run: curl -fsSL https://happier.dev/self-host-preview | bash"
+    if [[ "${CHANNEL}" == "publicdev" ]]; then
+      warn "Run: curl -fsSL https://happier.dev/self-host-dev | bash"
+    elif [[ "${CHANNEL}" == "preview" ]]; then
+      warn "Run: curl -fsSL https://happier.dev/self-host-preview | bash"
+    else
+      warn "Run: curl -fsSL https://happier.dev/self-host | bash"
+    fi
     return 1
   fi
   info "Checking Happier Self-Host..."
-  "${hstack}" self-host status --mode="${MODE}" --channel="${CHANNEL}" || true
-  "${hstack}" self-host doctor --mode="${MODE}" --channel="${CHANNEL}"
+  "${hstack}" self-host status --mode="${MODE}" --channel="$(display_channel_label "${CHANNEL}")" || true
+  "${hstack}" self-host doctor --mode="${MODE}" --channel="$(display_channel_label "${CHANNEL}")"
   return $?
 }
 
@@ -499,7 +561,7 @@ action_uninstall() {
     warn "hstack is not installed."
     return 1
   fi
-  local args=(self-host uninstall --yes --non-interactive --channel="${CHANNEL}" --mode="${MODE}")
+  local args=(self-host uninstall --yes --non-interactive --channel="$(display_channel_label "${CHANNEL}")" --mode="${MODE}")
   if [[ "${PURGE_DATA}" == "1" ]]; then
     args+=(--purge-data)
   fi
@@ -520,7 +582,7 @@ action_restart() {
   local hstack=""
   hstack="$(resolve_hstack_path 2>/dev/null || true)"
   if [[ -n "${hstack}" ]]; then
-    "${hstack}" self-host status --mode="${MODE}" --channel="${CHANNEL}" || true
+    "${hstack}" self-host status --mode="${MODE}" --channel="$(display_channel_label "${CHANNEL}")" || true
   fi
   return 0
 }
@@ -644,6 +706,8 @@ info "Fetching ${TAG} release metadata..."
 if ! RELEASE_JSON="$(curl -fsSL "${API_URL}")"; then
   if [[ "${CHANNEL}" == "stable" ]]; then
     echo "No stable releases found for Happier Stack." >&2
+  elif [[ "${CHANNEL}" == "publicdev" ]]; then
+    echo "No dev releases found for Happier Stack." >&2
   else
     echo "No preview releases found for Happier Stack." >&2
   fi
@@ -732,7 +796,7 @@ ln -sf "${STACK_INSTALL_DIR}/bin/hstack" "${STACK_BIN_DIR}/hstack"
 
 success "Installed hstack to ${STACK_INSTALL_DIR}/bin/hstack"
 
-SELF_HOST_ARGS=(self-host install --non-interactive --channel="${CHANNEL}" --mode="${MODE}")
+SELF_HOST_ARGS=(self-host install --non-interactive --channel="$(display_channel_label "${CHANNEL}")" --mode="${MODE}")
 if [[ "${WITH_CLI}" != "1" ]]; then
   SELF_HOST_ARGS+=(--without-cli)
 fi
@@ -766,9 +830,9 @@ if ! "${STACK_INSTALL_DIR}/bin/hstack" "${SELF_HOST_ARGS[@]}"; then
   warn "[self-host] install failed"
   say
   info "Troubleshooting:"
-  say "  ${STACK_BIN_DIR}/hstack self-host status --mode=${MODE} --channel=${CHANNEL}"
-  say "  ${STACK_BIN_DIR}/hstack self-host doctor --mode=${MODE} --channel=${CHANNEL}"
-  say "  ${STACK_BIN_DIR}/hstack self-host config view --mode=${MODE} --channel=${CHANNEL} --json"
+  say "  ${STACK_BIN_DIR}/hstack self-host status --mode=${MODE} --channel=$(display_channel_label "${CHANNEL}")"
+  say "  ${STACK_BIN_DIR}/hstack self-host doctor --mode=${MODE} --channel=$(display_channel_label "${CHANNEL}")"
+  say "  ${STACK_BIN_DIR}/hstack self-host config view --mode=${MODE} --channel=$(display_channel_label "${CHANNEL}") --json"
   say
   info "Logs:"
   if [[ "${MODE}" == "system" ]]; then

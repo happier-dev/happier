@@ -16,7 +16,7 @@ test('EAS apk build profiles use assembleRelease (no interactive prompt in non-i
   const eas = readEasJson();
   const build = eas?.build ?? {};
 
-  for (const profileName of ['canary-apk', 'preview-apk', 'production-apk']) {
+  for (const profileName of ['internalpreview-apk', 'publicdev-apk', 'preview-apk', 'production-apk']) {
     const profile = build?.[profileName] ?? {};
     const android = profile?.android ?? {};
     assert.equal(android.buildType, 'apk', `${profileName} should set android.buildType=apk`);

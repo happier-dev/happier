@@ -50,7 +50,7 @@ function sha256Hex(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-test('installCompanionCliFromBundle promotes the full CLI payload with shared installer logic', async (t) => {
+test('installCompanionCliFromBundle promotes the publicdev CLI payload with shared installer logic', async (t) => {
   if (process.platform === 'win32') {
     t.skip('tar-based bundle test does not run on windows');
     return;
@@ -66,7 +66,7 @@ test('installCompanionCliFromBundle promotes the full CLI payload with shared in
   });
 
   const staging = join(tmp, 'staging');
-  const rootName = 'happier-v1.2.3-preview.1-darwin-arm64';
+  const rootName = 'happier-v1.2.3-dev.1-darwin-arm64';
   const rootDir = join(staging, rootName);
   await mkdir(join(rootDir, 'package-dist'), { recursive: true });
   await writeFile(join(rootDir, 'package-dist', 'index.mjs'), 'console.log("ok");\n', 'utf-8');
@@ -89,15 +89,16 @@ test('installCompanionCliFromBundle promotes the full CLI payload with shared in
   });
 
   const bundle = {
-    version: '1.2.3-preview.1',
+    version: '1.2.3-dev.1',
     archive: { name: archiveName, url: `data:application/octet-stream;base64,${archiveBytes.toString('base64')}` },
-    checksums: { name: 'checksums-happier-v1.2.3-preview.1.txt', url: `data:text/plain,${encodeURIComponent(checksumsText)}` },
-    checksumsSig: { name: 'checksums-happier-v1.2.3-preview.1.txt.minisig', url: `data:text/plain,${encodeURIComponent(sigFile)}` },
+    checksums: { name: 'checksums-happier-v1.2.3-dev.1.txt', url: `data:text/plain,${encodeURIComponent(checksumsText)}` },
+    checksumsSig: { name: 'checksums-happier-v1.2.3-dev.1.txt.minisig', url: `data:text/plain,${encodeURIComponent(sigFile)}` },
   };
 
   const homeDir = join(tmp, 'home');
   const result = await installCompanionCliFromBundle({
     bundle,
+    channel: 'publicdev',
     processEnv: {
       ...process.env,
       HAPPIER_HOME_DIR: homeDir,
@@ -106,13 +107,13 @@ test('installCompanionCliFromBundle promotes the full CLI payload with shared in
   });
 
   assert.equal(result.installed, true);
-  assert.equal(result.version, '1.2.3-preview.1');
-  assert.equal(existsSync(join(homeDir, 'cli', 'current', 'package-dist', 'index.mjs')), true);
-  assert.equal(existsSync(join(homeDir, 'cli', 'previous')), false);
-  const installedEntrypoint = await readFile(join(homeDir, 'cli', 'current', 'package-dist', 'index.mjs'), 'utf-8');
+  assert.equal(result.version, '1.2.3-dev.1');
+  assert.equal(existsSync(join(homeDir, 'cli-dev', 'current', 'package-dist', 'index.mjs')), true);
+  assert.equal(existsSync(join(homeDir, 'cli-dev', 'previous')), false);
+  const installedEntrypoint = await readFile(join(homeDir, 'cli-dev', 'current', 'package-dist', 'index.mjs'), 'utf-8');
   assert.match(installedEntrypoint, /console\.log\("ok"\)/);
-  assert.equal(existsSync(join(homeDir, 'bin', 'happier')), true);
-  const resolvedCurrentBinary = join(homeDir, 'cli', 'current', 'happier');
+  assert.equal(existsSync(join(homeDir, 'bin', 'hdev')), true);
+  const resolvedCurrentBinary = join(homeDir, 'cli-dev', 'current', 'happier');
   assert.equal(existsSync(resolvedCurrentBinary), true);
-  assert.equal(existsSync(dirname(join(homeDir, 'cli', 'versions', '1.2.3-preview.1'))), true);
+  assert.equal(existsSync(dirname(join(homeDir, 'cli-dev', 'versions', '1.2.3-dev.1'))), true);
 });

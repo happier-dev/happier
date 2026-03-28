@@ -20,36 +20,46 @@ async function createStagedPayload(rootDir, versionId, contents) {
   return stagedPayloadPath;
 }
 
-test('syncInstalledFirstPartyShims points the public shim at the current payload binary', async () => {
-  const homeDir = await mkdtemp(join(tmpdir(), 'happier-first-party-runtime-'));
-  const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
+for (const [releaseRing, shimName, installRootPattern] of [
+  ['stable', 'happier', /cli\/current\/happier|..\/cli\/current\/happier/],
+  ['preview', 'hprev', /cli-preview\/current\/happier|..\/cli-preview\/current\/happier/],
+  ['publicdev', 'hdev', /cli-dev\/current\/happier|..\/cli-dev\/current\/happier/],
+]) {
+  test(`syncInstalledFirstPartyShims points the ${releaseRing} shim at the current payload binary`, async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-first-party-runtime-'));
+    const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
 
-  try {
-    await promoteVersionedPayload({
-      componentId: 'happier-cli',
-      processEnv: env,
-      versionId: '1.0.0',
-      stagedPayloadPath: await createStagedPayload(homeDir, '1.0.0', 'payload-binary'),
-    });
-    const result = await syncInstalledFirstPartyShims({
-      componentId: 'happier-cli',
-      processEnv: env,
-    });
+    try {
+      await promoteVersionedPayload({
+        componentId: 'happier-cli',
+        processEnv: env,
+        releaseRing,
+        versionId: '1.0.0',
+        stagedPayloadPath: await createStagedPayload(homeDir, '1.0.0', 'payload-binary'),
+      });
+      const result = await syncInstalledFirstPartyShims({
+        componentId: 'happier-cli',
+        processEnv: env,
+        releaseRing,
+      });
 
-    const paths = resolveInstalledFirstPartyComponentPaths({
-      componentId: 'happier-cli',
-      processEnv: env,
-    });
-    assert.deepEqual(result.shimPaths, paths.shimPaths);
-    assert.equal(existsSync(paths.shimPaths[0]), true);
+      const paths = resolveInstalledFirstPartyComponentPaths({
+        componentId: 'happier-cli',
+        processEnv: env,
+        releaseRing,
+      });
+      assert.deepEqual(result.shimPaths, paths.shimPaths);
+      assert.equal(paths.shimPaths[0], join(homeDir, 'bin', shimName));
+      assert.equal(existsSync(paths.shimPaths[0]), true);
 
-    if (process.platform === 'win32') {
-      assert.equal(await readFile(paths.shimPaths[0], 'utf8'), 'payload-binary');
-    } else {
-      assert.equal(lstatSync(paths.shimPaths[0]).isSymbolicLink(), true);
-      assert.match(readlinkSync(paths.shimPaths[0]), /cli\/current\/happier|..\/cli\/current\/happier/);
+      if (process.platform === 'win32') {
+        assert.equal(await readFile(paths.shimPaths[0], 'utf8'), 'payload-binary');
+      } else {
+        assert.equal(lstatSync(paths.shimPaths[0]).isSymbolicLink(), true);
+        assert.match(readlinkSync(paths.shimPaths[0]), installRootPattern);
+      }
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
     }
-  } finally {
-    await rm(homeDir, { recursive: true, force: true });
-  }
-});
+  });
+}

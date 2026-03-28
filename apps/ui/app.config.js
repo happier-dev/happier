@@ -1,11 +1,20 @@
-const variant = process.env.APP_ENV || 'development';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { getAppEnvironmentConfig } = require('./appVariantConfig.cjs');
 
 function normalizeVariantOverride(raw) {
     const value = String(raw ?? '').trim().toLowerCase();
     if (!value) return '';
     if (value === 'preview' || value.includes('preview')) return 'preview';
-    if (value === 'development' || value === 'dev' || value.includes('development')) return 'development';
-    if (value === 'production' || value === 'prod' || value === 'stable' || value.includes('production')) return 'production';
+    if (value === 'development' || value === 'dev' || value.endsWith('dev') || value.includes('development')) return 'development';
+    if (
+        value === 'production' ||
+        value === 'prod' ||
+        value === 'stable' ||
+        value.includes('production') ||
+        value.includes('stable')
+    ) {
+        return 'production';
+    }
     return '';
 }
 
@@ -43,10 +52,7 @@ if (appLocalConfigModule && typeof appLocalConfigModule === 'object') {
 const DEFAULTS = {
     owner: "happier-dev",
     slug: "happier",
-    scheme: "happier",
-    iosBundleId: "dev.happier.app",
     easProjectId: "2a550bd7-e4d2-4f59-ab47-dcb778775cee",
-    updatesChannel: "production",
     linkHost: "app.happier.dev",
 };
 
@@ -70,28 +76,16 @@ const packageJsonVersion = (() => {
     }
 })();
 
-const namesByVariant = {
-    development: "Happier (dev)",
-    preview: "Happier (preview)",
-    production: "Happier"
-};
-const iosBundleIdsByVariant = {
-    development: "dev.happier.app.development",
-    preview: "dev.happier.app.preview",
-    production: DEFAULTS.iosBundleId
-};
-const androidPackagesByVariant = {
-    development: "dev.happier.app.dev",
-    preview: "dev.happier.app.preview",
-    production: DEFAULTS.iosBundleId
-};
-const appVariant = namesByVariant[variant] ? variant : 'development';
+const rawAppEnvironment = process.env.APP_ENV || 'development';
+const appEnvironmentConfig = getAppEnvironmentConfig(rawAppEnvironment);
+const appVariant = appEnvironmentConfig.logicalVariant;
+const appIdentityVariant = appEnvironmentConfig.id;
 
 // If APP_ENV is unknown, fall back to development-safe defaults to avoid generating
 // an invalid Expo config with undefined identifiers.
-const name = nameOverride || namesByVariant[appVariant] || namesByVariant.development;
-const iosBundleId = iosBundleIdOverride || iosBundleIdsByVariant[appVariant] || iosBundleIdsByVariant.development;
-const androidPackage = androidPackageOverride || androidPackagesByVariant[appVariant] || androidPackagesByVariant.development;
+const name = nameOverride || appEnvironmentConfig.name;
+const iosBundleId = iosBundleIdOverride || appEnvironmentConfig.iosBundleId;
+const androidPackage = androidPackageOverride || appEnvironmentConfig.androidPackage;
 const owner = ownerOverride || DEFAULTS.owner;
 const slug = slugOverride || DEFAULTS.slug;
 
@@ -122,7 +116,7 @@ const updatesNativeDebugEnabled =
     null;
 
 const updatesUrl = (process.env.EXPO_UPDATES_URL || '').trim() || `https://u.expo.dev/${easProjectId}`;
-const updatesChannel = (process.env.EXPO_UPDATES_CHANNEL || '').trim() || (appVariant === 'production' ? DEFAULTS.updatesChannel : appVariant);
+const updatesChannel = (process.env.EXPO_UPDATES_CHANNEL || '').trim() || appEnvironmentConfig.updatesChannel;
 const updatesConfig = {
     url: updatesUrl,
     requestHeaders: {
@@ -140,8 +134,7 @@ const isBuildContext =
     normalizeCiFlag(process.env.CI) ||
     normalizeCiFlag(process.env.EAS_BUILD);
 
-const variantFeaturePolicyEnv =
-    appVariant === 'production' ? 'production' : appVariant === 'preview' ? 'preview' : '';
+const variantFeaturePolicyEnv = appEnvironmentConfig.featurePolicyEnv;
 const buildFeaturePolicyEnv =
     updatesChannel === 'production' ? 'production' : updatesChannel === 'preview' ? 'preview' : '';
 const resolvedFeaturePolicyEnv = variantFeaturePolicyEnv || (isBuildContext ? buildFeaturePolicyEnv : '');
@@ -159,7 +152,8 @@ const iosAssociatedDomains = iosAssociatedDomainsRaw
 // The URL scheme is used for deep linking *and* by the Expo development client launcher flow.
 // Keep the default stable for upstream users, but allow opt-in overrides for local dev variants
 // (e.g. to avoid iOS scheme collisions between multiple installs).
-const scheme = (process.env.EXPO_APP_SCHEME || process.env.HAPPY_STACKS_MOBILE_SCHEME || '').trim() || DEFAULTS.scheme;
+const schemeOverride = (process.env.EXPO_APP_SCHEME || process.env.HAPPY_STACKS_MOBILE_SCHEME || '').trim();
+const resolvedScheme = schemeOverride || appEnvironmentConfig.scheme;
 
 const mergeDeep = (base, override) => {
     if (override == null) return base;
@@ -200,10 +194,12 @@ const baseExpoConfig = {
         name,
         slug,
         version: versionOverride || packageJsonVersion || "0.1.0",
-        runtimeVersion: "18",
+        runtimeVersion: {
+            policy: "fingerprint"
+        },
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
-        scheme,
+        scheme: resolvedScheme,
         userInterfaceStyle: "automatic",
         newArchEnabled: true,
         notification: {
@@ -231,7 +227,7 @@ const baseExpoConfig = {
                     NSAllowsArbitraryLoads: false,
                 },
             },
-            associatedDomains: appVariant === 'production' ? iosAssociatedDomains : []
+            associatedDomains: appEnvironmentConfig.enableAssociatedDomains ? iosAssociatedDomains : []
         },
         android: {
             adaptiveIcon: {
@@ -252,7 +248,7 @@ const baseExpoConfig = {
             edgeToEdgeEnabled: true,
             package: androidPackage,
             googleServicesFile: "./google-services.json",
-            intentFilters: appVariant === 'production' ? [
+            intentFilters: appEnvironmentConfig.enableAssociatedDomains ? [
                 {
                     "action": "VIEW",
                     "autoVerify": true,
@@ -366,7 +362,7 @@ const baseExpoConfig = {
                 // Keep the native identity (`APP_ENV`) separate so we can ship preview-lane behavior to
                 // production bundle IDs without disabling production-only native configuration.
                 variant: appVariantOverride || appVariant,
-                identityVariant: appVariant,
+                identityVariant: appIdentityVariant,
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
                 revenueCatGoogleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE,

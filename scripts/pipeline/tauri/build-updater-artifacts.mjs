@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
+import { formatPublicReleaseChannelChoices, normalizePublicReleaseChannel } from '../release/lib/public-release-rings.mjs';
 
 function fail(message) {
   console.error(message);
@@ -67,14 +68,20 @@ function main() {
     allowPositionals: false,
   });
 
-  const environment = String(values.environment ?? '').trim();
-  if (environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'preview' or 'production' (got: ${environment || '<empty>'})`);
+  const requestedEnvironment = String(values.environment ?? '').trim();
+  const normalizedChannel = normalizePublicReleaseChannel(requestedEnvironment);
+  const environment = normalizedChannel === 'stable' ? 'production' : normalizedChannel;
+  if (!environment) {
+    fail(
+      `--environment must be ${JSON.stringify(
+        formatPublicReleaseChannelChoices({ stableAlias: 'production', preferredOrder: ['dev', 'preview', 'stable'] })
+      )} (got: ${requestedEnvironment || '<empty>'})`
+    );
   }
 
   const buildVersion = String(values['build-version'] ?? '').trim();
-  if (environment === 'preview' && !buildVersion) {
-    fail('--build-version is required when --environment preview');
+  if (environment !== 'production' && !buildVersion) {
+    fail('--build-version is required when --environment preview or dev');
   }
 
   const tauriTarget = String(values['tauri-target'] ?? '').trim();
@@ -124,7 +131,7 @@ function main() {
     configs.push('--config', codesignOverride);
   }
 
-  if (environment === 'preview') {
+  if (environment !== 'production') {
     const versionOverride = tempFile(tmpRoot, 'tauri.version.override.json');
     if (opts.dryRun) {
       console.log(`[dry-run] write ${versionOverride} (version=${buildVersion})`);
@@ -132,10 +139,12 @@ function main() {
       fs.writeFileSync(versionOverride, `${JSON.stringify({ version: buildVersion })}\n`, 'utf8');
     }
 
+    const configPath = environment === 'publicdev' ? 'src-tauri/tauri.publicdev.conf.json' : 'src-tauri/tauri.preview.conf.json';
+
     run(
       opts,
       'yarn',
-      ['tauri', 'build', '--config', 'src-tauri/tauri.preview.conf.json', '--config', versionOverride, ...configs, ...targetArgs],
+      ['tauri', 'build', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
       {
         cwd: absUiDir,
         env: {

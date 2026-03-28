@@ -11,7 +11,7 @@ function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
 }
 
-test('expo submit in preview is best-effort for a single platform (does not fail the whole pipeline)', () => {
+test('expo submit in public prerelease rings is best-effort for a single platform (does not fail the whole pipeline)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-expo-submit-fail-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
@@ -34,18 +34,19 @@ test('expo submit in preview is best-effort for a single platform (does not fail
     EXPO_TOKEN: 'test-token',
   };
 
-  const out = execFileSync(
-    process.execPath,
-    [
-      path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'submit.mjs'),
-      '--environment',
-      'preview',
-      '--platform',
-      'android',
-    ],
-    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
-  );
+  for (const environment of ['preview', 'dev']) {
+    const out = execFileSync(
+      process.execPath,
+      [
+        path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'submit.mjs'),
+        '--environment',
+        environment,
+        '--platform',
+        'android',
+      ],
+      { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+    );
 
-  assert.match(out, /::warning::Expo submit failed for android in preview/);
+    assert.match(out, new RegExp(`::warning::Expo submit failed for android in ${environment}`));
+  }
 });
-

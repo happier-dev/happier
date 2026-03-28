@@ -7,20 +7,20 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI can orchestrate UI mobile native preview-apk release in dry-run', async () => {
+test('pipeline CLI can orchestrate UI mobile native dev release in dry-run', async () => {
   const out = execFileSync(
     process.execPath,
     [
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'ui-mobile-release',
       '--environment',
-      'preview',
+      'dev',
       '--action',
       'native',
       '--platform',
       'android',
       '--profile',
-      'preview-apk',
+      'publicdev-apk',
       '--dry-run',
       '--secrets-source',
       'env',
@@ -40,7 +40,7 @@ test('pipeline CLI can orchestrate UI mobile native preview-apk release in dry-r
     },
   );
 
-  assert.match(out, /\[pipeline\] ui-mobile release: environment=preview action=native/);
+  assert.match(out, /\[pipeline\] ui-mobile release: environment=dev action=native/);
   assert.match(out, /scripts\/pipeline\/expo\/native-build\.mjs/);
   assert.match(out, /--dump-view"?\s+"?true\b/);
   assert.match(out, /scripts\/pipeline\/expo\/download-android-apk\.mjs/);

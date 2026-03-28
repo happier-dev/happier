@@ -14,8 +14,9 @@ on:
         type: choice
         default: preview
         options:
-          - development
-          - canary
+          - internaldev
+          - internalpreview
+          - publicdev
           - preview
           - production
       platform:
@@ -34,10 +35,12 @@ on:
         default: auto
         options:
           - auto
-          - development
-          - development-store
-          - canary
-          - canary-apk
+          - internaldev
+          - internaldev-store
+          - internalpreview
+          - internalpreview-apk
+          - publicdev
+          - publicdev-apk
           - preview
           - preview-apk
           - production
@@ -130,7 +133,7 @@ jobs:
 
   validate_apple_api_private_key:
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
-    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'publicdev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
     steps:
       - name: Fail when APPLE_API_PRIVATE_KEY is missing
@@ -152,7 +155,7 @@ jobs:
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
-      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
+      APP_ENV: ${{ inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EAS_PLATFORM: android
       # Local Android release builds can exceed default heap limits during D8 dex merging.
@@ -203,7 +206,7 @@ jobs:
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'preview' || inputs.environment == 'canary') && 'preview') || '' }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'publicdev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: EAS build (local runner) (pipeline)
@@ -238,7 +241,7 @@ jobs:
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
-      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
+      APP_ENV: ${{ inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EAS_PLATFORM: ios
     steps:
@@ -268,7 +271,7 @@ jobs:
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'preview' || inputs.environment == 'canary') && 'preview') || '' }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'publicdev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: EAS build (local runner) (pipeline)
@@ -294,13 +297,13 @@ jobs:
 
   submit_android:
     name: Submit (android)
-    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'publicdev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token, build_android]
     runs-on: ubuntu-latest
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
-      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
+      APP_ENV: ${{ inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EAS_PLATFORM: android
     steps:
@@ -339,12 +342,12 @@ jobs:
             ext="apk"
           fi
 
-          out=""
-          if [ "${env_name}" = "production" ]; then
-            out="dist/ui-mobile/happier-production-${platform}-v${app_version}.${ext}"
-          else
-            out="dist/ui-mobile/happier-preview-${platform}.${ext}"
-          fi
+              out=""
+              if [ "${env_name}" = "production" ]; then
+                out="dist/ui-mobile/happier-production-${platform}-v${app_version}.${ext}"
+              else
+                out="dist/ui-mobile/happier-${env_name}-${platform}.${ext}"
+              fi
 
           echo "out=${out}" >> "$GITHUB_OUTPUT"
 
@@ -410,7 +413,7 @@ jobs:
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
-      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
+      APP_ENV: ${{ inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
     steps:
       - name: Checkout
@@ -438,7 +441,7 @@ jobs:
           npm_config_production: "false"
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'preview' || inputs.environment == 'canary') && 'preview') || '' }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'publicdev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Publish OTA via pipeline
@@ -452,13 +455,13 @@ jobs:
 
   submit_ios:
     name: Submit (ios)
-    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'publicdev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token, validate_apple_api_private_key, build_ios]
     runs-on: macos-latest
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
-      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
+      APP_ENV: ${{ inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
       EAS_PLATFORM: ios
@@ -489,12 +492,12 @@ jobs:
             exit 1
           fi
 
-          out=""
-          if [ "${env_name}" = "production" ]; then
-            out="dist/ui-mobile/happier-production-${platform}-v${app_version}.ipa"
-          else
-            out="dist/ui-mobile/happier-preview-${platform}.ipa"
-          fi
+              out=""
+              if [ "${env_name}" = "production" ]; then
+                out="dist/ui-mobile/happier-production-${platform}-v${app_version}.ipa"
+              else
+                out="dist/ui-mobile/happier-${env_name}-${platform}.ipa"
+              fi
 
           echo "out=${out}" >> "$GITHUB_OUTPUT"
 

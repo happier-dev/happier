@@ -7,12 +7,19 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('self-host.sh supports --channel preview/stable flags', async () => {
+test('self-host.sh exposes dev as the public third channel while preserving the internal publicdev mapping', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'self-host.sh');
   const raw = await readFile(path, 'utf8');
   assert.match(raw, /--channel\)/);
   assert.match(raw, /--preview\)/);
+  assert.match(raw, /--dev\)/);
   assert.match(raw, /--stable\)/);
+  assert.match(raw, /--channel <stable\|preview\|dev>/);
+  assert.match(raw, /bash -s -- --channel dev/);
+  assert.match(raw, /HAPPIER_CHANNEL=dev bash/);
+  assert.match(raw, /publicdev\|dev\) echo "publicdev"/);
+  assert.match(raw, /publicdev\) echo "dev"/);
+  assert.match(raw, /TAG="stack-\$\(rolling_suffix_for_channel "\$\{CHANNEL\}"\)"/);
   assert.match(raw, /No stable releases found/i);
 });
 

@@ -27,3 +27,11 @@ test('apps/ui eas.json configures submit.production.android track without requir
   );
 });
 
+test('apps/ui eas.json configures submit.publicdev.android track without requiring a local key file', () => {
+  const raw = fs.readFileSync(path.join(repoRoot, 'apps', 'ui', 'eas.json'), 'utf8');
+  const parsed = JSON.parse(raw);
+  const android = parsed?.submit?.publicdev?.android;
+  assert.ok(android, 'expected submit.publicdev.android to exist');
+  assert.equal(String(android.track ?? ''), 'internal');
+  assert.equal(android.serviceAccountKeyPath ?? undefined, undefined, 'expected no submit.publicdev.android.serviceAccountKeyPath');
+});

@@ -36,3 +36,63 @@ test('installed component paths resolve binary, shim, and node entrypoint locati
   assert.equal(paths.nodeEntrypointPath, '/Users/tester/.happier-custom/cli/current/package-dist/index.mjs');
   assert.equal(paths.shimPaths[0], '/Users/tester/.happier-custom/bin/happier');
 });
+
+test('public release rings resolve to distinct install roots and public shims', () => {
+  const env = {
+    HOME: '/Users/tester',
+    HAPPIER_HOME_DIR: '/Users/tester/.happier-custom',
+  };
+
+  const previewLayout = resolveFirstPartyInstallLayout({
+    componentId: 'happier-cli',
+    processEnv: env,
+    releaseRing: 'preview',
+  });
+  const publicdevLayout = resolveFirstPartyInstallLayout({
+    componentId: 'happier-cli',
+    processEnv: env,
+    releaseRing: 'publicdev',
+  });
+  const previewPaths = resolveInstalledFirstPartyComponentPaths({
+    componentId: 'happier-cli',
+    processEnv: env,
+    releaseRing: 'preview',
+  });
+  const publicdevPaths = resolveInstalledFirstPartyComponentPaths({
+    componentId: 'happier-cli',
+    processEnv: env,
+    releaseRing: 'publicdev',
+  });
+
+  assert.equal(previewLayout.installRoot, '/Users/tester/.happier-custom/cli-preview');
+  assert.equal(previewLayout.currentPath, '/Users/tester/.happier-custom/cli-preview/current');
+  assert.equal(previewPaths.shimPaths[0], '/Users/tester/.happier-custom/bin/hprev');
+
+  assert.equal(publicdevLayout.installRoot, '/Users/tester/.happier-custom/cli-dev');
+  assert.equal(publicdevLayout.currentPath, '/Users/tester/.happier-custom/cli-dev/current');
+  assert.equal(publicdevPaths.shimPaths[0], '/Users/tester/.happier-custom/bin/hdev');
+});
+
+test('publicdev install layout resolves a side-by-side cli root and shim', () => {
+  const env = {
+    HOME: '/Users/tester',
+    HAPPIER_HOME_DIR: '/Users/tester/.happier-custom',
+  };
+
+  const cliLayout = resolveFirstPartyInstallLayout({
+    componentId: 'happier-cli',
+    channel: 'publicdev',
+    processEnv: env,
+  });
+  const daemonPaths = resolveInstalledFirstPartyComponentPaths({
+    componentId: 'happier-daemon',
+    channel: 'publicdev',
+    processEnv: env,
+  });
+
+  assert.equal(cliLayout.installRoot, '/Users/tester/.happier-custom/cli-dev');
+  assert.equal(cliLayout.currentPath, '/Users/tester/.happier-custom/cli-dev/current');
+  assert.equal(daemonPaths.binaryPath, '/Users/tester/.happier-custom/cli-dev/current/happier');
+  assert.equal(daemonPaths.nodeEntrypointPath, '/Users/tester/.happier-custom/cli-dev/current/package-dist/index.mjs');
+  assert.equal(daemonPaths.shimPaths[0], '/Users/tester/.happier-custom/bin/hdev');
+});

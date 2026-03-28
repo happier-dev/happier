@@ -34,6 +34,10 @@ import {
   resolveServiceBackend,
 } from '@happier-dev/cli-common/service';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
+import {
+  getReleaseRingCatalogEntry,
+  normalizePublicReleaseRingId,
+} from '@happier-dev/release-runtime/releaseRings';
 import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
 import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
 import { planArchiveExtraction } from '@happier-dev/release-runtime/extractPlan';
@@ -42,7 +46,7 @@ import { findExtractedExecutableByName } from './self_host/findExtractedExecutab
 import { maybeInstallCompanionCli } from './self_host/install_companion_cli.mjs';
 import { listVersionedDirectoryIdsNewestFirst, pruneVersionedDirectories } from './self_host/version_retention.mjs';
 
-const SUPPORTED_CHANNELS = new Set(['stable', 'preview']);
+const SUPPORTED_CHANNELS = new Set(['stable', 'preview', 'publicdev']);
 const DEFAULTS = Object.freeze({
   githubRepo: 'happier-dev/happier',
   installRoot: '/opt/happier',
@@ -60,29 +64,45 @@ const DEFAULTS = Object.freeze({
   uiWebArch: 'any',
 });
 
-export function resolveSelfHostDefaults({ platform = process.platform, mode = 'user', homeDir = homedir() } = {}) {
+function resolveSelfHostReleaseSuffix(channel) {
+  const entry = getReleaseRingCatalogEntry(channel);
+  if (!entry.rollingReleaseSuffix) {
+    throw new Error(`[self-host] public release ring ${channel} is missing a rolling suffix`);
+  }
+  return entry.rollingReleaseSuffix;
+}
+
+function appendSelfHostReleaseSuffix(baseValue, channel) {
+  return channel === 'stable' ? baseValue : `${baseValue}-${resolveSelfHostReleaseSuffix(channel)}`;
+}
+
+export function resolveSelfHostDefaults({ platform = process.platform, mode = 'user', channel = 'stable', homeDir = homedir() } = {}) {
   const p = String(platform ?? '').trim() || process.platform;
   const m = String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
+  const normalizedChannel = normalizeChannel(channel);
   const home = String(homeDir ?? '').trim() || homedir();
 
   if (m === 'system') {
     return {
-      installRoot: DEFAULTS.installRoot,
+      installRoot: appendSelfHostReleaseSuffix(DEFAULTS.installRoot, normalizedChannel),
       binDir: DEFAULTS.binDir,
-      configDir: DEFAULTS.configDir,
-      dataDir: DEFAULTS.dataDir,
-      logDir: DEFAULTS.logDir,
+      configDir: appendSelfHostReleaseSuffix(DEFAULTS.configDir, normalizedChannel),
+      dataDir: appendSelfHostReleaseSuffix(DEFAULTS.dataDir, normalizedChannel),
+      logDir: appendSelfHostReleaseSuffix(DEFAULTS.logDir, normalizedChannel),
+      serviceName: appendSelfHostReleaseSuffix(DEFAULTS.serviceName, normalizedChannel),
     };
   }
 
   const happierHome = p === 'win32' ? `${home}\\.happier` : join(home, '.happier');
-  const installRoot = p === 'win32' ? `${happierHome}\\self-host` : join(happierHome, 'self-host');
+  const installRootBase = p === 'win32' ? `${happierHome}\\self-host` : join(happierHome, 'self-host');
+  const installRoot = appendSelfHostReleaseSuffix(installRootBase, normalizedChannel);
   return {
     installRoot,
     binDir: p === 'win32' ? `${happierHome}\\bin` : join(happierHome, 'bin'),
     configDir: p === 'win32' ? `${installRoot}\\config` : join(installRoot, 'config'),
     dataDir: p === 'win32' ? `${installRoot}\\data` : join(installRoot, 'data'),
     logDir: p === 'win32' ? `${installRoot}\\logs` : join(installRoot, 'logs'),
+    serviceName: appendSelfHostReleaseSuffix(DEFAULTS.serviceName, normalizedChannel),
   };
 }
 
@@ -242,11 +262,30 @@ function normalizeOs(platform = process.platform) {
 }
 
 function normalizeChannel(raw) {
-  const channel = String(raw ?? '').trim() || 'stable';
+  const requested = String(raw ?? '').trim() || 'stable';
+  const channel = normalizePublicReleaseRingId(requested);
   if (!SUPPORTED_CHANNELS.has(channel)) {
-    throw new Error(`[self-host] invalid channel: ${channel} (expected stable|preview)`);
+    throw new Error(`[self-host] invalid channel: ${requested} (expected stable|preview|dev)`);
   }
   return channel;
+}
+
+function displayChannel(channel) {
+  return getReleaseRingCatalogEntry(normalizeChannel(channel)).publicLabel;
+}
+
+export function resolveSelfHostReleaseTargets(channel) {
+  const normalizedChannel = normalizeChannel(channel);
+  const suffix = resolveSelfHostReleaseSuffix(normalizedChannel);
+  return {
+    channel: normalizedChannel,
+    serverTag: `server-${suffix}`,
+    uiWebTags: normalizedChannel === 'stable'
+      ? ['ui-web-stable']
+      : normalizedChannel === 'preview'
+        ? ['ui-web-preview', 'ui-web-stable']
+        : ['ui-web-dev', 'ui-web-preview', 'ui-web-stable'],
+  };
 }
 
 function normalizeMode(raw) {
@@ -421,7 +460,7 @@ async function applySelfHostSqliteMigrationsAtInstallTime({ env }) {
 }
 
 function resolveConfig({ channel, mode = 'user', platform = process.platform } = {}) {
-  const defaults = resolveSelfHostDefaults({ platform, mode, homeDir: homedir() });
+  const defaults = resolveSelfHostDefaults({ platform, mode, channel, homeDir: homedir() });
   const installRoot = String(process.env.HAPPIER_SELF_HOST_INSTALL_ROOT ?? defaults.installRoot).trim();
   const binDir = String(process.env.HAPPIER_SELF_HOST_BIN_DIR ?? defaults.binDir).trim();
   const configDir = String(process.env.HAPPIER_SELF_HOST_CONFIG_DIR ?? defaults.configDir).trim();
@@ -750,7 +789,7 @@ export function renderSelfHostStatusText(report, { colors = true } = {}) {
         dim: identity,
       };
 
-  const channel = String(report?.channel ?? '').trim();
+  const channel = report?.channel ? displayChannel(report.channel) : '';
   const mode = String(report?.mode ?? '').trim();
   const serviceName = String(report?.serviceName ?? '').trim();
   const serverUrl = String(report?.serverUrl ?? '').trim();
@@ -869,7 +908,7 @@ export function renderUpdaterSystemdUnit({
   const label = String(updaterLabel ?? '').trim() || 'happier-self-host-updater';
   const hstack = String(hstackPath ?? '').trim();
   if (!hstack) throw new Error('[self-host] missing hstackPath for updater unit');
-  const ch = String(channel ?? '').trim() || 'stable';
+  const ch = displayChannel(channel);
   const m = String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
   const wd = String(workingDirectory ?? '').trim();
   const out = String(stdoutPath ?? '').trim();
@@ -940,7 +979,7 @@ export function renderUpdaterLaunchdPlistXml({
   const label = String(updaterLabel ?? '').trim() || 'happier-self-host-updater';
   const hstack = String(hstackPath ?? '').trim();
   if (!hstack) throw new Error('[self-host] missing hstackPath for updater launchd plist');
-  const ch = String(channel ?? '').trim() || 'stable';
+  const ch = displayChannel(channel);
   const m = String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
   const wd = String(workingDirectory ?? '').trim();
   const out = String(stdoutPath ?? '').trim();
@@ -984,7 +1023,7 @@ export function renderUpdaterScheduledTaskWrapperPs1({
   const label = String(updaterLabel ?? '').trim() || 'happier-self-host-updater';
   const hstack = String(hstackPath ?? '').trim();
   if (!hstack) throw new Error('[self-host] missing hstackPath for updater scheduled task wrapper');
-  const ch = String(channel ?? '').trim() || 'stable';
+  const ch = displayChannel(channel);
   const m = String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
   const wd = String(workingDirectory ?? '').trim();
   const out = String(stdoutPath ?? '').trim();
@@ -1730,7 +1769,7 @@ async function installFromRelease({ product, binaryName, config, explicitBinaryP
     });
   }
 
-  const channelTag = config.channel === 'preview' ? 'server-preview' : 'server-stable';
+  const { serverTag: channelTag } = resolveSelfHostReleaseTargets(config.channel);
   const release = await fetchGitHubReleaseByTag({
     githubRepo: config.githubRepo,
     tag: channelTag,
@@ -1795,9 +1834,7 @@ export async function resolveExtractedUiWebBundleRootDir({ extractDir } = {}) {
 }
 
 async function installUiWebFromRelease({ config }) {
-  const tags = config.channel === 'preview'
-    ? ['ui-web-preview', 'ui-web-stable']
-    : ['ui-web-stable'];
+  const { uiWebTags: tags } = resolveSelfHostReleaseTargets(config.channel);
 
   const resolvedRelease = await fetchFirstGitHubReleaseByTags({
     githubRepo: config.githubRepo,
@@ -2634,13 +2671,13 @@ export function usageText() {
     banner('self-host', { subtitle: 'Happier Self-Host guided installation flow.' }),
     '',
     sectionTitle('usage:'),
-    `  ${cyan('hstack self-host')} install [--mode=user|system] [--without-cli] [--without-ui] [--channel=stable|preview] [--auto-update|--no-auto-update] [--auto-update-interval=<minutes>] [--auto-update-at=<HH:MM>] [--env KEY=VALUE]... [--non-interactive] [--json]`,
-    `  ${cyan('hstack self-host')} status [--mode=user|system] [--channel=stable|preview] [--json]`,
-    `  ${cyan('hstack self-host')} update [--mode=user|system] [--channel=stable|preview] [--json]`,
-    `  ${cyan('hstack self-host')} rollback [--mode=user|system] [--to=<version>] [--channel=stable|preview] [--json]`,
+    `  ${cyan('hstack self-host')} install [--mode=user|system] [--without-cli] [--without-ui] [--channel=stable|preview|dev] [--auto-update|--no-auto-update] [--auto-update-interval=<minutes>] [--auto-update-at=<HH:MM>] [--env KEY=VALUE]... [--non-interactive] [--json]`,
+    `  ${cyan('hstack self-host')} status [--mode=user|system] [--channel=stable|preview|dev] [--json]`,
+    `  ${cyan('hstack self-host')} update [--mode=user|system] [--channel=stable|preview|dev] [--json]`,
+    `  ${cyan('hstack self-host')} rollback [--mode=user|system] [--to=<version>] [--channel=stable|preview|dev] [--json]`,
     `  ${cyan('hstack self-host')} uninstall [--mode=user|system] [--purge-data] [--yes] [--json]`,
     `  ${cyan('hstack self-host')} doctor [--json]`,
-    `  ${cyan('hstack self-host')} config view|set [--mode=user|system] [--channel=stable|preview] [--json]`,
+    `  ${cyan('hstack self-host')} config view|set [--mode=user|system] [--channel=stable|preview|dev] [--json]`,
     '',
     sectionTitle('notes:'),
     '- works without a repository checkout (binary-safe flow).',

@@ -7,6 +7,16 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
+import {
+  formatPublicReleaseChannel,
+  formatPublicReleaseChannelChoices,
+  getPublicReleaseRingEntry,
+  normalizePublicReleaseChannel,
+  resolveEmbeddedPolicyForChannel,
+  resolveRollingPrerelease,
+  resolveRollingReleaseLabel,
+  resolveRollingReleaseTagSuffix,
+} from './lib/public-release-rings.mjs';
 import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
 import { resolveGitHubRepoSlug } from '../github/resolve-github-repo-slug.mjs';
 
@@ -124,10 +134,11 @@ async function main() {
     allowPositionals: false,
   });
 
-  const channel = String(values.channel ?? '').trim();
-  if (!channel) fail('--channel is required');
-  if (channel !== 'preview' && channel !== 'stable') {
-    fail(`--channel must be 'preview' or 'stable' (got: ${channel})`);
+  const requestedChannel = String(values.channel ?? '').trim();
+  if (!requestedChannel) fail('--channel is required');
+  const channel = normalizePublicReleaseChannel(requestedChannel);
+  if (!channel) {
+    fail(`--channel must be ${JSON.stringify(formatPublicReleaseChannelChoices())} (got: ${requestedChannel})`);
   }
   const allowStable = parseBool(values['allow-stable'], '--allow-stable');
   if (channel === 'stable' && !allowStable) {
@@ -144,22 +155,21 @@ async function main() {
   const serverPkg = JSON.parse(fs.readFileSync(withinRepo(repoRoot, 'apps/server/package.json'), 'utf8'));
   const serverVersion = String(serverPkg.version ?? '').trim();
   if (!serverVersion) fail('Unable to resolve apps/server version');
+  const releaseRing = getPublicReleaseRingEntry(channel);
 
-  const tag = channel === 'preview' ? 'server-preview' : 'server-stable';
-  const title = channel === 'preview' ? 'Happier Server Preview' : 'Happier Server Stable';
-  const prerelease = channel === 'preview' ? 'true' : 'false';
-  const notesBase =
-    channel === 'preview' ? 'Rolling preview server runtime release.' : 'Rolling stable server runtime release.';
+  const tag = `server-${resolveRollingReleaseTagSuffix(channel)}`;
+  const title = `Happier Server ${resolveRollingReleaseLabel(channel)}`;
+  const prerelease = resolveRollingPrerelease(channel);
+  const notesBase = `Rolling ${releaseRing.publicLabel} server runtime release.`;
   const notes = withCurrentVersionLine(notesBase, serverVersion);
   const versionTag = `server-v${serverVersion}`;
   const versionTitle = `Happier Server v${serverVersion}`;
-  const versionNotes =
-    channel === 'preview' ? `Server runtime preview build v${serverVersion}.` : `Server runtime stable release v${serverVersion}.`;
+  const versionNotes = `Server runtime ${releaseRing.publicLabel} build v${serverVersion}.`;
   const targetSha = run(opts, 'git', ['rev-parse', 'HEAD'], { cwd: repoRoot, stdio: 'pipe' }).trim() || 'UNKNOWN_SHA';
 
-  const embeddedPolicy = channel === 'stable' ? 'production' : 'preview';
+  const embeddedPolicy = resolveEmbeddedPolicyForChannel(channel);
 
-  console.log(`[pipeline] server-runtime: channel=${channel} tag=${tag} version=${serverVersion}`);
+  console.log(`[pipeline] server-runtime: channel=${formatPublicReleaseChannel(channel)} tag=${tag} version=${serverVersion}`);
 
   await preflightMinisignKey(opts);
 

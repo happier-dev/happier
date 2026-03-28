@@ -10,7 +10,7 @@ import { join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI can download Android APK (dry-run) from EAS build JSON', async () => {
+test('pipeline CLI can download Android APK (dry-run) from EAS build JSON for dev', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'happier-eas-'));
   const buildJsonPath = join(dir, 'eas_build.json');
   writeFileSync(
@@ -36,7 +36,7 @@ test('pipeline CLI can download Android APK (dry-run) from EAS build JSON', asyn
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'expo-download-apk',
       '--environment',
-      'preview',
+      'dev',
       '--build-json',
       buildJsonPath,
       '--dry-run',
@@ -55,7 +55,6 @@ test('pipeline CLI can download Android APK (dry-run) from EAS build JSON', asyn
     },
   );
 
-  assert.match(out, /\[pipeline\] expo download apk: environment=preview/);
+  assert.match(out, /\[pipeline\] expo download apk: environment=dev/);
   assert.match(out, /scripts\/pipeline\/expo\/download-android-apk\.mjs/);
 });
-

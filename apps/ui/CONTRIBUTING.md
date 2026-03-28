@@ -63,7 +63,7 @@ yarn tauri:build:production
 
 **How Tauri Variants Work:**
 - Base config: `src-tauri/tauri.conf.json` (production defaults)
-- Partial configs: `tauri.dev.conf.json`, `tauri.preview.conf.json`
+- Partial configs: `tauri.publicdev.conf.json`, `tauri.preview.conf.json`
 - Tauri merges partial configs using [JSON Merge Patch (RFC 7396)](https://datatracker.ietf.org/doc/html/rfc7396)
 - Only differences need to be specified in partial configs (DRY principle)
 

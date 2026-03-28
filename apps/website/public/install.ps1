@@ -1,9 +1,25 @@
 param(
-  [ValidateSet("stable", "preview")]
   [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "stable" })
 )
 
 $ErrorActionPreference = "Stop"
+
+function Normalize-Channel {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Raw
+  )
+  $value = $Raw.Trim().ToLowerInvariant()
+  if (-not $value) { return "stable" }
+  switch ($value) {
+    "stable" { return "stable" }
+    "preview" { return "preview" }
+    "dev" { return "publicdev" }
+    "publicdev" { return "publicdev" }
+    default { throw "Invalid HAPPIER_CHANNEL '$Raw'. Expected stable, preview, or dev." }
+  }
+}
+
+$Channel = Normalize-Channel -Raw ([string]$Channel)
 
 $Repo = if ($env:HAPPIER_GITHUB_REPO) { $env:HAPPIER_GITHUB_REPO } else { "happier-dev/happier" }
 $Token = if ($env:HAPPIER_GITHUB_TOKEN) { $env:HAPPIER_GITHUB_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { "" }
@@ -81,7 +97,7 @@ function Resolve-MinisignPublicKey {
   Invoke-WebRequest -Uri $MinisignPubKeyUrl -OutFile $TargetPath
 }
 
-$tag = if ($Channel -eq "preview") { "cli-preview" } else { "cli-stable" }
+$tag = if ($Channel -eq "preview") { "cli-preview" } elseif ($Channel -eq "publicdev") { "cli-dev" } else { "cli-stable" }
 Write-Host "Fetching $tag release metadata..."
 try {
   $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
@@ -89,6 +105,9 @@ try {
 catch {
   if ($Channel -eq "stable") {
     throw "No stable releases found for Happier CLI."
+  }
+  if ($Channel -eq "publicdev") {
+    throw "No dev releases found for Happier CLI."
   }
   throw "No preview releases found for Happier CLI."
 }
@@ -162,7 +181,7 @@ try {
   $target = Join-Path $InstallDir "bin\happier.exe"
   $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
   $env:HAPPIER_HOME_DIR = $InstallDir
-  $promotionOutput = & $binary self __install-payload --component happier-cli --payload-root $payloadRoot --version $version 2>&1 | Out-String
+  $promotionOutput = & $binary self __install-payload --component happier-cli --payload-root $payloadRoot --version $version --channel $Channel 2>&1 | Out-String
   if ($LASTEXITCODE -ne 0) {
     if ($promotionOutput -match 'Unknown self subcommand:\s+__install-payload') {
       Write-Warning "Falling back to legacy binary install because the extracted CLI does not support payload promotion."

@@ -22,6 +22,17 @@ function applyTransform({ source, transform }) {
       })
       .join('\n');
   }
+  if (transform === 'publicdev-default-channel') {
+    const shellUpdated = source.replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-dev');
+    return shellUpdated
+      .split('\n')
+      .map((line) => {
+        if (!line.includes('$Channel')) return line;
+        if (!line.includes('"stable"')) return line;
+        return line.replace('"stable"', '"dev"');
+      })
+      .join('\n');
+  }
   return source;
 }
 

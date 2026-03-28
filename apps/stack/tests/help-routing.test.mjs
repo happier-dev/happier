@@ -110,6 +110,12 @@ const helpScenarios = [
     excludes: ['hstack self check'],
   },
   {
+    title: 'hstack self-host --channel=dev -h accepts the public dev channel',
+    args: ['self-host', '--channel=dev', '-h'],
+    includes: ['hstack self-host install', '--channel=stable|preview|dev'],
+    excludes: ['invalid channel'],
+  },
+  {
     title: 'hstack contrib sync -h prints sync help (not root help)',
     args: ['contrib', 'sync', '-h'],
     includes: ['hstack contrib sync'],

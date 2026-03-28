@@ -7,41 +7,46 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('publish-server-runtime pipeline publishes server-v* version tags alongside rolling tags (dry-run)', async () => {
-  const out = execFileSync(
-    process.execPath,
-    [
-      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-server-runtime.mjs'),
-      '--channel',
-      'preview',
-      '--allow-stable',
-      'false',
-      '--run-contracts',
-      'false',
-      '--check-installers',
-      'false',
-      '--dry-run',
-    ],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        GH_TOKEN: '',
-        GH_REPO: '',
-        GITHUB_REPOSITORY: '',
+for (const { channel, rollingTag } of [
+  { channel: 'preview', rollingTag: 'server-preview' },
+  { channel: 'publicdev', rollingTag: 'server-dev' },
+]) {
+  test(`publish-server-runtime pipeline publishes server-v* version tags alongside rolling tags for ${channel} (dry-run)`, async () => {
+    const out = execFileSync(
+      process.execPath,
+      [
+        resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-server-runtime.mjs'),
+        '--channel',
+        channel,
+        '--allow-stable',
+        'false',
+        '--run-contracts',
+        'false',
+        '--check-installers',
+        'false',
+        '--dry-run',
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          GH_TOKEN: '',
+          GH_REPO: '',
+          GITHUB_REPOSITORY: '',
+        },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 30_000,
       },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
-    },
-  );
+    );
 
-  assert.match(out, /--tag\s+server-preview\b/);
-  assert.match(out, /--tag\s+server-preview\b[^\n]*--generate-notes\s+false\b/);
-  assert.match(out, /--tag\s+server-v/);
-  assert.match(out, /--tag\s+server-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
-  assert.match(out, /clean artifacts dir: dist\/release-assets\/server|ensure clean artifacts dir: dist\/release-assets\/server/i);
-});
+    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b`));
+    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b[^\\n]*--generate-notes\\s+false\\b`));
+    assert.match(out, /--tag\s+server-v/);
+    assert.match(out, /--tag\s+server-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
+    assert.match(out, /clean artifacts dir: dist\/release-assets\/server|ensure clean artifacts dir: dist\/release-assets\/server/i);
+  });
+}
 
 test('publish-server-runtime fails fast with helpful message when MINISIGN_SECRET_KEY is invalid', async () => {
   const scriptPath = resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-server-runtime.mjs');

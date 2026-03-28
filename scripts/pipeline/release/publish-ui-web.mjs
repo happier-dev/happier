@@ -7,6 +7,18 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
+import {
+  formatPublicReleaseChannel,
+  formatPublicReleaseChannelChoices,
+  getPublicReleaseRingEntry,
+  normalizePublicReleaseChannel,
+  resolveEmbeddedPolicyForChannel,
+  resolveExpoAppEnvironmentForChannel,
+  resolveRollingPrerelease,
+  resolveRollingReleaseLabel,
+  resolveRollingReleaseTagSuffix,
+  resolveRollingVersionSuffix,
+} from './lib/public-release-rings.mjs';
 import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
 
 function fail(message) {
@@ -54,27 +66,12 @@ function normalizeBase(version) {
 }
 
 /**
- * @param {string} channel
+ * @param {import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId} channel
  */
 function computeUiVersion(channel, baseVersion) {
-  if (channel !== 'preview') return baseVersion;
+  if (channel === 'stable') return baseVersion;
   const base = normalizeBase(baseVersion);
-
-  const parseOptionalPositiveInt = (value) => {
-    const raw = String(value ?? '').trim();
-    if (!raw) return null;
-    if (!/^\d+$/.test(raw)) return null;
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) return null;
-    return Math.max(0, Math.floor(parsed));
-  };
-
-  const runNumber = parseOptionalPositiveInt(process.env.GITHUB_RUN_NUMBER);
-  const attemptNumber = parseOptionalPositiveInt(process.env.GITHUB_RUN_ATTEMPT);
-
-  const run = runNumber ?? Math.floor(Date.now() / 1000);
-  const attempt = Math.max(1, (attemptNumber ?? Math.floor(process.pid)));
-  return `${base}-preview.${run}.${attempt}`;
+  return `${base}-${resolveRollingVersionSuffix(channel)}`;
 }
 
 /**
@@ -142,10 +139,11 @@ async function main() {
     allowPositionals: false,
   });
 
-  const channel = String(values.channel ?? '').trim();
-  if (!channel) fail('--channel is required');
-  if (channel !== 'preview' && channel !== 'stable') {
-    fail(`--channel must be 'preview' or 'stable' (got: ${channel})`);
+  const requestedChannel = String(values.channel ?? '').trim();
+  if (!requestedChannel) fail('--channel is required');
+  const channel = normalizePublicReleaseChannel(requestedChannel);
+  if (!channel) {
+    fail(`--channel must be ${JSON.stringify(formatPublicReleaseChannelChoices())} (got: ${requestedChannel})`);
   }
   const allowStable = parseBool(values['allow-stable'], '--allow-stable');
   if (channel === 'stable' && !allowStable) {
@@ -162,24 +160,24 @@ async function main() {
   const pkg = JSON.parse(fs.readFileSync(withinRepo(repoRoot, 'apps/ui/package.json'), 'utf8'));
   const baseVersion = String(pkg.version ?? '').trim();
   if (!baseVersion) fail('Unable to resolve apps/ui version');
+  const releaseRing = getPublicReleaseRingEntry(channel);
   const uiVersion = computeUiVersion(channel, baseVersion);
 
-  const tag = channel === 'preview' ? 'ui-web-preview' : 'ui-web-stable';
-  const title = channel === 'preview' ? 'Happier UI Web Bundle Preview' : 'Happier UI Web Bundle Stable';
-  const prerelease = channel === 'preview' ? 'true' : 'false';
-  const notesBase = channel === 'preview' ? 'Rolling preview UI web bundle release.' : 'Rolling stable UI web bundle release.';
+  const tag = `ui-web-${resolveRollingReleaseTagSuffix(channel)}`;
+  const title = `Happier UI Web Bundle ${resolveRollingReleaseLabel(channel)}`;
+  const prerelease = resolveRollingPrerelease(channel);
+  const notesBase = `Rolling ${releaseRing.publicLabel} UI web bundle release.`;
   const notes = withCurrentVersionLine(notesBase, uiVersion);
   const versionTag = `ui-web-v${uiVersion}`;
   const versionTitle = `Happier UI Web Bundle v${uiVersion}`;
-  const versionNotes =
-    channel === 'preview' ? `UI web bundle preview build v${uiVersion}.` : `UI web bundle stable release v${uiVersion}.`;
+  const versionNotes = `UI web bundle ${releaseRing.publicLabel} build v${uiVersion}.`;
   const targetSha = run(opts, 'git', ['rev-parse', 'HEAD'], { cwd: repoRoot, stdio: 'pipe' }).trim() || 'UNKNOWN_SHA';
 
-  const appEnv = channel === 'stable' ? 'production' : 'preview';
-  const embeddedPolicy = channel === 'stable' ? 'production' : 'preview';
-  const updatesChannel = channel === 'stable' ? 'production' : 'preview';
+  const appEnv = resolveExpoAppEnvironmentForChannel(channel);
+  const embeddedPolicy = resolveEmbeddedPolicyForChannel(channel);
+  const updatesChannel = releaseRing.expoUpdatesChannel;
 
-  console.log(`[pipeline] ui-web: channel=${channel} tag=${tag} version=${uiVersion}`);
+  console.log(`[pipeline] ui-web: channel=${formatPublicReleaseChannel(channel)} tag=${tag} version=${uiVersion}`);
 
   await preflightMinisignKey(opts);
 

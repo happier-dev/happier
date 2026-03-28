@@ -11,21 +11,25 @@ function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
 }
 
-test('expo ota update passes case-sensitive git config to EAS on macOS', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-eas-ota-git-env-'));
+function createExpoOtaStubEnvironment(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
-  const npxLogPath = path.join(dir, 'npx.log');
-  const yarnLogPath = path.join(dir, 'yarn.log');
-  const gitLogPath = path.join(dir, 'git.log');
+  const paths = {
+    dir,
+    binDir,
+    npxLogPath: path.join(dir, 'npx.log'),
+    yarnLogPath: path.join(dir, 'yarn.log'),
+    gitLogPath: path.join(dir, 'git.log'),
+  };
 
   writeExecutable(
     path.join(binDir, 'git'),
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
-      `echo "$*" >> ${JSON.stringify(gitLogPath)}`,
+      `echo "$*" >> ${JSON.stringify(paths.gitLogPath)}`,
       'if [[ "$1" == "config" && "$2" == "--get" && "$3" == "core.ignorecase" ]]; then',
       '  echo "true"',
       '  exit 0',
@@ -44,7 +48,7 @@ test('expo ota update passes case-sensitive git config to EAS on macOS', () => {
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
-      `echo "$*" >> ${JSON.stringify(yarnLogPath)}`,
+      `echo "$*" >> ${JSON.stringify(paths.yarnLogPath)}`,
       'exit 0',
       '',
     ].join('\n'),
@@ -55,9 +59,10 @@ test('expo ota update passes case-sensitive git config to EAS on macOS', () => {
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
-      `echo "$*" >> ${JSON.stringify(npxLogPath)}`,
-      `env | grep '^GIT_CONFIG_' | sort >> ${JSON.stringify(npxLogPath)} || true`,
-      'if [[ "$*" == *" eas-cli@"*" update --channel development "* ]]; then',
+      `echo "$*" >> ${JSON.stringify(paths.npxLogPath)}`,
+      `echo "NODE_OPTIONS=${'${NODE_OPTIONS:-}'}" >> ${JSON.stringify(paths.npxLogPath)}`,
+      `env | grep '^GIT_CONFIG_' | sort >> ${JSON.stringify(paths.npxLogPath)} || true`,
+      'if [[ "$*" == *" eas-cli@"*" update --channel internaldev "* ]]; then',
       '  exit 0',
       'fi',
       'echo "unexpected npx invocation: $*" >&2',
@@ -66,36 +71,77 @@ test('expo ota update passes case-sensitive git config to EAS on macOS', () => {
     ].join('\n'),
   );
 
+  return paths;
+}
+
+function runExpoOtaUpdateWithStubbedCommands({
+  environment = 'internaldev',
+  message = 'internaldev OTA case env test',
+  extraEnv = {},
+  prefix,
+}) {
+  const stub = createExpoOtaStubEnvironment(prefix);
   execFileSync(
     process.execPath,
     [
       path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'ota-update.mjs'),
       '--environment',
-      'development',
+      environment,
       '--interactive',
       'true',
       '--message',
-      'development OTA case env test',
+      message,
     ],
     {
       cwd: repoRoot,
       env: {
         ...process.env,
-        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        PATH: `${stub.binDir}:${process.env.PATH ?? ''}`,
         EXPO_TOKEN: '',
+        ...extraEnv,
       },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
     },
   );
+  return stub;
+}
 
-  const npxLog = fs.readFileSync(npxLogPath, 'utf8');
-  assert.match(npxLog, /update --channel development/);
+test('expo ota update passes case-sensitive git config to EAS on macOS', () => {
+  const stub = runExpoOtaUpdateWithStubbedCommands({
+    prefix: 'happier-pipeline-eas-ota-git-env-',
+  });
+
+  const npxLog = fs.readFileSync(stub.npxLogPath, 'utf8');
+  assert.match(npxLog, /update --channel internaldev/);
   if (process.platform === 'darwin') {
-    const gitLog = fs.existsSync(gitLogPath) ? fs.readFileSync(gitLogPath, 'utf8') : '';
+    const gitLog = fs.existsSync(stub.gitLogPath) ? fs.readFileSync(stub.gitLogPath, 'utf8') : '';
     assert.equal(gitLog, '');
     assert.match(npxLog, /GIT_CONFIG_KEY_\d+=core\.ignorecase/);
     assert.match(npxLog, /GIT_CONFIG_VALUE_\d+=false/);
   }
+});
+
+test('expo ota update raises the Node heap limit for EAS update by default', () => {
+  const stub = runExpoOtaUpdateWithStubbedCommands({
+    prefix: 'happier-pipeline-eas-ota-heap-default-',
+  });
+
+  const npxLog = fs.readFileSync(stub.npxLogPath, 'utf8');
+  assert.match(npxLog, /NODE_OPTIONS=.*--max-old-space-size=8192/);
+});
+
+test('expo ota update respects explicit Expo heap overrides for EAS update', () => {
+  const stub = runExpoOtaUpdateWithStubbedCommands({
+    prefix: 'happier-pipeline-eas-ota-heap-override-',
+    extraEnv: {
+      HAPPIER_PIPELINE_EXPO_MAX_OLD_SPACE_SIZE_MB: '4096',
+      NODE_OPTIONS: '--trace-warnings --max-old-space-size=2048',
+    },
+  });
+
+  const npxLog = fs.readFileSync(stub.npxLogPath, 'utf8');
+  assert.match(npxLog, /NODE_OPTIONS=.*--trace-warnings.*--max-old-space-size=4096/);
+  assert.doesNotMatch(npxLog, /NODE_OPTIONS=.*--max-old-space-size=2048/);
 });

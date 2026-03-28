@@ -10,9 +10,9 @@ import { join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI can publish UI mobile APK release in dry-run', async () => {
+test('pipeline CLI can publish the dev UI mobile APK rolling release in dry-run', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'happier-apk-'));
-  const apkPath = join(dir, 'happier-preview-android.apk');
+  const apkPath = join(dir, 'happier-publicdev-android.apk');
   writeFileSync(apkPath, 'fake-apk');
 
   const out = execFileSync(
@@ -21,7 +21,7 @@ test('pipeline CLI can publish UI mobile APK release in dry-run', async () => {
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'expo-publish-apk-release',
       '--environment',
-      'preview',
+      'dev',
       '--apk-path',
       apkPath,
       '--target-sha',
@@ -44,7 +44,6 @@ test('pipeline CLI can publish UI mobile APK release in dry-run', async () => {
     },
   );
 
-  assert.match(out, /\[pipeline\] ui-mobile apk release: environment=preview tag=ui-mobile-preview/);
+  assert.match(out, /\[pipeline\] ui-mobile apk release: environment=dev tag=ui-mobile-dev/);
   assert.match(out, /scripts\/pipeline\/expo\/publish-apk-release\.mjs/);
 });
-

@@ -1,5 +1,7 @@
 import { cp, mkdir, rm } from 'node:fs/promises';
 
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+
 import type { FirstPartyComponentId } from './componentCatalog.js';
 import { resolveFirstPartyInstallLayout, resolveFirstPartyVersionInstallPath } from './installLayout.js';
 import { syncInstalledPayloadPointer } from './syncInstalledPayloadPointer.js';
@@ -15,15 +17,21 @@ export async function promoteVersionedPayload(params: Readonly<{
   componentId: FirstPartyComponentId;
   versionId: string;
   stagedPayloadPath: string;
+  channel?: PublicReleaseRingId;
+  releaseRing?: PublicReleaseRingId;
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<FirstPartyPayloadPromotionResult> {
   const layout = resolveFirstPartyInstallLayout({
     componentId: params.componentId,
+    channel: params.channel,
+    releaseRing: params.releaseRing,
     processEnv: params.processEnv,
   });
   const versionPath = resolveFirstPartyVersionInstallPath({
     componentId: params.componentId,
     versionId: params.versionId,
+    channel: params.channel,
+    releaseRing: params.releaseRing,
     processEnv: params.processEnv,
   });
   const { currentVersionId, previousVersionId } = await readInstalledVersionMarkers(layout);
@@ -34,11 +42,13 @@ export async function promoteVersionedPayload(params: Readonly<{
 
   let nextPreviousVersionId = previousVersionId;
   if (currentVersionId && currentVersionId !== params.versionId) {
-    const currentVersionPath = resolveFirstPartyVersionInstallPath({
-      componentId: params.componentId,
-      versionId: currentVersionId,
-      processEnv: params.processEnv,
-    });
+      const currentVersionPath = resolveFirstPartyVersionInstallPath({
+        componentId: params.componentId,
+        versionId: currentVersionId,
+        channel: params.channel,
+        releaseRing: params.releaseRing,
+        processEnv: params.processEnv,
+      });
     await syncInstalledPayloadPointer({
       layout,
       pointerPath: layout.previousPath,

@@ -1,6 +1,8 @@
 import { copyFile, mkdir, rm, symlink } from 'node:fs/promises';
 import { dirname, relative } from 'node:path';
 
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+
 import type { FirstPartyComponentId } from './componentCatalog.js';
 import { resolveInstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
 
@@ -10,10 +12,14 @@ export interface SyncInstalledFirstPartyShimsResult {
 
 export async function syncInstalledFirstPartyShims(params: Readonly<{
   componentId: FirstPartyComponentId;
+  channel?: PublicReleaseRingId;
+  releaseRing?: PublicReleaseRingId;
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<SyncInstalledFirstPartyShimsResult> {
   const paths = resolveInstalledFirstPartyComponentPaths({
     componentId: params.componentId,
+    channel: params.channel,
+    releaseRing: params.releaseRing,
     processEnv: params.processEnv,
   });
 

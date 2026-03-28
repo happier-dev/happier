@@ -35,3 +35,22 @@ test('hstack self update --preview honors explicit --to version over channel tag
   assert.ok(installLine.includes('@happier-dev/stack@1.2.3'), `expected explicit --to spec in install line\n${installLine}`);
   assert.ok(!installLine.includes('@happier-dev/stack@next'), `expected install line to avoid preview dist-tag\n${installLine}`);
 });
+
+test('hstack self check --dev uses npm dist-tag next', (t) => {
+  const harness = createSelfUpdateHarness(t, { prefix: 'hstack-publicdev-check-' });
+  const res = harness.runSelfCommand(['check', '--dev', '--quiet']);
+  assert.equal(res.status, 0);
+
+  const log = harness.readNpmArgsLog();
+  assert.ok(log.includes('view @happier-dev/stack@next version'));
+});
+
+test('hstack self update --channel=dev installs @next when --to is not provided', (t) => {
+  const harness = createSelfUpdateHarness(t, { prefix: 'hstack-dev-update-' });
+  const res = harness.runSelfCommand(['update', '--channel=dev', '--json']);
+  assert.equal(res.status, 0);
+
+  const log = harness.readNpmArgsLog();
+  assert.ok(log.includes('install'));
+  assert.ok(log.includes('@happier-dev/stack@next'));
+});

@@ -1,5 +1,7 @@
 // @ts-check
 
+import { formatPublicReleaseChannelChoices } from '../../release/lib/public-release-rings.mjs';
+
 /**
  * @typedef {{
  *   summary: string;
@@ -11,6 +13,11 @@
  */
 
 /** @type {Record<string, CommandHelpSpec>} */
+const TAURI_RELEASE_ENVIRONMENTS = formatPublicReleaseChannelChoices({
+  stableAlias: 'production',
+  preferredOrder: ['dev', 'preview', 'stable'],
+});
+
 export const COMMAND_HELP_TAURI = {
   'tauri-validate-updater-pubkey': {
     summary: 'Validate that the Tauri updater public key matches the configured signing key.',
@@ -25,9 +32,9 @@ export const COMMAND_HELP_TAURI = {
   'tauri-prepare-assets': {
     summary: 'Prepare Tauri publish assets (merge UI web + updater artifacts into publish dir).',
     usage:
-      'node scripts/pipeline/run.mjs tauri-prepare-assets --environment <preview|production> --repo <owner/repo> --ui-version <semver> [--artifacts-dir <dir>] [--publish-dir <dir>]',
+      `node scripts/pipeline/run.mjs tauri-prepare-assets --environment <${TAURI_RELEASE_ENVIRONMENTS}> --repo <owner/repo> --ui-version <semver> [--artifacts-dir <dir>] [--publish-dir <dir>]`,
     options: [
-      '--environment <preview|production>  Required.',
+      `--environment <${TAURI_RELEASE_ENVIRONMENTS}>  Required.`,
       '--repo <owner/repo>               Required.',
       '--ui-version <semver>             Required.',
       '--artifacts-dir <dir>             (default: dist/tauri/updates).',
@@ -38,15 +45,15 @@ export const COMMAND_HELP_TAURI = {
       '--keychain-account <name>',
     ],
     bullets: ['Used by desktop release workflows before publishing updater releases.'],
-    examples: ['node scripts/pipeline/run.mjs tauri-prepare-assets --environment preview --repo happier-dev/happier --ui-version 0.1.0'],
+    examples: ['node scripts/pipeline/run.mjs tauri-prepare-assets --environment dev --repo happier-dev/happier --ui-version 0.1.0'],
   },
 
   'tauri-build-updater-artifacts': {
     summary: 'Build Tauri updater artifacts (desktop binaries + signatures).',
     usage:
-      'node scripts/pipeline/run.mjs tauri-build-updater-artifacts --environment <preview|production> [--build-version <semver>] [--tauri-target <target>] [--ui-dir <dir>]',
+      `node scripts/pipeline/run.mjs tauri-build-updater-artifacts --environment <${TAURI_RELEASE_ENVIRONMENTS}> [--build-version <semver>] [--tauri-target <target>] [--ui-dir <dir>]`,
     options: [
-      '--environment <preview|production>  Required.',
+      `--environment <${TAURI_RELEASE_ENVIRONMENTS}>  Required.`,
       '--build-version <semver>          Optional.',
       '--tauri-target <target>           Optional; build a single target.',
       '--ui-dir <dir>                    (default: apps/ui).',
@@ -56,7 +63,7 @@ export const COMMAND_HELP_TAURI = {
       '--keychain-account <name>',
     ],
     bullets: ['Requires TAURI_SIGNING_PRIVATE_KEY (and Apple signing/notarization secrets for macOS).'],
-    examples: ['node scripts/pipeline/run.mjs tauri-build-updater-artifacts --environment production --ui-dir apps/ui'],
+    examples: ['node scripts/pipeline/run.mjs tauri-build-updater-artifacts --environment dev --build-version 0.1.0-dev.123 --ui-dir apps/ui'],
   },
 
   'tauri-notarize-macos-artifacts': {
@@ -77,9 +84,9 @@ export const COMMAND_HELP_TAURI = {
   'tauri-collect-updater-artifacts': {
     summary: 'Collect/normalize updater artifacts into a directory for publishing.',
     usage:
-      'node scripts/pipeline/run.mjs tauri-collect-updater-artifacts --environment <preview|production> --platform-key <key> --ui-version <semver> [--tauri-target <target>] [--ui-dir <dir>]',
+      `node scripts/pipeline/run.mjs tauri-collect-updater-artifacts --environment <${TAURI_RELEASE_ENVIRONMENTS}> --platform-key <key> --ui-version <semver> [--tauri-target <target>] [--ui-dir <dir>]`,
     options: [
-      '--environment <preview|production>  Required.',
+      `--environment <${TAURI_RELEASE_ENVIRONMENTS}>  Required.`,
       '--platform-key <key>              Required; e.g. darwin-arm64.',
       '--ui-version <semver>             Required.',
       '--tauri-target <target>           Optional.',
@@ -88,8 +95,7 @@ export const COMMAND_HELP_TAURI = {
     ],
     bullets: ['Used for assembling multi-platform updater releases.'],
     examples: [
-      'node scripts/pipeline/run.mjs tauri-collect-updater-artifacts --environment preview --platform-key darwin-arm64 --ui-version 0.1.0',
+      'node scripts/pipeline/run.mjs tauri-collect-updater-artifacts --environment dev --platform-key darwin-arm64 --ui-version 0.1.0',
     ],
   },
 };
-

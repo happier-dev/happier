@@ -4,6 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import {
+  formatPublicReleaseChannel,
+  formatPublicReleaseChannelChoices,
+  normalizePublicReleaseChannel,
+} from '../release/lib/public-release-rings.mjs';
 
 function fail(message) {
   console.error(message);
@@ -90,12 +95,14 @@ function normalizeBaseVersion(uiVersion) {
 
 /**
  * @param {string} uiVersion
+ * @param {'preview' | 'publicdev'} environment
  */
-function computePreviewVersion(uiVersion) {
+function computeRollingVersion(uiVersion, environment) {
   const base = normalizeBaseVersion(uiVersion);
   const runNumberRaw = Number(process.env.GITHUB_RUN_NUMBER ?? '');
   const runNumber = Number.isFinite(runNumberRaw) ? Math.max(0, Math.floor(runNumberRaw)) : Math.floor(Date.now() / 1000);
-  return `${base}-preview.${runNumber}`;
+  const suffix = environment === 'publicdev' ? 'dev' : 'preview';
+  return `${base}-${suffix}.${runNumber}`;
 }
 
 function main() {
@@ -112,10 +119,16 @@ function main() {
     allowPositionals: false,
   });
 
-  const environment = String(values.environment ?? '').trim();
-  if (!environment) fail('--environment is required');
-  if (environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'preview' or 'production' (got: ${environment})`);
+  const requestedEnvironment = String(values.environment ?? '').trim();
+  if (!requestedEnvironment) fail('--environment is required');
+  const normalizedChannel = normalizePublicReleaseChannel(requestedEnvironment);
+  const environment = normalizedChannel === 'stable' ? 'production' : normalizedChannel;
+  if (!environment) {
+    fail(
+      `--environment must be ${JSON.stringify(
+        formatPublicReleaseChannelChoices({ stableAlias: 'production', preferredOrder: ['dev', 'preview', 'stable'] })
+      )} (got: ${requestedEnvironment})`
+    );
   }
 
   const uiVersion = String(values['ui-version'] ?? '').trim();
@@ -128,12 +141,20 @@ function main() {
   const dryRun = values['dry-run'] === true;
   const opts = { dryRun };
 
-  const version = environment === 'preview' ? computePreviewVersion(uiVersion) : uiVersion;
-  const releaseTag = environment === 'preview' ? 'ui-desktop-preview' : `ui-desktop-v${uiVersion}`;
-  const notes = environment === 'preview' ? 'Rolling preview build.' : 'See the UI release notes for details.';
+  const version = environment === 'production' ? uiVersion : computeRollingVersion(uiVersion, /** @type {'preview' | 'publicdev'} */ (environment));
+  const releaseTag =
+    environment === 'preview' ? 'ui-desktop-preview' : environment === 'publicdev' ? 'ui-desktop-dev' : `ui-desktop-v${uiVersion}`;
+  const notes =
+    environment === 'preview'
+      ? 'Rolling preview build.'
+      : environment === 'publicdev'
+        ? 'Rolling dev build.'
+        : 'See the UI release notes for details.';
   const pubDate = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 
-  console.log(`[pipeline] tauri publish assets: env=${environment} ui_version=${uiVersion} version=${version} release_tag=${releaseTag}`);
+  console.log(
+    `[pipeline] tauri publish assets: env=${formatPublicReleaseChannel(environment === 'production' ? 'stable' : environment, { stableAlias: 'production' })} ui_version=${uiVersion} version=${version} release_tag=${releaseTag}`
+  );
 
   const latestJsonRel = path.join(publishDir, 'latest.json');
 
@@ -165,12 +186,16 @@ function main() {
   // Assemble per-release payloads (folder names intentionally stable and public).
   // These are uploaded to GitHub Releases.
   const previewDir = path.join(publishDir, 'ui-desktop-preview');
+  const publicdevDir = path.join(publishDir, 'ui-desktop-dev');
   const versionedDir = path.join(publishDir, 'ui-desktop-v');
   const stableDir = path.join(publishDir, 'ui-desktop-stable');
 
   if (environment === 'preview') {
     copyFile(repoRoot, latestJsonRel, path.join(previewDir, 'latest.json'), opts);
     copyDir(repoRoot, artifactsDir, previewDir, opts);
+  } else if (environment === 'publicdev') {
+    copyFile(repoRoot, latestJsonRel, path.join(publicdevDir, 'latest.json'), opts);
+    copyDir(repoRoot, artifactsDir, publicdevDir, opts);
   } else {
     copyFile(repoRoot, latestJsonRel, path.join(stableDir, 'latest.json'), opts);
     copyDir(repoRoot, artifactsDir, versionedDir, opts);
@@ -178,4 +203,3 @@ function main() {
 }
 
 main();
-

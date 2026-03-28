@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { formatPublicReleaseChannelChoices, normalizePublicReleaseChannel } from '../release/lib/public-release-rings.mjs';
 
 function fail(message) {
   console.error(message);
@@ -102,9 +103,15 @@ function main() {
     allowPositionals: false,
   });
 
-  const environment = String(values.environment ?? '').trim();
-  if (environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'preview' or 'production' (got: ${environment || '<empty>'})`);
+  const requestedEnvironment = String(values.environment ?? '').trim();
+  const normalizedChannel = normalizePublicReleaseChannel(requestedEnvironment);
+  const environment = normalizedChannel === 'stable' ? 'production' : normalizedChannel;
+  if (!environment) {
+    fail(
+      `--environment must be ${JSON.stringify(
+        formatPublicReleaseChannelChoices({ stableAlias: 'production', preferredOrder: ['dev', 'preview', 'stable'] })
+      )} (got: ${requestedEnvironment || '<empty>'})`
+    );
   }
 
   const platformKey = String(values['platform-key'] ?? '').trim();
@@ -126,7 +133,11 @@ function main() {
 
   const outDir = path.join(repoRoot, 'dist', 'tauri', 'updates', platformKey);
   const outBase =
-    environment === 'preview' ? `happier-ui-desktop-preview-${platformKey}` : `happier-ui-desktop-${platformKey}-v${uiVersion}`;
+    environment === 'preview'
+      ? `happier-ui-desktop-preview-${platformKey}`
+      : environment === 'publicdev'
+        ? `happier-ui-desktop-dev-${platformKey}`
+        : `happier-ui-desktop-${platformKey}-v${uiVersion}`;
 
   if (dryRun) {
     console.log(`[dry-run] search: ${rel(searchDir)}`);
@@ -190,4 +201,3 @@ function main() {
 }
 
 main();
-

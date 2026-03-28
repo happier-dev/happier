@@ -58,3 +58,20 @@ test('hstack remote server setup forwards env overrides to self-host install', (
   assert.ok(log.includes('HAPPIER_SERVER_PORT=3999'), `expected forwarded port override\n${log}`);
   assert.ok(log.includes('HAPPIER_DB_PROVIDER=sqlite'), `expected forwarded db provider override\n${log}`);
 });
+
+test('hstack remote server setup accepts the dev release ring', (t) => {
+  const h = createRemoteServerSetupHarness(t, { prefix: 'hstack-remote-server-dev-' });
+  const res = h.runRemoteCommand([
+    'server',
+    'setup',
+    '--ssh',
+    'dev@host',
+    '--channel=dev',
+    '--json',
+  ]);
+  assert.equal(res.status, 0, res.stderr);
+
+  const log = h.readInvocationsLog();
+  assert.ok(log.includes('HAPPIER_CHANNEL=dev'), `expected dev installer environment\n${log}`);
+  assert.ok(log.includes('--channel=dev'), `expected dev self-host install\n${log}`);
+});

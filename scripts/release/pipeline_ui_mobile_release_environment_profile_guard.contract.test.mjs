@@ -46,10 +46,11 @@ test('ui-mobile-release rejects environment/profile mismatches (production env w
   );
 });
 
-test('ui-mobile-release accepts development and canary native profiles in dry-run', () => {
+test('ui-mobile-release accepts internaldev, internalpreview, and dev native profiles in dry-run', () => {
   for (const [environment, profile] of [
-    ['development', 'development'],
-    ['canary', 'canary-apk'],
+    ['internaldev', 'internaldev'],
+    ['internalpreview', 'internalpreview-apk'],
+    ['dev', 'publicdev-apk'],
   ]) {
     const out = execFileSync(
       process.execPath,
@@ -88,7 +89,7 @@ test('ui-mobile-release forwards explicit interactive setting to delegated Expo 
       path.join(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'ui-mobile-release',
       '--environment',
-      'development',
+      'internaldev',
       '--action',
       'ota',
       '--platform',
@@ -108,12 +109,12 @@ test('ui-mobile-release forwards explicit interactive setting to delegated Expo 
     },
   );
 
-  assert.match(out, /\[pipeline\] ui-mobile release: environment=development action=ota platform=all/);
+  assert.match(out, /\[pipeline\] ui-mobile release: environment=internaldev action=ota platform=all/);
   assert.match(out, /scripts\/pipeline\/expo\/ota-update\.mjs/);
   assert.match(out, /--interactive\"?\s+\"?false\b/);
 });
 
-test('ui-mobile-release rejects native_submit outside preview and production', () => {
+test('ui-mobile-release rejects native_submit outside dev, preview, and production', () => {
   assert.throws(
     () =>
       execFileSync(
@@ -122,13 +123,13 @@ test('ui-mobile-release rejects native_submit outside preview and production', (
           path.join(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
           'ui-mobile-release',
           '--environment',
-          'canary',
+          'internalpreview',
           '--action',
           'native_submit',
           '--platform',
           'ios',
           '--profile',
-          'canary',
+          'internalpreview',
           '--dry-run',
           '--secrets-source',
           'env',
@@ -144,6 +145,7 @@ test('ui-mobile-release rejects native_submit outside preview and production', (
     (err) => {
       const stderr = /** @type {any} */ (err).stderr?.toString?.() ?? '';
       assert.match(stderr, /native_submit/i);
+      assert.match(stderr, /dev/i);
       assert.match(stderr, /preview/i);
       assert.match(stderr, /production/i);
       return true;

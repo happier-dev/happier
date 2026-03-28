@@ -7,41 +7,47 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('publish-cli-binaries pipeline publishes cli-v* version tags alongside rolling tags (dry-run)', async () => {
-  const out = execFileSync(
-    process.execPath,
-    [
-      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-cli-binaries.mjs'),
-      '--channel',
-      'preview',
-      '--allow-stable',
-      'false',
-      '--run-contracts',
-      'false',
-      '--check-installers',
-      'false',
-      '--dry-run',
-    ],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        GH_TOKEN: '',
-        GH_REPO: '',
-        GITHUB_REPOSITORY: '',
+for (const { channel, rollingTag, versionSuffix } of [
+  { channel: 'preview', rollingTag: 'cli-preview', versionSuffix: '-preview.' },
+  { channel: 'publicdev', rollingTag: 'cli-dev', versionSuffix: '-dev.' },
+]) {
+  test(`publish-cli-binaries pipeline publishes cli-v* version tags alongside rolling tags for ${channel} (dry-run)`, async () => {
+    const out = execFileSync(
+      process.execPath,
+      [
+        resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-cli-binaries.mjs'),
+        '--channel',
+        channel,
+        '--allow-stable',
+        'false',
+        '--run-contracts',
+        'false',
+        '--check-installers',
+        'false',
+        '--dry-run',
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          GH_TOKEN: '',
+          GH_REPO: '',
+          GITHUB_REPOSITORY: '',
+        },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 30_000,
       },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
-    },
-  );
+    );
 
-  assert.match(out, /--tag\s+cli-preview\b/);
-  assert.match(out, /--tag\s+cli-preview\b[^\n]*--generate-notes\s+false\b/);
-  assert.match(out, /--tag\s+cli-v/);
-  assert.match(out, /--tag\s+cli-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
-  assert.match(out, /clean artifacts dir: dist\/release-assets\/cli|ensure clean artifacts dir: dist\/release-assets\/cli/i);
-});
+    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b`));
+    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b[^\\n]*--generate-notes\\s+false\\b`));
+    assert.match(out, /--tag\s+cli-v/);
+    assert.match(out, new RegExp(`cli-v[^\\s"]*${versionSuffix.replace('.', '\\.')}[^\\s"]*`));
+    assert.match(out, /--tag\s+cli-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
+    assert.match(out, /clean artifacts dir: dist\/release-assets\/cli|ensure clean artifacts dir: dist\/release-assets\/cli/i);
+  });
+}
 
 test('publish-cli-binaries fails fast with helpful message when MINISIGN_SECRET_KEY is invalid', async () => {
   const scriptPath = resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-cli-binaries.mjs');

@@ -61,8 +61,8 @@ function main() {
 
     // NOTE: `latest.json` uses the Tauri updater schema and doesn't include the channel; we still validate
     // it so CI can fail fast if a workflow is misconfigured.
-    if (!channel || !['preview', 'production', 'stable'].includes(channel)) {
-        fail('--channel must be one of: preview, production, stable');
+    if (!channel || !['preview', 'publicdev', 'production', 'stable'].includes(channel)) {
+        fail('--channel must be one of: preview, publicdev, production, stable');
     }
     if (!version) fail('--version is required');
     if (!pubDate) fail('--pub-date is required');

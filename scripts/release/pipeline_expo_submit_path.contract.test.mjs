@@ -40,7 +40,7 @@ function runSubmit({ withPath }) {
   const args = [
     path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'submit.mjs'),
     '--environment',
-    'preview',
+    'dev',
     '--platform',
     'android',
     ...(withPath ? ['--path', artifactPath] : []),
@@ -59,15 +59,17 @@ test('expo submit uses --latest by default (cloud builds)', () => {
   const out = runSubmit({ withPath: false });
   assert.match(out, /NPX --yes eas-cli@/);
   assert.match(out, /\ssubmit\b/);
-  assert.match(out, /\s--profile preview\b/);
+  assert.match(out, /\s--profile publicdev\b/);
   assert.match(out, /\s--latest\b/);
+  assert.match(out, /\[pipeline\] expo submit: environment=dev platform=android/);
 });
 
 test('expo submit supports --path for local binaries', () => {
   const out = runSubmit({ withPath: true });
-  assert.match(out, /APP_ENV=preview/);
+  assert.match(out, /APP_ENV=publicdev/);
   assert.match(out, /\ssubmit\b/);
   assert.match(out, /\s--path\b/);
-  assert.match(out, /\s--profile preview\b/);
+  assert.match(out, /\s--profile publicdev\b/);
   assert.doesNotMatch(out, /\s--latest\b/);
+  assert.match(out, /\[pipeline\] expo submit: environment=dev platform=android/);
 });

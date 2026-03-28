@@ -3,6 +3,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import {
+  MOBILE_RELEASE_ENVIRONMENT_CHOICES,
+  normalizeMobileReleaseEnvironment,
+  resolveMobileReleaseMetadata,
+  supportsMobileApkReleasePublishing,
+} from './mobile-release-environments.mjs';
 
 function fail(message) {
   console.error(message);
@@ -52,10 +58,10 @@ function main() {
     allowPositionals: false,
   });
 
-  const environment = String(values.environment ?? '').trim();
-  if (!environment) fail('--environment is required');
-  if (environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'preview' or 'production' (got: ${environment})`);
+  const requestedEnvironment = String(values.environment ?? '').trim();
+  const environment = normalizeMobileReleaseEnvironment(requestedEnvironment);
+  if (!environment) {
+    fail(`--environment must be ${JSON.stringify(MOBILE_RELEASE_ENVIRONMENT_CHOICES)} (got: ${requestedEnvironment || '<empty>'})`);
   }
 
   const downloadOk = parseBool(values['download-ok'], '--download-ok');
@@ -76,26 +82,27 @@ function main() {
       generate_notes: false,
       notes: '',
     };
-  } else if (environment === 'production') {
-    if (!appVersion) fail('--app-version is required when --download-ok true');
+  } else if (!supportsMobileApkReleasePublishing(environment)) {
     meta = {
-      publish: true,
-      tag: `ui-mobile-v${appVersion}`,
-      title: `Happier UI Mobile v${appVersion}`,
+      publish: false,
+      tag: '',
+      title: '',
       prerelease: false,
       rolling_tag: false,
-      generate_notes: true,
+      generate_notes: false,
       notes: '',
     };
   } else {
+    if (environment === 'production' && !appVersion) fail('--app-version is required when --download-ok true');
+    const resolved = resolveMobileReleaseMetadata({ environment, appVersion });
     meta = {
-      publish: true,
-      tag: 'ui-mobile-preview',
-      title: 'Happier UI Mobile Preview',
-      prerelease: true,
-      rolling_tag: true,
-      generate_notes: false,
-      notes: 'Rolling preview build.',
+      publish: resolved.publish,
+      tag: resolved.tag,
+      title: resolved.title,
+      prerelease: resolved.prerelease,
+      rolling_tag: resolved.rollingTag,
+      generate_notes: resolved.generateNotes,
+      notes: resolved.notes,
     };
   }
 
@@ -114,4 +121,3 @@ function main() {
 }
 
 main();
-

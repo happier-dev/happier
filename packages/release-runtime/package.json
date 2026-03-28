@@ -33,6 +33,10 @@
     "./github": {
       "types": "./dist/github.d.ts",
       "default": "./dist/github.js"
+    },
+    "./releaseRings": {
+      "types": "./dist/releaseRings.d.ts",
+      "default": "./dist/releaseRings.js"
     }
   },
   "files": [

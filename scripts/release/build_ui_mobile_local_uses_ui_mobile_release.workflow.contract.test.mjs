@@ -10,9 +10,11 @@ test('build-ui-mobile-local workflow delegates local builds to ui-mobile-release
   assert.match(src, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
   assert.match(src, /--native-build-mode local/);
   assert.match(src, /--publish-apk-release false/);
-  assert.match(src, /-\s+development\b/);
-  assert.match(src, /-\s+canary\b/);
-  assert.match(src, /-\s+development-store\b/);
-  assert.match(src, /-\s+canary-apk\b/);
+  assert.match(src, /-\s+internaldev\b/);
+  assert.match(src, /-\s+internalpreview\b/);
+  assert.match(src, /-\s+publicdev\b/);
+  assert.match(src, /-\s+internaldev-store\b/);
+  assert.match(src, /-\s+internalpreview-apk\b/);
+  assert.match(src, /-\s+publicdev-apk\b/);
   assert.match(src, /-\s+ota\b/);
 });

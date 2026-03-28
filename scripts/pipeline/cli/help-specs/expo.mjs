@@ -1,5 +1,10 @@
 // @ts-check
 
+import {
+  MOBILE_RELEASE_ENVIRONMENT_CHOICES,
+  MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES,
+} from '../../expo/mobile-release-environments.mjs';
+
 /**
  * @typedef {{
  *   summary: string;
@@ -15,12 +20,12 @@ export const COMMAND_HELP_EXPO = {
   'ui-mobile-release': {
     summary: 'Expo mobile release entrypoint (OTA, native build, submit).',
     usage:
-      'node scripts/pipeline/run.mjs ui-mobile-release --environment <development|canary|preview|production> --action <ota|native|native_submit> --platform <ios|android|all> [--profile <easProfile>]',
+      `node scripts/pipeline/run.mjs ui-mobile-release --environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}> --action <ota|native|native_submit> --platform <ios|android|all> [--profile <easProfile>]`,
     options: [
-      '--environment <development|canary|preview|production>  Required.',
+      `--environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}>  Required.`,
       '--action <ota|native|native_submit> Required.',
       '--platform <ios|android|all>        Required.',
-      '--profile <name>                   Required for native/native_submit; must match the selected lane (development*, canary*, preview*, production*).',
+      '--profile <name>                   Required for native/native_submit; must match the selected lane (internaldev*, internalpreview*, publicdev*, preview*, production*).',
       '--publish-apk-release <auto|true|false> (default: auto).',
       '--native-build-mode <cloud|local>  (default: cloud).',
       '--native-local-runtime <host|dagger> (default: host).',
@@ -40,15 +45,16 @@ export const COMMAND_HELP_EXPO = {
     ],
     bullets: [
       'This command composes expo-ota / expo-native-build / expo-submit for convenience.',
-      'native_submit is intentionally limited to preview and production because only those lanes have store submit profiles.',
+      'native_submit is intentionally limited to dev, preview, and production because only those lanes have store submit profiles.',
       'Expo OTA and submit default to interactive on a local TTY and non-interactive in CI or when output is piped.',
       'Cloud native builds use two unified paths: interactive local TTY runs schedule normally and then resolve the build via EAS list/view; CI/non-interactive runs keep the direct JSON path.',
       "For local iOS builds, use --native-build-mode local and keep --native-local-runtime host (requires Xcode).",
       'For local Android builds, you may use --native-local-runtime dagger for containerized reproducibility.',
     ],
     examples: [
-      'node scripts/pipeline/run.mjs ui-mobile-release --environment development --action ota --platform all',
-      'node scripts/pipeline/run.mjs ui-mobile-release --environment canary --action native --platform android --profile canary-apk --native-build-mode local --native-local-runtime dagger',
+      'node scripts/pipeline/run.mjs ui-mobile-release --environment internaldev --action ota --platform all',
+      'node scripts/pipeline/run.mjs ui-mobile-release --environment internalpreview --action native --platform android --profile internalpreview-apk --native-build-mode local --native-local-runtime dagger',
+      'node scripts/pipeline/run.mjs ui-mobile-release --environment dev --action native_submit --platform all --profile publicdev',
       'node scripts/pipeline/run.mjs ui-mobile-release --environment preview --action ota --platform all',
       'node scripts/pipeline/run.mjs ui-mobile-release --environment production --action native --platform ios --profile production --native-build-mode local --native-local-runtime host',
     ],
@@ -56,9 +62,9 @@ export const COMMAND_HELP_EXPO = {
 
   'expo-ota': {
     summary: 'Publish an Expo OTA update for the given environment.',
-    usage: 'node scripts/pipeline/run.mjs expo-ota --environment <development|canary|preview|production> [--message <text>] [--dry-run]',
+    usage: `node scripts/pipeline/run.mjs expo-ota --environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}> [--message <text>] [--dry-run]`,
     options: [
-      '--environment <development|canary|preview|production>  Required.',
+      `--environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}>  Required.`,
       '--message <text>                   Optional.',
       '--interactive <auto|true|false>    (default: auto).',
       '--eas-cli-version <ver>            Optional; pins EAS CLI.',
@@ -70,11 +76,12 @@ export const COMMAND_HELP_EXPO = {
     bullets: [
       'Requires Expo auth (EXPO_TOKEN or EAS local login).',
       'Local TTY runs can prompt through EAS login/setup; CI and piped runs stay non-interactive.',
-      'development, canary, and preview publish directly to same-name Expo update channels; production keeps using the production OTA workflow.',
+      'internaldev, internalpreview, dev, and preview publish directly to same-name Expo update channels; production keeps using the production OTA workflow.',
     ],
     examples: [
-      'node scripts/pipeline/run.mjs expo-ota --environment development --message "Development OTA"',
-      'node scripts/pipeline/run.mjs expo-ota --environment canary --message "Canary OTA"',
+      'node scripts/pipeline/run.mjs expo-ota --environment internaldev --message "Internal dev OTA"',
+      'node scripts/pipeline/run.mjs expo-ota --environment internalpreview --message "Internal preview OTA"',
+      'node scripts/pipeline/run.mjs expo-ota --environment dev --message "Public dev OTA"',
       'node scripts/pipeline/run.mjs expo-ota --environment preview --message "Preview OTA"',
     ],
   },
@@ -111,9 +118,9 @@ export const COMMAND_HELP_EXPO = {
   'expo-download-apk': {
     summary: 'Download the Android APK from a previous EAS Build JSON output.',
     usage:
-      'node scripts/pipeline/run.mjs expo-download-apk --environment <development|canary|preview|production> [--build-json <path>] [--out-dir <dir>]',
+      `node scripts/pipeline/run.mjs expo-download-apk --environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}> [--build-json <path>] [--out-dir <dir>]`,
     options: [
-      '--environment <development|canary|preview|production>  Required.',
+      `--environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}>  Required.`,
       '--build-json <path>               (default: /tmp/eas_build.json).',
       '--out-dir <dir>                   (default: dist/ui-mobile).',
       '--eas-cli-version <ver>           Optional; pins EAS CLI.',
@@ -123,15 +130,15 @@ export const COMMAND_HELP_EXPO = {
       '--keychain-account <name>',
     ],
     bullets: ['Only relevant for *-apk EAS profiles.'],
-    examples: ['node scripts/pipeline/run.mjs expo-download-apk --environment development --build-json /tmp/eas_build.json'],
+    examples: ['node scripts/pipeline/run.mjs expo-download-apk --environment dev --build-json /tmp/eas_build.json'],
   },
 
   'expo-mobile-meta': {
     summary: 'Compute/emit mobile release metadata (used by workflows).',
     usage:
-      'node scripts/pipeline/run.mjs expo-mobile-meta --environment <development|canary|preview|production> [--download-ok true|false] [--out-json <path>]',
+      `node scripts/pipeline/run.mjs expo-mobile-meta --environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}> [--download-ok true|false] [--out-json <path>]`,
     options: [
-      '--environment <development|canary|preview|production>  Required.',
+      `--environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}>  Required.`,
       '--download-ok <bool>              true|false (default: false).',
       '--app-version <semver>            Optional override.',
       '--out-json <path>                 Optional; write JSON metadata to a file.',
@@ -141,15 +148,15 @@ export const COMMAND_HELP_EXPO = {
       '--keychain-account <name>',
     ],
     bullets: ['Mostly used internally by release automation.'],
-    examples: ['node scripts/pipeline/run.mjs expo-mobile-meta --environment canary --out-json dist/ui-mobile/meta.json'],
+    examples: ['node scripts/pipeline/run.mjs expo-mobile-meta --environment dev --out-json dist/ui-mobile/meta.json'],
   },
 
   'expo-submit': {
     summary: 'Submit a native build to TestFlight / Play Store (EAS Submit).',
     usage:
-      'node scripts/pipeline/run.mjs expo-submit --environment <preview|production> --platform <ios|android|all> [--profile <submitProfile>] [--path <artifactPath>]',
+      `node scripts/pipeline/run.mjs expo-submit --environment <${MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES}> --platform <ios|android|all> [--profile <submitProfile>] [--path <artifactPath>]`,
     options: [
-      '--environment <preview|production>  Required.',
+      `--environment <${MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES}>  Required.`,
       '--platform <ios|android|all>       Required.',
       '--profile <name>                  Optional; EAS submit profile.',
       '--path <path>                     Optional; submit a local artifact (IPA/AAB/APK).',
@@ -165,16 +172,17 @@ export const COMMAND_HELP_EXPO = {
       'Submit defaults to interactive on a local TTY and non-interactive in CI or when output is piped.',
     ],
     examples: [
+      'node scripts/pipeline/run.mjs expo-submit --environment dev --platform all --profile publicdev',
       'node scripts/pipeline/run.mjs expo-submit --environment production --platform ios --profile production --path dist/ui-mobile/happier-production-ios-v0.1.0.ipa',
     ],
   },
 
   'expo-publish-apk-release': {
-    summary: 'Publish an Android APK asset as a GitHub Release (used for preview distribution).',
+    summary: 'Publish an Android APK asset as a GitHub Release (used for dev/preview distribution).',
     usage:
-      'node scripts/pipeline/run.mjs expo-publish-apk-release --environment <development|canary|preview|production> --apk-path <path> --target-sha <sha> [--release-message <text>]',
+      `node scripts/pipeline/run.mjs expo-publish-apk-release --environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}> --apk-path <path> --target-sha <sha> [--release-message <text>]`,
     options: [
-      '--environment <development|canary|preview|production>  Required.',
+      `--environment <${MOBILE_RELEASE_ENVIRONMENT_CHOICES}>  Required.`,
       '--apk-path <path>                 Required.',
       '--target-sha <sha>                Required.',
       '--release-message <text>          Optional.',
@@ -185,6 +193,7 @@ export const COMMAND_HELP_EXPO = {
     ],
     bullets: ['Used by ui-mobile-release when building APK profiles.'],
     examples: [
+      'node scripts/pipeline/run.mjs expo-publish-apk-release --environment dev --apk-path dist/ui-mobile/happier-publicdev-android.apk --target-sha $(git rev-parse HEAD)',
       'node scripts/pipeline/run.mjs expo-publish-apk-release --environment preview --apk-path dist/ui-mobile/happier-preview-android.apk --target-sha $(git rev-parse HEAD)',
     ],
   },

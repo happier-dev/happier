@@ -9,10 +9,12 @@ export {
   firstPartyComponentCatalog,
   getFirstPartyComponentCatalogEntry,
   listFirstPartyComponentCatalogEntries,
+  resolveFirstPartyComponentPublicReleaseVariant,
 } from './componentCatalog.js';
 export type {
   FirstPartyComponentCatalogEntry,
   FirstPartyComponentId,
+  FirstPartyComponentPublicReleaseVariant,
 } from './componentCatalog.js';
 
 export {

@@ -4,15 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Release channel (preview only for now)"
+        description: "Release channel"
         required: true
         type: choice
         default: preview
         options:
           - preview
+          - publicdev
           - stable
       source_ref:
-        description: "Source ref to publish (auto => preview:preview, stable:main)"
+        description: "Source ref to publish (auto => publicdev:dev, preview:preview, stable:main)"
         required: true
         default: auto
         type: string
@@ -73,7 +74,7 @@ jobs:
     environment: release-shared
     env:
       APP_ENV: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
-      EXPO_UPDATES_CHANNEL: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
+      EXPO_UPDATES_CHANNEL: ${{ inputs.channel == 'stable' && 'production' || inputs.channel == 'publicdev' && 'publicdev' || 'preview' }}
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
     steps:
       - name: Enforce stable publishing gate
@@ -89,7 +90,9 @@ jobs:
           channel="${{ inputs.channel }}"
           src="${{ inputs.source_ref }}"
           if [ "$src" = "auto" ]; then
-            if [ "$channel" = "preview" ]; then
+            if [ "$channel" = "publicdev" ]; then
+              src="dev"
+            elif [ "$channel" = "preview" ]; then
               src="preview"
             else
               src="main"

@@ -6,7 +6,7 @@ This folder contains the Tauri (desktop) app for Happier.
 
 - Automatic updates are implemented via the Tauri v2 updater plugin:
   - Rust registers the updater plugin and exposes Tauri commands used by the UI.
-  - `tauri.conf.json` configures the stable update endpoint; `tauri.preview.conf.json` overrides it for preview.
+  - `tauri.conf.json` configures the stable update endpoint; `tauri.preview.conf.json` and `tauri.publicdev.conf.json` override it for preview/dev feeds.
   - GitHub Actions publishes platform updater artifacts plus a `latest.json` feed used by the app.
 
 ## Two different “signing” concepts
@@ -55,15 +55,16 @@ Key pieces:
 - Config: `plugins.updater` in `tauri.conf.json`:
   - `endpoints` (stable) and `pubkey` (base64-encoded minisign public key; Tauri updater signing uses minisign, not PEM)
   - preview overrides endpoints in `tauri.preview.conf.json`
+  - public dev overrides endpoints in `tauri.publicdev.conf.json`
 - Local builds: `bundle.createUpdaterArtifacts` is disabled by default so contributors can build the desktop app without updater signing keys.
 - CI: when `TAURI_SIGNING_PRIVATE_KEY` is present, CI enables `bundle.createUpdaterArtifacts` and publishes:
   - platform update bundles (per target)
-  - `latest.json` (preview: `ui-desktop-preview/latest.json`, stable: `ui-desktop-stable/latest.json`)
+  - `latest.json` (public dev: `ui-desktop-dev/latest.json`, preview: `ui-desktop-preview/latest.json`, stable: `ui-desktop-stable/latest.json`)
 
 Notes:
 - For preview vs production update channels, you usually either:
   - provide different endpoints (preview vs production), or
-  - embed logic/config per environment (`tauri.preview.conf.json` vs `tauri.conf.json`).
+  - embed logic/config per environment (`tauri.publicdev.conf.json`, `tauri.preview.conf.json`, `tauri.conf.json`).
 
 ## macOS codesigning & notarization (overview)
 
