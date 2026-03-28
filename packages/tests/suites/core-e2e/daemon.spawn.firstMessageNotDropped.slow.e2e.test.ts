@@ -155,10 +155,12 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
       },
     });
 
+    const daemonPort = daemon.state.httpPort;
+    expect(daemonPort).toBeGreaterThan(0);
     const controlToken = (daemon.state as any)?.controlToken as string | undefined;
     const prompt = 'E2E_DAEMON_INITIAL_PROMPT_SHOULD_NOT_DROP';
     const spawnRes = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
-      port: daemon.state.httpPort,
+      port: daemonPort,
       path: '/spawn-session',
       controlToken,
       body: {

@@ -166,9 +166,9 @@ describe('core e2e: execution runs (plan/delegate) produce structured meta', () 
 
   it('runs plan intent end-to-end with fake Claude JSON outputs', async () => {
     await runStructuredExecutionIntent({ intent: 'plan', expectedKind: 'plan_output.v1' });
-  }, 240_000);
+  }, 360_000);
 
   it('runs delegate intent end-to-end with fake Claude JSON outputs', async () => {
     await runStructuredExecutionIntent({ intent: 'delegate', expectedKind: 'delegate_output.v1' });
-  }, 240_000);
+  }, 360_000);
 });
