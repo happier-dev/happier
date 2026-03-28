@@ -7,12 +7,14 @@ import { renderScreen } from '@/dev/testkit';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'web',
-            select: (value: any) => value?.web ?? value?.default ?? value?.ios ?? null,
-        },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: {
+                    OS: 'web',
+                    select: (value: any) => value?.web ?? value?.default ?? value?.ios ?? null,
+                },
+            }
+    );
 });
 
 const updateFaviconWithNotification = vi.fn();

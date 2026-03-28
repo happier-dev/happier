@@ -14,28 +14,28 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                            View: 'View',
-                            Pressable: 'Pressable',
-                            ActivityIndicator: 'ActivityIndicator',
-                            useWindowDimensions: () => ({
-                                width: deviceState.windowWidth,
-                                height: deviceState.windowHeight,
-                                scale: 2,
-                                fontScale: 1,
-                            }),
-                            Platform: {
-                                get OS() {
-                                    return deviceState.platformOs;
-                                },
-                                select: (options: any) => options?.[deviceState.platformOs] ?? options?.default ?? options?.ios ?? options?.android,
-                            },
-                            Linking: {
-                                openSettings: vi.fn(async () => {}),
-                            },
-                            AppState: {
-                                addEventListener: () => ({ remove: () => {} }),
-                            },
-                        }
+                                    View: 'View',
+                                    Pressable: 'Pressable',
+                                    ActivityIndicator: 'ActivityIndicator',
+                                    useWindowDimensions: () => ({
+                                        width: deviceState.windowWidth,
+                                        height: deviceState.windowHeight,
+                                        scale: 2,
+                                        fontScale: 1,
+                                    }),
+                                    Platform: {
+                                        get OS() {
+                                            return deviceState.platformOs;
+                                        },
+                                        select: (options: any) => options?.[deviceState.platformOs] ?? options?.default ?? options?.ios ?? options?.android,
+                                    },
+                                    Linking: {
+                                        openSettings: vi.fn(async () => {}),
+                                    },
+                                    AppState: {
+                                        addEventListener: () => ({ remove: () => {} }),
+                                    },
+                                }
     );
 });
 

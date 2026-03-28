@@ -38,11 +38,6 @@ export function installAppPaneScopeHostCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = appPaneScopeHostModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
@@ -50,19 +45,15 @@ export function installAppPaneScopeHostCommonModuleMocks(
                 select: (value: Record<string, unknown>) => value.web ?? value.default,
             },
             View: 'View',
-            useWindowDimensions: () => activeOptions.getDimensions?.() ?? { width: 1200, height: 900 },
+            useWindowDimensions: () =>
+                appPaneScopeHostModuleState.options.getDimensions?.() ?? { width: 1200, height: 900 },
         });
     });
 
-    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-        const activeOptions = appPaneScopeHostModuleState.options;
-        if (activeOptions.storage) {
-            return await activeOptions.storage(importOriginal);
-        }
-
+    vi.mock('@/sync/domains/state/storage', async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useLocalSetting: (key: string) => activeOptions.getLocalSetting?.(key) ?? null,
+            useLocalSetting: (key: string) => appPaneScopeHostModuleState.options.getLocalSetting?.(key) ?? null,
             useLocalSettingMutable: () => [null, vi.fn()],
         });
     });
