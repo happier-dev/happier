@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -206,9 +207,20 @@ export const ToolTimelineRow = React.memo((props: {
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const showTaskRunningIndicator = isSubAgentTranscriptToolName(normalizedToolName);
+    const headerStatusIndicator =
+        toolForRendering.state === 'error'
+            ? <Ionicons testID="tool-timeline-row-error" name="alert-circle" size={18} color={theme.colors.textDestructive} />
+            : showTaskRunningIndicator && toolForRendering.state === 'running'
+                ? <ActivityIndicator size="small" />
+                : null;
+    const headerPrimaryActions = headerActions ?? null;
     const headerRightElement =
-        headerActions ??
-        (showTaskRunningIndicator && toolForRendering.state === 'running' ? <ActivityIndicator size="small" /> : null);
+        headerStatusIndicator && headerPrimaryActions ? (
+            <View style={styles.headerRightContent}>
+                {headerStatusIndicator}
+                {headerPrimaryActions}
+            </View>
+        ) : (headerStatusIndicator ?? headerPrimaryActions);
 
     const isBodyVisible = inlineDetailLevel !== 'title' && inlineDetailLevel !== 'compact';
     const bodyDetailLevel: 'summary' | 'full' = inlineDetailLevel === 'full' ? 'full' : 'summary';
@@ -309,5 +321,10 @@ const styles = StyleSheet.create((theme) => ({
         paddingRight: 10,
         paddingBottom: 12,
         paddingTop: 2,
+    },
+    headerRightContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
     },
 }));

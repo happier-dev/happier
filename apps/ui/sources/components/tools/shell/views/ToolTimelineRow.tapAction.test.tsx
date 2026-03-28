@@ -244,6 +244,34 @@ describe('ToolTimelineRow (tap action)', () => {
         expect(screen.getTextContent()).toContain('status.actionRequired');
     });
 
+    it('shows a header error indicator only for failed tool rows', async () => {
+        const failedScreen = await renderToolTimelineRow({
+            tool: {
+                name: 'SearchContent',
+                state: 'error',
+                result: {
+                    content: 'ripgrep timed out',
+                },
+            },
+        });
+
+        expect(failedScreen.findByTestId('tool-timeline-row-error')).not.toBeNull();
+
+        standardCleanup();
+
+        const completedScreen = await renderToolTimelineRow({
+            tool: {
+                name: 'SearchContent',
+                state: 'completed',
+                result: {
+                    content: 'ok',
+                },
+            },
+        });
+
+        expect(completedScreen.findByTestId('tool-timeline-row-error')).toBeNull();
+    });
+
     it('preloads sidechain messages when a Task tool is expanded', async () => {
         const screen = await renderToolTimelineRow({
             tool: {
