@@ -25,14 +25,15 @@ export function installVoiceToolActionImplCommonModuleMocks(
         storage: options.storage,
     };
 
-    vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-                getState: () => ({}),
-            } as typeof import('@/sync/domains/state/storage').storage,
-});
-});
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        const activeOptions = voiceToolActionImplModuleState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage();
+        }
+
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {});
+    });
 
     vi.mock('@/modal', async () => {
         const activeOptions = voiceToolActionImplModuleState.options;

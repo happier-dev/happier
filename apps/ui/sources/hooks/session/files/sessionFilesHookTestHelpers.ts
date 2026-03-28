@@ -31,15 +31,18 @@ export function installSessionFilesHookCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        OS: 'web',
-                    },
-                }
-    );
-});
+        const activeOptions = sessionFilesHookModuleState.options;
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
+
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+        });
+    });
 
     vi.mock('@/text', async () => {
         const activeOptions = sessionFilesHookModuleState.options;
@@ -62,7 +65,15 @@ export function installSessionFilesHookCommonModuleMocks(
     });
 
     vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
-});
+        const activeOptions = sessionFilesHookModuleState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage(async <T = unknown>() => await vi.importActual<T>('@/sync/domains/state/storage'));
+        }
+
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return await createPartialStorageModuleMock(
+            async <T = unknown>() => await vi.importActual<T>('@/sync/domains/state/storage'),
+            {},
+        );
+    });
 }

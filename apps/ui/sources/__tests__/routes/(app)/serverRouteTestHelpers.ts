@@ -41,14 +41,17 @@ export function installServerRouteCommonModuleMocks(
     }));
 
     vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            KeyboardAvoidingView: 'KeyboardAvoidingView',
-                            Platform: { OS: 'ios' },
-                        }
-    );
-});
+        const activeOptions = serverRouteModuleState.options;
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
+
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            KeyboardAvoidingView: 'KeyboardAvoidingView',
+            Platform: { OS: 'ios' },
+        });
+    });
 
     vi.mock('react-native-unistyles', async () => {
         const activeOptions = serverRouteModuleState.options;
