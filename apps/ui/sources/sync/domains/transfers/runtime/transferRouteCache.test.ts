@@ -97,4 +97,26 @@ describe('transferRouteCache', () => {
             failureReason: 'machine_rpc_direct_unavailable',
         }));
     });
+
+    it('notifies subscribers when machine-rpc direct route viability changes', async () => {
+        const {
+            recordCachedMachineRpcDirectRouteViable,
+            subscribeCachedMachineRpcDirectRoute,
+        } = await import('./transferRouteCache');
+
+        const listener = vi.fn();
+        const unsubscribe = subscribeCachedMachineRpcDirectRoute({
+            serverId: 'server-a',
+            remoteMachineId: 'machine-target',
+        }, listener);
+
+        recordCachedMachineRpcDirectRouteViable({
+            serverId: 'server-a',
+            remoteMachineId: 'machine-target',
+        });
+
+        expect(listener).toHaveBeenCalledTimes(1);
+
+        unsubscribe();
+    });
 });

@@ -32,6 +32,8 @@ type MachineRpcDirectRouteInput = Readonly<{
     remoteMachineId: string;
 }>;
 
+type CacheListener = () => void;
+
 function createScopedTransferRouteCache(serverId: string | null | undefined) {
     return createMachineTransferRouteCache({
         serverId: normalizeServerScopeId(serverId),
@@ -48,6 +50,7 @@ function createScopedTransferRouteCache(serverId: string | null | undefined) {
 }
 
 const transferRouteCachesByServerScopeId = new Map<string, ReturnType<typeof createMachineTransferRouteCache>>();
+const machineRpcDirectRouteListenersByServerScopeId = new Map<string, Set<CacheListener>>();
 
 function getScopedTransferRouteCache(serverId: string | null | undefined) {
     const normalizedServerId = normalizeServerScopeId(serverId);
@@ -58,6 +61,15 @@ function getScopedTransferRouteCache(serverId: string | null | undefined) {
     const nextCache = createScopedTransferRouteCache(normalizedServerId);
     transferRouteCachesByServerScopeId.set(normalizedServerId, nextCache);
     return nextCache;
+}
+
+function notifyMachineRpcDirectRouteListeners(serverId: string | null | undefined) {
+    const normalizedServerId = normalizeServerScopeId(serverId);
+    const listeners = machineRpcDirectRouteListenersByServerScopeId.get(normalizedServerId);
+    if (!listeners || listeners.size === 0) return;
+    for (const listener of listeners) {
+        listener();
+    }
 }
 
 export function readCachedDirectPeerRoute(input: DirectPeerRouteInput): TransferRouteViabilityRecord {
@@ -99,10 +111,33 @@ export function recordCachedMachineRpcDirectRouteUnavailable(
     getScopedTransferRouteCache(input.serverId).recordMachineRpcDirectRouteUnavailable({
         remoteMachineId: input.remoteMachineId,
     }, failureReason);
+    notifyMachineRpcDirectRouteListeners(input.serverId);
 }
 
 export function recordCachedMachineRpcDirectRouteViable(input: MachineRpcDirectRouteInput): void {
     getScopedTransferRouteCache(input.serverId).recordMachineRpcDirectRouteViable({
         remoteMachineId: input.remoteMachineId,
     });
+    notifyMachineRpcDirectRouteListeners(input.serverId);
+}
+
+export function subscribeCachedMachineRpcDirectRoute(
+    input: MachineRpcDirectRouteInput,
+    listener: CacheListener,
+): () => void {
+    const normalizedServerId = normalizeServerScopeId(input.serverId);
+    let listeners = machineRpcDirectRouteListenersByServerScopeId.get(normalizedServerId);
+    if (!listeners) {
+        listeners = new Set();
+        machineRpcDirectRouteListenersByServerScopeId.set(normalizedServerId, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+        const current = machineRpcDirectRouteListenersByServerScopeId.get(normalizedServerId);
+        if (!current) return;
+        current.delete(listener);
+        if (current.size === 0) {
+            machineRpcDirectRouteListenersByServerScopeId.delete(normalizedServerId);
+        }
+    };
 }
