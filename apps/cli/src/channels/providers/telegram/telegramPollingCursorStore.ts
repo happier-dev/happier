@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
+import { assertFilesystemSafeAccountId } from '@/channels/state/assertFilesystemSafeAccountId';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { logger } from '@/ui/logger';
 
@@ -13,28 +14,10 @@ type StoredTelegramPollingCursorDocV1 = Readonly<{
 
 const STORE_SCHEMA_VERSION = 1;
 const BOT_TOKEN_HASH_LENGTH = 32;
-const ACCOUNT_ID_SAFE_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
-}
-
-function assertFilesystemSafeAccountId(raw: string): string {
-  const value = raw.trim();
-  if (!value) {
-    throw new Error('Invalid accountId: empty');
-  }
-  if (value === '.' || value === '..') {
-    throw new Error(`Invalid accountId: ${value}`);
-  }
-  if (value.includes('/') || value.includes('\\')) {
-    throw new Error(`Invalid accountId: ${value}`);
-  }
-  if (!ACCOUNT_ID_SAFE_RE.test(value)) {
-    throw new Error(`Invalid accountId: ${value}`);
-  }
-  return value;
 }
 
 function toNonNegativeInt(value: unknown): number | null {

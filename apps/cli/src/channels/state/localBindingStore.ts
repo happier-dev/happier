@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import type { ChannelBindingStore, ChannelBridgeConversationRef, ChannelSessionBinding } from '@/channels/core/channelBridgeWorker';
 import { configuration } from '@/configuration';
+import { assertFilesystemSafeAccountId } from '@/channels/state/assertFilesystemSafeAccountId';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { logger } from '@/ui/logger';
 
@@ -23,25 +24,6 @@ type StoredBindingsDocV1 = Readonly<{
     updatedAtMs: number;
   }>>;
 }>;
-
-const ACCOUNT_ID_SAFE_RE = /^[A-Za-z0-9._-]{1,128}$/;
-
-function assertFilesystemSafeAccountId(raw: string): string {
-  const value = raw.trim();
-  if (!value) {
-    throw new Error('Invalid accountId: empty');
-  }
-  if (value === '.' || value === '..') {
-    throw new Error(`Invalid accountId: ${value}`);
-  }
-  if (value.includes('/') || value.includes('\\')) {
-    throw new Error(`Invalid accountId: ${value}`);
-  }
-  if (!ACCOUNT_ID_SAFE_RE.test(value)) {
-    throw new Error(`Invalid accountId: ${value}`);
-  }
-  return value;
-}
 
 function asRecord(value: unknown): RecordLike | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
