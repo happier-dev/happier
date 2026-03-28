@@ -16,15 +16,17 @@ const runtimeFetchSpy = vi.fn();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'web' },
-        AppState: {
-            get currentState() {
-                return appState.currentState;
-            },
-            addEventListener: appStateAddListener as any,
-        },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: { OS: 'web' },
+                AppState: {
+                    get currentState() {
+                        return appState.currentState;
+                    },
+                    addEventListener: appStateAddListener as any,
+                },
+            }
+    );
 });
 
 type SocketEventHandler = (...args: unknown[]) => void;
