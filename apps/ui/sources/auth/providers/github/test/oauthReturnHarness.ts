@@ -67,10 +67,14 @@ export function setAuthState(next: { isAuthenticated: boolean; credentials: { to
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ replace: replaceSpy }),
-    useLocalSearchParams: localSearchParamsMock,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { replace: replaceSpy },
+        params: () => localSearchParamsMock(),
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({

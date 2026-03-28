@@ -13,14 +13,16 @@ vi.mock('@/sync/http/client', () => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'web' },
-        AppState: {
-            get currentState() {
-                return appState.currentState;
-            },
-        },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: { OS: 'web' },
+                AppState: {
+                    get currentState() {
+                        return appState.currentState;
+                    },
+                },
+            }
+    );
 });
 
 type StubResponse = {
