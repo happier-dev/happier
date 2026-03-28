@@ -40,7 +40,6 @@ function createTestSessionMessages(messages: ReadonlyArray<Message>): SessionMes
         messageIdsOldestFirst: messages.map((message) => message.id),
         messagesById,
         messagesMap: messagesById,
-        draftsByLocalId: {},
         reducerState: createReducer(),
         latestThinkingMessageId: null,
         latestThinkingMessageActivityAtMs: null,

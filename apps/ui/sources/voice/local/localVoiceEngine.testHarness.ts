@@ -340,18 +340,18 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            View: 'View',
-            Text: 'Text',
-            Dimensions: {
-                get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
-            },
-            Platform: {
-                get OS() {
-                            return platformOs;
-                        },
-                select: (spec: any) => (spec && (spec.ios ?? spec.default)) ?? undefined,
-            },
-        }
+                    View: 'View',
+                    Text: 'Text',
+                    Dimensions: {
+                        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+                    },
+                    Platform: {
+                        get OS() {
+                                    return platformOs;
+                                },
+                        select: (spec: any) => (spec && (spec.ios ?? spec.default)) ?? undefined,
+                    },
+                }
     );
 });
 

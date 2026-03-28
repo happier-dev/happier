@@ -33,22 +33,19 @@ export function installVoicePickerCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = voicePickerModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-            Pressable: 'Pressable',
-            ScrollView: 'ScrollView',
-            Platform: {
-                OS: 'web',
-                select: (options: { web?: unknown; default?: unknown }) => options.web ?? options.default,
-            },
-        });
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                    Pressable: 'Pressable',
+                    ScrollView: 'ScrollView',
+                    Platform: {
+                        OS: 'web',
+                        select: (options: { web?: unknown; default?: unknown }) => options.web ?? options.default,
+                    },
+                }
+    );
+});
 
     vi.mock('react-native-unistyles', async () => {
         const activeOptions = voicePickerModuleState.options;
@@ -70,13 +67,8 @@ export function installVoicePickerCommonModuleMocks(
         return createTextModuleMock({ translate: (key: string) => key });
     });
 
-    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-        const activeOptions = voicePickerModuleState.options;
-        if (activeOptions.storage) {
-            return await activeOptions.storage(importOriginal);
-        }
-
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
-    });
+    vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({});
+});
 }
