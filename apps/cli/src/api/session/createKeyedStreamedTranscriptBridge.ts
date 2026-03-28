@@ -15,7 +15,6 @@ type KeyedStreamArgs = Readonly<{
 export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArgs>(params: Readonly<{
   provider: ACPProvider;
   createSessionForStream: (args: TArgs) => StreamedTranscriptWriterSession;
-  draftFlushIntervalMs?: number | null;
   checkpointIntervalMs?: number | null;
   checkpointMinChars?: number | null;
 }>) {
@@ -28,7 +27,6 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
     const writer = createStreamedTranscriptWriter({
       provider: params.provider,
       session: params.createSessionForStream(args),
-      draftFlushIntervalMs: params.draftFlushIntervalMs,
       checkpointIntervalMs: params.checkpointIntervalMs,
       checkpointMinChars: params.checkpointMinChars,
     });

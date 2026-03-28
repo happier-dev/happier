@@ -7,24 +7,14 @@ describe('createCurrentSessionTranscriptPort', () => {
     const firstSession = {
       sendAgentMessage: vi.fn(),
       sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendTranscriptDraftDelta: vi.fn(),
     };
     const secondSession = {
       sendAgentMessage: vi.fn(),
       sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendTranscriptDraftDelta: vi.fn(),
     };
 
     let currentSession = firstSession;
     const port = createCurrentSessionTranscriptPort(() => currentSession as any);
-
-    port.sendTranscriptDraftDelta('gemini' as any, {
-      localId: 'draft_1',
-      segmentKind: 'thinking',
-      sidechainId: null,
-      deltaText: 'draft',
-      createdAtMs: 1,
-    });
 
     currentSession = secondSession;
 
@@ -34,7 +24,6 @@ describe('createCurrentSessionTranscriptPort', () => {
       { localId: 'commit_1' },
     );
 
-    expect(firstSession.sendTranscriptDraftDelta).toHaveBeenCalledTimes(1);
     expect(firstSession.sendAgentMessageCommitted).not.toHaveBeenCalled();
     expect(secondSession.sendAgentMessageCommitted).toHaveBeenCalledWith(
       'gemini',

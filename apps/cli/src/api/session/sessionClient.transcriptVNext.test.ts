@@ -108,7 +108,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
     );
   });
 
-  it('emits transcript-draft ephemerals without writing to the durable transcript', async () => {
+  it('does not expose transcript-draft ephemerals (legacy partial streaming removed)', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1', didWrite: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
@@ -116,25 +116,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
     const { ApiSessionClient } = await import('./sessionClient');
 
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
-    client.sendTranscriptDraftDelta('codex' as any, {
-      localId: 'd1',
-      segmentKind: 'assistant',
-      sidechainId: 'sc-1',
-      deltaText: 'Hello',
-      createdAtMs: 123,
-    });
-
-    expect(sessionSocketStub.emit.mock.calls.some((c: any[]) => c[0] === 'message')).toBe(false);
-    expect(sessionSocketStub.emit).toHaveBeenCalledWith(
-      'transcript-draft',
-      expect.objectContaining({
-        sid: 's1',
-        localId: 'd1',
-        segmentKind: 'assistant',
-        sidechainId: 'sc-1',
-        createdAt: 123,
-      }),
-    );
+    expect((client as any).sendTranscriptDraftDelta).toBeUndefined();
   });
 
   it('clears materialized localId state when a durable stream checkpoint arrives as message-updated', async () => {

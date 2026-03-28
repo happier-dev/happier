@@ -312,7 +312,6 @@ export class ApiSessionClient extends EventEmitter {
             sendAcp: (provider, body, opts) => this.sendAgentMessage(provider as any, body as any, opts),
             streamedTranscriptSession: {
                 sendAgentMessageCommitted: (provider, body, opts) => this.sendAgentMessageCommitted(provider as any, body as any, opts),
-                sendTranscriptDraftDelta: (provider, params) => this.sendTranscriptDraftDelta(provider as any, params),
             },
             transcriptWriter,
             budgetRegistry: executionBudgetRegistry,
@@ -1550,57 +1549,6 @@ export class ApiSessionClient extends EventEmitter {
                 logger.debug('[SOCKET] Failed to send token_count usage report (non-fatal)', error);
             }
         }
-    }
-
-    sendTranscriptDraftDelta(
-        provider: ACPProvider,
-        params: {
-            localId: string;
-            segmentKind: 'assistant' | 'thinking';
-            sidechainId?: string | null;
-            deltaText: string;
-            createdAtMs?: number;
-        },
-    ): void {
-        const localId = typeof params.localId === 'string' ? params.localId.trim() : '';
-        const deltaText = typeof params.deltaText === 'string' ? params.deltaText : '';
-        if (!localId || !deltaText) return;
-
-        const sidechainId =
-            params.sidechainId === null || params.sidechainId === undefined
-                ? null
-                : typeof params.sidechainId === 'string'
-                    ? params.sidechainId.trim() || null
-                    : null;
-
-        const body: ACPMessageData =
-            params.segmentKind === 'assistant'
-                ? { type: 'message', message: deltaText, ...(sidechainId ? { sidechainId } : {}) }
-                : { type: 'thinking', text: deltaText, ...(sidechainId ? { sidechainId } : {}) };
-
-        const { content } = this.prepareAcpAgentMessage({
-            provider,
-            body,
-            localId,
-        });
-
-        const delta = this.buildOutboundSessionMessagePayload(content);
-        const createdAt = typeof params.createdAtMs === 'number' && Number.isFinite(params.createdAtMs) && params.createdAtMs >= 0
-            ? Math.trunc(params.createdAtMs)
-            : Date.now();
-
-        if (!this.socket.connected) {
-            return;
-        }
-
-        this.socket.emit('transcript-draft', {
-            sid: this.sessionId,
-            localId,
-            segmentKind: params.segmentKind,
-            sidechainId,
-            delta,
-            createdAt,
-        });
     }
 
     sendUserTextMessage(text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) {

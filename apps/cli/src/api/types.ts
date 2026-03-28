@@ -145,14 +145,6 @@ export interface ClientToServerEvents {
     data: { sid: string, message: string | SessionMessageContent, localId?: string | null, sidechainId?: string | null, echoToSender?: boolean },
     cb?: (answer: MessageAckResponse) => void
   ) => void
-  'transcript-draft': (data: {
-    sid: string;
-    localId: string;
-    segmentKind: 'assistant' | 'thinking';
-    sidechainId?: string | null;
-    delta: string | SessionMessageContent;
-    createdAt?: number;
-  }) => void
   'session-alive': (data: {
     sid: string;
     time: number;

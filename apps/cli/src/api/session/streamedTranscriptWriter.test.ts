@@ -2,15 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createStreamedTranscriptWriter } from './streamedTranscriptWriter';
 
-type DraftCall = {
-  provider: string;
-  localId: string;
-  segmentKind: 'assistant' | 'thinking';
-  sidechainId: string | null;
-  deltaText: string;
-  createdAtMs: number;
-};
-
 type DurableCall = {
   provider: string;
   localId: string;
@@ -19,21 +10,10 @@ type DurableCall = {
 };
 
 function createSessionStub() {
-  const draftCalls: DraftCall[] = [];
   const durableCalls: DurableCall[] = [];
   const bestEffortCalls: DurableCall[] = [];
 
   const session = {
-    sendTranscriptDraftDelta: (provider: any, params: any) => {
-      draftCalls.push({
-        provider: String(provider),
-        localId: String(params.localId),
-        segmentKind: params.segmentKind,
-        sidechainId: params.sidechainId ?? null,
-        deltaText: String(params.deltaText ?? ''),
-        createdAtMs: Number(params.createdAtMs),
-      });
-    },
     sendAgentMessage: (provider: any, body: any, opts: any) => {
       bestEffortCalls.push({
         provider: String(provider),
@@ -52,7 +32,7 @@ function createSessionStub() {
     },
   };
 
-  return { session, draftCalls, durableCalls, bestEffortCalls };
+  return { session, durableCalls, bestEffortCalls };
 }
 
 async function settleCommittedSnapshot() {
@@ -61,43 +41,44 @@ async function settleCommittedSnapshot() {
 }
 
 describe('createStreamedTranscriptWriter', () => {
-  it('buffers draft deltas and emits them on the configured flush interval', async () => {
+  it('emits durable checkpoints on the configured interval', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
-    const { session, draftCalls } = createSessionStub();
+    const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'l1',
-      draftFlushIntervalMs: 50,
-      checkpointIntervalMs: 1_000,
+      checkpointIntervalMs: 50,
       checkpointMinChars: 1,
     });
 
     writer.appendAssistantDelta('Hello');
     await settleCommittedSnapshot();
-    expect(draftCalls).toHaveLength(0);
+    expect(durableCalls).toHaveLength(1);
 
     writer.appendAssistantDelta(' world');
-    expect(draftCalls).toHaveLength(0);
+    await settleCommittedSnapshot();
+    expect(durableCalls).toHaveLength(1);
 
     vi.advanceTimersByTime(49);
     await settleCommittedSnapshot();
-    expect(draftCalls).toHaveLength(0);
+    writer.appendAssistantDelta('!');
+    await settleCommittedSnapshot();
+    expect(durableCalls).toHaveLength(1);
 
     vi.advanceTimersByTime(1);
     await settleCommittedSnapshot();
+    writer.appendAssistantDelta('?');
+    await settleCommittedSnapshot();
 
-    expect(draftCalls).toHaveLength(1);
-    expect(draftCalls[0]).toEqual({
+    expect(durableCalls).toHaveLength(2);
+    expect(durableCalls[1]).toMatchObject({
       provider: 'codex',
       localId: 'l1',
-      segmentKind: 'assistant',
-      sidechainId: null,
-      deltaText: 'Hello world',
-      createdAtMs: 50,
+      body: { type: 'message', message: 'Hello world!?' },
     });
   });
 
@@ -112,7 +93,6 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => ids.shift() ?? 'missing',
-      draftFlushIntervalMs: 50,
       checkpointIntervalMs: 1_000,
       checkpointMinChars: 1,
     });
@@ -138,44 +118,38 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
-  it('flushes each draft delta immediately when the flush interval is zero', async () => {
+  it('emits a durable checkpoint for each delta when checkpointIntervalMs is zero', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
-    const { session, draftCalls } = createSessionStub();
+    const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
-      draftFlushIntervalMs: 0,
-      checkpointIntervalMs: 1_000,
+      checkpointIntervalMs: 0,
       checkpointMinChars: 1,
     });
 
     writer.appendAssistantDelta('Hello');
     await settleCommittedSnapshot();
 
-    expect(draftCalls).toHaveLength(1);
-    expect(draftCalls[0]).toEqual({
+    expect(durableCalls).toHaveLength(1);
+    expect(durableCalls[0]).toMatchObject({
       provider: 'codex',
       localId: 'segment-1',
-      segmentKind: 'assistant',
-      sidechainId: null,
-      deltaText: 'Hello',
-      createdAtMs: 0,
+      body: { type: 'message', message: 'Hello' },
     });
 
     writer.appendAssistantDelta(' world');
+    await settleCommittedSnapshot();
 
-    expect(draftCalls).toHaveLength(2);
-    expect(draftCalls[1]).toEqual({
+    expect(durableCalls).toHaveLength(2);
+    expect(durableCalls[1]).toMatchObject({
       provider: 'codex',
       localId: 'segment-1',
-      segmentKind: 'assistant',
-      sidechainId: null,
-      deltaText: ' world',
-      createdAtMs: 0,
+      body: { type: 'message', message: 'Hello world' },
     });
   });
 
@@ -183,14 +157,13 @@ describe('createStreamedTranscriptWriter', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
-    const { session, draftCalls, durableCalls } = createSessionStub();
+    const { session, durableCalls } = createSessionStub();
     const ids = ['segment-1', 'segment-2'];
 
     const writer = createStreamedTranscriptWriter({
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => ids.shift() ?? 'missing',
-      draftFlushIntervalMs: 50,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -203,10 +176,6 @@ describe('createStreamedTranscriptWriter', () => {
 
     await writer.flushAll({ reason: 'tool-call-boundary' });
     await settleCommittedSnapshot();
-
-    expect(draftCalls).toHaveLength(1);
-    expect(draftCalls[0]!.deltaText).toBe('Hello world');
-    expect(draftCalls[0]!.localId).toBe('segment-1');
 
     expect(durableCalls).toHaveLength(2);
     expect(durableCalls[0]!.localId).toBe('segment-1');
@@ -229,13 +198,12 @@ describe('createStreamedTranscriptWriter', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
-    const { session, draftCalls, durableCalls } = createSessionStub();
+    const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'l1',
-      draftFlushIntervalMs: 50,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -246,13 +214,6 @@ describe('createStreamedTranscriptWriter', () => {
 
     await writer.flushAll({ reason: 'abort', interruptedReason: 'cancelled' });
     await settleCommittedSnapshot();
-
-    expect(draftCalls).toHaveLength(1);
-    expect(draftCalls[0]).toMatchObject({
-      sidechainId: 'sc-1',
-      segmentKind: 'thinking',
-      deltaText: '... next',
-    });
 
     expect(durableCalls.length).toBeGreaterThanOrEqual(2);
     expect(durableCalls[durableCalls.length - 1]!.body).toMatchObject({ type: 'thinking', sidechainId: 'sc-1' });
@@ -265,13 +226,12 @@ describe('createStreamedTranscriptWriter', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
-    const { session, draftCalls, durableCalls } = createSessionStub();
+    const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
-      draftFlushIntervalMs: null,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -283,7 +243,6 @@ describe('createStreamedTranscriptWriter', () => {
     await writer.flushAll({ reason: 'turn-end' });
     await settleCommittedSnapshot();
 
-    expect(draftCalls).toEqual([]);
     expect(durableCalls).toHaveLength(2);
     expect(durableCalls[0]!.body).toMatchObject({ type: 'message', message: 'READY ' });
     expect(durableCalls[1]!.body).toMatchObject({ type: 'message', message: 'READY_FOR_FOLLOWUP' });
@@ -305,7 +264,6 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'l1',
-      draftFlushIntervalMs: 50,
       checkpointIntervalMs: 1_000,
       checkpointMinChars: 1,
     });
@@ -334,7 +292,6 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
-      draftFlushIntervalMs: 0,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -389,7 +346,6 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
-      draftFlushIntervalMs: 0,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -420,11 +376,11 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
-  it('does not emit draft text before the first durable snapshot settles, but flushes the buffered text after it does', async () => {
+  it('tracks an in-flight durable commit and drains it before flushAll resolves', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
-    const { session, draftCalls, durableCalls } = createSessionStub();
+    const { session, durableCalls } = createSessionStub();
     let resolveFirstCommit: (() => void) | undefined;
     session.sendAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
       durableCalls.push({
@@ -444,33 +400,32 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
-      draftFlushIntervalMs: 50,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
 
-    writer.appendAssistantDelta('The disposable workspace ');
-    await settleCommittedSnapshot();
-    writer.appendAssistantDelta('is ready at /tmp/demo');
+    writer.appendAssistantDelta('Hello');
+    await Promise.resolve();
 
-    vi.advanceTimersByTime(50);
-    await settleCommittedSnapshot();
+    let flushResolved = false;
+    const flushPromise = writer.flushAll({ reason: 'turn-end' }).then(() => {
+      flushResolved = true;
+    });
 
-    expect(draftCalls).toHaveLength(0);
+    await Promise.resolve();
+    expect(flushResolved).toBe(false);
 
-    const releaseFirstCommit = resolveFirstCommit;
-    if (!releaseFirstCommit) {
+    const release = resolveFirstCommit;
+    if (!release) {
       throw new Error('expected first durable commit resolver');
     }
-    releaseFirstCommit();
-    await settleCommittedSnapshot();
+    release();
+    await flushPromise;
 
-    expect(draftCalls).toEqual([
-      expect.objectContaining({
-        localId: 'segment-1',
-        segmentKind: 'assistant',
-        deltaText: 'The disposable workspace is ready at /tmp/demo',
-      }),
-    ]);
+    expect(flushResolved).toBe(true);
+    expect(durableCalls).toHaveLength(2);
+    expect(durableCalls[1]!.meta).toMatchObject({
+      happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
+    });
   });
 });
