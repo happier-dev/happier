@@ -24,25 +24,22 @@ export function installSessionFileViewCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = sessionFileViewModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-                select: (options: any) => options?.web ?? options?.default ?? null,
-            },
-            AppState: {
-                currentState: 'active',
-                addEventListener: () => ({ remove: () => {} }),
-            },
-            View: (props: any) => React.createElement('View', props, props.children),
-            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-        });
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'web',
+                        select: (options: any) => options?.web ?? options?.default ?? null,
+                    },
+                    AppState: {
+                        currentState: 'active',
+                        addEventListener: () => ({ remove: () => {} }),
+                    },
+                    View: (props: any) => React.createElement('View', props, props.children),
+                    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+                }
+    );
+});
 
     vi.mock('@/text', async () => {
         const activeOptions = sessionFileViewModuleState.options;

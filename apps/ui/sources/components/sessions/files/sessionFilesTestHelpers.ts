@@ -32,14 +32,9 @@ export function installSessionFilesCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
-        const activeOptions = sessionFilesModuleState.options;
-        if (activeOptions.reactNative) {
-            return await activeOptions.reactNative();
-        }
-
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock();
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
     vi.mock('@expo/vector-icons', async () => {
         const activeOptions = sessionFilesModuleState.options;

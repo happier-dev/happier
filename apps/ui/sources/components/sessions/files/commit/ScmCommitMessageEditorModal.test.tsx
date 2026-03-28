@@ -18,12 +18,12 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            Platform: {
-                OS: 'ios',
-                select: (spec: any) => spec?.ios ?? spec?.default ?? spec?.web ?? spec?.android,
-            },
-            useWindowDimensions: () => ({ width: 1200, height: 760 }),
-        }
+                    Platform: {
+                        OS: 'ios',
+                        select: (spec: any) => spec?.ios ?? spec?.default ?? spec?.web ?? spec?.android,
+                    },
+                    useWindowDimensions: () => ({ width: 1200, height: 760 }),
+                }
     );
 });
 

@@ -6,12 +6,14 @@ import type { MutableRefObject } from 'react';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'web',
-            select: (value: any) => value?.default ?? null,
-        },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: {
+                    OS: 'web',
+                    select: (value: any) => value?.default ?? null,
+                },
+            }
+    );
 });
 
 import { useInitialScrollRestore } from '@/components/sessions/files/content/review/useInitialScrollRestore';
