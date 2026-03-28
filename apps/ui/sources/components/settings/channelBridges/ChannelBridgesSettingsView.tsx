@@ -12,19 +12,18 @@ import { CodeView } from '@/components/ui/media/CodeView';
 import { Text } from '@/components/ui/text/Text';
 import type { FeatureId } from '@happier-dev/protocol';
 import { FeatureDiagnosticsPanel } from '@/components/settings/features/FeatureDiagnosticsPanel';
-import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { t } from '@/text';
+import { useChannelBridgesRuntimeVisibility } from './channelBridgesVisibility';
 
 export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSettingsView() {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const channelBridgesDecision = useFeatureDecision('channelBridges', { scopeKind: 'runtime' });
-    const telegramDecision = useFeatureDecision('channelBridges.telegram', { scopeKind: 'runtime' });
-
-    const loading = channelBridgesDecision === null;
-    const needsLocalEnablement = channelBridgesDecision?.blockedBy === 'local_policy';
-    const supported = channelBridgesDecision?.state !== 'unsupported';
-    const telegramEnabled = telegramDecision?.state === 'enabled';
+    const {
+        loading,
+        needsLocalEnablement,
+        supported,
+        telegramEnabled,
+    } = useChannelBridgesRuntimeVisibility();
 
     const configureTelegramCommand = React.useMemo(() => {
         return [

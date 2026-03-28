@@ -26,6 +26,7 @@ import {
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
+import { isChannelBridgesFamilyHardDisabledByServer } from '@/components/settings/channelBridges/channelBridgesVisibility';
 
 export default React.memo(function FeaturesSettingsScreen() {
     const { theme } = useUnistyles();
@@ -129,6 +130,21 @@ export default React.memo(function FeaturesSettingsScreen() {
 
     const isToggleHardDisabledByServer = React.useCallback(
         (featureId: FeatureId): boolean => {
+            if (featureId === 'channelBridges') {
+                if (serverSnapshot.status !== 'ready') return false;
+                if (serverSnapshot.serverIds.length === 0) return false;
+
+                for (const serverId of serverSnapshot.serverIds) {
+                    const snapshot = serverSnapshot.snapshotsByServerId[serverId];
+                    if (!snapshot) return false;
+                    if (snapshot.status === 'error') return false;
+                    if (snapshot.status === 'unsupported') return true;
+                    if (isChannelBridgesFamilyHardDisabledByServer(snapshot)) return true;
+                }
+
+                return false;
+            }
+
             if (!featureRequiresServerSnapshot(featureId)) return false;
             if (serverSnapshot.status !== 'ready') return false;
             if (serverSnapshot.serverIds.length === 0) return false;

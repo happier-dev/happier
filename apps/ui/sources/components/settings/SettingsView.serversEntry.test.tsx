@@ -22,6 +22,21 @@ const shared = vi.hoisted(() => ({
     canRequestReviewSpy: vi.fn(async () => true),
 }));
 
+const useFeatureDecisionMock = vi.hoisted(() => vi.fn());
+
+useFeatureDecisionMock.mockImplementation((featureId: string) => {
+    if (featureId !== 'channelBridges') return null;
+    return {
+        featureId: 'channelBridges',
+        state: 'enabled',
+        blockedBy: null,
+        blockerCode: 'none',
+        diagnostics: [],
+        evaluatedAt: 0,
+        scope: { scopeKind: 'runtime' },
+    };
+});
+
 const settingsViewWebDimensions = { width: 1600, height: 900, scale: 2, fontScale: 1 };
 
 function createPassthroughNode(name: string) {
@@ -223,18 +238,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: (featureId: string) => {
-        if (featureId !== 'channelBridges') return null;
-        return {
-            featureId: 'channelBridges',
-            state: 'enabled',
-            blockedBy: null,
-            blockerCode: 'none',
-            diagnostics: [],
-            evaluatedAt: 0,
-            scope: { scopeKind: 'runtime' },
-        };
-    },
+    useFeatureDecision: (featureId: string, scope?: unknown) => useFeatureDecisionMock(featureId, scope),
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -263,6 +267,19 @@ afterEach(() => {
     shared.requestReviewSpy.mockClear();
     shared.canRequestReviewSpy.mockReset();
     shared.canRequestReviewSpy.mockResolvedValue(true);
+    useFeatureDecisionMock.mockReset();
+    useFeatureDecisionMock.mockImplementation((featureId: string) => {
+        if (featureId !== 'channelBridges') return null;
+        return {
+            featureId: 'channelBridges',
+            state: 'enabled',
+            blockedBy: null,
+            blockerCode: 'none',
+            diagnostics: [],
+            evaluatedAt: 0,
+            scope: { scopeKind: 'runtime' },
+        };
+    });
 });
 
 describe('SettingsView', () => {
@@ -346,6 +363,26 @@ describe('SettingsView', () => {
                 delete process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV;
             }
         }
+    });
+
+    it('hides Channel Bridges in Settings when the runtime decision is disabled', async () => {
+        useFeatureDecisionMock.mockImplementation((featureId: string) => {
+            if (featureId !== 'channelBridges') return null;
+            return {
+                featureId: 'channelBridges',
+                state: 'disabled',
+                blockedBy: 'server',
+                blockerCode: 'feature_disabled',
+                diagnostics: [],
+                evaluatedAt: 0,
+                scope: { scopeKind: 'runtime' },
+            };
+        });
+
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
+
+        expect(screen.findRowByTitle('settings.channelBridges')).toBeNull();
     });
 
     it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {

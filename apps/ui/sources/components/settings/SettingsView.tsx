@@ -32,7 +32,6 @@ import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior'
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
-import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
@@ -40,6 +39,7 @@ import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { useChannelBridgesRuntimeVisibility } from '@/components/settings/channelBridges/channelBridgesVisibility';
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -67,11 +67,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.discoverable !== false;
     const automationsNeedLocalEnablement = automationsSupport?.blockedBy === 'local_policy';
-    const channelBridgesDecision = useFeatureDecision('channelBridges');
-    const showChannelBridges = getFeatureBuildPolicyDecision('channelBridges') !== 'deny'
-        && channelBridgesDecision !== null
-        && channelBridgesDecision.state !== 'unsupported';
-    const channelBridgesNeedLocalEnablement = channelBridgesDecision?.blockedBy === 'local_policy';
+    const { showSettingsEntry: showChannelBridges } = useChannelBridgesRuntimeVisibility();
     const profile = useProfile();
     const displayName = getDisplayName(profile);
     const avatarUrl = getAvatarUrl(profile);
@@ -411,11 +407,9 @@ export const SettingsView = React.memo(function SettingsView() {
                 {showChannelBridges ? (
                     <Item
                         title={t('settings.channelBridges')}
-                        subtitle={channelBridgesNeedLocalEnablement
-                            ? t('settingsFeatures.expChannelBridgesSubtitle')
-                            : t('settings.channelBridgesSubtitle')}
+                        subtitle={t('settings.channelBridgesSubtitle')}
                         icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.orange} />}
-                        onPress={() => pushRoute(channelBridgesNeedLocalEnablement ? '/(app)/settings/features' : '/(app)/settings/channel-bridges')}
+                        onPress={() => pushRoute('/(app)/settings/channel-bridges')}
                     />
                 ) : null}
                 {mcpServersEnabled && (

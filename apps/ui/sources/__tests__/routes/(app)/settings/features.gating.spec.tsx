@@ -208,6 +208,31 @@ describe('FeaturesSettingsScreen gating', () => {
         expect(bridgeItem).toBeTruthy();
     });
 
+    it('hides the channel bridges toggle when telegram is hard-disabled by the server', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = 'channelBridges';
+
+        useEffectiveServerSelectionMock.mockReturnValue({ serverIds: ['server-1'] });
+        useServerFeaturesMainSelectionSnapshotMock.mockReturnValue({
+            status: 'ready',
+            serverIds: ['server-1'],
+            snapshotsByServerId: {
+                'server-1': {
+                    status: 'ready',
+                    features: createRootLayoutFeaturesResponse({
+                        features: {
+                            channelBridges: { enabled: true, telegram: { enabled: false } },
+                        },
+                    }),
+                },
+            },
+        });
+
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
+
+        const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
+        expect(screen.findRowByTitle('settingsFeatures.expChannelBridges')).toBeNull();
+    });
+
     it('turning off connectedServices also disables connectedServices.quotas', async () => {
         vi.resetModules();
         const setFeatureToggles = vi.fn();
