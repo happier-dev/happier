@@ -17,6 +17,7 @@ const executeSpy = vi.fn(async () => ({ ok: true as const, result: {} }));
 const createDefaultActionExecutorSpy = vi.fn();
 const fetchArtifactWithBodySpy = vi.fn(async () => null);
 const resolveServerIdForSessionIdFromLocalCacheSpy = vi.fn((_: string) => 'server-cache');
+let modalConfirmResult = true;
 const defaultApprovalArtifactBody = {
     v: 1,
     status: 'open',
@@ -52,6 +53,41 @@ function createApprovalArtifact(serverId?: string) {
         },
         body: JSON.stringify({
             ...defaultApprovalArtifactBody,
+            ...(serverId ? { serverId } : {}),
+        }),
+    };
+}
+
+function createSessionTitleApprovalArtifact(serverId?: string) {
+    return {
+        id: 'artifact-1',
+        header: {
+            kind: 'approval_request.v1',
+            title: 'Set session title',
+            approvalStatus: 'open',
+            actionId: 'session.title.set',
+            sessionId: 'session-1',
+        },
+        body: JSON.stringify({
+            v: 1,
+            status: 'open',
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            createdBy: {
+                surface: 'mcp',
+                sessionId: 'session-1',
+            },
+            requestedSurface: 'mcp',
+            actionId: 'session.title.set',
+            actionArgs: {
+                sessionId: 'session-1',
+                title: 'New title from MCP',
+            },
+            summary: 'Set session title',
+            preview: {
+                kind: 'session_title_set',
+                summary: 'Set a new title for the session',
+            },
             ...(serverId ? { serverId } : {}),
         }),
     };
@@ -178,7 +214,7 @@ installApprovalCommonModuleMocks({
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
             spies: {
-                confirm: vi.fn(async () => true),
+                confirm: vi.fn(async () => modalConfirmResult),
                 alert: vi.fn(),
             },
         }).module;
@@ -247,6 +283,7 @@ describe('ApprovalDetailScreen', () => {
         fetchArtifactWithBodySpy.mockClear();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server-cache');
+        modalConfirmResult = true;
         sessionFixtures = createSessionFixtures();
         machineFixtures = createMachineFixtures();
         storageState = createStorageState();
@@ -330,5 +367,52 @@ describe('ApprovalDetailScreen', () => {
             }),
         );
         expect(resolveServerIdForSessionIdFromLocalCacheSpy).not.toHaveBeenCalled();
+    });
+
+    it('executes approval decisions even when the web confirm modal resolves false (ModalProvider unavailable)', async () => {
+        modalConfirmResult = false;
+        currentArtifact = createApprovalArtifact('server-approval');
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('approvals.approve');
+        });
+
+        expect(executeSpy).toHaveBeenCalledWith(
+            'approval.request.decide',
+            { artifactId: 'artifact-1', decision: 'approve' },
+            expect.objectContaining({
+                surface: 'ui_button',
+                serverId: 'server-approval',
+            }),
+        );
+    });
+
+    it('renders and approves external session.title.set requests', async () => {
+        currentArtifact = createSessionTitleApprovalArtifact('server-approval');
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+
+        const text = screen.getTextContent();
+        expect(text).toContain('Set session title');
+        expect(text).toContain('New title from MCP');
+        expect(text).toContain('Session id');
+        expect(text).toContain('Title');
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('approvals.approve');
+        });
+
+        expect(executeSpy).toHaveBeenCalledWith(
+            'approval.request.decide',
+            { artifactId: 'artifact-1', decision: 'approve' },
+            expect.objectContaining({
+                surface: 'ui_button',
+                serverId: 'server-approval',
+            }),
+        );
     });
 });

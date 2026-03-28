@@ -188,12 +188,6 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
     async (decision: 'approve' | 'reject') => {
       if (!parsed) return;
 
-      const confirmed = decision === 'approve'
-        ? await Modal.confirm(t('approvals.confirmApproveTitle'), t('approvals.confirmApproveBody'), { confirmText: t('approvals.approve') })
-        : await Modal.confirm(t('approvals.confirmRejectTitle'), t('approvals.confirmRejectBody'), { confirmText: t('approvals.reject'), destructive: true });
-
-      if (!confirmed) return;
-
       try {
         setIsDeciding(true);
         const res = await executor.execute(
