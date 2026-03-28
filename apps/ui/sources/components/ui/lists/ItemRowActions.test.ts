@@ -48,30 +48,30 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: (m: any) => m?.ios ?? m?.default,
-                                    },
-                                    AppState: {
-                                        addEventListener: () => ({ remove: () => {} }),
-                                    },
-                                    InteractionManager: {
-                                        runAfterInteractions: () => {},
-                                    },
-                                    useWindowDimensions: () => ({ width: 320, height: 800 }),
-                                    StyleSheet: {
-                                        absoluteFill: {
-                                            position: 'absolute',
-                                            top: 0,
-                                            left: 0,
-                                            right: 0,
-                                            bottom: 0,
-                                        },
-                                    },
-                                    View: (props: any) => React.createElement('View', props, props.children),
-                                    Text: (props: any) => React.createElement('Text', props, props.children),
-                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                }
+                                            Platform: {
+                                                OS: 'ios',
+                                                select: (m: any) => m?.ios ?? m?.default,
+                                            },
+                                            AppState: {
+                                                addEventListener: () => ({ remove: () => {} }),
+                                            },
+                                            InteractionManager: {
+                                                runAfterInteractions: () => {},
+                                            },
+                                            useWindowDimensions: () => ({ width: 320, height: 800 }),
+                                            StyleSheet: {
+                                                absoluteFill: {
+                                                    position: 'absolute',
+                                                    top: 0,
+                                                    left: 0,
+                                                    right: 0,
+                                                    bottom: 0,
+                                                },
+                                            },
+                                            View: (props: any) => React.createElement('View', props, props.children),
+                                            Text: (props: any) => React.createElement('Text', props, props.children),
+                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                        }
     );
 });
 

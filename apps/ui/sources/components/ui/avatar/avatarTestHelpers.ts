@@ -19,11 +19,6 @@ const avatarModuleState = vi.hoisted(() => ({
 }));
 
 vi.mock('react-native', async () => {
-    const activeOptions = avatarModuleState.options;
-    if (activeOptions.reactNative) {
-        return await activeOptions.reactNative();
-    }
-
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });

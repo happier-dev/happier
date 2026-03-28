@@ -8,9 +8,9 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    Text: (props: any) => React.createElement('RNText', props, props.children),
-                    TextInput: (props: any) => React.createElement('RNTextInput', props, props.children),
-                }
+                            Text: (props: any) => React.createElement('RNText', props, props.children),
+                            TextInput: (props: any) => React.createElement('RNTextInput', props, props.children),
+                        }
     );
 });
 

@@ -13,12 +13,12 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            Platform: {
-                OS: 'web',
-            },
-            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                React.createElement('ScrollView', props, props.children),
-        }
+                    Platform: {
+                        OS: 'web',
+                    },
+                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                        React.createElement('ScrollView', props, props.children),
+                }
     );
 });
 
