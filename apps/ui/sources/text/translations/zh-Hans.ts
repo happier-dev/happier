@@ -1053,6 +1053,8 @@ export const zhHans: TranslationStructure = {
     executionRunsSubtitle: "跨设备执行运行",
     connectedServices: "已连接服务",
     connectedServicesSubtitle: "Claude/Codex 订阅与 OAuth 配置",
+    channelBridges: "频道桥接",
+    channelBridgesSubtitle: "将外部聊天（Telegram）桥接到会话",
     featuresTitle: "功能",
     featuresSubtitle: "启用或禁用应用功能",
     developer: "开发者",
@@ -2467,6 +2469,15 @@ export const zhHans: TranslationStructure = {
     },
   },
 
+  settingsChannelBridges: {
+    unsupported: "此环境不支持频道桥接。",
+    enableInFeatures: "启用频道桥接",
+    enableInFeaturesSubtitle: "频道桥接为实验功能，默认关闭。",
+    description: "频道桥接可将外部聊天（Telegram）附加到会话，并将消息转发给代理。",
+    telegramTitle: "Telegram",
+    telegramFooter: "请通过 CLI 配置 Telegram，然后在 Telegram 中使用 /sessions、/attach、/detach、/help 管理绑定。",
+  },
+
   settingsFeatures: {
     // Features settings screen
     experiments: "实验功能",
@@ -2539,6 +2550,8 @@ export const zhHans: TranslationStructure = {
     expConnectedServicesSubtitle: "启用已连接服务设置与会话绑定",
     expConnectedServicesQuotas: "已连接服务配额",
     expConnectedServicesQuotasSubtitle: "显示已连接服务的配额徽标与用量仪表",
+    expChannelBridges: "频道桥接",
+    expChannelBridgesSubtitle: "将 Telegram 等聊天渠道连接到 Happier 会话（实验性）",
     expMemorySearch: "记忆搜索",
     expMemorySearchSubtitle: "启用本地记忆搜索页面与设置",
     expSessionsDirect: "直连会话",

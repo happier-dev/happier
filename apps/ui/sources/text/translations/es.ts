@@ -1105,6 +1105,8 @@ export const es: TranslationStructure = {
       executionRunsSubtitle: "Ejecuciones en distintas máquinas",
       connectedServices: "Servicios conectados",
       connectedServicesSubtitle: "Suscripciones de Claude/Codex y perfiles OAuth",
+      channelBridges: "Puentes de canales",
+      channelBridgesSubtitle: "Conecta chats externos (Telegram) a las sesiones",
       featuresTitle: "Características",
       featuresSubtitle: "Habilitar o deshabilitar funciones de la aplicación",
     developer: "Desarrollador",
@@ -2583,6 +2585,15 @@ export const es: TranslationStructure = {
     },
   },
 
+  settingsChannelBridges: {
+    unsupported: "Los puentes de canales no están disponibles en este entorno.",
+    enableInFeatures: "Activar puentes de canales",
+    enableInFeaturesSubtitle: "Los puentes de canales son experimentales y están desactivados por defecto.",
+    description: "Los puentes de canales te permiten adjuntar chats externos (Telegram) a las sesiones y reenviar mensajes al agente.",
+    telegramTitle: "Telegram",
+    telegramFooter: "Configura Telegram mediante la CLI y luego gestiona las vinculaciones en Telegram con /sessions, /attach, /detach, /help.",
+  },
+
   settingsFeatures: {
     // Features settings screen
     experiments: "Experimentos",
@@ -2660,6 +2671,8 @@ export const es: TranslationStructure = {
       expConnectedServicesQuotas: "Cuotas de servicios conectados",
       expConnectedServicesQuotasSubtitle:
         "Mostrar insignias de cuota y medidores de uso para servicios conectados",
+      expChannelBridges: "Puentes de canal",
+      expChannelBridgesSubtitle: "Conecta Telegram y otros canales de chat a sesiones de Happier (experimental)",
       expMemorySearch: "Búsqueda de memoria",
       expMemorySearchSubtitle:
         "Habilitar pantallas y ajustes de búsqueda de memoria local",

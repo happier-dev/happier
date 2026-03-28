@@ -1405,6 +1405,8 @@ export const ja: TranslationStructure = {
     executionRunsSubtitle: "複数マシンでの実行",
     connectedServices: "接続済みサービス",
     connectedServicesSubtitle: "Claude/Codex のサブスクリプションと OAuth プロファイル",
+    channelBridges: "チャンネルブリッジ",
+    channelBridgesSubtitle: "外部チャット（Telegram）をセッションに接続",
     featuresTitle: "機能",
     featuresSubtitle: "アプリ機能の有効/無効を切り替え",
     developer: "開発者",
@@ -2865,6 +2867,15 @@ export const ja: TranslationStructure = {
     },
   },
 
+  settingsChannelBridges: {
+    unsupported: "この環境ではチャンネルブリッジはサポートされていません。",
+    enableInFeatures: "チャンネルブリッジを有効にする",
+    enableInFeaturesSubtitle: "チャンネルブリッジは実験的機能で、デフォルトでは無効です。",
+    description: "チャンネルブリッジにより、外部チャット（Telegram）をセッションに紐付け、メッセージをエージェントへ転送できます。",
+    telegramTitle: "Telegram",
+    telegramFooter: "CLI で Telegram を設定し、その後 Telegram 上で /sessions、/attach、/detach、/help を使って紐付けを管理してください。",
+  },
+
   settingsFeatures: {
     // Features settings screen
     experiments: "実験的機能",
@@ -2939,6 +2950,8 @@ export const ja: TranslationStructure = {
     expConnectedServicesQuotas: "連携サービスのクォータ",
     expConnectedServicesQuotasSubtitle:
       "連携サービスのクォータバッジと使用量メーターを表示",
+    expChannelBridges: "チャンネルブリッジ",
+    expChannelBridgesSubtitle: "Telegram などのチャットチャンネルを Happier セッションに接続（実験的）",
     expMemorySearch: "メモリ検索",
     expMemorySearchSubtitle: "ローカルメモリ検索の画面と設定を有効化",
     expSessionsDirect: "ダイレクトセッション",

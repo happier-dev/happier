@@ -1097,6 +1097,8 @@ export const ru: TranslationStructure = {
       executionRunsSubtitle: "Запуски выполнения на разных машинах",
       connectedServices: "Подключенные сервисы",
       connectedServicesSubtitle: "Подписки Claude/Codex и OAuth‑профили",
+      channelBridges: "Мосты каналов",
+      channelBridgesSubtitle: "Подключайте внешние чаты (Telegram) к сессиям",
       featuresTitle: "Возможности",
       featuresSubtitle: "Включить или отключить функции приложения",
     developer: "Разработчик",
@@ -2564,6 +2566,15 @@ export const ru: TranslationStructure = {
     },
   },
 
+  settingsChannelBridges: {
+    unsupported: "Мосты каналов не поддерживаются в этой среде.",
+    enableInFeatures: "Включить мосты каналов",
+    enableInFeaturesSubtitle: "Мосты каналов — экспериментальная функция и по умолчанию отключены.",
+    description: "Мосты каналов позволяют привязывать внешние чаты (Telegram) к сессиям и пересылать сообщения агенту.",
+    telegramTitle: "Telegram",
+    telegramFooter: "Настройте Telegram через CLI, затем управляйте привязками в Telegram с помощью /sessions, /attach, /detach, /help.",
+  },
+
   settingsFeatures: {
     // Features settings screen
     experiments: "Эксперименты",
@@ -2638,6 +2649,8 @@ export const ru: TranslationStructure = {
     expConnectedServicesSubtitle: "Включить настройки подключённых сервисов и привязку к сессиям",
     expConnectedServicesQuotas: "Квоты подключённых сервисов",
     expConnectedServicesQuotasSubtitle: "Показывать бейджи квот и счётчики использования подключённых сервисов",
+    expChannelBridges: "Мосты каналов",
+    expChannelBridgesSubtitle: "Подключайте Telegram и другие чаты к сессиям Happier (экспериментально)",
     expMemorySearch: "Поиск по памяти",
     expMemorySearchSubtitle: "Включить экраны и настройки локального поиска по памяти",
     expSessionsDirect: "Прямые сессии",

@@ -1128,6 +1128,8 @@ export const en = {
         executionRunsSubtitle: 'Subagents across machines',
         connectedServices: 'Connected services',
         connectedServicesSubtitle: 'Claude/Codex subscriptions and OAuth profiles',
+        channelBridges: 'Channel Bridges',
+        channelBridgesSubtitle: 'Bridge external chats (Telegram) into sessions',
         featuresTitle: 'Features',
         featuresSubtitle: 'Enable or disable app features',
         developer: 'Developer',
@@ -2513,6 +2515,22 @@ export const en = {
         },
     },
 
+    settingsChannelBridges: {
+
+    unsupported: 'Channel bridges are not supported in this environment.',
+
+    enableInFeatures: 'Enable Channel Bridges',
+
+    enableInFeaturesSubtitle: 'Channel bridges are experimental and disabled by default.',
+
+    description: 'Channel bridges let you attach external chats (Telegram) to sessions and forward messages to the agent.',
+
+    telegramTitle: 'Telegram',
+
+    telegramFooter: 'Configure Telegram via CLI, then manage bindings in Telegram with /sessions, /attach, /detach, /help.',
+
+    },
+
     settingsFeatures: {
         // Features settings screen
         experiments: 'Experiments',
@@ -2566,6 +2584,8 @@ export const en = {
         expConnectedServicesSubtitle: 'Enable connected services settings and session bindings',
         expConnectedServicesQuotas: 'Connected services quotas',
         expConnectedServicesQuotasSubtitle: 'Show quota badges and usage meters for connected services',
+        expChannelBridges: 'Channel bridges',
+        expChannelBridgesSubtitle: 'Connect Telegram and other chat channels to Happier sessions (experimental)',
         expMemorySearch: 'Memory search',
         expMemorySearchSubtitle: 'Enable local memory search screens and settings',
         expSessionsDirect: 'Direct sessions',
