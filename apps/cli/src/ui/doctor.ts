@@ -11,6 +11,8 @@ import { readSettings, readCredentials } from '@/persistence'
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient'
 import { findRunawayHappyProcesses, findAllHappyProcesses } from '@/daemon/doctor'
 import { readDaemonState, type DaemonLocallyPersistedState } from '@/persistence'
+import { isLoopbackHostname } from '@/server/serverUrlClassification';
+import { runChannelBridgeDoctorSection } from '@/ui/doctor/channelBridgesDoctor';
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -43,15 +45,151 @@ export function maskValue(value: string | undefined): string | undefined {
     return `<${value.length} chars>`;
 }
 
+export function isMissingRequiredTelegramWebhookSecret(params: Readonly<{
+    webhookEnabled: boolean;
+    webhookSecret: string;
+}>): boolean {
+    return params.webhookEnabled && params.webhookSecret.trim().length === 0;
+}
+
+export function collectMissingRequiredWebhookFields(params: Readonly<{
+    webhookEnabled: boolean;
+    webhookSecret: string;
+    webhookHost: string;
+    webhookPort: number | null;
+}>): string[] {
+    if (!params.webhookEnabled) return [];
+    const issues: string[] = [];
+    if (params.webhookSecret.trim().length === 0) {
+        issues.push('webhook.secret: <empty> (required when webhook.enabled=true)');
+    }
+    const normalizedWebhookHost = params.webhookHost.trim();
+    if (normalizedWebhookHost.length === 0) {
+        issues.push('webhook.host: <empty> (required when webhook.enabled=true)');
+    } else if (!isLoopbackHostname(normalizedWebhookHost)) {
+        issues.push(
+            `webhook.host: '${normalizedWebhookHost}' is not loopback-only (required when webhook.enabled=true)`,
+        );
+    }
+    if (
+        !Number.isFinite(params.webhookPort)
+        || params.webhookPort === null
+        || !Number.isInteger(params.webhookPort)
+        || params.webhookPort <= 0
+        || params.webhookPort > 65_535
+    ) {
+        issues.push('webhook.port: <empty/invalid> (required when webhook.enabled=true)');
+    }
+    return issues;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
+export function parseStrictWebhookPort(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        if (!Number.isInteger(value) || value <= 0 || value > 65_535) return null;
+        return value;
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!/^\d+$/.test(trimmed)) return null;
+        const parsed = Number.parseInt(trimmed, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65_535) return null;
+        return parsed;
+    }
+    return null;
+}
+
+function redactProviderSecrets(providerRecord: Record<string, unknown>): void {
+    const secrets = asRecord(providerRecord.secrets);
+    if (secrets) {
+        for (const [key, value] of Object.entries(secrets)) {
+            if (typeof value === 'string' && value.trim().length > 0) {
+                secrets[key] = '<redacted>';
+            }
+        }
+    }
+
+    if (typeof providerRecord.botToken === 'string' && providerRecord.botToken.trim().length > 0) {
+        providerRecord.botToken = '<redacted>';
+    }
+
+    const webhook = asRecord(providerRecord.webhook);
+    if (webhook && typeof webhook.secret === 'string' && webhook.secret.trim().length > 0) {
+        webhook.secret = '<redacted>';
+    }
+}
+
+function redactProvidersMap(providers: Record<string, unknown> | null): void {
+    if (!providers) return;
+    for (const providerScope of Object.values(providers)) {
+        const providerRecord = asRecord(providerScope);
+        if (!providerRecord) continue;
+        redactProviderSecrets(providerRecord);
+    }
+}
+
+export function resolveTelegramWebhookValidationInputs(params: Readonly<{
+    runtimeWebhookHost: string;
+    runtimeWebhookPort: number;
+}>): Readonly<{
+    webhookHost: string;
+    webhookPort: number | null;
+}> {
+    const webhookHost = String(params.runtimeWebhookHost ?? '').trim();
+    const webhookPort =
+        Number.isFinite(params.runtimeWebhookPort)
+        && Number.isInteger(params.runtimeWebhookPort)
+        && params.runtimeWebhookPort > 0
+        && params.runtimeWebhookPort <= 65_535
+            ? params.runtimeWebhookPort
+            : null;
+
+    return {
+        webhookHost,
+        webhookPort,
+    };
+}
+
 type SettingsForDisplay = Awaited<ReturnType<typeof readSettings>>;
 
-function redactSettingsForDisplay(settings: SettingsForDisplay): SettingsForDisplay {
+export function redactSettingsForDisplay(settings: SettingsForDisplay): SettingsForDisplay {
     const redacted = JSON.parse(JSON.stringify(settings ?? {})) as SettingsForDisplay;
     const redactedRecord = redacted as unknown as Record<string, unknown>;
 
     // Remove any legacy CLI-local env cache; it may contain secrets.
     if (Object.prototype.hasOwnProperty.call(redactedRecord, 'localEnvironmentVariables')) {
         delete redactedRecord.localEnvironmentVariables;
+    }
+
+    const channelBridge = asRecord(redactedRecord.channelBridge);
+    if (!channelBridge) {
+        return redacted;
+    }
+
+    redactProvidersMap(asRecord(channelBridge.providers));
+
+    const byServerId = asRecord(channelBridge.byServerId);
+    if (!byServerId) {
+        return redacted;
+    }
+
+    for (const serverScope of Object.values(byServerId)) {
+        const serverRecord = asRecord(serverScope);
+        if (!serverRecord) continue;
+
+        redactProvidersMap(asRecord(serverRecord.providers));
+
+        const byAccountId = asRecord(serverRecord.byAccountId);
+        if (!byAccountId) continue;
+
+        for (const accountScope of Object.values(byAccountId)) {
+            const accountRecord = asRecord(accountScope);
+            redactProvidersMap(asRecord(accountRecord?.providers));
+        }
     }
 
     return redacted;
@@ -123,11 +261,19 @@ export function shouldShowGlobalProcessInventory(filter: 'all' | 'daemon'): bool
     return filter === 'all';
 }
 
+export function applyDoctorExitCode(hasCriticalFailures: boolean): void {
+    if (hasCriticalFailures) {
+        process.exitCode = 1;
+    }
+}
+
 export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void> {
     // Default to 'all' if no filter specified
     if (!filter) {
         filter = 'all';
     }
+
+    let hasCriticalFailures = false;
     
     console.log(chalk.bold.cyan('\n🩺 Happier CLI Doctor\n'));
 
@@ -157,9 +303,15 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         console.log(`Wrapper Script: ${chalk.blue(formatDoctorSpawnPathLabel(runtimeDiagnostics.wrapperPath))}`);
         console.log(`CLI Entrypoint: ${chalk.blue(formatDoctorSpawnPathLabel(runtimeDiagnostics.cliEntrypointPath))}`);
         if (runtimeDiagnostics.wrapperExists !== null) {
+            if (!runtimeDiagnostics.wrapperExists) {
+                hasCriticalFailures = true;
+            }
             console.log(`Wrapper Exists: ${runtimeDiagnostics.wrapperExists ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
         }
         if (runtimeDiagnostics.cliEntrypointExists !== null) {
+            if (!runtimeDiagnostics.cliEntrypointExists) {
+                hasCriticalFailures = true;
+            }
             console.log(`CLI Exists: ${runtimeDiagnostics.cliEntrypointExists ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
         }
         console.log('');
@@ -209,19 +361,22 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         }
 
         // Settings
+        let settingsSnapshot: Awaited<ReturnType<typeof readSettings>> | null = null;
         try {
-            const settings = await readSettings();
+            settingsSnapshot = await readSettings();
             console.log(chalk.bold('\n📄 Settings (settings.json):'));
-            console.log(chalk.gray(JSON.stringify(redactSettingsForDisplay(settings), null, 2)));
+            console.log(chalk.gray(JSON.stringify(redactSettingsForDisplay(settingsSnapshot), null, 2)));
         } catch (error) {
             console.log(chalk.bold('\n📄 Settings:'));
             console.log(chalk.red('❌ Failed to read settings'));
+            hasCriticalFailures = true;
         }
 
         // Authentication status
+        let credentials: Awaited<ReturnType<typeof readCredentials>> | null = null;
         console.log(chalk.bold('\n🔐 Authentication'));
         try {
-            const credentials = await readCredentials();
+            credentials = await readCredentials();
             if (credentials) {
                 console.log(chalk.green('✓ Authenticated (credentials found)'));
                 if (snapshot?.accountId) {
@@ -232,6 +387,23 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             }
         } catch (error) {
             console.log(chalk.red('❌ Error reading credentials'));
+            hasCriticalFailures = true;
+        }
+
+        try {
+            const settings = settingsSnapshot ?? await readSettings();
+            const channelBridgeResult = await runChannelBridgeDoctorSection({
+                settings,
+                credentialsToken: credentials?.token ?? null,
+            });
+            if (channelBridgeResult.hasCriticalFailures) {
+                hasCriticalFailures = true;
+            }
+            console.log(chalk.gray('Apply changes with daemon restart: happier daemon stop && happier daemon start'));
+        } catch (error) {
+            hasCriticalFailures = true;
+            const message = error instanceof Error ? error.message : String(error);
+            console.log(chalk.red(`❌ Failed to evaluate channel bridge diagnostics: ${message}`));
         }
     }
 
@@ -252,7 +424,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         } else if (state && !isRunning) {
             console.log(chalk.yellow('⚠️  Daemon state exists but process not running (stale)'));
         } else {
-            console.log(chalk.red('❌ Daemon is not running'));
+            console.log(chalk.yellow('⚠️  Daemon is not running'));
         }
 
         // Show daemon state file
@@ -301,7 +473,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                     });
                 });
             } else {
-                console.log(chalk.red('❌ No happier processes found'));
+                console.log(chalk.yellow('⚠️  No happier processes found (process inventory may be unavailable in this runtime)'));
             }
 
             if (allProcesses.length > 1) { // More than just current process
@@ -311,6 +483,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         }
     } catch (error) {
         console.log(chalk.red('❌ Error checking daemon status'));
+        hasCriticalFailures = true;
     }
 
     // Log files - only show for 'all' filter
@@ -362,5 +535,11 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         console.log(`Documentation: ${chalk.blue('https://app.happier.dev')}`);
     }
 
-    console.log(chalk.green('\n✅ Doctor diagnosis complete!\n'));
+    if (hasCriticalFailures) {
+        console.log(chalk.red('\n❌ Doctor diagnosis complete!\n'));
+    } else {
+        console.log(chalk.green('\n✅ Doctor diagnosis complete!\n'));
+    }
+
+    applyDoctorExitCode(hasCriticalFailures);
 }

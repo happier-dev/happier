@@ -39,6 +39,7 @@ import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { useChannelBridgesRuntimeVisibility } from '@/components/settings/channelBridges/channelBridgesVisibility';
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -66,6 +67,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.discoverable !== false;
     const automationsNeedLocalEnablement = automationsSupport?.blockedBy === 'local_policy';
+    const { showSettingsEntry: showChannelBridges } = useChannelBridgesRuntimeVisibility();
     const profile = useProfile();
     const displayName = getDisplayName(profile);
     const avatarUrl = getAvatarUrl(profile);
@@ -400,6 +402,14 @@ export const SettingsView = React.memo(function SettingsView() {
                         subtitle={t('settings.connectedServicesSubtitle')}
                         icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={() => router.push('/(app)/settings/connected-services')}
+                    />
+                ) : null}
+                {showChannelBridges ? (
+                    <Item
+                        title={t('settings.channelBridges')}
+                        subtitle={t('settings.channelBridgesSubtitle')}
+                        icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.orange} />}
+                        onPress={() => pushRoute('/(app)/settings/channel-bridges')}
                     />
                 ) : null}
                 {mcpServersEnabled && (

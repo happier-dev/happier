@@ -63,4 +63,14 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         const config = requireFreshMetroConfig();
         expect(config?.resolver?.useWatchman).toBe(false);
     });
+
+    it('does not block the current UI workspace when the checkout itself lives under .project/worktrees', () => {
+        const config = requireFreshMetroConfig();
+        const blockList = Array.isArray(config?.resolver?.blockList)
+            ? config.resolver.blockList
+            : [config?.resolver?.blockList].filter(Boolean);
+        const workspaceEntryPath = path.resolve(String(config?.projectRoot ?? ''), 'index.ts');
+
+        expect(blockList.some((pattern: RegExp) => pattern.test(workspaceEntryPath))).toBe(false);
+    });
 });

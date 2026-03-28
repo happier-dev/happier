@@ -1041,6 +1041,8 @@ export const ca: TranslationStructure = {
           executionRunsSubtitle: 'Execucions en diverses màquines',
           connectedServices: 'Serveis connectats',
           connectedServicesSubtitle: 'Subscripcions Claude/Codex i perfils OAuth',
+          channelBridges: 'Channel Bridges',
+          channelBridgesSubtitle: 'Bridge external chats (Telegram) into sessions',
           featuresTitle: 'Funcions',
           featuresSubtitle: 'Activa o desactiva les funcions de l\'aplicació',
         developer: 'Desenvolupador',
@@ -2422,6 +2424,15 @@ export const ca: TranslationStructure = {
         },
     },
 
+    settingsChannelBridges: {
+        unsupported: 'Channel bridges are not supported in this environment.',
+        enableInFeatures: 'Enable Channel Bridges',
+        enableInFeaturesSubtitle: 'Channel bridges are experimental and disabled by default.',
+        description: 'Channel bridges let you attach external chats (Telegram) to sessions and forward messages to the agent.',
+        telegramTitle: 'Telegram',
+        telegramFooter: 'Configure Telegram via CLI, then manage bindings in Telegram with /sessions, /attach, /detach, /help.',
+    },
+
     settingsFeatures: {
         // Features settings screen
         experiments: 'Experimentació',
@@ -2475,6 +2486,8 @@ export const ca: TranslationStructure = {
         expConnectedServicesSubtitle: 'Activa la configuració de serveis connectats i els vincles de sessió',
         expConnectedServicesQuotas: 'Quotes de serveis connectats',
         expConnectedServicesQuotasSubtitle: 'Mostra insígnies de quota i mesuradors d’ús per als serveis connectats',
+        expChannelBridges: 'Ponts de canals',
+        expChannelBridgesSubtitle: 'Connecta Telegram i altres canals de xat a sessions de Happier (experimental)',
         expMemorySearch: 'Cerca de memòria',
         expMemorySearchSubtitle: 'Activa pantalles i ajustos de cerca de memòria local',
         expSessionsDirect: 'Sessions directes',

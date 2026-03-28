@@ -27,6 +27,11 @@ describe('feature catalog', () => {
     expect(isFeatureId('connectedServices.quotas')).toBe(true);
   });
 
+  it('includes channel bridge feature ids', () => {
+    expect(isFeatureId('channelBridges')).toBe(true);
+    expect(isFeatureId('channelBridges.telegram')).toBe(true);
+  });
+
   it('includes OTA updates feature id', () => {
     expect(isFeatureId('updates.ota')).toBe(true);
   });

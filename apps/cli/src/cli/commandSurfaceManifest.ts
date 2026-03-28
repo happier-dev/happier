@@ -44,6 +44,12 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
   },
   {
+    command: 'bridge',
+    rootHelpLabel: 'happier bridge',
+    rootHelpDescription: 'Manage channel bridges',
+    allowTmux: false,
+  },
+  {
     command: 'notify',
     rootHelpLabel: 'happier notify',
     rootHelpDescription: 'Send push notification',

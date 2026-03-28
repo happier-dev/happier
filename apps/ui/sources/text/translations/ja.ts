@@ -1405,6 +1405,8 @@ export const ja: TranslationStructure = {
     executionRunsSubtitle: "複数マシンでの実行",
     connectedServices: "接続済みサービス",
     connectedServicesSubtitle: "Claude/Codex のサブスクリプションと OAuth プロファイル",
+    channelBridges: "Channel Bridges",
+    channelBridgesSubtitle: "Bridge external chats (Telegram) into sessions",
     featuresTitle: "機能",
     featuresSubtitle: "アプリ機能の有効/無効を切り替え",
     developer: "開発者",
@@ -2869,6 +2871,15 @@ export const ja: TranslationStructure = {
     },
   },
 
+  settingsChannelBridges: {
+    unsupported: "Channel bridges are not supported in this environment.",
+    enableInFeatures: "Enable Channel Bridges",
+    enableInFeaturesSubtitle: "Channel bridges are experimental and disabled by default.",
+    description: "Channel bridges let you attach external chats (Telegram) to sessions and forward messages to the agent.",
+    telegramTitle: "Telegram",
+    telegramFooter: "Configure Telegram via CLI, then manage bindings in Telegram with /sessions, /attach, /detach, /help.",
+  },
+
   settingsFeatures: {
     // Features settings screen
     experiments: "実験的機能",
@@ -2943,6 +2954,9 @@ export const ja: TranslationStructure = {
     expConnectedServicesQuotas: "連携サービスのクォータ",
     expConnectedServicesQuotasSubtitle:
       "連携サービスのクォータバッジと使用量メーターを表示",
+    expChannelBridges: "チャンネルブリッジ",
+    expChannelBridgesSubtitle:
+      "Telegram などのチャットチャンネルを Happier セッションに接続（実験的）",
     expMemorySearch: "メモリ検索",
     expMemorySearchSubtitle: "ローカルメモリ検索の画面と設定を有効化",
     expSessionsDirect: "ダイレクトセッション",

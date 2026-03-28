@@ -61,6 +61,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             attachments: {
                 uploads: { enabled: true },
             },
+            channelBridges: {
+                enabled: true,
+                telegram: { enabled: true },
+            },
             automations: {
                 enabled: overrides.automationsEnabled ?? true,
             },

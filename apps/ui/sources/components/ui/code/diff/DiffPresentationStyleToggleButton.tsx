@@ -39,12 +39,15 @@ export const DiffPresentationStyleToggleButton = React.memo<DiffPresentationStyl
             disabled={disabled}
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
-            style={({ hovered, pressed }) => ([
-                styles.root,
-                hovered ? styles.rootHovered : null,
-                pressed ? styles.rootPressed : null,
-                disabled ? styles.rootDisabled : null,
-            ])}
+            style={(state) => {
+                const hovered = (state as typeof state & { hovered?: boolean }).hovered === true;
+                return [
+                    styles.root,
+                    hovered ? styles.rootHovered : null,
+                    state.pressed ? styles.rootPressed : null,
+                    disabled ? styles.rootDisabled : null,
+                ];
+            }}
         >
             <View style={styles.icon}>
                 <Ionicons

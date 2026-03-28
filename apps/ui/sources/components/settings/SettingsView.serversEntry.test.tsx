@@ -22,6 +22,21 @@ const shared = vi.hoisted(() => ({
     canRequestReviewSpy: vi.fn(async () => true),
 }));
 
+const useFeatureDecisionMock = vi.hoisted(() => vi.fn());
+
+useFeatureDecisionMock.mockImplementation((featureId: string) => {
+    if (featureId !== 'channelBridges' && featureId !== 'channelBridges.telegram') return null;
+    return {
+        featureId,
+        state: 'enabled',
+        blockedBy: null,
+        blockerCode: 'none',
+        diagnostics: [],
+        evaluatedAt: 0,
+        scope: { scopeKind: 'runtime' },
+    };
+});
+
 const settingsViewWebDimensions = { width: 1600, height: 900, scale: 2, fontScale: 1 };
 
 function createPassthroughNode(name: string) {
@@ -223,7 +238,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: () => null,
+    useFeatureDecision: (featureId: string, scope?: unknown) => useFeatureDecisionMock(featureId, scope),
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -252,6 +267,19 @@ afterEach(() => {
     shared.requestReviewSpy.mockClear();
     shared.canRequestReviewSpy.mockReset();
     shared.canRequestReviewSpy.mockResolvedValue(true);
+    useFeatureDecisionMock.mockReset();
+    useFeatureDecisionMock.mockImplementation((featureId: string) => {
+        if (featureId !== 'channelBridges' && featureId !== 'channelBridges.telegram') return null;
+        return {
+            featureId,
+            state: 'enabled',
+            blockedBy: null,
+            blockerCode: 'none',
+            diagnostics: [],
+            evaluatedAt: 0,
+            scope: { scopeKind: 'runtime' },
+        };
+    });
 });
 
 describe('SettingsView', () => {
@@ -294,6 +322,102 @@ describe('SettingsView', () => {
         expect(shared.deferOnWebSpy).toHaveBeenCalledTimes(1);
         expect(shared.navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+    });
+
+    it('blurs the active element before routing to Channel Bridges on web', async () => {
+        const previousBuildAllows = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW;
+        const previousBuildDenies = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        const previousEmbeddedPolicyEnv = process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = 'channelBridges';
+        delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        delete process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV;
+
+        try {
+            vi.resetModules();
+            const { SettingsView } = await import('./SettingsView');
+            const screen = await renderSettingsView(React.createElement(SettingsView));
+
+            expect(screen.findRowByTitle('settings.channelBridges')).toBeTruthy();
+
+            await act(async () => {
+                screen.pressRowByTitle('settings.channelBridges');
+            });
+
+            expect(shared.deferOnWebSpy).toHaveBeenCalled();
+            expect(shared.navigateWithBlurOnWebSpy).toHaveBeenCalled();
+            expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/channel-bridges');
+        } finally {
+            if (typeof previousBuildAllows === 'string') {
+                process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = previousBuildAllows;
+            } else {
+                delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW;
+            }
+            if (typeof previousBuildDenies === 'string') {
+                process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousBuildDenies;
+            } else {
+                delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            }
+            if (typeof previousEmbeddedPolicyEnv === 'string') {
+                process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV = previousEmbeddedPolicyEnv;
+            } else {
+                delete process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV;
+            }
+        }
+    });
+
+    it('hides Channel Bridges in Settings when the runtime decision is disabled', async () => {
+        useFeatureDecisionMock.mockImplementation((featureId: string) => {
+            if (featureId !== 'channelBridges') return null;
+            return {
+                featureId: 'channelBridges',
+                state: 'disabled',
+                blockedBy: 'server',
+                blockerCode: 'feature_disabled',
+                diagnostics: [],
+                evaluatedAt: 0,
+                scope: { scopeKind: 'runtime' },
+            };
+        });
+
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
+
+        expect(screen.findRowByTitle('settings.channelBridges')).toBeNull();
+    });
+
+    it('hides Channel Bridges in Settings when Telegram is not enabled at runtime', async () => {
+        useFeatureDecisionMock.mockImplementation((featureId: string) => {
+            if (featureId === 'channelBridges') {
+                return {
+                    featureId: 'channelBridges',
+                    state: 'enabled',
+                    blockedBy: null,
+                    blockerCode: 'none',
+                    diagnostics: [],
+                    evaluatedAt: 0,
+                    scope: { scopeKind: 'runtime' },
+                };
+            }
+
+            if (featureId === 'channelBridges.telegram') {
+                return {
+                    featureId: 'channelBridges.telegram',
+                    state: 'disabled',
+                    blockedBy: 'server',
+                    blockerCode: 'feature_disabled',
+                    diagnostics: [],
+                    evaluatedAt: 0,
+                    scope: { scopeKind: 'runtime' },
+                };
+            }
+
+            return null;
+        });
+
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
+
+        expect(screen.findRowByTitle('settings.channelBridges')).toBeNull();
     });
 
     it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {

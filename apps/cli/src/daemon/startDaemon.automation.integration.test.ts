@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type BuildHappyCliSubprocessLaunchSpec = typeof import('@/utils/spawnHappyCLI').buildHappyCliSubprocessLaunchSpec;
+type BridgeWorkerHandle = Readonly<{ stop: () => Promise<void>; trigger: () => void }>;
 
 const harness = vi.hoisted(() => {
   let resolveShutdown: ((value: { source: ShutdownSource; errorMessage?: string }) => void) | null = null;
@@ -13,6 +14,7 @@ const harness = vi.hoisted(() => {
   const automationWorkerRefreshAssignments = vi.fn(async () => {});
   const automationWorkerPause = vi.fn();
   const automationWorkerResume = vi.fn();
+  const startChannelBridgeFromEnv = vi.fn<() => Promise<BridgeWorkerHandle | null>>(async () => null);
   const startAutomationWorker = vi.fn(() => {
     if (autoShutdownAfterAutomationStart && requestShutdownRef) {
       setTimeout(() => requestShutdownRef?.('happier-cli'), 0);
@@ -34,6 +36,8 @@ const harness = vi.hoisted(() => {
     pause: connectedServiceQuotasPause,
     resume: connectedServiceQuotasResume,
   }));
+
+  const resolveChannelBridgesDaemonEnabled = vi.fn(async () => true);
 
   const apiMachine = {
     setRPCHandlers: vi.fn(),
@@ -86,6 +90,8 @@ const harness = vi.hoisted(() => {
     connectedServiceQuotasResume,
     connectedServiceQuotasStop,
     createDaemonShutdownController,
+    startChannelBridgeFromEnv,
+    resolveChannelBridgesDaemonEnabled,
     emitMachineConnectionState: (state: any) => machineConnectionStateListener?.(state),
     setAutoShutdownAfterAutomationStart: (value: boolean) => {
       autoShutdownAfterAutomationStart = value;
@@ -93,6 +99,14 @@ const harness = vi.hoisted(() => {
     requestShutdown: (source: ShutdownSource) => requestShutdownRef?.(source),
   };
 });
+
+vi.mock('@/channels/startChannelBridgeWorker', () => ({
+  startChannelBridgeFromEnv: harness.startChannelBridgeFromEnv,
+}));
+
+vi.mock('./channels/resolveChannelBridgesDaemonEnabled', () => ({
+  resolveChannelBridgesDaemonEnabled: harness.resolveChannelBridgesDaemonEnabled,
+}));
 
 vi.mock('@/api/api', () => ({
   ApiClient: {
@@ -166,6 +180,7 @@ vi.mock('@/persistence', () => ({
   writeDaemonState: vi.fn(),
   acquireDaemonLock: vi.fn(async () => harness.lockHandle),
   releaseDaemonLock: vi.fn(async () => {}),
+  readSettings: vi.fn(async () => ({})),
   readCredentials: vi.fn(async () => null),
 }));
 
@@ -320,6 +335,7 @@ vi.mock('./shutdownPolicy', () => ({
 
 describe('startDaemon automation wiring (integration)', () => {
   afterEach(() => {
+    vi.clearAllMocks();
     vi.restoreAllMocks();
     harness.setAutoShutdownAfterAutomationStart(true);
   });
@@ -477,6 +493,56 @@ describe('startDaemon automation wiring (integration)', () => {
     }
   });
 
+  it('does not start channel bridge worker when channel bridges are disabled', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    harness.resolveChannelBridgesDaemonEnabled.mockResolvedValueOnce(false);
+
+    try {
+      const { startDaemon } = await import('./startDaemon');
+      await startDaemon();
+
+      expect(harness.startChannelBridgeFromEnv).not.toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('stops a bridge worker that resolves after shutdown has already started', async () => {
+    vi.useRealTimers();
+
+    const delayedWorkerStop = vi.fn(async () => {});
+    let resolveBridgeStartup!: () => void;
+    const bridgeStartup = new Promise<void>((resolve) => {
+      resolveBridgeStartup = resolve;
+    });
+    harness.startChannelBridgeFromEnv.mockImplementationOnce(async () => {
+      await bridgeStartup;
+      return {
+        stop: delayedWorkerStop,
+        trigger: vi.fn(),
+      };
+    });
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    try {
+      const { startDaemon } = await import('./startDaemon');
+      const run = startDaemon();
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      harness.requestShutdown('happier-cli');
+      resolveBridgeStartup();
+      await run;
+
+      expect(harness.startChannelBridgeFromEnv).toHaveBeenCalledTimes(1);
+      expect(delayedWorkerStop).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
   it('does not leak bearer tokens when machine registration fails', async () => {
     vi.useRealTimers();
 
@@ -499,6 +565,7 @@ describe('startDaemon automation wiring (integration)', () => {
       });
 
       const { logger } = await import('@/ui/logger');
+      const { startChannelBridgeFromEnv } = await import('@/channels/startChannelBridgeWorker');
       const { startDaemon } = await import('./startDaemon');
 
       const run = startDaemon();
@@ -510,6 +577,7 @@ describe('startDaemon automation wiring (integration)', () => {
       const debugMock = (logger as any).debug as any;
       const serialized = JSON.stringify([...warnMock.mock.calls, ...debugMock.mock.calls]);
       expect(serialized).not.toContain(leakedBearer);
+      expect(startChannelBridgeFromEnv).toHaveBeenCalledTimes(1);
     } finally {
       exitSpy.mockRestore();
     }

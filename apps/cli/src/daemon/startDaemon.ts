@@ -16,19 +16,20 @@ import {
 } from '@/rpc/handlers/registerSessionHandlers';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
-import { configuration } from '@/configuration';
 import { startCaffeinate, stopCaffeinate } from '@/integrations/caffeinate';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { buildHappyCliSubprocessLaunchSpec, spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { getVendorResumeSupport, requireCatalogEntry, resolveAgentCliSubcommand, resolveCatalogAgentId } from '@/backends/catalog';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import {
   writeDaemonState,
   DaemonLocallyPersistedState,
   acquireDaemonLock,
   releaseDaemonLock,
   readCredentials,
+  readSettings,
 } from '@/persistence';
 import { createSessionAttachFile } from './sessionAttachFile';
 import { getDaemonShutdownExitCode, getDaemonShutdownWatchdogTimeoutMs } from './shutdownPolicy';
@@ -87,6 +88,8 @@ import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from './spa
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
 import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
+import { startChannelBridgeFromEnv, type ChannelBridgeRuntimeHandle } from '@/channels/startChannelBridgeWorker';
+import { configuration } from '@/configuration';
 import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
@@ -96,6 +99,7 @@ import { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/Co
 import { createConnectedServiceQuotaFetchers } from './connectedServices/quotas/createConnectedServiceQuotaFetchers';
 import { resolveConnectedServiceQuotasDaemonOptions } from './connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
 import { resolveConnectedServicesQuotasDaemonEnabled } from './connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
+import { resolveChannelBridgesDaemonEnabled } from './channels/resolveChannelBridgesDaemonEnabled';
 import { startConnectedServiceQuotasLoop, type ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import {
   HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
@@ -282,6 +286,7 @@ export async function startDaemon(): Promise<void> {
       let apiMachineForSessions: ApiMachineClient | null = null;
       let automationWorker: AutomationWorkerHandle | null = null;
       let memoryWorker: MemoryWorkerHandle | null = null;
+      let channelBridgeWorker: ChannelBridgeRuntimeHandle | null = null;
       let apiMachine: ApiMachineClient | null = null;
       let machineConnectionStateCleanup: (() => void) | null = null;
       let shutdownInitiated = false;
@@ -1521,6 +1526,75 @@ export async function startDaemon(): Promise<void> {
 
       // Do machine bootstrap in the background so shutdown requests are not blocked by /v1/machines latency.
       void (async () => {
+        const startChannelBridgeWorkerBestEffort = async (): Promise<void> => {
+          const bridgeSettings = await readSettings().catch((error) => {
+            logger.warn(
+              '[DAEMON RUN] Failed to read settings for channel bridge startup; channel bridges require user experimental opt-in and will remain disabled',
+              error instanceof Error ? error.message : String(error),
+            );
+            return null;
+          });
+
+          const channelBridgesEnabled = await resolveChannelBridgesDaemonEnabled({
+            env: process.env,
+            serverUrl: configuration.serverUrl,
+            settings: bridgeSettings,
+            timeoutMs: 1500,
+          }).catch((error) => {
+            logger.warn(
+              '[DAEMON RUN] Failed to resolve channel bridge feature gating; skipping channel bridge startup',
+              serializeAxiosErrorForLog(error),
+            );
+            return false;
+          });
+          if (!channelBridgesEnabled || shutdownInitiated) {
+            return;
+          }
+
+          const tokenPayload = decodeJwtPayload(credentials.token);
+          const channelBridgeAccountId =
+            tokenPayload && typeof tokenPayload.sub === 'string'
+              ? tokenPayload.sub.trim()
+              : null;
+          const channelBridgeServerId = (configuration.activeServerId ?? '').trim() || null;
+          const channelBridgeRuntimeSettings: unknown = bridgeSettings;
+
+          if (shutdownInitiated) {
+            return;
+          }
+
+          const worker = await startChannelBridgeFromEnv({
+            credentials,
+            ...(channelBridgeRuntimeSettings ? { settings: channelBridgeRuntimeSettings } : {}),
+            ...(channelBridgeServerId ? { serverId: channelBridgeServerId } : {}),
+            ...(channelBridgeAccountId ? { accountId: channelBridgeAccountId } : {}),
+          }).catch((error) => {
+            logger.warn(
+              '[DAEMON RUN] Failed to start channel bridge worker (best-effort)',
+              serializeAxiosErrorForLog(error),
+            );
+            return null;
+          });
+
+          if (!worker) {
+            return;
+          }
+
+          if (shutdownInitiated) {
+            await worker.stop().catch((error) => {
+              logger.warn(
+                '[DAEMON RUN] Failed to stop channel bridge worker started during shutdown',
+                serializeAxiosErrorForLog(error),
+              );
+            });
+            return;
+          }
+
+          channelBridgeWorker = worker;
+        };
+
+        void startChannelBridgeWorkerBestEffort();
+
         let attempts = 0;
         while (!shutdownInitiated) {
           try {
@@ -1816,6 +1890,39 @@ export async function startDaemon(): Promise<void> {
       }
       if (memoryWorker) {
         memoryWorker.stop();
+      }
+      if (channelBridgeWorker) {
+        const channelBridgeStopTimeoutMs = resolvePositiveIntEnv(
+          process.env.HAPPIER_DAEMON_CHANNEL_BRIDGE_STOP_TIMEOUT_MS,
+          5_000,
+          { min: 250, max: 60_000 },
+        );
+        let channelBridgeStopTimeoutHandle: NodeJS.Timeout | null = null;
+        try {
+          const stopResult = await Promise.race<'stopped' | 'timeout'>([
+            channelBridgeWorker.stop().then(() => 'stopped' as const),
+            new Promise<'timeout'>((resolve) => {
+              channelBridgeStopTimeoutHandle = setTimeout(() => resolve('timeout'), channelBridgeStopTimeoutMs);
+              channelBridgeStopTimeoutHandle.unref?.();
+            }),
+          ]);
+
+          if (stopResult === 'timeout') {
+            logger.warn(
+              `[DAEMON RUN] Channel bridge worker stop timed out after ${channelBridgeStopTimeoutMs}ms; continuing shutdown`,
+            );
+          }
+        } catch (error) {
+          logger.warn(
+            '[DAEMON RUN] Failed to stop channel bridge worker during shutdown (best-effort)',
+            serializeAxiosErrorForLog(error),
+          );
+        } finally {
+          if (channelBridgeStopTimeoutHandle) {
+            clearTimeout(channelBridgeStopTimeoutHandle);
+            channelBridgeStopTimeoutHandle = null;
+          }
+        }
       }
 
       // Best-effort cleanup for provider-managed background processes (e.g. shared OpenCode server).

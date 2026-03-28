@@ -1,7 +1,12 @@
 import type { FeatureId } from '@happier-dev/protocol';
 import type { TranslationKey } from '@/text';
 
-import { getUiFeatureDefinition, UI_FEATURE_REGISTRY } from './uiFeatureRegistry';
+import {
+    getUiFeatureDefinition,
+    UI_FEATURE_REGISTRY,
+    type UiFeatureDefinition,
+    type UiFeatureToggleServerVisibilityScope,
+} from './uiFeatureRegistry';
 
 type FeatureToggleSettings = Readonly<{
     experiments?: boolean | null | undefined;
@@ -12,6 +17,7 @@ export type UiFeatureToggleDefinition = Readonly<{
     featureId: FeatureId;
     isExperimental: boolean;
     defaultEnabled: boolean;
+    serverVisibilityScope: UiFeatureToggleServerVisibilityScope;
     titleKey: TranslationKey;
     subtitleKey: TranslationKey;
     icon: Readonly<{
@@ -24,12 +30,13 @@ export function listUiFeatureToggleDefinitions(): ReadonlyArray<UiFeatureToggleD
     const out: UiFeatureToggleDefinition[] = [];
     for (const [featureIdRaw, def] of Object.entries(UI_FEATURE_REGISTRY)) {
         const featureId = featureIdRaw as FeatureId;
-        const toggle = def.settingsToggle;
+        const toggle = def.settingsToggle as UiFeatureDefinition['settingsToggle'];
         if (!toggle?.showInSettings) continue;
         out.push({
             featureId,
             isExperimental: toggle.isExperimental,
             defaultEnabled: toggle.defaultEnabled,
+            serverVisibilityScope: toggle.serverVisibilityScope ?? 'main_selection',
             titleKey: toggle.titleKey,
             subtitleKey: toggle.subtitleKey,
             icon: toggle.icon,
@@ -64,4 +71,8 @@ export function buildUiFeatureToggleDefaults(params: { experimentalOnly: boolean
         defaults[featureId] = toggle.defaultEnabled === true;
     }
     return defaults;
+}
+
+export function resolveUiFeatureToggleServerVisibilityScope(featureId: FeatureId): UiFeatureToggleServerVisibilityScope {
+    return getUiFeatureDefinition(featureId).settingsToggle?.serverVisibilityScope ?? 'main_selection';
 }

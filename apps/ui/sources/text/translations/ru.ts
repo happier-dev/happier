@@ -1097,6 +1097,8 @@ export const ru: TranslationStructure = {
       executionRunsSubtitle: "Запуски выполнения на разных машинах",
       connectedServices: "Подключенные сервисы",
       connectedServicesSubtitle: "Подписки Claude/Codex и OAuth‑профили",
+      channelBridges: "Channel Bridges",
+      channelBridgesSubtitle: "Bridge external chats (Telegram) into sessions",
       featuresTitle: "Возможности",
       featuresSubtitle: "Включить или отключить функции приложения",
     developer: "Разработчик",
@@ -2568,6 +2570,15 @@ export const ru: TranslationStructure = {
     },
   },
 
+  settingsChannelBridges: {
+    unsupported: "Channel bridges are not supported in this environment.",
+    enableInFeatures: "Enable Channel Bridges",
+    enableInFeaturesSubtitle: "Channel bridges are experimental and disabled by default.",
+    description: "Channel bridges let you attach external chats (Telegram) to sessions and forward messages to the agent.",
+    telegramTitle: "Telegram",
+    telegramFooter: "Configure Telegram via CLI, then manage bindings in Telegram with /sessions, /attach, /detach, /help.",
+  },
+
   settingsFeatures: {
     // Features settings screen
     experiments: "Эксперименты",
@@ -2642,6 +2653,8 @@ export const ru: TranslationStructure = {
     expConnectedServicesSubtitle: "Включить настройки подключённых сервисов и привязку к сессиям",
     expConnectedServicesQuotas: "Квоты подключённых сервисов",
     expConnectedServicesQuotasSubtitle: "Показывать бейджи квот и счётчики использования подключённых сервисов",
+    expChannelBridges: "Мосты каналов",
+    expChannelBridgesSubtitle: "Подключайте Telegram и другие чаты к сессиям Happier (экспериментально)",
     expMemorySearch: "Поиск по памяти",
     expMemorySearchSubtitle: "Включить экраны и настройки локального поиска по памяти",
     expSessionsDirect: "Прямые сессии",

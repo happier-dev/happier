@@ -47,16 +47,25 @@ config.transformer.getTransformOptions = async () => ({
 const testRouteBlockList = /[\\/]sources[\\/]app[\\/].*\.(test|spec)\.[jt]sx?$/;
 const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
 const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
+const projectRootLivesUnderProjectWorktrees = /[\\/]\.project[\\/]worktrees[\\/]/.test(
+  path.resolve(String(config.projectRoot ?? __dirname)),
+);
 // Avoid scanning duplicate workspace-local `node_modules/**` trees (typically symlink-heavy) when Metro falls back
 // to the native `find` crawler (no Watchman). We still keep the monorepo root `node_modules` and `apps/ui/node_modules`.
 const workspaceNodeModulesBlockList =
   /[\\/]apps[\\/](?!ui[\\/])[^\\/]+[\\/]node_modules[\\/]|[\\/]packages[\\/][^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
+const projectLocalBlockListEntries = [
+  testRouteBlockList,
+  ...(projectRootLivesUnderProjectWorktrees ? [] : [projectArtifactsBlockList]),
+  nextBuildArtifactsBlockList,
+  workspaceNodeModulesBlockList,
+];
 config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
+  ? [...existingBlockList, ...projectLocalBlockListEntries]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
-    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList];
+    ? [existingBlockList, ...projectLocalBlockListEntries]
+    : projectLocalBlockListEntries;
 
 const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFolders : [];
 config.watchFolders = existingWatchFolders.filter(

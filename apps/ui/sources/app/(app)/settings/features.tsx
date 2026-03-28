@@ -22,10 +22,14 @@ import {
     buildUiFeatureToggleDefaults,
     listUiFeatureToggleDefinitions,
     resolveUiFeatureToggleEnabled,
+    type UiFeatureToggleDefinition,
 } from '@/sync/domains/features/featureRegistry';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
-import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
+import {
+    useServerFeaturesMainSelectionSnapshot,
+    useServerFeaturesRuntimeSnapshot,
+} from '@/sync/domains/features/featureDecisionRuntime';
 
 export default React.memo(function FeaturesSettingsScreen() {
     const { theme } = useUnistyles();
@@ -83,12 +87,20 @@ export default React.memo(function FeaturesSettingsScreen() {
     const shouldProbeServerForToggleVisibility = React.useMemo(() => {
         for (const def of toggleDefinitions) {
             if (getFeatureBuildPolicyDecision(def.featureId) === 'deny') continue;
-            if (featureRequiresServerSnapshot(def.featureId)) return true;
+            if (def.serverVisibilityScope === 'main_selection' && featureRequiresServerSnapshot(def.featureId)) return true;
+        }
+        return false;
+    }, [toggleDefinitions]);
+    const shouldProbeRuntimeServerForToggleVisibility = React.useMemo(() => {
+        for (const def of toggleDefinitions) {
+            if (getFeatureBuildPolicyDecision(def.featureId) === 'deny') continue;
+            if (def.serverVisibilityScope === 'runtime' && featureRequiresServerSnapshot(def.featureId)) return true;
         }
         return false;
     }, [toggleDefinitions]);
 
     const serverSnapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, { enabled: shouldProbeServerForToggleVisibility });
+    const runtimeServerSnapshot = useServerFeaturesRuntimeSnapshot({ enabled: shouldProbeRuntimeServerForToggleVisibility });
 
     const serverProbeFeatureIdsByFeatureId = React.useMemo(() => {
         const memo = new Map<FeatureId, FeatureId[]>();
@@ -127,9 +139,39 @@ export default React.memo(function FeaturesSettingsScreen() {
         return memo;
     }, [toggleDefinitions]);
 
-    const isToggleHardDisabledByServer = React.useCallback(
+    const isKnownFeatureId = React.useCallback((featureId: unknown): featureId is FeatureId => {
+        return typeof featureId === 'string' && (FEATURE_IDS as readonly string[]).includes(featureId);
+    }, []);
+
+    const isRuntimeFeatureHardDisabledByServer = React.useCallback(
         (featureId: FeatureId): boolean => {
+            if (!isKnownFeatureId(featureId)) return false;
             if (!featureRequiresServerSnapshot(featureId)) return false;
+            if (runtimeServerSnapshot.status === 'loading') return false;
+            if (runtimeServerSnapshot.status === 'error') return false;
+            if (runtimeServerSnapshot.status === 'unsupported') return true;
+
+            const serverFeatureIdsToProbe = serverProbeFeatureIdsByFeatureId.get(featureId) ?? [];
+            if (serverFeatureIdsToProbe.length === 0) return false;
+
+            for (const serverFeatureId of serverFeatureIdsToProbe) {
+                const enabled = readServerEnabledBit(runtimeServerSnapshot.features, serverFeatureId) === true;
+                if (!enabled) return true;
+            }
+
+            return false;
+        },
+        [isKnownFeatureId, runtimeServerSnapshot, serverProbeFeatureIdsByFeatureId],
+    );
+
+    const isFeatureHardDisabledByServer = React.useCallback(
+        (definition: UiFeatureToggleDefinition): boolean => {
+            const featureId = definition.featureId;
+            if (!isKnownFeatureId(featureId)) return false;
+            if (!featureRequiresServerSnapshot(featureId)) return false;
+            if (definition.serverVisibilityScope === 'runtime') {
+                return isRuntimeFeatureHardDisabledByServer(featureId);
+            }
             if (serverSnapshot.status !== 'ready') return false;
             if (serverSnapshot.serverIds.length === 0) return false;
 
@@ -158,16 +200,16 @@ export default React.memo(function FeaturesSettingsScreen() {
 
             return false;
         },
-        [serverProbeFeatureIdsByFeatureId, serverSnapshot],
+        [isKnownFeatureId, isRuntimeFeatureHardDisabledByServer, serverProbeFeatureIdsByFeatureId, serverSnapshot],
     );
 
     const visibleToggleDefinitions = React.useMemo(() => {
         return toggleDefinitions.filter((d) => {
             if (getFeatureBuildPolicyDecision(d.featureId) === 'deny') return false;
-            if (isToggleHardDisabledByServer(d.featureId)) return false;
+            if (isFeatureHardDisabledByServer(d)) return false;
             return true;
         });
-    }, [isToggleHardDisabledByServer, toggleDefinitions]);
+    }, [isFeatureHardDisabledByServer, toggleDefinitions]);
 
     const standardToggleDefinitions = visibleToggleDefinitions.filter((d) => !d.isExperimental);
     const experimentalToggleDefinitions = visibleToggleDefinitions.filter((d) => d.isExperimental);
@@ -212,10 +254,12 @@ export default React.memo(function FeaturesSettingsScreen() {
 
     const embeddedTerminalDockSettingVisible = React.useMemo(() => {
         if (!experiments) return false;
-        if (isToggleHardDisabledByServer('terminal.embeddedPty')) return false;
+        const embeddedTerminalDockToggle =
+            toggleDefinitions.find((definition) => definition.featureId === 'terminal.embeddedPty') ?? null;
+        if (embeddedTerminalDockToggle && isFeatureHardDisabledByServer(embeddedTerminalDockToggle)) return false;
         if (isLocallyBlockedByDependencies('terminal.embeddedPty')) return false;
         return resolveUiFeatureToggleEnabled(toggleSettings, 'terminal.embeddedPty');
-    }, [experiments, isToggleHardDisabledByServer, isLocallyBlockedByDependencies, toggleSettings]);
+    }, [experiments, isFeatureHardDisabledByServer, isLocallyBlockedByDependencies, toggleDefinitions, toggleSettings]);
 
     const embeddedTerminalDockLocationLabel = React.useMemo(() => {
         switch (embeddedTerminalDockLocation) {

@@ -1,0 +1,446 @@
+/**
+ * Channel bridge runtime wiring for the CLI daemon.
+ *
+ * Responsibilities:
+ * - resolve effective bridge runtime config from env/settings/account scope
+ * - construct provider adapters (Telegram today) and optional webhook relay
+ * - choose binding store implementation (in-memory or local file-backed state)
+ * - build default bridge deps that map channel events <-> session transcript I/O
+ * - start and return the core channel bridge worker lifecycle handle
+ *
+ * Public exports:
+ * - `ChannelBridgeRuntimeHandle`
+ * - `startChannelBridgeFromEnv`
+ *
+ * Runtime constraints:
+ * - designed for daemon/CLI runtime usage
+ * - webhook relay is loopback-bound and optional; polling remains supported
+ */
+import { createHash } from 'node:crypto';
+
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
+import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
+import type { Credentials } from '@/persistence';
+import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import {
+  encryptSessionPayload,
+  resolveSessionEncryptionContextFromCredentials,
+  resolveSessionStoredContentEncryptionMode,
+  tryDecryptSessionMetadata,
+  type SessionEncryptionContext,
+} from '@/session/transport/encryption/sessionEncryptionContext';
+import { sendSessionMessageViaSocketCommitted } from '@/session/transport/socket/sessionSocketSendMessage';
+import { fetchSessionById, fetchSessionsPage, type RawSessionListRow } from '@/session/transport/http/sessionsHttp';
+import { logger } from '@/ui/logger';
+
+import {
+  createInMemoryChannelBindingStore,
+  startChannelBridgeWorker,
+  type ChannelBindingStore,
+  type ChannelBridgeAdapter,
+  type ChannelBridgeAgentMessageRow,
+  type ChannelBridgeDeps,
+  type ChannelBridgeWorkerHandle,
+} from '@/channels/core/channelBridgeWorker';
+import { resolveChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
+import { startChannelBridgeRuntime } from '@/channels/runtime/startChannelBridgeRuntime';
+import { createLocalChannelBindingStore } from '@/channels/state/localBindingStore';
+
+export type ChannelBridgeRuntimeHandle = ChannelBridgeWorkerHandle;
+
+type DefaultChannelBridgeDepsHandle = Readonly<{
+  deps: ChannelBridgeDeps;
+  dispose: () => void;
+}>;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function toNonNegativeInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const truncated = Math.trunc(value);
+  return truncated >= 0 ? truncated : null;
+}
+
+function createStableBridgeLocalId(params: Readonly<{
+  providerId: string;
+  conversationId: string;
+  threadId: string | null;
+  sessionId: string;
+  text: string;
+  messageId?: string;
+}>): string {
+  const normalizedMessageId = typeof params.messageId === 'string' ? params.messageId.trim() : '';
+  if (normalizedMessageId.length === 0) {
+    throw new Error('Channel bridge inbound messageId is required for stable idempotency');
+  }
+
+  const digest = createHash('sha256')
+    .update(params.providerId)
+    .update('\u0000')
+    .update(params.conversationId)
+    .update('\u0000')
+    .update(params.threadId ?? '')
+    .update('\u0000')
+    .update(params.sessionId)
+    .update('\u0000')
+    .update(normalizedMessageId)
+    .digest('hex');
+  return `bridge-${digest}`;
+}
+
+function extractAssistantText(content: unknown): string | null {
+  const contentRecord = asRecord(content);
+  if (!contentRecord) return null;
+
+  const type = contentRecord.type;
+  if (type === 'text') {
+    const text = contentRecord.text;
+    return typeof text === 'string' && text.trim().length > 0 ? text.trim() : null;
+  }
+
+  if (type === 'acp') {
+    const data = asRecord(contentRecord.data);
+    if (!data) return null;
+
+    const dataType = data.type;
+    if (dataType === 'message' || dataType === 'reasoning') {
+      const message = data.message;
+      return typeof message === 'string' && message.trim().length > 0 ? message.trim() : null;
+    }
+    return null;
+  }
+
+  if (type === 'output') {
+    const data = asRecord(contentRecord.data);
+    if (!data) return null;
+
+    const message = data.message;
+    return typeof message === 'string' && message.trim().length > 0 ? message.trim() : null;
+  }
+
+  return null;
+}
+
+type PlainTranscriptRowLike = Readonly<{
+  seq: number;
+  createdAt: number;
+  content: unknown;
+}>;
+
+function parsePlainTranscriptRows(rows: readonly PlainTranscriptRowLike[]): ReadonlyArray<Readonly<{
+  seq: number;
+  createdAtMs: number;
+  role: 'user' | 'agent';
+  content: unknown;
+}>> {
+  const out: Array<Readonly<{
+    seq: number;
+    createdAtMs: number;
+    role: 'user' | 'agent';
+    content: unknown;
+  }>> = [];
+
+  for (const row of rows) {
+    const content = asRecord(row.content);
+    if (!content || content.t !== 'plain') continue;
+    const value = asRecord(content.v);
+    if (!value) continue;
+
+    const role = value.role;
+    if (role !== 'user' && role !== 'agent') continue;
+
+    out.push({
+      seq: row.seq,
+      createdAtMs: row.createdAt,
+      role,
+      content: value.content,
+    });
+  }
+
+  return out;
+}
+
+function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChannelBridgeDepsHandle {
+  type CachedSessionRuntime = Readonly<{
+    ctx: SessionEncryptionContext;
+    mode: ReturnType<typeof resolveSessionStoredContentEncryptionMode>;
+  }>;
+
+  const sessionRuntimeCache = new Map<string, CachedSessionRuntime>();
+  const SESSION_CTX_CACHE_MAX_ENTRIES = 200;
+
+  // Bounded LRU-style cache: cache hits are reinserted to the tail as most-recently-used.
+  // No TTL is applied by design to avoid per-tick server fetches; stale entries are naturally
+  // refreshed on miss/eviction and this cache stores only encryption runtime metadata.
+  const rememberSessionRuntime = (sessionId: string, runtime: CachedSessionRuntime): CachedSessionRuntime => {
+    if (sessionRuntimeCache.has(sessionId)) {
+      sessionRuntimeCache.delete(sessionId);
+    }
+    sessionRuntimeCache.set(sessionId, runtime);
+    while (sessionRuntimeCache.size > SESSION_CTX_CACHE_MAX_ENTRIES) {
+      const oldestKey = sessionRuntimeCache.keys().next().value;
+      if (!oldestKey) break;
+      sessionRuntimeCache.delete(oldestKey);
+    }
+    return runtime;
+  };
+
+  async function resolveSessionRuntime(sessionId: string): Promise<CachedSessionRuntime | null> {
+    const cached = sessionRuntimeCache.get(sessionId);
+    if (cached) return rememberSessionRuntime(sessionId, cached);
+
+    const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
+    if (!rawSession) return null;
+    const runtime: CachedSessionRuntime = {
+      ctx: resolveSessionEncryptionContextFromCredentials(credentials, rawSession),
+      mode: resolveSessionStoredContentEncryptionMode(rawSession),
+    };
+    return rememberSessionRuntime(sessionId, runtime);
+  }
+
+  const onWarning: NonNullable<ChannelBridgeDeps['onWarning']> = (message, error) => {
+    if (typeof error === 'undefined') {
+      logger.warn(`[channelBridge] ${message}`);
+    } else {
+      logger.warn(`[channelBridge] ${message}`, serializeAxiosErrorForLog(error));
+    }
+  };
+
+  return {
+    deps: {
+      listSessions: async () => {
+        const displayLimit = 20;
+        const pageSize = displayLimit;
+        const maxPages = 1;
+        const sessions: RawSessionListRow[] = [];
+        let cursor: string | undefined;
+
+        for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+          const page = await fetchSessionsPage({
+            token: credentials.token,
+            activeOnly: false,
+            limit: pageSize,
+            cursor,
+          });
+          sessions.push(...page.sessions);
+          if (sessions.length >= displayLimit) {
+            cursor = undefined;
+            break;
+          }
+          if (!page.hasNext || !page.nextCursor) {
+            cursor = undefined;
+            break;
+          }
+          cursor = page.nextCursor;
+        }
+
+        return sessions.slice(0, displayLimit).map((row) => {
+          const meta = tryDecryptSessionMetadata({ credentials, rawSession: row });
+          const tagRaw = meta?.tag;
+          const tag = typeof tagRaw === 'string' ? tagRaw.trim() : '';
+          return {
+            sessionId: row.id,
+            label: tag.length > 0 ? tag : null,
+          };
+        });
+      },
+      resolveSessionIdOrPrefix: async (idOrPrefix: string) => {
+        return await resolveSessionIdOrPrefix({
+          credentials,
+          idOrPrefix,
+        });
+      },
+      sendUserMessageToSession: async (params) => {
+        const runtime = await resolveSessionRuntime(params.sessionId);
+        if (!runtime) {
+          throw new Error(`Session not found: ${params.sessionId}`);
+        }
+
+        const ctx = runtime.ctx;
+        const mode = runtime.mode;
+        const record = {
+          role: 'user',
+          content: { type: 'text', text: params.text },
+          meta: {
+            sentFrom: params.sentFrom,
+            source: params.sentFrom,
+            channel: {
+              providerId: params.providerId,
+              conversationId: params.conversationId,
+              threadId: params.threadId,
+            },
+          },
+        };
+
+        const content =
+          mode === 'plain'
+            ? ({ t: 'plain', v: record } as const)
+            : ({ t: 'encrypted', c: encryptSessionPayload({ ctx, payload: record }) } as const);
+
+        await sendSessionMessageViaSocketCommitted({
+          token: credentials.token,
+          sessionId: params.sessionId,
+          content,
+          localId: createStableBridgeLocalId({
+            providerId: params.providerId,
+            conversationId: params.conversationId,
+            threadId: params.threadId,
+            sessionId: params.sessionId,
+            text: params.text,
+            messageId: params.messageId,
+          }),
+          sentFrom: params.sentFrom,
+        });
+      },
+      resolveLatestSessionSeq: async (sessionId: string) => {
+        const rows = await fetchEncryptedTranscriptPageLatest({
+          token: credentials.token,
+          sessionId,
+          limit: 1,
+        });
+        if (rows.length === 0) return 0;
+        return Math.max(0, Math.trunc(rows[0]!.seq));
+      },
+      fetchAgentMessagesAfterSeq: async ({ sessionId, afterSeq }) => {
+        const runtime = await resolveSessionRuntime(sessionId);
+        if (!runtime) {
+          return {
+            messages: [],
+            highestSeenSeq: null,
+          };
+        }
+
+        const encrypted = await fetchEncryptedTranscriptPageAfterSeq({
+          token: credentials.token,
+          sessionId,
+          afterSeq,
+          limit: 50,
+        });
+
+        const highestSeenSeq = encrypted.reduce<number | null>((currentMax, row) => {
+          const parsedSeq = toNonNegativeInt(row.seq);
+          if (parsedSeq === null) return currentMax;
+          if (currentMax === null) return parsedSeq;
+          return parsedSeq > currentMax ? parsedSeq : currentMax;
+        }, null);
+
+        const transcriptRows =
+          runtime.mode === 'plain'
+            ? parsePlainTranscriptRows(encrypted)
+            : decryptTranscriptRows({
+                ctx: runtime.ctx,
+                rows: encrypted,
+              });
+
+        const messages: ChannelBridgeAgentMessageRow[] = [];
+        for (const row of transcriptRows) {
+          if (row.role !== 'agent') {
+            continue;
+          }
+
+          const text = extractAssistantText(row.content);
+          if (!text) {
+            onWarning(
+              `Skipped agent transcript row with unsupported content for session=${sessionId} seq=${row.seq}`,
+            );
+            continue;
+          }
+
+          messages.push({
+            seq: row.seq,
+            text,
+          });
+        }
+
+        return {
+          messages,
+          highestSeenSeq,
+        };
+      },
+      onWarning,
+    },
+    dispose: () => {
+      sessionRuntimeCache.clear();
+    },
+  };
+}
+
+export async function startChannelBridgeFromEnv(params: Readonly<{
+  credentials: Credentials;
+  env?: NodeJS.ProcessEnv;
+  settings?: unknown;
+  serverId?: string | null;
+  accountId?: string | null;
+  deps?: ChannelBridgeDeps;
+  store?: ChannelBindingStore;
+  adapters?: readonly ChannelBridgeAdapter[];
+}>): Promise<ChannelBridgeWorkerHandle | null> {
+  const env = params.env ?? process.env;
+  const runtimeConfig = resolveChannelBridgeRuntimeConfig({
+    env,
+    settings: params.settings,
+    serverId: params.serverId,
+    accountId: params.accountId,
+  });
+
+  let defaultDepsHandle: DefaultChannelBridgeDepsHandle | null = null;
+  try {
+    const deps = (() => {
+      if (params.deps) return params.deps;
+      defaultDepsHandle = createDefaultChannelBridgeDeps(params.credentials);
+      return defaultDepsHandle.deps;
+    })();
+
+    let store = params.store ?? null;
+    if (!store) {
+      const accountId = typeof params.accountId === 'string' ? params.accountId.trim() : '';
+      if (accountId) {
+        store = createLocalChannelBindingStore({ accountId });
+      }
+    }
+    if (!store) {
+      store = createInMemoryChannelBindingStore();
+    }
+
+    const injectedAdapters = params.adapters ? [...params.adapters] : [];
+    const worker = injectedAdapters.length > 0
+      ? startChannelBridgeWorker({
+          store,
+          adapters: injectedAdapters,
+          deps,
+          tickMs: runtimeConfig.tickMs,
+        })
+      : await startChannelBridgeRuntime({
+          store,
+          deps,
+          runtimeConfig,
+          context: {
+            serverId: typeof params.serverId === 'string' ? params.serverId.trim() || null : null,
+            accountId: typeof params.accountId === 'string' ? params.accountId.trim() || null : null,
+          },
+        });
+
+    if (!worker) {
+      defaultDepsHandle?.dispose();
+      return null;
+    }
+
+    return {
+      trigger: worker.trigger,
+      stop: async () => {
+        try {
+          await worker.stop();
+        } finally {
+          defaultDepsHandle?.dispose();
+        }
+      },
+    };
+  } catch (error) {
+    defaultDepsHandle?.dispose();
+    throw error;
+  }
+}

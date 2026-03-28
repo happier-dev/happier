@@ -4,6 +4,7 @@ import { AGENTS, type AgentCatalogEntry } from '@/backends/catalog';
 
 import { handleAttachCliCommand } from './commands/attach';
 import { handleAuthCliCommand } from './commands/auth';
+import { handleBridgeCliCommand } from './commands/bridge';
 import { handleBugReportCliCommand } from './commands/bugReport';
 import { handleConnectCliCommand } from './commands/connect';
 import { handleDaemonCliCommand } from './commands/daemon';
@@ -47,6 +48,7 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   attach: handleAttachCliCommand,
   'acp-catalog': handleConfiguredAcpCatalogCliCommand,
   auth: handleAuthCliCommand,
+  bridge: handleBridgeCliCommand,
   'bug-report': handleBugReportCliCommand,
   connect: handleConnectCliCommand,
   daemon: handleDaemonCliCommand,

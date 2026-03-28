@@ -15,6 +15,9 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   connectedServicesEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED',
   connectedServicesQuotasEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED',
 
+  channelBridgesEnabled: 'HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED',
+  channelBridgesTelegramEnabled: 'HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED',
+
   updatesOtaEnabled: 'HAPPIER_FEATURE_UPDATES_OTA__ENABLED',
 
   attachmentsUploadsEnabled: 'HAPPIER_FEATURE_ATTACHMENTS_UPLOADS__ENABLED',

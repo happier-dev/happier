@@ -62,12 +62,15 @@ export async function dispatchCli(params: Readonly<{
 
   // Headless tmux launcher (CLI flow)
   if (args.includes('--tmux')) {
+    const argsWithoutTmux = args.filter((arg) => arg !== '--tmux');
+    const tmuxSubcommand = argsWithoutTmux.find((arg) => !arg.startsWith('-')) ?? '';
+
     // If user is asking for help/version, don't start a session.
     if (args.includes('-h') || args.includes('--help') || args.includes('-v') || args.includes('--version')) {
       const idx = args.indexOf('--tmux');
       if (idx !== -1) args.splice(idx, 1);
     } else {
-      if (subcommand && !isTmuxAllowedCommand(subcommand)) {
+      if (tmuxSubcommand && !isTmuxAllowedCommand(tmuxSubcommand)) {
         console.error(chalk.red('Error:'), '--tmux can only be used when starting a session.');
         process.exit(1);
         return;
