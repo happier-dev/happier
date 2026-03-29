@@ -8,7 +8,7 @@ describe('CLI command-surface manifest', () => {
     expect(entries.map((entry) => entry.command)).toEqual([
       null,
       'auth',
-      'bridge',
+      'mcp',
       'codex',
       'opencode',
       'gemini',

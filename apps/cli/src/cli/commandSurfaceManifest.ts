@@ -20,6 +20,12 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
   },
   {
+    command: 'mcp',
+    rootHelpLabel: 'happier mcp',
+    rootHelpDescription: 'Expose the MCP server and manage MCP clients',
+    allowTmux: false,
+  },
+  {
     command: 'codex',
     rootHelpLabel: 'happier codex',
     rootHelpDescription: 'Start Codex mode',

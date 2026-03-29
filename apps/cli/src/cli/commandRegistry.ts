@@ -48,6 +48,9 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   'acp-catalog': handleConfiguredAcpCatalogCliCommand,
   auth: handleAuthCliCommand,
   'bug-report': handleBugReportCliCommand,
+  // Backwards-compatible alias for the MCP command namespace.
+  // Prefer `happier mcp ...` in docs and help output.
+  bridge: handleMcpCliCommand,
   connect: handleConnectCliCommand,
   daemon: handleDaemonCliCommand,
   doctor: handleDoctorCliCommand,
