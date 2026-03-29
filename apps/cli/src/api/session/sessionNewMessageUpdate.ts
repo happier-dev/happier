@@ -124,7 +124,7 @@ export function handleSessionNewMessageUpdate(params: {
         const sentFrom = userResult.data.meta?.sentFrom;
         const source = userResult.data.meta?.source;
         const isSelfEchoSuppressedCliWrite =
-            isSelfEchoSuppressedLocalId && (source === 'cli' || sentFrom === 'cli');
+            isSelfEchoSuppressedLocalId && source === 'cli';
         const shouldRespectAgentQueueEchoSuppression = Boolean(params.pendingMessageCallback);
         const isEffectivelyAgentQueueEchoSuppressedLocalId =
             shouldRespectAgentQueueEchoSuppression && isAgentQueueEchoSuppressedLocalId;
