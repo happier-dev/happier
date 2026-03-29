@@ -84,7 +84,7 @@ import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { resolveGeminiQueuedPromptWithReplaySeed } from '@/backends/gemini/runtime/resolveGeminiQueuedPromptWithReplaySeed';
 import { formatGeminiPromptDebugSummary } from '@/backends/gemini/runtime/formatGeminiPromptDebugSummary';
 import { buildGeminiPromptForMessage } from '@/backends/gemini/utils/buildGeminiPromptForMessage';
-import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
+import { resolveGeminiSystemPromptText } from '@/backends/gemini/prompting/resolveGeminiSystemPromptText';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 
 
@@ -246,7 +246,7 @@ export async function runGemini(opts: {
 
   const promptArtifactBodyCache = new Map<string, string | null>();
   const resolveFreshSessionSystemPrompt = async (baseOverride?: string | null): Promise<string> =>
-    await resolveEffectiveCodingPromptText({
+    await resolveGeminiSystemPromptText({
       credentials: opts.credentials,
       settings: opts.accountSettingsContext?.settings ?? null,
       profileId: session.getMetadataSnapshot()?.profileId ?? null,
@@ -255,7 +255,13 @@ export async function runGemini(opts: {
         featureId: 'execution.runs',
         env: process.env,
       }).state === 'enabled',
-      providerId: 'gemini',
+      sessionId: session.sessionId,
+      runtimeDirectory: resolveAttachedRunRuntimeContext({
+        session,
+        metadata,
+        fallbackDirectory: process.cwd(),
+      }).runtimeDirectory,
+      machineId,
       cache: promptArtifactBodyCache,
     });
 
