@@ -51,6 +51,7 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
                 'dev.happier.app.dev',
                 '--serverUrl',
                 'http://127.0.0.1:26050',
+                '--skip-app-install-check',
             ],
             {
                 cwd: scratch,
@@ -137,6 +138,7 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
                 'dev.happier.app.dev',
                 '--serverUrl',
                 'http://127.0.0.1:26050',
+                '--skip-app-install-check',
             ],
             {
                 cwd: scratch,
@@ -155,7 +157,11 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
 
         const maestroArgs = await readFile(maestroArgsLogPath, 'utf8');
         expect(maestroArgs).toContain('HAPPIER_E2E_SERVER_URL=http://127.0.0.1:26050');
-        expect(maestroArgs).toContain('HAPPIER_E2E_DEV_CLIENT_METRO_URL=http://127.0.0.1:8081');
+        const metroUrlLine = maestroArgs
+            .split('\n')
+            .map((line) => line.trim())
+            .find((line) => line.startsWith('HAPPIER_E2E_DEV_CLIENT_METRO_URL='));
+        expect(metroUrlLine).toMatch(/^HAPPIER_E2E_DEV_CLIENT_METRO_URL=http:\/\/(127\.0\.0\.1|localhost):8081$/);
 
         const adbArgs = await readFile(adbArgsLogPath, 'utf8');
         expect(adbArgs).toContain('reverse');
@@ -215,6 +221,7 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
                 'dev.happier.app.dev',
                 '--serverUrl',
                 'http://127.0.0.1:26050',
+                '--skip-app-install-check',
             ],
             {
                 cwd: scratch,

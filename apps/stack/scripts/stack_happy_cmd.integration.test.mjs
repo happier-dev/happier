@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
@@ -172,6 +172,49 @@ test('hstack stack happier <name> ignores stale cloud settings defaults and keep
   assert.equal(out.homeDir, join(fixture.storageDir, fixture.stackName, 'cli'));
   assert.equal(out.serverUrl, 'http://127.0.0.1:44123');
   assert.equal(out.webappUrl, 'http://localhost:44123');
+});
+
+test('hstack stack happier <name> seeds stack server profile in CLI settings for env-hardened subcommands', async (t) => {
+  const fixture = await createHappyStackFixture(t, {
+    prefix: 'happier-stack-stack-happy-seed-settings-',
+    message: 'seed-settings',
+    serverPort: 45123,
+    stackCliSettings: {
+      schemaVersion: 6,
+      onboardingCompleted: false,
+      activeServerId: 'cloud',
+      servers: {
+        cloud: {
+          id: 'cloud',
+          name: 'Happier Cloud',
+          serverUrl: 'https://api.happier.dev',
+          webappUrl: 'https://app.happier.dev',
+          createdAt: 0,
+          updatedAt: 0,
+          lastUsedAt: 0,
+        },
+      },
+    },
+  });
+
+  const settingsPath = join(fixture.storageDir, fixture.stackName, 'cli', 'settings.json');
+
+  const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
+    cwd: rootDir,
+    env: fixture.baseEnv,
+  });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim());
+  assert.equal(out.message, 'seed-settings');
+  assert.ok(out.activeServerId, 'expected wrapper to export HAPPIER_ACTIVE_SERVER_ID');
+
+  const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+  assert.equal(settings.schemaVersion, 6);
+  assert.equal(settings.activeServerId, out.activeServerId);
+  assert.ok(settings.servers?.[out.activeServerId], `expected settings.servers[${out.activeServerId}] to exist`);
+  assert.equal(settings.servers[out.activeServerId].serverUrl, 'http://127.0.0.1:45123');
+  assert.equal(settings.servers[out.activeServerId].webappUrl, 'http://localhost:45123');
 });
 
 test('hstack stack happier <name> uses stack.runtime.json ports when env file does not pin HAPPIER_STACK_SERVER_PORT', async (t) => {

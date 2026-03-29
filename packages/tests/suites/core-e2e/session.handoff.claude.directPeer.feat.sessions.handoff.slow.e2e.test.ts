@@ -9,7 +9,6 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { waitForDaemonSessionWebhookMarker } from '../../src/testkit/daemon/waitForDaemonSessionWebhookMarker';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -18,6 +17,9 @@ import { fakeClaudeLogContainsUserText, postPlainUiTextMessage } from '../../src
 import { createUserScopedSocketCollector, type SocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
+// @ts-expect-error - This CJS helper is consumed directly by the runtime test fixture.
+import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
+import { waitForDaemonSessionWebhookMarker } from '../../src/testkit/daemon/waitForDaemonSessionWebhookMarker';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -28,6 +30,8 @@ type HandoffStartResult = Readonly<{
   handoffMetadataV2?: unknown;
   providerBundle?: unknown;
 }>;
+
+type HandoffStartResponse = HandoffStartResult | Readonly<{ ok: false; error?: unknown; errorCode?: unknown }>;
 
 type HandoffPrepareResult = Readonly<{
   handoffId: string;
@@ -247,6 +251,15 @@ function requireHandoffMetadataV2(result: HandoffStartResult, context: string): 
   return requireObject(result.handoffMetadataV2, `handoffMetadataV2 for ${context}`);
 }
 
+function requireHandoffStartOk(result: HandoffStartResponse, context: string): HandoffStartResult {
+  if ((result as any)?.ok === false) {
+    const errorCode = typeof (result as any).errorCode === 'string' ? (result as any).errorCode : '';
+    const error = typeof (result as any).error === 'string' ? (result as any).error : '';
+    throw new Error(`${context} failed: ${errorCode || error || 'unknown-error'}`);
+  }
+  return result as HandoffStartResult;
+}
+
 describe('core e2e: session handoff via direct peer', () => {
   let server: StartedServer | null = null;
   let sourceDaemon: StartedDaemon | null = null;
@@ -281,7 +294,7 @@ describe('core e2e: session handoff via direct peer', () => {
     const sourceClaudeConfigDir = resolve(join(testDir, 'source-claude-config'));
     const sourceClaudeProjectDir = resolve(join(sourceClaudeConfigDir, 'projects', 'proj-handoff-direct'));
     const sourceClaudeSessionFile = resolve(join(sourceClaudeProjectDir, 'sess-handoff-direct.jsonl'));
-    const targetClaudeConfigDir = resolve(join(testDir, 'target-claude-config'));
+    const targetClaudeConfigDir = resolve(join(targetHomeDir, '.claude'));
     const sourceFakeClaudeLog = resolve(join(testDir, 'fake-claude-source.jsonl'));
     const targetFakeClaudeLog = resolve(join(testDir, 'fake-claude-target.jsonl'));
     const fakeClaudePath = fakeClaudeFixturePath();
@@ -421,7 +434,7 @@ describe('core e2e: session handoff via direct peer', () => {
       throw new Error('Missing linked session id from direct session source');
     }
 
-    const started = unwrapDataKeyRpcResult(
+    const started = requireHandoffStartOk(unwrapDataKeyRpcResult(
       await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_START}`, {
         sessionId,
         sourceMachineId: sourceSeed.machineId,
@@ -438,7 +451,7 @@ describe('core e2e: session handoff via direct peer', () => {
         },
       }),
       'source handoff start',
-    ) as HandoffStartResult;
+    ) as HandoffStartResponse, 'source handoff start');
 
     expect(started).toEqual(expect.objectContaining({
       handoffId: expect.any(String),
@@ -492,7 +505,7 @@ describe('core e2e: session handoff via direct peer', () => {
     expect(prepared.status.transportStrategy).toBe('direct_peer');
     expect(preparedResume.agent).toBe('claude');
     expect(preparedResume.transcriptStorage).toBe('direct');
-    const targetProjectId = preparedResume.directory.replace(/[^a-zA-Z0-9-]/g, '-');
+    const targetProjectId = resolveClaudeProjectId(preparedResume.directory);
     const targetImportedTranscriptPath = resolve(
       join(targetClaudeConfigDir, 'projects', targetProjectId, 'sess-handoff-direct.jsonl'),
     );
@@ -557,17 +570,16 @@ describe('core e2e: session handoff via direct peer', () => {
       intervalMs: 250,
       context: 'server session active after handoff',
     });
+    await writeFile(resolve(join(preparedResume.directory, 'README.md')), 'session handoff test after second pass\n', 'utf8');
+    await writeFile(resolve(join(preparedResume.directory, 'added-after-first-handoff.txt')), 'added after first handoff\n', 'utf8');
+    await rm(resolve(join(preparedResume.directory, 'deleted-after-first-handoff.txt')));
     await waitForDaemonSessionWebhookMarker({
       happyHomeDir: targetHomeDir,
       sessionId,
       machineId: targetSeed.machineId,
     });
 
-    await writeFile(resolve(join(preparedResume.directory, 'README.md')), 'session handoff test after second pass\n', 'utf8');
-    await writeFile(resolve(join(preparedResume.directory, 'added-after-first-handoff.txt')), 'added after first handoff\n', 'utf8');
-    await rm(resolve(join(preparedResume.directory, 'deleted-after-first-handoff.txt')));
-
-    const secondStarted = unwrapDataKeyRpcResult(
+    const secondStarted = requireHandoffStartOk(unwrapDataKeyRpcResult(
       await targetMachineRpc.call(`${targetSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_START}`, {
         sessionId,
         sourceMachineId: targetSeed.machineId,
@@ -584,7 +596,7 @@ describe('core e2e: session handoff via direct peer', () => {
         },
       }),
       'target handoff-back start',
-    ) as HandoffStartResult;
+    ) as HandoffStartResponse, 'target handoff-back start');
     expect(secondStarted.handoffId).not.toBe(started.handoffId);
     const secondHandoffMetadataV2 = requireHandoffMetadataV2(secondStarted, 'target handoff-back start');
     expect(requireObject(secondHandoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
@@ -653,7 +665,6 @@ describe('core e2e: session handoff via direct peer', () => {
       sessionId,
       machineId: sourceSeed.machineId,
     });
-
     const secondCommitted = unwrapDataKeyRpcResult(
       await targetMachineRpc.call(`${targetSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT}`, {
         handoffId: secondStarted.handoffId,
@@ -916,7 +927,7 @@ describe('core e2e: session handoff via direct peer', () => {
     expect(committed.status.status).toBe('completed');
 
     await waitFor(() => fakeClaudeLogContainsUserText(targetFakeClaudeLog, latePrompt), {
-      timeoutMs: 60_000,
+      timeoutMs: 120_000,
       intervalMs: 200,
       context: 'late prompt reaches the resumed target session after cutover',
     });

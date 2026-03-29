@@ -365,6 +365,21 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         { timeoutMs: 60_000, context: 'direct session metadata converted to persisted' },
       );
 
+      await waitFor(
+        async () => {
+          const status = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET}`, {
+            machineId: seeded.machineId,
+            sessionId,
+            providerId: 'claude',
+            remoteSessionId: 'sess-direct-persist',
+            source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-persist' },
+          });
+          const statusResult = unwrapDataKeyRpcResult(status, 'direct Claude persisted takeover status');
+          return statusResult.ok === true && statusResult.runnerActive === true;
+        },
+        { timeoutMs: 60_000, context: 'direct Claude persisted runner becomes active' },
+      );
+
       const sessionAfter = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
       const metadataAfter = JSON.parse(sessionAfter.metadata) as Record<string, unknown>;
       expect(metadataAfter.directSessionV1).toBeUndefined();

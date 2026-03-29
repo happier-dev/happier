@@ -61,15 +61,17 @@ async function resolveCliSourceLaunchSpec(
   rootDir: string,
   options: CliLaunchOptions,
 ): Promise<CliTestLaunchSpec> {
-  await ensureCliSharedDepsBuilt(params, {
-    repoRoot: rootDir,
-    runCommand: options.runCommand,
-    skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
-    timeoutMs: options.timeoutMs,
-    pollIntervalMs: options.pollIntervalMs,
-    staleAfterMs: options.staleAfterMs,
-    buildTimeoutMs: options.buildTimeoutMs,
-  });
+  if (!shouldSkipCliSharedDepsBuild(params.env)) {
+    await ensureCliSharedDepsBuilt(params, {
+      repoRoot: rootDir,
+      runCommand: options.runCommand,
+      skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
+      timeoutMs: options.timeoutMs,
+      pollIntervalMs: options.pollIntervalMs,
+      staleAfterMs: options.staleAfterMs,
+      buildTimeoutMs: options.buildTimeoutMs,
+    });
+  }
   const snapshotDir = options.snapshotDir;
   ensureCliSourceSnapshot(snapshotDir, rootDir);
   const sourceEntrypoint = resolveCliSnapshotSourceEntrypoint(snapshotDir);
@@ -96,6 +98,19 @@ export function shouldUseCliSourceEntrypoint(env: NodeJS.ProcessEnv): boolean {
   const raw = (
     env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ??
     env.HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ??
+    ''
+  )
+    .toString()
+    .trim()
+    .toLowerCase();
+
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
+}
+
+export function shouldSkipCliSharedDepsBuild(env: NodeJS.ProcessEnv): boolean {
+  const raw = (
+    env.HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD ??
+    env.HAPPY_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD ??
     ''
   )
     .toString()

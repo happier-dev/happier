@@ -16,6 +16,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const readline = require('node:readline');
 const { randomUUID } = require('node:crypto');
+const { resolveClaudeProjectId } = require('../testkit/claudeProjectId.cjs');
 const {
   findArgValue,
   mergeMcpServers,
@@ -57,8 +58,7 @@ function resolveClaudeConfigDir() {
 }
 
 function resolveClaudeProjectDirForCwd(cwd) {
-  const projectId = path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-');
-  return path.join(resolveClaudeConfigDir(), 'projects', projectId);
+  return path.join(resolveClaudeConfigDir(), 'projects', resolveClaudeProjectId(cwd));
 }
 
 const transcriptPath = path.join(resolveClaudeProjectDirForCwd(process.cwd()), `${sessionId}.jsonl`);

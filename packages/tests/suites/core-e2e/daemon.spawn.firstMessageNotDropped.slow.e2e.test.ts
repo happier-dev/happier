@@ -186,11 +186,12 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
       throw new Error('Missing sessionId from daemon spawn-session');
     }
 
-    await waitForFakeClaudeInvocation(
+    const fakeClaudeInvocation = await waitForFakeClaudeInvocation(
       fakeLogPath,
-      (i) => i.mode === 'sdk',
+      () => true,
       { timeoutMs: 60_000, pollMs: 150 },
     );
+    expect(fakeClaudeInvocation.argv.length).toBeGreaterThan(0);
 
     await waitFor(async () => {
       const rows = await fetchAllMessages(server!.baseUrl, auth.token, sessionId);

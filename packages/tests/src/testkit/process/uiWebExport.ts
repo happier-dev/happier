@@ -258,32 +258,44 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
     return exportedDistDir;
   }
 
-  const buildPromise = withUiWebExportLock(exportedDistLockPath, async () => {
-    const stagingDir = resolvePath(exportedDistParent, `dist-staging-${process.pid}-${Date.now()}`);
-    const stdoutPath = resolvePath(params.testDir, 'ui.web.export.stdout.log');
-    const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
+	  const buildPromise = withUiWebExportLock(exportedDistLockPath, async () => {
+	    const stagingDir = resolvePath(exportedDistParent, `dist-staging-${process.pid}-${Date.now()}`);
+	    const stdoutPath = resolvePath(params.testDir, 'ui.web.export.stdout.log');
+	    const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
 
-    await mkdir(exportedDistParent, { recursive: true });
-    await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+	    await mkdir(exportedDistParent, { recursive: true });
+	    await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
 
-    try {
-      await runLoggedCommand({
-        command: yarnCommand(),
-        args: [
-          'expo',
-          'export',
+	    try {
+	      const exportEnv = buildExportEnv(params.env);
+	      const shouldPinMetroPort = !exportEnv.RCT_METRO_PORT && !exportEnv.EXPO_METRO_PORT && !exportEnv.METRO_PORT;
+	      const metroPort = shouldPinMetroPort ? await reserveAvailablePort() : null;
+	      const pinnedExportEnv = shouldPinMetroPort && metroPort != null
+	        ? {
+	          ...exportEnv,
+	          RCT_METRO_PORT: String(metroPort),
+	          EXPO_METRO_PORT: String(metroPort),
+	          METRO_PORT: String(metroPort),
+	        }
+	        : exportEnv;
+
+	      await runLoggedCommand({
+	        command: yarnCommand(),
+	        args: [
+	          'expo',
+	          'export',
           '--platform',
           'web',
-          '--output-dir',
-          stagingDir,
-          ...(clearCache ? ['--clear'] : []),
-        ],
-        cwd: resolvePath(repoRootDir(), 'apps', 'ui'),
-        env: buildExportEnv(params.env),
-        stdoutPath,
-        stderrPath,
-        timeoutMs: resolveUiWebExportBuildTimeoutMs(params.env),
-      });
+	          '--output-dir',
+	          stagingDir,
+	          ...(clearCache ? ['--clear'] : []),
+	        ],
+	        cwd: resolvePath(repoRootDir(), 'apps', 'ui'),
+	        env: pinnedExportEnv,
+	        stdoutPath,
+	        stderrPath,
+	        timeoutMs: resolveUiWebExportBuildTimeoutMs(params.env),
+	      });
 
       const indexPath = resolvePath(stagingDir, 'index.html');
       await stat(indexPath);

@@ -182,6 +182,28 @@ async function selectDirectoryFromPathBrowser(
     return visiblePath;
 }
 
+async function ensureNewSessionBackendIsReady(page: Page): Promise<void> {
+    const codexOption = page.getByTestId('agent-input-chip-picker.option:codex').first();
+    const inlineCodexOption = page.getByTestId('new-session-agent:codex').first();
+    const closeButton = page.getByTestId('agent-input-chip-picker.close').first();
+    const backendPicker = page.getByTestId('agent-input-chip-picker');
+
+    if (await codexOption.count()) {
+        await codexOption.scrollIntoViewIfNeeded().catch(() => {});
+        await codexOption.click({ force: true });
+    } else if (await inlineCodexOption.count()) {
+        await inlineCodexOption.scrollIntoViewIfNeeded().catch(() => {});
+        await inlineCodexOption.click({ force: true });
+    }
+
+    if (await closeButton.count()) {
+        await closeButton.click({ force: true }).catch(() => {});
+    }
+
+    await expect(backendPicker).toHaveCount(0, { timeout: 30_000 }).catch(() => {});
+    await expect(closeButton).toHaveCount(0, { timeout: 30_000 }).catch(() => {});
+}
+
 test.describe('ui e2e: directory path browser reuse', () => {
     test.describe.configure({ mode: 'serial' });
 
@@ -204,6 +226,7 @@ test.describe('ui e2e: directory path browser reuse', () => {
         EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
         HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `path-browser-directory-inputs-${run.runId}`,
+        HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '900000',
         HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
         // This suite exercises the shared path-browser contract; the Metro dev server adds
         // unnecessary startup cost and flake here, while the exported web bundle still proves
@@ -260,6 +283,7 @@ test.describe('ui e2e: directory path browser reuse', () => {
         await enableEnhancedSessionWizardInSettings(page, uiBaseUrl);
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
+        await ensureNewSessionBackendIsReady(page);
         await expect(page.getByTestId('path-browser-trigger')).toHaveCount(1, { timeout: 180_000 });
         await page.getByTestId('path-browser-trigger').click();
         const selectedPath = await selectDirectoryFromPathBrowser(page);

@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    partitionVitestFilesIntoShards,
     resolveVitestConfigPath,
     resolveVitestShardCount,
     resolveVitestPassthroughArgs,
 } from '../../scripts/runVitestShards.mjs';
 
 describe('apps/ui runVitestShards', () => {
-    it('defaults shard count to 4', () => {
-        expect(resolveVitestShardCount({})).toBe(4);
+    it('defaults shard count to 24', () => {
+        expect(resolveVitestShardCount({})).toBe(24);
     });
 
     it('uses HAPPIER_UI_VITEST_SHARDS override when valid', () => {
@@ -16,8 +17,8 @@ describe('apps/ui runVitestShards', () => {
     });
 
     it('ignores invalid shard overrides', () => {
-        expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: '0' })).toBe(4);
-        expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: 'nope' })).toBe(4);
+        expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: '0' })).toBe(24);
+        expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: 'nope' })).toBe(24);
     });
 
     it('parses --config path from argv', () => {
@@ -42,5 +43,13 @@ describe('apps/ui runVitestShards', () => {
                 'dot',
             ]),
         ).toEqual(['sources/dev/runVitestShards.test.ts', '--reporter', 'dot']);
+    });
+
+    it('partitions files across shards deterministically', () => {
+        const buckets = partitionVitestFilesIntoShards(['c', 'a', 'b', 'd', 'e'], 2);
+        expect(buckets).toEqual([
+            ['a', 'c', 'e'],
+            ['b', 'd'],
+        ]);
     });
 });

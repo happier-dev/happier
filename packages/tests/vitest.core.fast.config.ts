@@ -9,6 +9,7 @@ export default defineConfig({
       'suites/core-e2e/**/*.test.ts',
       'src/testkit/**/*.{test,spec}.ts',
     ],
+    globalSetup: ['src/testkit/vitest/globalSetup.coreFast.ts'],
     exclude: ['suites/core-e2e/**/*.slow.e2e.test.ts', ...resolveVitestFeatureTestExcludeGlobs()],
     testTimeout: 180_000,
     hookTimeout: 180_000,

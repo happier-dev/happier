@@ -143,7 +143,7 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
     server = null;
   });
 
-  it('ignores MCP approval settings for session_title_set and updates metadata immediately', async () => {
+  it('returns approval_request_created for session_title_set when the MCP surface requires approval', async () => {
     const scenario = await createScenario();
     server = scenario.server;
 
@@ -161,13 +161,13 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       });
       const titlePayload = JSON.parse(String((titleCall.content as any[])[0]?.text ?? ''));
       expect(titlePayload).toEqual(expect.objectContaining({
-        ok: true,
+        kind: 'approval_request_created',
+        actionId: 'session.title.set',
       }));
-      expect(titlePayload.result?.kind).not.toBe('approval_request_created');
 
       const snapAfterRename = await fetchSessionV2(scenario.serverBaseUrl, scenario.authToken, scenario.sessionId);
-      expect(snapAfterRename.metadataVersion).toBeGreaterThan(beforeMetadataVersion);
-      expect(snapAfterRename.metadata).not.toBe(beforeMetadataCiphertext);
+      expect(snapAfterRename.metadataVersion).toBe(beforeMetadataVersion);
+      expect(snapAfterRename.metadata).toBe(beforeMetadataCiphertext);
     } catch (error) {
       const stderrDump = scenario.stderrLines.join('');
       throw Object.assign(new Error(`external mcp stdio server failed (stderr follows)\n\n${stderrDump}`), { cause: error });
@@ -177,7 +177,7 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
     }
   }, 240_000);
 
-  it('ignores MCP approval settings for action_execute session.title.set requests', async () => {
+  it('returns approval_request_created for action_execute session.title.set requests', async () => {
     const scenario = await createScenario();
     server = scenario.server;
 
@@ -195,13 +195,13 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       });
       const actionPayload = JSON.parse(String((actionCall.content as any[])[0]?.text ?? ''));
       expect(actionPayload).toEqual(expect.objectContaining({
-        ok: true,
+        kind: 'approval_request_created',
+        actionId: 'session.title.set',
       }));
-      expect(actionPayload.result?.kind).not.toBe('approval_request_created');
 
       const snapAfterRename = await fetchSessionV2(scenario.serverBaseUrl, scenario.authToken, scenario.sessionId);
-      expect(snapAfterRename.metadataVersion).toBeGreaterThan(beforeMetadataVersion);
-      expect(snapAfterRename.metadata).not.toBe(beforeMetadataCiphertext);
+      expect(snapAfterRename.metadataVersion).toBe(beforeMetadataVersion);
+      expect(snapAfterRename.metadata).toBe(beforeMetadataCiphertext);
     } catch (error) {
       const stderrDump = scenario.stderrLines.join('');
       throw Object.assign(new Error(`external mcp stdio server failed (stderr follows)\n\n${stderrDump}`), { cause: error });

@@ -85,6 +85,10 @@ describe('core e2e: cli profiles list', () => {
       label: 'profiles.list',
       args: ['profiles', 'list', '--refresh-settings', '--json'],
       timeoutMs: 120_000,
+      launchOptions: {
+        preferSourceEntrypoint: true,
+        skipSourceFreshnessCheck: true,
+      },
     });
 
     expect(cliEnvelope.ok).toBe(true);

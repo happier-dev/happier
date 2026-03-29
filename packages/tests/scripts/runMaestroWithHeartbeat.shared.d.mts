@@ -5,6 +5,7 @@ export type ParsedMaestroArgs = {
   appId: string | null;
   platform: string | null;
   serverUrl: string | null;
+  skipAppInstallCheck: boolean;
   passThrough: string[];
 };
 

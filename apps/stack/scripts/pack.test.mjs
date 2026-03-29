@@ -87,3 +87,9 @@ test('stack package excludes the WSREPL Lima test shims from published files', a
     'expected WSREPL Lima VM shim to be excluded from the published stack package',
   );
 });
+
+test('stack package keeps the Expo heap helper local to the packaged scripts tree', async () => {
+  const commandMjs = await readFile(new URL('./utils/expo/command.mjs', import.meta.url), 'utf8');
+  assert.match(commandMjs, /from '\.\/expoNodeHeapEnv\.mjs';/);
+  assert.doesNotMatch(commandMjs, /scripts\/expo\/expoNodeHeapEnv\.mjs/);
+});

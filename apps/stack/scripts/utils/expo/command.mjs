@@ -6,7 +6,7 @@ import { spawnProc } from '../proc/proc.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from './expo.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../paths/paths.mjs';
 import { pathExists } from '../fs/fs.mjs';
-import { applyExpoNodeHeapEnv } from '../../../../../scripts/expo/expoNodeHeapEnv.mjs';
+import { applyExpoNodeHeapEnv } from './expoNodeHeapEnv.mjs';
 
 const DEFAULT_EXPO_EXPORT_MAX_WORKERS_NONINTERACTIVE = 1;
 

@@ -1,12 +1,14 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
@@ -26,10 +28,13 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
   let proxyStop: (() => Promise<void>) | null = null;
   let daemon: StartedDaemon | null = null;
 
-  async function waitForWelcomeAuthenticated(page: Page, baseUrl: string): Promise<void> {
+  async function waitForWelcomeAuthenticated(page: Page, baseUrl: string, authResponse: Promise<unknown>): Promise<void> {
     await gotoDomContentLoadedWithRetries(page, baseUrl);
+    await waitForInitialAppUi({ page, timeoutMs: 120_000 });
+    await authResponse;
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 120_000 }).toBe('/');
     await expect(page.getByTestId('welcome-create-account')).toHaveCount(0, { timeout: 120_000 });
-    await expect(page.getByTestId('session-getting-started-kind-connect_machine')).toHaveCount(1, { timeout: 120_000 });
+    await expect.poll(async () => await page.getByTestId('session-getting-started-kind-connect_machine').count(), { timeout: 120_000 }).toBeGreaterThan(0);
   }
 
   test.beforeAll(async () => {
@@ -120,8 +125,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
       { timeout: 120_000 },
     );
 
-    await waitForWelcomeAuthenticated(page, uiBaseUrl);
-    await mtlsOk;
+    await waitForWelcomeAuthenticated(page, uiBaseUrl, mtlsOk);
 
     const testDir = resolve(join(suiteDir, 't1-mtls-terminal-connect'));
     await mkdir(testDir, { recursive: true });
@@ -148,6 +152,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
       await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
       await page.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
+      await acknowledgeTerminalConnectSuccessIfPresent(page);
 
       const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
       const fakeClaudePath = fakeClaudeFixturePath();
@@ -173,7 +178,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
         },
       });
 
-      await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/`);
       await expect(page.getByTestId('session-getting-started-kind-start_daemon')).toHaveCount(0, { timeout: 180_000 });
 
       await expect

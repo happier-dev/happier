@@ -30,6 +30,7 @@ test('hstack remote server setup installs hstack and runs self-host install', (t
   assert.ok(log.includes('"bin":"ssh"'), `expected ssh invocations\n${log}`);
   assert.ok(log.includes('happier.dev/install'), `expected remote install script\n${log}`);
   assert.ok(log.includes('HAPPIER_PRODUCT=stack'), `expected remote installer to install hstack\n${log}`);
+  assert.ok(log.includes('HAPPIER_WITH_CLI=0'), `expected remote installer to skip cli on remote host\n${log}`);
   assert.ok(log.includes('HAPPIER_BIN_DIR=$HOME/.happier/bin'), `expected remote installer to place hstack under ~/.happier/bin\n${log}`);
   assert.ok(log.includes('HAPPIER_NO_PATH_UPDATE=1'), `expected remote installer to avoid shell rc edits\n${log}`);
   assert.ok(log.includes('self-host'), `expected self-host install invocation\n${log}`);

@@ -48,6 +48,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
 
     beforeEach(() => {
         vi.resetModules();
+        vi.unmock('@/utils/path/terminalConnectUrl');
         replaceMock.mockClear();
         setPendingMock.mockClear();
         upsertActivateAndSwitchServerMock.mockClear();

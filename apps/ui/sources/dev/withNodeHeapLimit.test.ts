@@ -26,12 +26,12 @@ describe('apps/ui withNodeHeapLimit', () => {
         );
     });
 
-    it('raises the default heap on high-memory machines when the UI env override is missing or invalid', () => {
-        const highMemoryMachineBytes = 48 * 1024 * 1024 * 1024;
+    it('caps the default heap on high-memory machines when the UI env override is missing or invalid', () => {
+        const highMemoryMachineBytes = 128 * 1024 * 1024 * 1024;
 
-        expect(resolveMaxOldSpaceSizeMb({}, highMemoryMachineBytes)).toBe(16_384);
-        expect(resolveMaxOldSpaceSizeMb({ HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB: 'nope' }, highMemoryMachineBytes)).toBe(16_384);
-        expect(resolveMaxOldSpaceSizeMb({ HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB: '0' }, highMemoryMachineBytes)).toBe(16_384);
+        expect(resolveMaxOldSpaceSizeMb({}, highMemoryMachineBytes)).toBe(24_576);
+        expect(resolveMaxOldSpaceSizeMb({ HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB: 'nope' }, highMemoryMachineBytes)).toBe(24_576);
+        expect(resolveMaxOldSpaceSizeMb({ HAPPIER_UI_TEST_MAX_OLD_SPACE_SIZE_MB: '0' }, highMemoryMachineBytes)).toBe(24_576);
     });
 
     it('keeps the baseline heap on smaller machines when the UI env override is missing', () => {

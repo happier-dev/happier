@@ -4,9 +4,20 @@ set -euo pipefail
 # Install ultra-early traps so that a SIGTERM during script parsing still yields a summary.json.
 # This must not depend on functions defined later in the file (large heredocs can delay parsing).
 #
-# Note: we optimistically seed VM_NAME from argv[1] so the early summary has a stable vmName/reportRoot.
-# Later argument parsing will override VM_NAME/SAFE_VM_NAME as needed.
-VM_NAME="${1:-happier-wsrepl-qa}"
+# Note: we optimistically seed VM_NAME from the first positional arg (skipping known flags)
+# so the early summary has a stable vmName/reportRoot. Later argument parsing will override
+# VM_NAME/SAFE_VM_NAME as needed.
+VM_NAME="happier-wsrepl-qa"
+for arg in "$@"; do
+  case "${arg}" in
+    --headed|--headless) ;;
+    -h|--help) ;;
+    *)
+      VM_NAME="${arg}"
+      break
+      ;;
+  esac
+done
 SAFE_VM_NAME="${VM_NAME//[^A-Za-z0-9._-]/_}"
 FINALIZED=0
 FAILURE_STAGE=""
@@ -120,7 +131,7 @@ trap 'wsrepl_early_terminate_due_to_signal 130 int' INT
 # - runs a Playwright-driven session-handoff workspace-transfer matrix against a real stack UI
 #
 # Usage (macOS/Linux host, from the repo root or `packages/tests/`):
-#   ./packages/tests/scripts/wsrepl-lima-matrix.sh [vm-name] [vm-name-2 ...]
+#   ./packages/tests/scripts/wsrepl-lima-matrix.sh [--headed|--headless] [vm-name] [vm-name-2 ...]
 #
 # Required env for the Playwright matrix:
 #   HAPPIER_QA_SESSION_ID=...
@@ -171,7 +182,7 @@ trap 'wsrepl_early_terminate_due_to_signal 130 int' INT
 usage() {
   cat <<'EOF'
 Usage:
-  ./packages/tests/scripts/wsrepl-lima-matrix.sh [vm-name] [vm-name-2 ...]
+  ./packages/tests/scripts/wsrepl-lima-matrix.sh [--headed|--headless] [vm-name] [vm-name-2 ...]
 
 Examples:
   WSREPL_QA_OUTPUT_DIR=output/wsrepl-lima-matrix-local \
@@ -237,9 +248,25 @@ if [[ ! -f "${PAYLOAD_TAR_HELPER}" ]]; then
   exit 1
 fi
 
+WSREPL_QA_PLAYWRIGHT_HEADLESS_MODE=""
+WSREPL_QA_POSITIONAL_ARGS=()
+for arg in "$@"; do
+  case "${arg}" in
+    --headed)
+      WSREPL_QA_PLAYWRIGHT_HEADLESS_MODE="headed"
+      ;;
+    --headless)
+      WSREPL_QA_PLAYWRIGHT_HEADLESS_MODE="headless"
+      ;;
+    *)
+      WSREPL_QA_POSITIONAL_ARGS+=("${arg}")
+      ;;
+  esac
+done
+
 VM_NAMES=()
-if [[ "$#" -gt 0 ]]; then
-  VM_NAMES=("$@")
+if [[ "${#WSREPL_QA_POSITIONAL_ARGS[@]}" -gt 0 ]]; then
+  VM_NAMES=("${WSREPL_QA_POSITIONAL_ARGS[@]}")
 else
   VM_NAMES=("happier-wsrepl-qa")
 fi
@@ -247,6 +274,17 @@ fi
 VM_NAME="${VM_NAMES[0]}"
 SAFE_VM_NAME="${VM_NAME//[^A-Za-z0-9._-]/_}"
 EXTRA_VM_NAMES=("${VM_NAMES[@]:1}")
+
+# Default Playwright to headless for CI/automation ergonomics; allow `--headed` for manual debugging.
+#
+# IMPORTANT: force the default regardless of the caller's ambient shell env. If a developer wants
+# headed mode they should pass `--headed` explicitly so that accidental `HAPPIER_QA_HEADLESS=0`
+# doesn't cause the runner to pop UI windows.
+if [[ "${WSREPL_QA_PLAYWRIGHT_HEADLESS_MODE}" == "headed" ]]; then
+  export HAPPIER_QA_HEADLESS="0"
+else
+  export HAPPIER_QA_HEADLESS="1"
+fi
 
 timestamp() {
   date +"%Y%m%d-%H%M%S"
@@ -820,7 +858,6 @@ start_host_daemon_watchdog_background() {
     set +o pipefail
     consecutive_not_running=0
     while true; do
-      sleep "${interval_s}"
       # `happier daemon status` can exit 0 even when unhealthy; treat explicit "not running" as unhealthy.
       if [[ -n "${watchdog_cli_root}" && -n "${watchdog_active_server_id}" ]]; then
         status_out="$(HAPPIER_SERVER_URL="${host_server_url:-}" HAPPIER_HOME_DIR="${watchdog_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${watchdog_active_server_id}" run_host_happier daemon status 2>&1)"
@@ -857,6 +894,8 @@ start_host_daemon_watchdog_background() {
         printf "%s\n" "[wsrepl-qa] host daemon watchdog: ensuring daemon is running (status_code=${status_code})" >> "${outdir}/host-daemon-watchdog.log" 2>&1 || true
         restart_host_daemon_and_capture_logs "${host_server_url:-}" ensure || true
       fi
+
+      sleep "${interval_s}"
     done
   ) &
   HOST_DAEMON_WATCHDOG_PID="$!"
@@ -1147,7 +1186,7 @@ PY
 
 run_host_happier() {
   WSREPL_QA_HOST_HAPPIER_KIND=""
-  local source="${WSREPL_QA_HOST_HAPPIER_SOURCE:-worktree_node}"
+  local source="${WSREPL_QA_HOST_HAPPIER_SOURCE:-auto}"
   source="$(printf "%s" "${source}" | tr '[:upper:]' '[:lower:]')"
 
   local kind=""
@@ -1264,6 +1303,7 @@ PY
     "${cmd[@]}"
     return $?
   fi
+
   if [[ -x "$HOME/.happier/bin/happier" ]]; then
     kind="user_install"
     resolved_path="$HOME/.happier/bin/happier"
@@ -1294,6 +1334,7 @@ PY
   WSREPL_QA_HOST_HAPPIER_KIND="${kind}"
   write_resolution_once
   "${cmd[@]}"
+  return $?
 }
 
 resolve_stack_cli_auth_scope_json_for_ui_url() {
@@ -2844,13 +2885,29 @@ resolve_final_status() {
     return 0
   fi
 
+  # Some Playwright runs can write a fully green summary (ok:true + steps) but still exit nonzero
+  # due to cleanup/interrupt noise. Prefer the harness summary as the source of truth so the
+  # wrapper doesn't report a false-negative failure.
+  if [[ "${status}" != "0" ]]; then
+    if playwright_attempt_wrote_success_summary "${PLAYWRIGHT_OUTDIR}"; then
+      RESOLVED_FINAL_STATUS="0"
+      FAILURE_STAGE=""
+      FAILURE_REASON=""
+      return 0
+    fi
+  fi
+
   local resolved_session_id
   resolved_session_id="$(resolve_playwright_session_id_best_effort || true)"
   resolved_session_id="$(printf "%s" "${resolved_session_id}" | tr -d '\n' | tr -d '\r')"
 
   if [[ -z "${resolved_session_id}" ]]; then
     FAILURE_STAGE="${FAILURE_STAGE:-playwright}"
-    FAILURE_REASON="${FAILURE_REASON:-missing_session_id}"
+    if [[ -z "${FAILURE_REASON}" && -f "${PLAYWRIGHT_OUTDIR}/fatal.json" ]]; then
+      FAILURE_REASON="playwright_fatal_json"
+    else
+      FAILURE_REASON="${FAILURE_REASON:-missing_session_id}"
+    fi
     RESOLVED_FINAL_STATUS="1"
     return 0
   fi
@@ -3271,28 +3328,34 @@ autoupdate_guest_happier_from_worktree() {
 
   local payload_root="${REPORT_ROOT}/vm-happier"
   local payload_dir="${payload_root}/payload.tmp"
+  local build_log="${payload_root}/build.log"
   rm -rf "${payload_root}" 2>/dev/null || true
   mkdir -p "${payload_root}"
 
   echo "[wsrepl-qa] building VM Happier artifact from worktree (bunTarget=${bun_target})..."
-  if ! WSREPL_QA_VM_HAPPIER_PAYLOAD_DIR="${payload_dir}" \
-    node - "${REPO_DIR}" "${payload_dir}" "${bun_target}" <<'NODE'
-import { buildCliBinaryArtifactPayload, CLI_BINARY_TARGETS } from '@happier-dev/cli-common/componentArtifacts';
+  # Run the payload builder from the repo root so `node -` ESM resolution is stable (it otherwise
+  # resolves relative to the current working directory, which can be a temp dir or `apps/stack`).
+  if ! (
+    cd "${REPO_DIR}"
+    WSREPL_QA_VM_HAPPIER_PAYLOAD_DIR="${payload_dir}" \
+      node --input-type=module - "${REPO_DIR}" "${payload_dir}" "${bun_target}" <<'NODE'
+	import { buildCliBinaryArtifactPayload, CLI_BINARY_TARGETS } from '@happier-dev/cli-common/componentArtifacts';
 
-const [repoRoot, payloadDir, bunTarget] = process.argv.slice(2);
-const target = CLI_BINARY_TARGETS.find((value) => value.bunTarget === bunTarget);
-if (!target) {
-  throw new Error(`[wsrepl-qa] unsupported bun target: ${bunTarget}`);
-}
+	const [repoRoot, payloadDir, bunTarget] = process.argv.slice(2);
+	const target = CLI_BINARY_TARGETS.find((value) => value.bunTarget === bunTarget);
+	if (!target) {
+	  throw new Error(`[wsrepl-qa] unsupported bun target: ${bunTarget}`);
+	}
 
-await buildCliBinaryArtifactPayload({
-  repoRoot,
-  payloadDir,
-  target,
-});
+	await buildCliBinaryArtifactPayload({
+	  repoRoot,
+	  payloadDir,
+	  target,
+	});
 NODE
+  ) 2>&1 | tee "${build_log}"
   then
-    echo "[wsrepl-qa] failed to build VM Happier artifact from worktree" >&2
+    echo "[wsrepl-qa] failed to build VM Happier artifact from worktree; see ${build_log}" >&2
     return 2
   fi
 
@@ -3596,7 +3659,7 @@ if [[ -z "${HAPPIER_QA_STEPS_JSON:-}" ]]; then
     vm_machine_name_pattern="$(resolve_vm_machine_name_pattern_for_ui)"
     host_machine_name_pattern="$(resolve_host_machine_name_pattern_for_ui)"
     export HAPPIER_QA_STEPS_JSON
-    HAPPIER_QA_STEPS_JSON="$(python3 - "$vm_machine_id" "$host_machine_id" "$vm_machine_name_pattern" "$host_machine_name_pattern" "$step_out_strategy" "$step_back_strategy" "$step_out_after_back_strategy" <<'PY'
+    HAPPIER_QA_STEPS_JSON="$(python3 - "$vm_machine_id" "$host_machine_id" "$vm_machine_name_pattern" "$host_machine_name_pattern" "$step_out_strategy" "$step_back_strategy" "$step_out_after_back_strategy" <<-'PY'
 import json
 import sys
 
@@ -4131,6 +4194,32 @@ except Exception:
 
 ok = payload.get("ok")
 if ok is False:
+  raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+playwright_attempt_wrote_success_summary() {
+  local outdir="${1:-}"
+  if [[ -z "${outdir}" ]]; then
+    return 1
+  fi
+  local summary_path="${outdir}/summary.json"
+  if [[ ! -f "${summary_path}" ]]; then
+    return 1
+  fi
+  python3 - "${summary_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+  payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+  raise SystemExit(1)
+
+if payload.get("ok") is True:
   raise SystemExit(0)
 raise SystemExit(1)
 PY

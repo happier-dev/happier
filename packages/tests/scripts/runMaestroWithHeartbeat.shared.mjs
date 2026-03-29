@@ -8,6 +8,7 @@ export function parseMaestroArgs(argv) {
   let appId = null;
   let platform = null;
   let serverUrl = null;
+  let skipAppInstallCheck = false;
   const passThrough = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -48,10 +49,19 @@ export function parseMaestroArgs(argv) {
       serverUrl = arg.slice('--serverUrl='.length) || null;
       continue;
     }
+    if (arg === '--skip-app-install-check') {
+      skipAppInstallCheck = true;
+      continue;
+    }
+    if (typeof arg === 'string' && arg.startsWith('--skip-app-install-check=')) {
+      const raw = arg.slice('--skip-app-install-check='.length).trim().toLowerCase();
+      skipAppInstallCheck = raw === '' || raw === '1' || raw === 'true' || raw === 'yes';
+      continue;
+    }
     passThrough.push(arg);
   }
 
-  return { flows, appId, platform, serverUrl, passThrough };
+  return { flows, appId, platform, serverUrl, skipAppInstallCheck, passThrough };
 }
 
 export function createMaestroSpawnOptions(env) {

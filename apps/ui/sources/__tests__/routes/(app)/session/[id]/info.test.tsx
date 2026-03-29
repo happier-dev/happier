@@ -16,6 +16,7 @@ let isDataReady = true;
 let sessionHydrated = true;
 const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
+const safeRouterBackSpy = vi.fn();
 const readMachineTargetForSessionSpy = vi.fn();
 const resolveServerIdForSessionIdFromLocalCacheSpy = vi.fn();
 const resolvePreferredServerIdForSessionIdSpy = vi.fn();
@@ -154,6 +155,9 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: () => sessionHydrated,
 }));
+vi.mock('@/utils/navigation/safeRouterBack', () => ({
+    safeRouterBack: (...args: any[]) => safeRouterBackSpy(...args),
+}));
 
 vi.mock('@/components/ui/text/Text', () => ({ Text: (props: any) => React.createElement('Text', props, props.children) }));
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -262,6 +266,8 @@ describe('/session/[id]/info', () => {
         isDataReady = true;
         sessionHydrated = true;
         routerPushSpy.mockReset();
+        routerBackSpy.mockReset();
+        safeRouterBackSpy.mockReset();
         readMachineTargetForSessionSpy.mockReset();
         readMachineTargetForSessionSpy.mockReturnValue(null);
         sessionStopSpy.mockClear();
@@ -776,7 +782,16 @@ describe('/session/[id]/info', () => {
         expect(sessionStopSpy).toHaveBeenCalledWith('session-1');
         expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
         expect(sessionArchiveSpy).toHaveBeenCalledWith('session-1', { serverId: null });
-        expect(routerBackSpy).toHaveBeenCalledTimes(2);
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
+        expect(safeRouterBackSpy).toHaveBeenNthCalledWith(1, {
+            router: expect.any(Object),
+            fallbackHref: '/session/session-1',
+        });
+        expect(safeRouterBackSpy).toHaveBeenNthCalledWith(2, {
+            router: expect.any(Object),
+            fallbackHref: '/',
+        });
     });
 
     it('stops without prompting to archive when the session is pinned', async () => {
@@ -803,6 +818,47 @@ describe('/session/[id]/info', () => {
         expect(sessionStopSpy).toHaveBeenCalledWith('session-1');
         expect(modalConfirmSpy).not.toHaveBeenCalled();
         expect(sessionArchiveSpy).not.toHaveBeenCalled();
-        expect(routerBackSpy).toHaveBeenCalledTimes(2);
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
+        expect(safeRouterBackSpy).toHaveBeenNthCalledWith(1, {
+            router: expect.any(Object),
+            fallbackHref: '/session/session-1',
+        });
+        expect(safeRouterBackSpy).toHaveBeenNthCalledWith(2, {
+            router: expect.any(Object),
+            fallbackHref: '/',
+        });
+    });
+
+    it('archives an inactive session and exits via the safe back helper', async () => {
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+            archivedAt: null,
+        };
+
+        const screen = await renderInfoScreen();
+        screen.pressByTestId('sessionInfo.archiveSession');
+
+        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+        const actions = modalAlertSpy.mock.calls[0][2];
+        await actions[1].onPress();
+
+        expect(sessionArchiveSpy).toHaveBeenCalledWith('session-1', { serverId: null });
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
+        expect(safeRouterBackSpy).toHaveBeenNthCalledWith(1, {
+            router: expect.any(Object),
+            fallbackHref: '/session/session-1',
+        });
+        expect(safeRouterBackSpy).toHaveBeenNthCalledWith(2, {
+            router: expect.any(Object),
+            fallbackHref: '/',
+        });
     });
 });

@@ -496,24 +496,24 @@ export async function startTestDaemon(params: {
   let state: DaemonState;
   try {
     const startupTimeoutMs = params.startupTimeoutMs ?? 45_000;
-    const exitStateGraceTimeoutMs = Math.min(startupTimeoutMs, 2_000);
+    const exitStateGraceTimeoutMs = Math.min(startupTimeoutMs, 10_000);
     state = await Promise.race([
       waitForDaemonState(params.happyHomeDir, { timeoutMs: startupTimeoutMs }),
-      new Promise<DaemonState>((resolve, reject) => {
+      new Promise<DaemonState>((resolveState, rejectState) => {
         proc.child.once('exit', (code, signal) => {
           void (async () => {
             try {
               const exitedState = await waitForDaemonState(params.happyHomeDir, { timeoutMs: exitStateGraceTimeoutMs });
-              resolve(exitedState);
+              resolveState(exitedState);
             } catch {
               const detail = signal ? `signal=${String(signal)}` : `code=${String(code)}`;
-              reject(
+              rejectState(
                 new Error(
                   `Daemon exited before writing daemon.state.json (${detail}). See logs: ${resolve(params.testDir, 'daemon.stdout.log')} and ${resolve(params.testDir, 'daemon.stderr.log')}`,
                 ),
               );
             }
-          })().catch((error) => reject(error instanceof Error ? error : new Error(String(error))));
+          })().catch((error) => rejectState(error instanceof Error ? error : new Error(String(error))));
         });
       }),
     ]);

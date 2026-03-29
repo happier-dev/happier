@@ -8,6 +8,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -101,12 +102,12 @@ test.describe('ui e2e: mTLS auto-redirect', () => {
     );
 
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-    await page.waitForTimeout(5_000);
+    await waitForInitialAppUi({ page, timeoutMs: 120_000 });
+    await mtlsOk;
 
     await expect(page.getByTestId('welcome-create-account')).toHaveCount(0, { timeout: 120_000 });
     await expect(page.getByTestId('session-getting-started-kind-connect_machine')).toHaveCount(1, { timeout: 120_000 });
-
-    await mtlsOk;
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 120_000 }).toBe('/');
 
     const dbPath = resolveServerLightSqliteDbPath({ server });
     const raw = execFileSync(

@@ -122,11 +122,21 @@ test.describe('ui e2e: add your phone (desktop QR → mobile scan)', () => {
     await expect(page.getByTestId('add-phone-pairing-link')).toHaveCount(1, { timeout: 120_000 });
 
     const pairingLinkRaw = (await page.getByTestId('add-phone-pairing-link').innerText()).trim();
-    if (!pairingLinkRaw.startsWith('happier:///pair')) {
-      throw new Error(`Expected pairing link to start with happier:///pair (got: ${pairingLinkRaw.slice(0, 64)}...)`);
+    let pairingUrl: URL;
+    try {
+      pairingUrl = new URL(pairingLinkRaw);
+    } catch (error) {
+      throw new Error(
+        `Expected pairing link to be a valid URL (got: ${pairingLinkRaw.slice(0, 64)}...): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (!pairingUrl.protocol.startsWith('happier')) {
+      throw new Error(`Expected pairing link to use a Happier deep-link scheme (got protocol: ${pairingUrl.protocol})`);
+    }
+    if (pairingUrl.pathname !== '/pair') {
+      throw new Error(`Expected pairing link pathname to be /pair (got: ${pairingUrl.pathname})`);
     }
 
-    const pairingUrl = new URL(pairingLinkRaw);
     const pairId = pairingUrl.searchParams.get('pairId') ?? '';
     const secret = pairingUrl.searchParams.get('secret') ?? '';
     const serverUrl = pairingUrl.searchParams.get('server');

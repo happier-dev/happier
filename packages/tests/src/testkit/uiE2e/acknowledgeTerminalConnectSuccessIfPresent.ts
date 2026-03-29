@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 
 export async function acknowledgeTerminalConnectSuccessIfPresent(page: Page): Promise<void> {
-  const okButton = page.getByRole('button', { name: 'OK' });
+  const okButton = page.getByTestId('web-modal-button-0');
   try {
     await okButton.first().waitFor({ state: 'visible', timeout: 1500 });
     await okButton.first().click();

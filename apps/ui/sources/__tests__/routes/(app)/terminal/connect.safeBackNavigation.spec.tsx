@@ -100,7 +100,7 @@ describe('TerminalConnectScreen safe navigation', () => {
         };
     });
 
-    it('falls back to replace(/terminal) when router cannot go back (success)', async () => {
+    it('falls back to replace(/) when router cannot go back (success)', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
         await renderScreen(<Screen />);
@@ -111,10 +111,10 @@ describe('TerminalConnectScreen safe navigation', () => {
         });
 
         expect(backMock).not.toHaveBeenCalled();
-        expect(replaceMock).toHaveBeenCalledWith('/terminal');
+        expect(replaceMock).toHaveBeenCalledWith('/');
     });
 
-    it('falls back to replace(/terminal) when router cannot go back (reject)', async () => {
+    it('falls back to replace(/) when router cannot go back (reject)', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
         const screen = await renderScreen(<Screen />);
@@ -125,6 +125,6 @@ describe('TerminalConnectScreen safe navigation', () => {
         });
 
         expect(backMock).not.toHaveBeenCalled();
-        expect(replaceMock).toHaveBeenCalledWith('/terminal');
+        expect(replaceMock).toHaveBeenCalledWith('/');
     });
 });

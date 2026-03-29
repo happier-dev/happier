@@ -42,10 +42,18 @@ export async function runCliJson(params: Readonly<{
   label: string;
   args: string[];
   timeoutMs?: number;
+  launchOptions?: Readonly<{
+    preferSourceEntrypoint?: boolean;
+    skipSourceFreshnessCheck?: boolean;
+  }>;
 }>): Promise<JsonEnvelope> {
   const cliLaunchSpec = await resolveCliTestLaunchSpec(
     { testDir: params.testDir, env: params.env },
-    { snapshotDir: resolvePath(join(params.testDir, 'cli-dist')) },
+    {
+      snapshotDir: resolvePath(join(params.testDir, 'cli-dist')),
+      preferSourceEntrypoint: params.launchOptions?.preferSourceEntrypoint,
+      skipSourceFreshnessCheck: params.launchOptions?.skipSourceFreshnessCheck,
+    },
   );
   const stdoutPath = resolvePath(join(params.testDir, `cli.${params.label}.stdout.log`));
   const stderrPath = resolvePath(join(params.testDir, `cli.${params.label}.stderr.log`));

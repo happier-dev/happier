@@ -89,6 +89,7 @@ export type MobileMaestroDeps = Readonly<{
     appId: string | null;
     platform: string | null;
     serverUrl: string | null;
+    skipAppInstallCheck: boolean;
     passThrough: string[];
   };
 }>;
@@ -316,9 +317,11 @@ export async function runMobileMaestro(
     'dev.happier.app.dev';
   const platform = parsed.platform ? parsed.platform.trim() : '';
   const mobilePlatform = platform === 'android' || platform === 'ios' ? platform : null;
+  const skipAppInstallCheck =
+    parsed.skipAppInstallCheck === true || isTruthyEnv(params.env.HAPPIER_E2E_SKIP_APP_INSTALL_CHECK ?? '0');
 
   const isAppInstalled = deps.isAppInstalled ?? defaultIsAppInstalled;
-  if (mobilePlatform) {
+  if (mobilePlatform && !skipAppInstallCheck) {
     let installed = await isAppInstalled({ env: params.env, platform: mobilePlatform, appId });
     if (!installed) {
       installed = await isAppInstalled({ env: params.env, platform: mobilePlatform, appId });
@@ -485,7 +488,11 @@ export async function runMobileMaestro(
   }
 
   const primeAppLaunch = deps.primeAppLaunch ?? defaultPrimePlatformAppLaunch;
-  if (mobilePlatform === 'android' && isTruthyEnv(params.env.HAPPIER_E2E_ANDROID_PRIME_APP_LAUNCH ?? '1')) {
+  if (
+    !skipAppInstallCheck
+    && mobilePlatform === 'android'
+    && isTruthyEnv(params.env.HAPPIER_E2E_ANDROID_PRIME_APP_LAUNCH ?? '1')
+  ) {
     await primeAppLaunch({
       env: params.env,
       platform: mobilePlatform,

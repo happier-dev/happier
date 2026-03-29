@@ -96,6 +96,60 @@ describe('mobileMaestroRunner', () => {
     expect(runMaestro).toHaveBeenCalledTimes(1);
   });
 
+  it('can bypass the install probe for unit-test-only runs', async () => {
+    const { runMobileMaestro } = await import('./mobileMaestroRunner');
+
+    const startServerLight = vi.fn(async () => ({
+      baseUrl: 'http://127.0.0.1:26050',
+      port: 26050,
+      stop: vi.fn(async () => {}),
+    }));
+    const startDevClientMetro = vi.fn(async () => ({
+      baseUrl: 'http://127.0.0.1:8081',
+      port: 8081,
+      stop: vi.fn(async () => {}),
+    }));
+    const isAppInstalled = vi.fn(async () => false);
+    const runMaestro = vi.fn(async () => ({ exitCode: 0 }));
+
+    await runMobileMaestro(
+      {
+        argv: [
+          'node',
+          'script',
+          '--platform',
+          'android',
+          '--flows',
+          'suites/mobile-e2e/flows',
+          '--appId',
+          'dev.happier.app.dev',
+          '--serverUrl',
+          'http://127.0.0.1:26050',
+          '--skip-app-install-check',
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          MAESTRO_CLI_NO_ANALYTICS: '1',
+          HAPPIER_E2E_MOBILE_MANAGE_METRO: '0',
+        },
+      },
+      {
+        startServerLight,
+        startDevClientMetro,
+        runMaestro,
+        isAppInstalled,
+        adbReversePorts: vi.fn(() => ({ enabled: false, reversedPorts: [] })),
+        primeAppLaunch: vi.fn(async () => {}),
+      },
+    );
+
+    expect(isAppInstalled).not.toHaveBeenCalled();
+    expect(startServerLight).not.toHaveBeenCalled();
+    expect(startDevClientMetro).toHaveBeenCalledTimes(0);
+    expect(runMaestro).toHaveBeenCalledTimes(1);
+  });
+
   it('uses explicit serverUrl and does not start server-light', async () => {
     const { runMobileMaestro } = await import('./mobileMaestroRunner');
 

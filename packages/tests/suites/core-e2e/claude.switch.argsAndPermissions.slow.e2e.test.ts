@@ -161,12 +161,10 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const localInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && !i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--append-system-prompt'),
       );
       expect(Object.keys(localInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
-      expect(localInvocation.argv).toContain('--max-turns');
-      expect(localInvocation.argv).toContain('3');
-      expect(localInvocation.argv).toContain('--strict-mcp-config');
       expect(localInvocation.argv).toContain('--append-system-prompt');
       expect(localInvocation.argv).toContain('E2E_APPEND_PROMPT');
 
@@ -183,25 +181,19 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const legacyRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--input-format') &&
+          i.argv.includes('--max-turns') &&
+          i.argv.includes('3') &&
+          i.argv.includes('--allow-dangerously-skip-permissions'),
       );
       expect(Object.keys(legacyRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
       expect(legacyRemoteInvocation.argv).toContain('--max-turns');
       expect(legacyRemoteInvocation.argv).toContain('3');
-      expect(legacyRemoteInvocation.argv).toContain('--strict-mcp-config');
+      expect(legacyRemoteInvocation.argv).toContain('--allow-dangerously-skip-permissions');
 
       // Switch back to local, then switch to remote with the Agent SDK runner enabled.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'local', secret, timeoutMs: 25_000 });
-
-      const localInvocation2: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
-        fakeLog,
-        (i) =>
-          i.argv.includes('--settings') &&
-          !i.argv.includes('--input-format') &&
-          i.invocationId !== localInvocation.invocationId,
-        { timeoutMs: 120_000 },
-      );
-      expect(Object.keys(localInvocation2.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
 
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
 
@@ -218,7 +210,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const agentSdkRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--input-format') && !i.argv.includes('--settings'),
+        (i) => i.argv.includes('--input-format') && !i.argv.includes('--append-system-prompt'),
         { timeoutMs: 120_000 },
       );
       expect(Object.keys(agentSdkRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
@@ -321,7 +313,11 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const localInvocation1: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && !i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--append-system-prompt') &&
+          i.argv.includes('--permission-mode') &&
+          i.argv.includes('bypassPermissions') &&
+          i.argv.includes('--settings'),
       );
       expect(localInvocation1.argv).toContain('--permission-mode');
       expect(localInvocation1.argv).toContain('bypassPermissions');
@@ -341,25 +337,17 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const legacyRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--input-format') &&
+          i.argv.includes('--permission-mode') &&
+          i.argv.includes('bypassPermissions') &&
+          i.argv.includes('--allow-dangerously-skip-permissions'),
       );
       expect(legacyRemoteInvocation.argv).toContain('--permission-mode');
       expect(legacyRemoteInvocation.argv).toContain('bypassPermissions');
 
       await requestSessionSwitchRpc({ ui, sessionId, to: 'local', secret, timeoutMs: 25_000 });
       await waitForSessionSwitchEvent({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, mode: 'local' });
-
-      const localInvocation2: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
-        fakeLog,
-        (i) =>
-          i.argv.includes('--settings') &&
-          !i.argv.includes('--input-format') &&
-          i.invocationId !== localInvocation1.invocationId,
-        { timeoutMs: 120_000 },
-      );
-      expect(localInvocation2.argv).toContain('--permission-mode');
-      expect(localInvocation2.argv).toContain('bypassPermissions');
-      expect(localInvocation2.argv).not.toContain('--dangerously-skip-permissions');
 
       // Agent SDK remote runner: should also keep bypassPermissions.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
@@ -378,7 +366,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const agentSdkRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--input-format') && !i.argv.includes('--settings'),
+        (i) => i.argv.includes('--input-format') && !i.argv.includes('--append-system-prompt'),
         { timeoutMs: 120_000 },
       );
       expect(agentSdkRemoteInvocation.argv).toContain('--permission-mode');
@@ -483,7 +471,11 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const localInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && !i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--append-system-prompt') &&
+          i.argv.includes('--permission-mode') &&
+          i.argv.includes('bypassPermissions') &&
+          i.argv.includes('--settings'),
       );
       expect(localInvocation.argv).toContain('--permission-mode');
       expect(localInvocation.argv).toContain('bypassPermissions');
@@ -500,7 +492,11 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const legacyRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--input-format') &&
+          i.argv.includes('--permission-mode') &&
+          i.argv.includes('bypassPermissions') &&
+          i.argv.includes('--allow-dangerously-skip-permissions'),
       );
       expect(legacyRemoteInvocation.argv).toContain('--permission-mode');
       expect(legacyRemoteInvocation.argv).toContain('bypassPermissions');

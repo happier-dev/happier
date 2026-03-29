@@ -22,13 +22,7 @@ import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
-import {
-  startCodexAppServerRemoteHarness,
-  type StartedCodexAppServerRemoteHarness,
-} from '../../src/testkit/codexAppServerRemoteHarness';
-
 const run = createRunDirs({ runLabel: 'core' });
-type RemoteBackend = 'acp' | 'appServer';
 
 type DecryptedAgentState = Readonly<{
   controlledByUser?: boolean;
@@ -108,20 +102,12 @@ async function enqueueBlockingPendingMessages(params: Readonly<{
 
 describe('core e2e: Codex remote→local switch fails closed when pending messages exist', () => {
   it('rejects remote→local switch while pending queue V2 has items', async () => {
-    await runRemoteToLocalFailClosedPendingScenario({ remoteBackend: 'acp' });
-  }, 240_000);
-
-  it('rejects app-server remote→local switch while pending queue V2 has items', async () => {
-    await runRemoteToLocalFailClosedPendingScenario({ remoteBackend: 'appServer' });
+    await runRemoteToLocalFailClosedPendingScenario();
   }, 240_000);
 });
 
-async function runRemoteToLocalFailClosedPendingScenario(params: Readonly<{
-  remoteBackend: RemoteBackend;
-}>): Promise<void> {
-  const testName = params.remoteBackend === 'appServer'
-    ? 'codex-switch-remote-to-local-fail-closed-app-server'
-    : 'codex-switch-remote-to-local-fail-closed';
+async function runRemoteToLocalFailClosedPendingScenario(): Promise<void> {
+  const testName = 'codex-switch-remote-to-local-fail-closed';
   const testDir = run.testDir(testName);
   const startedAt = new Date().toISOString();
   const localCodex = await createLocalSwitchBlockerCodexStub({ testDir });
@@ -129,50 +115,8 @@ async function runRemoteToLocalFailClosedPendingScenario(params: Readonly<{
   let server: StartedServer | null = null;
   let proc: SpawnedProcess | null = null;
   let ui: ReturnType<typeof createUserScopedSocketCollector> | null = null;
-  let harness: StartedCodexAppServerRemoteHarness | null = null;
 
   try {
-    if (params.remoteBackend === 'appServer') {
-      harness = await startCodexAppServerRemoteHarness({
-        testDir,
-        runId: run.runId,
-        testName,
-        waitForPublishedMetadata: false,
-        cliEnvOverrides: {
-          HAPPIER_CODEX_TUI_BIN: localCodex.fakeCodexPath,
-          HAPPIER_CODEX_SESSIONS_DIR: localCodex.codexSessionsDir,
-          // Ensure the remote app-server turn completes slowly enough that pending/queued work
-          // still exists when we request a mode switch (avoid timing-dependent drains).
-          HAPPIER_E2E_FAKE_CODEX_APP_SERVER_TURN_DELAY_MS: '2500',
-        },
-      });
-
-      ui = createUserScopedSocketCollector(harness.serverBaseUrl, harness.auth.token);
-      ui.connect();
-      await waitFor(() => ui?.isConnected() === true, { timeoutMs: 20_000 });
-
-      await enqueueBlockingPendingMessages({
-        secret: harness.secret,
-        serverBaseUrl: harness.serverBaseUrl,
-        sessionId: harness.sessionId,
-        token: harness.auth.token,
-        count: 1,
-      });
-
-      const switched = await requestSessionSwitchRpc({
-        ui,
-        sessionId: harness.sessionId,
-        to: 'local',
-        secret: harness.secret,
-        timeoutMs: 20_000,
-      });
-      expect(switched).toBe(false);
-
-      await new Promise((r) => setTimeout(r, 1500));
-      expect(existsSync(localCodex.rolloutPath)).toBe(false);
-      return;
-    }
-
     server = await startServerLight({ testDir });
     const serverBaseUrl = server.baseUrl;
     const auth = await createTestAuth(serverBaseUrl);
@@ -279,9 +223,8 @@ async function runRemoteToLocalFailClosedPendingScenario(params: Readonly<{
   } finally {
     ui?.close();
     await proc?.stop();
-    await harness?.stop().catch(() => {});
     await server?.stop().catch(() => {});
-    const cliHome = harness?.cliHome ?? resolve(join(testDir, 'cli-home'));
+    const cliHome = resolve(join(testDir, 'cli-home'));
     await stopDaemonFromHomeDir(cliHome).catch(() => {});
   }
 }

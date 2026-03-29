@@ -22,6 +22,7 @@ import { runLoggedCommand } from './spawnProcess';
 
 let _ensurePromise: Promise<string> | null = null;
 let _ensureSharedPromise: Promise<void> | null = null;
+const DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS = 600_000;
 
 type CliDistBuildLockOwner = {
   pid: number | null;
@@ -597,7 +598,7 @@ export async function ensureCliSharedDepsBuilt(
         env: { ...process.env, ...params.env, CI: '1' },
         stdoutPath: resolve(params.testDir, 'cli.buildShared.stdout.log'),
         stderrPath: resolve(params.testDir, 'cli.buildShared.stderr.log'),
-        timeoutMs: options.buildTimeoutMs ?? 240_000,
+        timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
       });
 
       if (hasCliSharedDepsOutputs(rootDir)) {
@@ -622,7 +623,7 @@ export async function withCliDistBuildLock<T>(fn: () => Promise<T>, options: Cli
   mkdirSync(dirname(lockPath), { recursive: true });
 
   const startedAt = Date.now();
-  const timeoutMs = options.timeoutMs ?? 240_000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? 250;
   const staleAfterMs = options.staleAfterMs ?? timeoutMs;
 
@@ -755,7 +756,7 @@ export async function ensureCliDistBuilt(
         env: { ...params.env, CI: '1' },
         stdoutPath: resolve(params.testDir, 'cli.build.stdout.log'),
         stderrPath: resolve(params.testDir, 'cli.build.stderr.log'),
-        timeoutMs: options.buildTimeoutMs ?? 240_000,
+        timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
       });
 
       if (!shouldRebuild()) {
