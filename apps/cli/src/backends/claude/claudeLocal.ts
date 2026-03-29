@@ -17,6 +17,7 @@ import { buildMissingJavaScriptRuntimeMessage } from "@/runtime/js/buildMissingJ
 import { isEmbeddedBunBundlePath } from "@/runtime/js/isEmbeddedBunBundlePath";
 import { resolveWindowsCommandInvocation, type CommandInvocation } from '@happier-dev/cli-common/process';
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from '@happier-dev/protocol';
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -225,7 +226,12 @@ export async function claudeLocal(opts: {
             // If hasResumeFlag && !startFrom: --resume is in claudeArgs, let Claude handle it
 
             const systemPromptText = typeof opts.systemPromptText === 'string' ? opts.systemPromptText.trim() : '';
-            args.push('--append-system-prompt', systemPromptText || getClaudeSystemPrompt());
+            const fallbackPrompt = (() => {
+                const providerBlocks = getClaudeSystemPrompt();
+                const base = HAPPIER_BASE_SYSTEM_PROMPT_V1;
+                return providerBlocks.trim().length > 0 ? `${base}\n\n${providerBlocks}` : base;
+            })();
+            args.push('--append-system-prompt', systemPromptText || fallbackPrompt);
 
             // Claude CLI treats the first non-flag token as the prompt. If a positional prompt
             // is provided before later flags, those flags can be mis-parsed as prompt text.
@@ -239,6 +245,7 @@ export async function claudeLocal(opts: {
 	                '--settings',
 	                '--mcp-config',
 	                '--max-turns',
+                '-p',
                 '--allowedTools',
                 '--disallowedTools',
                 '--output-format',
@@ -285,6 +292,18 @@ export async function claudeLocal(opts: {
                 args.push(...flagArgs);
             }
             if (positionalArgs.length > 0) {
+                // Claude Code treats some flags (notably `--mcp-config`) as variadic, so they will
+                // greedily consume subsequent non-flag tokens. Without a `--` delimiter, a user
+                // prompt can be mis-parsed as an additional MCP config path, causing the session
+                // to start without the initial prompt (or erroring if the prompt is not a file).
+                //
+                // Delimit positional args whenever a variadic flag is present in the final args.
+                const hasVariadicFlag =
+                    flagArgs.includes('--mcp-config') ||
+                    flagArgs.some((arg) => typeof arg === 'string' && arg.startsWith('--mcp-config='));
+                if (hasVariadicFlag) {
+                    args.push('--');
+                }
                 args.push(...positionalArgs);
             }
 

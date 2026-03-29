@@ -131,6 +131,34 @@ describe('claudeLocal --continue handling', () => {
         expect(onSessionFound).toHaveBeenCalledWith('123e4567-e89b-12d3-a456-426614174000');
     });
 
+    it('inserts a "--" delimiter before positional prompts when --mcp-config is present (variadic flag)', async () => {
+        const happierMcp = JSON.stringify({
+            mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs'] } },
+        });
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: ['Hello from QA'],
+            happierMcpConfigJson: happierMcp,
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+
+        const mcpIndex = spawnArgs.indexOf('--mcp-config');
+        expect(mcpIndex).toBeGreaterThan(-1);
+
+        const promptIndex = spawnArgs.indexOf('Hello from QA');
+        expect(promptIndex).toBeGreaterThan(-1);
+
+        // Claude Code treats --mcp-config as a variadic flag and will consume subsequent
+        // non-flag tokens as additional MCP configs unless we delimit positional args.
+        expect(spawnArgs[promptIndex - 1]).toBe('--');
+    });
+
     it('injects --mcp-config when happierMcpConfigJson is provided', async () => {
         const mcpJson = JSON.stringify({
             mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
@@ -207,6 +235,28 @@ describe('claudeLocal --continue handling', () => {
         expect(spawnArgs).toContain('E2E_APPEND_PROMPT');
     });
 
+    it('treats -p as a flag-with-value so the prompt is not misclassified as a positional arg', async () => {
+        const happierMcp = JSON.stringify({
+            mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
+        });
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: ['-p', 'HELLO_FROM_TEST'],
+            happierMcpConfigJson: happierMcp,
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const idx = spawnArgs.indexOf('-p');
+        expect(idx).toBeGreaterThan(-1);
+        expect(spawnArgs[idx + 1]).toBe('HELLO_FROM_TEST');
+        expect(spawnArgs).not.toContain('--');
+    });
+
     it('uses the centralized system prompt text when provided', async () => {
         await claudeLocal({
             abort: new AbortController().signal,
@@ -223,6 +273,26 @@ describe('claudeLocal --continue handling', () => {
         expect(appendIndex).toBeGreaterThan(-1);
         expect(spawnArgs[appendIndex + 1]).toBe('CENTRALIZED_EFFECTIVE_PROMPT');
         expect(spawnArgs).not.toContain('test-system-prompt');
+    });
+
+
+    it('falls back to the shared base prompt when a centralized prompt was not provided', async () => {
+        mockSpawn.mockClear();
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const appendIndex = spawnArgs.indexOf('--append-system-prompt');
+        expect(appendIndex).toBeGreaterThan(-1);
+        const appendText = String(spawnArgs[appendIndex + 1] ?? '');
+        expect(appendText).toContain('# Session title');
+        expect(appendText).toContain('test-system-prompt');
     });
 
     it('should spawn the Node launcher using process.execPath when running under Node', async () => {
