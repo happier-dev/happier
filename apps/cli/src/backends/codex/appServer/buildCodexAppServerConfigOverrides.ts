@@ -28,6 +28,16 @@ function assignInjectedServerKeys(serverNames: readonly string[]): Map<string, s
     const usedKeys = new Set<string>();
 
     for (const serverName of [...serverNames].sort((left, right) => left.localeCompare(right))) {
+        // Prefer stable, prompt-friendly keys for our own built-in Happier MCP servers.
+        // This keeps Codex tool names aligned with the canonical system-prompt guidance
+        // (e.g. `mcp__happier__change_title`) and avoids awkward double-prefix names like
+        // `happier__happier` for the internal Happier server.
+        if ((serverName === 'happier' || serverName === 'happy') && !usedKeys.has(serverName)) {
+            usedKeys.add(serverName);
+            assigned.set(serverName, serverName);
+            continue;
+        }
+
         const baseKey = `happier__${sanitizeServerKeyFragment(serverName)}`;
         let candidate = baseKey;
         let suffix = 2;

@@ -24,7 +24,7 @@ describe('readCodexSessionTitleFromRollout', () => {
     const filePath = join(sessionsDir, `rollout-2026-03-06T00-00-00-${sessionId}.jsonl`);
     const boilerplate = [
       '# Session title',
-      'At the start of the session (and again if the task changes significantly), call the change_title tool to set a short, descriptive session title.',
+      "At the start of the session (before you respond to the first user message), you MUST call the change_title tool once to set a short, descriptive session title based on the user's message.",
     ].join('\n');
     const meaningfulTask = 'Investigate direct transcript paging parity in the direct session browser';
 

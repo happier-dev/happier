@@ -25,9 +25,46 @@ function extractQuotedTitle(text: string): string | null {
     return null;
 }
 
+function parseJsonTitle(text: string): string | null {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(trimmed);
+    } catch {
+        return null;
+    }
+
+    const asRecord = (value: unknown): UnknownRecord | null => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        return value as UnknownRecord;
+    };
+
+    const readTitle = (value: unknown): string | null => {
+        const rec = asRecord(value);
+        if (rec && typeof rec.title === 'string' && rec.title.trim()) return rec.title.trim();
+        return null;
+    };
+
+    const rec = asRecord(parsed);
+    if (rec) {
+        return (
+            readTitle(rec) ??
+            readTitle(rec.output) ??
+            readTitle((asRecord(rec.data) ?? null)?.output) ??
+            readTitle((asRecord(rec.data) ?? null)?.result) ??
+            readTitle((asRecord(rec.result) ?? null)?.output)
+        );
+    }
+
+    return null;
+}
+
 export function normalizeChangeTitleResult(rawOutput: unknown): UnknownRecord {
     if (typeof rawOutput === 'string') {
-        const title = extractQuotedTitle(rawOutput);
+        const title = parseJsonTitle(rawOutput) ?? extractQuotedTitle(rawOutput);
         return title ? { title } : { message: rawOutput };
     }
 
@@ -46,7 +83,7 @@ export function normalizeChangeTitleResult(rawOutput: unknown): UnknownRecord {
                     ? (record as any).stdout
                     : null;
 
-    const title = message ? extractQuotedTitle(message) : null;
+    const title = message ? (parseJsonTitle(message) ?? extractQuotedTitle(message)) : null;
     if (title) return { ...record, title };
     if (message) return { ...record, message };
     return { ...record };

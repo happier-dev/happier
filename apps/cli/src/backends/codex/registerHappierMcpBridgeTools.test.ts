@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 
 const env = process.env;
 
@@ -13,7 +14,7 @@ describe('registerHappierMcpBridgeTools', () => {
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
       actions: {
-        'review.start': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
+        'review.start': { enabled: true, disabledSurfaces: ['session_agent'], disabledPlacements: [] },
       },
     });
 
@@ -34,23 +35,14 @@ describe('registerHappierMcpBridgeTools', () => {
     });
 
     const names = calls.map((c) => c.name);
+    expect(names).toEqual(listBuiltInHappierTools({ surface: 'session_agent' }).map((tool) => tool.name));
     expect(names).toContain('change_title');
-    expect(names).toContain('action_spec_search');
-    expect(names).toContain('action_spec_get');
-    expect(names).toContain('action_options_resolve');
-    expect(names).toContain('action_execute');
+    expect(names).not.toContain('happier__change_title');
+    expect(names).not.toContain('happy__change_title');
     expect(names).not.toContain('review_start');
-    expect(names).toContain('subagents_plan_start');
-    expect(names).toContain('subagents_delegate_start');
-    expect(names).toContain('voice_agent_start');
-    expect(names).toContain('execution_run_start');
-    expect(names).toContain('execution_run_list');
-    expect(names).toContain('execution_run_get');
-    expect(names).toContain('execution_run_send');
-    expect(names).toContain('execution_run_stop');
-    expect(names).toContain('execution_run_action');
 
     const start = calls.find((c) => c.name === 'execution_run_start');
+    expect(start).toBeTruthy();
     const res = await start.handler({
       intent: 'review',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },

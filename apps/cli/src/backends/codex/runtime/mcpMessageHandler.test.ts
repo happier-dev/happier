@@ -267,4 +267,59 @@ describe('createCodexMcpMessageHandler', () => {
       );
       expect(session.sendCodexMessage).not.toHaveBeenCalled();
   });
+
+  it('normalizes built-in Happier MCP tool names before emitting Codex tool-call events', () => {
+    let thinking = false;
+    let currentTaskId: string | null = null;
+    const session = {
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendCodexMessage: vi.fn(),
+      sendSessionEvent: vi.fn(),
+      keepAlive: vi.fn(),
+    };
+    const messageBuffer = { addMessage: vi.fn() };
+    const logger = { debug: vi.fn() };
+    const diffProcessor = { processDiff: vi.fn() };
+
+    const handler = createCodexMcpMessageHandler({
+      logger,
+      session,
+      messageBuffer,
+      sendReady: vi.fn(),
+      publishCodexThreadIdToMetadata: vi.fn(),
+      diffProcessor,
+      getCurrentTaskId: () => currentTaskId,
+      setCurrentTaskId: (next: string | null) => {
+        currentTaskId = next;
+      },
+      getThinking: () => thinking,
+      setThinking: (next: boolean) => {
+        thinking = next;
+      },
+    });
+
+    handler({
+      type: 'mcp_tool_call_begin',
+      call_id: 'call_1',
+      invocation: {
+        server: 'happier__happier',
+        tool: 'change_title',
+        arguments: {
+          title: 'Normalized title',
+        },
+      },
+    });
+
+    expect(session.sendCodexMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'tool-call',
+        name: 'mcp__happier__change_title',
+        callId: 'call_1',
+        input: {
+          title: 'Normalized title',
+        },
+      }),
+    );
+  });
 });

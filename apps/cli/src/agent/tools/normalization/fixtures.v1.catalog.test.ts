@@ -195,6 +195,37 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     });
     expect(asRecord(changeTitleResult)).toMatchObject({ title: 'Pi Tools Proof 2026-03-06' });
 
+    const toolsCallEnvelope = {
+      v: 1,
+      ok: true,
+      kind: 'tools_call',
+      data: {
+        source: 'happier',
+        tool: 'change_title',
+        isError: false,
+        output: { success: true, title: 'Pi Tools Proof 2026-03-06' },
+      },
+    };
+    const toolsCallText = JSON.stringify(toolsCallEnvelope);
+
+    const toolsCallJsonStdout = normalizeToolResultV2({
+      protocol: 'acp',
+      provider: 'pi',
+      rawToolName: 'execute',
+      canonicalToolName: 'change_title',
+      rawOutput: { stdout: toolsCallText, exit_code: 0 },
+    });
+    expect(asRecord(toolsCallJsonStdout)).toMatchObject({ title: 'Pi Tools Proof 2026-03-06' });
+
+    const toolsCallJsonContent = normalizeToolResultV2({
+      protocol: 'acp',
+      provider: 'pi',
+      rawToolName: 'execute',
+      canonicalToolName: 'change_title',
+      rawOutput: { content: [{ type: 'text', text: toolsCallText }], isError: false },
+    });
+    expect(asRecord(toolsCallJsonContent)).toMatchObject({ title: 'Pi Tools Proof 2026-03-06' });
+
     const bridgeCustomMcp = normalizeToolCallV2({
       protocol: 'acp',
       provider: 'auggie',

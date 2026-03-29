@@ -1557,6 +1557,17 @@ export class ApiSessionClient extends EventEmitter {
         this.logSendWhileDisconnected('User text message', { length: text.length });
         const payload = this.buildOutboundSessionMessagePayload(content);
         const localId = typeof opts?.localId === 'string' && opts.localId.length > 0 ? opts.localId : randomUUID();
+        const meta = opts?.meta ?? null;
+        const metaSource = typeof (meta as any)?.source === 'string' ? String((meta as any).source) : null;
+        const metaSentFrom = typeof (meta as any)?.sentFrom === 'string' ? String((meta as any).sentFrom) : null;
+        const shouldSuppressAgentQueueEcho =
+            metaSource === 'cli'
+            || metaSentFrom === 'cli';
+        if (shouldSuppressAgentQueueEcho) {
+            // Prevent our own CLI-originating outbound user messages from being treated as inbound prompts
+            // if/when the server echoes the transcript update back to this runner.
+            this.markAgentQueueEchoSuppressedLocalId(localId);
+        }
         this.commitSessionMessageBestEffort({
             message: payload,
             localId,
@@ -1572,6 +1583,8 @@ export class ApiSessionClient extends EventEmitter {
     ): Promise<void> {
         const content = this.buildUserTextMessageContent(text, opts.meta);
         const payload = this.buildOutboundSessionMessagePayload(content);
+        // Suppress agent-queue delivery for our own committed user messages; these are writes, not prompts.
+        this.markAgentQueueEchoSuppressedLocalId(opts.localId);
         await this.enqueueMessageCommit(() =>
             this.commitSessionMessage({
                 message: payload,
@@ -1592,10 +1605,31 @@ export class ApiSessionClient extends EventEmitter {
         if (text.length === 0) return;
         const localId = typeof params.localId === 'string' && params.localId.length > 0 ? params.localId : randomUUID();
 
-        this.sendUserTextMessage(text, {
+        const meta: Record<string, unknown> = params.meta && typeof params.meta === 'object' ? { ...params.meta } : {};
+        if (typeof meta.source !== 'string' || meta.source.trim().length === 0) {
+            meta.source = 'ui';
+        }
+        if (typeof meta.sentFrom !== 'string' || meta.sentFrom.trim().length === 0) {
+            meta.sentFrom = 'ui';
+        }
+
+        // Deliver immediately to the agent queue: this RPC is a prompt input, not a passive transcript write.
+        // Later transcript echo updates are suppressed by localId so we do not double-deliver.
+        const prompt = {
+            role: 'user',
+            content: { type: 'text', text },
             localId,
-            ...(params.meta && typeof params.meta === 'object' ? { meta: params.meta } : {}),
-        });
+            meta,
+            createdAt: Date.now(),
+        } satisfies UserMessage;
+        if (this.pendingMessageCallback) {
+            this.pendingMessageCallback(prompt);
+        } else {
+            this.pendingMessages.push(prompt);
+        }
+        this.markAgentQueueEchoSuppressedLocalId(localId);
+
+        this.sendUserTextMessage(text, { localId, meta });
     }
 
     async sendAgentMessageCommitted(

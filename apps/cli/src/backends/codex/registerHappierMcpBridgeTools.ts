@@ -23,15 +23,13 @@ export function registerHappierMcpBridgeTools(
     }
   };
 
-  for (const tool of listBuiltInHappierTools({ surface: 'mcp' })) {
-    server.registerTool(
-      tool.name,
-      {
-        description: tool.description,
-        title: tool.title,
-        inputSchema: tool.inputSchema,
-      },
-      forward(tool.name),
-    );
+  for (const tool of listBuiltInHappierTools({ surface: 'session_agent' })) {
+    const meta = {
+      description: tool.description,
+      title: tool.title,
+      inputSchema: tool.inputSchema,
+    };
+
+    server.registerTool(tool.name, meta, forward(tool.name));
   }
 }

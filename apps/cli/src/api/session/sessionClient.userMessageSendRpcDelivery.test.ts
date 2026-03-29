@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
-import { createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createApiSessionSocketStub, flushApiSessionClientMessageCommitQueue, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
@@ -45,7 +45,7 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
 import { ApiSessionClient } from './sessionClient';
 
 describe('ApiSessionClient session.userMessage.send delivery', () => {
-  it('delivers the prompt to the agent queue via the socket echo (not eagerly)', async () => {
+  it('delivers the prompt to the agent queue eagerly and suppresses later transcript echo updates', async () => {
     sessionSocketStub = createApiSessionSocketStub({
       connected: true,
       emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1' },
@@ -64,8 +64,10 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
       meta: { source: 'ui', sentFrom: 'ios' },
     });
 
-    // Should not be delivered to the agent queue until we observe the transcript echo.
-    expect(received).toHaveLength(0);
+    expect(received).toHaveLength(1);
+    expect(received[0]?.content?.type).toBe('text');
+    expect(received[0]?.content?.text).toBe('hello');
+    expect(received[0]?.localId).toBe('l1');
 
     sessionSocketStub.trigger('update', {
       id: 'u1',
@@ -93,8 +95,60 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
     });
 
     expect(received).toHaveLength(1);
-    expect(received[0]?.content?.type).toBe('text');
+  });
+
+  it('defaults session.userMessage.send meta source/sentFrom to ui when missing', async () => {
+    let lastMessagePayload: any = null;
+
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1' },
+      emitWithAck: async (event, payload) => {
+        if (event === 'message') {
+          lastMessagePayload = payload;
+        }
+        return { ok: true, id: 'm1', seq: 1, localId: 'l1' };
+      },
+    });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+
+    const received: any[] = [];
+    client.onUserMessage((msg) => received.push(msg));
+
+    (client as any).enqueueSessionUserMessage({
+      text: 'hello',
+      localId: 'l1',
+      meta: { permissionMode: 'yolo' },
+    });
+
+    await flushApiSessionClientMessageCommitQueue(client as any);
+
+    expect(lastMessagePayload?.sid).toBe('s1');
+    expect(lastMessagePayload?.localId).toBe('l1');
+    expect(lastMessagePayload?.message?.t).toBe('plain');
+    expect(lastMessagePayload?.message?.v?.meta?.source).toBe('ui');
+    expect(lastMessagePayload?.message?.v?.meta?.sentFrom).toBe('ui');
+
+    sessionSocketStub.trigger('update', {
+      id: 'u1',
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 's1',
+        message: {
+          id: 'm1',
+          seq: 1,
+          content: lastMessagePayload.message,
+          localId: 'l1',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      },
+    });
+
+    expect(received).toHaveLength(1);
     expect(received[0]?.content?.text).toBe('hello');
-    expect(received[0]?.localId).toBe('l1');
   });
 });

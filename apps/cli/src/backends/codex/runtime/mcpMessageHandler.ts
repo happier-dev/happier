@@ -8,6 +8,7 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { nextCodexLifecycleAcpMessages } from '../utils/codexAcpLifecycle';
 import { formatCodexEventForUi } from '../utils/formatCodexEventForUi';
 import { extractMcpToolCallResultOutput } from './sessionTurnLifecycle';
+import { canonicalizeCodexMcpToolName } from '../utils/canonicalizeCodexMcpToolName';
 
 type SessionSubset = Pick<
   ApiSessionClient,
@@ -239,7 +240,7 @@ export function createCodexMcpMessageHandler(opts: {
     if (message?.type === 'mcp_tool_call_begin') {
       void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
       const { call_id, invocation } = message;
-      const toolName = `mcp__${invocation.server}__${invocation.tool}`;
+      const toolName = canonicalizeCodexMcpToolName(`mcp__${invocation.server}__${invocation.tool}`);
       opts.session.sendCodexMessage({
         type: 'tool-call',
         name: toolName,

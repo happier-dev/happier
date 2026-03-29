@@ -253,6 +253,29 @@ describe('createCodexAppServerStreamEventBridge', () => {
         ]);
 
         expect(
+            bridge.onNotification({
+                method: 'item/started',
+                params: {
+                    item: {
+                        id: 'tool_title',
+                        type: 'mcpToolCall',
+                        server: 'happier__happier',
+                        tool: 'change_title',
+                        arguments: { title: 'Normalized title' },
+                    },
+                },
+            }),
+        ).toEqual([
+            {
+                type: 'tool-call',
+                toolKind: 'mcp',
+                callId: 'tool_title',
+                name: 'mcp__happier__change_title',
+                input: { title: 'Normalized title' },
+            },
+        ]);
+
+        expect(
             bridge.onServerRequest({
                 method: 'item/tool/requestUserInput',
                 params: {
@@ -287,6 +310,26 @@ describe('createCodexAppServerStreamEventBridge', () => {
                 toolKind: 'mcp',
                 callId: 'tool_1',
                 output: { status: 'ok' },
+            },
+        ]);
+
+        expect(
+            bridge.onNotification({
+                method: 'item/completed',
+                params: {
+                    item: {
+                        id: 'tool_title',
+                        type: 'mcpToolCall',
+                        result: { output: { title: 'Normalized title' } },
+                    },
+                },
+            }),
+        ).toEqual([
+            {
+                type: 'tool-result',
+                toolKind: 'mcp',
+                callId: 'tool_title',
+                output: { title: 'Normalized title' },
             },
         ]);
     });

@@ -28,6 +28,9 @@ export interface GenerateHookSettingsOptions {
 
 type ClaudeHookSettingsOverlay = Readonly<{
     hooks: Record<string, unknown>;
+    permissions?: Readonly<{
+        allow?: readonly string[];
+    }>;
 }>;
 
 /**
@@ -90,7 +93,15 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
         ];
     }
 
-    const settings: ClaudeHookSettingsOverlay = { hooks };
+    const settings: ClaudeHookSettingsOverlay = {
+        hooks,
+        permissions: {
+            allow: [
+                'mcp__happier__change_title',
+                'mcp__happier__session_title_set',
+            ],
+        },
+    };
 
     writeFileSync(filepath, JSON.stringify(settings, null, 2));
     logger.debug(`[generateHookSettings] Created hook settings file: ${filepath}`);

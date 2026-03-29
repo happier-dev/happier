@@ -775,9 +775,9 @@ describe('runCodex CodexACP resume behavior', () => {
     expect(createCodexAppServerRuntimeSpy).toHaveBeenCalledTimes(1);
     expect(createCodexAppServerRuntimeSpy).toHaveBeenCalledWith(expect.objectContaining({
       configOverrides: [
-        'mcp_servers.happier__happier.command="/tmp/happier-mcp-bridge"',
-        'mcp_servers.happier__happier.args=["--url","http://127.0.0.1:0"]',
-        'mcp_servers.happier__happier.enabled=true',
+        'mcp_servers.happier.command="/tmp/happier-mcp-bridge"',
+        'mcp_servers.happier.args=["--url","http://127.0.0.1:0"]',
+        'mcp_servers.happier.enabled=true',
       ],
     }));
     const runtimeArgs = createCodexAppServerRuntimeSpy.mock.calls[0]?.[0] as {
@@ -786,9 +786,9 @@ describe('runCodex CodexACP resume behavior', () => {
     } | undefined;
     expect(runtimeArgs?.processEnv).toBe(process.env);
     expect(runtimeArgs?.configOverrides).toEqual([
-      'mcp_servers.happier__happier.command="/tmp/happier-mcp-bridge"',
-      'mcp_servers.happier__happier.args=["--url","http://127.0.0.1:0"]',
-      'mcp_servers.happier__happier.enabled=true',
+      'mcp_servers.happier.command="/tmp/happier-mcp-bridge"',
+      'mcp_servers.happier.args=["--url","http://127.0.0.1:0"]',
+      'mcp_servers.happier.enabled=true',
     ]);
     const createdRuntime = createCodexAppServerRuntimeSpy.mock.results[0]?.value as any;
     const startOrLoad = createdRuntime?.startOrLoad as ReturnType<typeof vi.fn> | undefined;

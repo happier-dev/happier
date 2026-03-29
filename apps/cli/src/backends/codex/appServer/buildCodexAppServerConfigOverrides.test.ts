@@ -15,10 +15,10 @@ describe('buildCodexAppServerConfigOverrides', () => {
         });
 
         expect(overrides).toEqual([
-            'mcp_servers.happier__happier.command="/tmp/happier-mcp-bridge"',
-            'mcp_servers.happier__happier.args=["--url","http://127.0.0.1:0"]',
-            'mcp_servers.happier__happier.env={HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE="/tmp/bridge-config.json"}',
-            'mcp_servers.happier__happier.enabled=true',
+            'mcp_servers.happier.command="/tmp/happier-mcp-bridge"',
+            'mcp_servers.happier.args=["--url","http://127.0.0.1:0"]',
+            'mcp_servers.happier.env={HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE="/tmp/bridge-config.json"}',
+            'mcp_servers.happier.enabled=true',
         ]);
     });
 

@@ -42,6 +42,7 @@ describe('OpenCode ACP backend permissions', () => {
       expect(parsed.change_title).toBe('allow');
       expect(parsed.session_title_set).toBe('allow');
       expect(parsed.happier_session_title_set).toBe('allow');
+      expect(parsed.happier_action_execute).toBe('allow');
       expect(parsed.save_memory).toBe('allow');
       expect(parsed.think).toBe('allow');
     },

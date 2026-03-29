@@ -36,6 +36,10 @@ describe('generateHookSettingsFile', () => {
     // Prefer execPath over `node` so hooks still work when PATH is minimal (common on Windows/GUI contexts).
     expect(command).toContain(process.execPath);
     expect(parsed.hooks?.PermissionRequest).toBeUndefined();
+    expect(parsed.permissions?.allow).toEqual(expect.arrayContaining([
+      'mcp__happier__change_title',
+      'mcp__happier__session_title_set',
+    ]));
   });
 
   it('adds PermissionRequest hook when local permission bridge is enabled', () => {

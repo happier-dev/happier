@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { appendFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,7 +19,7 @@ type JsonRpcMessage = Readonly<{
     error?: Readonly<{ code?: number; message?: string }>;
 }>;
 
-type JsonRpcRequestHandler = (params: unknown) => Promise<unknown> | unknown;
+type JsonRpcRequestHandler = (params: unknown, message: JsonRpcMessage) => Promise<unknown> | unknown;
 type JsonRpcNotificationHandler = (params: unknown) => Promise<void> | void;
 
 export type CodexAppServerClient = Readonly<{
@@ -42,6 +43,41 @@ type PendingRequest = Readonly<{
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
 }>;
+
+type RpcLogEntry = Readonly<{
+    direction: 'incoming' | 'outgoing';
+    id?: number | string | null;
+    method?: string;
+    params?: unknown;
+    result?: unknown;
+    error?: Readonly<{ code?: number; message?: string }> | null;
+}>;
+
+function resolveRpcLogPath(env: NodeJS.ProcessEnv): string | null {
+    const raw = typeof env.HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH === 'string'
+        ? env.HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH.trim()
+        : '';
+    return raw ? raw : null;
+}
+
+function createRpcLogger(env: NodeJS.ProcessEnv): {
+    append: (entry: RpcLogEntry) => void;
+} {
+    const path = resolveRpcLogPath(env);
+    if (!path) {
+        return { append: () => undefined };
+    }
+
+    let chain = Promise.resolve();
+    const append = (entry: RpcLogEntry): void => {
+        const payload = `${safeJsonStringify(entry)}\n`;
+        chain = chain
+            .then(() => appendFile(path, payload, { encoding: 'utf8' }))
+            .catch(() => undefined);
+    };
+
+    return { append };
+}
 
 function failWaiters(state: MessageQueueState, error: Error): void {
     if (state.fatalError === null) {
@@ -120,6 +156,7 @@ export async function createCodexAppServerClient(params: Readonly<{
     disableUserMcpServers?: boolean;
 }>): Promise<DisposableCodexAppServerClient> {
     const processEnv = sanitizeCodexAppServerEnv(params.processEnv ?? process.env);
+    const rpcLogger = createRpcLogger(processEnv);
     const baseInvocation = await resolveCodexCliInvocation({
         args: ['app-server', '--listen', 'stdio://'],
         cwd: params.cwd,
@@ -179,6 +216,14 @@ export async function createCodexAppServerClient(params: Readonly<{
         if (state.fatalError) {
             throw state.fatalError;
         }
+        rpcLogger.append({
+            direction: 'outgoing',
+            id: (message as JsonRpcMessage).id ?? null,
+            method: (message as JsonRpcMessage).method,
+            params: (message as JsonRpcMessage).params ?? null,
+            result: (message as JsonRpcMessage).result ?? null,
+            error: ((message as JsonRpcMessage).error as RpcLogEntry['error']) ?? null,
+        });
         let payload: string;
         try {
             payload = `${safeJsonStringify(message)}\n`;
@@ -223,7 +268,7 @@ export async function createCodexAppServerClient(params: Readonly<{
             return;
         }
         try {
-            const result = await handler(message.params);
+            const result = await handler(message.params, message);
             await sendMessage({ id: message.id, result: result ?? null });
         } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
@@ -241,6 +286,14 @@ export async function createCodexAppServerClient(params: Readonly<{
     };
 
     const handleIncomingMessage = (message: JsonRpcMessage): void => {
+        rpcLogger.append({
+            direction: 'incoming',
+            id: message.id ?? null,
+            method: message.method,
+            params: message.params ?? null,
+            result: message.result ?? null,
+            error: message.error ?? null,
+        });
         const requestKey = toMessageKey(message.id);
         if (typeof message.method === 'string') {
             if (requestKey) {

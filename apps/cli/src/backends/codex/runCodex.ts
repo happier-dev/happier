@@ -112,8 +112,9 @@ import {
     SESSION_MODES_STATE_KEY,
     type CodexBackendMode,
 } from '@happier-dev/agents';
-import type { CodexMcpClient } from './codexMcpClient';
-import { resolveCodexBackendModeForRun } from './utils/resolveCodexBackendModeForRun';
+	import type { CodexMcpClient } from './codexMcpClient';
+	import { resolveCodexBackendModeForRun } from './utils/resolveCodexBackendModeForRun';
+	import { resolveCodexRequestedDirectory } from './utils/resolveCodexRequestedDirectory';
 
 /**
  * Main entry point for the codex command with ink UI
@@ -136,12 +137,9 @@ export async function runCodex(opts: {
     codexBackendMode?: CodexBackendMode;
     accountSettingsContext?: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext | null;
 }): Promise<void> {
-    // Use shared PermissionMode type for cross-agent compatibility
-    type PermissionMode = import('@/api/types').PermissionMode;
-    const requestedDirectory =
-        typeof opts.directory === 'string' && opts.directory.trim().length > 0
-            ? opts.directory.trim()
-            : process.cwd();
+	    // Use shared PermissionMode type for cross-agent compatibility
+	    type PermissionMode = import('@/api/types').PermissionMode;
+	    const requestedDirectory = resolveCodexRequestedDirectory({ directory: opts.directory ?? null });
     interface EnhancedMode {
         permissionMode: PermissionMode;
         permissionModeUpdatedAt?: number;

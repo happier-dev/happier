@@ -1,5 +1,6 @@
 import { extractMcpToolCallResultOutput } from '../runtime/sessionTurnLifecycle';
 import { readCodexMessageContentText } from '../utils/readCodexMessageContentText';
+import { canonicalizeCodexMcpToolName } from '../utils/canonicalizeCodexMcpToolName';
 
 type RecordLike = Record<string, unknown>;
 
@@ -120,7 +121,7 @@ function readToolContextFromItem(item: RecordLike): ToolContext | null {
 
     const server = readString(item.server);
     const tool = readString(item.tool) ?? readString(item.name);
-    const name = server && tool ? `mcp__${server}__${tool}` : tool;
+    const name = server && tool ? canonicalizeCodexMcpToolName(`mcp__${server}__${tool}`) : tool;
     if (!name) return null;
 
     return {

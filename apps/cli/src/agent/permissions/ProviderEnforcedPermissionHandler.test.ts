@@ -48,6 +48,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     await expect(handler.handleToolCall('safe-2', 'mcp__happier__change_title', {})).resolves.toEqual({ decision: 'approved' });
     await expect(handler.handleToolCall('safe-3', 'happier_change_title', {})).resolves.toEqual({ decision: 'approved' });
     await expect(handler.handleToolCall('safe-4', 'mcp__happier__session_title_set', {})).resolves.toEqual({ decision: 'approved' });
+    await expect(handler.handleToolCall('safe-5', 'happier_action_execute', { actionId: 'session.title.set' })).resolves.toEqual({ decision: 'approved' });
     await expect(handler.handleToolCall('mcp__happier__change_title-1', 'other', {})).resolves.toEqual({ decision: 'approved' });
 
     const pending = handler.handleToolCall('pending-1', 'think_malware', {});
@@ -75,6 +76,9 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
 
     expect(handler.getImmediateDecision('fs-read-1', 'readTextFile', {})).toEqual({ decision: 'approved' });
     expect(handler.getImmediateDecision('fs-write-1', 'writeTextFile', {})).toEqual({ decision: 'approved' });
+    expect(handler.getImmediateDecision('spec-search-1', 'action_spec_search', {})).toEqual({ decision: 'approved' });
+    expect(handler.getImmediateDecision('spec-search-2', 'mcp__happier__action_spec_search', {})).toEqual({ decision: 'approved' });
+    expect(handler.getImmediateDecision('spec-search-3', 'happier_action_spec_search', {})).toEqual({ decision: 'approved' });
     expect(handler.getImmediateDecision('perm-1', 'bash', { command: 'pwd' })).toBeNull();
   });
 

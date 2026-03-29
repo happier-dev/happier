@@ -116,6 +116,33 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            }, 20);',
         '            continue;',
         '        }',
+        '        if (text === "bridge-mcp-elicitation") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ id: "mcp-elicitation-request", method: "mcpServer/elicitation/request", params: { toolUseId: "mcp_tool_1", invocation: { server: "happier", tool: "change_title", arguments: { title: "New Title" } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-mcp-elicitation-callid") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ id: "mcp-elicitation-request-callid", method: "mcpServer/elicitation/request", params: { callId: "call_test_1", invocation: { tool: "mcp__happier__change_title", arguments: { title: "New Title" } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-mcp-elicitation-meta") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ id: 0, method: "mcpServer/elicitation/request", params: { threadId: msg.params?.threadId ?? null, turnId: turnId, serverName: "happier", mode: "form", _meta: { tool_params: { title: "New Title" } }, message: "Allow the happier MCP server to run tool \\"change_title\\"?", requestedSchema: { type: "object", properties: {} } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
         '        if (text === "bridge-streams-divergent-final") {',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { itemId: "msg_diverge", delta: "READY " } }) + "\\n");',
@@ -429,7 +456,13 @@ describe('createCodexAppServerRuntime', () => {
                     method: 'thread/start',
                     params: expect.objectContaining({
                         cwd: root,
-                        approvalPolicy: 'on-request',
+                        approvalPolicy: expect.objectContaining({
+                            granular: expect.objectContaining({
+                                mcp_elicitations: true,
+                                rules: true,
+                                sandbox_approval: true,
+                            }),
+                        }),
                         sandbox: 'workspace-write',
                         experimentalRawEvents: true,
                         persistExtendedHistory: true,
@@ -1075,6 +1108,126 @@ describe('createCodexAppServerRuntime', () => {
                     error: null,
                 }),
             ]),
+        );
+    });
+
+    it('bridges MCP elicitation server requests through the permission handler', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-bridge-mcp-elicitation-');
+
+        const permissionHandler = {
+            handleToolCall: vi.fn().mockResolvedValueOnce({ decision: 'approved' }),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+            } as any,
+            permissionHandler: permissionHandler as any,
+        } as any);
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-mcp-elicitation');
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'mcp-elicitation-request',
+                    params: null,
+                    result: { action: 'accept', decision: 'approved', content: {} },
+                    error: null,
+                }),
+            ]),
+        );
+
+        expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
+            'mcp_tool_1',
+            'mcp__happier__change_title',
+            { title: 'New Title' },
+        );
+    });
+
+    it('bridges MCP elicitation requests that use callId fields through the permission handler', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-bridge-mcp-elicitation-callid-');
+
+        const permissionHandler = {
+            handleToolCall: vi.fn().mockResolvedValueOnce({ decision: 'approved' }),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+            } as any,
+            permissionHandler: permissionHandler as any,
+        } as any);
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-mcp-elicitation-callid');
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'mcp-elicitation-request-callid',
+                    params: null,
+                    result: { action: 'accept', decision: 'approved', content: {} },
+                    error: null,
+                }),
+            ]),
+        );
+
+        expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
+            'call_test_1',
+            'mcp__happier__change_title',
+            { title: 'New Title' },
+        );
+    });
+
+    it('bridges Codex mcpServer/elicitation requests that only include serverName + message + _meta.tool_params', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-bridge-mcp-elicitation-meta-');
+
+        const permissionHandler = {
+            handleToolCall: vi.fn().mockResolvedValueOnce({ decision: 'approved' }),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+            } as any,
+            permissionHandler: permissionHandler as any,
+        } as any);
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-mcp-elicitation-meta');
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: 0,
+                    params: null,
+                    result: { action: 'accept', decision: 'approved', content: {} },
+                    error: null,
+                }),
+            ]),
+        );
+
+        expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
+            '0',
+            'mcp__happier__change_title',
+            { title: 'New Title' },
         );
     });
 

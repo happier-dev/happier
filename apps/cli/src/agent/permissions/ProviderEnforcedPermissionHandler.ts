@@ -36,6 +36,12 @@ type HandlerOpts = Readonly<{
 const DEFAULT_ALWAYS_AUTO_APPROVE_TOOL_NAME_INCLUDES = [
   'change_title',
   'session_title_set',
+  'action_execute',
+  // Action-spec discovery tools are read-only and used by several providers before invoking actions/tools.
+  // Auto-approve to avoid blocking harmless capability discovery behind provider-native permission prompts.
+  'action_spec_search',
+  'action_spec_get',
+  'action_options_resolve',
   'save_memory',
   'think',
   // ACP fs bridge operations are host-side capability calls; provider policy decides when these occur.
@@ -49,6 +55,7 @@ const DEFAULT_ALWAYS_AUTO_APPROVE_TOOL_NAME_INCLUDES = [
 const DEFAULT_ALWAYS_AUTO_APPROVE_TOOL_CALL_ID_INCLUDES = [
   'change_title',
   'session_title_set',
+  'action_execute',
   'save_memory',
 ] as const;
 

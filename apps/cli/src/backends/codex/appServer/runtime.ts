@@ -21,6 +21,7 @@ import {
     looksLikeCodexApprovalRequestUserInput,
     normalizeCodexRequestUserInputQuestionsToAskUserQuestionInput,
 } from '../runtime/codexRequestUserInputQuestions';
+import { canonicalizeCodexMcpToolName } from '../utils/canonicalizeCodexMcpToolName';
 import { resolveCodexAppServerPolicyForPermissionMode } from '../utils/permissionModePolicy';
 import { readCodexEnvironmentAuthState } from '../cli/auth/readCodexEnvironmentAuthState';
 
@@ -643,6 +644,117 @@ export function createCodexAppServerRuntime(params: Readonly<{
         return { answers };
     };
 
+    const readMcpElicitationInvocation = (
+        params: unknown,
+        message?: Readonly<{ id?: unknown }> | null,
+    ): Readonly<{
+        toolCallId: string;
+        toolName: string;
+        input: unknown;
+    }> | null => {
+        const record = readRecord(params);
+        if (!record) return null;
+
+        const invocation = readRecord(record.invocation) ?? record;
+        const server =
+            trimStringValue(invocation.server) ??
+            trimStringValue(invocation.mcpServer) ??
+            trimStringValue(invocation.mcp_server) ??
+            trimStringValue(invocation.serverName) ??
+            trimStringValue(invocation.server_name);
+
+        const toolFromMessage = (() => {
+            const messageText = trimStringValue(record.message);
+            if (!messageText) return null;
+            const match = messageText.match(/tool\s+\"([^\"]+)\"/i);
+            return match && match[1] ? match[1].trim() : null;
+        })();
+
+        const tool =
+            trimStringValue(invocation.tool) ??
+            trimStringValue(invocation.name) ??
+            trimStringValue(invocation.toolName) ??
+            trimStringValue(invocation.tool_name) ??
+            toolFromMessage;
+
+        const meta = readRecord(record._meta) ?? readRecord(record.meta) ?? null;
+        const metaToolParams = meta ? (meta.tool_params ?? meta.toolParams ?? null) : null;
+        const input = invocation.arguments ?? invocation.input ?? invocation.args ?? metaToolParams ?? {};
+
+        const toolCallId =
+            trimStringValue(record.callId) ??
+            trimStringValue(record.call_id) ??
+            trimStringValue(record.toolUseId) ??
+            trimStringValue(record.tool_use_id) ??
+            trimStringValue(record.toolCallId) ??
+            trimStringValue(record.tool_call_id) ??
+            trimStringValue(record.codexCallId) ??
+            trimStringValue(record.codex_call_id) ??
+            trimStringValue(record.codex_tool_call_id) ??
+            trimStringValue(record.codex_mcp_tool_call_id) ??
+            trimStringValue(record.itemId) ??
+            trimStringValue(record.item_id) ??
+            trimStringValue(record.id) ??
+            (typeof message?.id === 'string' || typeof message?.id === 'number' ? String(message.id) : null);
+
+        if (!toolCallId) return null;
+
+        const toolName = server && tool ? canonicalizeCodexMcpToolName(`mcp__${server}__${tool}`) : tool;
+        if (!toolName) return null;
+
+        return { toolCallId, toolName, input };
+    };
+
+    type CodexElicitationAction = 'accept' | 'decline' | 'cancel';
+    type CodexElicitationDecision = 'approved' | 'approved_for_session' | 'denied' | 'abort';
+
+    const mapMcpElicitationDecision = (result: PermissionResult): Readonly<Record<string, unknown>> => {
+        const decision: CodexElicitationDecision = (() => {
+            switch (result.decision) {
+                case 'approved_for_session':
+                    return 'approved_for_session';
+                case 'approved_execpolicy_amendment':
+                case 'approved':
+                    return 'approved';
+                case 'abort':
+                    return 'abort';
+                case 'denied':
+                default:
+                    return 'denied';
+            }
+        })();
+
+        const action: CodexElicitationAction = (() => {
+            if (decision === 'approved' || decision === 'approved_for_session') {
+                return 'accept';
+            }
+            if (decision === 'abort') {
+                return 'cancel';
+            }
+            return 'decline';
+        })();
+
+        // Codex app-server MCP elicitations follow the same `action`/`decision` response shape as MCP `elicitation/create`.
+        // Include an empty `content` object for compatibility with newer Codex builds that expect both.
+        return { action, decision, content: {} };
+    };
+
+    const handleMcpElicitationRequest = async (
+        requestParams: unknown,
+        message?: Readonly<{ id?: unknown }> | null,
+    ): Promise<unknown> => {
+        const invocation = readMcpElicitationInvocation(requestParams, message);
+        if (!invocation) {
+            return { decision: 'decline' };
+        }
+
+        const result = params.permissionHandler
+            ? await params.permissionHandler.handleToolCall(invocation.toolCallId, invocation.toolName, invocation.input)
+            : { decision: 'denied' as const };
+
+        return mapMcpElicitationDecision(result);
+    };
+
     const handleServerRequest = async (method: string, requestParams: unknown): Promise<unknown> => {
         const updates = streamEventBridge.onServerRequest({ method, params: requestParams });
         for (const update of updates) {
@@ -914,6 +1026,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     });
                     client.registerRequestHandler('item/tool/requestUserInput', (requestParams) => {
                         return runBridgeWork(() => handleServerRequest('item/tool/requestUserInput', requestParams));
+                    });
+                    client.registerRequestHandler('mcpServer/elicitation/request', (requestParams, message) => {
+                        return runBridgeWork(() => handleMcpElicitationRequest(requestParams, message));
                     });
                     const registerTerminalHandler = (method: string): void => {
                         client.registerNotificationHandler(method, async (notificationParams) => {

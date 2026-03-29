@@ -30,12 +30,22 @@ export function createChangeTitleToolHandler(params: Readonly<{
       { surface: params.surface, defaultSessionId: normalizedSessionId },
     );
 
-    if (res.ok && res.result && typeof res.result === 'object' && (res.result as any).kind === 'approval_request_created') {
-      return res.result;
-    }
-
     if (!res.ok) {
       return { success: false, error: res.error };
+    }
+
+    if (res.result && typeof res.result === 'object') {
+      if ((res.result as any).kind === 'approval_request_created') {
+        return res.result;
+      }
+      if ((res.result as any).ok === false) {
+        const error = typeof (res.result as any).error === 'string' && (res.result as any).error.trim().length > 0
+          ? (res.result as any).error
+          : typeof (res.result as any).errorCode === 'string' && (res.result as any).errorCode.trim().length > 0
+            ? (res.result as any).errorCode
+            : 'action_failed';
+        return { success: false, error };
+      }
     }
 
     try {

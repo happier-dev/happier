@@ -8,6 +8,10 @@ export function resolveOpenCodeChangeTitleToolNameForMcpClient(mcpClientName: st
   return `${sanitizeOpenCodeMcpClientName(mcpClientName)}_change_title`;
 }
 
+export function resolveOpenCodeSessionTitleSetToolNameForMcpClient(mcpClientName: string): string {
+  return `${sanitizeOpenCodeMcpClientName(mcpClientName)}_session_title_set`;
+}
+
 export function canonicalizeOpenCodeConfiguredMcpToolName(
   rawToolName: string,
   mcpServers: Readonly<Record<string, McpServerConfig>>,
@@ -26,4 +30,3 @@ export function canonicalizeOpenCodeConfiguredMcpToolName(
 
   return `mcp__${matchingAlias}__${toolSuffix}`;
 }
-

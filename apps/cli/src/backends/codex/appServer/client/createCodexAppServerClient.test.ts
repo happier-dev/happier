@@ -464,8 +464,8 @@ describe('createCodexAppServerClient', () => {
             const client = await createCodexAppServerClient({
                 processEnv: createCodexAppServerProcessEnv(fakeAppServer),
                 configOverrides: [
-                    'mcp_servers.happier__happier.command="echo"',
-                    'mcp_servers.happier__happier.enabled=true',
+                    'mcp_servers.happier.command="echo"',
+                    'mcp_servers.happier.enabled=true',
                 ],
             });
 
@@ -476,9 +476,9 @@ describe('createCodexAppServerClient', () => {
                         '--listen',
                         'stdio://',
                         '-c',
-                        'mcp_servers.happier__happier.command="echo"',
+                        'mcp_servers.happier.command="echo"',
                         '-c',
-                        'mcp_servers.happier__happier.enabled=true',
+                        'mcp_servers.happier.enabled=true',
                     ],
                 });
             } finally {
@@ -554,6 +554,58 @@ describe('createCodexAppServerClient', () => {
             } finally {
                 await client.dispose();
             }
+        });
+    });
+
+    it('logs JSON-RPC traffic when HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH is set', async () => {
+        await withTempDir('happier-codex-app-server-client-rpc-log-', async (root) => {
+            const requestLogPath = join(root, 'rpc.jsonl');
+            const fakeAppServer = await writeFakeCodexAppServerScript({
+                dir: root,
+                bodyLines: [
+                    'for await (const line of rl) {',
+                    '  if (!line.trim()) continue;',
+                    '  const msg = JSON.parse(line);',
+                    '  if (msg.method === "initialize") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  if (msg.method === "initialized") continue;',
+                    '  if (msg.method === "state/read") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { ok: true } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
+                    '}',
+                ],
+            });
+
+            const client = await createCodexAppServerClient({
+                processEnv: createCodexAppServerProcessEnv(fakeAppServer, {
+                    HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH: requestLogPath,
+                }),
+            });
+
+            try {
+                await expect(client.request('state/read')).resolves.toEqual({ ok: true });
+            } finally {
+                await client.dispose();
+            }
+
+            const lines = (await readFile(requestLogPath, 'utf8'))
+                .trim()
+                .split('\n')
+                .map((line) => JSON.parse(line) as { direction: string; method?: string; result?: unknown });
+
+            const directions = new Set(lines.map((entry) => entry.direction));
+            expect(directions).toEqual(new Set(['outgoing', 'incoming']));
+            expect(lines).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ direction: 'outgoing', method: 'initialize' }),
+                    expect.objectContaining({ direction: 'outgoing', method: 'initialized' }),
+                    expect.objectContaining({ direction: 'outgoing', method: 'state/read' }),
+                ]),
+            );
         });
     });
 });

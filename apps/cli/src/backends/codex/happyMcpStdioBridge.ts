@@ -75,7 +75,7 @@ async function main() {
     },
   });
   registerHappierMcpResources(server as any, {
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'mcp' }),
+    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'session_agent' }),
   });
 
   // Start STDIO transport

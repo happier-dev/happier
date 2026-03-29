@@ -6,7 +6,30 @@ export type OpenCodePermissionValue = 'allow' | 'deny' | 'ask';
 
 const OPENCODE_READ_PERMISSIONS = ['read', 'glob', 'grep', 'list', 'ls'] as const;
 const OPENCODE_EDIT_PERMISSIONS = ['edit', 'write'] as const;
-const OPENCODE_ALWAYS_ALLOW_PERMISSIONS = [...CHANGE_TITLE_TOOL_NAME_ALIASES, 'save_memory', 'think'] as const;
+const OPENCODE_HAPPIER_ACTION_TOOL_NAME_ALIASES = [
+  'action_execute',
+  'happier_action_execute',
+  'happier__action_execute',
+  'mcp__happier__action_execute',
+  'action_spec_search',
+  'happier_action_spec_search',
+  'happier__action_spec_search',
+  'mcp__happier__action_spec_search',
+  'action_spec_get',
+  'happier_action_spec_get',
+  'happier__action_spec_get',
+  'mcp__happier__action_spec_get',
+  'action_options_resolve',
+  'happier_action_options_resolve',
+  'happier__action_options_resolve',
+  'mcp__happier__action_options_resolve',
+] as const;
+const OPENCODE_ALWAYS_ALLOW_PERMISSIONS = [
+  ...CHANGE_TITLE_TOOL_NAME_ALIASES,
+  ...OPENCODE_HAPPIER_ACTION_TOOL_NAME_ALIASES,
+  'save_memory',
+  'think',
+] as const;
 const OPENCODE_GUARD_PERMISSIONS = ['external_directory', 'doom_loop'] as const;
 const OPENCODE_OTHER_COMMON_PERMISSIONS = ['bash', 'task'] as const;
 
