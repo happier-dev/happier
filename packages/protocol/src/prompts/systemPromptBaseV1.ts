@@ -3,9 +3,13 @@ import { trimIdent } from '../strings/trimIdent.js';
 export const HAPPIER_BASE_SYSTEM_PROMPT_V1 = trimIdent(`
   # Session title
 
-  At the start of the session (and again if the task changes significantly), call the change_title tool to set a short, descriptive session title.
+  At the start of the session (before you respond to the first user message), you MUST call the change_title tool once to set a short, descriptive session title based on the user's message.
 
-  The tool may be exposed under different names depending on the provider (for example: mcp__happier__change_title).
+  This title-change tool call is always allowed and does not require asking the user for permission.
+
+  The tool may be exposed under different names depending on the provider. Prefer "mcp__happier__change_title" when available; otherwise use an equivalent alias (for example: change_title).
+
+  Call the title tool again if the task changes significantly.
 
   # Options
 

@@ -10,6 +10,9 @@ describe('HAPPIER_BASE_SYSTEM_PROMPT_V1', () => {
 
   it('mentions change_title for session titles', () => {
     expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('change_title');
+    expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('first user message');
+    expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('MUST');
+    expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('Prefer "mcp__happier__change_title"');
   });
 
   it('documents attachment blocks so referenced files are read before answering', () => {

@@ -20,5 +20,12 @@ describe('changeTitleInstructionV1', () => {
       const text = buildChangeTitleInstructionV1({ preferredToolName: 'mcp__happier__change_title' });
       expect(text).toContain('mcp__happier__change_title');
     });
+
+    it('instructs the agent to set a title before answering when tools are allowed', () => {
+      const text = buildChangeTitleInstructionV1({ preferredToolName: 'mcp__happier__change_title' });
+      expect(text.toLowerCase()).toContain('before you respond');
+      expect(text.toLowerCase()).toContain('call');
+      expect(text.toLowerCase()).toContain('change-title');
+    });
   });
 });

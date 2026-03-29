@@ -33,7 +33,7 @@ export function buildChangeTitleInstructionV1(opts: ChangeTitleInstructionV1Opti
   const fallbackPreview = fallbacks.slice(0, 3).join(', ');
 
   return trimIdent(
-    `Based on the user's message, call the change-title tool to set (or update) a short, descriptive session title.
+    `Before you respond, call the change-title tool once to set (or update) a short, descriptive session title based on the user's message.
 
 The tool may be exposed under different names depending on the provider. Prefer "${preferred}" when available; otherwise use an equivalent alias (for example: ${fallbackPreview}).
 
