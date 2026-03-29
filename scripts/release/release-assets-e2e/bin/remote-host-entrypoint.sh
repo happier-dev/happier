@@ -63,9 +63,11 @@ with_cli="${HAPPIER_WITH_CLI:-1}"
 
 rm -rf "$prefix/lib/node_modules/@happier-dev/cli"
 rm -rf "$prefix/lib/node_modules/@happier-dev/stack"
+rm -f "$prefix/bin/happier" "$prefix/bin/happier-dev" "$prefix/bin/happier-mcp" \
+  "$prefix/bin/happier-mcp-remote-bridge" "$prefix/bin/happier-mcp-stdio-launcher" "$prefix/bin/hstack"
 
 if [[ "$with_cli" == "1" ]]; then
-  npm install -g /packs/cli.tgz --no-audit --no-fund >/dev/null
+  npm install -g --force /packs/cli.tgz --no-audit --no-fund >/dev/null
 fi
 
 if [[ "$with_cli" == "1" && ! -x "$prefix/bin/happier" ]]; then

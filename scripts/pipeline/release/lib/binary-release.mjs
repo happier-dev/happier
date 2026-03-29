@@ -7,18 +7,27 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import {
+import { loadCliCommonDistModule } from '../../../../scripts/ensureCliCommonDistModule.mjs';
+import { listPublicReleaseRingCatalogEntries, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+
+const {
   CLI_BINARY_TARGETS,
   SERVER_BINARY_TARGETS,
+  buildCliBinaryArtifactPayload,
+  buildServerBinaryArtifactPayload,
   commandExists,
   compileBunBinary,
   ensureFileExists,
   execOrThrow,
   resolveYarnCommand,
-} from '@happier-dev/cli-common/componentArtifacts';
-import { listPublicReleaseRingCatalogEntries, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+} = await loadCliCommonDistModule({
+  repoRoot: fileURLToPath(new URL('../../../../', import.meta.url)),
+  subpath: 'componentArtifacts',
+});
 
 export {
+  buildCliBinaryArtifactPayload,
+  buildServerBinaryArtifactPayload,
   commandExists,
   compileBunBinary,
   ensureFileExists,

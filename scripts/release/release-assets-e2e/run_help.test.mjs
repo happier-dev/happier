@@ -161,6 +161,19 @@ test('npm-e2e-smoke cli-smoke.sh supports preinstalled happier-cli mode', () => 
   assert.match(cliSmoke, /command -v happier/);
 });
 
+test('release-assets-e2e remote host install shims make repeated CLI installs idempotent', () => {
+  const entrypoints = [
+    join(here, 'bin', 'remote-host-entrypoint.sh'),
+    join(here, 'bin', 'remote-host-systemd-entrypoint.sh'),
+  ];
+
+  for (const entrypoint of entrypoints) {
+    const script = fs.readFileSync(entrypoint, 'utf8');
+    assert.match(script, /rm -f "\$prefix\/bin\/happier"/);
+    assert.match(script, /npm install -g --force \/packs\/cli\.tgz --no-audit --no-fund/);
+  }
+});
+
 test('npm-e2e-smoke dockerhub postgres smoke waits for postgres readiness', () => {
   const content = fs.readFileSync(runScript, 'utf8');
   assert.match(content, /waiting for dockerhub postgres/i);

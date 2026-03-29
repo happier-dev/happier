@@ -243,11 +243,10 @@ trap cleanup EXIT
 echo "[npm-e2e-smoke] docker sanity check..."
 docker version >/dev/null
 
-env_file="$repo_root/output/npm-e2e-smoke.env"
-rm -f "$env_file" || true
+mkdir -p "$repo_root/output"
+env_file="$(mktemp "${repo_root}/output/npm-e2e-smoke.env.XXXXXX")"
 
-packs_dir="$repo_root/output/npm-e2e-smoke"
-mkdir -p "$packs_dir"
+packs_dir="$(mktemp -d "${repo_root}/output/npm-e2e-smoke.packs.XXXXXX")"
 
 ssh_dir="$repo_root/output/npm-e2e-smoke-ssh"
 mkdir -p "$ssh_dir"
@@ -796,9 +795,9 @@ if [[ "$with_any_remote" == "1" ]]; then
   if [[ "$with_remote_server" == "1" ]]; then
     build_targets+=(remote-server1 remote-server-smoke)
   fi
-  "${compose_remote[@]}" --env-file "$env_file" build "${build_targets[@]}" >/dev/null
+  "${compose_remote[@]}" --env-file "$env_file" build "${build_targets[@]}"
 else
-  "${compose[@]}" --env-file "$env_file" build stack cli cli2 >/dev/null
+  "${compose[@]}" --env-file "$env_file" build stack cli cli2
 fi
 
 echo "[npm-e2e-smoke] starting stack..."

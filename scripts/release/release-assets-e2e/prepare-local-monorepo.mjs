@@ -113,6 +113,28 @@ function copyUntrackedFiles({ srcDir, dstDir }) {
   }
 }
 
+function copyGeneratedSourceFiles({ srcDir, dstDir }) {
+  const stack = [srcDir];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current || !fs.existsSync(current)) continue;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const from = join(current, entry.name);
+      const rel = from.slice(srcDir.length + 1);
+      const to = join(dstDir, rel);
+
+      if (entry.isDirectory()) {
+        stack.push(from);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.generated.ts')) continue;
+
+      fs.mkdirSync(dirname(to), { recursive: true });
+      fs.copyFileSync(from, to);
+    }
+  }
+}
+
 function ensureMainBranch({ repoDir }) {
   const head = gitCapture({ repoDir, args: ['rev-parse', '--abbrev-ref', 'HEAD'] }).trim();
   if (head === 'main') {
@@ -172,9 +194,17 @@ function main() {
   applyDiff({ srcDir: src, dstDir: dst, args: [] });
   applyDiff({ srcDir: src, dstDir: dst, args: ['--cached'] });
   copyUntrackedFiles({ srcDir: src, dstDir: dst });
+  copyGeneratedSourceFiles({ srcDir: src, dstDir: dst });
 
   commitIfDirty({ repoDir: dst });
   ensureMainBranch({ repoDir: dst });
+
+  const excludePath = join(dst, '.git', 'info', 'exclude');
+  const currentExclude = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf8') : '';
+  if (!currentExclude.split('\n').some((line) => line.trim() === 'node_modules')) {
+    fs.mkdirSync(dirname(excludePath), { recursive: true });
+    fs.writeFileSync(excludePath, `${currentExclude}${currentExclude.endsWith('\n') || currentExclude.length === 0 ? '' : '\n'}node_modules\n`);
+  }
 }
 
 main();

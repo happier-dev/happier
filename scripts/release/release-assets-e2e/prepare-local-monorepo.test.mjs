@@ -43,6 +43,8 @@ test('prepare-local-monorepo commits applied diffs so downstream clones include 
   run('git', ['add', '.gitignore'], { cwd: src });
   run('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-m', 'ignore', '-q'], { cwd: src });
 
+  fs.mkdirSync(join(src, 'node_modules'), { recursive: true });
+
   // Unstaged working-tree diff (should be applied).
   fs.writeFileSync(join(src, 'a.txt'), 'two\n', 'utf8');
 
@@ -58,6 +60,7 @@ test('prepare-local-monorepo commits applied diffs so downstream clones include 
 
   const res = spawnSync(process.execPath, [prepareScript, '--src', src, '--dst', dst], { encoding: 'utf8' });
   assert.equal(res.status, 0, res.stderr || res.stdout);
+  assert.equal(fs.existsSync(join(dst, 'node_modules')), false);
 
   const refRes = spawnSync('git', ['show-ref', '--verify', '--quiet', 'refs/heads/main'], { cwd: dst });
   assert.equal(refRes.status, 0);

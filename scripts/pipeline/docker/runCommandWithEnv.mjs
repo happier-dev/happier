@@ -2,7 +2,7 @@
 
 import { execFileSync as nodeExecFileSync } from 'node:child_process';
 
-import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { resolveWindowsCommandInvocation } from '../lib/windows/resolveWindowsCommandInvocation.mjs';
 
 /**
  * @param {{
