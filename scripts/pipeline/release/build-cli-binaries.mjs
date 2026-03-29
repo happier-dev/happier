@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   CLI_STACK_TARGETS,
+  buildCliBinaryArtifactPayload,
   normalizeChannel,
   packagePreparedTargetBinary,
   parseArgs,
@@ -18,7 +19,6 @@ import {
   maybeSignFile,
   writeChecksumsFile,
 } from './lib/binary-release.mjs';
-import { buildCliBinaryArtifactPayload } from '@happier-dev/cli-common/componentArtifacts';
 
 async function main() {
   const repoRoot = resolveRepoRoot();

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { projectPath } from '@/projectPath';
 import { ensureBuildArtifactsReadyOnce } from '@/testSetupBuildCoordinator';
 
@@ -117,16 +117,19 @@ async function ensureCliDistReady(distDir: string): Promise<void> {
 }
 
 describe('CLI build output', () => {
-  it('does not lazy-load daemon spawn hooks via dynamic import (prevents runtime chunk-missing failures)', async () => {
-    // Some tests may change `process.cwd()`; resolve relative to the CLI project root instead.
-    const distDir = join(projectPath(), 'dist');
-    await ensureCliDistReady(distDir);
+  const distDir = join(projectPath(), 'dist');
+  let distFiles: string[] = [];
 
-    const files = await listDistFiles(distDir);
-    expect(files.length).toBeGreaterThan(0);
+  beforeAll(async () => {
+    await ensureCliDistReady(distDir);
+    distFiles = await listDistFiles(distDir);
+  }, 180_000);
+
+  it('does not lazy-load daemon spawn hooks via dynamic import (prevents runtime chunk-missing failures)', async () => {
+    expect(distFiles.length).toBeGreaterThan(0);
 
     const offenders: string[] = [];
-    for (const file of files) {
+    for (const file of distFiles) {
       const text = await fs.readFile(file, 'utf8');
       if (matchesDynamicSpawnHooksImport(text)) offenders.push(file);
     }
@@ -135,15 +138,10 @@ describe('CLI build output', () => {
   }, 60_000);
 
   it('does not lazy-load vendor resume support via dynamic import (prevents runtime chunk-missing failures)', async () => {
-    // Some tests may change `process.cwd()`; resolve relative to the CLI project root instead.
-    const distDir = join(projectPath(), 'dist');
-    await ensureCliDistReady(distDir);
-
-    const files = await listDistFiles(distDir);
-    expect(files.length).toBeGreaterThan(0);
+    expect(distFiles.length).toBeGreaterThan(0);
 
     const offenders: string[] = [];
-    for (const file of files) {
+    for (const file of distFiles) {
       const text = await fs.readFile(file, 'utf8');
       if (matchesDynamicVendorResumeSupportImport(text)) offenders.push(file);
     }
