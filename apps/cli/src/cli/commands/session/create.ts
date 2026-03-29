@@ -2,7 +2,7 @@ import chalk from 'chalk';
 
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
 import { readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
-import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/parseSingleBackendTargetFromFlag';
+import { normalizeBackendTargetKeysFromCsv } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { Credentials } from '@/persistence';
@@ -23,6 +23,8 @@ export async function cmdSessionCreate(
   const title = (readFlagValue(argv, '--title') ?? '').trim();
   const initialPrompt = (readFlagValue(argv, '--message') ?? readFlagValue(argv, '--prompt') ?? '').trim();
   const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
+  const backendTargetKeys = normalizeBackendTargetKeysFromCsv(backendRaw);
+  const backendTargetKey = backendTargetKeys.length === 1 ? backendTargetKeys[0] : null;
   if (hasFlag(argv, '--help') || hasFlag(argv, '-h')) {
     throw new Error(
       'Usage: happier session create [--path <path>] [--backend <backend-target>] [--title <text>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]',
@@ -39,7 +41,7 @@ export async function cmdSessionCreate(
     process.exit(1);
   }
 
-  if (backendRaw && !parseSingleBackendTargetFromFlag(backendRaw)) {
+  if (backendRaw && !backendTargetKey) {
     throw new Error(
       'Usage: happier session create [--path <path>] [--backend <backend-target>] [--title <text>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]',
     );
@@ -52,7 +54,7 @@ export async function cmdSessionCreate(
       'session.spawn_new',
       {
         path,
-        ...(backendRaw ? { backendTargetKey: backendRaw } : { agentId: DEFAULT_CATALOG_AGENT_ID }),
+        ...(backendTargetKey ? { backendTargetKey } : { agentId: DEFAULT_CATALOG_AGENT_ID }),
         ...(title ? { title } : {}),
         ...(tag ? { tag } : {}),
         ...(initialPrompt ? { initialMessage: initialPrompt } : {}),
