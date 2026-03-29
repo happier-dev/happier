@@ -39,9 +39,13 @@
      so we don't rely on hashed classnames. */
 @media (min-width: 700px) {
     [data-vaul-drawer][data-vaul-drawer-direction="bottom"] [data-presentation="modal"] {
-        height: min(820px, calc(100vh - 96px)) !important;
+        /*
+        Desktop web "modal" drawers should size to content by default (no giant empty
+        panel), but still be extensible up to a safe viewport cap.
+        */
+        height: auto !important;
+        min-height: 0 !important;
         max-height: min(820px, calc(100vh - 96px)) !important;
-        min-height: min(820px, calc(100vh - 96px)) !important;
     }
 }
 

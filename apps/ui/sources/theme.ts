@@ -39,9 +39,9 @@ export const lightTheme = {
         //
 
         text: '#000000',
-        textDestructive: Platform.select({ ios: '#FF3B30', default: '#F44336' }),
-        textSecondary: Platform.select({ ios: '#8E8E93', default: '#49454F' }),
-        textTertiary: Platform.select({ ios: '#AEAEB2', default: '#8C8793' }),
+        textDestructive: '#FF3B30',
+        textSecondary: '#747478',
+        textTertiary: '#99999d',
         textLink: '#2BACCC',
         accent: {
             blue: '#007AFF',
@@ -265,9 +265,9 @@ export const darkTheme = {
         //
 
         text: '#ffffff',
-        textDestructive: Platform.select({ ios: '#FF453A', default: '#F48FB1' }),
-        textSecondary: Platform.select({ ios: '#8E8E93', default: '#CAC4D0' }),
-        textTertiary: Platform.select({ ios: '#636366', default: '#8B8692' }),
+        textDestructive: '#FF453A',
+        textSecondary: '#99999d',
+        textTertiary: '#747478',
         textLink: '#2BACCC',
         accent: {
             blue: '#0A84FF',
