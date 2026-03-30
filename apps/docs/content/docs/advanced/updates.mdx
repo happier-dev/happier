@@ -36,14 +36,12 @@ The table below covers all user-facing released assets and how updates work.
 | **Desktop app** (Tauri, “Tori” / Happier desktop) | Installed app bundle (`.app` / installer) | The app checks a signed update feed and offers an in-app update | **Checks automatically**, install is **user-triggered** | Accept the in-app update prompt; stable/preview/dev is determined by which build you installed |
 | **Mobile app** (iOS/Android) | App Store / Play Store | (1) JS/asset OTA updates may be fetched; (2) native updates come from the store | OTA can be **automatic + user-applied**; store updates are **store-managed** | In-app “Update available” banner applies OTA updates (reload). Native updates require installing the new store version |
 | **Web app** (hosted) | You open the hosted web UI | New deployments go live; users get them on refresh | Yes (on refresh) | Refresh the page (hard refresh if your browser is caching aggressively) |
-| **Self-hosted web UI bundle** (`happier-ui-web`) | Embedded/served by your self-hosted server, Docker image, or runner | It changes when your server runtime updates (or when your runner downloads a newer UI bundle) | Depends on the host (see below) | Control updates via the host (Docker pull, `hstack self-host update`, runner restart, or pin tags) |
+| **Self-hosted web UI bundle** (`happier-ui-web`) | Embedded/served by your self-hosted server, Docker image, or runner | It changes when your server runtime updates (or when your runner downloads a newer UI bundle) | Depends on the host (see below) | Control updates via the host (Docker pull, `happier relay host install`, runner restart, or pin tags) |
 | **Relay server Docker image** (`happierdev/relay-server`) | `docker run … happierdev/relay-server:<tag>` | You pull a newer image tag and restart the container | No | `docker pull …` then restart/recreate the container; pin to an immutable tag or digest for strict control |
 | **UI embedded in relay-server Docker image** | Part of the Docker image build | It updates with the Docker image | No | Same as the Docker image update (pull + restart) |
 | **Relay server npm package** (`@happier-dev/relay-server`) | `npx … @happier-dev/relay-server happier-server …` | The runner fetches the latest server runtime/UI bundle for the selected rolling tags on startup | Yes (on restart) | Restart the runner to pick up newest rolling tag; pin via `--tag server-vX.Y.Z` and `--ui-tag ui-web-vX.Y.Z`; disable UI via `--without-ui` or `HAPPIER_SERVER_UI_DIR=` |
 | **UI “embedded” in relay-server npm runner** | Downloaded + cached by the runner (not shipped inside npm tarball) | The runner downloads the UI bundle when needed | Yes (on restart) | Same controls as the runner: `--ui-tag …`, `--without-ui`, or set `HAPPIER_SERVER_UI_DIR` to a fixed directory |
-| **Self-host managed runtime** (`hstack self-host …`) | `curl -fsSL https://happier.dev/self-host \| bash` | You run `hstack self-host update` (or an opt-in scheduler runs it for you) | Optional (opt-in) | `hstack self-host update` (manual). Opt-in auto-update schedules the same command (systemd/launchd/schtasks) |
-| **Self-host installer** (`https://happier.dev/self-host`) | The installer script itself | You rerun it | No | Re-run the installer to reinstall/repair + rerun `hstack self-host install` |
-| **Server runtime installer** (`https://happier.dev/install-server`) | `curl …install-server \| bash` (macOS/Linux) | You rerun it | No | Re-run the installer to replace the `happier-server` binary (rolling tags `server-stable` / `server-preview` / `server-dev`) |
+| **Managed Relay runtime** (`happier relay host …`) | Install the Happier CLI, then run `happier relay host install …` | You rerun `happier relay host install` | No | `happier relay host install` (local or with `--ssh user@host`) |
 | **CLI installer** (`https://happier.dev/install`) | `curl …install \| bash` / `irm …install.ps1` | You rerun it (or use the CLI’s self-update for installer installs) | No | Re-run the installer, or run the lane-specific command (`happier`, `hprev`, or `hdev`) with `self update` |
 | **CLI installer payload** | Installed under `~/.happier/cli{,-preview,-dev}/{versions,current,previous}` with lane-specific shims in `~/.happier/bin` and `~/.local/bin` (or Windows equivalent) | You run `happier self update`, `hprev self update`, `hdev self update`, or rerun the installer | No (but it can show notices) | Installer lanes are `stable` (`happier`), `preview` (`hprev`), and `dev` (`hdev`). You can still target `--channel preview|dev` or `--to versionOrTag` explicitly. |
 | **CLI npm package** (`@happier-dev/cli`) | `npm install -g @happier-dev/cli` | You upgrade the npm package | No (but it can show notices) | `npm install -g @happier-dev/cli@latest` (or `@next` for preview) |
@@ -184,88 +182,39 @@ curl -fsSL https://happier.dev/install | bash
 
 Windows (PowerShell) updates work the same way (rerun the installer).
 
-### Server runtime installer (`install-server`)
+### Managed Relay runtime (`happier relay host …`)
 
-This is a convenience wrapper for server runtime binaries (macOS/Linux). Update by rerunning it:
-
-```bash
-curl -fsSL https://happier.dev/install-server | bash
-```
-
-### Self-host installer (`self-host`)
-
-The self-host installer updates by rerunning:
+Install or update your managed Relay runtime by running:
 
 ```bash
-curl -fsSL https://happier.dev/self-host | bash
+happier relay host install --mode system
 ```
 
-After install, the managed runtime itself is updated via:
+Remote host (over SSH):
 
-- `hstack self-host update` (manual), or
-- an opt-in scheduler (systemd/launchd/schtasks) that runs the same command
+```bash
+happier relay host install --ssh user@host --mode system
+```
+
+Then manage it with `happier relay host status` and `happier relay host start|stop|restart`.
 
 ## Server / self-host updates
 
 There are multiple supported self-host shapes. See also: [Self-host runtime (installer vs runner)](/docs/deployment/self-host-runtime).
 
-### Server runtime installer (`install-server`)
+### Managed Relay runtime (`happier relay host …`)
 
-If you installed the **server runtime binary** directly via the installer (macOS/Linux), update by rerunning it:
-
-```bash
-curl -fsSL https://happier.dev/install-server | bash
-```
-
-### Managed self-host runtime (`hstack self-host …`)
-
-Manual update:
+Update/reinstall (install-or-update):
 
 ```bash
-hstack self-host update
+happier relay host install --mode system
 ```
 
-Rollback:
+Then restart if needed:
 
 ```bash
-hstack self-host rollback --to <version>
+happier relay host restart --mode system
 ```
-
-#### What `self-host update` updates
-
-`hstack self-host update` pulls and installs:
-
-- the **server runtime binary** (from the rolling release tag for your channel: `server-stable` / `server-preview` / `server-dev`)
-- the **UI web bundle** (from `ui-web-stable` / `ui-web-preview` / `ui-web-dev`), unless you disabled UI
-
-`hstack self-host status` shows:
-
-- installed versions (server + UI)
-- whether auto-update is configured, and whether the platform scheduler job is installed/enabled
-
-#### Auto-update scheduling (opt-in)
-
-Auto-update is **disabled by default**. When enabled, the host schedules a platform-native job that periodically runs:
-
-- `hstack self-host update`
-
-Enable at install time:
-
-```bash
-hstack self-host install --auto-update --auto-update-at=03:15
-```
-
-Or set it later:
-
-```bash
-hstack self-host config set --auto-update --auto-update-at=03:15
-```
-
-Environment variables (equivalent defaults/overrides):
-
-- `HAPPIER_SELF_HOST_AUTO_UPDATE=1`
-- `HAPPIER_SELF_HOST_AUTO_UPDATE_INTERVAL_MINUTES=60`
-- `HAPPIER_SELF_HOST_AUTO_UPDATE_AT=03:15` (daily schedule; takes precedence when set)
 
 ### Relay server runner (`@happier-dev/relay-server`)
 

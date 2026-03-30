@@ -249,7 +249,7 @@ tailscale serve status
 
 ### HStack release channel
 
-By default, the Proxmox helper script installs Happier using the official **self-host runtime** installers (`hstack self-host` under the hood), which support stable/preview/dev channels and in-place updates.
+By default, the Proxmox helper script installs Happier using the managed **Relay runtime** (`happier relay host` under the hood), which supports stable/preview/dev channels and in-place updates.
 
 If you prefer an install that builds from source using `npx ... hstack setup-from-source` you can opt into it via an env var (see below).
 
@@ -322,9 +322,9 @@ If you enabled Tailscale but skipped the key, enroll later:
 
 Recommended installers:
 
-- Use the Proxmox helper script “Update” action (it runs `hstack self-host update` and also updates the Happier CLI if installed).
+- Use the Proxmox helper script “Update” action (it runs `happier relay host install` and also updates the Happier CLI if installed).
 - Or update from inside the container:
-  - `hstack self-host update --mode system --channel stable|preview|dev`
+  - `happier relay host install --mode system --channel stable|preview|dev`
   - `happier self update --channel stable|preview|dev` (Dev box only)
 
 From-source installs:

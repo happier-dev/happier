@@ -75,6 +75,54 @@ function takeFlagValue(args: string[], name: string): { value: string | null; re
   return { value, rest };
 }
 
+function takeRepeatedFlagValues(args: string[], name: string): { values: string[]; rest: string[] } {
+  const rest: string[] = [];
+  const values: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = String(args[index] ?? '');
+    if (current === name) {
+      const next = String(args[index + 1] ?? '');
+      if (!next || next.startsWith('--')) {
+        throw new Error(`Missing value for ${name}`);
+      }
+      values.push(next);
+      index += 1;
+      continue;
+    }
+    if (current.startsWith(`${name}=`)) {
+      const next = current.slice(`${name}=`.length);
+      if (!next) {
+        throw new Error(`Missing value for ${name}`);
+      }
+      values.push(next);
+      continue;
+    }
+    rest.push(current);
+  }
+
+  return { values, rest };
+}
+
+function parseEnvOverrides(values: readonly string[]): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const raw of values) {
+    const entry = String(raw ?? '').trim();
+    if (!entry) continue;
+    const eq = entry.indexOf('=');
+    if (eq < 0) {
+      throw new Error(`Invalid --env value (expected KEY=VALUE): ${entry}`);
+    }
+    const key = entry.slice(0, eq).trim();
+    const value = entry.slice(eq + 1);
+    if (!key) {
+      throw new Error(`Invalid --env value (expected KEY=VALUE): ${entry}`);
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
 function normalizeMode(raw: unknown): 'user' | 'system' {
   return String(raw ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
 }
@@ -97,6 +145,30 @@ function resolveTestFirstPartyPayloadOverride(): Readonly<{ payloadRoot: string;
     throw new Error(`Invalid ${TEST_FIRST_PARTY_PAYLOAD_ROOT_ENV}: expected a directory`);
   }
   return { payloadRoot, versionId };
+}
+
+function resolveFirstExistingPath(candidates: readonly string[]): string {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return '';
+}
+
+function resolveLocalServerBinaryFromPayloadRoot(payloadRoot: string): string {
+  const root = String(payloadRoot ?? '').trim();
+  if (!root) return '';
+  const name = process.platform === 'win32' ? 'happier-server.exe' : 'happier-server';
+  return resolveFirstExistingPath([
+    join(root, name),
+    join(root, 'bin', name),
+  ]);
 }
 
 function quoteForRemoteBash(command: string): string {
@@ -374,7 +446,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const op = String(args[0] ?? '').trim();
   if (!op) {
-    throw new Error('Usage: happier relay host <install|status|start|stop|restart> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--json]');
+    throw new Error('Usage: happier relay host <install|status|start|stop|restart> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--self-host-server-binary <path>] [--json]');
   }
 
   let rest = args.slice(1);
@@ -384,6 +456,10 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   rest = modeFlag.rest;
   const sshFlag = takeFlagValue(rest, '--ssh');
   rest = sshFlag.rest;
+  const envFlag = takeRepeatedFlagValues(rest, '--env');
+  rest = envFlag.rest;
+  const selfHostServerBinaryFlag = takeFlagValue(rest, '--self-host-server-binary');
+  rest = selfHostServerBinaryFlag.rest;
   const identityFile = takeFlagValue(rest, '--identity-file');
   rest = identityFile.rest;
   const sshConfigFile = takeFlagValue(rest, '--ssh-config-file');
@@ -421,6 +497,8 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   }
 
   const taskParams = resolveRelayRuntimeTaskParams({ channel, mode, ssh });
+  const env = envFlag.values.length > 0 ? parseEnvOverrides(envFlag.values) : null;
+  const selfHostRelayBinaryOverride = String(selfHostServerBinaryFlag.value ?? '').trim() || null;
 
   if (op === 'status') {
     const payload = ssh
@@ -467,6 +545,11 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   }
 
   if (op === 'install') {
+    const installParams: RelayRuntimeTaskParams = {
+      ...taskParams,
+      ...(env ? { env } : {}),
+      ...(selfHostRelayBinaryOverride ? { selfHostRelayBinaryOverride } : {}),
+    };
     const result = ssh
       ? (() => {
           const runner = buildSshRunner(ssh);
@@ -509,10 +592,54 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
               return { binaryPath: out.binaryPath, versionId: out.versionId };
             },
           });
-          return engine.installOrUpdate(taskParams);
+          return engine.installOrUpdate(installParams);
         })()
-      : (() => {
-          throw new Error('Local relay host install is not implemented in this command surface yet.');
+      : (async () => {
+          const override = resolveTestFirstPartyPayloadOverride();
+          const prepared = override
+            ? {
+                payloadRoot: override.payloadRoot,
+                versionId: override.versionId,
+                cleanup: async () => undefined,
+              }
+            : await prepareFirstPartyComponentPayloadFromGitHubRelease({
+                componentId: 'happier-server',
+                channel: channel === 'dev' ? 'publicdev' : channel,
+              });
+          try {
+            const serverBinaryPath = selfHostRelayBinaryOverride || resolveLocalServerBinaryFromPayloadRoot(prepared.payloadRoot);
+            if (!serverBinaryPath) {
+              throw new Error('Unable to resolve happier-server binary from prepared payload.');
+            }
+
+            const engine = createRelayHostEngine({
+              installRemoteComponent: async () => {
+                throw new Error('Remote component installation is not available for local relay host install.');
+              },
+              resolveRemoteReleaseTarget: async () => {
+                throw new Error('Remote target resolution is not available for local relay host install.');
+              },
+              runRemoteText: async () => {
+                throw new Error('Remote execution is not available for local relay host install.');
+              },
+              copyLocalDirectoryToRemote: async () => {
+                throw new Error('Remote copy is not available for local relay host install.');
+              },
+              resolveLocalInstallVersion: async ({ serverBinaryPath: candidate }) => {
+                if (candidate === serverBinaryPath) {
+                  return prepared.versionId || null;
+                }
+                return null;
+              },
+            });
+
+            return await engine.installOrUpdate({
+              ...installParams,
+              selfHostRelayBinaryOverride: serverBinaryPath,
+            });
+          } finally {
+            await prepared.cleanup();
+          }
         })();
 
     const payload: RelayHostInstallJson = await result;

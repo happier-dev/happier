@@ -471,8 +471,8 @@
                 <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
               </div>
               <div>
-                <h3 class="font-semibold text-gray-900 dark:text-white mb-1">One-command setup</h3>
-                <p class="text-gray-600 dark:text-gray-400">Install and launch the full stack with hstack’s guided self-host profile.</p>
+                <h3 class="font-semibold text-gray-900 dark:text-white mb-1">One-command install</h3>
+                <p class="text-gray-600 dark:text-gray-400">Install Happier in one command, then self-host the relay with the Happier CLI’s guided setup.</p>
               </div>
             </div>
 
@@ -507,18 +507,17 @@
                 <span class="ml-2 text-sm text-gray-400">Terminal</span>
               </div>
               <div class="p-6 font-mono text-sm">
-                <div class="text-gray-400"># One-command setup (guided):</div>
-                <div class="text-accent mt-2">$ curl -fsSL https://happier.dev/self-host | bash</div>
-                <div class="mt-4 text-gray-400"># Start Happier anytime:</div>
-                <div class="text-accent mt-2">$ hstack self-host status</div>
-                <div class="mt-4 text-gray-400"># Optional: secure remote access for mobile:</div>
-                <div class="text-accent mt-2">$ hstack tailscale enable</div>
-                <div class="text-accent">$ hstack tailscale url</div>
+                <div class="text-gray-400"># Install Happier (one command):</div>
+                <div class="text-accent mt-2">$ curl -fsSL https://happier.dev/install | bash</div>
+                <div class="mt-4 text-gray-400"># Self-host the relay on this machine:</div>
+                <div class="text-accent mt-2">$ happier relay host install --mode system</div>
+                <div class="mt-4 text-gray-400"># Check status anytime:</div>
+                <div class="text-accent mt-2">$ happier relay host status</div>
               </div>
             </div>
             <p class="mt-4 text-sm text-gray-600 dark:text-gray-400">
               Prefer npm? Power users can still install with <code class="text-xs">npm install -g @happier-dev/cli</code>.
-              <a href="https://github.com/happier-dev/happier/tree/main/apps/stack" target="_blank" rel="noopener noreferrer" class="text-accent hover:text-accent-dark font-semibold transition-colors">Open hstack docs</a>
+              <a href="https://github.com/happier-dev/happier/tree/main/apps/stack" target="_blank" rel="noopener noreferrer" class="text-accent hover:text-accent-dark font-semibold transition-colors">Self-host docs</a>
             </p>
           </div>
         </div>

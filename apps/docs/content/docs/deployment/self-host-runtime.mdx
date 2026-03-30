@@ -5,7 +5,7 @@ description: Understand the supported ways to run a self-hosted Happier Server, 
 
 Happier currently supports two **different** self-host “shapes”:
 
-1) a **managed install** (service + config + rollback) driven by `hstack self-host …`
+1) a **managed install** (service + config) driven by `happier relay host …`
 2) a **runner** that simply downloads/verifies artifacts and starts the server process (`@happier-dev/relay-server`)
 
 They are complementary, but they are not the same thing.
@@ -14,54 +14,35 @@ For a complete “what updates automatically vs manually” matrix across all sh
 
 ## Option A: Managed self-host install (recommended when you want a service)
 
-Use the self-host installer (or `hstack self-host install`) when you want:
+Use `happier relay host install` when you want:
 
 - the server installed as a **managed service** (user/system mode)
-- an on-disk **env file** (`server.env`) you can edit/override
-- a local **state file** (`self-host-state.json`)
-- platform-native **auto-update scheduling** (opt-in)
-- `hstack self-host rollback` for recovery
+- a repeatable **install-or-update** command for your selected channel
 
-### What it installs
+First, install the Happier CLI: see [CLI install](/docs/clients/cli).
 
-When you run:
+Install locally:
 
 ```bash
-curl -fsSL https://happier.dev/self-host | bash
+happier relay host install --mode system
 ```
 
-the installer:
+Install remotely over SSH:
 
-- downloads and installs the **`hstack` binary** on the machine
-- then runs the guided flow: `hstack self-host install …`
+```bash
+happier relay host install --ssh user@host --mode system
+```
 
 After install, you manage it with:
 
 ```bash
-hstack self-host status
-hstack self-host update
-hstack self-host rollback --to <version>
+happier relay host status
+happier relay host start
+happier relay host stop
+happier relay host restart
 ```
 
-### Auto-update scheduling (daily window)
-
-Auto-update is opt-in:
-
-```bash
-hstack self-host install --auto-update --auto-update-at=03:15
-```
-
-Update the schedule later:
-
-```bash
-hstack self-host config set --auto-update --auto-update-at=03:15
-```
-
-Inspect effective config:
-
-```bash
-hstack self-host config view
-```
+To update, rerun `happier relay host install` (it installs or updates to the latest version in that channel).
 
 ## Option B: Runner (`@happier-dev/relay-server`) (recommended for Docker / “just run it”)
 
@@ -85,7 +66,7 @@ Example (local runner):
 npx --yes --package @happier-dev/relay-server happier-server --help
 ```
 
-Important: because this is a runner, `hstack self-host config` / `hstack self-host rollback` do **not** apply to it.
+Important: because this is a runner, `happier relay host …` service controls do **not** apply to it.
 
 ## Choosing between them
 

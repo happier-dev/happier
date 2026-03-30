@@ -86,14 +86,18 @@ export class HappierPipeline {
   ): Promise<Directory> {
     const workdir = "/repo"
     const ext = path.extname(artifactName || "") || ".apk"
-    const internalArtifact = `/tmp/happier-ui-mobile-android${ext}`
-    const internalOutJson = "/tmp/eas_build_android.json"
+    // Note: /tmp is mounted as tmpfs to keep EAS local build working dirs off the container snapshot.
+    // Dagger cannot reliably export files from tmpfs, so we write the *final* artifacts under /repo.
+    const artifactDir = `${workdir}/.project/dagger-artifacts`
+    const internalArtifact = `${artifactDir}/happier-ui-mobile-android${ext}`
+    const internalOutJson = `${artifactDir}/eas_build_android.json`
 
     let container = dag.container({ platform: containerPlatform })
       .from("ghcr.io/cirruslabs/android-sdk:34")
-      // EAS local builds can generate millions of files under /tmp. Keep them off the container
-      // filesystem snapshot to avoid exploding the Dagger engine cache.
-      .withMountedTemp("/tmp")
+      // EAS local builds generate a large working directory. Mount it as a cache volume so:
+      // - we avoid tmpfs ENOSPC failures
+      // - we avoid exploding the container snapshot/engine cache
+      .withMountedCache("/tmp/eas-workdir", dag.cacheVolume("happier-expo-eas-workdir"))
       .withExec([
         "bash",
         "-lc",
@@ -121,6 +125,7 @@ export class HappierPipeline {
       .withMountedDirectory(workdir, repo)
       .withWorkdir(workdir)
       .withExec(["git", "init"])
+      .withExec(["bash", "-lc", `set -euo pipefail && mkdir -p "${artifactDir}"`])
       .withEnvVariable("HAPPIER_PIPELINE_LOCAL_RUNTIME", "dagger")
       .withSecretVariable("EXPO_TOKEN", expoToken)
       .withSecretVariable("SENTRY_AUTH_TOKEN", sentryAuthToken)

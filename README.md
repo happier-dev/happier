@@ -231,11 +231,11 @@ Think of the relay server as the long-running process which allows your mobile d
 It is lightweight, and can run as a simple service on your computer. You can then access it from your mobile devices using Tailscale Serve (as long as your computer is running).
 
 Simply run the [self-host guided setup](https://docs.happier.dev/deployment/self-host-runtime) on your computer:
-```
-curl -fsSL https://happier.dev/self-host | bash
+```bash
+happier relay host install --mode system
 ```
 
-The self-host runtime also follows the public release-ring model (`stable`, `preview`, `dev`) when those rolling installer endpoints are published.
+The self-host runtime follows the public release-ring model (`stable`, `preview`, `dev`) via `--channel stable|preview|dev`.
 
 By default is uses an SQLite database.
 

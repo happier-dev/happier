@@ -82,12 +82,9 @@ test('syncInstallers publishes preview and dev shortcut endpoints', () => {
   const targets = publishedTargets();
   assert.ok(targets.includes('install-preview'), 'expected install-preview to be published');
   assert.ok(targets.includes('install-dev'), 'expected install-dev to be published');
-  assert.ok(targets.includes('self-host-preview'), 'expected self-host-preview to be published');
-  assert.ok(targets.includes('self-host-dev'), 'expected self-host-dev to be published');
   assert.ok(targets.includes('install-preview.ps1'), 'expected install-preview.ps1 to be published');
   assert.ok(targets.includes('install-dev.ps1'), 'expected install-dev.ps1 to be published');
-  assert.ok(targets.includes('self-host-preview.ps1'), 'expected self-host-preview.ps1 to be published');
-  assert.ok(targets.includes('self-host-dev.ps1'), 'expected self-host-dev.ps1 to be published');
+  assert.ok(!targets.some((target) => target.startsWith('self-host')), 'expected no self-host installer endpoints to be published');
 });
 
 test('syncInstallers normalizes target file modes even when contents are already in sync', async () => {

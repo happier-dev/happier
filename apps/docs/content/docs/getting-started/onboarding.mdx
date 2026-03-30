@@ -44,7 +44,7 @@ You run your own Relay (remote machine, LAN box, or even your own computer), but
 
 1. Install your Relay (examples):
    - Proxmox: see [Proxmox deployment](../deployment/proxmox).
-   - Any machine (managed service + rollback): `curl -fsSL https://happier.dev/self-host | bash`
+   - Any machine (managed service): install the CLI, then run `happier relay host install --mode system` (or remote: `happier relay host install --ssh user@host --mode system`)
    - Docker: see [Deployment → Docker](../deployment/docker).
 
 2. Open the desktop app (recommended) or web UI (status/management only) and choose that Relay.

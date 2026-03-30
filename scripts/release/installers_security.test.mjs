@@ -8,13 +8,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const sourceRoot = join(repoRoot, 'scripts', 'release', 'installers');
 const installShPath = join(sourceRoot, 'install.sh');
-const selfHostShPath = join(sourceRoot, 'self-host.sh');
 const installPs1Path = join(sourceRoot, 'install.ps1');
 const publicKeyPath = join(sourceRoot, 'happier-release.pub');
 
 test('release-owned installer scripts enforce minisign verification defaults', async () => {
   const installSh = await readFile(installShPath, 'utf8');
-  const selfHostSh = await readFile(selfHostShPath, 'utf8');
   const publicKey = (await readFile(publicKeyPath, 'utf8')).trim();
   const publicKeyLines = publicKey.split('\n').map((line) => line.trim()).filter(Boolean);
   const publicKeyPayload = publicKeyLines.at(-1) ?? '';
@@ -25,12 +23,6 @@ test('release-owned installer scripts enforce minisign verification defaults', a
   assert.doesNotMatch(installSh, /skipped signature verification/i);
   assert.ok(publicKeyPayload.length > 10);
   assert.ok(installSh.includes(publicKeyPayload), 'install.sh should embed the release minisign public key payload');
-
-  assert.match(selfHostSh, /HAPPIER_MINISIGN_PUBKEY_URL/);
-  assert.match(selfHostSh, /https:\/\/happier\.dev\/happier-release\.pub/);
-  assert.match(selfHostSh, /Signature verified\./);
-  assert.doesNotMatch(selfHostSh, /skipped signature verification/i);
-  assert.ok(selfHostSh.includes(publicKeyPayload), 'self-host.sh should embed the release minisign public key payload');
 });
 
 test('release-owned windows installer enforces minisign verification defaults', async () => {

@@ -187,18 +187,9 @@ jobs:
             apps/website/public/install-preview.sh \
             apps/website/public/install-dev \
             apps/website/public/install-dev.sh \
-            apps/website/public/self-host.sh \
-            apps/website/public/self-host \
-            apps/website/public/self-host-preview \
-            apps/website/public/self-host-preview.sh \
-            apps/website/public/self-host-dev \
-            apps/website/public/self-host-dev.sh \
             apps/website/public/install.ps1 \
             apps/website/public/install-preview.ps1 \
             apps/website/public/install-dev.ps1 \
-            apps/website/public/self-host.ps1 \
-            apps/website/public/self-host-preview.ps1 \
-            apps/website/public/self-host-dev.ps1 \
             apps/website/public/happier-release.pub; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -238,7 +229,7 @@ jobs:
           fi
 
           src="${{ steps.resolve.outputs.ref }}"
-          paths="apps/website/package.json,apps/website/public/install,apps/website/public/install.sh,apps/website/public/install-preview,apps/website/public/install-preview.sh,apps/website/public/install-dev,apps/website/public/install-dev.sh,apps/website/public/self-host.sh,apps/website/public/self-host,apps/website/public/self-host-preview,apps/website/public/self-host-preview.sh,apps/website/public/self-host-dev,apps/website/public/self-host-dev.sh,apps/website/public/install.ps1,apps/website/public/install-preview.ps1,apps/website/public/install-dev.ps1,apps/website/public/self-host.ps1,apps/website/public/self-host-preview.ps1,apps/website/public/self-host-dev.ps1,apps/website/public/happier-release.pub"
+          paths="apps/website/package.json,apps/website/public/install,apps/website/public/install.sh,apps/website/public/install-preview,apps/website/public/install-preview.sh,apps/website/public/install-dev,apps/website/public/install-dev.sh,apps/website/public/install.ps1,apps/website/public/install-preview.ps1,apps/website/public/install-dev.ps1,apps/website/public/happier-release.pub"
           out="$(node scripts/pipeline/run.mjs github-commit-and-push \
             --paths "${paths}" \
             --allow-missing false \

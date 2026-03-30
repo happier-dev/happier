@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
+import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
 import { formatPublicReleaseChannelChoices, normalizePublicReleaseChannel } from '../release/lib/public-release-rings.mjs';
 
 function fail(message) {
@@ -105,6 +106,7 @@ function main() {
   const configs = [];
 
   const signingKeyValue = String(process.env.TAURI_SIGNING_PRIVATE_KEY ?? '').trim();
+  const signingKeyPassword = resolveTauriSigningPrivateKeyPassword(process.env);
   const signingKeyPath = signingKeyValue
     ? ensureTauriSigningKeyFile({ tmpRoot, keyValue: signingKeyValue, dryRun: opts.dryRun })
     : '';
@@ -151,6 +153,7 @@ function main() {
           CI: 'true',
           APP_ENV: environment,
           ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
+          ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
         },
       },
     );
@@ -163,6 +166,7 @@ function main() {
       CI: 'true',
       APP_ENV: environment,
       ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
+      ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
     },
   });
 }

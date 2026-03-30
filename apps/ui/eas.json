@@ -90,10 +90,10 @@
       "environment": "preview",
       "autoIncrement": true,
       "distribution": "store",
-      "channel": "publicdev",
+      "channel": "dev",
       "env": {
         "APP_ENV": "publicdev",
-        "EXPO_UPDATES_CHANNEL": "publicdev",
+        "EXPO_UPDATES_CHANNEL": "dev",
         "EXPO_APP_NAME": "Happier (dev)",
         "EXPO_APP_BUNDLE_ID": "dev.happier.app.publicdev",
         "EXPO_APP_SCHEME": "happier-dev"
@@ -104,14 +104,14 @@
       "environment": "preview",
       "autoIncrement": true,
       "distribution": "internal",
-      "channel": "publicdev",
+      "channel": "dev",
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelease"
       },
       "env": {
         "APP_ENV": "publicdev",
-        "EXPO_UPDATES_CHANNEL": "publicdev",
+        "EXPO_UPDATES_CHANNEL": "dev",
         "EXPO_APP_NAME": "Happier (dev)",
         "EXPO_APP_BUNDLE_ID": "dev.happier.app.publicdev",
         "EXPO_APP_SCHEME": "happier-dev"

@@ -29,13 +29,13 @@ hstack setup-from-source --profile=dev
 Self-host profile (stable / production-ish):
 
 ```bash
-curl -fsSL https://happier.dev/self-host | bash
+happier relay host install --mode system
 ```
 
-Direct hstack flow (same guided installer):
+Legacy wrapper (still supported):
 
 ```bash
-hstack self-host install
+hstack self-host install # forwards to `happier relay host install` when supported
 ```
 
 Enable auto-updates (opt-in) at install time:

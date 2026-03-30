@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 
 import { stageRepoForDagger } from './stage-repo-for-dagger.mjs';
 import { rewriteEasLocalBuildArtifactPath } from './rewrite-eas-local-build-artifact-path.mjs';
+import { resolveDaggerSecretArg } from './resolve-dagger-secret-arg.mjs';
 import { assertDockerCanRunLinuxAmd64 } from '../docker/assert-docker-can-run-linux-amd64.mjs';
 import { createEasLocalBuildEnv } from './eas-local-build-env.mjs';
 import { ensureStagedGitRepo } from '../git/ensure-staged-git-repo.mjs';
@@ -538,14 +539,16 @@ async function main() {
             '--artifact-name',
             artifactName,
             '--out-json-name',
-            outJsonName,
-            '--expo-token',
-            'env://EXPO_TOKEN',
-            ...(sentryAuthToken ? ['--sentry-auth-token', 'env://SENTRY_AUTH_TOKEN'] : []),
-            '--eas-cli-version',
-            easCliVersion,
-            ...(daggerContainerPlatform ? ['--container-platform', daggerContainerPlatform] : []),
-            ...(expoAppSlug ? ['--expo-app-slug', expoAppSlug] : []),
+	            outJsonName,
+	            '--expo-token',
+	            resolveDaggerSecretArg('EXPO_TOKEN'),
+	            ...(sentryAuthToken
+	              ? ['--sentry-auth-token', resolveDaggerSecretArg('SENTRY_AUTH_TOKEN')]
+	              : []),
+	            '--eas-cli-version',
+	            easCliVersion,
+	            ...(daggerContainerPlatform ? ['--container-platform', daggerContainerPlatform] : []),
+	            ...(expoAppSlug ? ['--expo-app-slug', expoAppSlug] : []),
             ...(expoAppScheme ? ['--expo-app-scheme', expoAppScheme] : []),
             ...(expoAppName ? ['--expo-app-name', expoAppName] : []),
             ...(expoAppBundleId ? ['--expo-app-bundle-id', expoAppBundleId] : []),
@@ -637,9 +640,10 @@ async function main() {
     const effectiveUiDir = path.join(effectiveRepoDir, 'apps', 'ui');
 
     try {
-      if (staged && effectiveRepoDir !== repoRoot) {
-        maybeLinkNodeModulesIntoStage({ repoRoot, stagedRepoDir: effectiveRepoDir, dryRun });
-      }
+      // Do not symlink the real repo's node_modules into the staged context.
+      // Our app uses `runtimeVersion: { policy: "fingerprint" }`, so a preexisting node_modules tree can
+      // skew the computed fingerprint before EAS local build performs its own dependency install.
+      // That drift fails the build with "Runtime version mismatch" in the CONFIGURE_EXPO_UPDATES step.
       ensureStagedGitRepo({ repoDir: effectiveRepoDir, env: buildEnv, dryRun });
       const localArgs = [
         '--yes',

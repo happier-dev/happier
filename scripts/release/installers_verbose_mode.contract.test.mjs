@@ -8,7 +8,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const installersRoot = join(repoRoot, 'scripts', 'release', 'installers');
 const installShPath = join(installersRoot, 'install.sh');
-const selfHostShPath = join(installersRoot, 'self-host.sh');
 
 function extractArgCaseBlock(script, label) {
   const start = script.indexOf(label);
@@ -50,14 +49,10 @@ function assertInstallerVerboseMode(script, name) {
 
 test('installers support a --verbose flag without enabling set -x', async () => {
   const installSh = await readFile(installShPath, 'utf8');
-  const selfHostSh = await readFile(selfHostShPath, 'utf8');
 
   assertInstallerVerboseMode(installSh, 'install.sh');
-  assertInstallerVerboseMode(selfHostSh, 'self-host.sh');
 
   // set -x stays exclusive to --debug.
   assert.ok(extractArgCaseBlock(installSh, '--debug)').includes('DEBUG_MODE="1"'));
   assert.ok(!extractArgCaseBlock(installSh, '--verbose)').includes('set -x'));
-  assert.ok(extractArgCaseBlock(selfHostSh, '--debug)').includes('DEBUG_MODE="1"'));
-  assert.ok(!extractArgCaseBlock(selfHostSh, '--verbose)').includes('set -x'));
 });
