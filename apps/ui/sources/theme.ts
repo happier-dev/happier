@@ -64,8 +64,8 @@ export const lightTheme = {
         surface: '#ffffff',
         surfaceRipple: 'rgba(0, 0, 0, 0.08)',
         surfacePressed: '#fafafa',
-        surfaceSelected: Platform.select({ ios: '#f8f8f8', default: '#f8f8f8' }),
-        surfacePressedOverlay: Platform.select({ ios: '#D1D1D6', default: 'transparent' }),
+        surfaceSelected: '#f8f8f8',
+        surfacePressedOverlay: '#fafafa',
         overlay: {
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
