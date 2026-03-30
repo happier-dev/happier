@@ -6406,7 +6406,7 @@ settingsSession: {
         webDesktopOnlyTitle: 'Cal l’app d’escriptori',
         webDesktopOnlyBody: 'Obre l’app d’escriptori per configurar aquest ordinador. L’app web pot mostrar l’estat, però no pot instal·lar ni configurar el servei en segon pla.',
         preAuthTitle: 'On viu el teu relay?',
-        preAuthBody: 'El teu telèfon envia missatges a través d’un Relay cap als teus ordinadors. Tria on viu el Relay — ho pots canviar més endavant.',
+        preAuthBody: 'El teu relay enruta missatges entre el teu telèfon i els teus ordinadors. Tria on viu — ho pots canviar més endavant.',
         preAuthContinueHint: 'Quan continuïs, Happier et tornarà a la pantalla d’inici de sessió amb el Relay seleccionat i després et retornarà aquí per acabar la configuració.',
         currentRelayTitle: 'Relay seleccionat',
         selectedRelayFooterLabel: 'Relay',

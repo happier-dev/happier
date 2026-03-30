@@ -36,7 +36,7 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
     const styles = stylesheet;
     const dimensions = useModalCardDimensions({
         size: 'md',
-        width: 560,
+        width: 500,
     });
     const cardWidth = Math.min(dimensions.width, layout.maxWidth);
     return (
