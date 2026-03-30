@@ -95,10 +95,25 @@ jobs:
         id: channel_meta
         run: |
           set -euo pipefail
-          node scripts/pipeline/release/resolve-public-release-channel-meta.mjs \
-            --channel "${{ inputs.channel }}" \
-            --source-ref "${{ inputs.source_ref }}" \
-            --github-output "$GITHUB_OUTPUT"
+          channel="${{ inputs.channel }}"
+          src="${{ inputs.source_ref }}"
+
+          if [ "$src" = "auto" ]; then
+            case "$channel" in
+              dev) src="dev" ;;
+              preview) src="preview" ;;
+              stable) src="main" ;;
+              *) echo "Unknown channel: $channel" >&2; exit 1 ;;
+            esac
+          fi
+
+          embedded_policy_env="preview"
+          if [ "$channel" = "stable" ]; then
+            embedded_policy_env="production"
+          fi
+
+          echo "source_ref=$src" >> "$GITHUB_OUTPUT"
+          echo "embedded_policy_env=$embedded_policy_env" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub App token
         id: app_token
