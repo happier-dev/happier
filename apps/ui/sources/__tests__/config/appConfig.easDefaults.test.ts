@@ -97,7 +97,7 @@ describe('app.config.js', () => {
         expect(exp.android?.package).toBe('dev.happier.app.publicdev');
         expect(exp.scheme).toBe('happier-dev');
         expect(featurePolicyEnv).toBe('preview');
-        expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('publicdev');
+        expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('dev');
     });
 
     it('maps the internalpreview environment to the internal preview identity', () => {

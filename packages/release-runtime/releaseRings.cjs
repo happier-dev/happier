@@ -1,31 +1,37 @@
-export const RELEASE_RING_IDS = [
+// This file exists so CommonJS consumers (notably Expo config evaluation on EAS)
+// can resolve release-ring metadata without requiring a built `dist/` folder.
+//
+// Keep this module dependency-free and deterministic.
+
+const RELEASE_RING_IDS = [
   'stable',
   'preview',
   'publicdev',
   'internalpreview',
   'internaldev',
-] as const;
+];
 
-export type ReleaseRingId = (typeof RELEASE_RING_IDS)[number];
-export const PUBLIC_RELEASE_RING_IDS = ['stable', 'preview', 'publicdev'] as const;
-export type PublicReleaseRingId = (typeof PUBLIC_RELEASE_RING_IDS)[number];
-export type ReleaseRingVisibility = 'public' | 'internal';
-export type PublicReleaseRingLabel = 'stable' | 'preview' | 'dev';
+const PUBLIC_RELEASE_RING_IDS = ['stable', 'preview', 'publicdev'];
 
-export interface ReleaseRingCatalogEntry {
-  id: ReleaseRingId;
-  visibility: ReleaseRingVisibility;
-  publicLabel: PublicReleaseRingLabel;
-  sourceBranch: 'main' | 'preview' | 'dev';
-  manifestChannel: 'stable' | 'preview' | 'publicdev' | null;
-  rollingReleaseSuffix: 'stable' | 'preview' | 'dev' | null;
-  embeddedPolicyEnv: 'production' | 'preview' | '';
-  expoAppEnv: 'production' | 'preview' | 'development';
-  expoUpdatesChannel: 'production' | 'preview' | 'dev' | 'internalpreview' | 'internaldev';
-  supportsMobileStoreSubmit: boolean;
-}
+/** @typedef {'public' | 'internal'} ReleaseRingVisibility */
+/** @typedef {'stable' | 'preview' | 'dev'} PublicReleaseRingLabel */
 
-const releaseRingCatalog = {
+/**
+ * @typedef {Object} ReleaseRingCatalogEntry
+ * @property {typeof RELEASE_RING_IDS[number]} id
+ * @property {ReleaseRingVisibility} visibility
+ * @property {PublicReleaseRingLabel} publicLabel
+ * @property {'main' | 'preview' | 'dev'} sourceBranch
+ * @property {'stable' | 'preview' | 'publicdev' | null} manifestChannel
+ * @property {'stable' | 'preview' | 'dev' | null} rollingReleaseSuffix
+ * @property {'production' | 'preview' | ''} embeddedPolicyEnv
+ * @property {'production' | 'preview' | 'development'} expoAppEnv
+ * @property {'production' | 'preview' | 'dev' | 'internalpreview' | 'internaldev'} expoUpdatesChannel
+ * @property {boolean} supportsMobileStoreSubmit
+ */
+
+/** @type {Readonly<Record<typeof RELEASE_RING_IDS[number], ReleaseRingCatalogEntry>>} */
+const releaseRingCatalog = Object.freeze({
   stable: {
     id: 'stable',
     visibility: 'public',
@@ -86,9 +92,13 @@ const releaseRingCatalog = {
     expoUpdatesChannel: 'internaldev',
     supportsMobileStoreSubmit: false,
   },
-} as const satisfies Record<ReleaseRingId, ReleaseRingCatalogEntry>;
+});
 
-export function getReleaseRingCatalogEntry(id: ReleaseRingId): ReleaseRingCatalogEntry {
+/**
+ * @param {typeof RELEASE_RING_IDS[number]} id
+ * @returns {ReleaseRingCatalogEntry}
+ */
+function getReleaseRingCatalogEntry(id) {
   const entry = releaseRingCatalog[id];
   if (!entry) {
     throw new Error(`Unknown release ring: ${String(id)}`);
@@ -96,19 +106,30 @@ export function getReleaseRingCatalogEntry(id: ReleaseRingId): ReleaseRingCatalo
   return entry;
 }
 
-export function listReleaseRingCatalogEntries(): readonly ReleaseRingCatalogEntry[] {
+/**
+ * @returns {readonly ReleaseRingCatalogEntry[]}
+ */
+function listReleaseRingCatalogEntries() {
   return RELEASE_RING_IDS.map((id) => releaseRingCatalog[id]);
 }
 
-export function isPublicReleaseRingId(id: ReleaseRingId): boolean {
+/**
+ * @param {typeof RELEASE_RING_IDS[number]} id
+ */
+function isPublicReleaseRingId(id) {
   return getReleaseRingCatalogEntry(id).visibility === 'public';
 }
 
-export function getReleaseRingPublicLabel(id: ReleaseRingId): PublicReleaseRingLabel {
+/**
+ * @param {typeof RELEASE_RING_IDS[number]} id
+ * @returns {PublicReleaseRingLabel}
+ */
+function getReleaseRingPublicLabel(id) {
   return getReleaseRingCatalogEntry(id).publicLabel;
 }
 
-const releaseRingAliases: Readonly<Record<string, ReleaseRingId>> = {
+/** @type {Readonly<Record<string, typeof RELEASE_RING_IDS[number]>>} */
+const releaseRingAliases = Object.freeze({
   stable: 'stable',
   production: 'stable',
   prod: 'stable',
@@ -125,26 +146,54 @@ const releaseRingAliases: Readonly<Record<string, ReleaseRingId>> = {
   'internal-dev': 'internaldev',
   internal_dev: 'internaldev',
   development: 'internaldev',
-};
+});
 
-export function normalizeReleaseRingId(raw: unknown): ReleaseRingId | '' {
+/**
+ * @param {unknown} raw
+ * @returns {typeof RELEASE_RING_IDS[number] | ''}
+ */
+function normalizeReleaseRingId(raw) {
   const value = String(raw ?? '').trim().toLowerCase();
   if (!value) return '';
   return releaseRingAliases[value] ?? '';
 }
 
-export function listPublicReleaseRingCatalogEntries(): readonly ReleaseRingCatalogEntry[] {
+/**
+ * @returns {readonly ReleaseRingCatalogEntry[]}
+ */
+function listPublicReleaseRingCatalogEntries() {
   return listReleaseRingCatalogEntries().filter((entry) => entry.visibility === 'public');
 }
 
-export function listPublicReleaseRingLabels(): readonly PublicReleaseRingLabel[] {
+/**
+ * @returns {readonly PublicReleaseRingLabel[]}
+ */
+function listPublicReleaseRingLabels() {
   return PUBLIC_RELEASE_RING_IDS.map((id) => releaseRingCatalog[id].publicLabel);
 }
 
-export function normalizePublicReleaseRingId(raw: unknown): PublicReleaseRingId | '' {
+/**
+ * @param {unknown} raw
+ * @returns {typeof PUBLIC_RELEASE_RING_IDS[number] | ''}
+ */
+function normalizePublicReleaseRingId(raw) {
   const ringId = normalizeReleaseRingId(raw);
   if (!ringId || !isPublicReleaseRingId(ringId)) {
     return '';
   }
-  return ringId as PublicReleaseRingId;
+  return ringId;
 }
+
+module.exports = {
+  RELEASE_RING_IDS,
+  PUBLIC_RELEASE_RING_IDS,
+  getReleaseRingCatalogEntry,
+  listReleaseRingCatalogEntries,
+  isPublicReleaseRingId,
+  getReleaseRingPublicLabel,
+  normalizeReleaseRingId,
+  listPublicReleaseRingCatalogEntries,
+  listPublicReleaseRingLabels,
+  normalizePublicReleaseRingId,
+};
+

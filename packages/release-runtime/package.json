@@ -36,12 +36,13 @@
     },
     "./releaseRings": {
       "types": "./dist/releaseRings.d.ts",
-      "require": "./dist/releaseRings.cjs",
+      "require": "./releaseRings.cjs",
       "default": "./dist/releaseRings.js"
     }
   },
   "files": [
     "dist",
+    "releaseRings.cjs",
     "package.json",
     "README.md"
   ],
