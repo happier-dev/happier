@@ -181,6 +181,25 @@ export function assertCargoAvailableForTauri({ env = process.env, resolveUserHom
   );
 }
 
+function isExecutablePath(path) {
+  const candidate = String(path ?? '').trim();
+  if (!candidate) return false;
+  if (!existsSync(candidate)) return false;
+  try {
+    accessSync(candidate, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeFilesystemPath(value) {
+  const s = String(value ?? '').trim();
+  if (!s) return false;
+  if (s.includes('/') || s.includes('\\')) return true;
+  return /^[A-Za-z]:[\\/]/.test(s);
+}
+
 function prependPathEntry(env, entry) {
   const candidate = String(entry ?? '').trim();
   const delimiter = process.platform === 'win32' ? ';' : ':';
@@ -239,9 +258,15 @@ export function buildTauriRuntimeEnv({ env = process.env, resolveUserHomeDir } =
   const cargoBinDir = resolveCargoBinDir({ env: nextEnv, resolveUserHomeDir });
   if (cargoBinDir) {
     prependPathEntry(nextEnv, cargoBinDir);
-    if (!String(nextEnv.CARGO ?? '').trim()) {
-      const cargoBinaryName = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
-      nextEnv.CARGO = join(cargoBinDir, cargoBinaryName);
+    const cargoBinaryName = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
+    const resolvedCargoBinary = join(cargoBinDir, cargoBinaryName);
+    const existingCargo = String(nextEnv.CARGO ?? '').trim();
+    const shouldOverrideExistingCargo =
+      !existingCargo
+      || !looksLikeFilesystemPath(existingCargo)
+      || !isExecutablePath(existingCargo);
+    if (shouldOverrideExistingCargo) {
+      nextEnv.CARGO = resolvedCargoBinary;
     }
     if (resolvedHomeDir) {
       if (String(nextEnv.HOME ?? '').trim() !== resolvedHomeDir) {

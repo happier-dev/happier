@@ -1,5 +1,5 @@
 import './utils/env/env.mjs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -152,6 +152,17 @@ async function main() {
     resolveUserHomeDir,
   });
   assertCargoAvailableForTauri({ env: runtimeEnv, resolveUserHomeDir });
+  if (String(runtimeEnv.HAPPIER_STACK_TUI ?? '').trim() === '1') {
+    const pathEntries = String(runtimeEnv.PATH ?? '')
+      .split(process.platform === 'win32' ? ';' : ':')
+      .map((entry) => String(entry ?? '').trim())
+      .filter(Boolean);
+    const pathHead = pathEntries.slice(0, 4).join(process.platform === 'win32' ? ';' : ':');
+    // eslint-disable-next-line no-console
+    console.log(
+      `[tauri-dev] env preflight: HOME=${String(runtimeEnv.HOME ?? '')} CARGO=${String(runtimeEnv.CARGO ?? '')} PATH=${pathHead}${pathEntries.length > 4 ? ':…' : ''}`
+    );
+  }
 
   const baseConfig = await readJsonFile(uiLayout.configPath);
   const overlayConfig = await readJsonFile(uiLayout.publicDevConfigPath);
@@ -161,6 +172,37 @@ async function main() {
     devUrl,
     env: envWithStackDefaults,
   });
+
+  // Best-effort: refresh the stack-scoped dev config under the stack storage dir.
+  // Some workflows (or older stack tooling) may still refer to this path; keeping it current prevents
+  // drift like stale `externalBin` entries causing hard-to-debug native build failures.
+  if (!json && stackName) {
+    try {
+      const stackBaseDir = getDefaultAutostartPaths(envWithStackDefaults).baseDir;
+      const stackConfigPath = join(stackBaseDir, 'tauri.dev.stack.json');
+      const stackDevConfig = buildStackTauriDevConfig({
+        baseConfig,
+        overlayConfig,
+        devUrl,
+        env: envWithStackDefaults,
+      });
+      stackDevConfig.build = {
+        ...(stackDevConfig.build ?? {}),
+        beforeDevCommand: null,
+        beforeBuildCommand: null,
+      };
+      if (stackDevConfig.bundle && typeof stackDevConfig.bundle === 'object') {
+        stackDevConfig.bundle = {
+          ...stackDevConfig.bundle,
+          createUpdaterArtifacts: false,
+        };
+      }
+      await mkdir(dirname(stackConfigPath), { recursive: true }).catch(() => {});
+      await writeFile(stackConfigPath, JSON.stringify(stackDevConfig, null, 2), 'utf-8');
+    } catch {
+      // ignore (non-fatal)
+    }
+  }
   const configPath = uiLayout.publicDevConfigPath;
   const configOverride = {
     identifier: mergedConfig.identifier,
@@ -180,9 +222,10 @@ async function main() {
       rootDir,
       repoRootDir,
       uiDir,
-      env: envWithStackDefaults,
+      env: runtimeEnv,
       configPath,
       configOverride,
+      resolveUserHomeDir,
     });
     printResult({
       json,
@@ -228,12 +271,13 @@ async function main() {
     rootDir,
     repoRootDir,
     uiDir,
-    env: envWithStackDefaults,
+    env: runtimeEnv,
     configPath,
     configOverride,
+    resolveUserHomeDir,
   });
   spawnProc('tauri', tauriInvocation.command, tauriInvocation.args, {
-    ...(tauriInvocation.env ?? envWithStackDefaults),
+    ...(tauriInvocation.env ?? runtimeEnv),
     CI: 'false',
   }, {
     cwd: tauriInvocation.cwd,

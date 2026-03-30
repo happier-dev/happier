@@ -376,6 +376,56 @@ test('buildTauriRuntimeEnv prepends the current Node binary directory for GUI-la
   }
 });
 
+test('buildTauriRuntimeEnv replaces an invalid CARGO env var with the resolved cargo binary path', async () => {
+  if (process.platform === 'win32') {
+    // Environment variable semantics differ on Windows; keep the fix scoped to POSIX to avoid flaky shebang execution.
+    return;
+  }
+
+  const cargoHome = await mkdir(`${tmpdir()}/happier-tauri-invalid-cargo-env-${Date.now()}`, { recursive: true });
+  const cargoBinDir = `${cargoHome}/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/cargo`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      CARGO_HOME: cargoHome,
+      CARGO: '/no/such/cargo',
+    },
+  });
+
+  assert.equal(env.CARGO, cargoBinary);
+});
+
+test('buildTauriRuntimeEnv overrides a non-path CARGO env var with the resolved cargo binary path', async () => {
+  if (process.platform === 'win32') {
+    // Environment variable semantics differ on Windows; keep the fix scoped to POSIX to avoid flaky shebang execution.
+    return;
+  }
+
+  const cargoHome = await mkdir(`${tmpdir()}/happier-tauri-nonpath-cargo-env-${Date.now()}`, { recursive: true });
+  const cargoBinDir = `${cargoHome}/bin`;
+  await mkdir(cargoBinDir, { recursive: true });
+  const cargoBinary = `${cargoBinDir}/cargo`;
+  await writeFile(cargoBinary, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(cargoBinary, 0o755);
+
+  const env = buildTauriRuntimeEnv({
+    env: {
+      ...process.env,
+      PATH: '/usr/bin:/bin',
+      CARGO_HOME: cargoHome,
+      CARGO: 'cargo',
+    },
+  });
+
+  assert.equal(env.CARGO, cargoBinary);
+});
+
 test('buildStackTauriDevProcessInvocation fails fast with a friendly error when cargo is unavailable', async () => {
   const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-missing-cargo-${Date.now()}`, { recursive: true });

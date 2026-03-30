@@ -260,6 +260,7 @@ export function gethstackRegistry() {
         [
           'hstack remote daemon setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>] [--service <user|none>] [--ssh-config-file=<path>] [--server-url=<url>] [--webapp-url=<url>] [--public-server-url=<url>] [--json]',
           'hstack remote server setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>] [--mode <user|system>] [--self-host-server-binary <path>] [--env KEY=VALUE]... [--json]',
+          'hstack remote relay setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>] [--mode <user|system>] [--self-host-server-binary <path>] [--env KEY=VALUE]... [--json]',
         ],
       description: 'Remote setup helpers (SSH verified bootstrap + daemon/server setup)',
     },

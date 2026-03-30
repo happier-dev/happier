@@ -135,59 +135,6 @@ function usageText() {
   ].join('\n');
 }
 
-export function splitRemoteServerSetupEnvValues(envValues) {
-  const values = Array.isArray(envValues) ? envValues : [];
-  const serviceEnvValues = [];
-  let selfHostServerBinary = '';
-
-  for (const raw of values) {
-    const entry = String(raw ?? '').trim();
-    if (!entry) continue;
-    const eq = entry.indexOf('=');
-    const key = (eq >= 0 ? entry.slice(0, eq) : entry).trim();
-    const value = eq >= 0 ? entry.slice(eq + 1) : '';
-
-    if (key === 'HAPPIER_SELF_HOST_SERVER_BINARY') {
-      selfHostServerBinary = value.trim();
-      continue;
-    }
-
-    serviceEnvValues.push(entry);
-  }
-
-  return { serviceEnvValues, selfHostServerBinary };
-}
-
-export function buildRemoteSelfHostInstallCommand({ channel, mode, envValues, remoteHstack = '$HOME/.happier/bin/hstack' }) {
-  const channelLabel = displayChannel(channel);
-
-  const split = splitRemoteServerSetupEnvValues(envValues);
-  const envArgs = split.serviceEnvValues.map((value) => `--env ${safeBashSingleQuote(value)}`).join(' ');
-
-  // `hstack self-host install` only reads this override from process.env (not from --env),
-  // so forward it via `env VAR=...` and do not persist it into the installed service env file.
-  const installEnvParts = [];
-  if (split.selfHostServerBinary) {
-    installEnvParts.push(`HAPPIER_SELF_HOST_SERVER_BINARY=${safeBashSingleQuote(split.selfHostServerBinary)}`);
-  }
-  const installEnvPrefix = installEnvParts.length ? `env ${installEnvParts.join(' ')} ` : '';
-
-  const baseSelfHostCmd = [
-    remoteHstack,
-    'self-host',
-    'install',
-    `--channel=${channelLabel}`,
-    `--mode=${mode}`,
-    '--without-cli',
-    '--non-interactive',
-    '--json',
-  ].join(' ');
-  const sudoPrefix = mode === 'system' ? 'sudo -E ' : '';
-  const selfHostCmd = `${sudoPrefix}${installEnvPrefix}${baseSelfHostCmd}${envArgs ? ` ${envArgs}` : ''}`;
-
-  return { selfHostCmd };
-}
-
 function resolveChannel(argv) {
   if (argv.includes('--preview')) return 'preview';
   if (argv.includes('--dev')) return 'publicdev';
