@@ -52,9 +52,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         color: theme.colors.groupped.sectionTitle,
         fontSize: Platform.select({ ios: 13, default: 14 }),
         lineHeight: Platform.select({ ios: 18, default: 20 }),
-        letterSpacing: Platform.select({ ios: -0.08, default: 0.1 }),
-        textTransform: 'uppercase',
-        fontWeight: Platform.select({ ios: 'normal', default: '500' }),
+        letterSpacing: -0.08,
+        textTransform: 'uppercase'
     },
     contentContainerOuter: {
         backgroundColor: theme.colors.surface,

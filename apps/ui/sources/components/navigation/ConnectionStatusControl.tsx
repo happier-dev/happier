@@ -47,7 +47,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         overflow: 'visible',
     },
     statusText: {
-        fontWeight: '500',
         lineHeight: 16,
         ...Typography.default(),
         flexGrow: 0,

@@ -103,17 +103,17 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                         numberOfLines={1}
                     >
                         {props.title}
-                        {showSubtitleInline ? (
-                            <Text style={styles.subtitleInline} numberOfLines={1}>
-                                {` — ${props.subtitle}`}
-                            </Text>
-                        ) : null}
-                        {showStatusInline ? (
-                            <Text style={styles.statusInline} numberOfLines={1}>
-                                {` · ${props.statusText}`}
-                            </Text>
-                        ) : null}
                     </Text>
+                    {showSubtitleInline ? (
+                        <Text style={styles.subtitleInline} numberOfLines={1}>
+                            {`${props.subtitle}`}
+                        </Text>
+                    ) : null}
+                    {showStatusInline ? (
+                        <Text style={styles.statusInline} numberOfLines={1}>
+                            {` · ${props.statusText}`}
+                        </Text>
+                    ) : null}
                 </View>
                 {props.rightElement ? <View style={styles.actions}>{props.rightElement}</View> : null}
             </Pressable>
@@ -194,23 +194,33 @@ const styles = StyleSheet.create((theme, _runtime) => ({
     },
     text: {
         flex: 1,
+        flexDirection: 'row',
         minWidth: 0,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        gap: 8,
+        fontSize: 13,
     },
     title: {
-        fontSize: 14,
+        fontSize: 13,
         lineHeight: 20,
-        fontWeight: '600',
+        ...Typography.default('semiBold'),
         color: theme.colors.text,
+        flexShrink: 0,
     },
     titleCompact: {
         fontSize: 13,
         lineHeight: 18,
     },
     subtitleInline: {
+        fontSize: 13,
         color: theme.colors.textSecondary,
+        ...Typography.default('regular'),
     },
     statusInline: {
+        fontSize: 13,
         opacity: 0.4,
+        ...Typography.default('regular'),
     },
     actions: {
         flexDirection: 'row',

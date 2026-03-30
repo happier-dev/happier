@@ -70,8 +70,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         overflow: 'visible',
     },
     titleText: {
-        fontSize: 17,
-        fontWeight: '600',
+        fontSize: 16,
         color: theme.colors.header.tint,
         ...Typography.default('semiBold'),
     },
@@ -115,7 +114,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     statusText: {
         fontSize: 11,
-        fontWeight: '500',
+        ...Typography.default('regular'),
         lineHeight: 16,
         ...Typography.default(),
     },

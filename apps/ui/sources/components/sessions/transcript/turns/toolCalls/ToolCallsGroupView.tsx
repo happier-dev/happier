@@ -19,6 +19,7 @@ import { resolveMessageRouteIdForDisplay } from '@/sync/domains/messages/message
 import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
+import { Typography } from '@/constants/Typography';
 
 function shouldRenderGroupedToolCallWithMessageView(
     message: ToolCallMessage,
@@ -356,7 +357,7 @@ const styles = StyleSheet.create((theme) => ({
         flexGrow: 1,
         color: theme.colors.text,
         fontSize: 13,
-        fontWeight: '600',
+        ...Typography.default('semiBold'),
     },
     subtitle: {
         color: theme.colors.agentEventText,
@@ -389,7 +390,7 @@ const styles = StyleSheet.create((theme) => ({
         width: 2,
         borderRadius: 2,
         backgroundColor: theme.colors.agentEventText,
-        opacity: 0.42,
+        opacity: 0.1,
         marginBottom: 7
     },
     contentBody: {
@@ -417,7 +418,7 @@ const styles = StyleSheet.create((theme) => ({
     previewMore: {
         paddingHorizontal: 0,
         paddingTop: 6,
-        paddingBottom: 2,
+        paddingBottom: 6,
         alignSelf: 'flex-start',
     },
     previewMorePressed: {
@@ -425,8 +426,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     previewMoreText: {
         color: theme.colors.textSecondary,
-        fontSize: 12,
-        fontWeight: '600',
+        ...Typography.default('regular'),
+        fontSize: 13,
     },
     body: {
         paddingBottom: 6,

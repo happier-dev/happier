@@ -141,7 +141,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'center',
     },
     title: {
-        ...Typography.default('regular'),
+        ...Typography.default('semiBold'),
         ...ITEM_TITLE_TEXT_METRICS.comfortable,
     },
     titleCompact: {

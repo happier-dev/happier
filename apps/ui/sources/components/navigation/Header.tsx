@@ -130,7 +130,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
         if (typeof options.headerTitle === 'string') {
             title = (
                 <Text style={[
-                    { fontSize: 17, fontWeight: '600', textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
+                    { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
                     Typography.default('semiBold'),
                     options.headerTitleStyle
                 ]}>
@@ -144,7 +144,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
     } else if (typeof options.title === 'string') {
         title = (
             <Text style={[
-                { fontSize: 17, fontWeight: '600', textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
+                { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
                 Typography.default('semiBold'),
                 options.headerTitleStyle
             ]}>
@@ -237,8 +237,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'flex-end',
     },
     title: {
-        fontSize: 17,
-        fontWeight: '600',
+        fontSize: 16,
         textAlign: 'center',
         color: theme.colors.header.tint,
         ...Typography.default('semiBold'),

@@ -38,9 +38,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
     },
     titleText: {
-        fontSize: 17,
+        fontSize: 16,
         color: theme.colors.header.tint,
-        fontWeight: '600',
         ...Typography.default('semiBold'),
     },
     subtitleText: {
@@ -57,8 +56,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         marginRight: 4,
     },
     statusText: {
-        fontSize: 12,
-        fontWeight: '500',
+        fontSize: 11,
         lineHeight: 16,
         ...Typography.default(),
     },

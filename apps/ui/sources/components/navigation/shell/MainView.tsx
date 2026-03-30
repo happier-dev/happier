@@ -112,9 +112,8 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
     },
     titleText: {
-        fontSize: 17,
+        fontSize: 16,
         color: theme.colors.header.tint,
-        fontWeight: '600',
         ...Typography.default('semiBold'),
     },
     statusContainer: {
@@ -123,8 +122,7 @@ const styles = StyleSheet.create((theme) => ({
         marginTop: -2,
     },
     statusText: {
-        fontSize: 12,
-        fontWeight: '500',
+        fontSize: 11,
         lineHeight: 16,
         ...Typography.default(),
     },
