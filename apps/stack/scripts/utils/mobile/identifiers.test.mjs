@@ -28,9 +28,9 @@ test('stackSlugForMobileIds derives a stable slug', () => {
 
 test('defaultDevClientIdentity is stable and safe', () => {
   const id = defaultDevClientIdentity({ user: 'Leeroy' });
-  assert.equal(id.iosAppName, 'Happier Dev');
-  assert.equal(id.scheme, 'happier-dev');
-  assert.equal(id.iosBundleId, 'dev.happier.app.development');
+  assert.equal(id.iosAppName, 'Happier (internal dev)');
+  assert.equal(id.scheme, 'happier-internaldev');
+  assert.equal(id.iosBundleId, 'dev.happier.app.internaldev');
 });
 
 test('defaultStackReleaseIdentity is per-stack', () => {

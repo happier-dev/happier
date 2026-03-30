@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  extractTuiLaunchOptions,
   inferTuiStackName,
   isTuiHelpRequest,
   isTuiRestartableForwardedArgs,
@@ -20,6 +21,25 @@ test('normalizeTuiForwardedArgs defaults to dev when only flags are provided', (
 
 test('normalizeTuiForwardedArgs preserves explicit args', () => {
   assert.deepEqual(normalizeTuiForwardedArgs(['stack', 'dev', 'exp1']), ['stack', 'dev', 'exp1']);
+});
+
+test('extractTuiLaunchOptions strips Tauri flags from child args and preserves forwarded commands', () => {
+  assert.deepEqual(extractTuiLaunchOptions([]), {
+    forwardedArgs: ['dev'],
+    withTauri: false,
+  });
+  assert.deepEqual(extractTuiLaunchOptions(['--tauri']), {
+    forwardedArgs: ['dev'],
+    withTauri: true,
+  });
+  assert.deepEqual(extractTuiLaunchOptions(['--tauri', '--mobile']), {
+    forwardedArgs: ['dev', '--mobile'],
+    withTauri: true,
+  });
+  assert.deepEqual(extractTuiLaunchOptions(['stack', 'dev', 'exp1', '--with-tauri']), {
+    forwardedArgs: ['stack', 'dev', 'exp1'],
+    withTauri: true,
+  });
 });
 
 test('isTuiHelpRequest only matches explicit help', () => {

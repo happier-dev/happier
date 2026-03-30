@@ -33,6 +33,10 @@ import {
   renderWindowsScheduledTaskWrapperPs1,
   resolveServiceBackend,
 } from '@happier-dev/cli-common/service';
+import {
+  parseEnvText as parseEnvTextShared,
+  renderSelfHostServerEnvText as renderSelfHostServerEnvTextShared,
+} from '@happier-dev/cli-common/firstPartyRuntime';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
 import {
   PUBLIC_RELEASE_RING_IDS,
@@ -204,12 +208,6 @@ export function decideSelfHostAutoUpdateReconcile(state, { fallbackIntervalMinut
   };
 }
 
-function assertLinux() {
-  if (process.platform !== 'linux') {
-    throw new Error('[self-host] Happier Self-Host currently supports Linux only.');
-  }
-}
-
 function assertRoot() {
   if (typeof process.getuid !== 'function') return;
   if (process.getuid() !== 0) {
@@ -278,9 +276,20 @@ function displayChannel(channel) {
 export function resolveSelfHostReleaseTargets(channel) {
   const normalizedChannel = normalizeChannel(channel);
   const suffix = resolveSelfHostReleaseSuffix(normalizedChannel);
+  const stableServerTag = `server-${resolveSelfHostReleaseSuffix('stable')}`;
+  const previewServerTag = `server-${resolveSelfHostReleaseSuffix('preview')}`;
+  const channelServerTag = `server-${suffix}`;
+  const serverTags = Array.from(new Set(
+    normalizedChannel === 'stable'
+      ? [stableServerTag]
+      : normalizedChannel === 'preview'
+        ? [previewServerTag, stableServerTag]
+        : [channelServerTag, previewServerTag, stableServerTag],
+  ));
   return {
     channel: normalizedChannel,
-    serverTag: `server-${suffix}`,
+    serverTag: serverTags[0],
+    serverTags,
     uiWebTags: normalizedChannel === 'stable'
       ? ['ui-web-stable']
       : normalizedChannel === 'preview'
@@ -524,90 +533,21 @@ export function renderServerEnvFile({
   arch = process.arch,
   platform = process.platform,
 }) {
-  const normalizedDataDir = String(dataDir ?? '').replace(/\/+$/, '') || String(dataDir ?? '');
-  const p = String(platform ?? '').trim() || process.platform;
-  const a = String(arch ?? '').trim() || process.arch;
-  const hasBunRuntime = typeof globalThis.Bun !== 'undefined';
-  // NOTE: Bun's native sqlite module (`bun:sqlite`) can hang when used inside launchd-managed binaries on macOS.
-  // We pre-apply migrations at install time in the self-host installer on that path instead.
-  const autoMigrateSqlite = p === 'darwin' && hasBunRuntime ? '0' : '1';
-  const migrationsDir =
-    p === 'win32'
-      ? win32Path.join(String(dataDir ?? ''), 'migrations', 'sqlite')
-      : `${normalizedDataDir}/migrations/sqlite`;
-  const dbPath =
-    p === 'win32'
-      ? win32Path.join(String(dataDir ?? ''), 'happier-server-light.sqlite')
-      : `${normalizedDataDir}/happier-server-light.sqlite`;
-  const databaseUrl =
-    p === 'win32'
-      ? (() => {
-          const normalized = String(dbPath).replaceAll('\\', '/');
-          if (/^[a-zA-Z]:\//.test(normalized)) return `file:///${normalized}`;
-          if (normalized.startsWith('//')) return `file:${normalized}`;
-          return `file:///${normalized}`;
-        })()
-      : `file:${dbPath}`;
-  const uiDirRaw = typeof uiDir === 'string' && uiDir.trim() ? uiDir.trim() : '';
-  const serverBinDirRaw = typeof serverBinDir === 'string' && serverBinDir.trim() ? serverBinDir.trim() : '';
-  const prismaEngineCandidates = [];
-  if (serverBinDirRaw && p === 'darwin' && a === 'arm64') {
-    prismaEngineCandidates.push(
-      join(serverBinDirRaw, 'node_modules', '.prisma', 'client', 'libquery_engine-darwin-arm64.dylib.node'),
-      join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-darwin-arm64.dylib.node'),
-    );
-  } else if (serverBinDirRaw && p === 'linux' && a === 'arm64') {
-    prismaEngineCandidates.push(
-      join(serverBinDirRaw, 'node_modules', '.prisma', 'client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'),
-      join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'),
-    );
-  } else if (serverBinDirRaw && p === 'linux' && a === 'x64') {
-    prismaEngineCandidates.push(
-      join(serverBinDirRaw, 'node_modules', '.prisma', 'client', 'libquery_engine-debian-openssl-3.0.x.so.node'),
-      join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-debian-openssl-3.0.x.so.node'),
-    );
-  }
-  const prismaEnginePath = prismaEngineCandidates.find((candidate) => existsSync(candidate)) || '';
-  const nodeModulesPath = serverBinDirRaw ? join(serverBinDirRaw, 'node_modules') : '';
-  return [
-    `PORT=${port}`,
-    `HAPPIER_SERVER_HOST=${host}`,
-    ...(uiDirRaw ? [`HAPPIER_SERVER_UI_DIR=${uiDirRaw}`] : []),
-    'METRICS_ENABLED=false',
-    // Bun-compiled server binaries currently exhibit unstable pglite path resolution in systemd environments.
-    'HAPPIER_DB_PROVIDER=sqlite',
-    `DATABASE_URL=${databaseUrl}`,
-    'HAPPIER_FILES_BACKEND=local',
-    ...(nodeModulesPath ? [`NODE_PATH=${nodeModulesPath}`] : []),
-    ...(prismaEnginePath
-      ? [
-          'PRISMA_CLIENT_ENGINE_TYPE=library',
-          `PRISMA_QUERY_ENGINE_LIBRARY=${prismaEnginePath}`,
-        ]
-      : []),
-    `HAPPIER_SQLITE_AUTO_MIGRATE=${autoMigrateSqlite}`,
-    `HAPPIER_SQLITE_MIGRATIONS_DIR=${migrationsDir}`,
-    `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`,
-    `HAPPIER_SERVER_LIGHT_FILES_DIR=${filesDir}`,
-    `HAPPIER_SERVER_LIGHT_DB_DIR=${dbDir}`,
-    '',
-  ].join('\n');
+  return renderSelfHostServerEnvTextShared({
+    port,
+    host,
+    dataDir,
+    filesDir,
+    dbDir,
+    uiDir,
+    serverBinDir,
+    arch,
+    platform,
+  });
 }
 
 function parseEnvText(raw) {
-  const env = {};
-  for (const line of String(raw ?? '').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (trimmed.startsWith('#')) continue;
-    const idx = trimmed.indexOf('=');
-    if (idx <= 0) continue;
-    const k = trimmed.slice(0, idx).trim();
-    const v = trimmed.slice(idx + 1);
-    if (!k) continue;
-    env[k] = v;
-  }
-  return env;
+  return parseEnvTextShared(raw);
 }
 
 function listEnvKeysInOrder(raw) {
@@ -1770,13 +1710,23 @@ async function installFromRelease({ product, binaryName, config, explicitBinaryP
     });
   }
 
-  const { serverTag: channelTag } = resolveSelfHostReleaseTargets(config.channel);
-  const release = await fetchGitHubReleaseByTag({
+  const { serverTags: tags } = resolveSelfHostReleaseTargets(config.channel);
+  const resolvedRelease = await fetchFirstGitHubReleaseByTags({
     githubRepo: config.githubRepo,
-    tag: channelTag,
+    tags,
     userAgent: 'happier-self-host-installer',
     githubToken: String(process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? ''),
+  }).catch((e) => {
+    const status = Number(e?.status);
+    if (status === 404) return null;
+    throw e;
   });
+
+  if (!resolvedRelease) {
+    throw new Error(`[self-host] server release tag not found (${tags.join(', ')})`);
+  }
+
+  const { release, tag: channelTag } = resolvedRelease;
   const os = normalizeOs(config.platform);
   const resolved = resolveReleaseAssetBundle({
     assets: release?.assets,

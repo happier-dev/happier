@@ -10,7 +10,7 @@ test('hstack remote daemon setup requires --ssh', (t) => {
   assert.match(res.stderr ?? '', /Missing required flag: --ssh/i);
 });
 
-test('hstack remote daemon setup (service=user) installs, pairs, and installs service', (t) => {
+test('hstack remote daemon setup delegates to happier machine bootstrap with relay targeting', (t) => {
   const h = createRemoteDaemonSetupHarness(t, { prefix: 'hstack-remote-daemon-user-' });
   const res = h.runRemoteCommand([
     'daemon',
@@ -19,51 +19,36 @@ test('hstack remote daemon setup (service=user) installs, pairs, and installs se
     'dev@host',
     '--preview',
     '--server-url=https://example.invalid',
+    '--public-server-url=https://public.example.invalid',
     '--json',
   ]);
   assert.equal(res.status, 0, res.stderr);
 
   const log = h.readInvocationsLog();
-  const invocations = log
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => JSON.parse(l));
-  const sshCalls = invocations.filter((i) => i?.bin === 'ssh' && Array.isArray(i.argv));
-  assert.ok(sshCalls.length >= 1, `expected ssh invocations\n${log}`);
-  // Remote commands are executed via `ssh <target> bash -lc '<command>'`. Without quoting, ssh will
-  // concatenate args and the remote bash will treat only the first word as the `-c` command string.
-  for (const call of sshCalls) {
-    const cmd = String(call.argv[3] ?? '');
-    assert.ok(cmd.startsWith("'") && cmd.endsWith("'"), `expected quoted bash -lc command arg\n${log}`);
-  }
-  const serverSetIndex = sshCalls.findIndex((c) => String(c.argv?.[3] ?? '').includes(' server set '));
-  const authRequestIndex = sshCalls.findIndex((c) => String(c.argv?.[3] ?? '').includes('auth request'));
-  assert.ok(serverSetIndex >= 0, `expected remote server set before auth request\n${log}`);
-  assert.ok(authRequestIndex >= 0, `expected remote auth request\n${log}`);
-  assert.ok(serverSetIndex < authRequestIndex, `expected server set to run before auth request\n${log}`);
-
-  const serverSetCmd = String(sshCalls[serverSetIndex]?.argv?.[3] ?? '');
-  assert.ok(serverSetCmd.includes('https://example.invalid'), `expected remote server set to include --server-url value\n${log}`);
-  assert.ok(log.includes('"bin":"ssh"'), `expected ssh invocations\n${log}`);
-  assert.ok(log.includes('HAPPIER_CHANNEL=preview'), `expected preview channel in remote installer\n${log}`);
-  assert.ok(log.includes('HAPPIER_WITH_DAEMON=0'), `expected remote installer to skip auto-service install\n${log}`);
-  assert.ok(log.includes('auth request'), `expected remote auth request\n${log}`);
-  assert.ok(log.includes('auth wait'), `expected remote auth wait\n${log}`);
   assert.ok(log.includes('"bin":"happier"'), `expected local happier invocation\n${log}`);
-  assert.ok(log.includes('auth","approve'), `expected local auth approve invocation\n${log}`);
-  assert.ok(log.includes('--server-url=https://example.invalid'), `expected server-url passed to local approve\n${log}`);
-  assert.ok(log.includes('daemon service install'), `expected service install on remote\n${log}`);
-  assert.ok(log.includes('daemon service start'), `expected service start on remote\n${log}`);
+  assert.ok(log.includes('"machine","bootstrap"'), `expected machine bootstrap delegation\n${log}`);
+  assert.ok(log.includes('--server-url=https://example.invalid'), `expected server-url passed to local happier invocation\n${log}`);
+  assert.ok(log.includes('--public-server-url=https://public.example.invalid'), `expected public-server-url passed to local happier invocation\n${log}`);
+  assert.ok(!log.includes('"bin":"ssh"'), `expected no direct ssh orchestration in remote wrapper\n${log}`);
 });
 
-test('hstack remote daemon setup --service none skips service install/start', (t) => {
+test('hstack remote daemon setup forwards ssh config file and service mode to happier machine bootstrap', (t) => {
   const h = createRemoteDaemonSetupHarness(t, { prefix: 'hstack-remote-daemon-none-' });
-  const res = h.runRemoteCommand(['daemon', 'setup', '--ssh', 'dev@host', '--service', 'none', '--json']);
+  const res = h.runRemoteCommand([
+    'daemon',
+    'setup',
+    '--ssh',
+    'dev@host',
+    '--service',
+    'none',
+    '--ssh-config-file',
+    '/tmp/lima-ssh.config',
+    '--json',
+  ]);
   assert.equal(res.status, 0, res.stderr);
 
   const log = h.readInvocationsLog();
-  assert.ok(log.includes('auth request'), `expected remote auth request\n${log}`);
-  assert.ok(!log.includes('daemon service install'), `expected no service install\n${log}`);
-  assert.ok(!log.includes('daemon service start'), `expected no service start\n${log}`);
+  assert.ok(log.includes('"bin":"happier"'), `expected local happier invocation\n${log}`);
+  assert.ok(log.includes('--service-mode=none'), `expected service none delegation\n${log}`);
+  assert.ok(log.includes('--ssh-config-file=/tmp/lima-ssh.config'), `expected ssh config delegation\n${log}`);
 });

@@ -382,3 +382,48 @@ test('installed SwiftBar assets prefer the stack repo helper from HAPPIER_STACK_
     `helper stdout:\n${helperRes.stdout}`
   );
 });
+
+test('SwiftBar tailscale fallback uses the shared parser to normalize the reported HTTPS URL', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const stackRoot = dirname(scriptsDir);
+  const repoRoot = resolve(stackRoot, '..', '..');
+
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-swiftbar-tailscale-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  });
+
+  const fakeHome = join(tmp, 'home');
+  const fakeBin = join(tmp, 'bin');
+  await mkdir(fakeBin, { recursive: true });
+
+  const helperRes = runBashInline(
+    [
+      'tailscale() {',
+      '  if [[ "${1:-}" == "serve" && "${2:-}" == "status" ]]; then',
+      '    printf "https://my-machine.tailnet.ts.net/\\n"',
+      '    printf "|-- / proxy http://127.0.0.1:3005\\n"',
+      '    return 0',
+      '  fi',
+      '  return 1',
+      '}',
+      'source extras/swiftbar/lib/utils.sh',
+      'source extras/swiftbar/lib/system.sh',
+      'get_tailscale_url',
+    ].join('\n'),
+    {
+      cwd: stackRoot,
+      env: {
+        HOME: fakeHome,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+        HAPPIER_STACK_HOME_DIR: fakeHome,
+        HAPPIER_STACK_CANONICAL_HOME_DIR: fakeHome,
+        HAPPIER_STACK_REPO_DIR: repoRoot,
+        hstack_ROOT_DIR: fakeHome,
+      },
+    }
+  );
+
+  assert.equal(helperRes.status, 0, `helper stderr:\n${helperRes.stderr}`);
+  assert.equal(helperRes.stdout.trim(), 'https://my-machine.tailnet.ts.net');
+});

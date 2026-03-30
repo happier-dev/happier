@@ -1,6 +1,6 @@
 import './utils/env/env.mjs';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
@@ -10,7 +10,7 @@ import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
 import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv } from './utils/server/urls.mjs';
 import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
 import { resolveStackEnvPath } from './utils/paths/paths.mjs';
-import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import { applyStackActiveServerScopeEnv, buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { resolvePreferredStackServerIdFromCliSettings } from './utils/auth/credentials_paths.mjs';
 import { readCliDistIntegrity } from './utils/cli/cliDistIntegrity.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
@@ -169,6 +169,70 @@ function readActiveServerUrlsFromCliSettings(homeDir) {
   }
 }
 
+function bestEffortSeedStackServerProfileInCliSettings({ cliHomeDir, stackName, cliIdentity, internalServerUrl, publicServerUrl }) {
+  const home = String(cliHomeDir ?? '').trim();
+  if (!home) return;
+  const serverUrl = normalizeServerUrl(internalServerUrl);
+  const webappUrl = normalizeServerUrl(publicServerUrl);
+  if (!serverUrl || !webappUrl) return;
+
+  const settingsPath = join(home, 'settings.json');
+  if (!existsSync(settingsPath)) return;
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+  } catch {
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object') return;
+  const schemaVersion = Number(parsed.schemaVersion ?? 0);
+  if (!Number.isFinite(schemaVersion) || schemaVersion < 5) return;
+
+  const serversRaw = parsed.servers && typeof parsed.servers === 'object' ? parsed.servers : {};
+  const servers = { ...serversRaw };
+
+  const matchingId = Object.entries(servers).find(([, profile]) => {
+    const coerced = coerceServerProfileFromSettings(profile);
+    if (!coerced) return false;
+    return normalizeServerUrl(coerced.serverUrl) === serverUrl || normalizeServerUrl(coerced.localServerUrl) === serverUrl;
+  })?.[0] ?? '';
+
+  const stableId = buildStackStableScopeId({ stackName, cliIdentity });
+  const targetId = matchingId || stableId;
+
+  const existing = servers[targetId] && typeof servers[targetId] === 'object' ? servers[targetId] : {};
+  const now = Date.now();
+  const nextProfile = {
+    ...existing,
+    id: targetId,
+    name: typeof existing.name === 'string' && existing.name.trim() ? existing.name : `Stack ${stackName}`,
+    serverUrl,
+    localServerUrl: serverUrl,
+    webappUrl,
+    createdAt: Number.isFinite(existing.createdAt) ? existing.createdAt : now,
+    updatedAt: now,
+    lastUsedAt: now,
+  };
+
+  const shouldWrite =
+    parsed.activeServerId !== targetId ||
+    !servers[targetId] ||
+    normalizeServerUrl(servers[targetId].serverUrl) !== serverUrl ||
+    normalizeServerUrl(servers[targetId].webappUrl) !== webappUrl;
+
+  if (!shouldWrite) return;
+
+  servers[targetId] = nextProfile;
+  const nextSettings = { ...parsed, activeServerId: targetId, servers };
+
+  try {
+    writeFileSync(settingsPath, JSON.stringify(nextSettings, null, 2) + '\n', 'utf-8');
+  } catch {
+    // best-effort
+  }
+}
+
 function resolveCliEntrypoint(cliDir) {
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
   const distIntegrity = readCliDistIntegrity(distEntrypoint);
@@ -268,6 +332,17 @@ async function main() {
   const isStackScopedInvocation =
     Boolean(String(env.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim()) ||
     Boolean(stackEnvFilePath && existsSync(stackEnvFilePath));
+
+  if (isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection) {
+    const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';
+    bestEffortSeedStackServerProfileInCliSettings({
+      cliHomeDir,
+      stackName,
+      cliIdentity,
+      internalServerUrl,
+      publicServerUrl,
+    });
+  }
 
   const settingsDefaults =
     !isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection

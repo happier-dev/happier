@@ -27,13 +27,13 @@ export function stackSlugForMobileIds(stackName) {
 
 export function defaultDevClientIdentity({ user = null } = {}) {
   return {
-    iosAppName: 'Happier Dev',
+    iosAppName: 'Happier (internal dev)',
     // IMPORTANT:
     // Keep the dev-client bundle id stable so EAS Android signing credentials (keystore) can be
     // provisioned once and reused across runs. This also matches the default development variant
     // bundle id in apps/ui/app.config.js.
-    iosBundleId: 'dev.happier.app.development',
-    scheme: 'happier-dev',
+    iosBundleId: 'dev.happier.app.internaldev',
+    scheme: 'happier-internaldev',
   };
 }
 

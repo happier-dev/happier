@@ -77,7 +77,7 @@ test('patchIosXcodeProjectsForSigningAndIdentity patches both Happydev + Happy p
 
   await mkdir(join(iosDir, 'Happydev.xcodeproj'), { recursive: true });
   await mkdir(join(iosDir, 'Happydev'), { recursive: true });
-  await writeFile(join(iosDir, 'Happydev.xcodeproj', 'project.pbxproj'), 'PRODUCT_BUNDLE_IDENTIFIER = dev.happier.app.dev;\n', 'utf-8');
+  await writeFile(join(iosDir, 'Happydev.xcodeproj', 'project.pbxproj'), 'PRODUCT_BUNDLE_IDENTIFIER = dev.happier.app.internaldev;\n', 'utf-8');
   await writeFile(join(iosDir, 'Happydev', 'Info.plist'), '<key>CFBundleDisplayName</key><string>Happy (dev)</string>\n', 'utf-8');
 
   await patchIosXcodeProjectsForSigningAndIdentity({

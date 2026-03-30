@@ -72,6 +72,78 @@ resolve_daemon_state_helper_module() {
   echo "$helper"
 }
 
+resolve_tailscale_status_helper_module() {
+  local repo_root="${HAPPIER_STACK_CLI_ROOT_DIR:-}"
+  if [[ -z "$repo_root" ]]; then
+    repo_root="${HAPPIER_STACK_REPO_DIR:-}"
+  fi
+  if [[ -z "$repo_root" ]] && [[ -n "${HAPPIER_STACK_ENV_FILE:-}" ]] && [[ -f "${HAPPIER_STACK_ENV_FILE:-}" ]]; then
+    repo_root="$(dotenv_get "${HAPPIER_STACK_ENV_FILE:-}" "HAPPIER_STACK_REPO_DIR")"
+  fi
+
+  local install_root
+  install_root="$(resolve_hstack_root_dir)"
+
+  local helper=""
+  local candidates=()
+  if [[ -n "$repo_root" ]]; then
+    candidates+=("$repo_root/apps/stack/scripts/utils/tailscale/extract_https_url_from_status.mjs")
+    candidates+=("$repo_root/scripts/utils/tailscale/extract_https_url_from_status.mjs")
+  fi
+  if [[ -n "$install_root" ]]; then
+    candidates+=("$install_root/scripts/utils/tailscale/extract_https_url_from_status.mjs")
+    candidates+=("$install_root/runtime/node_modules/@happier-dev/stack/scripts/utils/tailscale/extract_https_url_from_status.mjs")
+    candidates+=("$install_root/node_modules/@happier-dev/stack/scripts/utils/tailscale/extract_https_url_from_status.mjs")
+  fi
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      helper="$candidate"
+      break
+    fi
+  done
+
+  [[ -n "$helper" ]] || return
+  echo "$helper"
+}
+
+extract_tailscale_url_from_status_text() {
+  local status_text="$1"
+  if [[ -z "$status_text" ]]; then
+    echo ""
+    return
+  fi
+
+  local node_bin
+  node_bin="$(resolve_node_bin)"
+  if [[ -z "$node_bin" ]] || [[ ! -x "$node_bin" ]]; then
+    echo ""
+    return
+  fi
+
+  local helper
+  helper="$(resolve_tailscale_status_helper_module)"
+  if [[ ! -f "$helper" ]]; then
+    echo ""
+    return
+  fi
+
+  local resolved
+  resolved="$(printf '%s' "$status_text" | "$node_bin" --input-type=module -e '
+    const { readFileSync } = await import("node:fs");
+    const { pathToFileURL } = await import("node:url");
+    const helperUrl = pathToFileURL(process.argv[1]).href;
+    const { extractTailscaleHttpsUrlFromStatusText } = await import(helperUrl);
+    const input = readFileSync(0, "utf8");
+    const url = extractTailscaleHttpsUrlFromStatusText(input);
+    if (url) {
+      process.stdout.write(url);
+    }
+  ' "$helper" 2>/dev/null || true)"
+  echo "$resolved"
+}
+
 resolve_preferred_daemon_state_pair() {
   local cli_home_dir="$1"
   if [[ -z "$cli_home_dir" ]]; then
@@ -306,16 +378,18 @@ get_tailscale_url() {
 
   if command -v tailscale &>/dev/null; then
     local t0 t1
+    local status_text
     t0="$(swiftbar_now_ms 2>/dev/null || echo 0)"
-    url="$(tailscale serve status 2>/dev/null | grep -oE 'https://[^ ]+' | head -1 || true)"
+    status_text="$(tailscale serve status 2>/dev/null || true)"
+    url="$(extract_tailscale_url_from_status_text "$status_text")"
     t1="$(swiftbar_now_ms 2>/dev/null || echo 0)"
     swiftbar_profile_log "time" "label=tailscale_url_cli" "ms=$((t1 - t0))" "ok=$([[ -n "$url" ]] && echo 1 || echo 0)"
   fi
   if [[ -z "$url" ]] && [[ -x "/Applications/Tailscale.app/Contents/MacOS/tailscale" ]]; then
-    url="$(/Applications/Tailscale.app/Contents/MacOS/tailscale serve status 2>/dev/null | grep -oE 'https://[^ ]+' | head -1 || true)"
+    url="$(extract_tailscale_url_from_status_text "$(/Applications/Tailscale.app/Contents/MacOS/tailscale serve status 2>/dev/null || true)")"
   fi
   if [[ -z "$url" ]] && [[ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]]; then
-    url="$(/Applications/Tailscale.app/Contents/MacOS/Tailscale serve status 2>/dev/null | grep -oE 'https://[^ ]+' | head -1 || true)"
+    url="$(extract_tailscale_url_from_status_text "$(/Applications/Tailscale.app/Contents/MacOS/Tailscale serve status 2>/dev/null || true)")"
   fi
 
   echo "$url"

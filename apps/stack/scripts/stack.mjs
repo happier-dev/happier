@@ -361,12 +361,19 @@ async function cmdNew({ rootDir, argv, emit = true }) {
       json,
       requireSourceStackExists: kv.has('--copy-auth-from'),
       linkMode: linkAuth,
-    }).catch((err) => {
-      if (!json && emit) {
-        console.warn(`[stack] auth copy skipped: ${err instanceof Error ? err.message : String(err)}`);
-        console.warn(`[stack] tip: you can always run: hstack stack auth ${stackName} login`);
-      }
-    });
+    })
+      .then(() => {
+        if (kv.has('--copy-auth-from') && copyAuthFrom) {
+          stackEnv.HAPPIER_STACK_AUTH_SEED_FROM = copyAuthFrom;
+          stackEnv.HAPPIER_STACK_AUTO_AUTH_SEED = '1';
+        }
+      })
+      .catch((err) => {
+        if (!json && emit) {
+          console.warn(`[stack] auth copy skipped: ${err instanceof Error ? err.message : String(err)}`);
+          console.warn(`[stack] tip: you can always run: hstack stack auth ${stackName} login`);
+        }
+      });
   }
 
   const envPath = await writeStackEnv({ stackName, env: stackEnv });

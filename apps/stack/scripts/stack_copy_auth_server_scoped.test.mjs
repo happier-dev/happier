@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
+import { pickNextFreeTcpPort } from './utils/net/ports.mjs';
 
 function runNode(args, { cwd, env }) {
   return new Promise((resolve, reject) => {
@@ -31,7 +32,7 @@ test('hstack stack new copies server-scoped credentials from source stack', asyn
   const sandboxDir = join(tmp, 'sandbox');
   const sourceStack = 'seed-auth';
   const targetStack = 'exp-copy-auth';
-  const serverPort = 4101;
+  const serverPort = await pickNextFreeTcpPort(4101, { host: '127.0.0.1' });
   const serverUrl = `http://127.0.0.1:${serverPort}`;
 
   const monoRoot = join(workspaceDir, 'tmp', 'leeroy-wip');
@@ -89,6 +90,9 @@ test('hstack stack new copies server-scoped credentials from source stack', asyn
   const targetCred = resolveStackCredentialPaths({ cliHomeDir: targetCliHome, serverUrl, env: targetStableEnv });
   const targetCredRaw = await readFile(targetCred.serverScopedPath, 'utf-8');
   assert.equal(targetCredRaw.trim(), 'seed-credential');
+  const targetEnvRaw = await readFile(join(storageDir, targetStack, 'env'), 'utf-8');
+  assert.match(targetEnvRaw, new RegExp(`^HAPPIER_STACK_AUTH_SEED_FROM=${sourceStack}$`, 'm'));
+  assert.match(targetEnvRaw, /^HAPPIER_STACK_AUTO_AUTH_SEED=1$/m);
 
   await rm(tmp, { recursive: true, force: true });
 });
@@ -104,7 +108,7 @@ test('hstack stack new copy-auth prefers source server-scoped credentials over u
   const sandboxDir = join(tmp, 'sandbox');
   const sourceStack = 'seed-auth';
   const targetStack = 'exp-copy-auth';
-  const serverPort = 4101;
+  const serverPort = await pickNextFreeTcpPort(4101, { host: '127.0.0.1' });
   const serverUrl = `http://127.0.0.1:${serverPort}`;
 
   const monoRoot = join(workspaceDir, 'tmp', 'leeroy-wip');
@@ -178,7 +182,7 @@ test('hstack stack new copy-auth copies stable-scope credentials from source sta
   const sandboxDir = join(tmp, 'sandbox');
   const sourceStack = 'seed-auth';
   const targetStack = 'exp-copy-auth';
-  const serverPort = 4101;
+  const serverPort = await pickNextFreeTcpPort(4101, { host: '127.0.0.1' });
   const serverUrl = `http://127.0.0.1:${serverPort}`;
 
   const monoRoot = join(workspaceDir, 'tmp', 'leeroy-wip');

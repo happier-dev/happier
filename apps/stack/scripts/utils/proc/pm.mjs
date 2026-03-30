@@ -655,26 +655,58 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, { q
 
   const componentPkg = await readJson(componentPkgPath);
   const componentName = typeof componentPkg?.name === 'string' ? componentPkg.name : '';
-  const depSources = [componentPkg?.dependencies, componentPkg?.optionalDependencies, componentPkg?.devDependencies];
-  const internalDeps = new Set();
-  for (const src of depSources) {
-    if (!src || typeof src !== 'object') continue;
-    for (const name of Object.keys(src)) {
-      if (!name.startsWith('@happier-dev/')) continue;
-      if (name === componentName) continue;
-      internalDeps.add(name);
-    }
-  }
-
   const built = [];
-  for (const name of internalDeps) {
-    const id = String(name).split('/')[1] ?? '';
-    if (!id) continue;
-    const pkgDir = join(monorepoRoot, 'packages', id);
-    if (!(await pathExists(join(pkgDir, 'package.json')))) continue;
+
+  const visited = new Set([componentName].filter(Boolean));
+  const collectInternalDeps = (pkgJson, currentPkgName) => {
+    const depSources = [pkgJson?.dependencies, pkgJson?.optionalDependencies, pkgJson?.devDependencies];
+    const internalDeps = [];
+    for (const src of depSources) {
+      if (!src || typeof src !== 'object') continue;
+      for (const name of Object.keys(src)) {
+        if (!name.startsWith('@happier-dev/')) continue;
+        if (name === currentPkgName) continue;
+        internalDeps.push(name);
+      }
+    }
+    return internalDeps;
+  };
+
+  const buildWorkspaceClosure = async (pkgDir) => {
+    const pkgJsonPath = join(pkgDir, 'package.json');
+    if (!(await pathExists(pkgJsonPath))) {
+      return;
+    }
+
+    const pkgJson = await readJson(pkgJsonPath);
+    const pkgName = typeof pkgJson?.name === 'string' ? pkgJson.name : '';
+    if (pkgName && visited.has(pkgName)) {
+      return;
+    }
+    if (pkgName) {
+      visited.add(pkgName);
+    }
+
+    for (const depName of collectInternalDeps(pkgJson, pkgName)) {
+      const depId = String(depName).split('/')[1] ?? '';
+      if (!depId) continue;
+      const depDir = join(monorepoRoot, 'packages', depId);
+      if (!(await pathExists(join(depDir, 'package.json')))) continue;
+      await buildWorkspaceClosure(depDir);
+    }
 
     const res = await ensureWorkspacePackageBuilt(pkgDir, { quiet, env });
-    if (res.built) built.push(name);
+    if (res.built && pkgName) {
+      built.push(pkgName);
+    }
+  };
+
+  for (const depName of collectInternalDeps(componentPkg, componentName)) {
+    const depId = String(depName).split('/')[1] ?? '';
+    if (!depId) continue;
+    const depDir = join(monorepoRoot, 'packages', depId);
+    if (!(await pathExists(join(depDir, 'package.json')))) continue;
+    await buildWorkspaceClosure(depDir);
   }
 
   return { ok: true, built, skipped: [] };

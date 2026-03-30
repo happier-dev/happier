@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 
 import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { compareVersions, installRuntimeFromNpm, readNpmDistTagVersion, resolveNpmPackageNameOverride } from '@happier-dev/cli-common/update';
+import { installVersionedPayload } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { parseArgs } from './utils/cli/args.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
@@ -297,6 +298,21 @@ function resolveCliRootCandidate({ rootDir, target }) {
   return abs;
 }
 
+function readCliOptionValue(argv, name) {
+  const args = Array.isArray(argv) ? argv.map(String) : [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i] ?? '';
+    if (arg === name) {
+      const next = String(args[i + 1] ?? '').trim();
+      return next || '';
+    }
+    if (arg.startsWith(`${name}=`)) {
+      return String(arg.slice(`${name}=`.length)).trim();
+    }
+  }
+  return '';
+}
+
 async function cmdUseCli({ rootDir, argv }) {
   const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
@@ -391,6 +407,35 @@ async function cmdUseCli({ rootDir, argv }) {
   });
 }
 
+async function cmdInternalInstallPayload({ argv }) {
+  const componentId = readCliOptionValue(argv, '--component');
+  const payloadRoot = readCliOptionValue(argv, '--payload-root');
+  const versionId = readCliOptionValue(argv, '--version');
+  const rawChannel = readCliOptionValue(argv, '--channel');
+  const channel = rawChannel ? normalizePublicReleaseRingId(rawChannel) : 'stable';
+
+  if (componentId !== 'hstack') {
+    throw new Error('--component must be hstack');
+  }
+  if (!payloadRoot) {
+    throw new Error('--payload-root is required');
+  }
+  if (!versionId) {
+    throw new Error('--version is required');
+  }
+  if (rawChannel && !channel) {
+    throw new Error(`invalid --channel value: ${rawChannel}`);
+  }
+
+  await installVersionedPayload({
+    componentId: 'hstack',
+    versionId,
+    payloadRoot,
+    channel: channel || 'stable',
+    processEnv: process.env,
+  });
+}
+
 async function main() {
   const rootDir = getRootDir(import.meta.url);
   const argv = process.argv.slice(2);
@@ -459,6 +504,10 @@ async function main() {
   }
   if (cmd === 'use-cli') {
     await cmdUseCli({ rootDir, argv });
+    return;
+  }
+  if (cmd === '__install-payload') {
+    await cmdInternalInstallPayload({ argv });
     return;
   }
 

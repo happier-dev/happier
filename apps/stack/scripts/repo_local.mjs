@@ -42,12 +42,14 @@ function usage() {
     '  node apps/stack/scripts/repo_local.mjs dev',
     '  node apps/stack/scripts/repo_local.mjs start --restart',
     '  node apps/stack/scripts/repo_local.mjs tui',
+    '  node apps/stack/scripts/repo_local.mjs tui --tauri',
     '  node apps/stack/scripts/repo_local.mjs tui stack dev exp1',
     '',
     'notes:',
     '  - Forces using this repo checkout (no re-exec to global hstack install).',
     '  - Defaults to an isolated per-checkout stack (prevents collisions with your main stack).',
     '  - `tui` defaults to `tui dev` when no command is provided.',
+    '  - `tui --tauri` adds a Tauri dev pane and keeps the stack UI off in that run.',
     '  - `stop` maps to `stack stop <repo-stack>` for convenience.',
     '  - Use --dry-run to print the resolved invocation as JSON.',
   ].join('\n');
@@ -273,6 +275,7 @@ async function main() {
       argv = ['tui', 'dev', ...forwarded];
     }
   }
+  const wantsTuiMobile = argv[0] === 'tui' && argv.some((arg) => String(arg ?? '').trim() === '--mobile' || String(arg ?? '').trim() === '--with-mobile');
 
   const scriptsDir = dirname(fileURLToPath(import.meta.url)); // <repo>/apps/stack/scripts
   const repoRoot = dirname(dirname(dirname(scriptsDir))); // <repo>
@@ -377,6 +380,7 @@ async function main() {
           HAPPIER_STACK_EXPO_DEV_PORT_RANGE: (process.env.HAPPIER_STACK_EXPO_DEV_PORT_RANGE ?? '2000').toString(),
           // Make Expo's Metro use stable (stack-scoped) port strategy.
           HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: (process.env.HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY ?? 'stable').toString(),
+          ...(wantsTuiMobile ? { HAPPIER_STACK_CLI_BUILD_MODE: 'always' } : {}),
           ...(runtimeServerPort &&
           !existingPinnedServerPort &&
           isPortWithinRange(
@@ -502,6 +506,7 @@ async function main() {
             HAPPIER_STACK_SERVER_PORT: effectiveEnv.HAPPIER_STACK_SERVER_PORT,
             HAPPIER_STACK_ENV_FILE: effectiveEnv.HAPPIER_STACK_ENV_FILE,
             HAPPIER_STACK_CLI_HOME_DIR: effectiveEnv.HAPPIER_STACK_CLI_HOME_DIR,
+            HAPPIER_STACK_CLI_BUILD_MODE: effectiveEnv.HAPPIER_STACK_CLI_BUILD_MODE,
             HAPPIER_STACK_LOG_TEE_DIR: effectiveEnv.HAPPIER_STACK_LOG_TEE_DIR,
             HAPPIER_ACTIVE_SERVER_ID: effectiveEnv.HAPPIER_ACTIVE_SERVER_ID,
             HAPPIER_STACK_INVOKED_CWD: effectiveEnv.HAPPIER_STACK_INVOKED_CWD,

@@ -38,4 +38,5 @@ test('tui help remains explicit', async () => {
   assert.match(res.stdout, /\[tui\] usage:/);
   assert.match(res.stdout, /hstack tui \[\<hstack args\.\.\.\>\]/);
   assert.match(res.stdout, /hstack tui\s+=> hstack tui dev/);
+  assert.match(res.stdout, /hstack tui --tauri\s+=> hstack tui dev with a Tauri pane/);
 });

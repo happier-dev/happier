@@ -1223,12 +1223,14 @@ test('renderSelfHostStatusText reports dev as the public channel label for the p
 test('resolveSelfHostReleaseTargets maps the publicdev ring to dev rolling tags', () => {
   const targets = resolveSelfHostReleaseTargets('publicdev');
   assert.equal(targets.serverTag, 'server-dev');
+  assert.deepEqual(targets.serverTags, ['server-dev', 'server-preview', 'server-stable']);
   assert.deepEqual(targets.uiWebTags, ['ui-web-dev', 'ui-web-preview', 'ui-web-stable']);
 });
 
 test('resolveSelfHostReleaseTargets preserves stable release tags without fallback churn', () => {
   const targets = resolveSelfHostReleaseTargets('stable');
   assert.equal(targets.serverTag, 'server-stable');
+  assert.deepEqual(targets.serverTags, ['server-stable']);
   assert.deepEqual(targets.uiWebTags, ['ui-web-stable']);
 });
 

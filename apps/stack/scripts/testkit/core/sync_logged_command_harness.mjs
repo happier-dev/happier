@@ -22,6 +22,7 @@ export function createSyncLoggedCommandHarness(t, {
 
   const setup = setupBins({ tmp, logPath }) ?? {};
   const binDirs = Array.from(new Set((setup.binDirs ?? []).filter(Boolean)));
+  const nodeArgs = Array.isArray(setup.nodeArgs) ? setup.nodeArgs.map(String) : [];
 
   function runCommand(args, { extraEnv: localExtraEnv = {} } = {}) {
     const env = buildStackHarnessEnv({
@@ -33,7 +34,7 @@ export function createSyncLoggedCommandHarness(t, {
         ...localExtraEnv,
       },
     });
-    return runNodeCaptureSync([resolveStackScriptPath(stackRoot, scriptName), ...args], {
+    return runNodeCaptureSync([...nodeArgs, resolveStackScriptPath(stackRoot, scriptName), ...args], {
       cwd: stackRoot,
       env,
       timeout,

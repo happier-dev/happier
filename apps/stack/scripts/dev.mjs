@@ -1,6 +1,7 @@
 import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { killProcessTree } from './utils/proc/proc.mjs';
+import { spawnProc } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
 import { killPortListeners } from './utils/net/ports.mjs';
 import { getServerComponentName, isHappierServerRunning } from './utils/server/server.mjs';
@@ -37,6 +38,7 @@ import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog.mjs';
+import { resolveTauriPaneInvocation } from './utils/tui/tauri_mode.mjs';
 
  /**
   * Dev mode stack:
@@ -68,6 +70,7 @@ async function main() {
           '--no-watch',
           '--no-browser',
           '--mobile',
+          '--tauri',
           '--expo-tailscale',
           '--bind=loopback|lan',
           '--loopback',
@@ -82,6 +85,7 @@ async function main() {
 		        '  hstack dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
 		        '  hstack dev --no-browser    # do not open the UI in your browser automatically',
 		        '  hstack dev --mobile        # also start Expo dev-client Metro for mobile',
+	        '  hstack dev --tauri         # start the desktop Tauri shell against this stack',
 	        '  hstack dev --expo-tailscale # forward Expo to Tailscale interface for remote access',
 	        '  hstack dev --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
 	        '  hstack dev --no-server --server-url=https://api.example.com',
@@ -137,11 +141,16 @@ async function main() {
 	    throw new Error(`[local] --server=both is not supported for dev (pick one: happier-server-light or happier-server)`);
 	  }
 
+  const startTauri = flags.has('--tauri') || flags.has('--with-tauri');
   const startUi = !flags.has('--no-ui');
   const startDaemon = !flags.has('--no-daemon');
   const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
-  const noBrowser = flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
+  const noBrowser = startTauri || flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
+
+  if (startTauri && !startUi) {
+    throw new Error('[local] --tauri requires the ui');
+  }
 
 	  const serverDir = getComponentDir(rootDir, serverComponentName);
 	  const uiDir = getComponentDir(rootDir, 'happier-ui');
@@ -211,6 +220,7 @@ async function main() {
         serverConnectionSource,
         startUi,
         startMobile,
+        startTauri,
         startDaemon,
         cliHomeDir,
       },
@@ -550,6 +560,17 @@ async function main() {
   if (startMobile && expoRes?.port) {
     const metroUrl = await preferStackLocalhostUrl(`http://localhost:${expoRes.port}`, { stackName });
     console.log(`[local] mobile: metro ${metroUrl}`);
+  }
+
+  if (startTauri) {
+    const invocation = resolveTauriPaneInvocation({ rootDir, env: baseEnv });
+    const tauri = spawnProc('tauri', invocation.command, invocation.args, baseEnv, {
+      cwd: invocation.cwd,
+      ...(process.platform === 'win32'
+        ? { windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : {}),
+    });
+    children.push(tauri);
   }
 
   // Show Tailscale URL if forwarder is running

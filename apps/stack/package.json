@@ -37,6 +37,8 @@
     "build": "node ./scripts/build.mjs",
     "start": "node ./scripts/run.mjs",
     "dev": "node ./scripts/dev.mjs",
+    "ui:tauri": "node ./scripts/tauri_dev.mjs",
+    "tauri:dev": "node ./scripts/tauri_dev.mjs",
     "release": "node ./scripts/release.mjs",
     "happier": "node ./scripts/happier.mjs",
     "wt": "node ./scripts/worktrees.mjs",

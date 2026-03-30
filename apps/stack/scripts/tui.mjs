@@ -1,6 +1,7 @@
 import './utils/env/env.mjs';
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
+import * as os from 'node:os';
 import { join, resolve, sep } from 'node:path';
 
 import { printResult } from './utils/cli/cli.mjs';
@@ -17,12 +18,18 @@ import { resolveMobileQrPayload } from './utils/mobile/dev_client_links.mjs';
 import { worktreeSpecFromDir } from './utils/git/worktrees.mjs';
 import { stopStackForTuiExit } from './utils/tui/cleanup.mjs';
 import {
+  extractTuiLaunchOptions,
   inferTuiStackName,
   isTuiHelpRequest,
   isTuiRestartableForwardedArgs,
   isTuiStartLikeForwardedArgs,
-  normalizeTuiForwardedArgs,
 } from './utils/tui/args.mjs';
+import {
+  buildTuiChildArgs,
+  buildTauriPaneEnv,
+  resolveTauriPaneSpawnConfig,
+  shouldStartTauriPane,
+} from './utils/tui/tauri_mode.mjs';
 import { terminateProcessGroup } from './utils/proc/terminate.mjs';
 import { getProcessGroupId } from './utils/proc/ownership.mjs';
 import { killPid } from './utils/expo/expo.mjs';
@@ -446,7 +453,9 @@ async function buildExpoQrPaneLines({ stackName }) {
 
 async function main() {
   const argvRaw = process.argv.slice(2);
-  const argv = normalizeTuiForwardedArgs(argvRaw);
+  const { forwardedArgs: rawForwardedArgs, withTauri } = extractTuiLaunchOptions(argvRaw);
+  const forwarded = rawForwardedArgs;
+  const childForwarded = buildTuiChildArgs({ forwardedArgs: forwarded, withTauri });
 
   if (isTuiHelpRequest(argvRaw)) {
     printResult({
@@ -454,10 +463,12 @@ async function main() {
       data: { usage: 'hstack tui [<hstack args...>]', json: false, defaultCommand: 'dev' },
       text: [
         '[tui] usage:',
-        '  hstack tui [<hstack args...>]',
+        '  hstack tui [<hstack args...>] [--tauri]',
         '',
         'defaults:',
         '  hstack tui                 => hstack tui dev',
+        '  hstack tui --tauri         => hstack tui dev with a Tauri pane',
+        '  hstack tui --tauri --mobile => hstack tui dev --mobile with a Tauri pane',
         '',
         'examples:',
         '  hstack tui stack dev resume-upstream',
@@ -496,8 +507,6 @@ async function main() {
 
   const rootDir = getRootDir(import.meta.url);
   const happysBin = join(rootDir, 'bin', 'hstack.mjs');
-  const forwarded = argv;
-
   const stackName = inferTuiStackName(forwarded, process.env);
   const stackEnvPath = stackName ? resolveStackEnvPath(stackName).envPath : null;
   const summaryTitle = stackName ? `stack summary (${stackName})` : 'session summary (stackless)';
@@ -505,6 +514,7 @@ async function main() {
   const panes = [
     mkPane('orch', 'orchestration', { visible: true, kind: 'log' }),
     mkPane('summary', summaryTitle, { visible: true, kind: 'summary' }),
+    mkPane('tauri', 'tauri', { visible: withTauri, kind: 'log' }),
     // Data-only pane: we render QR inside the Expo pane (no separate box).
     mkPane('qr', 'expo QR', { visible: false, kind: 'qr' }),
     mkPane('local', 'local', { visible: true, kind: 'log' }),
@@ -567,12 +577,7 @@ async function main() {
   // In TUI mode, we intentionally do not forward keyboard input to the child process (stdin is ignored),
   // so any interactive prompts inside the child would deadlock.
   // Mark the child env so dependency installers can auto-approve safe prompts (Corepack yarn downloads).
-  const childEnv = {
-    ...process.env,
-    HAPPIER_STACK_TUI: '1',
-    // Avoid Corepack mutating package.json automatically.
-    COREPACK_ENABLE_AUTO_PIN: '0',
-  };
+  const childEnv = buildTauriPaneEnv({ env: process.env });
   let child = null;
 
   const spawnForwardedChild = () => {
@@ -580,7 +585,7 @@ async function main() {
       ? buildScriptPtyArgs({
           platform: process.platform,
           file: '/dev/null',
-          command: [process.execPath, happysBin, ...forwarded],
+          command: [process.execPath, happysBin, ...childForwarded],
         })
       : null;
     const proc = wantsPty
@@ -592,7 +597,7 @@ async function main() {
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: process.platform !== 'win32',
         })
-      : spawn(process.execPath, [happysBin, ...forwarded], {
+      : spawn(process.execPath, [happysBin, ...childForwarded], {
           cwd: rootDir,
           env: childEnv,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -600,7 +605,7 @@ async function main() {
         });
 
     logOrch(
-      `spawned: ${wantsPty ? `${pty.cmd} ${pty.args.join(' ')} ` : ''}node ${happysBin} ${forwarded.join(' ')} (pid=${proc.pid})`
+      `spawned: ${wantsPty ? `${pty.cmd} ${pty.args.join(' ')} ` : ''}node ${happysBin} ${childForwarded.join(' ')} (pid=${proc.pid})`
     );
 
     const buf = { out: '', err: '' };
@@ -635,7 +640,58 @@ async function main() {
     return proc;
   };
 
+  const spawnTauriChild = () => {
+    if (!withTauri || !shouldStartTauriPane(rawForwardedArgs)) {
+      return null;
+    }
+
+    const { invocation, env: tauriEnv } = resolveTauriPaneSpawnConfig({
+      rootDir,
+      env: childEnv,
+      resolveUserHomeDir: () => {
+        try {
+          return String(os.userInfo()?.homedir ?? '').trim();
+        } catch {
+          return String(os.homedir() ?? '').trim();
+        }
+      },
+    });
+    const proc = spawn(invocation.command, invocation.args, {
+      cwd: invocation.cwd,
+      env: tauriEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+      ...(process.platform === 'win32' ? { windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments } : null),
+    });
+
+    logOrch(`spawned: node apps/stack/scripts/tauri_dev.mjs (pid=${proc.pid})`);
+    const tauriIdx = paneIndexById.get('tauri');
+    const tauriPane = panes[tauriIdx];
+    const write = (chunk) => {
+      const s = String(chunk ?? '');
+      for (const line of s.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        pushLine(tauriPane, line);
+      }
+      scheduleRender();
+    };
+
+    proc.stdout?.on('data', write);
+    proc.stderr?.on('data', write);
+    proc.on('exit', (code, sig) => {
+      pushLine(tauriPane, `tauri exited (code=${code}, sig=${sig ?? 'null'})`);
+      scheduleRender();
+    });
+    proc.on('error', (error) => {
+      pushLine(tauriPane, `tauri error: ${error instanceof Error ? error.message : String(error)}`);
+      scheduleRender();
+    });
+
+    return proc;
+  };
+
   child = spawnForwardedChild();
+  let tauriChild = spawnTauriChild();
 
   async function refreshSummary() {
     const idx = paneIndexById.get('summary');
@@ -709,7 +765,7 @@ async function main() {
 		          panes[daemonIdx].lines = reconciled.lines;
 	        }
 
-	        const isStartLike = isTuiStartLikeForwardedArgs(forwarded);
+          const isStartLike = isTuiStartLikeForwardedArgs(forwarded);
 	        const minIntervalRaw = (process.env.HAPPIER_STACK_TUI_DAEMON_AUTOSTART_MIN_INTERVAL_MS ?? '').toString().trim();
 	        const minIntervalMs = minIntervalRaw ? Number(minIntervalRaw) : 12_000;
 	        const shouldAutostart = shouldAttemptTuiDaemonAutostart({
@@ -997,6 +1053,16 @@ async function main() {
         await killPid(plan.target);
       }
     }
+    const tauriPid = Number(tauriChild?.pid);
+    if (tauriChild && tauriChild.exitCode == null && Number.isFinite(tauriPid) && tauriPid > 1) {
+      const [tauriPgid, selfPgid] = await Promise.all([getProcessGroupId(tauriPid), getProcessGroupId(process.pid)]);
+      const plan = resolveTuiChildTerminationPlan({ childPid: tauriPid, childPgid: tauriPgid, selfPgid });
+      if (plan.strategy === 'pgid') {
+        await terminateProcessGroup(plan.target, { graceMs: 900 });
+      } else if (plan.strategy === 'pid') {
+        await killPid(plan.target);
+      }
+    }
 
     try {
       await stopStackForTuiExit({ rootDir, stackName, json: false, noDocker: false });
@@ -1032,6 +1098,7 @@ async function main() {
 
     process.stdout.write(`[restart] starting stack...\n\n`);
     child = spawnForwardedChild();
+    tauriChild = spawnTauriChild();
 
     paused = false;
     handoff.restoreForTui();
@@ -1106,7 +1173,7 @@ async function main() {
 
     const focusPane = panes[focused];
     const focusLabel = focusPane ? `${focusPane.id} (${focusPane.title})` : String(focused);
-    const header = `hstack tui | ${forwarded.join(' ')} | layout=${layout} | focus=${focusLabel}`;
+    const header = `hstack tui | ${forwarded.join(' ')}${withTauri ? ' +tauri' : ''} | layout=${layout} | focus=${focusLabel}`;
     process.stdout.write(padRight(header, cols) + '\n');
 
     const bodyY = 1;
@@ -1378,6 +1445,16 @@ async function main() {
       // watch process can immediately respawn server/daemon and re-lock the DB.
       const [childPgid, selfPgid] = await Promise.all([getProcessGroupId(childPid), getProcessGroupId(process.pid)]);
       const plan = resolveTuiChildTerminationPlan({ childPid, childPgid, selfPgid });
+      if (plan.strategy === 'pgid') {
+        await terminateProcessGroup(plan.target, { graceMs: 900 });
+      } else if (plan.strategy === 'pid') {
+        await killPid(plan.target);
+      }
+    }
+    const tauriPid = Number(tauriChild?.pid);
+    if (tauriChild && tauriChild.exitCode == null && Number.isFinite(tauriPid) && tauriPid > 1) {
+      const [tauriPgid, selfPgid] = await Promise.all([getProcessGroupId(tauriPid), getProcessGroupId(process.pid)]);
+      const plan = resolveTuiChildTerminationPlan({ childPid: tauriPid, childPgid: tauriPgid, selfPgid });
       if (plan.strategy === 'pgid') {
         await terminateProcessGroup(plan.target, { graceMs: 900 });
       } else if (plan.strategy === 'pid') {

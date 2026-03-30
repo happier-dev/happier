@@ -26,7 +26,7 @@ import { pickMetroPort, resolveStablePortStart } from './utils/expo/metro_ports.
  * Usage:
  *   hstack mobile
  *   hstack mobile --host=lan
- *   hstack mobile --scheme=dev.happier.app.development
+ *   hstack mobile --scheme=happier-internaldev
   *   hstack mobile --no-metro
  *   hstack mobile --run-ios --device="Your iPhone"
  */
@@ -104,8 +104,8 @@ async function main() {
     return Array.isArray(parsed) ? parsed : [];
   }
 
-  // Default to the existing dev bundle identifier, which is also registered as a URL scheme
-  // (Info.plist includes `dev.happier.app.development`), so iOS will open the dev build instead of the App Store app.
+  // Default to a dev bundle identifier/scheme that is distinct from the App Store build so iOS opens
+  // the dev build instead of the App Store app when scanning QR/deeplinks.
   const appEnv = process.env.APP_ENV ?? kv.get('--app-env') ?? 'development';
   const host = kv.get('--host') ?? process.env.HAPPIER_STACK_MOBILE_HOST ?? 'lan';
   const portFromArg = kv.get('--port') ?? '';

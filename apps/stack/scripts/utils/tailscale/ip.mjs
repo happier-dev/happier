@@ -4,63 +4,23 @@
  * Provides functions to detect the local Tailscale IPv4 address for port forwarding.
  */
 
+import { resolveTailscaleBin, sanitizeTailscaleEnv } from '@happier-dev/cli-common/tailscale';
 import { runCaptureResult } from '../proc/proc.mjs';
-import { resolveCommandPath } from '../proc/commands.mjs';
-import { access, constants } from 'node:fs/promises';
 
 const TAILSCALE_TIMEOUT_MS = 3000;
 
 /**
- * Check if a path is executable.
- */
-async function isExecutable(path) {
-  try {
-    await access(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Tailscale env: strip XPC_SERVICE_NAME which can cause hangs in LaunchAgent contexts.
- */
-function tailscaleEnv() {
-  const env = { ...process.env };
-  delete env.XPC_SERVICE_NAME;
-  return env;
-}
-
-/**
  * Resolve the tailscale CLI path.
  *
- * Priority:
- * 1. HAPPIER_STACK_TAILSCALE_BIN env override
- * 2. PATH lookup
- * 3. macOS app bundle paths
+ * Reuses the canonical shared Tailscale command resolution so the stack helper stays aligned
+ * with the rest of the app and honors the unified env overrides.
  */
-export async function resolveTailscaleCmd() {
-  // Explicit override
-  if (process.env.HAPPIER_STACK_TAILSCALE_BIN?.trim()) {
-    return process.env.HAPPIER_STACK_TAILSCALE_BIN.trim();
-  }
-
-  // Try PATH first
+export async function resolveTailscaleCmd({ env = process.env } = {}) {
   try {
-    const found = await resolveCommandPath('tailscale', { env: tailscaleEnv(), timeoutMs: TAILSCALE_TIMEOUT_MS });
-    if (found) return found;
+    return await resolveTailscaleBin({ env });
   } catch {
-    // ignore
+    return null;
   }
-
-  // macOS app bundle paths
-  const appCliPath = '/Applications/Tailscale.app/Contents/MacOS/tailscale';
-  if (await isExecutable(appCliPath)) return appCliPath;
-
-  const appPath = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
-  if (await isExecutable(appPath)) return appPath;
-
-  return null;
 }
 
 /**
@@ -68,12 +28,13 @@ export async function resolveTailscaleCmd() {
  *
  * @returns {Promise<string | null>} The Tailscale IPv4 address, or null if unavailable.
  */
-export async function getTailscaleIpv4() {
-  const cmd = await resolveTailscaleCmd();
+export async function getTailscaleIpv4({ env = process.env } = {}) {
+  const tailscaleEnv = sanitizeTailscaleEnv(env);
+  const cmd = await resolveTailscaleCmd({ env: tailscaleEnv });
   if (!cmd) return null;
 
   const result = await runCaptureResult(cmd, ['ip', '-4'], {
-    env: tailscaleEnv(),
+    env: tailscaleEnv,
     timeoutMs: TAILSCALE_TIMEOUT_MS,
   });
 
@@ -91,8 +52,8 @@ export async function getTailscaleIpv4() {
  *
  * @returns {Promise<boolean>}
  */
-export async function isTailscaleAvailable() {
-  const ip = await getTailscaleIpv4();
+export async function isTailscaleAvailable({ env = process.env } = {}) {
+  const ip = await getTailscaleIpv4({ env });
   return Boolean(ip);
 }
 
@@ -101,13 +62,13 @@ export async function isTailscaleAvailable() {
  *
  * @returns {Promise<{ available: boolean, ip: string | null, error: string | null }>}
  */
-export async function getTailscaleStatus() {
-  const cmd = await resolveTailscaleCmd();
+export async function getTailscaleStatus({ env = process.env } = {}) {
+  const cmd = await resolveTailscaleCmd({ env });
   if (!cmd) {
     return { available: false, ip: null, error: 'tailscale CLI not found' };
   }
 
-  const ip = await getTailscaleIpv4();
+  const ip = await getTailscaleIpv4({ env });
   if (!ip) {
     return { available: false, ip: null, error: 'tailscale not connected or no IPv4 address' };
   }

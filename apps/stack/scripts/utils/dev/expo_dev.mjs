@@ -2,6 +2,7 @@ import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import net from 'node:net';
+import { existsSync } from 'node:fs';
 import {
   ensureExpoIsolationEnv,
   getExpoStatePaths,
@@ -16,6 +17,7 @@ import { isPidAlive, recordStackRuntimeUpdate } from '../stack/runtime_state.mjs
 import { getProcessGroupId, getPsEnvLine, killProcessGroupOwnedByStack, listPidsWithEnvNeedle } from '../proc/ownership.mjs';
 import { terminateProcessGroup } from '../proc/terminate.mjs';
 import { expoSpawn } from '../expo/command.mjs';
+import { run } from '../proc/proc.mjs';
 import { resolveMobileExpoConfig } from '../mobile/config.mjs';
 import { resolveMobileReachableServerUrl } from '../server/mobile_api_url.mjs';
 import { getTailscaleStatus } from '../tailscale/ip.mjs';
@@ -29,6 +31,19 @@ function normalizeExpoHost(raw) {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'localhost' || v === 'lan' || v === 'tunnel') return v;
   return 'lan';
+}
+
+async function ensureWorkspacePackagesBuiltForExpoProject({ projectDir, env, quiet }) {
+  const scriptPath = join(projectDir, 'scripts', 'ensureWorkspacePackagesBuilt.mjs');
+  if (!existsSync(scriptPath)) {
+    return;
+  }
+  await run(process.execPath, [scriptPath], {
+    cwd: projectDir,
+    env,
+    stdio: quiet ? 'ignore' : 'inherit',
+    timeoutMs: 10 * 60_000,
+  });
 }
 
 /**
@@ -530,6 +545,7 @@ export async function ensureDevExpoServer({
     delete normalizedSpawnOptions.stdio;
   }
   // Run the Expo CLI from the runner dir (where deps/bins live), but target the actual Expo project dir.
+  await ensureWorkspacePackagesBuiltForExpoProject({ projectDir, env, quiet });
   const proc = await expoSpawn({ label: 'expo', dir: uiDir, projectDir, args, env, options: normalizedSpawnOptions, quiet });
   children.push(proc);
 

@@ -36,6 +36,61 @@ export async function looksLikeExpoMetro({ port, timeoutMs = null } = {}) {
   }
 }
 
+function resolveMetroWaitTimeoutMsFromEnv(env = process.env) {
+  const raw = (env.HAPPIER_STACK_EXPO_METRO_WAIT_TIMEOUT_MS ?? '').toString().trim();
+  const n = raw ? Number(raw) : null;
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  return 120_000;
+}
+
+function resolveMetroWaitIntervalMsFromEnv(env = process.env) {
+  const raw = (env.HAPPIER_STACK_EXPO_METRO_WAIT_INTERVAL_MS ?? '').toString().trim();
+  const n = raw ? Number(raw) : null;
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  return 500;
+}
+
+export async function waitForExpoMetroRunning(
+  {
+    port,
+    timeoutMs = null,
+    intervalMs = null,
+    env = process.env,
+  } = {},
+  {
+    looksLikeExpoMetroImpl = looksLikeExpoMetro,
+    delayImpl = delay,
+    nowMsImpl = () => Date.now(),
+  } = {},
+) {
+  const p = Number(port);
+  if (!Number.isFinite(p) || p <= 0) {
+    return { ok: false, reason: 'invalid_port', probes: 0 };
+  }
+  const resolvedTimeoutMs =
+    Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+      ? Number(timeoutMs)
+      : resolveMetroWaitTimeoutMsFromEnv(env);
+  const resolvedIntervalMs =
+    Number.isFinite(Number(intervalMs)) && Number(intervalMs) > 0
+      ? Number(intervalMs)
+      : resolveMetroWaitIntervalMsFromEnv(env);
+
+  const startMs = nowMsImpl();
+  let probes = 0;
+  while (nowMsImpl() - startMs <= resolvedTimeoutMs) {
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await looksLikeExpoMetroImpl({ port: p });
+    probes += 1;
+    if (ok) {
+      return { ok: true, probes };
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await delayImpl(resolvedIntervalMs);
+  }
+  return { ok: false, reason: 'timeout', probes };
+}
+
 function hashDir(dir) {
   return createHash('sha1').update(String(dir ?? '')).digest('hex').slice(0, 12);
 }
