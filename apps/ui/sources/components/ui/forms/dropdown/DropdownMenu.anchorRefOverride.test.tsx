@@ -19,6 +19,7 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: any) => React.createElement('Popover', props, null),
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
