@@ -1129,6 +1129,27 @@ export {
   type EphemeralTaskRunRequest,
   type EphemeralTaskRunResponse,
 } from './ephemeralTasks.js';
+export {
+  canonicalizeServerUrlForIdentity,
+  createServerUrlComparableKey,
+  SERVER_URL_COMPARABLE_KEY_ERROR_CODE,
+  ServerUrlComparableKeyError,
+} from './serverUrls/index.js';
+export {
+  SYSTEM_TASK_PROTOCOL_VERSION,
+  SystemTaskEventSchema,
+  SystemTaskJsonValueSchema,
+  SystemTaskResultErrorSchema,
+  SystemTaskResultSchema,
+  SystemTaskSpecSchema,
+  type SystemTaskEvent,
+  type SystemTaskJsonArray,
+  type SystemTaskJsonObject,
+  type SystemTaskJsonValue,
+  type SystemTaskResult,
+  type SystemTaskResultError,
+  type SystemTaskSpec,
+} from './systemTasks/index.js';
 
 export {
   LlmTaskRunnerConfigV1Schema,

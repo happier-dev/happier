@@ -115,7 +115,77 @@ describe('accountSettings', () => {
 
     // Session agents controlling other sessions is opt-in and must be fail-closed by default.
     expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
+    // Title changes are safe and are required for provider UX (auto-title on first message).
+    expect(isActionEnabledByActionsSettings('session.title.set' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
     expect(isActionEnabledByActionsSettings('session.message.send' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
     expect(isActionEnabledByActionsSettings('session.list' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
+  });
+
+  it('migrates legacy default session-agent action settings to keep session.title.set enabled', () => {
+    const legacyDefaultDisabled = [
+      'session.stop',
+      'session.title.set',
+      'session.permission_mode.set',
+      'session.model.set',
+      'session.archive',
+      'session.unarchive',
+      'session.status.get',
+      'session.history.get',
+      'session.wait.idle',
+      'session.message.send',
+      'session.permission.respond',
+      'session.user_action.answer',
+      'session.mode.set',
+      'session.list',
+      'session.activity.get',
+      'session.messages.recent.get',
+    ] as const;
+
+    const parsed = accountSettingsParse({
+      actionsSettingsV1: {
+        v: 1,
+        actions: Object.fromEntries(
+          legacyDefaultDisabled.map((id) => [id, { disabledSurfaces: ['session_agent'] }]),
+        ),
+      },
+    });
+    const settings = parsed.actionsSettingsV1;
+
+    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
+    expect(isActionEnabledByActionsSettings('session.title.set' as any, settings, { surface: 'session_agent' } as any)).toBe(true);
+  });
+
+  it('keeps session.title.set enabled even when legacy actions settings also contain approval requirements', () => {
+    const legacyDefaultDisabled = [
+      'session.stop',
+      'session.title.set',
+      'session.permission_mode.set',
+      'session.model.set',
+      'session.archive',
+      'session.unarchive',
+      'session.status.get',
+      'session.history.get',
+      'session.wait.idle',
+      'session.message.send',
+      'session.permission.respond',
+      'session.user_action.answer',
+      'session.mode.set',
+      'session.list',
+      'session.activity.get',
+      'session.messages.recent.get',
+    ] as const;
+
+    const parsed = accountSettingsParse({
+      actionsSettingsV1: {
+        v: 1,
+        actions: Object.fromEntries([
+          ...legacyDefaultDisabled.map((id) => [id, { disabledSurfaces: ['session_agent'] }]),
+          ['session.message.send', { disabledSurfaces: ['session_agent'], approvalRequiredSurfaces: ['cli'] }],
+        ]),
+      },
+    });
+
+    expect(isActionEnabledByActionsSettings('session.title.set' as any, parsed.actionsSettingsV1, { surface: 'session_agent' } as any)).toBe(true);
+    expect(isActionEnabledByActionsSettings('session.message.send' as any, parsed.actionsSettingsV1, { surface: 'session_agent' } as any)).toBe(false);
   });
 });

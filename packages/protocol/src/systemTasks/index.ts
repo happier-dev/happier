@@ -1,0 +1,15 @@
+export {
+  SYSTEM_TASK_PROTOCOL_VERSION,
+  SystemTaskEventSchema,
+  SystemTaskJsonValueSchema,
+  SystemTaskResultErrorSchema,
+  SystemTaskResultSchema,
+  SystemTaskSpecSchema,
+  type SystemTaskEvent,
+  type SystemTaskJsonArray,
+  type SystemTaskJsonObject,
+  type SystemTaskJsonValue,
+  type SystemTaskResult,
+  type SystemTaskResultError,
+  type SystemTaskSpec,
+} from './spec.js';

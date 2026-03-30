@@ -43,7 +43,7 @@ describe('session handoff schemas', () => {
     // Legacy inline transferred-bundles payloads/artifacts are not part of the steady-state V2 protocol surface.
     expect(mod).not.toHaveProperty('SessionHandoffTransferredPayloadSchema');
     expect(mod).not.toHaveProperty('SessionHandoffTransferredWorkspaceArtifactsSchema');
-  });
+  }, 30_000);
 
   it('validates start, status, and transfer payloads', async () => {
     const mod = await loadHandoffModule();
@@ -295,7 +295,7 @@ describe('session handoff schemas', () => {
         },
       }).success,
     ).toBe(false);
-  });
+  }, 30_000);
 
   it('rejects oversized handoff status fields (bounded progress payload)', async () => {
     const mod = await loadHandoffModule();

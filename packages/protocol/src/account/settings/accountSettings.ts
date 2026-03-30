@@ -53,7 +53,6 @@ export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1S
     // Fail-closed: session agents must not control other sessions by default.
     // Users can explicitly opt in per action via settings.
     'session.stop': { disabledSurfaces: ['session_agent'] },
-    'session.title.set': { disabledSurfaces: ['session_agent'] },
     'session.permission_mode.set': { disabledSurfaces: ['session_agent'] },
     'session.model.set': { disabledSurfaces: ['session_agent'] },
     'session.archive': { disabledSurfaces: ['session_agent'] },
@@ -70,6 +69,53 @@ export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1S
     'session.messages.recent.get': { disabledSurfaces: ['session_agent'] },
   },
 });
+
+const LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1 = Object.freeze([
+  'session.stop',
+  'session.title.set',
+  'session.permission_mode.set',
+  'session.model.set',
+  'session.archive',
+  'session.unarchive',
+  'session.status.get',
+  'session.history.get',
+  'session.wait.idle',
+  'session.message.send',
+  'session.permission.respond',
+  'session.user_action.answer',
+  'session.mode.set',
+  'session.list',
+  'session.activity.get',
+  'session.messages.recent.get',
+] as const satisfies readonly string[]);
+
+function isLegacyDefaultSessionAgentActionLockdownV1(settings: ActionsSettingsV1): boolean {
+  const known = new Set<string>(LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1);
+  const actions = settings.actions ?? ({} as any);
+  const keys = Object.keys(actions);
+  if (keys.length !== LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1.length) return false;
+
+  for (const key of keys) {
+    if (!known.has(key)) return false;
+    const override = (actions as any)[key] as any;
+    if (!override || typeof override !== 'object' || Array.isArray(override)) return false;
+    if (override.enabled === false) return false;
+    const disabledSurfaces = Array.isArray(override.disabledSurfaces) ? override.disabledSurfaces : [];
+    if (disabledSurfaces.length !== 1 || disabledSurfaces[0] !== 'session_agent') return false;
+    const enabledPlacements = Array.isArray(override.enabledPlacements) ? override.enabledPlacements : [];
+    if (enabledPlacements.length > 0) return false;
+    const disabledPlacements = Array.isArray(override.disabledPlacements) ? override.disabledPlacements : [];
+    if (disabledPlacements.length > 0) return false;
+  }
+  return true;
+}
+
+function migrateLegacyDefaultActionsSettingsV1(settings: ActionsSettingsV1): ActionsSettingsV1 {
+  if (!isLegacyDefaultSessionAgentActionLockdownV1(settings)) return settings;
+  const actions = { ...(settings.actions as any) } as ActionsSettingsV1['actions'];
+  delete (actions as any)['session.title.set'];
+  return { ...settings, actions };
+}
 
 const BackendEnabledByTargetKeySchema = z.record(z.string(), z.boolean()).catch({});
 const BackendCliSourcePreferenceSchema = z.enum(['system-first', 'managed-first']);
@@ -108,6 +154,13 @@ function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>):
         NotificationsSettingsV1Schema.parse(raw.notificationsSettingsV1),
       ),
     ];
+  }
+
+  if (next.actionsSettingsV1 && typeof next.actionsSettingsV1 === 'object' && !Array.isArray(next.actionsSettingsV1)) {
+    const parsed = ActionsSettingsV1Schema.safeParse(next.actionsSettingsV1);
+    if (parsed.success) {
+      next.actionsSettingsV1 = migrateLegacyDefaultActionsSettingsV1(parsed.data);
+    }
   }
 
   return next;

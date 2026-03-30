@@ -230,7 +230,7 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
-  it('never routes session.title.set through approvals even when a caller policy requests it', async () => {
+  it('routes session.title.set through approvals when required by the caller policy', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
     const sessionTitleSet = vi.fn(async () => ({ ok: true }));
 
@@ -246,9 +246,16 @@ describe('createActionExecutor (approvals)', () => {
       { surface: 'mcp', defaultSessionId: null },
     );
 
-    expect(res).toEqual({ ok: true, result: { ok: true } });
-    expect(sessionTitleSet).toHaveBeenCalledWith({ sessionId: 's1', title: 'Renamed' });
-    expect(approvalsCreate).not.toHaveBeenCalled();
+    expect(res.ok).toBe(true);
+    expect((res as any).result?.kind).toBe('approval_request_created');
+    expect((res as any).result?.artifactId).toBe('a1');
+    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        actionId: 'session.title.set',
+        createdBy: expect.objectContaining({ surface: 'mcp', sessionId: 's1' }),
+      }),
+    }));
   });
 
   it('allows approval.request.create for any action (except approval actions)', async () => {

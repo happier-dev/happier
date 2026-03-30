@@ -2,14 +2,6 @@ import type { ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
 import type { ActionsSettingsV1, ActionSettingsOverride } from './actionSettings.js';
 
-const ALWAYS_AUTO_APPROVED_ACTION_IDS = new Set<ActionId>([
-  'session.title.set',
-]);
-
-export function isActionAlwaysAutoApproved(actionId: ActionId): boolean {
-  return ALWAYS_AUTO_APPROVED_ACTION_IDS.has(actionId);
-}
-
 /**
  * Generic approvals policy resolution rooted in persisted ActionsSettings.
  *
@@ -23,7 +15,6 @@ export function isApprovalRequiredByActionsSettings(
   settings: ActionsSettingsV1,
   ctx?: Pick<ActionExecutorContext, 'surface'> | null,
 ): boolean {
-  if (isActionAlwaysAutoApproved(actionId)) return false;
   const surface = ctx?.surface ?? null;
   if (!surface) return false;
 
