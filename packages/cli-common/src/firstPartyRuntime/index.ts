@@ -29,6 +29,13 @@ export type { FirstPartyRetentionResolution } from './retentionPolicy.js';
 export { resolveInstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
 export type { InstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
 export {
+  prepareFirstPartyComponentPayloadFromGitHubRelease,
+} from './prepareFirstPartyComponentPayloadFromGitHubRelease.js';
+export type {
+  FirstPartyReleaseArtifactSource,
+  PreparedFirstPartyComponentPayload,
+} from './prepareFirstPartyComponentPayloadFromGitHubRelease.js';
+export {
   resolveCliBinaryAssetBundleFromReleaseAssets,
 } from './releaseAssetBundle.js';
 export type {
@@ -50,3 +57,21 @@ export type { FirstPartyRollbackResult } from './rollbackVersionedPayload.js';
 
 export { syncInstalledFirstPartyShims } from './syncInstalledFirstPartyShims.js';
 export type { SyncInstalledFirstPartyShimsResult } from './syncInstalledFirstPartyShims.js';
+export {
+  checkRelayRuntimeHealth,
+  normalizeRelayRuntimeStatus,
+  resolveRelayRuntimeDefaults,
+} from './relayRuntime.js';
+export type {
+  RelayRuntimeDefaults,
+  RelayRuntimeHealthResult,
+  RelayRuntimeNormalizedStatus,
+} from './relayRuntime.js';
+
+export {
+  applyEnvOverridesToEnvText,
+  parseEnvText,
+  renderSelfHostServerEnvText,
+} from './selfHostServerEnv.js';
+
+export { installOrUpdateRelayRuntimeLocal } from './relayRuntimeInstall.js';

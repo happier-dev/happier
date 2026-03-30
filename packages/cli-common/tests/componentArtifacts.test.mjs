@@ -200,7 +200,7 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
 
     assert.equal(result.executableName, 'happier');
     assert.equal(result.entrypoint, 'happier');
-    assert.deepEqual(runCalls, [{ cmd: 'yarn', args: ['--cwd', 'apps/cli', 'build'] }]);
+    assert.deepEqual(runCalls, []);
     assert.equal(compileCalls.length, 1);
     assert.deepEqual(compileCalls[0].externals.sort(), [
       '@homebridge/node-pty-prebuilt-multiarch',

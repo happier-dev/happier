@@ -141,7 +141,9 @@ export async function buildCliBinaryArtifactPayload({
       await rename(distBackupDir, distDir);
     }
 
-    if (waited && existsSync(entrypoint)) {
+    // If the CLI dist entrypoint is already present, prefer snapshotting it instead of rebuilding.
+    // Rebuilding `apps/cli` is expensive and can disrupt long-running processes in dev checkouts.
+    if (existsSync(entrypoint)) {
       return await snapshotCliDistDir({ cliDir, distDir });
     }
 
