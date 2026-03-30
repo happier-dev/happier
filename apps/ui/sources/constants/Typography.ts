@@ -87,8 +87,8 @@ export const getLogoFont = () => {
 // Font weight mappings for the font families
 export const FontWeights = {
     regular: '400',
-    semiBold: '600',
-    bold: '700',
+    semiBold: '500',
+    bold: '600',
 } as const;
 
 // Style utilities for easy inline usage
