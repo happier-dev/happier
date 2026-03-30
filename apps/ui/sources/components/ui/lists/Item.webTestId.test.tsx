@@ -59,7 +59,7 @@ describe('Item web testID forwarding', () => {
         expect(row?.props.accessibilityRole).toBe('button');
     });
 
-    it('keeps right-side actions outside the row pressable on web', async () => {
+    it('keeps right-side actions inside the row pressable on web', async () => {
         const { Item } = await import('./Item');
         const screen = await renderScreen(
             <Item
@@ -77,7 +77,7 @@ describe('Item web testID forwarding', () => {
         const row = screen.findByTestId('item-with-actions');
         const action = screen.findByTestId('item-right-action');
 
-        expect(findClosestPressableAncestor(action as renderer.ReactTestInstance)).not.toBe(row);
+        expect(findClosestPressableAncestor(action as renderer.ReactTestInstance)).toBe(row);
     });
 
     it('forwards testID as data-testid on non-interactive web rows', async () => {
