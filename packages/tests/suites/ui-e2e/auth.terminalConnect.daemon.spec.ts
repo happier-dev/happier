@@ -552,24 +552,32 @@ test.describe('ui e2e: auth + terminal connect', () => {
     }
   });
 
-  test('terminal-connect link redirects to welcome when logged out, then can be approved after restore', async ({ page }, testInfo) => {
+  test('terminal-connect link redirects to welcome when logged out, then can be approved after restore', async ({ page, browser }, testInfo) => {
     test.setTimeout(420_000);
     if (!server || !ui) throw new Error('missing server/ui fixtures');
     if (!uiBaseUrl) throw new Error('missing ui base url');
-    if (!accountSecretKeyFormatted) throw new Error('missing account secret key from prior test');
+    if (!accountSecretKeyFormatted) {
+      await ensureAuthenticatedAccount(page, uiBaseUrl);
+      if (!accountSecretKeyFormatted) {
+        throw new Error('missing account secret key after ensureAuthenticatedAccount');
+      }
+    }
 
     const pageConsole: string[] = [];
     const pageErrors: string[] = [];
     const requestFailures: string[] = [];
     const responseErrors: string[] = [];
 
-    page.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
-    page.on('pageerror', (err) => pageErrors.push(String(err)));
-    page.on('requestfailed', (request) => {
+    const ctx = await browser.newContext();
+    const loggedOutPage = await ctx.newPage();
+
+    loggedOutPage.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
+    loggedOutPage.on('pageerror', (err) => pageErrors.push(String(err)));
+    loggedOutPage.on('requestfailed', (request) => {
       const failure = request.failure();
       requestFailures.push(`${request.method()} ${request.url()} ${failure ? `-> ${failure.errorText}` : ''}`.trim());
     });
-    page.on('response', (response) => {
+    loggedOutPage.on('response', (response) => {
       const status = response.status();
       if (status >= 400) responseErrors.push(`${status} ${response.request().method()} ${response.url()}`);
     });
@@ -593,24 +601,25 @@ test.describe('ui e2e: auth + terminal connect', () => {
         },
       });
 
-      await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-      await expect(page.locator('[data-testid="welcome-terminal-connect-intent"]:visible')).toHaveCount(1, { timeout: 60_000 });
-      await expect(page.locator('[data-testid="welcome-restore"]:visible')).toHaveCount(1, { timeout: 60_000 });
+      await loggedOutPage.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
+      await expect(loggedOutPage.locator('[data-testid="welcome-terminal-connect-intent"]:visible')).toHaveCount(1, { timeout: 60_000 });
+      await expect(loggedOutPage.locator('[data-testid="welcome-restore"]:visible')).toHaveCount(1, { timeout: 60_000 });
 
       // Restore account. The app should automatically open the pending terminal connect approval screen.
-      await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted, { postRestorePath: null });
+      await restoreAccountUsingSecretKey(loggedOutPage, uiBaseUrl, accountSecretKeyFormatted, { postRestorePath: null });
 
-      await page.waitForURL((url) => url.pathname.startsWith('/terminal'), { timeout: 120_000 });
-      const approve = page.getByTestId('terminal-connect-approve');
+      await loggedOutPage.waitForURL((url) => url.pathname.startsWith('/terminal'), { timeout: 120_000 });
+      const approve = loggedOutPage.getByTestId('terminal-connect-approve');
       await expect(approve).toHaveCount(1, { timeout: 120_000 });
 
-      await page.getByTestId('terminal-connect-approve').click();
+      await loggedOutPage.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
     } catch (error) {
       thrown = error;
       throw error;
     } finally {
       await cliLogin?.stop().catch(() => {});
+      await ctx.close().catch(() => {});
       if (thrown) {
         const diagnostic =
           `# Browser diagnostics\n\n` +

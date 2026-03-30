@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { createTestAuth } from '../../src/testkit/auth';
@@ -13,6 +13,7 @@ async function requestJson<T>(params: {
   path: string;
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
+  timeoutMs?: number;
 }): Promise<{ status: number; data: T }> {
   const hasBody = params.body !== undefined;
   const headers: Record<string, string> = {
@@ -20,11 +21,19 @@ async function requestJson<T>(params: {
     ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
   };
 
-  const response = await fetch(`${params.baseUrl}${params.path}`, {
-    method: params.method ?? 'GET',
-    headers,
-    ...(hasBody ? { body: JSON.stringify(params.body) } : {}),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), params.timeoutMs ?? 15_000);
+  let response: Response;
+  try {
+    response = await fetch(`${params.baseUrl}${params.path}`, {
+      method: params.method ?? 'GET',
+      headers,
+      ...(hasBody ? { body: JSON.stringify(params.body) } : {}),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -34,22 +43,27 @@ async function requestJson<T>(params: {
 }
 
 describe('core e2e: automation actions', () => {
-  const started: StartedServer[] = [];
+  let server: StartedServer | null = null;
 
-  afterAll(async () => {
-    await Promise.all(started.map(async (server) => await server.stop()));
+  beforeAll(async () => {
+    const testDir = run.testDir('automations-actions-suite');
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
   });
 
-  async function startTestServer(testName: string): Promise<{ server: StartedServer; token: string }> {
-    const testDir = run.testDir(testName);
-    const server = await startServerLight({ testDir, dbProvider: 'sqlite' });
-    started.push(server);
+  afterAll(async () => {
+    await server?.stop().catch(() => {});
+    server = null;
+  });
+
+  async function createAuthToken(): Promise<string> {
+    if (!server) throw new Error('Server not started');
     const auth = await createTestAuth(server.baseUrl);
-    return { server, token: auth.token };
+    return auth.token;
   }
 
   it('pauses/resumes automation and supports run-now POST without body', async () => {
-    const { server, token } = await startTestServer('automations-actions-pause-resume');
+    if (!server) throw new Error('Server not started');
+    const token = await createAuthToken();
 
     const created = await requestJson<{ id: string; enabled: boolean }>({
       baseUrl: server.baseUrl,
@@ -98,7 +112,8 @@ describe('core e2e: automation actions', () => {
   }, 60_000);
 
   it('allows only one machine to claim the same queued run', async () => {
-    const { server, token } = await startTestServer('automations-actions-claim-exclusivity');
+    if (!server) throw new Error('Server not started');
+    const token = await createAuthToken();
 
     const m1 = 'machine-claim-1';
     const m2 = 'machine-claim-2';

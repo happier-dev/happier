@@ -19,10 +19,10 @@ describe('primePlatformAppLaunch', () => {
     expect(
       parseResolvedAndroidLaunchableActivity(
         'priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n' +
-          'dev.happier.app.dev/.MainActivity\n',
-        'dev.happier.app.dev',
+          'dev.happier.app.internaldev/.MainActivity\n',
+        'dev.happier.app.internaldev',
       ),
-    ).toBe('dev.happier.app.dev/.MainActivity');
+    ).toBe('dev.happier.app.internaldev/.MainActivity');
   });
 
   it('prelaunches the resolved Android launcher activity', async () => {
@@ -30,7 +30,7 @@ describe('primePlatformAppLaunch', () => {
       .mockReturnValueOnce({
         status: 0,
         stdout: 'priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n' +
-          'dev.happier.app.dev/.MainActivity\n',
+          'dev.happier.app.internaldev/.MainActivity\n',
         stderr: '',
       })
       .mockReturnValueOnce({
@@ -45,13 +45,13 @@ describe('primePlatformAppLaunch', () => {
         ANDROID_SERIAL: 'emulator-5554',
       },
       platform: 'android',
-      appId: 'dev.happier.app.dev',
+      appId: 'dev.happier.app.internaldev',
     });
 
     expect(spawnSyncMock).toHaveBeenNthCalledWith(
       1,
       'adb',
-      ['-s', 'emulator-5554', 'shell', 'cmd', 'package', 'resolve-activity', '--brief', 'dev.happier.app.dev'],
+      ['-s', 'emulator-5554', 'shell', 'cmd', 'package', 'resolve-activity', '--brief', 'dev.happier.app.internaldev'],
       expect.objectContaining({
         encoding: 'utf8',
         env: expect.objectContaining({
@@ -62,7 +62,7 @@ describe('primePlatformAppLaunch', () => {
     expect(spawnSyncMock).toHaveBeenNthCalledWith(
       2,
       'adb',
-      ['-s', 'emulator-5554', 'shell', 'am', 'start', '-W', '-n', 'dev.happier.app.dev/.MainActivity'],
+      ['-s', 'emulator-5554', 'shell', 'am', 'start', '-W', '-n', 'dev.happier.app.internaldev/.MainActivity'],
       expect.objectContaining({
         encoding: 'utf8',
       }),
@@ -80,7 +80,7 @@ describe('primePlatformAppLaunch', () => {
       defaultPrimePlatformAppLaunch({
         env: process.env,
         platform: 'android',
-        appId: 'dev.happier.app.dev',
+        appId: 'dev.happier.app.internaldev',
       }),
     ).rejects.toThrow(/could not be resolved/i);
   });

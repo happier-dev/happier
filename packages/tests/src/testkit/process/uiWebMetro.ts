@@ -10,7 +10,7 @@ import {
   resolveProcessOwnershipLeasesDir,
   sweepProcessOwnershipLeases,
 } from './processOwnershipLease';
-import { readPositiveEnvInt } from './uiWebEnv';
+import { readPositiveEnvInt, resolveUiWebEntryProbeTimeoutMs } from './uiWebEnv';
 import { resolveScriptUrlsFromHtml, selectPrimaryAppScriptUrl } from './uiWebHtml';
 import { spawnLoggedProcess } from './spawnProcess';
 import type { StartedUiWeb } from './uiWebTypes';
@@ -65,28 +65,45 @@ function extractHttpUrls(text: string): string[] {
   return out;
 }
 
-async function looksLikeUiWebEntryPage(url: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+type UiWebEntryPageProbe = Readonly<{
+  isEntryPage: boolean;
+  hasScriptTags: boolean;
+}>;
+
+async function inspectUiWebEntryPage(url: string, env: NodeJS.ProcessEnv): Promise<UiWebEntryPageProbe> {
   try {
-    const timeoutMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_ENTRY_FETCH_TIMEOUT_MS, 10_000);
+    const timeoutMs = resolveUiWebEntryProbeTimeoutMs(env);
     const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) return false;
+    if (!res.ok) return { isEntryPage: false, hasScriptTags: false };
     const text = await res.text().catch(() => '');
-    if (!text.includes('<html') && !text.toLowerCase().includes('<!doctype html')) return false;
+    if (!text.includes('<html') && !text.toLowerCase().includes('<!doctype html')) {
+      return { isEntryPage: false, hasScriptTags: false };
+    }
+    if (text.toLowerCase().includes('metro bundler')) {
+      return { isEntryPage: false, hasScriptTags: false };
+    }
 
     const scripts = resolveScriptUrlsFromHtml(text, url);
-    if (scripts.length === 0) return false;
-    return Boolean(selectPrimaryAppScriptUrl(scripts));
+    return {
+      isEntryPage: true,
+      hasScriptTags: scripts.length > 0 && Boolean(selectPrimaryAppScriptUrl(scripts)),
+    };
   } catch {
-    return false;
+    return { isEntryPage: false, hasScriptTags: false };
   }
 }
+
+type ResolvedExpoWebBaseUrl = Readonly<{
+  baseUrl: string;
+  hasScriptTags: boolean;
+}>;
 
 async function resolveExpoWebBaseUrl(params: {
   stdoutPath: string;
   timeoutMs: number;
   expectedPort?: number;
   env: NodeJS.ProcessEnv;
-}): Promise<string> {
+}): Promise<ResolvedExpoWebBaseUrl> {
   const defaultCandidates = [
     'http://localhost:19006',
     'http://127.0.0.1:19006',
@@ -99,33 +116,32 @@ async function resolveExpoWebBaseUrl(params: {
       ? [`http://localhost:${params.expectedPort}`, `http://127.0.0.1:${params.expectedPort}`]
       : [];
 
-  let resolved: string | null = null;
-  await waitFor(async () => {
-    const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
-    const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
-    const orderedCandidates: string[] = [];
-    const seen = new Set<string>();
+  const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
+  const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
+  const orderedCandidates: string[] = [];
+  const seen = new Set<string>();
 
-    for (const raw of [...stdoutCandidates, ...expectedCandidates, ...(expectedCandidates.length > 0 ? [] : defaultCandidates)]) {
-      const url = raw.trim().replace(/\/+$/, '');
-      if (!url || seen.has(url)) continue;
-      seen.add(url);
-      orderedCandidates.push(url);
+  for (const raw of [...stdoutCandidates, ...expectedCandidates, ...(expectedCandidates.length > 0 ? [] : defaultCandidates)]) {
+    const url = raw.trim().replace(/\/+$/, '');
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    orderedCandidates.push(url);
+  }
+
+  for (const url of orderedCandidates) {
+    const probe = await inspectUiWebEntryPage(url, params.env);
+    if (probe.isEntryPage) {
+      return { baseUrl: url, hasScriptTags: probe.hasScriptTags };
     }
-
-    for (const url of orderedCandidates) {
-      if (await looksLikeUiWebEntryPage(url, params.env)) {
-        resolved = url;
-        return true;
-      }
-    }
-    return false;
-  }, { timeoutMs: params.timeoutMs, intervalMs: 250, context: 'expo web ready' });
-
-  if (resolved) return resolved;
+  }
 
   for (const url of expectedCandidates.length > 0 ? expectedCandidates : defaultCandidates) {
-    if (await looksLikeUiWebEntryPage(url, params.env)) return url;
+    const probe = await inspectUiWebEntryPage(url, params.env);
+    if (probe.isEntryPage) return { baseUrl: url, hasScriptTags: probe.hasScriptTags };
+  }
+
+  if (orderedCandidates.length > 0) {
+    return { baseUrl: orderedCandidates[0] as string, hasScriptTags: false };
   }
 
   throw new Error(`Failed to resolve Expo web baseUrl from stdout log: ${params.stdoutPath}`);
@@ -173,7 +189,7 @@ async function probeScriptReady(url: string, timeoutMs: number): Promise<ScriptR
 }
 
 async function resolvePrimaryAppScriptUrl(baseUrl: string, env: NodeJS.ProcessEnv): Promise<string | null> {
-  const entryTimeoutMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_ENTRY_FETCH_TIMEOUT_MS, 10_000);
+  const entryTimeoutMs = resolveUiWebEntryProbeTimeoutMs(env);
   const html = await fetch(baseUrl, { method: 'GET', signal: AbortSignal.timeout(entryTimeoutMs) })
     .then((response) => response.ok ? response.text() : '')
     .catch(() => '');
@@ -193,6 +209,10 @@ async function waitForPrimaryAppScriptReady(baseUrl: string, env: NodeJS.Process
       if (!primaryAppScriptUrl) {
         primaryAppScriptUrl = await resolvePrimaryAppScriptUrl(baseUrl, env);
         retryCountForCurrentScript = 0;
+      }
+      if (!primaryAppScriptUrl) {
+        const probe = await inspectUiWebEntryPage(baseUrl, env);
+        return probe.isEntryPage;
       }
       if (!primaryAppScriptUrl) return false;
       const probe = await probeScriptReady(primaryAppScriptUrl, attemptTimeoutMs);
@@ -308,7 +328,7 @@ export async function startUiWebMetro(params: {
       }
     });
 
-    baseUrl = await Promise.race([
+    const resolved = await Promise.race([
       resolveExpoWebBaseUrl({
         stdoutPath,
         timeoutMs: resolveUiWebBaseUrlTimeoutMs(params.env),
@@ -317,6 +337,7 @@ export async function startUiWebMetro(params: {
       }),
       exitedEarly,
     ]);
+    baseUrl = resolved.baseUrl;
 
     await waitFor(
       async () =>
@@ -325,7 +346,9 @@ export async function startUiWebMetro(params: {
       { timeoutMs: resolveUiWebMetroStatusTimeoutMs(params.env), intervalMs: 250, context: 'metro /status ready' },
     );
 
-    await waitForPrimaryAppScriptReady(baseUrl, params.env);
+    if (resolved.hasScriptTags) {
+      await waitForPrimaryAppScriptReady(baseUrl, params.env);
+    }
   } catch (e) {
     await proc.stop().catch(() => {});
     const stdoutText = await readFile(stdoutPath, 'utf8').catch(() => '');

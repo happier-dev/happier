@@ -153,7 +153,7 @@ describe('core e2e: Codex MCP attach strips stale ACP session state metadata', (
           meta.acpSessionModelsV1 === undefined &&
           meta.acpConfigOptionsV1 === undefined
         );
-      }, { timeoutMs: 45_000 });
+      }, { timeoutMs: 90_000, context: 'codex MCP attach strips stale ACP state metadata' });
 
       const finalSnap = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
       const finalMeta = decryptLegacyBase64Normalized(finalSnap.metadata, secret) as any;

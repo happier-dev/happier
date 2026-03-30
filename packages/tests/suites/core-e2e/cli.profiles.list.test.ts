@@ -81,13 +81,19 @@ describe('core e2e: cli profiles list', () => {
       cliHomeDir: cliHome,
       serverUrl: server.baseUrl,
       webappUrl: server.baseUrl,
-      env: { ...process.env, CI: '1', HAPPIER_VARIANT: 'dev' },
+      env: {
+        ...process.env,
+        CI: '1',
+        HAPPIER_VARIANT: 'dev',
+        HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink',
+      },
       label: 'profiles.list',
       args: ['profiles', 'list', '--refresh-settings', '--json'],
       timeoutMs: 120_000,
       launchOptions: {
         preferSourceEntrypoint: true,
         skipSourceFreshnessCheck: true,
+        skipSharedDepsBuild: true,
       },
     });
 

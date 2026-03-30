@@ -97,6 +97,8 @@ describe('core e2e: direct Codex sessions browse/link/tail', () => {
       env: {
         ...process.env,
         CI: '1',
+        HAPPIER_E2E_DAEMON_CLI_SNAPSHOT_MODE: 'testdir',
+        HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy',
         HAPPIER_HOME_DIR: daemonHomeDir,
         HAPPIER_SERVER_URL: server.baseUrl,
         CODEX_HOME: codexHomeDir,

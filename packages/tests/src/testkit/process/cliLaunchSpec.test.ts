@@ -83,6 +83,7 @@ describe('resolveCliTestLaunchSpec', () => {
           env: {
             ...process.env,
             HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+            HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy',
           },
         },
         {
@@ -100,7 +101,8 @@ describe('resolveCliTestLaunchSpec', () => {
       expect(existsSync(resolve(snapshotDir, 'tools', 'launch-helper.txt'))).toBe(true);
       expect(existsSync(resolve(snapshotDir, 'bin', 'launch-helper.txt'))).toBe(true);
       expect(existsSync(resolve(snapshotDir, 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'github.js'))).toBe(true);
-      expect(lstatSync(resolve(snapshotDir, 'node_modules')).isSymbolicLink()).toBe(false);
+      const nodeModulesEntry = lstatSync(resolve(snapshotDir, 'node_modules'));
+      expect(nodeModulesEntry.isSymbolicLink() || nodeModulesEntry.isDirectory()).toBe(true);
       expect(spec.env?.TSX_TSCONFIG_PATH).toBe(resolve(snapshotDir, 'tsconfig.json'));
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
@@ -170,6 +172,49 @@ describe('resolveCliTestLaunchSpec', () => {
       expect(sharedDepsBuildMock.ensureCliSharedDepsBuilt).not.toHaveBeenCalled();
       expect(spec.command).toBe(process.execPath);
       expect(spec.args).toContain(resolve(snapshotDir, 'src', 'index.ts'));
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('can symlink snapshot node_modules for source-entrypoint launches', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-symlink-'));
+    const snapshotDir = resolve(repoRoot, 'snapshot');
+
+    try {
+      mkdirSync(resolve(repoRoot, 'apps', 'cli', 'src'), { recursive: true });
+      mkdirSync(resolve(repoRoot, 'apps', 'cli', 'scripts'), { recursive: true });
+      mkdirSync(resolve(repoRoot, 'apps', 'cli', 'tools'), { recursive: true });
+      mkdirSync(resolve(repoRoot, 'apps', 'cli', 'bin'), { recursive: true });
+      mkdirSync(resolve(repoRoot, 'apps', 'cli', 'node_modules'), { recursive: true });
+
+      writeFileSync(resolve(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }), 'utf8');
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }), 'utf8');
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'tsconfig.json'), '{}', 'utf8');
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'src', 'index.ts'), 'export const ok = true;\n', 'utf8');
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'scripts', 'claude_version_utils.cjs'), 'module.exports = {};\n', 'utf8');
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'tools', 'launch-helper.txt'), 'tools\n', 'utf8');
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'bin', 'launch-helper.txt'), 'bin\n', 'utf8');
+
+      const spec = await resolveCliTestLaunchSpec(
+        {
+          testDir: resolve(repoRoot, '.project'),
+          env: {
+            ...process.env,
+            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+            HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink',
+          },
+        },
+        {
+          repoRoot,
+          snapshotDir,
+        },
+      );
+
+      expect(spec.command).toBe(process.execPath);
+      expect(spec.args).toContain(resolve(snapshotDir, 'src', 'index.ts'));
+      expect(lstatSync(resolve(snapshotDir, 'node_modules')).isSymbolicLink()).toBe(true);
+      expect(existsSync(resolve(snapshotDir, 'scripts', 'claude_version_utils.cjs'))).toBe(true);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

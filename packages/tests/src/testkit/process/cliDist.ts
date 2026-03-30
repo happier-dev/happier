@@ -20,8 +20,8 @@ import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules';
 import { yarnCommand } from './commands';
 import { runLoggedCommand } from './spawnProcess';
 
-let _ensurePromise: Promise<string> | null = null;
-let _ensureSharedPromise: Promise<void> | null = null;
+const ensureDistPromisesByRepoRoot = new Map<string, Promise<string>>();
+const ensureSharedPromisesByRepoRoot = new Map<string, Promise<void>>();
 const DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS = 600_000;
 
 type CliDistBuildLockOwner = {
@@ -322,6 +322,41 @@ function hasCliBundledWorkspaceDistParity(rootDir: string, packageName: CliShare
   });
 }
 
+function stableJsonStringify(value: unknown): string {
+  if (value === null) return 'null';
+  const t = typeof value;
+  if (t === 'string') return JSON.stringify(value);
+  if (t === 'number' || t === 'boolean') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((v) => stableJsonStringify(v)).join(',')}]`;
+  if (t !== 'object') return JSON.stringify(String(value));
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJsonStringify(obj[k])}`).join(',')}}`;
+}
+
+function readPackageJsonField(packageJsonPath: string, field: string): unknown {
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as Record<string, unknown>;
+    return parsed[field];
+  } catch {
+    return undefined;
+  }
+}
+
+function hasCliBundledWorkspaceManifestParity(rootDir: string, packageName: CliSharedDepPackageName): boolean {
+  const workspacePackageJsonPath = resolve(resolveCliWorkspacePackageDir(rootDir, packageName), 'package.json');
+  const bundledPackageJsonPath = resolve(resolveCliBundledWorkspacePackageDir(rootDir, packageName), 'package.json');
+  if (!existsSync(workspacePackageJsonPath) || !existsSync(bundledPackageJsonPath)) return false;
+
+  const workspaceExports = readPackageJsonField(workspacePackageJsonPath, 'exports');
+  const bundledExports = readPackageJsonField(bundledPackageJsonPath, 'exports');
+
+  // When the CLI imports an internal workspace via a subpath export (e.g. `@happier-dev/cli-common/systemTasks`),
+  // a stale bundled `package.json#exports` can crash at runtime even if dist files exist. Treat exports parity
+  // as part of the shared-deps contract so E2E snapshots rebuild when exports evolve.
+  return stableJsonStringify(workspaceExports) === stableJsonStringify(bundledExports);
+}
+
 function repairMissingCliBundledSharedDepsOutputs(rootDir: string): void {
   for (const packageName of CLI_SHARED_DEP_PACKAGE_NAMES) {
     const packageDir = resolveCliBundledWorkspacePackageDir(rootDir, packageName);
@@ -358,6 +393,7 @@ function hasCliBundledSharedDepsOutputs(rootDir: string): boolean {
   return CLI_SHARED_DEP_PACKAGE_NAMES.every((packageName) => {
     const packageDir = resolveCliBundledWorkspacePackageDir(rootDir, packageName);
     if (!existsSync(packageDir)) return false;
+    if (!hasCliBundledWorkspaceManifestParity(rootDir, packageName)) return false;
     const expectedOutputPaths = resolveCliBundledWorkspaceExpectedOutputPaths(rootDir, packageName);
     if (!expectedOutputPaths.every((candidatePath) => existsSync(candidatePath))) return false;
     if (!hasCliBundledWorkspaceDistParity(rootDir, packageName)) return false;
@@ -379,6 +415,47 @@ function collectExternalRuntimeDepNamesFromPackageJson(packageJson: any): Readon
   return [...required, ...optional];
 }
 
+function collectPackageJsonRelativeFileTargets(value: unknown, result: Set<string>): void {
+  if (typeof value === 'string') {
+    if (value.startsWith('./') && !value.includes('*')) {
+      result.add(value.slice(2));
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectPackageJsonRelativeFileTargets(item, result);
+    return;
+  }
+  for (const nested of Object.values(value)) collectPackageJsonRelativeFileTargets(nested, result);
+}
+
+function hasBundledWorkspacePackageReferencedFiles(packageJsonPath: string): boolean {
+  if (!existsSync(packageJsonPath)) return false;
+
+  let pkg: any;
+  try {
+    pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  } catch {
+    return false;
+  }
+
+  const packageDir = dirname(packageJsonPath);
+  const relativeFileTargets = new Set<string>();
+  collectPackageJsonRelativeFileTargets(pkg.main, relativeFileTargets);
+  collectPackageJsonRelativeFileTargets(pkg.module, relativeFileTargets);
+  collectPackageJsonRelativeFileTargets(pkg.types, relativeFileTargets);
+  collectPackageJsonRelativeFileTargets(pkg.exports, relativeFileTargets);
+
+  for (const relPath of relativeFileTargets) {
+    if (!existsSync(resolve(packageDir, relPath))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function isBundledWorkspaceRuntimeDependencyTreeHealthy(
   packageJsonPath: string,
   opts?: { visited?: Set<string> },
@@ -393,6 +470,10 @@ function isBundledWorkspaceRuntimeDependencyTreeHealthy(
   try {
     pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
   } catch {
+    return false;
+  }
+
+  if (!hasBundledWorkspacePackageReferencedFiles(packageJsonPath)) {
     return false;
   }
 
@@ -578,13 +659,14 @@ export async function ensureCliSharedDepsBuilt(
   const rootDir = options.repoRoot ?? repoRootDir();
   const skipSourceFreshnessCheck = options.skipSourceFreshnessCheck ?? false;
   const maxBuildAttempts = Math.max(1, options.maxBuildAttempts ?? 2);
-  if (_ensureSharedPromise) return await _ensureSharedPromise;
+  const existing = ensureSharedPromisesByRepoRoot.get(rootDir);
+  if (existing) return await existing;
 
   if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
     return;
   }
 
-  _ensureSharedPromise = (async () => {
+  const promise = (async () => {
     if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
       return;
     }
@@ -612,9 +694,10 @@ export async function ensureCliSharedDepsBuilt(
   })();
 
   try {
-    return await _ensureSharedPromise;
+    ensureSharedPromisesByRepoRoot.set(rootDir, promise);
+    return await promise;
   } finally {
-    _ensureSharedPromise = null;
+    ensureSharedPromisesByRepoRoot.delete(rootDir);
   }
 }
 
@@ -716,12 +799,15 @@ export async function ensureCliDistBuilt(
   }
 
   // If a previous ensure attempt completed but dist is missing, rebuild.
-  if (_ensurePromise) {
-    await _ensurePromise.catch(() => {});
-    _ensurePromise = null;
+  const existingEnsure = ensureDistPromisesByRepoRoot.get(rootDir);
+  if (existingEnsure) {
+    await existingEnsure.catch(() => {});
+    ensureDistPromisesByRepoRoot.delete(rootDir);
+    const availableEntrypoint = resolveReusableEntrypoint();
+    if (availableEntrypoint) return availableEntrypoint;
   }
 
-  _ensurePromise = withCliDistBuildLock(async () => {
+  const promise = withCliDistBuildLock(async () => {
     const reusableEntrypoint = resolveReusableEntrypoint();
     if (reusableEntrypoint) return reusableEntrypoint;
     if (!allowRebuild) {
@@ -786,7 +872,12 @@ export async function ensureCliDistBuilt(
     staleAfterMs: options.staleAfterMs,
   });
 
-  return await _ensurePromise;
+  ensureDistPromisesByRepoRoot.set(rootDir, promise);
+  try {
+    return await promise;
+  } finally {
+    ensureDistPromisesByRepoRoot.delete(rootDir);
+  }
 }
 
 function isHealthyCliDist(dir: string): boolean {

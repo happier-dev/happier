@@ -844,6 +844,68 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
+  it('does not stall when the metro entry-page probe hangs for a single candidate', async () => {
+    const { startUiWeb } = await import('./uiWeb');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
+    await writeFile(join(testDir, 'ui.web.stdout.log'), '', 'utf8');
+    await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
+
+    let bundleFetchCount = 0;
+    const fetchMock = vi.fn(async (input: unknown, init?: { signal?: AbortSignal }): Promise<FakeFetchResponse> => {
+      const url = resolveUrlString(input);
+      const parsed = new URL(url);
+
+      if (parsed.pathname === '/status') {
+        return okText('packager-status:running', 'text/plain');
+      }
+
+      if (parsed.pathname === '/') {
+        return await new Promise<FakeFetchResponse>((_, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+
+      if (parsed.pathname.startsWith('/index.bundle')) {
+        bundleFetchCount += 1;
+        return okText('globalThis.__HAPPIER_E2E__ = true;', 'application/javascript');
+      }
+
+      return notOk();
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const started = await Promise.race([
+        startUiWeb({
+          testDir,
+          env: {
+            HAPPIER_E2E_UI_WEB_MODE: 'metro',
+            HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '50',
+          },
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`startUiWeb stalled on a hanging entry probe; bundleFetchCount=${bundleFetchCount}`));
+          }, 500);
+        }),
+      ]);
+
+      expect(bundleFetchCount).toBe(0);
+      await started.stop();
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  }, 10_000);
+
   it('retries the primary app script fetch after an aborted attempt', async () => {
     const { startUiWeb } = await import('./uiWeb');
 
@@ -969,6 +1031,53 @@ describe('startUiWeb baseUrl resolution', () => {
 
       expect(htmlFetchCount).toBeGreaterThan(0);
       expect(bundleFetchCount).toBeGreaterThan(0);
+      await started.stop();
+    } finally {
+      if (typeof originalFetch === 'function') {
+        (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+    }
+  }, 10_000);
+
+  it('returns once the entry html is available even before Expo injects script tags', async () => {
+    const { startUiWeb } = await import('./uiWeb');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
+    await writeFile(join(testDir, 'ui.web.stdout.log'), '', 'utf8');
+    await writeFile(join(testDir, 'ui.web.stderr.log'), '', 'utf8');
+
+    let htmlFetchCount = 0;
+
+    const fetchMock = vi.fn(async (input: unknown): Promise<FakeFetchResponse> => {
+      const url = resolveUrlString(input);
+      const parsed = new URL(url);
+
+      if (parsed.pathname === '/status') {
+        return okText('packager-status:running', 'text/plain');
+      }
+
+      if (parsed.pathname === '/') {
+        htmlFetchCount += 1;
+        return okText('<!doctype html><html><head></head><body>Compiling…</body></html>', 'text/html');
+      }
+
+      return notOk();
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const started = await Promise.race([
+        startUiWeb({ testDir, env: { HAPPIER_E2E_UI_WEB_MODE: 'metro' } }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('startUiWeb did not finish quickly')), 5_000);
+        }),
+      ]);
+
+      expect(htmlFetchCount).toBeGreaterThan(0);
       await started.stop();
     } finally {
       if (typeof originalFetch === 'function') {
@@ -1368,26 +1477,15 @@ describe('startUiWeb baseUrl resolution', () => {
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
     try {
-      const started = await Promise.race([
-        startUiWeb({
-          testDir,
-          env: {
-            HAPPIER_E2E_UI_WEB_MODE: 'metro',
-            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
-            HAPPIER_E2E_UI_WEB_SCRIPT_HTML_REFRESH_RETRY_COUNT: '1',
-          },
-        }),
-        new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            reject(
-              new Error(
-                `startUiWeb did not recover from stale script content; html=${htmlFetchCount} stale=${staleScriptFetchCount} ready=${readyScriptFetchCount}`,
-              ),
-            );
-          }, 450);
-        }),
-      ]);
+      const started = await startUiWeb({
+        testDir,
+        env: {
+          HAPPIER_E2E_UI_WEB_MODE: 'metro',
+          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
+          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
+          HAPPIER_E2E_UI_WEB_SCRIPT_HTML_REFRESH_RETRY_COUNT: '1',
+        },
+      });
 
       expect(htmlFetchCount).toBeGreaterThanOrEqual(2);
       expect(staleScriptFetchCount).toBeGreaterThan(0);

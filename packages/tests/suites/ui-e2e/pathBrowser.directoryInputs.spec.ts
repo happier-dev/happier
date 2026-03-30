@@ -226,6 +226,7 @@ test.describe('ui e2e: directory path browser reuse', () => {
         EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
         HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `path-browser-directory-inputs-${run.runId}`,
+        HAPPIER_E2E_EXPO_CLEAR: '1',
         HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '900000',
         HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
         // This suite exercises the shared path-browser contract; the Metro dev server adds

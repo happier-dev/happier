@@ -34,10 +34,10 @@ Prereqs:
 Install a **development build** on the target device/simulator first:
 
 ```bash
-# Android (installs `dev.happier.app.dev` on the active emulator/device)
+# Android (installs `dev.happier.app.internaldev` on the active emulator/device)
 yarn workspace @happier-dev/app android:dev
 
-# iOS simulator (installs `dev.happier.app.development`)
+# iOS simulator (installs `dev.happier.app.internaldev`)
 yarn workspace @happier-dev/app ios:dev
 ```
 

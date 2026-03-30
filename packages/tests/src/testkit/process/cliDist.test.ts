@@ -260,6 +260,152 @@ describe('ensureCliDistBuilt', () => {
     expect(rebuildCalls).toBe(1);
   });
 
+  it('rebuilds when a vendored runtime dependency is missing an exported subpath file', async () => {
+    const repoRoot = await createRepoRoot();
+    const agentsPackageJsonPath = join(repoRoot, 'packages', 'agents', 'package.json');
+    const bundledAgentsPackageJsonPath = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'agents',
+      'package.json',
+    );
+    const bundledZodDir = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'agents',
+      'node_modules',
+      'zod',
+    );
+
+    await writeFile(
+      agentsPackageJsonPath,
+      JSON.stringify(
+        {
+          name: '@happier-dev/agents',
+          dependencies: {
+            zod: '4.3.6',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(
+      bundledAgentsPackageJsonPath,
+      JSON.stringify(
+        {
+          name: '@happier-dev/agents',
+          dependencies: {
+            zod: '4.3.6',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    await mkdir(bundledZodDir, { recursive: true });
+    await writeFile(
+      join(bundledZodDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: 'zod',
+          version: '4.3.6',
+          exports: {
+            '.': './index.js',
+            './v4/core': './v4/core/index.js',
+            './v4/locales/*': './v4/locales/*',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(join(bundledZodDir, 'index.js'), 'exports.ok = true;\n', 'utf8');
+    await mkdir(join(bundledZodDir, 'v4', 'locales'), { recursive: true });
+    await writeFile(join(bundledZodDir, 'v4', 'locales', 'en.js'), 'export const locale = "en";\n', 'utf8');
+    rmSync(join(bundledZodDir, 'v4', 'core'), { recursive: true, force: true });
+
+    let rebuildCalls = 0;
+    await ensureCliSharedDepsBuilt(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        skipSourceFreshnessCheck: true,
+        runCommand: async () => {
+          rebuildCalls += 1;
+          await mkdir(join(bundledZodDir, 'v4', 'core'), { recursive: true });
+          await writeFile(join(bundledZodDir, 'v4', 'core', 'index.js'), 'export const core = true;\n', 'utf8');
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(1);
+  });
+
+  it('rebuilds when bundled workspace exports drift from workspace package.json exports', async () => {
+    const repoRoot = await createRepoRoot();
+    const workspacePackageJsonPath = join(repoRoot, 'packages', 'cli-common', 'package.json');
+    const bundledPackageJsonPath = join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common', 'package.json');
+    const workspaceSystemTasksDistPath = join(repoRoot, 'packages', 'cli-common', 'dist', 'systemTasks', 'index.js');
+    const bundledSystemTasksDistPath = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'cli-common',
+      'dist',
+      'systemTasks',
+      'index.js',
+    );
+
+    await mkdir(join(workspaceSystemTasksDistPath, '..'), { recursive: true });
+    await mkdir(join(bundledSystemTasksDistPath, '..'), { recursive: true });
+    await writeFile(workspaceSystemTasksDistPath, 'export const ok = true;\n', 'utf8');
+    await writeFile(bundledSystemTasksDistPath, 'export const ok = true;\n', 'utf8');
+
+    const workspacePackageJson = {
+      name: '@happier-dev/cli-common',
+      exports: {
+        '.': { default: './dist/index.js' },
+        './systemTasks': { default: './dist/systemTasks/index.js' },
+      },
+    };
+    const staleBundledPackageJson = {
+      name: '@happier-dev/cli-common',
+      exports: {
+        '.': { default: './dist/index.js' },
+      },
+    };
+    await writeFile(workspacePackageJsonPath, JSON.stringify(workspacePackageJson, null, 2), 'utf8');
+    await writeFile(bundledPackageJsonPath, JSON.stringify(staleBundledPackageJson, null, 2), 'utf8');
+
+    let rebuildCalls = 0;
+    await ensureCliSharedDepsBuilt(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        skipSourceFreshnessCheck: true,
+        runCommand: async () => {
+          rebuildCalls += 1;
+          await writeFile(bundledPackageJsonPath, JSON.stringify(workspacePackageJson, null, 2), 'utf8');
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(1);
+  });
+
   it('repairs bundled workspace dist when an internal file is missing even though the entrypoint exists', async () => {
     const repoRoot = await createRepoRoot();
     const workspaceNestedFilePath = join(

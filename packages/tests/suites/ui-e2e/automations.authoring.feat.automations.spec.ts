@@ -201,9 +201,6 @@ test.describe('ui e2e: automations authoring', () => {
         const machineId = await readMachineIdFromCliAuthLoginStdout(resolve(join(testDir, 'cli.auth.login.stdout.log')));
 
         await enableAutomationsInSettings({ page, baseUrl: uiBaseUrl });
-        await expect(page.getByTestId('session-getting-started-start-new-session')).toHaveCount(1, { timeout: 60_000 });
-        await page.getByTestId('session-getting-started-start-new-session').click();
-        await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 
         const inlineAutomationName = `Inline automation ${run.runId}`;
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new?automation=1&happier_hmr=0`, 180_000);

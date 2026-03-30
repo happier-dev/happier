@@ -314,7 +314,7 @@ export async function runMobileMaestro(
   const appId =
     (parsed.appId ? parsed.appId.trim() : '') ||
     (String(params.env.HAPPIER_E2E_MOBILE_APP_ID ?? '').trim()) ||
-    'dev.happier.app.dev';
+    'dev.happier.app.internaldev';
   const platform = parsed.platform ? parsed.platform.trim() : '';
   const mobilePlatform = platform === 'android' || platform === 'ios' ? platform : null;
   const skipAppInstallCheck =

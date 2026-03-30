@@ -45,6 +45,7 @@ export async function runCliJson(params: Readonly<{
   launchOptions?: Readonly<{
     preferSourceEntrypoint?: boolean;
     skipSourceFreshnessCheck?: boolean;
+    skipSharedDepsBuild?: boolean;
   }>;
 }>): Promise<JsonEnvelope> {
   const cliLaunchSpec = await resolveCliTestLaunchSpec(
@@ -57,13 +58,21 @@ export async function runCliJson(params: Readonly<{
   );
   const stdoutPath = resolvePath(join(params.testDir, `cli.${params.label}.stdout.log`));
   const stderrPath = resolvePath(join(params.testDir, `cli.${params.label}.stderr.log`));
+  const env = {
+    ...params.env,
+    ...(params.launchOptions?.skipSharedDepsBuild
+      ? {
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
+        }
+      : {}),
+  };
 
   await runLoggedCommand({
     command: cliLaunchSpec.command,
     args: [...cliLaunchSpec.args, ...params.args],
     cwd: repoRootDir(),
     env: {
-      ...params.env,
+      ...env,
       ...(cliLaunchSpec.env ?? {}),
       CI: '1',
       HAPPIER_SESSION_AUTOSTART_DAEMON: '0',

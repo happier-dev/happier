@@ -148,7 +148,7 @@ function collectTreeTargets(rootPid: number, additionalPids: number[]): { pids: 
   for (const rootPid of roots) {
     if (!Number.isInteger(rootPid) || rootPid <= 0) continue;
     const entry = byPid.get(rootPid);
-    if (entry?.pgid && entry.pgid > 0) {
+    if (entry?.pgid && entry.pgid > 0 && entry.pgid === rootPid) {
       groupIds.add(entry.pgid);
       continue;
     }
@@ -158,7 +158,7 @@ function collectTreeTargets(rootPid: number, additionalPids: number[]): { pids: 
   }
   for (const pid of pids) {
     const entry = byPid.get(pid);
-    if (entry && entry.pgid > 0) {
+    if (entry && entry.pgid > 0 && entry.pgid === pid) {
       groupIds.add(entry.pgid);
     }
   }

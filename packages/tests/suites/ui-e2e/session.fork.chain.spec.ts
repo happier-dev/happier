@@ -56,6 +56,19 @@ function parseSessionIdFromUrl(url: string): string {
   return sessionId;
 }
 
+async function fillAndClickSessionComposerSend(params: Readonly<{ page: Page; prompt: string; timeoutMs?: number }>): Promise<void> {
+  const timeoutMs = params.timeoutMs ?? 60_000;
+  const input = params.page.getByTestId('session-composer-input');
+  await expect(input).toHaveCount(1, { timeout: timeoutMs });
+  await input.click({ timeout: timeoutMs });
+  await input.fill(params.prompt);
+
+  const sendButton = params.page.getByTestId('session-composer-send');
+  await expect(sendButton).toHaveCount(1, { timeout: timeoutMs });
+  await expect(sendButton).toBeEnabled({ timeout: timeoutMs });
+  await sendButton.click({ timeout: timeoutMs });
+}
+
 async function createSessionFromComposer(params: {
   page: Page;
   uiBaseUrl: string;
@@ -122,6 +135,52 @@ async function waitForCommittedTranscriptMessageMatch(params: {
   return match;
 }
 
+async function waitForCommittedTranscriptMessageMatchAfterTestId(params: {
+  page: Page;
+  text: string;
+  afterTestId: string;
+  timeoutMs?: number;
+}): Promise<TranscriptMessageMatch> {
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  let match: TranscriptMessageMatch | null = null;
+  await expect.poll(async () => {
+    match = await params.page.locator('[data-testid="transcript-chat-list"]').evaluateAll((roots, args) => {
+      const targetText = String(args.text);
+      const afterTestId = String(args.afterTestId);
+      const root = roots[0];
+      if (!root) return null;
+
+      const nodes = Array.from(root.querySelectorAll('[data-testid]'));
+      let afterIndex = -1;
+      for (let index = 0; index < nodes.length; index += 1) {
+        const testId = nodes[index]?.getAttribute('data-testid') ?? '';
+        if (testId === afterTestId) {
+          afterIndex = index;
+          break;
+        }
+      }
+      if (afterIndex < 0) return null;
+      for (let index = afterIndex + 1; index < nodes.length; index += 1) {
+        const node = nodes[index];
+        const testId = node?.getAttribute('data-testid') ?? '';
+        if (!testId.startsWith('transcript-message-')) continue;
+        if (testId.includes(':')) continue;
+        if (!(node.textContent ?? '').includes(targetText)) continue;
+        return {
+          testId,
+          messageId: testId.replace(/^transcript-message-/, ''),
+        };
+      }
+      return null;
+    }, { text: params.text, afterTestId: params.afterTestId });
+    return match !== null;
+  }, { timeout: timeoutMs }).toBe(true);
+  if (!match) {
+    throw new Error(`failed to locate committed transcript message after ${params.afterTestId} matching text: ${params.text}`);
+  }
+  return match;
+}
+
 async function ensureReplayForkEnabled(params: { page: Page; uiBaseUrl: string; sessionId: string }): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const targetWrapper = params.page.locator('[data-testid^="transcript-message-"]').filter({ hasText: 'FAKE_CLAUDE_OK_1' }).first();
@@ -158,6 +217,9 @@ async function forkFromTranscriptMessage(params: {
   messageId: string;
   currentSessionId: string;
 }): Promise<string> {
+  const message = params.page.getByTestId(`transcript-message-${params.messageId}`);
+  await expect(message).toHaveCount(1, { timeout: 120_000 });
+  await message.hover({ timeout: 120_000 });
   const forkButton = params.page.getByTestId(`transcript-message-fork:${params.messageId}`);
   await expect(forkButton).toHaveCount(1, { timeout: 120_000 });
   await forkButton.click();
@@ -289,8 +351,7 @@ test.describe('ui e2e: multi-level session fork chain', () => {
     await expect(page.getByTestId(parentOk1Match.testId)).toBeVisible({ timeout: 180_000 });
 
     const parentPrompt2 = `fork-chain-parent-2 ${run.runId}`;
-    await page.locator('textarea[data-testid="session-composer-input"]:visible').fill(parentPrompt2);
-    await page.locator('textarea[data-testid="session-composer-input"]:visible').press('Enter');
+    await fillAndClickSessionComposerSend({ page, prompt: parentPrompt2 });
     const parentOk2Match = await waitForCommittedTranscriptMessageMatch({
       page,
       text: 'FAKE_CLAUDE_OK_2',
@@ -311,8 +372,7 @@ test.describe('ui e2e: multi-level session fork chain', () => {
     }
 
     const childPrompt = `fork-chain-child-1 ${run.runId}`;
-    await page.locator('textarea[data-testid="session-composer-input"]:visible').fill(childPrompt);
-    await page.locator('textarea[data-testid="session-composer-input"]:visible').press('Enter');
+    await fillAndClickSessionComposerSend({ page, prompt: childPrompt });
     // Child session B starts a new vendor session; expect a new FAKE_CLAUDE_OK_1 while also showing
     // the read-only ancestor FAKE_CLAUDE_OK_1 from session A.
     const childViewOk1Matches = await waitForCommittedTranscriptMessageMatches({
@@ -323,16 +383,34 @@ test.describe('ui e2e: multi-level session fork chain', () => {
     });
     expect(childViewOk1Matches.map((match) => match.testId)).toHaveLength(2);
 
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+
+    await waitForCommittedTranscriptMessageMatches({
+      page,
+      text: 'FAKE_CLAUDE_OK_1',
+      expectedCount: 2,
+      timeoutMs: 180_000,
+    });
+
     const childPromptMatch = await waitForCommittedTranscriptMessageMatch({
       page,
       text: childPrompt,
       timeoutMs: 120_000,
     });
 
-    // Fork from the committed user message (stable test id) to avoid ambiguity between ancestor vs new vendor responses.
+    const reloadedChildOk1Match = await waitForCommittedTranscriptMessageMatchAfterTestId({
+      page,
+      text: 'FAKE_CLAUDE_OK_1',
+      afterTestId: `transcript-fork-divider:${parentSessionId}:${sessionBId}`,
+      timeoutMs: 180_000,
+    });
+
+    // Fork from the committed child-session response after a reload so the nested fork chain stays stable.
+    await expect(page.getByTestId(reloadedChildOk1Match.testId)).toBeVisible({ timeout: 120_000 });
     const sessionCId = await forkFromTranscriptMessage({
       page,
-      messageId: childPromptMatch.messageId,
+      messageId: reloadedChildOk1Match.messageId,
       currentSessionId: sessionBId,
     });
     {

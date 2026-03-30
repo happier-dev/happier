@@ -21,6 +21,14 @@ export function normalizeLoopbackBaseUrl(input: string): string {
 }
 
 export async function gotoDomContentLoadedWithRetries(page: Page, url: string, timeoutMs = 90_000): Promise<void> {
+  await gotoWithRetries(page, url, timeoutMs, 'domcontentloaded');
+}
+
+export async function gotoCommittedWithRetries(page: Page, url: string, timeoutMs = 90_000): Promise<void> {
+  await gotoWithRetries(page, url, timeoutMs, 'commit');
+}
+
+async function gotoWithRetries(page: Page, url: string, timeoutMs: number, waitUntil: 'commit' | 'domcontentloaded'): Promise<void> {
   const normalizeUrl = (value: string): string => value.replace(/\/+$/, '');
   const targetUrl = normalizeUrl(url);
   const retryable = (error: unknown): boolean => {
@@ -46,10 +54,10 @@ export async function gotoDomContentLoadedWithRetries(page: Page, url: string, t
     attempt += 1;
     try {
       const remaining = Math.max(5_000, timeoutMs - (Date.now() - start));
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: remaining });
+      await page.goto(url, { waitUntil, timeout: remaining });
       return;
     } catch (error) {
-      if (isCommittedTimeout(error)) return;
+      if (waitUntil === 'commit' && isCommittedTimeout(error)) return;
       if (attempt >= 4 || !retryable(error)) throw error;
       await page.waitForTimeout(500 * attempt);
     }

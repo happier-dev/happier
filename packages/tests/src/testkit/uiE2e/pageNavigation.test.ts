@@ -5,6 +5,7 @@ import {
   gotoDomContentLoadedWithRetries,
   normalizeLoopbackBaseUrl,
 } from './pageNavigation';
+import * as pageNavigation from './pageNavigation';
 
 describe('gotoDomContentLoadedWithRetries', () => {
   it('retries retryable network errors before succeeding', async () => {
@@ -26,7 +27,7 @@ describe('gotoDomContentLoadedWithRetries', () => {
     expect(waitForTimeout).toHaveBeenCalledWith(500);
   });
 
-  it('treats a timed-out navigation as usable once the target URL has committed', async () => {
+  it('rejects a timed-out navigation when waiting for DOM content (even if the target URL committed)', async () => {
     const targetUrl = 'http://localhost:3000/';
     const goto = vi.fn(async () => {
       throw new Error('page.goto: Timeout 90000ms exceeded.');
@@ -38,7 +39,7 @@ describe('gotoDomContentLoadedWithRetries', () => {
       url: () => targetUrl,
     };
 
-    await expect(gotoDomContentLoadedWithRetries(page as never, targetUrl)).resolves.toBeUndefined();
+    await expect(gotoDomContentLoadedWithRetries(page as never, targetUrl)).rejects.toThrow(/timeout/i);
     expect(goto).toHaveBeenCalledTimes(1);
   });
 
@@ -55,6 +56,53 @@ describe('gotoDomContentLoadedWithRetries', () => {
     };
 
     await expect(gotoDomContentLoadedWithPathFallback(page as never, targetUrl, '/')).resolves.toBeUndefined();
+    expect(goto).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('gotoCommittedWithRetries', () => {
+  it('retries retryable network errors before succeeding', async () => {
+    const goto = vi
+      .fn<(_url: string, _options: { waitUntil: 'commit'; timeout: number }) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('net::ERR_CONNECTION_RESET'))
+      .mockResolvedValueOnce(undefined);
+    const waitForTimeout = vi.fn(async () => {});
+
+    type PageStub = {
+      goto: typeof goto;
+      waitForTimeout: typeof waitForTimeout;
+      url: () => string;
+    };
+
+    const page: PageStub = {
+      goto,
+      waitForTimeout,
+      url: () => 'about:blank',
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).gotoCommittedWithRetries;
+    expect(helper).toBeTypeOf('function');
+    await expect((helper as (page: PageStub, url: string, timeoutMs?: number) => Promise<void>)(page, 'http://localhost:3000')).resolves.toBeUndefined();
+
+    expect(goto).toHaveBeenCalledTimes(2);
+    expect(waitForTimeout).toHaveBeenCalledWith(500);
+  });
+
+  it('treats a timed-out navigation as usable once the target URL has committed', async () => {
+    const targetUrl = 'http://localhost:3000/';
+    const goto = vi.fn(async () => {
+      throw new Error('page.goto: Timeout 90000ms exceeded.');
+    });
+
+    const page = {
+      goto,
+      waitForTimeout: vi.fn(async () => {}),
+      url: () => targetUrl,
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).gotoCommittedWithRetries;
+    expect(helper).toBeTypeOf('function');
+    await expect((helper as (page: typeof page, url: string, timeoutMs?: number) => Promise<void>)(page, targetUrl)).resolves.toBeUndefined();
     expect(goto).toHaveBeenCalledTimes(1);
   });
 });

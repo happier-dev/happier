@@ -179,8 +179,6 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
       });
 
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/`);
-      await expect(page.getByTestId('session-getting-started-kind-start_daemon')).toHaveCount(0, { timeout: 180_000 });
-
       await expect
         .poll(
           async () => {

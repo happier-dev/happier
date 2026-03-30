@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import { repoRootDir } from '../paths';
 import { ensureCliDistSnapshotEntrypoint, ensureCliSharedDepsBuilt } from './cliDist';
@@ -29,8 +29,12 @@ function resolveCliTsconfigPath(snapshotDir: string): string {
   return resolve(snapshotDir, 'tsconfig.json');
 }
 
-function ensureCliSourceSnapshot(snapshotDir: string, rootDir: string): void {
-    mkdirSync(snapshotDir, { recursive: true });
+function ensureCliSourceSnapshot(
+  snapshotDir: string,
+  rootDir: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  mkdirSync(snapshotDir, { recursive: true });
 
   const linkTargets = ['src', 'scripts', 'tools', 'bin'];
   for (const relPath of linkTargets) {
@@ -41,11 +45,43 @@ function ensureCliSourceSnapshot(snapshotDir: string, rootDir: string): void {
     symlinkSync(target, dest, process.platform === 'win32' ? 'junction' : 'dir');
   }
 
-  ensureCliDistSnapshotNodeModules({
-    snapshotDir,
-    snapshotDistDir: resolve(snapshotDir, 'dist'),
-    rootDir,
-  });
+  const snapshotNodeModulesModeRaw = (
+    env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? ''
+  ).toString().trim().toLowerCase();
+  const snapshotNodeModulesMode =
+    snapshotNodeModulesModeRaw === 'symlink' || snapshotNodeModulesModeRaw === 'copy'
+      ? snapshotNodeModulesModeRaw
+      : snapshotNodeModulesModeRaw
+        ? 'copy'
+        : 'auto';
+
+  const snapshotNodeModulesDir = resolve(snapshotDir, 'node_modules');
+  const ensureSymlinkNodeModules = (): void => {
+    if (existsSync(snapshotNodeModulesDir)) return;
+    const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
+    const rootNodeModulesDir = resolve(rootDir, 'node_modules');
+    const source = existsSync(cliNodeModulesDir) ? cliNodeModulesDir : rootNodeModulesDir;
+    if (!existsSync(source)) return;
+
+    mkdirSync(dirname(snapshotNodeModulesDir), { recursive: true });
+    try {
+      symlinkSync(source, snapshotNodeModulesDir, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      // Best-effort only.
+    }
+  };
+
+  if (snapshotNodeModulesMode !== 'copy') {
+    ensureSymlinkNodeModules();
+  }
+
+  if (!existsSync(snapshotNodeModulesDir) && snapshotNodeModulesMode !== 'symlink') {
+    ensureCliDistSnapshotNodeModules({
+      snapshotDir,
+      snapshotDistDir: resolve(snapshotDir, 'dist'),
+      rootDir,
+    });
+  }
 
   for (const relPath of ['package.json', 'tsconfig.json']) {
     const target = resolve(rootDir, 'apps', 'cli', relPath);
@@ -73,7 +109,7 @@ async function resolveCliSourceLaunchSpec(
     });
   }
   const snapshotDir = options.snapshotDir;
-  ensureCliSourceSnapshot(snapshotDir, rootDir);
+  ensureCliSourceSnapshot(snapshotDir, rootDir, params.env);
   const sourceEntrypoint = resolveCliSnapshotSourceEntrypoint(snapshotDir);
   if (!existsSync(sourceEntrypoint)) {
     throw new Error(`CLI source entrypoint missing for test launch: ${sourceEntrypoint}`);

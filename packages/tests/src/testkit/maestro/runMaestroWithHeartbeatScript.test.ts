@@ -48,7 +48,7 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
                 '--flows',
                 'suites/mobile-e2e/flows',
                 '--appId',
-                'dev.happier.app.dev',
+                'dev.happier.app.internaldev',
                 '--serverUrl',
                 'http://127.0.0.1:26050',
                 '--skip-app-install-check',
@@ -81,7 +81,7 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
         const manifest = JSON.parse(await readFile(lastRunDir, 'utf8'));
         expect(manifest.tool).toBe('maestro');
         expect(manifest.platform).toBe('android');
-        expect(manifest.appId).toBe('dev.happier.app.dev');
+        expect(manifest.appId).toBe('dev.happier.app.internaldev');
     }, TEST_TIMEOUT_MS);
 
     it('can enable adb reverse for android and keep loopback URLs', async () => {
@@ -135,7 +135,7 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
                 '--flows',
                 'suites/mobile-e2e/flows',
                 '--appId',
-                'dev.happier.app.dev',
+                'dev.happier.app.internaldev',
                 '--serverUrl',
                 'http://127.0.0.1:26050',
                 '--skip-app-install-check',
@@ -218,7 +218,7 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
                 '--flows',
                 'suites/mobile-e2e/flows',
                 '--appId',
-                'dev.happier.app.dev',
+                'dev.happier.app.internaldev',
                 '--serverUrl',
                 'http://127.0.0.1:26050',
                 '--skip-app-install-check',

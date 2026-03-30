@@ -252,6 +252,7 @@ function resolveServerSharedDepsOutputPaths(rootDir: string): string[] {
   return [
     resolve(rootDir, 'packages', 'agents', 'dist', 'index.js'),
     resolve(rootDir, 'packages', 'protocol', 'dist', 'index.js'),
+    resolve(rootDir, 'packages', 'cli-common', 'dist', 'tailscale', 'index.js'),
   ];
 }
 
@@ -647,7 +648,8 @@ async function prepareServerLightDataDir(params: {
 async function ensureServerSharedDepsBuilt(params: { testDir: string; env: NodeJS.ProcessEnv }): Promise<void> {
   if (shouldSkipServerSharedDepsBuild(params.env)) return;
   const rootDir = repoRootDir();
-  if (sharedDepsReady) return;
+  if (sharedDepsReady && hasServerSharedDepsOutputs(rootDir)) return;
+  if (sharedDepsReady) sharedDepsReady = false;
   if (sharedDepsBuildPromise) {
     await sharedDepsBuildPromise;
     return;
@@ -701,7 +703,7 @@ async function ensureServerGeneratedProviders(params: { testDir: string; env: No
     sharedGeneratedProvidersReady = true;
     return;
   }
-  if (sharedGeneratedProvidersReady) return;
+  if (sharedGeneratedProvidersReady) sharedGeneratedProvidersReady = false;
   if (sharedGenerateProvidersPromise) {
     await sharedGenerateProvidersPromise;
     return;
