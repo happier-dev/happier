@@ -7,7 +7,7 @@ import { AvatarBrutalist } from "./AvatarBrutalist";
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useSetting } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
-import { shadowLevelForSheet } from '@/shadowElevation';
+import { shadowLevelStyle } from '@/shadowElevation';
 import {
     DEFAULT_AGENT_ID,
     resolveAgentIdFromFlavor,
@@ -37,7 +37,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         borderRadius: 100,
         padding: 2,
-        ...shadowLevelForSheet(theme.colors.shadowLevels[2]),
+        ...shadowLevelStyle(theme.colors.shadowLevels[2]),
     },
     unreadBadge: {
         position: 'absolute',

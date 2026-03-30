@@ -63,11 +63,11 @@ export const lightTheme = {
         success: '#34C759',
         surface: '#ffffff',
         surfaceRipple: 'rgba(0, 0, 0, 0.08)',
-        surfacePressed: '#f0f0f2',
+        surfacePressed: '#fafafa',
         surfaceSelected: Platform.select({ ios: '#f8f8f8', default: '#f8f8f8' }),
         surfacePressedOverlay: Platform.select({ ios: '#D1D1D6', default: 'transparent' }),
         overlay: {
-            scrim: 'rgba(100, 51, 51, 0.45)',
+            scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',

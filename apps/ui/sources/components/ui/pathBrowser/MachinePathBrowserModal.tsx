@@ -11,7 +11,7 @@ import type { FilesystemBrowserNode } from '@/components/ui/filesystemBrowser/fi
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { shadowLevelForSheet } from '@/shadowElevation';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { useLazyDirectoryTree } from '@/hooks/ui/filesystem/useLazyDirectoryTree';
 import type { LazyDirectoryTreeLoadResult } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
 import {
@@ -102,7 +102,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         borderRadius: 14,
         overflow: 'hidden',
-        ...shadowLevelForSheet(theme.colors.shadowLevels[4]),
+        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
     header: {
         paddingHorizontal: 16,
@@ -191,7 +191,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         borderWidth: 1,
         borderColor: theme.colors.divider,
-        ...shadowLevelForSheet(theme.colors.shadowLevels[5]),
+        ...shadowLevelStyle(theme.colors.shadowLevels[5]),
     },
 }));
 

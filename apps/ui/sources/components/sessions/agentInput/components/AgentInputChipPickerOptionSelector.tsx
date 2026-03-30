@@ -3,7 +3,7 @@ import { Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { shadowLevelForSheet } from "@/shadowElevation";
+import { shadowLevelStyle } from "@/shadowElevation";
 import { Typography } from "@/constants/Typography";
 import { Text } from "@/components/ui/text/Text";
 import { normalizeNodeForView } from "@/components/ui/rendering/normalizeNodeForView";
@@ -167,7 +167,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   optionRowFocused: {
     backgroundColor: theme.colors.surface,
-    ...shadowLevelForSheet(theme.colors.shadowLevels[1]),
+    ...shadowLevelStyle(theme.colors.shadowLevels[1]),
   },
   optionRowPressed: {
     opacity: 0.82,

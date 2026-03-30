@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { shadowLevelForSheet } from '@/shadowElevation';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { ModalCardBody } from './ModalCardBody';
 import { ModalCardHeader } from './ModalCardHeader';
 import { useModalCardDimensions, type ModalCardDimensionOptions, type ModalCardSizePreset } from './useModalCardDimensions';
@@ -33,7 +33,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         borderRadius: 14,
         overflow: 'hidden',
-        ...shadowLevelForSheet(theme.colors.shadowLevels[4]),
+        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
         alignSelf: 'center',
         flexDirection: 'column',
         minHeight: 0,

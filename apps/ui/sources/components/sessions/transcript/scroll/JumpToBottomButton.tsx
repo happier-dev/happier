@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
-import { shadowLevelForSheet } from '@/shadowElevation';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 
 export const JumpToBottomButton = React.memo(function JumpToBottomButton(props: {
@@ -44,7 +44,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surfaceHighest,
         borderWidth: 1,
         borderColor: theme.colors.divider,
-        ...shadowLevelForSheet(theme.colors.shadowLevels[4]),
+        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
     badge: {
         minWidth: 18,

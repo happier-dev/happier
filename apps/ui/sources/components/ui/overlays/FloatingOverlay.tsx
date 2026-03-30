@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { Platform, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades, type ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
-import { shadowLevelForSheet, shadowLevelStyle } from '@/shadowElevation';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -14,7 +14,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         backgroundColor: theme.colors.surface,
         borderWidth: Platform.OS === 'web' ? 0 : 0.5,
         borderColor: theme.colors.modal.border,
-        ...shadowLevelForSheet(theme.colors.shadowLevels[4]),
+        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
 }));
 
@@ -185,41 +185,40 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const protrusion = arrowSize / 2;
 
     const arrowStyle = (() => {
-        const base = {
+        const base: ViewStyle & { boxShadow?: string } = {
             position: 'absolute' as const,
             width: arrowSize,
             height: arrowSize,
             backgroundColor: theme.colors.surface,
             borderWidth: Platform.OS === 'web' ? 0 : 0.5,
             borderColor: theme.colors.modal.border,
-            ...(Platform.OS === 'web'
-                ? ({
-                        // RN-web can be inconsistent with shadow props on transformed views.
-                        // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
-                        boxShadow: theme.colors.shadowPopoverArrowBoxShadow,
-                    } as any)
-                : {
-                        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
-                    }),
             transform: [{ rotate: '45deg' as const }],
             pointerEvents: 'none' as const,
         };
 
+        if (Platform.OS === 'web') {
+            // RN-web can be inconsistent with shadow props on transformed views.
+            // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
+            base.boxShadow = theme.colors.shadowPopoverArrowBoxShadow;
+        } else {
+            Object.assign(base, shadowLevelStyle(theme.colors.shadowLevels[4]));
+        }
+
         switch (arrowSide) {
             case 'top':
-                return [base, { top: -protrusion, left: '50%', marginLeft: -protrusion }] as const;
+                return [base, { top: -protrusion, left: '50%', marginLeft: -protrusion }];
             case 'bottom':
-                return [base, { bottom: -protrusion, left: '50%', marginLeft: -protrusion }] as const;
+                return [base, { bottom: -protrusion, left: '50%', marginLeft: -protrusion }];
             case 'left':
-                return [base, { left: -protrusion, top: '50%', marginTop: -protrusion }] as const;
+                return [base, { left: -protrusion, top: '50%', marginTop: -protrusion }];
             case 'right':
-                return [base, { right: -protrusion, top: '50%', marginTop: -protrusion }] as const;
+                return [base, { right: -protrusion, top: '50%', marginTop: -protrusion }];
         }
     })();
 
     return (
         <Animated.View style={{ position: 'relative' }}>
-            <Animated.View testID="floating-overlay-arrow" style={arrowStyle as any} />
+            <View testID="floating-overlay-arrow" style={arrowStyle} />
             {overlay}
         </Animated.View>
     );

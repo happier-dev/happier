@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View, StyleProp, ViewStyle, TextStyle, Platform } from 'react-native';
-import { shadowLevelForSheet } from '@/shadowElevation';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -62,7 +62,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         borderRadius: Platform.select({ ios: 10, default: 16 }),
         // IMPORTANT: allow popovers to overflow this rounded container.
         overflow: 'visible',
-        ...shadowLevelForSheet(theme.colors.shadowLevels[1]),
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     contentContainerInner: {
         borderRadius: Platform.select({ ios: 10, default: 16 }),

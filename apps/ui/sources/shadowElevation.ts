@@ -1,4 +1,4 @@
-import { Platform, type ViewStyle } from 'react-native';
+import { Platform } from 'react-native';
 
 /** Canonical UI shadow steps (1 = lowest). Web uses CSS `box-shadow`; native uses a single-shadow approximation. */
 export const SHADOW_LEVELS = [1, 2, 3, 4, 5] as const;
@@ -14,6 +14,18 @@ export type ShadowElevationToken = Readonly<{
 }>;
 
 export type ShadowLevels = Record<ShadowLevel, ShadowElevationToken>;
+
+export type ShadowLevelStyle =
+    | Readonly<{
+            boxShadow: string;
+        }>
+    | Readonly<{
+            shadowColor: string;
+            shadowOffset: Readonly<{ width: number; height: number }>;
+            shadowOpacity: number;
+            shadowRadius: number;
+            elevation: number;
+        }>;
 
 function token(
     boxShadow: string,
@@ -134,11 +146,10 @@ export function buildShadowPopoverArrowBoxShadow(dark: boolean): string {
 
 /**
  * View shadow styles for a themed elevation step.
- * Cast to `ViewStyle` so `boxShadow` (web) is accepted on RN Web.
  */
-export function shadowLevelStyle(level: ShadowElevationToken): ViewStyle {
+export function shadowLevelStyle(level: ShadowElevationToken): ShadowLevelStyle {
     if (Platform.OS === 'web') {
-        return { boxShadow: level.boxShadow } as ViewStyle;
+        return { boxShadow: level.boxShadow };
     }
     return {
         shadowColor: level.shadowColor,
@@ -147,12 +158,4 @@ export function shadowLevelStyle(level: ShadowElevationToken): ViewStyle {
         shadowRadius: level.shadowRadius,
         elevation: level.elevation,
     };
-}
-
-/**
- * Same values as {@link shadowLevelStyle}, typed for spreading inside Unistyles `StyleSheet.create`
- * (plain `ViewStyle` breaks its stylesheet inference when spread into style objects).
- */
-export function shadowLevelForSheet(level: ShadowElevationToken): any {
-    return shadowLevelStyle(level);
 }

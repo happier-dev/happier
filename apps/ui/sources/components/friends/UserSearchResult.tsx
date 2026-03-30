@@ -6,7 +6,7 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { t } from '@/text';
 import { useRouter } from 'expo-router';
 import { Text } from '@/components/ui/text/Text';
-import { shadowLevelForSheet } from '@/shadowElevation';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 const USERNAME_PREFIX = '@';
 
@@ -85,7 +85,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 12,
         marginHorizontal: 16,
         marginVertical: 4,
-        ...shadowLevelForSheet(theme.colors.shadowLevels[1]),
+        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     content: {
         flexDirection: 'row',

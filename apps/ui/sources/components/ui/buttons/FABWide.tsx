@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { shadowLevelForSheet } from '@/shadowElevation';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 
@@ -17,7 +17,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         borderRadius: 12,
         paddingVertical: 16,
         paddingHorizontal: 20,
-        ...shadowLevelForSheet(theme.colors.shadowLevels[4]),
+        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
         alignItems: 'center',
         justifyContent: 'center',
     },
