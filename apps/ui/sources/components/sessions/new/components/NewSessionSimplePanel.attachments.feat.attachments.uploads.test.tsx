@@ -64,6 +64,8 @@ vi.mock('@/components/ui/popover', () => ({
         React.createElement(React.Fragment, null, props.children),
     PopoverPortalTargetProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement(React.Fragment, null, props.children),
+    PopoverScope: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement(React.Fragment, null, props.children),
 }));
 
 vi.mock('@/components/sessions/agentInput', () => ({
