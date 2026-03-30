@@ -1,76 +1,89 @@
-const APP_ENVIRONMENT_ALIASES = {
-    development: 'internaldev',
-    dev: 'publicdev',
-    canary: 'internalpreview',
-    stable: 'production',
-    prod: 'production',
-};
+const { getReleaseRingCatalogEntry, normalizeReleaseRingId } = require('@happier-dev/release-runtime/releaseRings');
+
+function resolveLogicalVariantFromRing(ring) {
+    if (ring.expoAppEnv === 'production') return 'production';
+    if (ring.expoAppEnv === 'development') return 'development';
+    return 'preview';
+}
+
+function buildRingBackedConfig(ringId, overrides) {
+    const ring = getReleaseRingCatalogEntry(ringId);
+    return {
+        id: ringId,
+        logicalVariant: resolveLogicalVariantFromRing(ring),
+        name: overrides.name,
+        iosBundleId: overrides.iosBundleId,
+        androidPackage: overrides.androidPackage,
+        scheme: overrides.scheme,
+        updatesChannel: ring.expoUpdatesChannel,
+        featurePolicyEnv: ring.embeddedPolicyEnv,
+        enableAssociatedDomains: overrides.enableAssociatedDomains,
+    };
+}
+
+function buildProductionConfig(overrides) {
+    const ring = getReleaseRingCatalogEntry('stable');
+    return {
+        id: 'production',
+        logicalVariant: 'production',
+        name: overrides.name,
+        iosBundleId: overrides.iosBundleId,
+        androidPackage: overrides.androidPackage,
+        scheme: overrides.scheme,
+        updatesChannel: ring.expoUpdatesChannel,
+        featurePolicyEnv: ring.embeddedPolicyEnv,
+        enableAssociatedDomains: overrides.enableAssociatedDomains,
+    };
+}
 
 const APP_ENVIRONMENT_CONFIGS = {
-    internaldev: {
-        id: 'internaldev',
-        logicalVariant: 'development',
+    internaldev: buildRingBackedConfig('internaldev', {
         name: 'Happier (internal dev)',
         iosBundleId: 'dev.happier.app.internaldev',
         androidPackage: 'dev.happier.app.internaldev',
         scheme: 'happier-internaldev',
-        updatesChannel: 'internaldev',
-        featurePolicyEnv: '',
         enableAssociatedDomains: false,
-    },
-    internalpreview: {
-        id: 'internalpreview',
-        logicalVariant: 'preview',
+    }),
+    internalpreview: buildRingBackedConfig('internalpreview', {
         name: 'Happier (internal preview)',
         iosBundleId: 'dev.happier.app.internalpreview',
         androidPackage: 'dev.happier.app.internalpreview',
         scheme: 'happier-internalpreview',
-        updatesChannel: 'internalpreview',
-        featurePolicyEnv: 'preview',
         enableAssociatedDomains: false,
-    },
-    publicdev: {
-        id: 'publicdev',
-        logicalVariant: 'preview',
+    }),
+    publicdev: buildRingBackedConfig('publicdev', {
         name: 'Happier (dev)',
         iosBundleId: 'dev.happier.app.publicdev',
         androidPackage: 'dev.happier.app.publicdev',
-        scheme: 'happier-publicdev',
-        updatesChannel: 'publicdev',
-        featurePolicyEnv: 'preview',
+        scheme: 'happier-dev',
         enableAssociatedDomains: false,
-    },
-    preview: {
-        id: 'preview',
-        logicalVariant: 'preview',
+    }),
+    preview: buildRingBackedConfig('preview', {
         name: 'Happier (preview)',
         iosBundleId: 'dev.happier.app.preview',
         androidPackage: 'dev.happier.app.preview',
         scheme: 'happier-preview',
-        updatesChannel: 'preview',
-        featurePolicyEnv: 'preview',
         enableAssociatedDomains: false,
-    },
-    production: {
-        id: 'production',
-        logicalVariant: 'production',
+    }),
+    production: buildProductionConfig({
         name: 'Happier',
         iosBundleId: 'dev.happier.app',
         androidPackage: 'dev.happier.app',
         scheme: 'happier',
-        updatesChannel: 'production',
-        featurePolicyEnv: 'production',
         enableAssociatedDomains: true,
-    },
+    }),
 };
 
 function normalizeAppEnvironmentId(raw) {
     const value = String(raw ?? '').trim().toLowerCase();
     if (!value) return '';
-    if (Object.prototype.hasOwnProperty.call(APP_ENVIRONMENT_ALIASES, value)) {
-        return APP_ENVIRONMENT_ALIASES[value];
+    if (Object.prototype.hasOwnProperty.call(APP_ENVIRONMENT_CONFIGS, value)) {
+        return value;
     }
-    return Object.prototype.hasOwnProperty.call(APP_ENVIRONMENT_CONFIGS, value) ? value : '';
+
+    const ring = normalizeReleaseRingId(value);
+    if (!ring) return '';
+    return ring === 'stable' ? 'production' : ring;
 }
 
 function getAppEnvironmentConfig(raw) {
@@ -83,3 +96,4 @@ module.exports = {
     getAppEnvironmentConfig,
     normalizeAppEnvironmentId,
 };
+
