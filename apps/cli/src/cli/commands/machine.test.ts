@@ -18,7 +18,7 @@ describe('handleMachineCommand', () => {
     process.exitCode = undefined;
   });
 
-  it('streams remote bootstrap task events/results in json mode and forwards parsed relay/task options', async () => {
+  it('streams remote setup task events/results in json mode and forwards parsed relay/task options', async () => {
     const event: SystemTaskEvent = {
       protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
       taskId: 'task-1',
@@ -57,7 +57,7 @@ describe('handleMachineCommand', () => {
 
     await handleMachineCommand(
       [
-        'bootstrap',
+        'setup',
         '--ssh',
         'dev@example.test',
         '--identity-file',
@@ -172,7 +172,7 @@ describe('handleMachineCommand', () => {
       });
 
     await handleMachineCommand(
-      ['bootstrap', '--ssh', 'dev@example.test'],
+      ['setup', '--ssh', 'dev@example.test'],
       {
         applyServerSelectionFromArgs: async (args) => args,
         createRunner: () => ({
@@ -200,7 +200,7 @@ describe('handleMachineCommand', () => {
   it('fails closed in non-interactive mode without --yes when a prompt is required', async () => {
     const respond = vi.fn(async () => undefined);
     await handleMachineCommand(
-      ['bootstrap', '--ssh', 'dev@example.test'],
+      ['setup', '--ssh', 'dev@example.test'],
       {
         applyServerSelectionFromArgs: async (args) => args,
         createRunner: () => ({
@@ -234,9 +234,9 @@ describe('handleMachineCommand', () => {
     expect(errorSpy.mock.calls.flat().join('\n')).toContain('Non-interactive mode requires --yes');
   });
 
-  it('rejects unknown bootstrap flags instead of ignoring them', async () => {
+  it('rejects unknown setup flags instead of ignoring them', async () => {
     await handleMachineCommand(
-      ['bootstrap', '--ssh', 'dev@example.test', '--bogus', '--json'],
+      ['setup', '--ssh', 'dev@example.test', '--bogus', '--json'],
       {
         applyServerSelectionFromArgs: async (args) => args,
         createRunner: () => ({

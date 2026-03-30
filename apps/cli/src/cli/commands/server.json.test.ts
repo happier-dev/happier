@@ -201,6 +201,38 @@ describe('happier server --json', () => {
     }
   });
 
+  it('derives webappUrl from the new serverUrl when --webapp-url is omitted', async () => {
+    const output = captureConsoleLogAndMuteStdout();
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await addServerProfile({
+        name: 'Old',
+        serverUrl: 'https://old.example.test',
+        webappUrl: 'https://old-webapp.example.test',
+        use: true,
+      });
+
+      await handleServerCommand([
+        'set',
+        '--server-url',
+        'https://s.example.test',
+        '--json',
+      ]);
+
+      const parsed = JSON.parse(output.logs.join('\n').trim());
+      expect(parsed.v).toBe(1);
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('server_set');
+      expect(parsed.data?.active?.serverUrl).toBe('https://s.example.test');
+      expect(parsed.data?.active?.webappUrl).toBe('https://s.example.test');
+      expect(process.exitCode).toBe(0);
+    } finally {
+      output.restore();
+      process.exitCode = prevExitCode;
+    }
+  });
+
   it('prints a server_test JSON envelope (ok=true)', async () => {
     const output = captureConsoleLogAndMuteStdout();
     let server: Server | null = null;

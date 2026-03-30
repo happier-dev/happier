@@ -54,6 +54,10 @@
       "types": "./dist/firstPartyRuntime/index.d.ts",
       "default": "./dist/firstPartyRuntime/index.js"
     },
+    "./relayHost": {
+      "types": "./dist/relayHost/index.d.ts",
+      "default": "./dist/relayHost/index.js"
+    },
     "./systemTasks": {
       "types": "./dist/systemTasks/index.d.ts",
       "default": "./dist/systemTasks/index.js"

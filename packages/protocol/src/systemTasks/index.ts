@@ -13,3 +13,16 @@ export {
   type SystemTaskResultError,
   type SystemTaskSpec,
 } from './spec.js';
+
+export {
+  createTailscaleSecureAccessTaskSpec,
+  TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND,
+  TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_STEP_IDS,
+  type TailscaleSecureAccessInstallPolicy,
+  type TailscaleSecureAccessLoginPolicy,
+  type TailscaleSecureAccessMode,
+  type TailscaleSecureAccessSystemTaskStepId,
+  type TailscaleSecureAccessTaskParams,
+  type TailscaleSecureAccessTaskResult,
+  type TailscaleSecureAccessTaskSpec,
+} from './tailscaleSecureAccessTaskContract.js';

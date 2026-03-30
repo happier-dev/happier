@@ -46,18 +46,13 @@ describe('buildRemoteBootstrapCommand', () => {
     expect(command).toContain('daemon service install --mode=user --json');
   });
 
-  it('normalizes relay runtime install channel and mode before composing shell commands', () => {
+  it('never emits hstack self-host install shells (relay runtime is handled out-of-band)', () => {
     const command = buildRemoteBootstrapCommand({
-      label: 'relay.runtime.install',
+      label: 'auth.status',
       serverUrl: 'https://relay.example.test',
-      data: {
-        channel: 'preview; touch /tmp/pwned',
-        mode: 'system; touch /tmp/pwned',
-      },
     });
 
-    expect(command).toContain('--channel=stable');
-    expect(command).toContain('--mode=user');
-    expect(command).not.toContain('touch /tmp/pwned');
+    expect(command).not.toContain('hstack');
+    expect(command).not.toContain('self-host');
   });
 });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { runRemoteDaemonSetupWithDeps } from './remote_cmd.mjs';
 
-test('remote daemon setup delegates to happier machine bootstrap with relay targeting and user service defaults', async () => {
+test('remote daemon setup delegates to happier machine setup with relay targeting and user service defaults', async () => {
   const invocations = [];
 
   await runRemoteDaemonSetupWithDeps(
@@ -18,7 +18,7 @@ test('remote daemon setup delegates to happier machine bootstrap with relay targ
   assert.equal(invocations.length, 1);
   assert.deepEqual(invocations[0].args, [
     'machine',
-    'bootstrap',
+    'setup',
     '--ssh',
     'dev@example.test',
     '--service-mode=user',
@@ -29,7 +29,7 @@ test('remote daemon setup delegates to happier machine bootstrap with relay targ
   ]);
 });
 
-test('remote daemon setup forwards service none and release channel flags to happier machine bootstrap', async () => {
+test('remote daemon setup forwards service none and release channel flags to happier machine setup', async () => {
   const invocations = [];
 
   await runRemoteDaemonSetupWithDeps(
@@ -44,7 +44,7 @@ test('remote daemon setup forwards service none and release channel flags to hap
   assert.equal(invocations.length, 1);
   assert.deepEqual(invocations[0].args, [
     'machine',
-    'bootstrap',
+    'setup',
     '--ssh',
     'dev@example.test',
     '--channel=preview',

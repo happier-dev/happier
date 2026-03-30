@@ -4,9 +4,6 @@ import { pathToFileURL } from 'node:url';
 import { getReleaseRingCatalogEntry, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { run } from './utils/proc/proc.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import {
-  installRemoteFirstPartyComponent,
-} from './utils/remote/install_remote_first_party_component.mjs';
 
 function takeFlagValue(args, name) {
   const rest = [];
@@ -57,10 +54,6 @@ function assertPublicChannel(channel, source = '--channel') {
   return normalized;
 }
 
-async function runSsh({ target, command }) {
-  await run('ssh', [target, 'bash', '-lc', safeBashSingleQuote(command)], { env: process.env });
-}
-
 export async function runRemoteDaemonSetupWithDeps(argvRaw, deps = {}) {
   const resolvedDeps = {
     runLocalMachineBootstrap: async ({ args }) => {
@@ -100,7 +93,7 @@ export async function runRemoteDaemonSetupWithDeps(argvRaw, deps = {}) {
   await resolvedDeps.runLocalMachineBootstrap({
     args: [
       'machine',
-      'bootstrap',
+      'setup',
       '--ssh',
       ssh.value,
       ...(channel === 'stable' ? [] : [`--channel=${channel}`]),
@@ -123,6 +116,12 @@ function usageText() {
     '    [--json]',
     '',
     '  hstack remote server setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
+    '    [--mode <user|system>]',
+    '    [--self-host-server-binary <path>]',
+    '    [--env KEY=VALUE]...',
+    '    [--json]',
+    '',
+    '  hstack remote relay setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
     '    [--mode <user|system>]',
     '    [--self-host-server-binary <path>]',
     '    [--env KEY=VALUE]...',
@@ -280,38 +279,23 @@ async function runRemoteServerSetup(argvRaw) {
   args = selfHostServerBinaryFlag.rest;
 
   const envValues = collectEnvValues(argv0);
-  if (selfHostServerBinaryFlag.value) {
-    // Forward this override to `hstack self-host install` via process.env, without persisting it
-    // in the installed service env file.
-    envValues.push(`HAPPIER_SELF_HOST_SERVER_BINARY=${selfHostServerBinaryFlag.value}`);
-  }
-  const installedStack = await installRemoteFirstPartyComponent({
-    componentId: 'hstack',
-    channel,
-    target: ssh.value,
-  });
-  const built = buildRemoteSelfHostInstallCommand({
-    channel,
-    mode,
-    envValues,
-    remoteHstack: installedStack.binaryPath,
-  });
 
-  await runSsh({ target: ssh.value, command: built.selfHostCmd });
-
-  printResult({
-    json,
-    data: { ok: true, ssh: ssh.value, channel, mode, env: envValues, selfHostServerBinary: selfHostServerBinaryFlag.value || null },
-    text: json
-      ? null
-      : [
-          '✓ Remote server setup complete',
-          `- ssh: ${ssh.value}`,
-          `- channel: ${displayChannel(channel)}`,
-          `- mode: ${mode}`,
-          `- env: ${envValues.length ? envValues.join(', ') : '(none)'}`,
-        ].join('\n'),
-  });
+  await run(
+    'happier',
+    [
+      'relay',
+      'host',
+      'install',
+      '--ssh',
+      ssh.value,
+      `--channel=${channel === 'publicdev' ? 'dev' : channel}`,
+      `--mode=${mode}`,
+      ...(selfHostServerBinaryFlag.value ? ['--self-host-server-binary', selfHostServerBinaryFlag.value] : []),
+      ...envValues.flatMap((value) => ['--env', value]),
+      ...(json ? ['--json'] : []),
+    ],
+    { env: process.env },
+  );
 }
 
 async function main() {
@@ -330,6 +314,10 @@ async function main() {
     return;
   }
   if (top === 'server' && sub === 'setup') {
+    await runRemoteServerSetup(argvRaw);
+    return;
+  }
+  if (top === 'relay' && sub === 'setup') {
     await runRemoteServerSetup(argvRaw);
     return;
   }

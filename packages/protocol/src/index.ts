@@ -1142,6 +1142,9 @@ export {
   SystemTaskResultErrorSchema,
   SystemTaskResultSchema,
   SystemTaskSpecSchema,
+  createTailscaleSecureAccessTaskSpec,
+  TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND,
+  TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_STEP_IDS,
   type SystemTaskEvent,
   type SystemTaskJsonArray,
   type SystemTaskJsonObject,
@@ -1149,6 +1152,13 @@ export {
   type SystemTaskResult,
   type SystemTaskResultError,
   type SystemTaskSpec,
+  type TailscaleSecureAccessInstallPolicy,
+  type TailscaleSecureAccessLoginPolicy,
+  type TailscaleSecureAccessMode,
+  type TailscaleSecureAccessSystemTaskStepId,
+  type TailscaleSecureAccessTaskParams,
+  type TailscaleSecureAccessTaskResult,
+  type TailscaleSecureAccessTaskSpec,
 } from './systemTasks/index.js';
 
 export {

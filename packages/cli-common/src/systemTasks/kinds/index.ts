@@ -33,3 +33,10 @@ export {
   type ParsedSshKnownHostLine,
   type ResolvedSshHostTrust,
 } from './sshHostTrust.js';
+
+export {
+  createRelayHostEngine,
+  type RelayHostEngine,
+  type RelayHostEngineDeps,
+  type RelayHostRemoteCommandResult,
+} from '../../relayHost/index.js';

@@ -8,14 +8,13 @@ import {
   installRemoteFirstPartyComponent,
   normalizeRemoteReleaseArch,
   normalizeRemoteReleaseOs,
-  resolveRemoteInstalledFirstPartyBinaryPath,
   resolveSshKnownHostTrust,
   SystemTaskExecutionError,
   type RemoteFirstPartyCommandResult,
   type RemoteHostTrustResolution,
   type SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
-import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { createRelayHostEngine } from '@happier-dev/cli-common/relayHost';
 
 import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
 import { configuration } from '@/configuration';
@@ -30,6 +29,7 @@ import {
 } from './sshTransport';
 
 type JsonRecord = Record<string, unknown>;
+type RemoteCommandResult = Readonly<{ status: number; stdout: string; stderr: string }>;
 
 function resolveAppKnownHostsPath(): string {
   return join(configuration.happyHomeDir, 'ssh', 'known_hosts');
@@ -178,6 +178,43 @@ function runSshCommand(params: Readonly<{
   });
 }
 
+function runSshCommandResult(params: Readonly<{
+  ssh: SystemTaskSshConnectionConfig;
+  auth: SshAuth;
+  knownHostsPath?: string;
+  knownHostsMode?: 'app' | 'system';
+  remoteCommand: readonly string[];
+}>): RemoteCommandResult {
+  if ((params.knownHostsMode ?? 'app') === 'app' && params.knownHostsPath) {
+    mkdirSync(dirname(params.knownHostsPath), { recursive: true });
+  }
+  const invocation = buildSshCommand({
+    sshBin: 'ssh',
+    target: params.ssh.target,
+    port: params.ssh.port,
+    sshConfigFile: params.ssh.sshConfigFile,
+    remoteCommand: params.remoteCommand,
+    knownHostsPath: params.knownHostsPath,
+    knownHostsMode: params.knownHostsMode,
+    auth: params.auth,
+    connectTimeoutSec: 10,
+    serverAliveIntervalSec: 15,
+    serverAliveCountMax: 2,
+  });
+  const result = spawnSync(invocation.command, [...invocation.args], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  return {
+    status: result.status ?? 1,
+    stdout: String(result.stdout ?? ''),
+    stderr: String(result.stderr ?? ''),
+  };
+}
+
 function runSshJson<T extends JsonRecord>(params: Readonly<{
   ssh: SystemTaskSshConnectionConfig;
   auth: SshAuth;
@@ -236,6 +273,22 @@ function runSshPosixText(params: Readonly<{
   };
 }
 
+function runSshPosixCommandResult(params: Readonly<{
+  ssh: SystemTaskSshConnectionConfig;
+  auth: SshAuth;
+  knownHostsPath?: string;
+  knownHostsMode?: 'app' | 'system';
+  shellCommand: string;
+}>): RemoteCommandResult {
+  return runSshCommandResult({
+    ssh: params.ssh,
+    auth: params.auth,
+    knownHostsPath: params.knownHostsPath,
+    knownHostsMode: params.knownHostsMode,
+    remoteCommand: ['bash', '-lc', safeBashSingleQuote(params.shellCommand)],
+  });
+}
+
 function copyLocalDirectoryToRemote(params: Readonly<{
   ssh: SystemTaskSshConnectionConfig;
   auth: SshAuth;
@@ -266,41 +319,148 @@ function copyLocalDirectoryToRemote(params: Readonly<{
   });
 }
 
-function normalizeRelayRuntimeCommandChannel(raw: unknown): 'stable' | 'preview' | 'dev' {
-  const channel = normalizePublicReleaseRingId(String(raw ?? '').trim());
-  if (channel === 'preview') {
-    return 'preview';
+function applyRelayRuntimeUrlOverrides(params: Readonly<{
+  relayUrl: string;
+  envOverrides?: Record<string, string>;
+}>): string {
+  const rawHost = String(params.envOverrides?.HAPPIER_SERVER_HOST ?? '').trim();
+  const rawPort = String(params.envOverrides?.PORT ?? '').trim();
+  try {
+    const url = new URL(params.relayUrl);
+    if (rawHost) {
+      url.hostname = rawHost;
+    }
+    const port = Number(rawPort);
+    if (Number.isFinite(port) && port > 0) {
+      url.port = String(Math.floor(port));
+    }
+    return url.toString().replace(/\/$/u, '');
+  } catch {
+    return params.relayUrl;
   }
-  if (channel === 'publicdev') {
-    return 'dev';
-  }
-  return 'stable';
 }
 
-function buildRelayRuntimeInstallCommand(params: Readonly<{
-  remoteHstackBinaryPath: string;
-  channel?: string;
+async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
+  ssh: SystemTaskSshConnectionConfig;
+  auth: SshAuth;
+  knownHostsPath?: string;
+  knownHostsMode?: 'app' | 'system';
+  channel?: 'stable' | 'preview' | 'dev';
   mode?: 'user' | 'system';
   env?: Record<string, string>;
   selfHostRelayBinaryOverride?: string;
-}>): string {
-  const mode = params.mode === 'system' ? 'system' : 'user';
-  const args = [
-    params.remoteHstackBinaryPath,
-    'self-host',
-    'install',
-    `--channel=${normalizeRelayRuntimeCommandChannel(params.channel)}`,
-    `--mode=${mode}`,
-    '--non-interactive',
-    '--json',
-    ...(params.selfHostRelayBinaryOverride
-      ? ['--self-host-server-binary', params.selfHostRelayBinaryOverride]
-      : []),
-    ...Object.entries(params.env ?? {}).flatMap(([key, value]) => ['--env', `${key}=${value}`]),
-  ];
-  return args
-    .map((value, index) => index === 0 || value.startsWith('$HOME/') ? value : safeBashSingleQuote(value))
-    .join(' ');
+}>): Promise<Readonly<{ relayUrl: string; mode: 'user' | 'system' }>> {
+  const engineSsh = params.knownHostsMode === 'app' && params.knownHostsPath
+    ? { ...params.ssh, knownHostsPath: params.knownHostsPath }
+    : params.ssh;
+
+  const engine = createRelayHostEngine({
+    resolveRemoteReleaseTarget: async ({ ssh, knownHostsMode }) => {
+      const transportKnownHostsPath = knownHostsMode === 'app' ? params.knownHostsPath : undefined;
+      const preflight = runSshPosixJson<Readonly<{ platform?: unknown; arch?: unknown }>>({
+        ssh,
+        auth: params.auth,
+        knownHostsPath: transportKnownHostsPath,
+        knownHostsMode,
+        shellCommand: [
+          "printf '{\"platform\":\"%s\",\"arch\":\"%s\"}\\n'",
+          '"$(uname -s | tr \'[:upper:]\' \'[:lower:]\')"',
+          '"$(uname -m | tr \'[:upper:]\' \'[:lower:]\')"',
+        ].join(' '),
+      });
+      return {
+        os: normalizeRemoteReleaseOs(preflight.platform),
+        arch: normalizeRemoteReleaseArch(preflight.arch),
+      };
+    },
+    runRemoteText: async ({ ssh, remoteCommand, knownHostsMode }) => {
+      const transportKnownHostsPath = knownHostsMode === 'app' ? params.knownHostsPath : undefined;
+      return runSshPosixCommandResult({
+        ssh,
+        auth: params.auth,
+        knownHostsPath: transportKnownHostsPath,
+        knownHostsMode,
+        shellCommand: remoteCommand,
+      });
+    },
+    copyLocalDirectoryToRemote: async ({ ssh, localPath, remotePath, knownHostsMode }) => {
+      const transportKnownHostsPath = knownHostsMode === 'app' ? params.knownHostsPath : undefined;
+      copyLocalDirectoryToRemote({
+        ssh,
+        auth: params.auth,
+        knownHostsPath: transportKnownHostsPath,
+        knownHostsMode,
+        localPath,
+        remotePath,
+      });
+    },
+    installRemoteComponent: async ({ componentId, channel, ssh, knownHostsMode, installerBinaryPath, remoteHomeDir }) => {
+      const transportKnownHostsPath = knownHostsMode === 'app' ? params.knownHostsPath : undefined;
+      const installed = await installRemoteFirstPartyComponent({
+        componentId,
+        channel,
+        ssh,
+        knownHostsMode,
+        installerBinaryPath,
+        remoteHomeDir,
+      }, {
+        resolveRemoteReleaseTarget: async () => {
+          const preflight = runSshPosixJson<Readonly<{ platform?: unknown; arch?: unknown }>>({
+            ssh,
+            auth: params.auth,
+            knownHostsPath: transportKnownHostsPath,
+            knownHostsMode,
+            shellCommand: [
+              "printf '{\"platform\":\"%s\",\"arch\":\"%s\"}\\n'",
+              '"$(uname -s | tr \'[:upper:]\' \'[:lower:]\')"',
+              '"$(uname -m | tr \'[:upper:]\' \'[:lower:]\')"',
+            ].join(' '),
+          });
+          return {
+            os: normalizeRemoteReleaseOs(preflight.platform),
+            arch: normalizeRemoteReleaseArch(preflight.arch),
+          };
+        },
+        runRemoteText: async ({ remoteCommand }) => runSshPosixText({
+          ssh,
+          auth: params.auth,
+          knownHostsPath: transportKnownHostsPath,
+          knownHostsMode,
+          shellCommand: remoteCommand,
+        }),
+        copyLocalDirectoryToRemote: async ({ localPath, remotePath }) => {
+          copyLocalDirectoryToRemote({
+            ssh,
+            auth: params.auth,
+            knownHostsPath: transportKnownHostsPath,
+            knownHostsMode,
+            localPath,
+            remotePath,
+          });
+        },
+      });
+      return {
+        binaryPath: installed.binaryPath,
+        versionId: installed.versionId,
+      };
+    },
+  });
+
+  const installResult = await engine.installOrUpdate({
+    target: { kind: 'ssh', ssh: engineSsh },
+    channel: params.channel,
+    mode: params.mode,
+    env: params.env,
+    selfHostRelayBinaryOverride: params.selfHostRelayBinaryOverride,
+  });
+
+  return {
+    relayUrl: applyRelayRuntimeUrlOverrides({
+      relayUrl: installResult.relayUrl,
+      envOverrides: params.env,
+    }),
+    mode: installResult.mode,
+  };
 }
 
 export function createLiveRemoteSshBootstrapTaskKind() {
@@ -418,70 +578,21 @@ export function createLiveRemoteSshBootstrapTaskKind() {
       const knownHostsPath = resolveKnownHostsPath(parsed.ssh, knownHostsMode);
 
       if (label === 'relay.runtime.install') {
-        const remoteCliBinaryPath = resolveRemoteInstalledFirstPartyBinaryPath({
-          componentId: 'happier-cli',
-          channel: parsed.channel,
-        });
-        const remoteHstack = await installRemoteFirstPartyComponent({
-          componentId: 'hstack',
-          channel: parsed.channel,
-          ssh: parsed.ssh,
-          knownHostsMode,
-          installerBinaryPath: remoteCliBinaryPath,
-        }, {
-          resolveRemoteReleaseTarget: async () => {
-            const preflight = runSshPosixJson<Readonly<{ platform?: unknown; arch?: unknown }>>({
-              ssh: parsed.ssh,
-              auth: auth as SshAuth,
-              knownHostsPath,
-              knownHostsMode,
-              shellCommand: [
-                "printf '{\"platform\":\"%s\",\"arch\":\"%s\"}\\n'",
-                '"$(uname -s | tr \'[:upper:]\' \'[:lower:]\')"',
-                '"$(uname -m | tr \'[:upper:]\' \'[:lower:]\')"',
-              ].join(' '),
-            });
-            return {
-              os: normalizeRemoteReleaseOs(preflight.platform),
-              arch: normalizeRemoteReleaseArch(preflight.arch),
-            };
-          },
-          runRemoteText: async ({ remoteCommand }) => runSshPosixText({
-            ssh: parsed.ssh,
-            auth: auth as SshAuth,
-            knownHostsPath,
-            knownHostsMode,
-            shellCommand: remoteCommand,
-          }),
-          copyLocalDirectoryToRemote: async ({ localPath, remotePath }) => {
-            copyLocalDirectoryToRemote({
-              ssh: parsed.ssh,
-              auth: auth as SshAuth,
-              knownHostsPath,
-              knownHostsMode,
-              localPath,
-              remotePath,
-            });
-          },
-        });
-        const relayInstall = runSshPosixJson<Readonly<{ serverUrl?: string | null }>>({
+        const relayInstall = await installRemoteRelayRuntimeUsingSharedEngine({
           ssh: parsed.ssh,
           auth: auth as SshAuth,
           knownHostsPath,
           knownHostsMode,
-          shellCommand: buildRelayRuntimeInstallCommand({
-            remoteHstackBinaryPath: remoteHstack.binaryPath,
-            channel: parsed.channel,
-            mode: parsed.relayRuntime?.mode ?? 'user',
-            env: parsed.relayRuntime?.env,
-            selfHostRelayBinaryOverride: parsed.relayRuntime?.selfHostRelayBinaryOverride,
-          }),
+          channel: parsed.channel,
+          mode: parsed.relayRuntime?.mode ?? 'user',
+          env: parsed.relayRuntime?.env,
+          selfHostRelayBinaryOverride: parsed.relayRuntime?.selfHostRelayBinaryOverride,
         });
         return {
           ok: true,
           data: {
-            relayUrl: String(relayInstall.serverUrl ?? '').trim() || 'http://127.0.0.1:3005',
-            mode: parsed.relayRuntime?.mode === 'system' ? 'system' : 'user',
+            relayUrl: relayInstall.relayUrl,
+            mode: relayInstall.mode,
           },
         };
       }

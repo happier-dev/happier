@@ -127,7 +127,7 @@ function normalizeTaskChannel(args: readonly string[]): 'stable' | 'preview' | '
   return 'stable';
 }
 
-function buildMachineBootstrapSpec(params: Readonly<{
+function buildMachineSetupSpec(params: Readonly<{
   args: string[];
   relaySelection: Readonly<{
     relayUrl: string;
@@ -165,7 +165,7 @@ function buildMachineBootstrapSpec(params: Readonly<{
   const installRelayRuntime = takeFlag(args, '--install-relay-runtime');
   args = installRelayRuntime.rest;
   if (args.length > 0) {
-    throw new Error(`Unknown machine bootstrap arguments: ${args.join(' ')}`);
+    throw new Error(`Unknown machine setup arguments: ${args.join(' ')}`);
   }
 
   const usesKeyfileAuth = Boolean(identityFile.value && identityFile.value.trim());
@@ -250,7 +250,7 @@ async function resolvePromptAnswer(params: Readonly<{
   }
 
   if (!params.interactive) {
-    throw new Error('Non-interactive mode requires --yes for bootstrap prompts.');
+    throw new Error('Non-interactive mode requires --yes for setup prompts.');
   }
 
   if (params.prompt.kind === 'ssh.trustHost' || params.prompt.kind === 'ssh.replaceHostKey') {
@@ -278,12 +278,12 @@ function printHumanEvent(event: SystemTaskEvent): void {
   }
 }
 
-async function runBootstrapSubcommand(argsRaw: string[], deps: MachineCommandDeps): Promise<void> {
+async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): Promise<void> {
   let args = await deps.applyServerSelectionFromArgs(argsRaw);
   const yes = takeFlag(args, '--yes');
   args = yes.rest;
   const json = wantsJson(args);
-  const spec = buildMachineBootstrapSpec({
+  const spec = buildMachineSetupSpec({
     args,
     relaySelection: deps.readRelaySelection(),
   });
@@ -375,18 +375,18 @@ export async function handleMachineCommand(args: string[], deps: Partial<Machine
       return;
     }
 
-    if (subcommand !== 'bootstrap') {
+    if (subcommand !== 'setup') {
       throw new Error(`Unknown machine subcommand: ${subcommand}`);
     }
 
-    await runBootstrapSubcommand(args.slice(1), effectiveDeps);
+    await runSetupSubcommand(args.slice(1), effectiveDeps);
   } catch (error) {
     if (json) {
       const mapped = mapUnknownErrorToControlError(error);
       printJsonEnvelope(
         {
           ok: false,
-          kind: 'machine_bootstrap',
+          kind: 'machine_setup',
           error: { code: mapped.code, ...(mapped.message ? { message: mapped.message } : {}) },
         },
         { exitCode: mapped.unexpected ? 2 : 1 },

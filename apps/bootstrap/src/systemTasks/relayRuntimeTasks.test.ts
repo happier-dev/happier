@@ -4,8 +4,9 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { preparePayloadMock } = vi.hoisted(() => ({
+const { preparePayloadMock, createRelayHostEngineMock } = vi.hoisted(() => ({
     preparePayloadMock: vi.fn(),
+    createRelayHostEngineMock: vi.fn(),
 }));
 
 vi.mock('@happier-dev/cli-common/firstPartyRuntime', async (importOriginal) => {
@@ -13,6 +14,17 @@ vi.mock('@happier-dev/cli-common/firstPartyRuntime', async (importOriginal) => {
     return {
         ...actual,
         prepareFirstPartyComponentPayloadFromGitHubRelease: preparePayloadMock,
+    };
+});
+
+vi.mock('@happier-dev/cli-common/systemTasks', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/cli-common/systemTasks')>();
+    return {
+        ...actual,
+        createRelayHostEngine: (...args: unknown[]) => {
+            createRelayHostEngineMock(...args);
+            return actual.createRelayHostEngine(...(args as Parameters<typeof actual.createRelayHostEngine>));
+        },
     };
 });
 
@@ -168,6 +180,7 @@ describe('installOrUpdateRelayRuntimeDefault', () => {
             expect(preparePayloadMock).toHaveBeenCalledWith(expect.objectContaining({
                 componentId: 'happier-server',
             }));
+            expect(createRelayHostEngineMock).toHaveBeenCalled();
 
             const installRoot = join(fakeOsHomeDir, '.happier', 'self-host');
             expect(readFileSync(join(installRoot, 'self-host-state.json'), 'utf8')).toContain('"version"');
@@ -203,7 +216,27 @@ describe('installOrUpdateRelayRuntimeDefault', () => {
             outputs: [
                 {
                     status: 0,
-                    stdout: `${JSON.stringify({ serverUrl: 'http://127.0.0.1:3005' })}\n`,
+                    stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n`,
+                },
+                {
+                    status: 0,
+                    stdout: 'yes\n',
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
                 },
             ],
         });
@@ -224,15 +257,92 @@ describe('installOrUpdateRelayRuntimeDefault', () => {
                     installRemoteFirstPartyComponent: async ({ componentId }) => ({
                         binaryPath: componentId === 'happier-cli'
                             ? '$HOME/.happier/cli/current/happier'
-                            : '$HOME/.happier/stack/current/hstack',
+                            : '$HOME/.happier/server/current/happier-server',
                         versionId: '1.2.3',
                         source: 'https://example.test/payload.tgz',
                     }),
                 });
             });
 
-            const remoteCommands = fakeSsh.readInvocations().map((args) => args.at(-1) ?? '');
-            expect(remoteCommands.join('\n')).not.toContain('curl -fsSL https://happier.dev/install');
+            const remoteCommands = fakeSsh.readInvocations().map((args) => args.join(' ')).join('\n');
+            expect(remoteCommands).not.toContain('curl -fsSL https://happier.dev/install');
+        } finally {
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('does not delegate remote relay runtime installs to `hstack self-host install`', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n`,
+                },
+                {
+                    status: 0,
+                    stdout: 'yes\n',
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+            ],
+        });
+
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await expect(installOrUpdateRelayRuntimeDefault({
+                    target: {
+                        kind: 'ssh',
+                        ssh: {
+                            target: 'dev@example.test',
+                            auth: 'agent',
+                        },
+                    },
+                    channel: 'stable',
+                    mode: 'user',
+                }, {}, {
+                    installRemoteFirstPartyComponent: async ({ componentId }) => {
+                        switch (componentId) {
+                            case 'happier-cli':
+                                return {
+                                    binaryPath: '$HOME/.happier/cli/current/happier',
+                                    versionId: '1.2.3',
+                                    source: 'https://example.test/payload.tgz',
+                                };
+                            case 'happier-server':
+                                return {
+                                    binaryPath: '$HOME/.happier/server/current/happier-server',
+                                    versionId: '1.2.3',
+                                    source: 'https://example.test/payload.tgz',
+                                };
+                            default: {
+                                const exhaustive: never = componentId;
+                                throw new Error(`unexpected component id: ${String(exhaustive)}`);
+                            }
+                        }
+                    },
+                })).resolves.toMatchObject({
+                    relayUrl: 'http://127.0.0.1:3005',
+                    mode: 'user',
+                });
+            });
+
+            const remoteCommands = fakeSsh.readInvocations().map((args) => args.join(' ')).join('\n');
+            expect(remoteCommands).not.toContain('hstack');
+            expect(remoteCommands).not.toContain("'$HOME/");
         } finally {
             fakeSsh.cleanup();
         }
@@ -240,17 +350,24 @@ describe('installOrUpdateRelayRuntimeDefault', () => {
 });
 
 describe('readRelayRuntimeStatusDefault', () => {
-    it('uses the channel-specific managed hstack path instead of a hardcoded bin shim path', async () => {
+    it('does not delegate remote relay runtime status reads to `hstack self-host status`', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
                 {
                     status: 0,
-                    stdout: `${JSON.stringify({
-                        versions: { server: '1.2.3' },
-                        service: { active: true, enabled: true },
-                        serverUrl: 'http://127.0.0.1:3005',
-                        healthy: true,
-                    })}\n`,
+                    stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n`,
+                },
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({ version: '1.2.3' })}\n`,
+                },
+                {
+                    status: 0,
+                    stdout: 'enabled\nactive\nrunning\n',
+                },
+                {
+                    status: 0,
+                    stdout: 'yes\n',
                 },
             ],
         });
@@ -270,9 +387,9 @@ describe('readRelayRuntimeStatusDefault', () => {
                 });
             });
 
-            const remoteCommand = fakeSsh.readInvocations().at(-1)?.at(-1) ?? '';
-            expect(remoteCommand).toContain('$HOME/.happier/stack-preview/current/hstack self-host status --json --mode=user --channel=preview');
-            expect(remoteCommand).not.toContain('$HOME/.happier/bin/hstack');
+            const remoteCommands = fakeSsh.readInvocations().map((args) => args.join(' ')).join('\n');
+            expect(remoteCommands).not.toContain('hstack self-host status');
+            expect(remoteCommands).not.toContain("'$HOME/");
         } finally {
             fakeSsh.cleanup();
         }

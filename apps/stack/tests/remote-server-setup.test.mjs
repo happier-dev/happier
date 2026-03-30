@@ -10,28 +10,28 @@ test('hstack remote server setup requires --ssh', (t) => {
   assert.match(res.stderr ?? '', /Missing required flag: --ssh/i);
 });
 
-test('hstack remote server setup uses the verified install path for hstack and runs self-host install', (t) => {
+test('hstack remote relay setup is an alias for remote server setup', (t) => {
+  const h = createRemoteServerSetupHarness(t, { prefix: 'hstack-remote-relay-alias-' });
+  const res = h.runRemoteCommand(['relay', 'setup', '--ssh', 'dev@host', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+
+  const log = h.readInvocationsLog();
+  assert.ok(log.includes('"bin":"happier"'), `expected delegation to happier\n${log}`);
+  assert.ok(log.includes('"relay","host","install"'), `expected relay host install delegation\n${log}`);
+});
+
+test('hstack remote server setup delegates to happier relay host install (no direct ssh orchestration)', (t) => {
   const h = createRemoteServerSetupHarness(t, { prefix: 'hstack-remote-server-default-' });
   const res = h.runRemoteCommand(['server', 'setup', '--ssh', 'dev@host', '--json']);
   assert.equal(res.status, 0, res.stderr);
 
   const log = h.readInvocationsLog();
-  const invocations = log
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => JSON.parse(l));
-  const sshCalls = invocations.filter((i) => i?.bin === 'ssh' && Array.isArray(i.argv));
-  assert.ok(sshCalls.length >= 1, `expected ssh invocations\n${log}`);
-  for (const call of sshCalls) {
-    const cmd = String(call.argv[3] ?? '');
-    assert.ok(cmd.startsWith("'") && cmd.endsWith("'"), `expected quoted bash -lc command arg\n${log}`);
-  }
-  assert.ok(log.includes('"kind":"installRemoteFirstPartyComponent"'), `expected verified installer handoff\n${log}`);
-  assert.ok(!log.includes('happier.dev/install'), `expected verified payload install instead of curl|bash\n${log}`);
-  assert.ok(log.includes('$HOME/.happier/stack/current/hstack self-host install'), `expected remote self-host command to use installed stack binary path\n${log}`);
-  assert.ok(log.includes('self-host'), `expected self-host install invocation\n${log}`);
-  assert.ok(log.includes('--channel=stable'), `expected stable channel\n${log}`);
+  assert.ok(log.includes('"bin":"happier"'), `expected delegation to happier\n${log}`);
+  assert.ok(log.includes('"relay","host","install"'), `expected relay host install delegation\n${log}`);
+  assert.ok(log.includes('--ssh'), `expected ssh forwarded to happier\n${log}`);
+  assert.ok(log.includes('dev@host'), `expected ssh target forwarded\n${log}`);
+  assert.ok(log.includes('--channel=stable'), `expected stable channel forwarded\n${log}`);
+  assert.ok(!log.includes('"bin":"ssh"'), `expected no ssh orchestration in hstack wrapper\n${log}`);
 });
 
 test('hstack remote server setup forwards env overrides to self-host install', (t) => {
@@ -51,6 +51,7 @@ test('hstack remote server setup forwards env overrides to self-host install', (
   assert.equal(res.status, 0, res.stderr);
 
   const log = h.readInvocationsLog();
+  assert.ok(log.includes('"bin":"happier"'), `expected delegation to happier\n${log}`);
   assert.ok(log.includes('--channel=preview'), `expected preview channel\n${log}`);
   assert.ok(log.includes('--env'), `expected env args\n${log}`);
   assert.ok(log.includes('HAPPIER_SERVER_PORT=3999'), `expected forwarded port override\n${log}`);
@@ -70,7 +71,7 @@ test('hstack remote server setup accepts the dev release ring', (t) => {
   assert.equal(res.status, 0, res.stderr);
 
   const log = h.readInvocationsLog();
-  assert.ok(log.includes('"kind":"installRemoteFirstPartyComponent"'), `expected verified installer handoff\n${log}`);
-  assert.ok(log.includes('$HOME/.happier/stack-dev/current/hstack self-host install'), `expected dev install root\n${log}`);
-  assert.ok(log.includes('--channel=dev'), `expected dev self-host install\n${log}`);
+  assert.ok(log.includes('"bin":"happier"'), `expected delegation to happier\n${log}`);
+  assert.ok(log.includes('"relay","host","install"'), `expected relay host install delegation\n${log}`);
+  assert.ok(log.includes('--channel=dev'), `expected dev install forwarded\n${log}`);
 });

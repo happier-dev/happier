@@ -88,6 +88,40 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
         throw new Error(`Unexpected command: ${command}`);
       }
       const remoteCommand = String(args.at(-1) ?? '');
+      if (remoteCommand.includes('$PATH') && remoteCommand.includes('printf')) {
+        return {
+          status: 0,
+          stdout: '/usr/local/bin:/usr/bin:/bin\n',
+          stderr: '',
+        };
+      }
+      if (remoteCommand.includes('exit 0') && remoteCommand.includes('echo ""')) {
+        return {
+          status: 0,
+          stdout: '\n',
+          stderr: '',
+        };
+      }
+      if (remoteCommand.includes('echo yes') && (remoteCommand.includes('[ -d ') || remoteCommand.includes('[ -f '))) {
+        return {
+          status: 0,
+          stdout: 'yes\n',
+          stderr: '',
+        };
+      }
+      if (remoteCommand.includes('homeDir')) {
+        return jsonResult({
+          platform: 'linux',
+          arch: 'x86_64',
+          homeDir: '/home/leeroy',
+        });
+      }
+      if (remoteCommand.includes('prismaEnginePath')) {
+        return jsonResult({
+          hasNodeModules: true,
+          prismaEnginePath: '/home/leeroy/.happier/server/current/node_modules/.prisma/client/libquery_engine-debian-openssl-3.0.x.so.node',
+        });
+      }
       if (remoteCommand.includes('"arch"')) {
         return jsonResult({
           platform: 'linux',
@@ -232,6 +266,55 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       .map(([, args]) => args as readonly string[]);
 
     expect(sshArgs.some((args) => args.includes('bash') && args.includes('-lc'))).toBe(true);
+  });
+
+  it('installs the relay runtime over ssh without hstack self-host and returns the computed relay url', async () => {
+    const kind = createLiveRemoteSshBootstrapTaskKind();
+
+    const result = await kind.run({
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'https://relay.example.test',
+        },
+        channel: 'preview',
+        knownHostsMode: 'system',
+        serviceMode: 'none',
+        relayRuntime: {
+          enabled: true,
+          mode: 'user',
+          env: {
+            PORT: '4001',
+          },
+        },
+      },
+      emit: () => undefined,
+      prompt: async (request) => {
+        if (request.kind === 'auth.approveRemoteProvisioning') {
+          return { approved: true };
+        }
+        throw new Error(`Unexpected prompt: ${request.kind}`);
+      },
+    });
+
+    expect(result.relayRuntime?.relayUrl).toBe('http://127.0.0.1:4001');
+
+    const sshRemoteCommands = spawnSync.mock.calls
+      .filter(([command]) => command === 'ssh')
+      .map(([, args]) => String((args as readonly string[]).at(-1) ?? ''))
+      .join('\n');
+
+    expect(sshRemoteCommands).not.toContain('hstack');
+    expect(sshRemoteCommands).not.toContain('hstack self-host');
+    expect(sshRemoteCommands).not.toContain('self-host install');
+    expect(sshRemoteCommands).not.toContain("--component 'hstack'");
+    expect(sshRemoteCommands).not.toContain('/Users/leeroy/Documents/Development/happier/dev');
+    // Guardrail: relay runtime install must use the shared relay host engine, not the bespoke heredoc/prisma probe flow.
+    expect(sshRemoteCommands).not.toContain('HAPPIER_EOF');
+    expect(sshRemoteCommands).not.toContain('prismaEnginePath');
   });
 
   it('honors provided trusted host keys and known_hosts paths without prompting again', async () => {

@@ -14,7 +14,6 @@ export async function handleRelayCommand(args: string[]): Promise<void> {
     const sub = String(subcommand ?? '').trim();
     if (!sub) return 'relay_unknown';
     if (sub === 'inspect-target') return 'relay_inspect_target';
-    if (sub === 'upsert-by-url') return 'relay_upsert_by_url';
     return `relay_${sub}`;
   })();
 
@@ -52,7 +51,6 @@ export async function handleRelayCliCommand(context: CommandContext): Promise<vo
     const sub = String(subcommand ?? '').trim();
     if (!sub) return 'relay_unknown';
     if (sub === 'inspect-target') return 'relay_inspect_target';
-    if (sub === 'upsert-by-url') return 'relay_upsert_by_url';
     return `relay_${sub}`;
   })();
 

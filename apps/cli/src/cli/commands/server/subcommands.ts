@@ -451,7 +451,7 @@ async function cmdSet(args: string[]): Promise<void> {
   }
   const webappUrl = webappUrlRaw
     ? normalizeUrlOrThrow(webappUrlRaw, '--webapp-url')
-    : configuration.webappUrl;
+    : defaultWebappUrlFromServerUrl(serverUrl);
   const created = await upsertServerProfileByUrl({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: true });
   reloadConfiguration();
   if (json) {

@@ -12,9 +12,10 @@ use protocol::{
 };
 use serde::Serialize;
 use state::{SharedChild, SystemTaskSnapshot};
-use std::io::{BufReader, ErrorKind, Write};
+use std::io::{BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use tauri::{AppHandle, Emitter, State};
 
@@ -133,11 +134,40 @@ fn monitor_child_output(
     child: SharedChild,
     stdout: std::process::ChildStdout,
 ) {
+    let app_for_events = app.clone();
+    let app_for_results = app;
+
+    let emit_event_fn = Arc::new(move |task_id: &str, event: &protocol::SystemTaskEvent| {
+        emit_event(&app_for_events, task_id, event);
+    });
+    let emit_result_fn = Arc::new(move |task_id: &str, result: &SystemTaskResult| {
+        emit_result(&app_for_results, task_id, result);
+    });
+
+    monitor_child_output_with_emitters(
+        state,
+        task_id,
+        child,
+        stdout,
+        emit_event_fn,
+        emit_result_fn,
+    );
+}
+
+fn monitor_child_output_with_emitters(
+    state: SystemTasksState,
+    task_id: String,
+    child: SharedChild,
+    stdout: std::process::ChildStdout,
+    emit_event: Arc<dyn Fn(&str, &protocol::SystemTaskEvent) + Send + Sync>,
+    emit_result: Arc<dyn Fn(&str, &SystemTaskResult) + Send + Sync>,
+) {
     thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         let mut buffer = Vec::new();
         let mut emitted_final_result = false;
         let mut output_limit_exceeded = false;
+        let stderr_handle = spawn_stderr_collector(&state, &task_id, &child);
 
         loop {
             match read_json_line(&mut reader, &mut buffer, MAX_STDOUT_LINE_BYTES) {
@@ -156,12 +186,12 @@ fn monitor_child_output(
                         Some(OutputPayload::Event(event)) => {
                             let event = rewrite_event_task_id(event, &task_id);
                             let _ = state.append_event(&task_id, event.clone());
-                            emit_event(&app, &task_id, &event);
+                            (emit_event)(&task_id, &event);
                         }
                         Some(OutputPayload::Result(result)) => {
                             let result = rewrite_result_task_id(result, &task_id);
                             emitted_final_result =
-                                complete_task_and_emit_result(&app, &state, &task_id, result);
+                                complete_task_and_emit_result(&state, &task_id, result, &emit_result);
                             break;
                         }
                         None => {}
@@ -172,13 +202,81 @@ fn monitor_child_output(
         }
 
         wait_for_child(&child);
+        if let Some(handle) = stderr_handle {
+            let _ = handle.join();
+        }
         let _ = state.mark_finished(&task_id);
 
         if !emitted_final_result {
             let fallback = build_fallback_result(&state, &task_id, output_limit_exceeded);
-            let _ = complete_task_and_emit_result(&app, &state, &task_id, fallback);
+            let _ = complete_task_and_emit_result(&state, &task_id, fallback, &emit_result);
         }
     });
+}
+
+fn spawn_stderr_collector(
+    state: &SystemTasksState,
+    task_id: &str,
+    child: &SharedChild,
+) -> Option<thread::JoinHandle<()>> {
+    let stderr = {
+        let mut child_guard = child.lock().ok()?;
+        child_guard.stderr.take()
+    }?;
+
+    let state = state.clone();
+    let task_id = task_id.to_string();
+
+    Some(thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut chunk = [0u8; 1024];
+
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let _ = state.append_stderr_preview_bytes(&task_id, &chunk[..n]);
+                }
+                Err(_) => break,
+            }
+        }
+    }))
+}
+
+fn sanitize_stderr_preview(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    let mut filtered = String::new();
+    for ch in String::from_utf8_lossy(bytes).chars() {
+        if ch == '\n' || ch == '\r' || ch == '\t' {
+            filtered.push(ch);
+            continue;
+        }
+        if ch.is_control() {
+            continue;
+        }
+        filtered.push(ch);
+    }
+
+    let trimmed = filtered.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    const MAX_CHARS: usize = 800;
+    let char_count = trimmed.chars().count();
+    if char_count <= MAX_CHARS {
+        return trimmed.to_string();
+    }
+
+    trimmed
+        .chars()
+        .skip(char_count - MAX_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn build_fallback_result(
@@ -198,6 +296,15 @@ fn build_fallback_result(
         return build_failure_result(task_id, "cancelled", "Task cancelled.");
     }
 
+    let stderr_preview = state.read_stderr_preview_bytes(task_id).unwrap_or_default();
+    let stderr_preview = sanitize_stderr_preview(&stderr_preview);
+    if !stderr_preview.is_empty() {
+        let message = format!(
+            "System task executor exited without a final result.\n\nStderr (tail):\n{stderr_preview}"
+        );
+        return build_failure_result(task_id, "executor_ended_without_result", &message);
+    }
+
     build_failure_result(
         task_id,
         "executor_ended_without_result",
@@ -206,14 +313,14 @@ fn build_fallback_result(
 }
 
 fn complete_task_and_emit_result(
-    app: &AppHandle,
     state: &SystemTasksState,
     task_id: &str,
     result: SystemTaskResult,
+    emit_result: &Arc<dyn Fn(&str, &SystemTaskResult) + Send + Sync>,
 ) -> bool {
     match state.complete_task(task_id, result.clone()) {
         Ok(true) => {
-            emit_result(app, task_id, &result);
+            (emit_result)(task_id, &result);
             true
         }
         _ => false,
@@ -362,14 +469,17 @@ fn create_hsetup_run_command(hsetup_path: &Path) -> Command {
         .arg("system-tasks")
         .arg("run")
         .stdin(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .stdout(Stdio::piped());
     command
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{request_child_cancel, send_prompt_answer_to_task, spawn_hsetup_child};
+    use super::{
+        monitor_child_output_with_emitters, request_child_cancel, send_prompt_answer_to_task,
+        spawn_hsetup_child,
+    };
     use crate::system_tasks::SystemTasksState;
     use std::fs;
     use std::io::Read;
@@ -525,6 +635,100 @@ mod tests {
             .wait()
             .expect("child should exit");
         assert!(status.success());
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawned_hsetup_exposes_stderr_pipe() {
+        let temp_dir = create_temp_dir("system-task-stderr");
+        let script_path = temp_dir.join("stderr.sh");
+        fs::write(
+            &script_path,
+            "#!/bin/sh\nIFS= read -r _spec || exit 2\nprintf 'boom\\n' 1>&2\nexit 7\n",
+        )
+        .expect("script should write");
+
+        let permissions = fs::Permissions::from_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script should be executable");
+
+        let spec_json = r#"{"protocolVersion":1,"kind":"system.ping.v1","params":{}}"#;
+        let mut child = spawn_hsetup_child(&script_path, spec_json).expect("child should start");
+
+        let mut stderr = String::new();
+        child
+            .stderr
+            .take()
+            .expect("stderr should be piped")
+            .read_to_string(&mut stderr)
+            .expect("stderr should read");
+
+        let status = child.wait().expect("child should exit");
+        assert_eq!(status.code(), Some(7));
+        assert!(stderr.contains("boom"));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fallback_result_includes_stderr_preview_when_executor_exits_without_result() {
+        let temp_dir = create_temp_dir("system-task-fallback-stderr");
+        let script_path = temp_dir.join("no-result.sh");
+        fs::write(
+            &script_path,
+            "#!/bin/sh\nIFS= read -r _spec || exit 2\nprintf 'stderr-preview: boom\\n' 1>&2\nexit 1\n",
+        )
+        .expect("script should write");
+
+        let permissions = fs::Permissions::from_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script should be executable");
+
+        let spec_json = r#"{"protocolVersion":1,"kind":"system.ping.v1","params":{}}"#;
+        let mut child = spawn_hsetup_child(&script_path, spec_json).expect("child should start");
+        let stdout = child.stdout.take().expect("stdout should be piped");
+
+        let child = std::sync::Arc::new(std::sync::Mutex::new(child));
+        let state = SystemTasksState::default();
+        state
+            .insert_running_task("task_1", child.clone())
+            .expect("task should insert");
+
+        let emit_event = std::sync::Arc::new(|_task_id: &str, _event: &crate::system_tasks::protocol::SystemTaskEvent| {});
+        let emit_result = std::sync::Arc::new(|_task_id: &str, _result: &crate::system_tasks::protocol::SystemTaskResult| {});
+        monitor_child_output_with_emitters(
+            state.clone(),
+            "task_1".to_string(),
+            child,
+            stdout,
+            emit_event,
+            emit_result,
+        );
+
+        let start = Instant::now();
+        loop {
+            let snapshot = state.snapshot("task_1").expect("snapshot should load");
+            if let Some(result) = snapshot.result {
+                match result {
+                    crate::system_tasks::protocol::SystemTaskResult::Failure(failure) => {
+                        assert_eq!(failure.error.code, "executor_ended_without_result");
+                        assert!(
+                            failure.error.message.contains("stderr-preview: boom"),
+                            "expected stderr preview in failure message, got: {}",
+                            failure.error.message
+                        );
+                    }
+                    _ => panic!("expected failure result"),
+                }
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "timed out waiting for fallback result"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
 
         let _ = fs::remove_dir_all(temp_dir);
     }

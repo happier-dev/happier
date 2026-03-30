@@ -18,7 +18,9 @@ import {
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
-type RelayUpsertByUrlJsonResult = Readonly<{
+import { runRelayHostSubcommand } from './host';
+
+type RelaySetJsonResult = Readonly<{
   serverId: string;
   serverUrl: string;
   comparableKey: string;
@@ -100,14 +102,14 @@ async function cmdInspectTarget(args: string[]): Promise<void> {
   console.log(chalk.gray(`  webapp: ${payload.active.webappUrl}`));
 }
 
-async function cmdUpsertByUrl(args: string[]): Promise<void> {
+async function cmdSet(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const shouldUse = args.includes('--use');
   const serverUrlRaw = argvValue(args, '--server-url')
     || argvValue(args, '--relay-url')
     || firstPositionalArg(args);
   if (!serverUrlRaw) {
-    throw new Error('Usage: happier relay upsert-by-url <relay-url> [--use] [--json] [--server-url <url>] [--webapp-url <url>] [--local-server-url <url>]');
+    throw new Error('Usage: happier relay set <relay-url> [--use] [--json] [--server-url <url>] [--webapp-url <url>] [--local-server-url <url>]');
   }
 
   const serverUrl = normalizeUrlOrThrow(serverUrlRaw, 'relay url');
@@ -142,7 +144,7 @@ async function cmdUpsertByUrl(args: string[]): Promise<void> {
     beforeMatch.webappUrl !== upserted.webappUrl;
   const used = shouldUse && !beforeMatchActive;
 
-  const payload: RelayUpsertByUrlJsonResult = {
+  const payload: RelaySetJsonResult = {
     serverId: upserted.id,
     serverUrl: upserted.serverUrl,
     comparableKey,
@@ -151,7 +153,7 @@ async function cmdUpsertByUrl(args: string[]): Promise<void> {
   };
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'relay_upsert_by_url', data: payload });
+    printJsonEnvelope({ ok: true, kind: 'relay_set', data: payload });
     return;
   }
 
@@ -170,8 +172,11 @@ export async function runRelaySubcommand(subcommand: string, args: string[]): Pr
     case 'inspect-target':
       await cmdInspectTarget(args.slice(1));
       return true;
-    case 'upsert-by-url':
-      await cmdUpsertByUrl(args.slice(1));
+    case 'set':
+      await cmdSet(args.slice(1));
+      return true;
+    case 'host':
+      await runRelayHostSubcommand(args.slice(1));
       return true;
     default:
       return false;

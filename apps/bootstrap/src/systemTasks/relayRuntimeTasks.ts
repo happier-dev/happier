@@ -1,27 +1,24 @@
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { homedir } from 'node:os';
-import type {
-  RelayRuntimeStatusSnapshot,
-  RelayRuntimeTaskParams,
-  SystemTaskSshConnectionConfig,
+import {
+  createRelayHostEngine,
+  installRemoteFirstPartyComponent as installRemoteFirstPartyComponentShared,
+  normalizeRemoteReleaseArch,
+  normalizeRemoteReleaseOs,
+  type RelayHostEngineDeps,
+  type RelayRuntimeStatusSnapshot,
+  type RelayRuntimeTaskParams,
+  type SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
 import {
   checkRelayRuntimeHealth as checkRelayRuntimeHealthShared,
-  installOrUpdateRelayRuntimeLocal,
   listInstalledVersionIdsNewestFirst,
-  normalizeRelayRuntimeStatus,
-  resolveRelayRuntimeDefaults,
 } from '@happier-dev/cli-common/firstPartyRuntime';
-import { resolveServiceBackend } from '@happier-dev/cli-common/service';
 
-import { buildSshCommand } from '../ssh/index.js';
+import { buildScpCommand, buildSshCommand, redactSshText } from '../ssh/index.js';
 import {
   ensureLocalFirstPartyComponentCommand,
 } from './localFirstPartyCommand.js';
 import { normalizeBootstrapChannel, parseFirstJsonObject, runCommandCapture, type CommandExecutionResult } from './taskRuntime.js';
-import { installRemoteFirstPartyComponent, resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyPayloadInstaller.js';
 
 export type SshConnectionConfig = SystemTaskSshConnectionConfig;
 
@@ -34,84 +31,8 @@ function shellQuote(value: string): string {
 export async function readRelayRuntimeStatusDefault(
   params: RelayRuntimeTaskParams,
 ): Promise<RelayRuntimeStatusSnapshot> {
-  const mode = params.mode === 'system' ? 'system' : 'user';
-  const commandChannel = normalizeBootstrapChannel(params.channel).commandChannel;
-
-  if (params.target.kind === 'ssh') {
-    const remote = await runRemoteJson(
-      params.target.ssh,
-      `${resolveRemoteInstalledFirstPartyBinaryPath({
-        componentId: 'hstack',
-        channel: params.channel,
-      })} self-host status --json --mode=${mode} --channel=${commandChannel}`,
-    ) as null | Readonly<{
-      serverUrl?: string | null;
-      healthy?: boolean | null;
-      versions?: Readonly<{ server?: string | null }>;
-      service?: Readonly<{ active?: boolean | null; enabled?: boolean | null }>;
-    }>;
-    return {
-      installed: Boolean(remote?.versions?.server),
-      version: remote?.versions?.server ?? null,
-      service: {
-        active: remote?.service?.active ?? null,
-        enabled: remote?.service?.enabled ?? null,
-      },
-      baseUrl: String(remote?.serverUrl ?? '').trim() || 'http://127.0.0.1:3005',
-      healthy: typeof remote?.healthy === 'boolean' ? remote.healthy : null,
-    };
-  }
-
-  const releaseChannel = normalizeBootstrapChannel(params.channel).releaseChannel;
-  const defaults = resolveRelayRuntimeDefaults({
-    platform: process.platform,
-    mode,
-    channel: releaseChannel,
-    homeDir: homedir(),
-  });
-  const separator = process.platform === 'win32' ? '\\' : '/';
-  const statePath = `${defaults.installRoot}${separator}self-host-state.json`;
-  const binaryName = process.platform === 'win32' ? 'happier-server.exe' : 'happier-server';
-  const binaryPath = `${defaults.installRoot}${separator}bin${separator}${binaryName}`;
-  const stateText = existsSync(statePath) ? await readFile(statePath, 'utf8').catch(() => '') : '';
-  const state = stateText.trim()
-    ? parseFirstJsonObject(stateText) as { version?: string }
-    : null;
-
-  const backend = resolveServiceBackend({
-    platform: process.platform,
-    mode,
-  });
-  const serviceRaw = await queryLocalRelayService({
-    backend,
-    serviceName: defaults.serviceName,
-  });
-  const normalized = normalizeRelayRuntimeStatus({
-    installVersion: typeof state?.version === 'string'
-      ? state.version
-      : existsSync(binaryPath)
-        ? 'installed'
-        : null,
-    service: {
-      backend,
-      raw: serviceRaw,
-    },
-    health: {
-      portOpen: false,
-      pingOk: false,
-      url: `http://${defaults.serverHost}:${defaults.serverPort}${defaults.healthPath}`,
-    },
-  });
-
-  return {
-    installed: normalized.installed,
-    version: typeof state?.version === 'string' ? state.version : null,
-    service: {
-      active: normalized.service.active,
-      enabled: normalized.service.enabled,
-    },
-    baseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
-  };
+  const engine = createRelayHostEngine(buildRelayHostEngineDeps());
+  return await engine.readStatus(params);
 }
 
 export async function checkRelayRuntimeHealthDefault(params: Readonly<{ baseUrl: string }>): Promise<boolean> {
@@ -136,62 +57,44 @@ export async function installOrUpdateRelayRuntimeDefault(
     skipLocalHealthCheck?: boolean;
   }> = {},
   deps: Readonly<{
-    installRemoteFirstPartyComponent?: typeof installRemoteFirstPartyComponent;
+    installRemoteFirstPartyComponent?: (params: Readonly<{
+      componentId: 'happier-cli' | 'happier-server';
+      channel?: string;
+      ssh: SshConnectionConfig;
+      knownHostsMode?: 'app' | 'system';
+      installerBinaryPath?: string;
+      remoteHomeDir?: string;
+    }>) => Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>>;
   }> = {},
 ): Promise<Readonly<{ relayUrl: string; mode: 'user' | 'system' }>> {
-  const installRemoteComponent = deps.installRemoteFirstPartyComponent ?? installRemoteFirstPartyComponent;
   const mode = params.mode === 'system' ? 'system' : 'user';
   const bootstrapChannel = normalizeBootstrapChannel(params.channel);
-  const commandChannel = bootstrapChannel.commandChannel;
   const releaseRing = bootstrapChannel.releaseChannel;
-  const envArgs = Object.entries(params.env ?? {}).flatMap(([key, value]) => ['--env', `${key}=${value}`]);
-  const binaryArgs = params.selfHostRelayBinaryOverride
-    ? ['--self-host-server-binary', params.selfHostRelayBinaryOverride]
-    : [];
+
+  const engine = createRelayHostEngine(buildRelayHostEngineDeps({
+    installRemoteFirstPartyComponent: deps.installRemoteFirstPartyComponent,
+    localInstallPolicy: {
+      runServiceCommands: options.runLocalServiceCommands !== false,
+      skipHealthCheck: options.skipLocalHealthCheck === true,
+    },
+    resolveLocalInstallVersion: async () => {
+      if (params.selfHostRelayBinaryOverride) {
+        return null;
+      }
+      return (await listInstalledVersionIdsNewestFirst({
+        componentId: 'happier-server',
+        processEnv: process.env,
+        releaseRing,
+      })).at(0) ?? null;
+    },
+  }));
 
   if (params.target.kind === 'ssh') {
-    // Remote relay runtime install still delegates to `hstack self-host` because the remote flow needs:
-    // - a remote-first bootstrap of the `hstack` binary (via first-party payload install),
-    // - service manager integration on the remote host,
-    // - and a JSON status/install contract we can reliably drive over SSH.
-    // Local installs are now handled in-process via `@happier-dev/cli-common` to avoid end-user `hstack` dependency.
-    const knownHostsMode = params.target.ssh.knownHostsPath ? 'app' : 'system';
-    const remoteCliBinaryPath = options.ensureRemoteCliInstalled === false
-      ? resolveRemoteInstalledFirstPartyBinaryPath({
-        componentId: 'happier-cli',
-        channel: params.channel,
-      })
-      : (await installRemoteComponent({
-        componentId: 'happier-cli',
-        channel: params.channel,
-        ssh: params.target.ssh,
-        knownHostsMode,
-      })).binaryPath;
-    const remoteHstackBinaryPath = (await installRemoteComponent({
-      componentId: 'hstack',
-      channel: params.channel,
-      ssh: params.target.ssh,
-      knownHostsMode,
-      installerBinaryPath: remoteCliBinaryPath,
-    })).binaryPath;
-    const remote = await runRemoteJson(
-      params.target.ssh,
-      [
-        remoteHstackBinaryPath,
-        'self-host',
-        'install',
-        `--channel=${commandChannel}`,
-        `--mode=${mode}`,
-        '--non-interactive',
-        '--json',
-        ...binaryArgs,
-        ...envArgs,
-      ].map((value, index) => index === 0 || value.startsWith('$HOME/') ? value : shellQuote(value)).join(' '),
-    ) as null | Readonly<{ serverUrl?: string | null }>;
-    return {
-      relayUrl: String(remote?.serverUrl ?? '').trim() || 'http://127.0.0.1:3005',
+    return await engine.installOrUpdate({
+      ...params,
       mode,
-    };
+      channel: releaseRing === 'publicdev' ? 'dev' : releaseRing,
+    });
   }
 
   const serverBinaryPath = params.selfHostRelayBinaryOverride
@@ -202,82 +105,34 @@ export async function installOrUpdateRelayRuntimeDefault(
         envVarNames: ['HAPPIER_BOOTSTRAP_SELF_HOST_SERVER_PATH'],
         releaseRing,
       });
-  const serverVersion = params.selfHostRelayBinaryOverride
-    ? null
-    : (await listInstalledVersionIdsNewestFirst({
-        componentId: 'happier-server',
-        processEnv: process.env,
-        releaseRing,
-      })).at(0) ?? null;
-  const local = await installOrUpdateRelayRuntimeLocal({
-    serverBinaryPath,
-    channel: releaseRing,
+
+  return await engine.installOrUpdate({
+    ...params,
     mode,
-    env: params.env,
-    version: serverVersion,
-    runServiceCommands: options.runLocalServiceCommands !== false,
-    skipHealthCheck: options.skipLocalHealthCheck === true,
+    channel: releaseRing === 'publicdev' ? 'dev' : releaseRing,
+    selfHostRelayBinaryOverride: serverBinaryPath,
   });
-  return {
-    relayUrl: String(local?.baseUrl ?? '').trim() || 'http://127.0.0.1:3005',
-    mode,
-  };
 }
 
 export async function controlRelayRuntimeDefault(
   params: RelayRuntimeTaskParams & Readonly<{ action: 'start' | 'stop' | 'restart' }>,
 ): Promise<void> {
-  const mode = params.mode === 'system' ? 'system' : 'user';
-  const releaseChannel = normalizeBootstrapChannel(params.channel).releaseChannel;
-
-  if (params.target.kind === 'ssh') {
-    const platformResult = await runRemoteText(params.target.ssh, 'uname -s');
-    const remotePlatform = platformResult.stdout.toLowerCase().includes('darwin') ? 'darwin' : 'linux';
-    const defaults = resolveRelayRuntimeDefaults({
-      platform: remotePlatform,
-      mode,
-      channel: releaseChannel,
-      homeDir: homedir(),
-    });
-    const command = remotePlatform === 'darwin'
-      ? (params.action === 'stop'
-        ? `launchctl bootout gui/$UID/${defaults.serviceName}`
-        : `launchctl kickstart -k gui/$UID/${defaults.serviceName}`)
-      : `${mode === 'user' ? 'systemctl --user' : 'systemctl'} ${params.action} ${defaults.serviceName}.service`;
-    const result = await runRemoteText(params.target.ssh, command);
-    if (result.status !== 0) {
-      throw new Error(result.stderr.trim() || `Failed to ${params.action} relay runtime.`);
-    }
-    return;
-  }
-
-  const defaults = resolveRelayRuntimeDefaults({
-    platform: process.platform,
-    mode,
-    channel: releaseChannel,
-    homeDir: homedir(),
-  });
-  const lifecycle = resolveLocalLifecycleCommand({
-    platform: process.platform,
-    mode,
-    serviceName: defaults.serviceName,
-    action: params.action,
-  });
-  const result = await runCommandCapture({
-    command: lifecycle.command,
-    args: lifecycle.args,
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || `Failed to ${params.action} relay runtime.`);
-  }
+  const engine = createRelayHostEngine(buildRelayHostEngineDeps());
+  await engine.control(params);
 }
 
-async function runRemoteJson(ssh: SshConnectionConfig, remoteCommand: string): Promise<unknown> {
-  const result = await runRemoteText(ssh, remoteCommand);
-  return parseFirstJsonObject(result.stdout);
+function resolveKnownHostsConfig(ssh: SshConnectionConfig, knownHostsMode?: 'app' | 'system') {
+  const mode = knownHostsMode === 'app' || knownHostsMode === 'system'
+    ? knownHostsMode
+    : ssh.knownHostsPath
+      ? 'app'
+      : 'system';
+  return mode === 'app'
+    ? { mode: 'app' as const, path: ssh.knownHostsPath ?? '' }
+    : { mode: 'system' as const };
 }
 
-async function runRemoteText(ssh: SshConnectionConfig, remoteCommand: string): Promise<CommandExecutionResult> {
+async function runRemoteTextCapture(ssh: SshConnectionConfig, remoteCommand: string, knownHostsMode?: 'app' | 'system'): Promise<CommandExecutionResult> {
   const invocation = buildSshCommand({
     target: ssh.target,
     port: ssh.port,
@@ -285,95 +140,122 @@ async function runRemoteText(ssh: SshConnectionConfig, remoteCommand: string): P
       kind: ssh.auth,
       identityFile: ssh.identityFile,
     },
-    knownHosts: ssh.knownHostsPath
-      ? { mode: 'app', path: ssh.knownHostsPath }
-      : { mode: 'system' },
+    knownHosts: resolveKnownHostsConfig(ssh, knownHostsMode),
     remoteCommand,
   });
   const result = await runCommandCapture({
     command: invocation.command,
     args: invocation.args,
   });
-  if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || `SSH command failed for ${ssh.target}.`);
-  }
   return result;
 }
 
-async function queryLocalRelayService(params: Readonly<{
-  backend: string;
-  serviceName: string;
-}>): Promise<Record<string, unknown>> {
-  if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
-    const prefix = params.backend === 'systemd-user' ? ['--user'] : [];
-    const result = await runCommandCapture({
-      command: 'systemctl',
-      args: [...prefix, 'show', `${params.serviceName}.service`, '--property=UnitFileState,ActiveState,SubState', '--value'],
-    }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
-    const [unitFileState = '', activeState = '', subState = ''] = result.stdout.split(/\r?\n/);
-    return {
-      unitFileState,
-      activeState,
-      subState,
-    };
-  }
-
-  if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
-    const result = await runCommandCapture({
-      command: 'launchctl',
-      args: ['list', params.serviceName],
-    }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
-    return {
-      loaded: result.status === 0,
-      pid: result.status === 0 ? 1 : null,
-      lastExitStatus: result.status === 0 ? 0 : null,
-    };
-  }
-
+async function copyLocalDirectoryToRemoteCapture(params: Readonly<{
+  ssh: SshConnectionConfig;
+  localPath: string;
+  remotePath: string;
+  knownHostsMode?: 'app' | 'system';
+}>): Promise<void> {
+  const invocation = buildScpCommand({
+    target: params.ssh.target,
+    remotePath: params.remotePath,
+    localPath: params.localPath,
+    port: params.ssh.port,
+    auth: {
+      kind: params.ssh.auth,
+      identityFile: params.ssh.identityFile,
+    },
+    knownHosts: resolveKnownHostsConfig(params.ssh, params.knownHostsMode),
+  });
   const result = await runCommandCapture({
-    command: 'schtasks',
-    args: ['/Query', '/TN', `Happier\\${params.serviceName}`, '/FO', 'LIST', '/V'],
-  }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
-  const output = `${result.stdout}\n${result.stderr}`;
-  return {
-    exists: result.status === 0,
-    enabled: /Scheduled Task State:\s*Enabled/i.test(output),
-    active: /Status:\s*Running/i.test(output),
-    stateLabel: /Status:\s*(.+)/i.exec(output)?.[1]?.trim() ?? '',
-  };
+    command: invocation.command,
+    args: invocation.args,
+  });
+  if (result.status !== 0) {
+    throw new Error(redactSshText(result.stderr || result.stdout || `SCP command failed for ${params.ssh.target}.`));
+  }
 }
 
-function resolveLocalLifecycleCommand(params: Readonly<{
-  platform: NodeJS.Platform;
-  mode: 'user' | 'system';
-  serviceName: string;
-  action: 'start' | 'stop' | 'restart';
-}>): Readonly<{ command: string; args: readonly string[] }> {
-  const backend = resolveServiceBackend({
-    platform: params.platform,
-    mode: params.mode,
-  });
-  if (backend === 'systemd-user' || backend === 'systemd-system') {
-    const prefix = backend === 'systemd-user' ? ['--user'] : [];
-    return {
-      command: 'systemctl',
-      args: [...prefix, params.action, `${params.serviceName}.service`],
-    };
-  }
-  if (backend === 'launchd-user' || backend === 'launchd-system') {
-    const domain = `gui/${process.getuid?.() ?? 0}/${params.serviceName}`;
-    return {
-      command: 'launchctl',
-      args: params.action === 'stop'
-        ? ['bootout', domain]
-        : ['kickstart', '-k', domain],
-    };
-  }
+function buildRelayHostEngineDeps(params: Readonly<{
+  installRemoteFirstPartyComponent?: (params: Readonly<{
+    componentId: 'happier-cli' | 'happier-server';
+    channel?: string;
+    ssh: SshConnectionConfig;
+    knownHostsMode?: 'app' | 'system';
+    installerBinaryPath?: string;
+    remoteHomeDir?: string;
+  }>) => Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>>;
+  localInstallPolicy?: RelayHostEngineDeps['localInstallPolicy'];
+  resolveLocalInstallVersion?: RelayHostEngineDeps['resolveLocalInstallVersion'];
+}> = {}): RelayHostEngineDeps {
+  const installRemoteFirstPartyComponent = params.installRemoteFirstPartyComponent
+    ?? (async (installParams) => await installRemoteFirstPartyComponentShared(installParams, {
+      resolveRemoteReleaseTarget: async ({ ssh, knownHostsMode }) => {
+        const preflight = await runRemoteTextCapture(
+          ssh,
+          [
+            "printf '{\"platform\":\"%s\",\"arch\":\"%s\"}\\n'",
+            '"$(uname -s | tr \'[:upper:]\' \'[:lower:]\')"',
+            '"$(uname -m | tr \'[:upper:]\' \'[:lower:]\')"',
+          ].join(' '),
+          knownHostsMode,
+        );
+        if (preflight.status !== 0) {
+          throw new Error(redactSshText(preflight.stderr || preflight.stdout || `SSH command failed for ${ssh.target}.`));
+        }
+        const parsed = parseFirstJsonObject(preflight.stdout) as null | Readonly<{ platform?: unknown; arch?: unknown }>;
+        return {
+          os: normalizeRemoteReleaseOs(parsed?.platform),
+          arch: normalizeRemoteReleaseArch(parsed?.arch),
+        };
+      },
+      runRemoteText: async ({ ssh, remoteCommand, knownHostsMode }) => {
+        const result = await runRemoteTextCapture(ssh, remoteCommand, knownHostsMode);
+        return result;
+      },
+      copyLocalDirectoryToRemote: async ({ ssh, localPath, remotePath, knownHostsMode }) => {
+        await copyLocalDirectoryToRemoteCapture({ ssh, localPath, remotePath, knownHostsMode });
+      },
+    }));
+
   return {
-    command: 'schtasks',
-    args: params.action === 'stop'
-      ? ['/End', '/TN', `Happier\\${params.serviceName}`]
-      : ['/Run', '/TN', `Happier\\${params.serviceName}`],
+    resolveRemoteReleaseTarget: async ({ ssh, knownHostsMode }) => {
+      const preflight = await runRemoteTextCapture(
+        ssh,
+        [
+          "printf '{\"platform\":\"%s\",\"arch\":\"%s\"}\\n'",
+          '"$(uname -s | tr \'[:upper:]\' \'[:lower:]\')"',
+          '"$(uname -m | tr \'[:upper:]\' \'[:lower:]\')"',
+        ].join(' '),
+        knownHostsMode,
+      );
+      if (preflight.status !== 0) {
+        throw new Error(redactSshText(preflight.stderr || preflight.stdout || `SSH command failed for ${ssh.target}.`));
+      }
+      const parsed = parseFirstJsonObject(preflight.stdout) as null | Readonly<{ platform?: unknown; arch?: unknown }>;
+      return {
+        os: normalizeRemoteReleaseOs(parsed?.platform),
+        arch: normalizeRemoteReleaseArch(parsed?.arch),
+      };
+    },
+    runRemoteText: async ({ ssh, remoteCommand, knownHostsMode }) => await runRemoteTextCapture(ssh, remoteCommand, knownHostsMode),
+    copyLocalDirectoryToRemote: async ({ ssh, localPath, remotePath, knownHostsMode }) => await copyLocalDirectoryToRemoteCapture({ ssh, localPath, remotePath, knownHostsMode }),
+    installRemoteComponent: async ({ componentId, channel, ssh, knownHostsMode, installerBinaryPath, remoteHomeDir }) => {
+      const result = await installRemoteFirstPartyComponent({
+        componentId,
+        channel,
+        ssh,
+        knownHostsMode,
+        installerBinaryPath,
+        remoteHomeDir,
+      });
+      return {
+        binaryPath: result.binaryPath,
+        versionId: result.versionId,
+      };
+    },
+    ...(params.localInstallPolicy ? { localInstallPolicy: params.localInstallPolicy } : {}),
+    ...(params.resolveLocalInstallVersion ? { resolveLocalInstallVersion: params.resolveLocalInstallVersion } : {}),
   };
 }
 

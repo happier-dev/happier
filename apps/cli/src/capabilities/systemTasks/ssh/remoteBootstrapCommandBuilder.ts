@@ -1,4 +1,3 @@
-import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks';
 
 import { safeBashSingleQuote } from './sshTransport';
@@ -12,8 +11,7 @@ export type RemoteBootstrapCommandLabel =
   | 'auth.request'
   | 'auth.wait'
   | 'daemon.service.install'
-  | 'daemon.service.start'
-  | 'relay.runtime.install';
+  | 'daemon.service.start';
 
 function deriveWebappUrl(serverUrl: string, explicitWebappUrl?: string): string {
   if (typeof explicitWebappUrl === 'string' && explicitWebappUrl.trim()) {
@@ -54,17 +52,6 @@ function buildDaemonServiceEnv(params: Readonly<{
     env.push(`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${safeBashSingleQuote(params.publicServerUrl)}`);
   }
   return env.join(' ');
-}
-
-function normalizeBootstrapChannel(channel: string): 'stable' | 'preview' | 'publicdev' {
-  const normalized = normalizePublicReleaseRingId(String(channel ?? '').trim());
-  return normalized === 'stable' || normalized === 'preview' || normalized === 'publicdev'
-    ? normalized
-    : 'stable';
-}
-
-function normalizeRelayRuntimeMode(mode: unknown): 'user' | 'system' {
-  return String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
 }
 
 export function buildRemoteBootstrapCommand(params: Readonly<{
@@ -111,23 +98,6 @@ export function buildRemoteBootstrapCommand(params: Readonly<{
       return `env ${daemonServiceEnv} sudo -E ${happier} daemon service start --mode=system --json`;
     }
     return `${daemonServiceEnv} ${happier} daemon service start --mode=user --json`;
-  }
-  if (params.label === 'relay.runtime.install') {
-    const relayChannel = normalizeBootstrapChannel(String(params.data?.channel ?? 'stable'));
-    const relayMode = normalizeRelayRuntimeMode(params.data?.mode);
-    const envArgs = Array.isArray(params.data?.env)
-      ? params.data.env.map((value) => `--env ${safeBashSingleQuote(String(value))}`).join(' ')
-      : '';
-    const sourceBinaryPath = String(params.data?.sourceBinaryPath ?? '').trim();
-    const hstack = resolveRemoteInstalledFirstPartyBinaryPath({
-      componentId: 'hstack',
-      channel: params.channel,
-    });
-    const relayEnvPrefix = sourceBinaryPath
-      ? `env HAPPIER_SELF_HOST_SERVER_BINARY=${safeBashSingleQuote(sourceBinaryPath)} `
-      : '';
-    const sudoPrefix = relayMode === 'system' ? 'sudo -E ' : '';
-    return `${sudoPrefix}${relayEnvPrefix}${hstack} self-host install --channel=${relayChannel === 'publicdev' ? 'dev' : relayChannel} --mode=${relayMode} --non-interactive --json${envArgs ? ` ${envArgs}` : ''}`;
   }
   throw new Error(`Unsupported remote bootstrap command: ${params.label satisfies never}`);
 }

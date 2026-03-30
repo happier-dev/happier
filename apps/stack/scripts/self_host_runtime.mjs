@@ -2636,7 +2636,50 @@ export function usageText() {
   ].join('\n');
 }
 
+let cachedRelayHostForwardSupport = null;
+
+function shouldAttemptRelayHostForward(env = process.env) {
+  const raw = String(env?.HAPPIER_STACK_SELF_HOST_FORWARD ?? '1').trim().toLowerCase();
+  if (!raw) return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  return true;
+}
+
+function resolveRelayHostForwardSupport(env = process.env) {
+  if (cachedRelayHostForwardSupport != null) {
+    return cachedRelayHostForwardSupport;
+  }
+
+  try {
+    const probe = spawnSync('happier', ['relay', 'host', '--help'], {
+      env,
+      stdio: 'ignore',
+      encoding: 'utf-8',
+    });
+    cachedRelayHostForwardSupport = (probe.status ?? 1) === 0;
+  } catch {
+    cachedRelayHostForwardSupport = false;
+  }
+
+  return cachedRelayHostForwardSupport;
+}
+
 export async function runSelfHostCli(argv = process.argv.slice(2)) {
+  if (shouldAttemptRelayHostForward(process.env) && resolveRelayHostForwardSupport(process.env)) {
+    const forwarded = spawnSync('happier', ['relay', 'host', ...argv], {
+      env: process.env,
+      stdio: 'inherit',
+      encoding: 'utf-8',
+    });
+    if (forwarded.error) {
+      throw forwarded.error;
+    }
+    if ((forwarded.status ?? 1) !== 0) {
+      throw new Error(`[self-host] forwarded command failed (happier relay host), exit code: ${forwarded.status ?? 1}`);
+    }
+    return;
+  }
+
   const parsed = parseSelfHostInvocation(argv);
   const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });

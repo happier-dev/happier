@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 
 pub type SharedChild = Arc<Mutex<Child>>;
 const DEFAULT_MAX_COMPLETED_TASKS: usize = 64;
+const DEFAULT_MAX_EVENTS_PER_TASK: usize = 200;
+const DEFAULT_MAX_STDERR_PREVIEW_BYTES: usize = 4096;
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +25,8 @@ pub struct SystemTasksState {
 struct SystemTasksStateInner {
     next_task_id: AtomicU64,
     max_completed_tasks: usize,
+    max_events_per_task: usize,
+    max_stderr_preview_bytes: usize,
     tasks: Mutex<TaskStore>,
 }
 
@@ -36,6 +40,7 @@ struct TaskRecord {
     child: Option<SharedChild>,
     cancel_requested: bool,
     snapshot: SystemTaskSnapshot,
+    stderr_preview: Vec<u8>,
 }
 
 impl SystemTasksState {
@@ -44,6 +49,8 @@ impl SystemTasksState {
             inner: Arc::new(SystemTasksStateInner {
                 next_task_id: AtomicU64::default(),
                 max_completed_tasks,
+                max_events_per_task: DEFAULT_MAX_EVENTS_PER_TASK,
+                max_stderr_preview_bytes: DEFAULT_MAX_STDERR_PREVIEW_BYTES,
                 tasks: Mutex::new(TaskStore::default()),
             }),
         }
@@ -62,6 +69,7 @@ impl SystemTasksState {
                 child: Some(child),
                 cancel_requested: false,
                 snapshot: SystemTaskSnapshot::default(),
+                stderr_preview: Vec::new(),
             },
         );
         Ok(())
@@ -69,12 +77,16 @@ impl SystemTasksState {
 
     pub fn append_event(&self, task_id: &str, event: SystemTaskEvent) -> Result<(), String> {
         let mut task_store = self.lock_tasks()?;
-        let record = task_store
-            .tasks
-            .entry(task_id.to_string())
-            .or_insert_with(TaskRecord::default);
+        let Some(record) = task_store.tasks.get_mut(task_id) else {
+            return Ok(());
+        };
         if record.snapshot.result.is_none() {
             record.snapshot.events.push(event);
+            let max_events = self.inner.max_events_per_task;
+            if record.snapshot.events.len() > max_events {
+                let overflow = record.snapshot.events.len() - max_events;
+                record.snapshot.events.drain(0..overflow);
+            }
         }
         Ok(())
     }
@@ -93,6 +105,39 @@ impl SystemTasksState {
         task_store.completed_task_ids.push_back(task_id.to_string());
         evict_completed_tasks(&mut task_store, self.inner.max_completed_tasks);
         Ok(true)
+    }
+
+    pub fn append_stderr_preview_bytes(&self, task_id: &str, bytes: &[u8]) -> Result<(), String> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        let mut task_store = self.lock_tasks()?;
+        let Some(record) = task_store.tasks.get_mut(task_id) else {
+            return Ok(());
+        };
+        if record.snapshot.result.is_some() {
+            return Ok(());
+        }
+
+        record.stderr_preview.extend_from_slice(bytes);
+
+        let max_bytes = self.inner.max_stderr_preview_bytes;
+        if record.stderr_preview.len() > max_bytes {
+            let overflow = record.stderr_preview.len() - max_bytes;
+            record.stderr_preview.drain(0..overflow);
+        }
+
+        Ok(())
+    }
+
+    pub fn read_stderr_preview_bytes(&self, task_id: &str) -> Result<Vec<u8>, String> {
+        let task_store = self.lock_tasks()?;
+        Ok(task_store
+            .tasks
+            .get(task_id)
+            .map(|record| record.stderr_preview.clone())
+            .unwrap_or_default())
     }
 
     pub fn request_cancel(&self, task_id: &str) -> Result<Option<SharedChild>, String> {
@@ -168,6 +213,7 @@ impl Default for TaskRecord {
             child: None,
             cancel_requested: false,
             snapshot: SystemTaskSnapshot::default(),
+            stderr_preview: Vec::new(),
         }
     }
 }
@@ -180,11 +226,32 @@ impl Default for SystemTasksState {
 
 #[cfg(test)]
 mod tests {
-    use super::SystemTasksState;
+    use super::{SharedChild, SystemTasksState};
     use crate::system_tasks::protocol::{
         build_failure_result, SystemTaskEvent, SystemTaskResult, SystemTaskSuccessResult,
         SYSTEM_TASK_PROTOCOL_VERSION,
     };
+    use std::process::{Command, Stdio};
+    use std::sync::{Arc, Mutex};
+
+    fn spawn_test_child() -> SharedChild {
+        let child = Command::new("node")
+            .arg("-e")
+            .arg("setTimeout(() => {}, 60_000)")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("test child should spawn");
+        Arc::new(Mutex::new(child))
+    }
+
+    fn kill_test_child(child: SharedChild) {
+        if let Ok(mut guard) = child.lock() {
+            let _ = guard.kill();
+            let _ = guard.wait();
+        }
+    }
 
     fn build_event(task_id: &str, message: &str) -> SystemTaskEvent {
         SystemTaskEvent {
@@ -201,6 +268,10 @@ mod tests {
     #[test]
     fn preserves_event_order_in_snapshots() {
         let state = SystemTasksState::default();
+        let child = spawn_test_child();
+        state
+            .insert_running_task("task_1", child.clone())
+            .expect("task should insert");
         state
             .append_event("task_1", build_event("task_1", "first"))
             .expect("event should append");
@@ -213,11 +284,16 @@ mod tests {
         assert_eq!(snapshot.events.len(), 2);
         assert_eq!(snapshot.events[0].message.as_deref(), Some("first"));
         assert_eq!(snapshot.events[1].message.as_deref(), Some("second"));
+        kill_test_child(child);
     }
 
     #[test]
     fn ignores_late_events_after_completion() {
         let state = SystemTasksState::default();
+        let child = spawn_test_child();
+        state
+            .insert_running_task("task_1", child.clone())
+            .expect("task should insert");
         let result = SystemTaskResult::Success(SystemTaskSuccessResult {
             protocol_version: SYSTEM_TASK_PROTOCOL_VERSION,
             task_id: "task_1".to_string(),
@@ -234,6 +310,7 @@ mod tests {
 
         let snapshot = state.snapshot("task_1").expect("snapshot should load");
         assert!(snapshot.events.is_empty());
+        kill_test_child(child);
     }
 
     #[test]
@@ -253,6 +330,52 @@ mod tests {
             SystemTaskResult::Failure(failure) => assert_eq!(failure.error.code, "cancelled"),
             _ => panic!("expected failure result"),
         }
+    }
+
+    #[test]
+    fn ignores_events_for_unknown_task_ids() {
+        let state = SystemTasksState::default();
+        state
+            .append_event("unknown_task", build_event("unknown_task", "ignored"))
+            .expect("append should not fail");
+
+        let snapshot = state
+            .snapshot("unknown_task")
+            .expect("snapshot should load");
+        assert!(snapshot.events.is_empty());
+        assert!(snapshot.result.is_none());
+    }
+
+    #[test]
+    fn caps_event_history_per_task() {
+        const EXPECTED_MAX_EVENTS: usize = 200;
+
+        let state = SystemTasksState::default();
+        let child = spawn_test_child();
+        state
+            .insert_running_task("task_1", child.clone())
+            .expect("task should insert");
+
+        for idx in 0..(EXPECTED_MAX_EVENTS + 25) {
+            state
+                .append_event("task_1", build_event("task_1", &format!("event-{idx}")))
+                .expect("event should append");
+        }
+
+        let snapshot = state.snapshot("task_1").expect("snapshot should load");
+        assert_eq!(snapshot.events.len(), EXPECTED_MAX_EVENTS);
+        assert_eq!(
+            snapshot.events[0].message.as_deref(),
+            Some("event-25"),
+            "oldest events should be truncated"
+        );
+        let expected_last = format!("event-{}", EXPECTED_MAX_EVENTS + 24);
+        assert_eq!(
+            snapshot.events[EXPECTED_MAX_EVENTS - 1].message.as_deref(),
+            Some(expected_last.as_str()),
+            "newest events should be retained"
+        );
+        kill_test_child(child);
     }
 
     #[test]
