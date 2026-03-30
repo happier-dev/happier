@@ -11,6 +11,7 @@ import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 vi.mock('@/components/ui/popover', () => ({
     usePopoverBoundaryRef: () => null,
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 installPopoverCommonModuleMocks({

@@ -24,6 +24,7 @@ async function flushInitialPositioning() {
 
 vi.mock('@/components/ui/popover', () => ({
     usePopoverBoundaryRef: () => null,
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('expo-blur', () => {
