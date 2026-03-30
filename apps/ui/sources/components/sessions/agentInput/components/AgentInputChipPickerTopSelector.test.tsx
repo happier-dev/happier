@@ -43,6 +43,7 @@ installAgentInputCommonModuleMocks({
 vi.mock('@/components/ui/popover', () => ({
     usePopoverBoundaryRef: () => boundaryRef,
     usePopoverPortalTarget: () => ({ rootRef: { current: null }, layout: { width: 0, height: 0 } }),
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({

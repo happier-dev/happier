@@ -61,6 +61,7 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputSimpleOptionsPopo
 
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: any) => React.createElement('Popover', props, props.children),
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/sessions/agentInput/components/AgentInputPopoverSurface', () => ({
