@@ -201,6 +201,7 @@ vi.mock('@/components/ui/popover', () => ({
         captured.last = props;
         return React.createElement('Popover', props, props.open ? renderPopoverChildren(props) : null);
     },
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({

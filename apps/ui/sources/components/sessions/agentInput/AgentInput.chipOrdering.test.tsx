@@ -130,6 +130,7 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
 
 vi.mock('@/components/ui/popover', () => ({
     Popover: () => null,
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
