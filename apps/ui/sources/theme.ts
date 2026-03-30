@@ -45,7 +45,7 @@ export const lightTheme = {
 
         text: '#000000',
         textDestructive: '#FF3B30',
-        textSecondary: '#606064',
+        textSecondary: '#6c6c70',
         textTertiary: '#99999d',
         textLink: '#2BACCC',
         accent: {

@@ -1,7 +1,8 @@
 import React from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import Color from "color";
 
 import { shadowLevelStyle } from "@/shadowElevation";
 import { Typography } from "@/constants/Typography";
@@ -96,9 +97,16 @@ function AgentInputChipPickerOptionButton(
       accessibilityRole="button"
       accessibilityLabel={props.option.label}
       onPress={props.onPress}
-      style={({ pressed }) => [
+      style={({ pressed, hovered }) => [
         styles.optionRow,
         props.compact ? styles.optionRowCompact : null,
+        Platform.OS === "web"
+          && hovered
+          && !props.focused
+          && !props.option.disabled
+          && !props.option.muted
+          ? styles.optionRowHovered
+          : null,
         props.focused ? styles.optionRowFocused : null,
         pressed ? styles.optionRowPressed : null,
         (props.option.disabled || props.option.muted) ? styles.optionRowDisabled : null,
@@ -111,7 +119,7 @@ function AgentInputChipPickerOptionButton(
           </View>
         ) : null}
         <View style={styles.optionTextBlock}>
-          <Text style={styles.optionLabel}>{props.option.label}</Text>
+          <Text style={[styles.optionLabel, props.focused ? styles.optionLabelFocused : null]}>{props.option.label}</Text>
           {shouldShowSubtitle ? (
             <Text style={styles.optionSubtitle}>{normalizedSubtitle}</Text>
           ) : null}
@@ -169,6 +177,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface,
     ...shadowLevelStyle(theme.colors.shadowLevels[1]),
   },
+	  optionRowHovered: {
+	    backgroundColor: (() => {
+	      try {
+	        return Color(theme.colors.surface).alpha(0.8).rgb().string();
+	      } catch {
+	        return theme.colors.surfacePressed;
+	      }
+	    })(),
+	  },
   optionRowPressed: {
     opacity: 0.82,
   },
@@ -192,14 +209,16 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: 0,
   },
   optionLabel: {
-    fontSize: 13,
+    fontSize: 14,
     lineHeight: 15,
     color: theme.colors.text,
+  },
+  optionLabelFocused: {
     ...Typography.default("semiBold"),
   },
   optionSubtitle: {
     marginTop: 1,
-    fontSize: 11,
+    fontSize: 12,
     lineHeight: 14,
     color: theme.colors.textTertiary,
   },

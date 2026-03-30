@@ -30,6 +30,18 @@ vi.mock('@/text', async () => {
 });
 
 describe('OptionPickerOverlay', () => {
+    function flattenStyleFromCallback(
+        styleProp: unknown,
+        state: { pressed: boolean; hovered?: boolean },
+    ): Record<string, unknown> {
+        if (typeof styleProp !== 'function') {
+            throw new Error('Expected style prop to be a function');
+        }
+        const resolved = (styleProp as (s: any) => unknown)(state);
+        const resolvedArray = Array.isArray(resolved) ? resolved : [resolved];
+        return Object.assign({}, ...resolvedArray.filter(Boolean));
+    }
+
     it('uses a single option-card column on narrow screens', async () => {
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
         mockEnv.windowWidth = 390;
@@ -439,5 +451,54 @@ describe('OptionPickerOverlay', () => {
         await screen.pressByTestIdAsync('agent-input-session-mode-option:review');
 
         expect(onSelect).toHaveBeenCalledWith('review');
+    });
+
+    it('applies hover background styling to option cards on web', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Mode"
+            effectiveLabel=""
+            notes={[]}
+            options={[
+                { value: 'build', label: 'Build', description: 'Default behavior.' },
+                { value: 'review', label: 'Review', description: 'Review and critique mode.' },
+            ]}
+            selectedValue="build"
+            emptyText="empty"
+            canEnterCustomValue={false}
+            onSelect={() => {}}
+        />);
+
+        const card = screen.findByTestId('model-picker-overlay-option:review');
+        if (!card) {
+            throw new Error('Expected option card to render');
+        }
+        const base = flattenStyleFromCallback(card.props.style, { pressed: false, hovered: false });
+        const hovered = flattenStyleFromCallback(card.props.style, { pressed: false, hovered: true });
+        expect(hovered.backgroundColor).not.toBe(base.backgroundColor);
+    });
+
+    it('applies hover background styling to the custom option card on web', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            effectiveLabel=""
+            notes={[]}
+            options={[{ value: 'default', label: 'Default', description: '' }]}
+            selectedValue="default"
+            emptyText="empty"
+            canEnterCustomValue
+            onSelect={() => {}}
+        />);
+
+        const customCard = screen.findByTestId('model-picker-overlay-custom');
+        if (!customCard) {
+            throw new Error('Expected custom option card to render');
+        }
+        const base = flattenStyleFromCallback(customCard.props.style, { pressed: false, hovered: false });
+        const hovered = flattenStyleFromCallback(customCard.props.style, { pressed: false, hovered: true });
+        expect(hovered.backgroundColor).not.toBe(base.backgroundColor);
     });
 });

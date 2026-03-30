@@ -16,7 +16,7 @@ import {
 } from '@/sync/domains/sessionControl/configOptionsControl';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
-
+import { Typography } from '@/constants/Typography';
 
 export type OptionPickerOption = Readonly<{
     value: string;
@@ -315,9 +315,10 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                                     key={option.value}
                                                     testID={`${optionTestIDPrefix}:${option.value}`}
                                                     onPress={() => handleSelectOption(option.value)}
-                                                    style={({ pressed }) => [
+                                                    style={({ pressed, hovered }) => [
                                                         styles.optionCard,
                                                         isSelected ? styles.optionCardSelected : null,
+                                                        !isSelected && hovered ? styles.optionCardHovered : null,
                                                         pressed ? styles.optionCardPressed : null,
                                                     ]}
                                                 >
@@ -352,44 +353,44 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                         </View>
                     ) : null}
                     {props.canEnterCustomValue ? (
-                        <View style={[
-                            styles.customEntryRow,
-                            styles.optionCard,
-                            customEditorVisible ? styles.optionCardSelected : null,
-                        ]}>
-                            <Pressable
-                                testID="model-picker-overlay-custom"
-                                onPress={() => {
-                                    setCustomEditorVisible(true);
-                                    if (selectedCustomValue.length > 0) {
-                                        setCustomValue(selectedCustomValue);
-                                    }
-                                }}
-                            >
-                                <View style={styles.optionCardHeader}>
-                                    <View style={styles.customEntryTextBlock}>
-                                        <Text style={[styles.optionCardTitle, customEditorVisible ? styles.optionCardTitleSelected : null]}>
-                                            {props.customLabel ?? t('modelPickerOverlay.customTitle')}
+                        <Pressable
+                            testID="model-picker-overlay-custom"
+                            onPress={() => {
+                                if (customEditorVisible) return;
+                                setCustomEditorVisible(true);
+                                if (selectedCustomValue.length > 0) {
+                                    setCustomValue(selectedCustomValue);
+                                }
+                            }}
+                            style={({ pressed, hovered }) => [
+                                styles.customEntryRow,
+                                styles.optionCard,
+                                customEditorVisible ? styles.optionCardSelected : null,
+                                !customEditorVisible && hovered ? styles.optionCardHovered : null,
+                                pressed && !customEditorVisible ? styles.optionCardPressed : null,
+                            ]}
+                        >
+                            <View style={styles.optionCardHeader}>
+                                <View style={styles.customEntryTextBlock}>
+                                    <Text style={[styles.optionCardTitle, customEditorVisible ? styles.optionCardTitleSelected : null]}>
+                                        {props.customLabel ?? t('modelPickerOverlay.customTitle')}
+                                    </Text>
+                                    {props.customDescription ? (
+                                        <Text style={styles.optionCardDescription}>
+                                            {props.customDescription}
                                         </Text>
-                                        {props.customDescription ? (
-                                            <Text style={styles.optionCardDescription}>
-                                                {props.customDescription}
-                                            </Text>
-                                        ) : null}
-                                    </View>
-                                    <View
-                                        style={styles.customEntryIconSlot}
-                                    >
-                                        {customEditorVisible ? (
-                                            <Ionicons
-                                                name="checkmark-outline"
-                                                size={14}
-                                                style={styles.optionCardIndicatorIcon}
-                                            />
-                                        ) : null}
-                                    </View>
+                                    ) : null}
                                 </View>
-                            </Pressable>
+                                <View style={styles.customEntryIconSlot}>
+                                    {customEditorVisible ? (
+                                        <Ionicons
+                                            name="checkmark-outline"
+                                            size={14}
+                                            style={styles.optionCardIndicatorIcon}
+                                        />
+                                    ) : null}
+                                </View>
+                            </View>
                             {customEditorVisible ? (
                                 <View style={styles.customEditor}>
                                     <TextInput
@@ -405,7 +406,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                     />
                                 </View>
                             ) : null}
-                        </View>
+                        </Pressable>
                     ) : null}
                 </>
             ) : (
@@ -440,11 +441,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         flex: 1,
-        fontSize: 11,
-        fontWeight: '600',
+        fontSize: 12,
         color: theme.colors.textSecondary,
         textTransform: 'uppercase',
-        letterSpacing: 0.5,
         position: 'relative',
     },
     effectiveBlock: {
@@ -488,7 +487,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     cardsColumn: {
         flex: 1,
-        gap: 4,
+        gap: 8,
     },
     optionCard: {
         borderRadius: 12,
@@ -498,7 +497,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     optionCardSelected: {
         backgroundColor: theme.colors.surfaceSelected,
-        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
+    },
+    optionCardHovered: {
+        backgroundColor: theme.colors.surfacePressed,
     },
     optionCardPressed: {
         opacity: 0.86,
@@ -511,11 +512,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     optionCardTitle: {
         flex: 1,
-        fontSize: 12,
-        color: theme.colors.textSecondary,
+        fontSize: 14,
+        color: theme.colors.text,
     },
     optionCardTitleSelected: {
-        fontWeight: '600',
+        ...Typography.default('semiBold'),
         color: theme.colors.text,
     },
     optionCardIndicator: {
@@ -527,8 +528,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         height: 12,
     },
     optionCardDescription: {
-        fontSize: 11,
-        color: theme.colors.textTertiary,
+        fontSize: 12,
+        color: theme.colors.textSecondary,
     },
     inlineSelectedControls: {
         marginTop: 10,
@@ -550,8 +551,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     selectedControlTitle: {
         fontSize: 9,
-        fontWeight: '700',
-        letterSpacing: 0.35,
+        ...Typography.default('semiBold'),
         textTransform: 'uppercase',
         color: theme.colors.textSecondary,
     },
