@@ -69,6 +69,7 @@
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/swagger": "9.7.0",
     "@happier-dev/agents": "0.0.0",
+    "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@prisma/client": "^6.11.1",
     "@socket.io/redis-streams-adapter": "^0.2.2",

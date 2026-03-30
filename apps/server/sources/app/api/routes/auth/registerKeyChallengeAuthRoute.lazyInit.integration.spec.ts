@@ -63,6 +63,43 @@ describe("registerKeyChallengeAuthRoute (lazy auth init) (integration)", () => {
         harness.resetEnv();
     });
 
+    it("accepts browser key-challenge signups that include content encryption keys", async () => {
+        const app = createTestApp();
+        registerKeyChallengeAuthRoute(app);
+        await app.ready();
+
+        const signing = tweetnacl.sign.keyPair();
+        const contentKey = tweetnacl.box.keyPair();
+        const challenge = crypto.randomBytes(32);
+        const signature = tweetnacl.sign.detached(challenge, signing.secretKey);
+        const binding = Buffer.concat([
+            Buffer.from("Happy content key v1\u0000", "utf8"),
+            Buffer.from(contentKey.publicKey),
+        ]);
+        const contentSignature = tweetnacl.sign.detached(binding, signing.secretKey);
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: {
+                publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)),
+                challenge: privacyKit.encodeBase64(new Uint8Array(challenge)),
+                signature: privacyKit.encodeBase64(new Uint8Array(signature)),
+                contentPublicKey: privacyKit.encodeBase64(new Uint8Array(contentKey.publicKey)),
+                contentPublicKeySig: privacyKit.encodeBase64(new Uint8Array(contentSignature)),
+            },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toEqual({
+            success: true,
+            token: expect.any(String),
+        });
+
+        await app.close();
+        harness.resetEnv();
+    });
+
     it("does not touch account updatedAt when content keys are not provided", async () => {
         const app = createTestApp();
         registerKeyChallengeAuthRoute(app);
