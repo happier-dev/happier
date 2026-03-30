@@ -138,6 +138,9 @@ export function BaseModal({
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const baseZ = zIndexBase ?? 100000;
     const [modalPortalTarget, setModalPortalTarget] = React.useState<HTMLElement | null>(null);
+    const setModalPortalHostRef = React.useCallback((node: HTMLElement | null) => {
+        setModalPortalTarget((prev) => (prev === node ? prev : node));
+    }, []);
 
     useEffect(() => {
         const useNativeDriver = Platform.OS !== 'web';
@@ -262,9 +265,7 @@ export function BaseModal({
                             {/* Host for web portals (e.g. popovers) that must live inside the dialog subtree. */}
                             <div
                                 data-happy-modal-portal-host=""
-                                ref={(node) => {
-                                    setModalPortalTarget((prev) => (prev === node ? prev : node));
-                                }}
+                                ref={setModalPortalHostRef}
                                 style={portalHostStyle}
                             />
                             <ModalPortalTargetProvider target={modalPortalTarget}>

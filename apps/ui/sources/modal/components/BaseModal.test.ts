@@ -254,6 +254,31 @@ describe('BaseModal (web)', () => {
         expect(observedTarget).toBe(portalHostMock);
     });
 
+    it('keeps the portal-host ref callback stable across rerenders (avoids ref/setState loops on web)', async () => {
+        const { BaseModal } = await import('./BaseModal');
+
+        const screen = await renderBaseModalScreen(BaseModal);
+
+        const findPortalHost = () => screen.find((node) => {
+            return node.type === 'div' && node.props?.['data-happy-modal-portal-host'] !== undefined;
+        });
+
+        const host = findPortalHost() as any;
+        const initialRef = host?.props?.ref;
+        expect(typeof initialRef).toBe('function');
+
+        act(() => {
+            screen.tree.update(React.createElement(BaseModal, {
+                visible: true,
+                showBackdrop: false,
+                children: React.createElement('Child'),
+            }));
+        });
+
+        const hostAfterUpdate = findPortalHost() as any;
+        expect(hostAfterUpdate?.props?.ref).toBe(initialRef);
+    });
+
     it('calls onClose when Radix reports onOpenChange(false)', async () => {
         const { BaseModal } = await import('./BaseModal');
         const onClose = vi.fn();
