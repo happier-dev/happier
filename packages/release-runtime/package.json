@@ -36,6 +36,7 @@
     },
     "./releaseRings": {
       "types": "./dist/releaseRings.d.ts",
+      "require": "./dist/releaseRings.cjs",
       "default": "./dist/releaseRings.js"
     }
   },
@@ -45,7 +46,9 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build:esm": "tsc -p tsconfig.json",
+    "build:releaseRings:cjs": "tsc -p tsconfig.releaseRings.cjs.json && node scripts/writeReleaseRingsCjs.mjs",
+    "build": "yarn -s build:esm && yarn -s build:releaseRings:cjs",
     "test": "yarn -s build && HAPPIER_FEATURE_POLICY_ENV= node --test \"tests/*.test.mjs\"",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'release-runtime',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\""
