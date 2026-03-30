@@ -128,6 +128,11 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === "event-target-shim/index") {
     resolvedModuleName = "event-target-shim";
   }
+  // Some upstream packages import `@noble/hashes/crypto.js`, but noble-hashes only exports `./crypto`.
+  // Metro can crash when resolution throws inside a large monorepo watch crawl; normalize to the exported subpath.
+  if (moduleName === "@noble/hashes/crypto.js") {
+    resolvedModuleName = "@noble/hashes/crypto";
+  }
 
   // Per-tab web QA opt-out: allow disabling Fast Refresh/HMR on specific browser tabs (via sessionStorage),
   // without turning it off for all connected clients.
@@ -205,7 +210,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === "path") {
     return { type: "sourceFile", filePath: nodePathShim };
   }
-  if (moduleName === "fs/promises") {
+  if (moduleName === "node:fs/promises" || moduleName === "fs/promises") {
     return { type: "sourceFile", filePath: nodeFsPromisesShim };
   }
   if (moduleName === "node:fs" || moduleName === "fs") {
@@ -223,12 +228,14 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     !resolvedModuleName.startsWith(".") &&
     !path.isAbsolute(resolvedModuleName) &&
     resolvedModuleName !== "happier";
+  let lastResolutionError = null;
 
   if (typeof defaultResolveRequest === "function") {
     try {
       const resolved = defaultResolveRequest(context, resolvedModuleName, platform);
       if (resolved != null) return resolved;
     } catch (error) {
+      lastResolutionError = error;
       if (!canTryNodeResolveFallback) throw error;
     }
   }
@@ -238,6 +245,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       const resolved = context.resolveRequest(context, resolvedModuleName, platform);
       if (resolved != null) return resolved;
     } catch (error) {
+      lastResolutionError = error;
       if (!canTryNodeResolveFallback) throw error;
     }
   }
@@ -249,12 +257,16 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     try {
       const resolved = require.resolve(resolvedModuleName, { paths: [appNodeModules, rootNodeModules] });
       return { type: "sourceFile", filePath: resolved };
-    } catch {
-      // ignore
+    } catch (error) {
+      lastResolutionError = error;
     }
   }
 
-  return null;
+  if (lastResolutionError) {
+    throw lastResolutionError;
+  }
+
+  throw new Error(`Unable to resolve module "${resolvedModuleName}" for platform "${platform ?? "unknown"}".`);
 };
 
 module.exports = config;

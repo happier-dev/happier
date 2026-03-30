@@ -1,3 +1,101 @@
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+
+#[path = "build_support.rs"]
+mod build_support;
+
+use build_support::{resolve_sidecar_update_action, SidecarSnapshot, SidecarUpdateAction};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 fn main() {
-  tauri_build::build()
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=TARGET");
+    println!("cargo:rerun-if-env-changed=HAPPIER_HSETUP_SIDECAR_SOURCE");
+
+    build_hsetup_sidecar().expect("failed to build bundled hsetup sidecar");
+    tauri_build::build()
+}
+
+fn build_hsetup_sidecar() -> Result<(), String> {
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").map_err(|error| error.to_string())?);
+    let target = env::var("TARGET").map_err(|error| error.to_string())?;
+    let filename = if target.contains("windows") {
+        format!("hsetup-{target}.exe")
+    } else {
+        format!("hsetup-{target}")
+    };
+    let binaries_dir = manifest_dir.join("binaries");
+    let output_path = binaries_dir.join(&filename);
+    let default_source_path = if target.contains("windows") {
+        manifest_dir
+            .join("..")
+            .join("..")
+            .join("bootstrap")
+            .join("dist")
+            .join("bin")
+            .join("hsetup.exe")
+    } else {
+        manifest_dir
+            .join("..")
+            .join("..")
+            .join("bootstrap")
+            .join("dist")
+            .join("bin")
+            .join("hsetup")
+    };
+    let source_path = env::var("HAPPIER_HSETUP_SIDECAR_SOURCE")
+        .map(PathBuf::from)
+        .unwrap_or(default_source_path);
+
+    fs::create_dir_all(&binaries_dir).map_err(|error| error.to_string())?;
+    println!("cargo:rerun-if-changed={}", source_path.display());
+    println!("cargo:rerun-if-changed=build_support.rs");
+
+    if !source_path.is_file() {
+        return Err(format!(
+      "hsetup sidecar binary not found at {}. Build it first (recommended): yarn workspace @happier-dev/bootstrap build:binary",
+      source_path.display()
+    ));
+    }
+
+    let source_snapshot =
+        SidecarSnapshot::from_path(&source_path).map_err(|error| error.to_string())?;
+    let destination_snapshot = if output_path.is_file() {
+        Some(SidecarSnapshot::from_path(&output_path).map_err(|error| error.to_string())?)
+    } else {
+        None
+    };
+
+    match resolve_sidecar_update_action(&source_snapshot, destination_snapshot.as_ref()) {
+        SidecarUpdateAction::Noop => {}
+        SidecarUpdateAction::Copy => {
+            fs::copy(&source_path, &output_path).map_err(|error| error.to_string())?;
+        }
+        SidecarUpdateAction::PermissionsOnly => {
+            #[cfg(unix)]
+            {
+                if let Some(mode) = source_snapshot.unix_mode {
+                    fs::set_permissions(&output_path, fs::Permissions::from_mode(mode))
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        SidecarUpdateAction::CopyAndPermissions => {
+            fs::copy(&source_path, &output_path).map_err(|error| error.to_string())?;
+
+            #[cfg(unix)]
+            {
+                if let Some(mode) = source_snapshot.unix_mode {
+                    fs::set_permissions(&output_path, fs::Permissions::from_mode(mode))
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+        }
+    }
+
+    println!("cargo:rustc-env=HAPPIER_HSETUP_SIDECAR_FILENAME={filename}");
+    Ok(())
 }

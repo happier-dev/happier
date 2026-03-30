@@ -11,6 +11,13 @@
     }
   },
   "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "default",
+        "mcp-dev"
+      ]
+    },
     "windows": [
       {
         "title": "Happier (dev)"
