@@ -40,6 +40,7 @@ const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
       'yarn workspace @happier-dev/agents test',
       'yarn workspace @happier-dev/cli-common test',
       'yarn workspace @happier-dev/connection-supervisor test',
+      'yarn workspace @happier-dev/bootstrap test',
       'yarn workspace @happier-dev/app test:unit',
       'yarn workspace @happier-dev/cli test:unit',
       'yarn --cwd apps/server test:unit',

@@ -66,6 +66,15 @@ rm -rf "$prefix/lib/node_modules/@happier-dev/stack"
 rm -f "$prefix/bin/happier" "$prefix/bin/happier-dev" "$prefix/bin/happier-mcp" \
   "$prefix/bin/happier-mcp-remote-bridge" "$prefix/bin/happier-mcp-stdio-launcher" "$prefix/bin/hstack"
 
+if [[ -f /packs/stack.tgz ]]; then
+  # `@happier-dev/stack` also exposes a `happier` shim. Install stack first so the
+  # optional CLI install can win last (and avoid EEXIST on the bin link).
+  npm install -g --force /packs/stack.tgz --no-audit --no-fund >/dev/null
+  if [[ -x "$prefix/bin/hstack" ]]; then
+    ln -sf "$prefix/bin/hstack" "$HOME/.happier/bin/hstack"
+  fi
+fi
+
 if [[ "$with_cli" == "1" ]]; then
   npm install -g --force /packs/cli.tgz --no-audit --no-fund >/dev/null
 fi
@@ -76,13 +85,6 @@ if [[ "$with_cli" == "1" && ! -x "$prefix/bin/happier" ]]; then
 fi
 if [[ "$with_cli" == "1" ]]; then
   ln -sf "$prefix/bin/happier" "$HOME/.happier/bin/happier"
-fi
-
-if [[ -f /packs/stack.tgz ]]; then
-  npm install -g /packs/stack.tgz --no-audit --no-fund >/dev/null
-  if [[ -x "$prefix/bin/hstack" ]]; then
-    ln -sf "$prefix/bin/hstack" "$HOME/.happier/bin/hstack"
-  fi
 fi
 
 rm -rf "$cache_dir" "$HOME/.npm/_cacache" >/dev/null 2>&1 || true

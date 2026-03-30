@@ -24,7 +24,7 @@ test('appVariantConfig treats publicdev as a preview-like public ring with its o
   assert.equal(publicdev.name, 'Happier (dev)');
   assert.equal(publicdev.iosBundleId, 'dev.happier.app.publicdev');
   assert.equal(publicdev.androidPackage, 'dev.happier.app.publicdev');
-  assert.equal(publicdev.scheme, 'happier-publicdev');
+  assert.equal(publicdev.scheme, 'happier-dev');
   assert.equal(publicdev.updatesChannel, 'publicdev');
   assert.equal(publicdev.featurePolicyEnv, 'preview');
 });

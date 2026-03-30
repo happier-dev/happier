@@ -6,7 +6,6 @@ import { mkdir, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
-import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
 import {
   formatPublicReleaseChannel,
   formatPublicReleaseChannelChoices,
@@ -138,6 +137,7 @@ async function preflightMinisignKey({ dryRun }) {
   if (!keyRaw) {
     fail('[pipeline] MINISIGN_SECRET_KEY is required to publish signed CLI release artifacts.');
   }
+  const { prepareMinisignSecretKeyFile } = await import('./lib/binary-release.mjs');
   const prepared = await prepareMinisignSecretKeyFile(keyRaw);
   if (prepared.temp) {
     await rm(prepared.cleanupPath ?? prepared.path, { recursive: true, force: true });

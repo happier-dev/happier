@@ -3,9 +3,39 @@
 // @ts-check
 
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { parseArgs, resolveRepoRoot } from './lib/binary-release.mjs';
+function parseArgs(argv) {
+  const kv = new Map();
+  const flags = new Set();
+  const positionals = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) {
+      positionals.push(arg);
+      continue;
+    }
+    if (arg.includes('=')) {
+      const idx = arg.indexOf('=');
+      kv.set(arg.slice(0, idx), arg.slice(idx + 1));
+      continue;
+    }
+    const next = argv[i + 1];
+    if (next && !next.startsWith('--')) {
+      kv.set(arg, next);
+      i += 1;
+      continue;
+    }
+    flags.add(arg);
+  }
+  return { kv, flags, positionals };
+}
+
+function resolveRepoRoot() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return resolve(here, '..', '..', '..');
+}
 
 export const INSTALLER_PUBLISH_SPECS = [
   { source: 'install.sh', targets: ['install.sh', 'install'] },

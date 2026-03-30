@@ -812,10 +812,6 @@ VERSION_PREFIX="happier-v"
 CHECKSUMS_PREFIX="checksums-happier-v"
 
 if [[ "${PRODUCT}" == "server" ]]; then
-  if [[ "${OS}" != "linux" ]]; then
-    echo "Happier server runtime binaries are currently published for Linux only." >&2
-    exit 1
-  fi
   ASSET_REGEX="^happier-server-v.*-${OS}-${ARCH}[.]tar[.]gz$"
   CHECKSUMS_REGEX="^checksums-happier-server-v.*[.]txt$"
   SIG_REGEX="^checksums-happier-server-v.*[.]txt[.]minisig$"
