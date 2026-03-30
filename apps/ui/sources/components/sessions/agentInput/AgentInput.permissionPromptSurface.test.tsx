@@ -164,6 +164,7 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
 
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: any) => React.createElement(React.Fragment, null, props.children),
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => ({

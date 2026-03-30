@@ -220,6 +220,7 @@ vi.mock('@/components/ui/popover', () => ({
             ? props.children({ maxHeight: 600 })
             : props.children ?? null;
     },
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
     usePopoverBoundaryRef: () => React.createRef(),
 }));
 
