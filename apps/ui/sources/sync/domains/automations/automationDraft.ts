@@ -8,9 +8,11 @@ export type NewSessionAutomationDraft = Readonly<{
     timezone: string | null;
 }>;
 
+export const LEGACY_DEFAULT_NEW_SESSION_AUTOMATION_NAME = 'Scheduled Session';
+
 export const DEFAULT_NEW_SESSION_AUTOMATION_DRAFT: NewSessionAutomationDraft = {
     enabled: false,
-    name: 'Scheduled Session',
+    name: '',
     description: '',
     scheduleKind: 'interval',
     everyMinutes: 60,
@@ -20,6 +22,9 @@ export const DEFAULT_NEW_SESSION_AUTOMATION_DRAFT: NewSessionAutomationDraft = {
 
 function normalizeString(input: unknown, fallback: string): string {
     const value = typeof input === 'string' ? input.trim() : '';
+    if (value === LEGACY_DEFAULT_NEW_SESSION_AUTOMATION_NAME) {
+        return fallback;
+    }
     return value.length > 0 ? value : fallback;
 }
 

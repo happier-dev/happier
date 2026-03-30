@@ -19,20 +19,25 @@ hstack remote server setup --ssh user@host
 
 Default behavior:
 
-- uses the **stable** channel (set `--channel preview` when you want preview binaries)
+- uses the **stable** channel (set `--channel preview` or `--channel dev` when you want newer public binaries)
 - installs the self-host service in **user** mode
 - uses the self-host defaults (SQLite, local files, `PORT=3005`)
 
-## Preview vs stable channel
+## Release channel
 
 ```bash
 hstack remote server setup --ssh user@host --channel preview
+```
+
+```bash
+hstack remote server setup --ssh user@host --channel dev
 ```
 
 Equivalent shortcuts:
 
 ```bash
 hstack remote server setup --ssh user@host --preview
+hstack remote server setup --ssh user@host --dev
 hstack remote server setup --ssh user@host --stable
 ```
 

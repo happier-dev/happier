@@ -1,41 +1,117 @@
 import { MMKV } from 'react-native-mmkv';
 import { z } from 'zod';
-import { Settings, settingsDefaults, settingsParse, SettingsSchema } from '../settings/settings';
+import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/settings';
+import type { Settings } from '../settings/settings';
 import { voiceSettingsParse } from '../settings/voiceSettings';
 import { LocalSettings, localSettingsDefaults, localSettingsParse } from '../settings/localSettings';
 import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
 import { Profile, profileDefaults, profileParse } from '../profiles/profile';
 import { isModelMode, isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
-import { dbgSettings, summarizeSettingsDelta } from '../settings/debugSettings';
+import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/registry/registryCore';
 import { SecretStringSchema, type SecretString } from '../../encryption/secretSettings';
+import {
+    readPersistedNewSessionCheckoutDraft,
+    type NewSessionCheckoutCreationDraft,
+} from './newSessionCheckoutDraft';
 import {
     sanitizeNewSessionAutomationDraft,
     type NewSessionAutomationDraft,
 } from '@/sync/domains/automations/automationDraft';
 import { ReviewCommentDraftSchema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { SessionActionDraftSchema } from '@/sync/domains/sessionActions/sessionActionDraftMeta';
+import { PROVIDER_SETTINGS_SHAPE } from '@/agents/providers/registry/providerSettingArtifacts';
+import {
+    AcpConfigOptionOverridesV1Schema,
+    BackendTargetRefSchema,
+    SessionMcpSelectionV1Schema,
+    normalizeCodexBackendMode,
+    type CodexBackendMode,
+    type AcpConfigOptionOverridesV1,
+    type BackendTargetRefV1,
+    type SessionMcpSelectionV1,
+} from '@happier-dev/protocol';
+var persistedStorage: MMKV | null = null;
 
-const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
-const storageScope = isWebRuntime ? null : readStorageScopeFromEnv();
-const mmkv = storageScope ? new MMKV({ id: scopedStorageId('default', storageScope) }) : new MMKV();
-const NEW_SESSION_DRAFT_KEY = 'new-session-draft-v1';
-const SESSION_MATERIALIZED_MAX_SEQ_KEY = 'session-materialized-max-seq-v1';
-const LAST_CHANGES_CURSOR_BY_ACCOUNT_ID_KEY = 'last-changes-cursor-by-account-id-v1';
-const CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX = 'changes-cursor-by-account-id-v1:';
-const CHANGES_CURSOR_BY_SERVER_SCOPE_AND_ACCOUNT_ID_PREFIX = 'changes-cursor-by-server-scope-and-account-id-v1:';
-const SESSION_MODEL_MODE_UPDATED_ATS_KEY = 'session-model-mode-updated-ats-v1';
-const SESSION_REVIEW_COMMENTS_DRAFT_KEY = 'session-review-comments-draft-v1';
-const SESSION_ACTION_DRAFTS_KEY = 'session-action-drafts-v1';
+const pendingSettingsSchemaByKey: Readonly<Record<string, z.ZodTypeAny>> = Object.freeze({
+    ...ACCOUNT_SETTING_ARTIFACTS.shape,
+    ...PROVIDER_SETTINGS_SHAPE,
+});
 
-export type NewSessionSessionType = 'simple' | 'worktree';
+function deviceAnalyticsIdKey(): string {
+    return 'device-analytics-id-v1';
+}
+
+function newSessionDraftKey(): string {
+    return 'new-session-draft-v1';
+}
+
+function sessionMaterializedMaxSeqKey(): string {
+    return 'session-materialized-max-seq-v1';
+}
+
+function lastChangesCursorByAccountIdKey(): string {
+    return 'last-changes-cursor-by-account-id-v1';
+}
+
+function changesCursorByAccountIdPrefix(): string {
+    return 'changes-cursor-by-account-id-v1:';
+}
+
+function changesCursorByServerScopeAndAccountIdPrefix(): string {
+    return 'changes-cursor-by-server-scope-and-account-id-v1:';
+}
+
+function sessionModelModeUpdatedAtsKey(): string {
+    return 'session-model-mode-updated-ats-v1';
+}
+
+function sessionReviewCommentsDraftsKey(): string {
+    return 'session-review-comments-draft-v1';
+}
+
+function sessionActionDraftsKey(): string {
+    return 'session-action-drafts-v1';
+}
+
+function isWebRuntime(): boolean {
+    return typeof window !== 'undefined' && typeof document !== 'undefined';
+}
+
+function normalizeStorageScope(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    const sanitized = trimmed.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const collapsed = sanitized.replace(/_+/g, '_');
+    const clamped = collapsed.slice(0, 64);
+    return clamped || null;
+}
+
+function readScopedStorageScopeFromEnv(): string | null {
+    return normalizeStorageScope(process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE);
+}
+
+function buildScopedStorageId(baseId: string, scope: string | null): string {
+    return scope ? `${baseId}__${scope}` : baseId;
+}
+
+function getPersistenceStorage(): MMKV {
+    if (persistedStorage) return persistedStorage;
+    // Keep storage-scope bootstrap local here to avoid import-cycle TDZ hazards during Sync initialization.
+    const storageScope = isWebRuntime() ? null : readScopedStorageScopeFromEnv();
+    persistedStorage = storageScope ? new MMKV({ id: buildScopedStorageId('default', storageScope) }) : new MMKV();
+    return persistedStorage;
+}
+
 export type NewSessionAgentType = AgentId;
 
 export interface NewSessionDraft {
     input: string;
     selectedMachineId: string | null;
     selectedPath: string | null;
+    entryIntent?: 'session' | 'automation' | null;
+    checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
     selectedProfileId: string | null;
     selectedSecretId: string | null;
     /**
@@ -49,6 +125,8 @@ export interface NewSessionDraft {
      */
     sessionOnlySecretValueEncByProfileIdByEnvVarName?: Record<string, Record<string, SecretString | null | undefined>> | null;
     agentType: NewSessionAgentType;
+    backendTarget?: BackendTargetRefV1 | null;
+    transcriptStorage?: 'persisted' | 'direct';
     permissionMode: PermissionMode;
     modelMode: ModelMode;
     /**
@@ -56,13 +134,15 @@ export interface NewSessionDraft {
      * UI-only draft state (not sent to server unless supported by the selected agent).
      */
     acpSessionModeId: string | null;
-    sessionType: NewSessionSessionType;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
+    codexBackendMode?: CodexBackendMode | null;
+    mcpSelection?: SessionMcpSelectionV1 | null;
     resumeSessionId?: string;
     /**
      * Provider-specific new-session option state keyed by agent id.
      * This is UI-only draft state (not sent to server).
      */
-    agentNewSessionOptionStateByAgentId?: Partial<Record<AgentId, Record<string, unknown>>> | null;
+    agentNewSessionOptionStateByAgentId?: Record<string, Record<string, unknown>> | null;
     automationDraft?: NewSessionAutomationDraft | null;
     updatedAt: number;
 }
@@ -118,12 +198,13 @@ function parseDraftSecretStringOrNull(value: unknown): SecretString | null | und
 
 function parseDraftAgentNewSessionOptionStateByAgentId(
     input: unknown,
-): Partial<Record<AgentId, Record<string, unknown>>> | null {
+): Record<string, Record<string, unknown>> | null {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
-    const out: Partial<Record<AgentId, Record<string, unknown>>> = {};
+    const out: Record<string, Record<string, unknown>> = {};
 
-    for (const [rawAgentId, rawOptions] of Object.entries(input as Record<string, unknown>)) {
-        if (!isAgentId(rawAgentId)) continue;
+    for (const [rawTargetKey, rawOptions] of Object.entries(input as Record<string, unknown>)) {
+        const targetKey = typeof rawTargetKey === 'string' ? rawTargetKey.trim() : '';
+        if (!targetKey) continue;
         if (!rawOptions || typeof rawOptions !== 'object' || Array.isArray(rawOptions)) continue;
 
         const options: Record<string, unknown> = {};
@@ -137,28 +218,53 @@ function parseDraftAgentNewSessionOptionStateByAgentId(
             }
         }
 
-        if (Object.keys(options).length > 0) out[rawAgentId] = options;
+        if (Object.keys(options).length > 0) out[targetKey] = options;
     }
 
     return Object.keys(out).length > 0 ? out : null;
 }
 
-export function loadSettings(): { settings: Settings, version: number | null } {
+function parseDraftCodexBackendMode(value: unknown): CodexBackendMode | null {
+    return normalizeCodexBackendMode(value);
+}
+
+function parseDraftEntryIntent(value: unknown): NewSessionDraft['entryIntent'] {
+    return value === 'automation' || value === 'session' ? value : null;
+}
+
+export function loadSettings(): { settings: unknown; version: number | null } {
+    const mmkv = getPersistenceStorage();
     const settings = mmkv.getString('settings');
     if (settings) {
         try {
             const parsed = JSON.parse(settings);
             const version = typeof parsed.version === 'number' ? parsed.version : null;
-            return { settings: settingsParse(parsed.settings), version };
+            return { settings: parsed.settings, version };
         } catch (e) {
             console.error('Failed to parse settings', e);
-            return { settings: { ...settingsDefaults }, version: null };
+            return { settings: {}, version: null };
         }
     }
-    return { settings: { ...settingsDefaults }, version: null };
+    return { settings: {}, version: null };
+}
+
+export function loadDeviceAnalyticsId(): string | null {
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(deviceAnalyticsIdKey());
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    return trimmed || null;
+}
+
+export function saveDeviceAnalyticsId(value: string): void {
+    const mmkv = getPersistenceStorage();
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    mmkv.set(deviceAnalyticsIdKey(), trimmed);
 }
 
 export function saveSettings(settings: Settings, version: number) {
+    const mmkv = getPersistenceStorage();
     mmkv.set('settings', JSON.stringify({ settings, version }));
 }
 
@@ -172,61 +278,61 @@ function parsePendingSettings(raw: unknown): Partial<Settings> {
     const input = raw as Record<string, unknown>;
     const out: Partial<Settings> = {};
 
-    (Object.keys(SettingsSchema.shape) as Array<Extract<keyof typeof SettingsSchema.shape, string>>).forEach((key) => {
-        if (!Object.prototype.hasOwnProperty.call(input, key)) return;
+    for (const [rawKey, rawValue] of Object.entries(input)) {
+        const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+        if (!key) continue;
+        if (rawValue === undefined) continue;
+        if (typeof rawValue === 'function') continue;
 
-        // Voice is parsed with a tolerant parser in settingsParse to avoid dropping the entire object
-        // due to a single invalid nested field. Pending settings must follow the same rule so we do
-        // not lose unsynced voice deltas (e.g. BYO API keys) on restart.
+        // Voice is parsed with a tolerant parser to avoid dropping the entire object due to a
+        // single invalid nested field. Pending settings must follow the same rule so we do not
+        // lose unsynced voice deltas (e.g. BYO API keys) on restart.
         if (key === 'voice') {
-            (out as any).voice = voiceSettingsParse(input[key]);
-            return;
+            const parsedVoice = voiceSettingsParse(rawValue);
+            if (parsedVoice) (out as any).voice = parsedVoice;
+            continue;
         }
 
-        const schema = SettingsSchema.shape[key] as z.ZodTypeAny;
-        const parsed = schema.safeParse(input[key]);
-        if (parsed.success) {
-            (out as any)[key] = parsed.data;
-        }
-    });
+        const schema = pendingSettingsSchemaByKey[key];
+        if (!schema) continue;
+
+        const parsed = schema.safeParse(rawValue);
+        if (!parsed.success) continue;
+
+        (out as any)[key] = parsed.data;
+    }
 
     return out;
 }
 
 export function loadPendingSettings(): Partial<Settings> {
+    const mmkv = getPersistenceStorage();
     const pending = mmkv.getString('pending-settings');
     if (pending) {
         try {
             const parsed = JSON.parse(pending);
             const validated = parsePendingSettings(parsed);
-            dbgSettings('loadPendingSettings', {
-                pendingKeys: Object.keys(validated).sort(),
-                pendingSummary: summarizeSettingsDelta(validated),
-            });
             return validated;
         } catch (e) {
             console.error('Failed to parse pending settings', e);
             return {};
         }
     }
-    dbgSettings('loadPendingSettings: none', {});
     return {};
 }
 
 export function savePendingSettings(settings: Partial<Settings>) {
+    const mmkv = getPersistenceStorage();
     // Recommended: delete key when empty to reduce churn/ambiguity.
     if (Object.keys(settings).length === 0) {
         mmkv.delete('pending-settings');
     } else {
         mmkv.set('pending-settings', JSON.stringify(settings));
     }
-    dbgSettings('savePendingSettings', {
-        pendingKeys: Object.keys(settings).sort(),
-        pendingSummary: summarizeSettingsDelta(settings),
-    });
 }
 
 export function loadLocalSettings(): LocalSettings {
+    const mmkv = getPersistenceStorage();
     const localSettings = mmkv.getString('local-settings');
     if (localSettings) {
         try {
@@ -241,10 +347,12 @@ export function loadLocalSettings(): LocalSettings {
 }
 
 export function saveLocalSettings(settings: LocalSettings) {
+    const mmkv = getPersistenceStorage();
     mmkv.set('local-settings', JSON.stringify(settings));
 }
 
 export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
+    const mmkv = getPersistenceStorage();
     const localSettings = mmkv.getString('local-settings');
     if (localSettings) {
         try {
@@ -260,6 +368,7 @@ export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
 }
 
 export function loadPurchases(): Purchases {
+    const mmkv = getPersistenceStorage();
     const purchases = mmkv.getString('purchases');
     if (purchases) {
         try {
@@ -274,10 +383,12 @@ export function loadPurchases(): Purchases {
 }
 
 export function savePurchases(purchases: Purchases) {
+    const mmkv = getPersistenceStorage();
     mmkv.set('purchases', JSON.stringify(purchases));
 }
 
 export function loadSessionDrafts(): Record<string, string> {
+    const mmkv = getPersistenceStorage();
     const drafts = mmkv.getString('session-drafts');
     if (drafts) {
         try {
@@ -291,13 +402,15 @@ export function loadSessionDrafts(): Record<string, string> {
 }
 
 export function saveSessionDrafts(drafts: Record<string, string>) {
+    const mmkv = getPersistenceStorage();
     mmkv.set('session-drafts', JSON.stringify(drafts));
 }
 
 export type SessionReviewCommentDraftsBySessionId = Record<string, z.infer<typeof ReviewCommentDraftSchema>[]>;
 
 export function loadSessionReviewCommentsDrafts(): SessionReviewCommentDraftsBySessionId {
-    const raw = mmkv.getString(SESSION_REVIEW_COMMENTS_DRAFT_KEY);
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(sessionReviewCommentsDraftsKey());
     if (!raw) return {};
     try {
         const parsed = JSON.parse(raw);
@@ -323,17 +436,19 @@ export function loadSessionReviewCommentsDrafts(): SessionReviewCommentDraftsByS
 }
 
 export function saveSessionReviewCommentsDrafts(drafts: SessionReviewCommentDraftsBySessionId): void {
+    const mmkv = getPersistenceStorage();
     if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(SESSION_REVIEW_COMMENTS_DRAFT_KEY);
+        mmkv.delete(sessionReviewCommentsDraftsKey());
         return;
     }
-    mmkv.set(SESSION_REVIEW_COMMENTS_DRAFT_KEY, JSON.stringify(drafts));
+    mmkv.set(sessionReviewCommentsDraftsKey(), JSON.stringify(drafts));
 }
 
 export type SessionActionDraftsBySessionId = Record<string, z.infer<typeof SessionActionDraftSchema>[]>;
 
 export function loadSessionActionDrafts(): SessionActionDraftsBySessionId {
-    const raw = mmkv.getString(SESSION_ACTION_DRAFTS_KEY);
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(sessionActionDraftsKey());
     if (!raw) return {};
     try {
         const parsed = JSON.parse(raw);
@@ -359,15 +474,17 @@ export function loadSessionActionDrafts(): SessionActionDraftsBySessionId {
 }
 
 export function saveSessionActionDrafts(drafts: SessionActionDraftsBySessionId): void {
+    const mmkv = getPersistenceStorage();
     if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(SESSION_ACTION_DRAFTS_KEY);
+        mmkv.delete(sessionActionDraftsKey());
         return;
     }
-    mmkv.set(SESSION_ACTION_DRAFTS_KEY, JSON.stringify(drafts));
+    mmkv.set(sessionActionDraftsKey(), JSON.stringify(drafts));
 }
 
 export function loadNewSessionDraft(): NewSessionDraft | null {
-    const raw = mmkv.getString(NEW_SESSION_DRAFT_KEY);
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(newSessionDraftKey());
     if (!raw) {
         return null;
     }
@@ -380,6 +497,8 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
         const input = typeof parsed.input === 'string' ? parsed.input : '';
         const selectedMachineId = typeof parsed.selectedMachineId === 'string' ? parsed.selectedMachineId : null;
         const selectedPath = typeof parsed.selectedPath === 'string' ? parsed.selectedPath : null;
+        const entryIntent = parseDraftEntryIntent((parsed as any).entryIntent);
+        const checkoutDraft = readPersistedNewSessionCheckoutDraft(parsed);
         const selectedProfileId = typeof parsed.selectedProfileId === 'string' ? parsed.selectedProfileId : null;
         const selectedSecretId = typeof parsed.selectedSecretId === 'string' ? parsed.selectedSecretId : null;
         const selectedSecretIdByProfileIdByEnvVarName = parseDraftNestedRecord(
@@ -391,6 +510,8 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             parseDraftSecretStringOrNull,
         );
         const agentType: NewSessionAgentType = isAgentId(parsed.agentType) ? parsed.agentType : DEFAULT_AGENT_ID;
+        const parsedBackendTarget = BackendTargetRefSchema.safeParse((parsed as any).backendTarget);
+        const backendTarget = parsedBackendTarget.success ? parsedBackendTarget.data : undefined;
         const permissionMode: PermissionMode = isPermissionMode(parsed.permissionMode)
             ? parsed.permissionMode
             : 'default';
@@ -403,7 +524,13 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             : typeof rawAcpSessionModeId === 'string'
                 ? (rawAcpSessionModeId.trim() || null)
                 : null;
-        const sessionType: NewSessionSessionType = parsed.sessionType === 'worktree' ? 'worktree' : 'simple';
+        const parsedMcpSelection = SessionMcpSelectionV1Schema.safeParse((parsed as any).mcpSelection);
+        const mcpSelection = parsedMcpSelection.success ? parsedMcpSelection.data : undefined;
+        const parsedSessionConfigOptionOverrides = AcpConfigOptionOverridesV1Schema.safeParse((parsed as any).sessionConfigOptionOverrides);
+        const sessionConfigOptionOverrides = parsedSessionConfigOptionOverrides.success
+            ? parsedSessionConfigOptionOverrides.data
+            : null;
+        const transcriptStorage = (parsed as any).transcriptStorage === 'direct' ? 'direct' : (parsed as any).transcriptStorage === 'persisted' ? 'persisted' : undefined;
         const resumeSessionId = typeof parsed.resumeSessionId === 'string' ? parsed.resumeSessionId : undefined;
         const agentNewSessionOptionStateByAgentId = parseDraftAgentNewSessionOptionStateByAgentId(
             (parsed as any).agentNewSessionOptionStateByAgentId,
@@ -412,9 +539,10 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             ? (parsed as any).auggieAllowIndexing
             : undefined;
         const automationDraft = sanitizeNewSessionAutomationDraft((parsed as any).automationDraft);
+        const codexBackendMode = parseDraftCodexBackendMode((parsed as any).codexBackendMode);
         const updatedAt = typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now();
 
-        const migratedAgentOptions: Partial<Record<AgentId, Record<string, unknown>>> = {
+        const migratedAgentOptions: Record<string, Record<string, unknown>> = {
             ...(agentNewSessionOptionStateByAgentId ?? {}),
         };
         // Legacy migration: older drafts stored `auggieAllowIndexing` at top-level.
@@ -430,15 +558,21 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             input,
             selectedMachineId,
             selectedPath,
+            ...(entryIntent ? { entryIntent } : {}),
+            ...(checkoutDraft.checkoutCreationDraft ? { checkoutCreationDraft: checkoutDraft.checkoutCreationDraft } : {}),
             selectedProfileId,
             selectedSecretId,
             selectedSecretIdByProfileIdByEnvVarName,
             sessionOnlySecretValueEncByProfileIdByEnvVarName,
             agentType,
+            ...(backendTarget ? { backendTarget } : {}),
+            ...(transcriptStorage ? { transcriptStorage } : {}),
             permissionMode,
             modelMode,
             acpSessionModeId,
-            sessionType,
+            ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
+            ...(codexBackendMode ? { codexBackendMode } : {}),
+            ...(mcpSelection ? { mcpSelection } : {}),
             ...(resumeSessionId ? { resumeSessionId } : {}),
             ...(Object.keys(migratedAgentOptions).length > 0 ? { agentNewSessionOptionStateByAgentId: migratedAgentOptions } : {}),
             ...(automationDraft.enabled ? { automationDraft } : {}),
@@ -451,14 +585,17 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
 }
 
 export function saveNewSessionDraft(draft: NewSessionDraft) {
-    mmkv.set(NEW_SESSION_DRAFT_KEY, JSON.stringify(draft));
+    const mmkv = getPersistenceStorage();
+    mmkv.set(newSessionDraftKey(), JSON.stringify(draft));
 }
 
 export function clearNewSessionDraft() {
-    mmkv.delete(NEW_SESSION_DRAFT_KEY);
+    const mmkv = getPersistenceStorage();
+    mmkv.delete(newSessionDraftKey());
 }
 
 export function loadSessionPermissionModes(): Record<string, PermissionMode> {
+    const mmkv = getPersistenceStorage();
     const modes = mmkv.getString('session-permission-modes');
     if (modes) {
         try {
@@ -472,10 +609,12 @@ export function loadSessionPermissionModes(): Record<string, PermissionMode> {
 }
 
 export function saveSessionPermissionModes(modes: Record<string, PermissionMode>) {
+    const mmkv = getPersistenceStorage();
     mmkv.set('session-permission-modes', JSON.stringify(modes));
 }
 
 export function loadSessionPermissionModeUpdatedAts(): Record<string, number> {
+    const mmkv = getPersistenceStorage();
     const raw = mmkv.getString('session-permission-mode-updated-ats');
     if (raw) {
         try {
@@ -500,10 +639,12 @@ export function loadSessionPermissionModeUpdatedAts(): Record<string, number> {
 }
 
 export function saveSessionPermissionModeUpdatedAts(updatedAts: Record<string, number>) {
+    const mmkv = getPersistenceStorage();
     mmkv.set('session-permission-mode-updated-ats', JSON.stringify(updatedAts));
 }
 
 export function loadSessionLastViewed(): Record<string, number> {
+    const mmkv = getPersistenceStorage();
     const raw = mmkv.getString('session-last-viewed');
     if (raw) {
         try {
@@ -528,10 +669,12 @@ export function loadSessionLastViewed(): Record<string, number> {
 }
 
 export function saveSessionLastViewed(data: Record<string, number>) {
+    const mmkv = getPersistenceStorage();
     mmkv.set('session-last-viewed', JSON.stringify(data));
 }
 
 export function loadSessionModelModes(): Record<string, ModelMode> {
+    const mmkv = getPersistenceStorage();
     const modes = mmkv.getString('session-model-modes');
     if (modes) {
         try {
@@ -557,11 +700,13 @@ export function loadSessionModelModes(): Record<string, ModelMode> {
 }
 
 export function saveSessionModelModes(modes: Record<string, ModelMode>) {
+    const mmkv = getPersistenceStorage();
     mmkv.set('session-model-modes', JSON.stringify(modes));
 }
 
 export function loadSessionModelModeUpdatedAts(): Record<string, number> {
-    const raw = mmkv.getString(SESSION_MODEL_MODE_UPDATED_ATS_KEY);
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(sessionModelModeUpdatedAtsKey());
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -585,11 +730,13 @@ export function loadSessionModelModeUpdatedAts(): Record<string, number> {
 }
 
 export function saveSessionModelModeUpdatedAts(data: Record<string, number>) {
-    mmkv.set(SESSION_MODEL_MODE_UPDATED_ATS_KEY, JSON.stringify(data));
+    const mmkv = getPersistenceStorage();
+    mmkv.set(sessionModelModeUpdatedAtsKey(), JSON.stringify(data));
 }
 
 export function loadSessionMaterializedMaxSeqById(): Record<string, number> {
-    const raw = mmkv.getString(SESSION_MATERIALIZED_MAX_SEQ_KEY);
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(sessionMaterializedMaxSeqKey());
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -613,7 +760,8 @@ export function loadSessionMaterializedMaxSeqById(): Record<string, number> {
 }
 
 export function saveSessionMaterializedMaxSeqById(data: Record<string, number>) {
-    mmkv.set(SESSION_MATERIALIZED_MAX_SEQ_KEY, JSON.stringify(data));
+    const mmkv = getPersistenceStorage();
+    mmkv.set(sessionMaterializedMaxSeqKey(), JSON.stringify(data));
 }
 
 function normalizeChangesCursorScope(scopeRaw?: string | null): string | null {
@@ -623,15 +771,16 @@ function normalizeChangesCursorScope(scopeRaw?: string | null): string | null {
 }
 
 function scopedChangesCursorKey(accountId: string, scope: string): string {
-    return `${CHANGES_CURSOR_BY_SERVER_SCOPE_AND_ACCOUNT_ID_PREFIX}${scope}:${accountId}`;
+    return `${changesCursorByServerScopeAndAccountIdPrefix()}${scope}:${accountId}`;
 }
 
 function unscopedChangesCursorKey(accountId: string): string {
-    return `${CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX}${accountId}`;
+    return `${changesCursorByAccountIdPrefix()}${accountId}`;
 }
 
 export function loadChangesCursor(scopeRaw?: string | null): string | null {
-    const accountId = loadProfile().id;
+    const mmkv = getPersistenceStorage();
+    const accountId = readPersistedProfileId(mmkv);
     if (!accountId) return null;
 
     const scope = normalizeChangesCursorScope(scopeRaw);
@@ -660,7 +809,8 @@ export function loadChangesCursor(scopeRaw?: string | null): string | null {
 }
 
 export function saveChangesCursor(cursor: string, scopeRaw?: string | null): void {
-    const accountId = loadProfile().id;
+    const mmkv = getPersistenceStorage();
+    const accountId = readPersistedProfileId(mmkv);
     if (!accountId) return;
 
     const scope = normalizeChangesCursorScope(scopeRaw);
@@ -693,7 +843,8 @@ export function saveChangesCursor(cursor: string, scopeRaw?: string | null): voi
 }
 
 export function loadLastChangesCursorByAccountId(): Record<string, number> {
-    const raw = mmkv.getString(LAST_CHANGES_CURSOR_BY_ACCOUNT_ID_KEY);
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(lastChangesCursorByAccountIdKey());
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -717,10 +868,24 @@ export function loadLastChangesCursorByAccountId(): Record<string, number> {
 }
 
 export function saveLastChangesCursorByAccountId(data: Record<string, number>) {
-    mmkv.set(LAST_CHANGES_CURSOR_BY_ACCOUNT_ID_KEY, JSON.stringify(data));
+    const mmkv = getPersistenceStorage();
+    mmkv.set(lastChangesCursorByAccountIdKey(), JSON.stringify(data));
+}
+
+function readPersistedProfileId(mmkv: MMKV): string | null {
+    const rawProfile = mmkv.getString('profile');
+    if (!rawProfile) return null;
+
+    try {
+        const parsed = JSON.parse(rawProfile) as { id?: unknown } | null;
+        return typeof parsed?.id === 'string' && parsed.id.trim().length > 0 ? parsed.id : null;
+    } catch {
+        return null;
+    }
 }
 
 export function loadProfile(): Profile {
+    const mmkv = getPersistenceStorage();
     const profile = mmkv.getString('profile');
     if (profile) {
         try {
@@ -735,9 +900,11 @@ export function loadProfile(): Profile {
 }
 
 export function saveProfile(profile: Profile) {
+    const mmkv = getPersistenceStorage();
     mmkv.set('profile', JSON.stringify(profile));
 }
 
 export function clearPersistence() {
+    const mmkv = getPersistenceStorage();
     mmkv.clearAll();
 }

@@ -1,8 +1,10 @@
 import { V2SessionByIdResponseSchema, type V2SessionByIdResponse } from '@happier-dev/protocol';
 
-import { AgentStateSchema, MetadataSchema, type Session } from '@/sync/domains/state/storageTypes';
-import type { Metadata } from '@/sync/domains/state/storageTypes';
+import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
+
+import { parsePlainSessionAgentState, parsePlainSessionMetadata } from './parsePlainSessionPayload';
 
 type SessionEncryption = {
   decryptAgentState: (version: number, value: string | null) => Promise<any>;
@@ -15,39 +17,25 @@ export type SessionByIdEncryption = {
   getSessionEncryption: (sessionId: string) => SessionEncryption | null;
 };
 
-function parsePlainMetadata(value: string): Metadata | null {
-  try {
-    const parsedJson = JSON.parse(value);
-    const parsed = MetadataSchema.safeParse(parsedJson);
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-
-function parsePlainAgentState(value: string | null): unknown {
-  if (!value) return {};
-  try {
-    const parsedJson = JSON.parse(value);
-    const parsed = AgentStateSchema.safeParse(parsedJson);
-    return parsed.success ? parsed.data : {};
-  } catch {
-    return {};
-  }
-}
-
 export async function fetchAndApplySessionById(params: Readonly<{
   sessionId: string;
+  serverId?: string | null;
   credentials: AuthCredentials;
   encryption: SessionByIdEncryption;
   sessionDataKeys: Map<string, Uint8Array>;
   request: (path: string, init: RequestInit) => Promise<Response>;
   applySessions: (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
+  getExistingSession?: (sessionId: string) => Session | null | undefined;
   log: { log: (message: string) => void };
   timeoutMs?: number;
-}>): Promise<{ ok: boolean; session: (V2SessionByIdResponse['session'] & { metadata: Metadata | null }) | null }> {
+}>): Promise<{
+  ok: boolean;
+  session: (V2SessionByIdResponse['session'] & { metadata: Metadata | null }) | null;
+  errorCode?: string;
+  httpStatus?: number;
+}> {
   const sessionId = String(params.sessionId ?? '').trim();
-  if (!sessionId) return { ok: false, session: null };
+  if (!sessionId) return { ok: false, session: null, errorCode: 'invalid_session_id' };
 
   const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 10_000;
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -65,24 +53,30 @@ export async function fetchAndApplySessionById(params: Readonly<{
     });
   } catch (err) {
     params.log.log(`[sessionById] Failed to fetch session ${sessionId}: ${err instanceof Error ? err.message : 'unknown error'}`);
-    return { ok: false, session: null };
+    return { ok: false, session: null, errorCode: 'network_error' };
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
-    return { ok: false, session: null };
+    const status = response.status;
+    const errorCode =
+      status === 404 ? 'not_found'
+        : status === 401 ? 'unauthorized'
+            : status === 403 ? 'forbidden'
+                : 'http_error';
+    return { ok: false, session: null, errorCode, httpStatus: status };
   }
 
   const body = (await response.json().catch(() => null)) as unknown;
   const parsed = V2SessionByIdResponseSchema.safeParse(body);
   if (!parsed.success || !parsed.data.session) {
-    return { ok: false, session: null };
+    return { ok: false, session: null, errorCode: 'invalid_response' };
   }
 
   const row = parsed.data.session;
   if (String(row.id ?? '').trim() !== sessionId) {
-    return { ok: false, session: null };
+    return { ok: false, session: null, errorCode: 'invalid_response' };
   }
 
   const encryptionMode: 'e2ee' | 'plain' = row.encryptionMode === 'plain' ? 'plain' : 'e2ee';
@@ -107,34 +101,44 @@ export async function fetchAndApplySessionById(params: Readonly<{
   const sessionEncryption = params.encryption.getSessionEncryption(sessionId);
   if (encryptionMode === 'e2ee' && !sessionEncryption) {
     params.log.log(`[sessionById] Session encryption not found for ${sessionId}`);
-    return { ok: false, session: null };
+    return { ok: false, session: null, errorCode: 'session_encryption_not_found' };
   }
 
   const metadata =
     encryptionMode === 'plain'
-      ? parsePlainMetadata(row.metadata)
+      ? parsePlainSessionMetadata(row.metadata)
       : await sessionEncryption!.decryptMetadata(row.metadataVersion, row.metadata);
 
   const agentState =
     encryptionMode === 'plain'
-      ? parsePlainAgentState(row.agentState)
+      ? parsePlainSessionAgentState(row.agentState)
       : await sessionEncryption!.decryptAgentState(row.agentStateVersion, row.agentState);
 
   const accessLevel = row.share?.accessLevel;
   const normalizedAccessLevel = accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;
 
-  params.applySessions([
-    {
-      ...row,
-      encryptionMode,
-      thinking: false,
-      thinkingAt: 0,
-      metadata,
-      agentState,
-      accessLevel: normalizedAccessLevel,
-      canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
-    },
-  ]);
+  const nextSession = {
+    ...row,
+    serverId: typeof params.serverId === 'string' && params.serverId.trim().length > 0 ? params.serverId.trim() : undefined,
+    encryptionMode,
+    thinking: false,
+    thinkingAt: 0,
+    metadata,
+    agentState,
+    accessLevel: normalizedAccessLevel,
+    canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
+  };
 
-  return { ok: true, session: { ...row, metadata } };
+  const previousSession = params.getExistingSession?.(sessionId);
+  params.applySessions([nextSession]);
+  reportNewAgentRequestsFromSessionTransition(previousSession, nextSession);
+
+  return {
+    ok: true,
+    session: {
+      ...row,
+      serverId: typeof params.serverId === 'string' && params.serverId.trim().length > 0 ? params.serverId.trim() : undefined,
+      metadata,
+    },
+  };
 }

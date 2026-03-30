@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
-import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
+import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -96,53 +92,54 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend tool_call_update kind inference', () => {
   it('infers execute tool kind for command-like output embedded in rawInput when kind is missing', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-kind-inference-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-kind-inference-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 1_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            initTimeoutMs: 1_000,
+            idleTimeoutMs: 1,
+          }),
+        });
+        backendForCleanup = backend;
 
-      const toolResults: Array<{ toolName: string; result: unknown }> = [];
-      backend.onMessage((msg) => {
-        if (msg.type !== 'tool-result') return;
-        toolResults.push({ toolName: msg.toolName, result: msg.result });
-      });
+        const toolResults: Array<{ toolName: string; result: unknown }> = [];
+        backend.onMessage((msg) => {
+          if (msg.type !== 'tool-result') return;
+          toolResults.push({ toolName: msg.toolName, result: msg.result });
+        });
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
-      await backend.waitForResponseComplete(5_000);
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+        await backend.waitForResponseComplete(5_000);
 
-      expect(toolResults.length).toBeGreaterThan(0);
-      const last = toolResults[toolResults.length - 1]!;
+        expect(toolResults.length).toBeGreaterThan(0);
+        const last = toolResults[toolResults.length - 1]!;
 
-      // Without inference this would be 'unknown'.
-      expect(last.toolName).toBe('execute');
+        // Without inference this would be 'unknown'.
+        expect(last.toolName).toBe('execute');
 
-      // Without output extraction fallback this would be ''.
-      expect(last.result).not.toBe('');
-      expect(Array.isArray((last.result as any)?.output)).toBe(true);
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        // Without output extraction fallback this would be ''.
+        expect(last.result).not.toBe('');
+        expect(Array.isArray((last.result as any)?.output)).toBe(true);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 15_000);
 });

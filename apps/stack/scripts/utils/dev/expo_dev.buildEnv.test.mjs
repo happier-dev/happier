@@ -20,7 +20,9 @@ test('buildExpoDevEnv does not inject auth auto-restore env vars', () => {
     stackName: 'qa-agent-x',
   });
 
+  assert.equal(env.EXPO_PUBLIC_HAPPIER_SERVER_URL, 'http://localhost:3010');
   assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_URL, 'http://localhost:3010');
+  assert.equal(env.EXPO_PUBLIC_SERVER_URL, 'http://localhost:3010');
   assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT, 'stack');
   assert.equal(env.EXPO_NO_BROWSER, '1');
   assert.equal(env.BROWSER, 'none');

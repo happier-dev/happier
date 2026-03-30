@@ -1,27 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
+import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
+import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
+import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
+import { createStackHappierCliCommandFixture } from './testkit/stack_happier_cli_command_testkit.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
-  });
-}
 
 function runHstack(args, { env }) {
   return runNode([join(rootDir, 'bin', 'hstack.mjs'), ...args], { cwd: rootDir, env });
@@ -61,18 +52,15 @@ async function writeDummyAuth({ cliHomeDir }) {
   await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
 }
 
-async function writeServerScopedAuth({ cliHomeDir, serverUrl }) {
-  const paths = resolveStackCredentialPaths({ cliHomeDir, serverUrl });
+async function writeServerScopedAuth({ cliHomeDir, serverUrl, env = {} }) {
+  const paths = resolveStackCredentialPaths({ cliHomeDir, serverUrl, env });
   await mkdir(dirname(paths.serverScopedPath), { recursive: true });
   await writeFile(paths.serverScopedPath, 'dummy\n', 'utf-8');
   await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
 }
 
-async function writeStubHappyCli({ cliDir }) {
-  await mkdir(join(cliDir, 'bin'), { recursive: true });
-  await mkdir(join(cliDir, 'dist'), { recursive: true });
-
-const distScript = `
+function buildStubHappyCliScript() {
+  return `
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -115,6 +103,10 @@ if (sub === 'start') {
   // Capture resolved target server so integration tests can assert correct stack port selection.
   append('server_url=' + String(process.env.HAPPIER_SERVER_URL || ''));
   append('webapp_url=' + String(process.env.HAPPIER_WEBAPP_URL || ''));
+  append('direct_peer_bind_port=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT || ''));
+  append('direct_peer_advertised_hosts=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS || ''));
+  append('direct_peer_feature_enabled=' + String(process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED || ''));
+  append('direct_peer_server_enabled=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED || ''));
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
   child.unref();
   writeFileSync(state, JSON.stringify({ pid: child.pid, httpPort: 0, startTime: new Date().toISOString() }) + '\\n', 'utf-8');
@@ -139,59 +131,24 @@ if (sub === 'status') {
 append('other:' + sub);
 process.exit(0);
 `;
-
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), distScript.trimStart(), 'utf-8');
-  await writeFile(join(cliDir, 'bin', 'happier.mjs'), "import '../dist/index.mjs';\n", 'utf-8');
-}
-
-async function ensureMinimalHappierMonorepo({ monoRoot }) {
-  await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
-  await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
 }
 
 async function createDaemonFixture(t, { prefix, stackName = 'exp-test', serverPort = 4101 } = {}) {
-  const tmp = await mkdtemp(join(tmpdir(), prefix));
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
-  });
-
-  const storageDir = join(tmp, 'storage');
-  const homeDir = join(tmp, 'home');
-  const workspaceDir = join(tmp, 'workspace');
-  const monoRoot = join(workspaceDir, 'happier');
-
-  await ensureMinimalHappierMonorepo({ monoRoot });
-  await writeStubHappyCli({ cliDir: join(monoRoot, 'apps', 'cli') });
-
-  const stackCliHome = join(storageDir, stackName, 'cli');
-  await mkdir(stackCliHome, { recursive: true });
-
-  async function writeStackEnv({ name = stackName, cliHomeDir = stackCliHome, port = serverPort, repoDir = monoRoot } = {}) {
-    const envPath = join(storageDir, name, 'env');
-    await mkdir(dirname(envPath), { recursive: true });
-    await writeFile(
-      envPath,
-      [
-        `HAPPIER_STACK_REPO_DIR=${repoDir}`,
-        `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,
-        `HAPPIER_STACK_SERVER_PORT=${port}`,
-        '',
-      ].join('\n'),
-      'utf-8'
-    );
-  }
-
-  return {
-    storageDir,
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix,
     stackName,
     serverPort,
-    stackCliHome,
-    baseEnv: buildBaseEnv({ homeDir, storageDir, workspaceDir }),
-    writeStackEnv,
+    distIndexScript: buildStubHappyCliScript().trimStart(),
+    binHappierScript: "import '../dist/index.mjs';\n",
+  });
+
+  return {
+    storageDir: fixture.storageDir,
+    stackName: fixture.stackName,
+    serverPort,
+    stackCliHome: fixture.stackCliHome,
+    baseEnv: fixture.baseEnv,
+    writeStackEnv: fixture.writeStackEnv,
   };
 }
 
@@ -206,7 +163,10 @@ test('hstack stack daemon <name> restart restarts only the daemon', async (t) =>
     serverPort: 4101,
   });
 
-  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await writeServerScopedAuth({
+    cliHomeDir: fixture.stackCliHome,
+    serverUrl: `http://127.0.0.1:${fixture.serverPort}`,
+  });
   await fixture.writeStackEnv();
   registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName, includeNameFirst: true });
 
@@ -349,6 +309,38 @@ test('hstack stack daemon <name> start/stop with --identity uses an isolated cli
   assert.ok(logTextAfter.includes('stop'), `expected stub daemon stop to be called for identity\n${logTextAfter}`);
 });
 
+test('hstack stack daemon <name> start with --identity accepts stack-stable server-scoped credentials', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-stack-daemon-identity-scoped-auth-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  const identity = 'account-b';
+  const identityHome = join(fixture.storageDir, fixture.stackName, 'cli-identities', identity);
+  const scopedEnv = {
+    ...fixture.baseEnv,
+    HAPPIER_ACTIVE_SERVER_ID: buildStackStableScopeId({ stackName: fixture.stackName, cliIdentity: identity }),
+  };
+  await writeServerScopedAuth({
+    cliHomeDir: identityHome,
+    serverUrl: `http://127.0.0.1:${fixture.serverPort}`,
+    env: scopedEnv,
+  });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName, identity });
+
+  const startRes = await runHstack(
+    ['stack', 'daemon', fixture.stackName, 'start', `--identity=${identity}`, '--json'],
+    { env: fixture.baseEnv }
+  );
+  assertExitOk(startRes, 'stack daemon start with identity-scoped auth');
+
+  const logPath = join(identityHome, 'stub-daemon.log');
+  const logText = await readLogText(logPath);
+  assert.ok(logText.includes('start'), `expected stub daemon start to be called in identity home\n${logText}`);
+});
+
 test('hstack daemon status targets main stack', async (t) => {
   const fixture = await createDaemonFixture(t, {
     prefix: 'happy-stacks-main-daemon-shortcut-',
@@ -442,7 +434,7 @@ test('hstack stack daemon <name> start uses runtime server port when env port is
   await fixture.writeStackEnv({ port: '' });
 
   // Create a runtime state file that indicates the stack server is running on fixture.serverPort.
-  const serverStub = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const serverStub = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   t.after(() => {
     try {
       serverStub.kill('SIGTERM');
@@ -516,6 +508,53 @@ test('hstack stack daemon <name> start uses explicit HAPPIER_SERVER_URL when env
     logText.includes(`server_url=http://127.0.0.1:${explicitPort}`),
     `expected daemon env to target explicit HAPPIER_SERVER_URL port ${explicitPort}\n${logText}`
   );
+});
+
+test('hstack stack daemon <name> restart reuses persisted direct-peer topology env', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-stack-daemon-direct-peer-env-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+
+  const topologyEnv = {
+    ...fixture.baseEnv,
+    HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: 'host.lima.internal',
+    HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: '13378',
+    HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED: 'true',
+    HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED: 'true',
+  };
+
+  const startRes = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env: topologyEnv });
+  assertExitOk(startRes, 'stack daemon start with direct-peer topology env');
+
+  const envPath = join(fixture.storageDir, fixture.stackName, 'env');
+  const envTextAfterStart = await readFile(envPath, 'utf-8');
+  assert.match(envTextAfterStart, /HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS=host\.lima\.internal/);
+  assert.match(envTextAfterStart, /HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT=13378/);
+  assert.match(envTextAfterStart, /HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED=true/);
+  assert.match(envTextAfterStart, /HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED=true/);
+
+  const logPath = join(fixture.stackCliHome, 'stub-daemon.log');
+  const logTextAfterStart = await readLogText(logPath);
+  assert.match(logTextAfterStart, /direct_peer_bind_port=13378/);
+  assert.match(logTextAfterStart, /direct_peer_advertised_hosts=host\.lima\.internal/);
+  assert.match(logTextAfterStart, /direct_peer_feature_enabled=true/);
+  assert.match(logTextAfterStart, /direct_peer_server_enabled=true/);
+
+  const restartRes = await runHstack(['stack', 'daemon', fixture.stackName, 'restart', '--json'], { env: fixture.baseEnv });
+  assertExitOk(restartRes, 'stack daemon restart with persisted direct-peer topology env');
+
+  const restartLogText = await readLogText(logPath);
+  const appendedLog = restartLogText.slice(logTextAfterStart.length);
+  assert.match(appendedLog, /direct_peer_bind_port=13378/);
+  assert.match(appendedLog, /direct_peer_advertised_hosts=host\.lima\.internal/);
+  assert.match(appendedLog, /direct_peer_feature_enabled=true/);
+  assert.match(appendedLog, /direct_peer_server_enabled=true/);
 });
 
 test('hstack stack auth <name> login --identity=<name> --print prints identity-scoped HAPPIER_HOME_DIR', async (t) => {

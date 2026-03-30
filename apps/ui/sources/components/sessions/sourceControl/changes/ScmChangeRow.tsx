@@ -7,8 +7,20 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
-
 const PATH_SEPARATOR = '/';
+type Theme = Readonly<{
+    colors: Readonly<{
+        surface?: string;
+        surfaceHigh?: string;
+        divider?: string;
+        text?: string;
+        textSecondary: string;
+        textLink?: string;
+        success?: string;
+        warning?: string;
+        textDestructive?: string;
+    }>;
+}>;
 
 const ViewWithClick = View as unknown as React.ComponentType<
     React.ComponentPropsWithRef<typeof View> & {
@@ -25,11 +37,11 @@ type ChangeDescriptor = Readonly<{
     label: string;
 }>;
 
-function describeChange(file: ScmFileStatus, theme: any): ChangeDescriptor {
-    const info = theme.colors.info ?? theme.colors.textSecondary;
+function describeChange(file: ScmFileStatus, theme: Theme): ChangeDescriptor {
+    const info = theme.colors.textLink ?? theme.colors.textSecondary;
     const success = theme.colors.success ?? theme.colors.textSecondary;
     const warning = theme.colors.warning ?? theme.colors.textSecondary;
-    const danger = theme.colors.danger ?? theme.colors.textDestructive ?? theme.colors.textSecondary;
+    const danger = theme.colors.textDestructive ?? theme.colors.textSecondary;
 
     switch (file.status) {
         case 'untracked':
@@ -52,7 +64,7 @@ function describeChange(file: ScmFileStatus, theme: any): ChangeDescriptor {
 }
 
 export type ScmChangeRowProps = Readonly<{
-    theme: any;
+    theme: Theme;
     file: ScmFileStatus;
     onPress: () => void;
     onPressPinned?: () => void;
@@ -74,8 +86,8 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
 
     const containerStyle = React.useMemo(() => {
         const bg = props.highlighted
-            ? (theme.colors.surfaceHigh ?? theme.colors.surface)
-            : theme.colors.surface;
+            ? (theme.colors.surfaceHigh ?? theme.colors.surface ?? theme.colors.textSecondary)
+            : (theme.colors.surface ?? theme.colors.textSecondary);
         return {
             paddingHorizontal: 12,
             paddingVertical,
@@ -84,9 +96,9 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
             gap: 10,
             backgroundColor: bg,
             borderBottomWidth: props.showDivider ? Platform.select({ ios: 0.33, default: 1 }) : 0,
-            borderBottomColor: theme.colors.divider,
+            borderBottomColor: theme.colors.divider ?? theme.colors.textSecondary,
         } as const;
-    }, [paddingVertical, props.highlighted, props.showDivider, theme.colors.divider, theme.colors.surface, theme.colors.surfaceHigh]);
+    }, [paddingVertical, props.highlighted, props.showDivider, theme.colors.divider, theme.colors.surface, theme.colors.surfaceHigh, theme.colors.textSecondary]);
 
     const { dir, name } = React.useMemo(() => {
         return normalizeRepoPathParts({ fileName: file.fileName, filePath: file.filePath, fullPath: file.fullPath });
@@ -167,7 +179,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                         flexShrink: 0,
                         maxWidth: '70%' as any,
                         fontSize: 13,
-                        color: theme.colors.text,
+                        color: theme.colors.text ?? theme.colors.textSecondary,
                         ...Typography.default('semiBold'),
                     }}
                 >
@@ -176,13 +188,13 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                <Text style={{ fontSize: 11, color: theme.colors.success, ...Typography.default('semiBold') }}>
+                <Text style={{ fontSize: 11, color: theme.colors.success ?? theme.colors.textSecondary, ...Typography.default('semiBold') }}>
                     {`+${file.linesAdded}`}
                 </Text>
                 <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default() }}>
                     {PATH_SEPARATOR}
                 </Text>
-                <Text style={{ fontSize: 11, color: theme.colors.danger ?? theme.colors.textDestructive, ...Typography.default('semiBold') }}>
+                <Text style={{ fontSize: 11, color: theme.colors.textDestructive ?? theme.colors.textSecondary, ...Typography.default('semiBold') }}>
                     {`-${file.linesRemoved}`}
                 </Text>
             </View>

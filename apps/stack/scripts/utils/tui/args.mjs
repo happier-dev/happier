@@ -16,6 +16,17 @@ export function normalizeTuiForwardedArgs(argv) {
   return args.length ? args : ['dev'];
 }
 
+export function extractTuiLaunchOptions(argv) {
+  const forwardedArgs = normalizeTuiForwardedArgs(argv);
+  const withTauri = forwardedArgs.some((arg) => arg === '--tauri' || arg === '--with-tauri');
+  const childArgs = forwardedArgs.filter((arg) => arg !== '--tauri' && arg !== '--with-tauri');
+
+  return {
+    forwardedArgs: childArgs.length > 0 ? childArgs : ['dev'],
+    withTauri,
+  };
+}
+
 export function inferTuiStackName(argv, env = process.env) {
   const args = Array.isArray(argv) ? argv : [];
 

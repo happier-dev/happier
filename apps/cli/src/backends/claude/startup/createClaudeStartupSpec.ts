@@ -16,7 +16,7 @@ export type ClaudeStartupArtifacts = {
 
 type CreateClaudeStartupSpecDeps = Readonly<{
   startHookServer: () => Promise<HookServer>;
-  generateHookSettingsFile: (port: number) => string;
+  generateHookSettingsFile: (port: number) => Promise<string> | string;
   cleanupHookSettingsFile: (path: string) => void;
   registerRpcHandlers: (args: { artifacts: ClaudeStartupArtifacts }) => void;
   initializeSessionInBackground: (args: { artifacts: ClaudeStartupArtifacts; signal: AbortSignal }) => Promise<void>;

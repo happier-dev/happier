@@ -1,6 +1,12 @@
 import { decodeAutomationTemplate } from './automationTemplateCodec';
 import { AUTOMATION_TEMPLATE_ENVELOPE_KIND, encodeAutomationTemplateForTransport, tryDecodeAutomationTemplateEnvelope } from './automationTemplateTransport';
 import type { AutomationTemplate } from './automationTypes';
+import {
+    buildAutomationTemplateFromSessionAuthoringDraft,
+    hydrateSessionAuthoringDraftFromAutomationTemplate,
+    mergeExistingSessionAuthoringDraftInheritedFields,
+} from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 
 function normalizeMessage(input: string): string {
     const normalized = typeof input === 'string' ? input.trim() : '';
@@ -21,8 +27,10 @@ function decodeTemplateFromDecryptedRaw(raw: unknown): AutomationTemplate {
 export async function updateExistingSessionAutomationTemplateMessage(params: {
     templateCiphertext: string;
     message: string;
+    draft?: SessionAuthoringDraft;
     decryptRaw: (payloadCiphertext: string) => Promise<unknown | null>;
     encryptRaw: (value: unknown) => Promise<string>;
+    fallbackDraft?: SessionAuthoringDraft;
 }): Promise<string> {
     const envelope = tryDecodeAutomationTemplateEnvelope(params.templateCiphertext);
     if (!envelope) {
@@ -40,11 +48,30 @@ export async function updateExistingSessionAutomationTemplateMessage(params: {
     }
 
     const message = normalizeMessage(params.message);
-    const nextTemplate: AutomationTemplate = {
-        ...template,
-        prompt: message,
-        displayText: message,
-    };
+    const baseDraft = mergeExistingSessionAuthoringDraftInheritedFields(
+        hydrateSessionAuthoringDraftFromAutomationTemplate({
+            targetType: 'existing_session',
+            template,
+        }),
+        params.fallbackDraft,
+    );
+    const nextDraft = mergeExistingSessionAuthoringDraftInheritedFields(
+        params.draft ? {
+            ...params.draft,
+            targetType: 'existing_session',
+        } : {
+            ...baseDraft,
+            prompt: message,
+            displayText: message,
+        },
+        baseDraft,
+    );
+    const nextMessage = normalizeMessage(nextDraft.prompt || nextDraft.displayText);
+    const nextTemplate: AutomationTemplate = buildAutomationTemplateFromSessionAuthoringDraft({
+        ...nextDraft,
+        prompt: nextMessage,
+        displayText: nextMessage,
+    });
 
     return await encodeAutomationTemplateForTransport({
         accountMode: envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND ? 'e2ee' : 'plain',

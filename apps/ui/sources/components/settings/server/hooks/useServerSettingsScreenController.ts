@@ -6,6 +6,7 @@ import { t } from '@/text';
 import { validateServerUrl } from '@/sync/domains/server/serverConfig';
 import {
     getActiveServerId,
+    getActiveServerSnapshot,
     getDeviceDefaultServerId,
     getResetToDefaultServerId,
     listServerProfiles,
@@ -30,9 +31,12 @@ import { useServerAutoAddFromRoute } from '@/components/settings/server/hooks/us
 import { useServerSettingsServerProfileActions } from '@/components/settings/server/hooks/useServerSettingsServerProfileActions';
 import { useServerSettingsGroupActions } from '@/components/settings/server/hooks/useServerSettingsGroupActions';
 import { useServerSettingsConcurrentActions } from '@/components/settings/server/hooks/useServerSettingsConcurrentActions';
+import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
+import type { RelayDriftBanner } from '@/components/settings/server/relayDriftTypes';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
+import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 
 type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[]; source?: string | string[] }>;
 
@@ -64,9 +68,12 @@ export type ServerSettingsController = Readonly<{
     servers: ReadonlyArray<ServerProfile>;
     serverGroups: ReadonlyArray<ServerSelectionGroup>;
     activeServerId: string;
+    activeServerUrl: string;
+    activeLocalRelayUrl: string | null;
     deviceDefaultServerId: string;
     activeTargetKey: string | null;
     authStatusByServerId: Readonly<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>;
+    relayDriftBanner: RelayDriftBanner | null;
 
     autoMode: boolean;
     inputUrl: string;
@@ -100,6 +107,7 @@ export type ServerSettingsController = Readonly<{
 export function useServerSettingsScreenController(): ServerSettingsController {
     const router = useRouter();
     const auth = useAuth();
+    const relayDriftBanner = useRelayDriftBanner();
     const searchParams = useLocalSearchParams<SearchParams>();
 
     const [revision, setRevision] = React.useState(0);
@@ -139,10 +147,23 @@ export function useServerSettingsScreenController(): ServerSettingsController {
                 return false;
             }
 
-            const versionRes = await runtimeFetch(`${normalized}/v1/version`, {
-                method: 'GET',
-                headers: { 'Accept': 'application/json' },
-            });
+            const timeoutMs = readServerReachabilityProbeTimeoutMs();
+            const controller = typeof AbortController === 'function' ? new AbortController() : null;
+            const timeout = controller
+                ? setTimeout(() => {
+                    controller.abort();
+                }, Math.max(0, timeoutMs))
+                : null;
+            let versionRes: Response;
+            try {
+                versionRes = await runtimeFetch(`${normalized}/v1/version`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' },
+                    ...(controller ? { signal: controller.signal } : null),
+                });
+            } finally {
+                if (timeout) clearTimeout(timeout);
+            }
             if (!versionRes.ok) {
                 setError(t('server.serverReturnedError'));
                 return false;
@@ -217,6 +238,27 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     }, [activeServerIdValue, serverSelectionActiveTargetId, serverSelectionActiveTargetKind]);
 
     const authStatusByServerId = useServerAuthStatusByServerId(servers);
+    const activeServerUrl = React.useMemo(() => {
+        return servers.find((profile) => profile.id === activeServerIdValue)?.serverUrl ?? '';
+    }, [activeServerIdValue, servers]);
+    const activeServerSnapshot = React.useMemo(() => {
+        try {
+            return getActiveServerSnapshot();
+        } catch {
+            return {
+                serverId: activeServerIdValue,
+                serverUrl: activeServerUrl,
+                activeLocalRelayUrl: null,
+                generation: 0,
+            };
+        }
+    }, [activeServerIdValue, activeServerUrl]);
+    const activeLocalRelayUrl = React.useMemo(() => {
+        const value = typeof activeServerSnapshot.activeLocalRelayUrl === 'string'
+            ? activeServerSnapshot.activeLocalRelayUrl.trim()
+            : '';
+        return value.length > 0 ? value : null;
+    }, [activeServerSnapshot.activeLocalRelayUrl]);
 
     React.useEffect(() => {
         const normalizedStored = normalizeStoredServerSelectionGroups(serverSelectionGroups);
@@ -396,9 +438,12 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         servers,
         serverGroups: normalizedGroupProfiles,
         activeServerId: activeServerIdValue,
+        activeServerUrl,
+        activeLocalRelayUrl,
         deviceDefaultServerId,
         activeTargetKey,
         authStatusByServerId,
+        relayDriftBanner,
 
         autoMode,
         inputUrl,
@@ -430,7 +475,24 @@ export function useServerSettingsScreenController(): ServerSettingsController {
                 setServerSelectionActiveTargetId(activeServerIdValue || null);
                 return;
             }
-            const nextGroupId = activeMultiServerProfileId ?? normalizedGroupProfiles[0]?.id ?? null;
+            const nextGroupId = (() => {
+                if (activeMultiServerProfileId) return activeMultiServerProfileId;
+                if (activeServerIdValue) {
+                    const candidates = normalizedGroupProfiles.filter((profile) => profile.serverIds.includes(activeServerIdValue));
+                    if (candidates.length > 0) {
+                        const multiServerCandidates = candidates.filter((profile) => profile.serverIds.length > 1);
+                        const pool = multiServerCandidates.length > 0 ? multiServerCandidates : candidates;
+                        let best = pool[0]!;
+                        for (const candidate of pool.slice(1)) {
+                            if (candidate.serverIds.length > best.serverIds.length) {
+                                best = candidate;
+                            }
+                        }
+                        return best.id;
+                    }
+                }
+                return normalizedGroupProfiles[0]?.id ?? null;
+            })();
             if (!nextGroupId) return;
             setServerSelectionActiveTargetKind('group');
             setServerSelectionActiveTargetId(nextGroupId);

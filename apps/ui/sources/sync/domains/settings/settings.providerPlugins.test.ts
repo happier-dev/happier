@@ -9,9 +9,8 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteAgentSdkEnabled).toBe(true);
         expect((settings as any).claudeRemoteSettingSources).toBe('user_project');
         expect((settings as any).claudeRemoteSettingSourcesV2).toEqual(['user', 'project', 'local']);
-        expect((settings as any).claudeRemoteIncludePartialMessages).toBe(false);
         expect((settings as any).claudeLocalPermissionBridgeEnabled).toBe(true);
-        expect((settings as any).claudeLocalPermissionBridgeWaitIndefinitely).toBe(false);
+        expect((settings as any).claudeLocalPermissionBridgeWaitIndefinitely).toBe(true);
         expect((settings as any).claudeLocalPermissionBridgeTimeoutSeconds).toBe(600);
         expect((settings as any).claudeRemoteEnableFileCheckpointing).toBe(false);
         expect((settings as any).claudeRemoteMaxThinkingTokens).toBe(null);
@@ -19,9 +18,18 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteStrictMcpServerConfig).toBe(false);
         expect((settings as any).claudeRemoteAdvancedOptionsJson).toBe('');
         expect((settings as any).claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
+        expect((settings as any).codexBackendMode).toBe('appServer');
+        expect((settings as any).backendCliSourcePreferenceById).toEqual({});
+    });
+
+    it('preserves legacy Codex backend mode when migrating settings from schema v5', () => {
+        const settings = settingsParse({
+            schemaVersion: 5,
+            codexBackendMode: 'mcp',
+        } as any);
+
+        expect((settings as any).schemaVersion).toBe(6);
         expect((settings as any).codexBackendMode).toBe('mcp');
-        expect((settings as any).codexMcpResumeInstallSpec).toBe('');
-        expect((settings as any).codexAcpInstallSpec).toBe('');
     });
 
     it('respects persisted Claude provider settings (can disable Agent SDK)', () => {
@@ -38,5 +46,20 @@ describe('settingsParse provider plugin defaults', () => {
         } as any);
 
         expect((settings as any).claudeRemoteAdvancedOptionsJson).toBe('');
+    });
+
+    it('preserves valid backend CLI source preferences and drops invalid values', () => {
+        const settings = settingsParse({
+            backendCliSourcePreferenceById: {
+                codex: 'managed-first',
+                gemini: 'system-first',
+                invalid: 'nope',
+            },
+        } as any);
+
+        expect((settings as any).backendCliSourcePreferenceById).toEqual({
+            codex: 'managed-first',
+            gemini: 'system-first',
+        });
     });
 });

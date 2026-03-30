@@ -71,4 +71,3 @@ export function openBoxBundle(params: {
   const compatSecretKey = deriveBoxSecretKeyFromSeed(params.recipientSecretKeyOrSeed);
   return tryOpen(compatSecretKey);
 }
-

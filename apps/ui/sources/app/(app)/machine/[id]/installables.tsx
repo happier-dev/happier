@@ -6,6 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { DetectedClisList } from '@/components/machines/DetectedClisList';
 import { InstallableDepInstaller } from '@/components/machines/InstallableDepInstaller';
+import { ProviderSetupFlow } from '@/components/settings/providers/setup/ProviderSetupFlow';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -14,7 +15,7 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries, type InstallableAutoUpdateMode } from '@/capabilities/installablesRegistry';
-import { resolveInstallablePolicy, applyInstallablePolicyOverride } from '@/sync/domains/settings/installablesPolicy';
+import { resolveInstallablePolicy, applyInstallablePolicyOverride } from '@happier-dev/protocol/installablesPolicy';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 
@@ -78,8 +79,8 @@ export default function MachineInstallablesScreen() {
 
         const requests = installables
             .filter((d) => d.enabled)
-            .filter((d) => d.entry.shouldPrefetchRegistry({ requireExistingResult: true, result: d.detectResult, data: d.status }))
-            .flatMap((d) => d.entry.buildRegistryDetectRequest().requests ?? []);
+            .filter((d) => d.entry.shouldPrefetchLatestVersion({ requireExistingResult: true, result: d.detectResult, data: d.status }))
+            .flatMap((d) => d.entry.buildLatestVersionDetectRequest().requests ?? []);
 
         if (requests.length === 0) return;
 
@@ -116,6 +117,8 @@ export default function MachineInstallablesScreen() {
                 <ItemGroup title={t('machine.detectedClis')}>
                     <DetectedClisList state={detectedCapabilities} layout="stacked" />
                 </ItemGroup>
+
+                <ProviderSetupFlow machineId={machineId ?? null} serverId={serverId} />
 
                 {installables.map(({ entry, enabled, status, policy }) => {
                     if (!enabled) return null;
@@ -159,9 +162,6 @@ export default function MachineInstallablesScreen() {
                                     />
                                 </>
                             }
-                            installSpecSettingKey={entry.installSpecSettingKey}
-                            installSpecTitle={entry.installSpecTitle}
-                            installSpecDescription={entry.installSpecDescription}
                             installLabels={{
                                 install: t(entry.installLabels.installKey),
                                 update: t(entry.installLabels.updateKey),
@@ -174,7 +174,7 @@ export default function MachineInstallablesScreen() {
                                 description: t(entry.installModal.descriptionKey),
                             }}
                             refreshStatus={() => refreshDetectedCapabilities()}
-                            refreshRegistry={() => refreshDetectedCapabilities({ request: entry.buildRegistryDetectRequest(), timeoutMs: 12_000 })}
+                            refreshLatestVersion={() => refreshDetectedCapabilities({ request: entry.buildLatestVersionDetectRequest(), timeoutMs: 12_000 })}
                         />
                     );
                 })}

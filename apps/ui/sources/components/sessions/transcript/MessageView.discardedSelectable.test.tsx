@@ -1,52 +1,32 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  Text: 'Text',
-  ScrollView: 'ScrollView',
-  Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-  Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default },
-  Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
-  useWindowDimensions: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
-    theme: {
-      colors: {
-        success: '#0a0',
-        text: '#111',
-        textSecondary: '#555',
-        surfaceHighest: '#fff',
-        divider: '#ddd',
-        input: { background: '#f7f7f7' },
-        userMessageBackground: '#eef',
-        agentEventText: '#777',
-      },
+installMessageViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'ios' },
+        });
     },
-  }),
-  StyleSheet: {
-    create: (input: any) => {
-      const theme = {
-        colors: {
-          success: '#0a0',
-          text: '#111',
-          textSecondary: '#555',
-          surfaceHighest: '#fff',
-          divider: '#ddd',
-          input: { background: '#f7f7f7' },
-          userMessageBackground: '#eef',
-          agentEventText: '#777',
-        },
-      };
-      return typeof input === 'function' ? input(theme, {}) : input;
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
     },
-  },
-}));
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSetting: () => null,
+            useSession: () => null,
+        });
+    },
+});
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
   MarkdownView: (props: any) => React.createElement('MarkdownView', props),
@@ -61,8 +41,8 @@ vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
-  Text: (props: any) => React.createElement('Text', props, props.children),
-  TextInput: (props: any) => React.createElement('TextInput', props, props.children),
+    Text: (props: any) => React.createElement('Text', props, props.children),
+    TextInput: (props: any) => React.createElement('TextInput', props, props.children),
 }));
 
 vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({
@@ -75,18 +55,6 @@ vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
   isCommittedMessageDiscarded: () => true,
-}));
-
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: vi.fn() }),
-}));
-
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
-
-vi.mock('@/modal', () => ({
-  Modal: { alert: vi.fn() },
 }));
 
 vi.mock('expo-clipboard', () => ({
@@ -102,12 +70,11 @@ vi.mock('@/sync/sync', () => ({
   sync: { submitMessage: vi.fn(), sendMessage: vi.fn() },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSetting: () => null,
-  useSession: () => null,
-}));
-
 describe('MessageView (discarded label)', () => {
+  afterEach(() => {
+    standardCleanup();
+  });
+
   it('renders the discarded label as selectable', async () => {
     const { MessageView } = await import('./MessageView');
 
@@ -118,13 +85,10 @@ describe('MessageView (discarded label)', () => {
       text: 'hello',
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={{} as any} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={{} as any} sessionId="s1" />);
 
-    const discarded = tree.root.findAll(
-      (n: any) => n.type === 'Text' && n.props?.children === 'message.discarded'
+    const discarded = screen.findAll(
+      (n: any) => n.type === 'Text' && n.props?.children === 'message.discarded',
     )[0]!;
     expect(discarded.props.selectable).toBe(true);
   });

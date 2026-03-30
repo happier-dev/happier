@@ -43,6 +43,35 @@ describe('shouldEnableExecutionRunPolling', () => {
         expect(result).toBe(true);
     });
 
+    it('returns true when feature is disabled but transcript contains SubAgent transcript tool calls', () => {
+        const messages: Message[] = [
+            {
+                kind: 'tool-call',
+                id: 'm1',
+                localId: null,
+                createdAt: Date.now(),
+                tool: {
+                    name: 'SubAgent',
+                    state: 'error',
+                    input: { runId: 'run_1' },
+                    createdAt: Date.now(),
+                    startedAt: Date.now(),
+                    completedAt: Date.now(),
+                    description: null,
+                    result: { error: 'Request interrupted' },
+                },
+                children: [],
+            } as Message,
+        ];
+
+        const result = shouldEnableExecutionRunPolling({
+            executionRunsFeatureEnabled: false,
+            messages,
+        });
+
+        expect(result).toBe(true);
+    });
+
     it('returns false when feature is disabled and transcript has no execution-run signals', () => {
         const messages: Message[] = [
             {

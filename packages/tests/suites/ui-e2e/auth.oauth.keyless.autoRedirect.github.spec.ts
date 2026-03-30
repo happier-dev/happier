@@ -9,6 +9,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { reserveAvailablePort } from '../../src/testkit/network/reserveAvailablePort';
 import { startFakeGitHubOAuthServer, type StopFn } from '../../src/testkit/oauth/fakeGithubOAuthServer';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -109,9 +110,7 @@ test.describe('ui e2e: keyless OAuth auto-redirect (GitHub)', () => {
     );
 
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-
-    // Auto-redirect should run without the user tapping buttons.
-    await expect(page.getByTestId('welcome-create-account')).toHaveCount(0, { timeout: 120_000 });
+    await waitForInitialAppUi({ page, timeoutMs: 120_000 });
 
     await finalized;
     await expect

@@ -1,11 +1,11 @@
 import { redactBugReportSensitiveText, type MemoryWindowV1 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
 
-import type { RawSessionRecord } from '@/sessionControl/sessionsHttp';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
+import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { FetchEncryptedTranscriptRangeResult } from '@/api/session/fetchEncryptedTranscriptWindow';
 import { fetchEncryptedTranscriptRange } from '@/api/session/fetchEncryptedTranscriptWindow';
 import { configuration } from '@/configuration';

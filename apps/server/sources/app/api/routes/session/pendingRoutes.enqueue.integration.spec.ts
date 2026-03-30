@@ -1,36 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+
 const enqueuePendingMessage = vi.fn();
 
 vi.mock("@/app/session/pending/pendingMessageService", () => ({
     enqueuePendingMessage,
 }));
-
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get(path: string, _opts: any, handler: any) {
-        this.routes.set(`GET ${path}`, handler);
-    }
-    post(path: string, _opts: any, handler: any) {
-        this.routes.set(`POST ${path}`, handler);
-    }
-    put(path: string, _opts: any, handler: any) {
-        this.routes.set(`PUT ${path}`, handler);
-    }
-    patch(path: string, _opts: any, handler: any) {
-        this.routes.set(`PATCH ${path}`, handler);
-    }
-    delete(path: string, _opts: any, handler: any) {
-        this.routes.set(`DELETE ${path}`, handler);
-    }
-}
-
-function replyStub() {
-    const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-    return reply;
-}
 
 describe("sessionPendingRoutes (enqueue)", () => {
     beforeEach(() => {
@@ -60,18 +36,20 @@ describe("sessionPendingRoutes (enqueue)", () => {
         });
 
         const { sessionPendingRoutes } = await import("./pendingRoutes");
-        const app = new FakeApp();
-        sessionPendingRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/sessions/:sessionId/pending",
+            registerRoutes(app) {
+                sessionPendingRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("POST /v2/sessions/:sessionId/pending");
-        const reply = replyStub();
-        await handler(
+        const { reply } = await route.invoke(
             {
                 userId: "actor",
                 params: { sessionId: "s1" },
                 body: { localId: "l1", content: { t: "plain", v: { type: "user", text: "hi" } } },
             },
-            reply,
         );
 
         expect(enqueuePendingMessage).toHaveBeenCalledWith({
@@ -97,18 +75,20 @@ describe("sessionPendingRoutes (enqueue)", () => {
         });
 
         const { sessionPendingRoutes } = await import("./pendingRoutes");
-        const app = new FakeApp();
-        sessionPendingRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/sessions/:sessionId/pending",
+            registerRoutes(app) {
+                sessionPendingRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("POST /v2/sessions/:sessionId/pending");
-        const reply = replyStub();
-        await handler(
+        const { reply } = await route.invoke(
             {
                 userId: "actor",
                 params: { sessionId: "s1" },
                 body: { localId: "l1", ciphertext: "cipher" },
             },
-            reply,
         );
 
         expect(reply.code).toHaveBeenCalledWith(400);

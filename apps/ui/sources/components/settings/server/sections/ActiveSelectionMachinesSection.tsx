@@ -4,14 +4,13 @@ import { View } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Typography } from '@/constants/Typography';
+import { Text } from '@/components/ui/text/Text';
 import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { t } from '@/text';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
-import { Text as RNText } from '@/components/ui/text/Text';
 
 
 type ThemeColors = Readonly<{
@@ -39,23 +38,20 @@ function renderMachineSubtitle(params: Readonly<{
     return (
         <View style={{ gap: 2 }}>
             {subtitleTop ? (
-                <RNText style={[Typography.default(), { fontSize: 14, color: params.textSecondaryColor, lineHeight: 20 }]}>
+                <Text style={{ fontSize: 14, color: params.textSecondaryColor, lineHeight: 20 }}>
                     {subtitleTop}
-                </RNText>
+                </Text>
             ) : null}
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <RNText
-                    style={[
-                        Typography.default(),
-                        { fontSize: 14, color: params.textSecondaryColor, lineHeight: 20, flexShrink: 1 },
-                    ]}
+                <Text
+                    style={{ fontSize: 14, color: params.textSecondaryColor, lineHeight: 20, flexShrink: 1 }}
                     numberOfLines={1}
                 >
                     {statusLineText}
-                </RNText>
-                <RNText style={[Typography.default(), { fontSize: 14, color: params.textSecondaryColor, lineHeight: 20, opacity: 0.8 }]}>
+                </Text>
+                <Text style={{ fontSize: 14, color: params.textSecondaryColor, lineHeight: 20, opacity: 0.8 }}>
                     {' • '}
-                </RNText>
+                </Text>
                 <MachineCliGlyphs machineId={params.machine.id} serverId={params.serverId} isOnline={isOnline} />
             </View>
         </View>

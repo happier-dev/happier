@@ -1,11 +1,18 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import { installNewPickRouteCommonModuleMocks } from './newPickRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const navigationDispatchSpy = vi.hoisted(() => vi.fn());
 const routerBackSpy = vi.hoisted(() => vi.fn());
+const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const setActiveServerAndSwitchSpy = vi.hoisted(() => vi.fn(async (_params: any) => false));
 const refreshMachinesThrottledSpy = vi.hoisted(() => vi.fn(async () => {}));
 const prefetchMachineCapabilitiesSpy = vi.hoisted(() => vi.fn(async () => {}));
@@ -49,39 +56,100 @@ const scopedMachinesState = vi.hoisted(() => ({
     ] as any[],
 }));
 
-let capturedMachineSelectorProps: any = null;
-let capturedServerScopedMachineSelectorProps: any = null;
+let capturedMachineSelectionContentProps: any = null;
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                header: { tint: '#111' },
-                textSecondary: '#666',
-                groupped: { background: '#fff' },
+installNewPickRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'web' },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    header: { tint: '#111' },
+                    textSecondary: '#666',
+                    groupped: { background: '#fff' },
+                },
             },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const module = createExpoRouterMock({
+            navigation: {
+                getState: () => ({
+                    index: 1,
+                    routes: [
+                        {
+                            key: 'new-route',
+                            name: '(app)/new/index',
+                            path: '/new',
+                            params: {
+                                machineId: 'machine-1',
+                                spawnServerId: 'server-b',
+                            },
+                        },
+                        {
+                            key: 'current-route',
+                            name: '(app)/new/pick/machine',
+                            path: '/new/pick/machine',
+                        },
+                    ],
+                }),
+                dispatch: navigationDispatchSpy,
+            },
+            router: {
+                push: vi.fn(),
+                back: routerBackSpy,
+                replace: routerReplaceSpy,
+                setParams: vi.fn(),
+            },
+        }).module;
+
+        return {
+            ...module,
+            useLocalSearchParams: () => state.localSearchParams,
+        };
+    },
+    storage: async (importOriginal) => (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useAllMachines: () => ([
+                {
+                    id: 'machine-1',
+                    metadata: {
+                        host: 'host-1',
+                        displayName: 'Machine 1',
+                        homeDir: '/home/me',
+                        platform: 'darwin',
+                        happyCliVersion: '0.0.0-test',
+                        happyHomeDir: '/Users/tester/.happy-dev',
+                    },
+                    active: true,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    activeAt: Date.now(),
+                    seq: 1,
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                },
+            ]),
+            useSessions: () => [],
+            useSetting: (key: string) => {
+                if (key === 'useMachinePickerSearch') return false;
+                return (state.settings as any)[key];
+            },
+            useSettingMutable: (key: string) => (key === 'favoriteMachines' ? [[], vi.fn()] : [undefined, vi.fn()]),
         },
     }),
-    StyleSheet: { create: (styles: any) => styles },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+});
 
 vi.mock('@react-navigation/native', () => ({
     CommonActions: {
@@ -92,59 +160,9 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useAllMachines: () => ([
-        {
-            id: 'machine-1',
-            metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
-            active: true,
-            createdAt: 1,
-            updatedAt: 1,
-            activeAt: Date.now(),
-            seq: 1,
-            metadataVersion: 1,
-            daemonState: null,
-            daemonStateVersion: 0,
-        },
-    ]),
-    useSessions: () => [],
-    useSetting: (key: string) => {
-        if (key === 'useMachinePickerSearch') return false;
-        return (state.settings as any)[key];
-    },
-    useSettingMutable: (key: string) => (key === 'favoriteMachines' ? [[], vi.fn()] : [undefined, vi.fn()]),
-}));
-
-vi.mock('expo-router', () => ({
-    Stack: Object.assign(
-        ({ children }: any) => React.createElement(React.Fragment, null, children),
-        { Screen: ({ children }: any) => React.createElement(React.Fragment, null, children) },
-    ),
-    useRouter: () => ({ back: routerBackSpy }),
-    useNavigation: () => ({
-        getState: () => ({
-            index: 1,
-            routes: [{ key: 'prev-route' }, { key: 'current-route' }],
-        }),
-        dispatch: navigationDispatchSpy,
-    }),
-    useLocalSearchParams: () => state.localSearchParams,
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
-    MachineSelector: (props: any) => {
-        capturedMachineSelectorProps = props;
-        return null;
-    },
-}));
-
-vi.mock('@/components/sessions/new/components/ServerScopedMachineSelector', () => ({
-    ServerScopedMachineSelector: (props: any) => {
-        capturedServerScopedMachineSelectorProps = props;
+vi.mock('@/components/sessions/new/components/NewSessionMachineSelectionContent', () => ({
+    NewSessionMachineSelectionContent: (props: any) => {
+        capturedMachineSelectionContentProps = props;
         return null;
     },
 }));
@@ -193,6 +211,10 @@ vi.mock('@/components/sessions/new/hooks/machines/useServerScopedMachineOptions'
 }));
 
 describe('machine picker server scope', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
         activeServerId = 'server-a';
         state.localSearchParams = {
@@ -235,23 +257,19 @@ describe('machine picker server scope', () => {
         routerBackSpy.mockReset();
         refreshMachinesThrottledSpy.mockReset();
         prefetchMachineCapabilitiesSpy.mockReset();
-        capturedMachineSelectorProps = null;
-        capturedServerScopedMachineSelectorProps = null;
+        capturedMachineSelectionContentProps = null;
 
         const Screen = (await import('@/app/(app)/new/pick/machine')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
 
         expect(setActiveServerAndSwitchSpy).not.toHaveBeenCalled();
 
         await act(async () => {
-            capturedMachineSelectorProps.onSelect({
+            capturedMachineSelectionContentProps.onSelectMachine({
                 id: 'machine-1',
                 metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
             });
-            await Promise.resolve();
+            await flushHookEffects();
         });
 
         expect(navigationDispatchSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -272,21 +290,18 @@ describe('machine picker server scope', () => {
         routerBackSpy.mockReset();
         refreshMachinesThrottledSpy.mockReset();
         prefetchMachineCapabilitiesSpy.mockReset();
-        capturedMachineSelectorProps = null;
+        capturedMachineSelectionContentProps = null;
 
         const Screen = (await import('@/app/(app)/new/pick/machine')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
 
         await act(async () => {
-            capturedMachineSelectorProps.onSelect({
+            capturedMachineSelectionContentProps.onSelectMachine({
                 id: 'machine-1',
                 serverId: 'server-c',
                 metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
             } as any);
-            await Promise.resolve();
+            await flushHookEffects();
         });
 
         expect(setActiveServerAndSwitchSpy).not.toHaveBeenCalled();
@@ -307,7 +322,7 @@ describe('machine picker server scope', () => {
         routerBackSpy.mockReset();
         refreshMachinesThrottledSpy.mockReset();
         prefetchMachineCapabilitiesSpy.mockReset();
-        capturedMachineSelectorProps = null;
+        capturedMachineSelectionContentProps = null;
 
         state.localSearchParams = {
             selectedId: '',
@@ -315,11 +330,8 @@ describe('machine picker server scope', () => {
         };
 
         const Screen = (await import('@/app/(app)/new/pick/machine')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
+        await flushHookEffects();
 
         expect(navigationDispatchSpy).toHaveBeenCalledWith(expect.objectContaining({
             type: 'SET_PARAMS',
@@ -339,7 +351,7 @@ describe('machine picker server scope', () => {
         routerBackSpy.mockReset();
         refreshMachinesThrottledSpy.mockReset();
         prefetchMachineCapabilitiesSpy.mockReset();
-        capturedMachineSelectorProps = null;
+        capturedMachineSelectionContentProps = null;
 
         state.localSearchParams = {
             selectedId: '',
@@ -371,21 +383,31 @@ describe('machine picker server scope', () => {
         ] as any;
 
         const Screen = (await import('@/app/(app)/new/pick/machine')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
+        await flushHookEffects();
 
         expect(navigationDispatchSpy).not.toHaveBeenCalled();
         expect(routerBackSpy).not.toHaveBeenCalled();
+    });
+
+    it('refreshes machines on mount so newly registered daemons appear in the fallback picker route', async () => {
+        refreshMachinesThrottledSpy.mockReset();
+
+        const Screen = (await import('@/app/(app)/new/pick/machine')).default;
+        await renderScreen(React.createElement(Screen));
+        await flushHookEffects();
+
+        expect(refreshMachinesThrottledSpy).toHaveBeenCalledWith({
+            staleMs: 0,
+            force: true,
+        });
     });
 
     it('normalizes invalid requested serverId to the allowed active target server', async () => {
         setActiveServerAndSwitchSpy.mockReset();
         navigationDispatchSpy.mockReset();
         routerBackSpy.mockReset();
-        capturedMachineSelectorProps = null;
+        capturedMachineSelectionContentProps = null;
 
         state.localSearchParams = {
             selectedId: 'machine-1',
@@ -418,20 +440,17 @@ describe('machine picker server scope', () => {
         ] as any;
 
         const Screen = (await import('@/app/(app)/new/pick/machine')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
 
-        expect(capturedMachineSelectorProps).toBeTruthy();
-        expect(capturedMachineSelectorProps.serverId).toBe('server-b');
+        expect(capturedMachineSelectionContentProps).toBeTruthy();
+        expect(capturedMachineSelectionContentProps.serverId).toBe('server-b');
 
         await act(async () => {
-            capturedMachineSelectorProps.onSelect({
+            capturedMachineSelectionContentProps.onSelectMachine({
                 id: 'machine-1',
                 metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
             } as any);
-            await Promise.resolve();
+            await flushHookEffects();
         });
 
         expect(navigationDispatchSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -446,8 +465,7 @@ describe('machine picker server scope', () => {
     });
 
     it('renders grouped selector when target is a group with multiple servers', async () => {
-        capturedMachineSelectorProps = null;
-        capturedServerScopedMachineSelectorProps = null;
+        capturedMachineSelectionContentProps = null;
         state.settings.serverSelectionGroups = [
             {
                 id: 'grp-dev',
@@ -490,12 +508,10 @@ describe('machine picker server scope', () => {
         ] as any;
 
         const Screen = (await import('@/app/(app)/new/pick/machine')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
 
-        expect(capturedServerScopedMachineSelectorProps).toBeTruthy();
-        expect(capturedMachineSelectorProps).toBeNull();
+        expect(capturedMachineSelectionContentProps).toBeTruthy();
+        expect(capturedMachineSelectionContentProps.groups).toHaveLength(2);
+        expect(capturedMachineSelectionContentProps.onSelectScopedMachine).toEqual(expect.any(Function));
     });
 });

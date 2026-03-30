@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installSystemUtilityCommonModuleMocks } from './systemUtilityTestHelpers';
 
 const storeReview = vi.hoisted(() => ({
     isAvailableAsync: vi.fn(async () => true),
@@ -28,15 +29,6 @@ vi.mock('react-native-mmkv', () => {
 });
 
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: modalConfirmSpy,
-    },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
 
 vi.mock('@/track', () => ({
     trackReviewPromptShown: vi.fn(),
@@ -52,16 +44,29 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
-            settings: {
-                reviewPromptAnswered: false,
-                reviewPromptLikedApp: null,
+installSystemUtilityCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: modalConfirmSpy,
             },
-        }),
+        }).module;
     },
-}));
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => ({
+                    settings: {
+                        reviewPromptAnswered: false,
+                        reviewPromptLikedApp: null,
+                    },
+                }),
+            },
+        });
+    },
+});
 
 async function flushMicrotasks(iterations: number = 5): Promise<void> {
     for (let i = 0; i < iterations; i += 1) {
@@ -71,12 +76,15 @@ async function flushMicrotasks(iterations: number = 5): Promise<void> {
 
 async function loadRequestReview(params: { platformOs: string }) {
     vi.doMock('react-native', async () => {
-        const actual = await vi.importActual<any>('react-native');
-        return {
-            ...actual,
-            Platform: { ...(actual?.Platform ?? {}), OS: params.platformOs },
-        };
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: params.platformOs,
+            },
+        }
+    );
+});
 
     return await import('./requestReview');
 }

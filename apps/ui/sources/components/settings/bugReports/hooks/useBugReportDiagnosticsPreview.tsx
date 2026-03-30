@@ -43,13 +43,19 @@ export function useBugReportDiagnosticsPreview(input: {
         content: String(artifact.content ?? ''),
       }));
 
-      const Wrapper = ({ onClose }: { onClose: () => void }) => (
-        <BugReportDiagnosticsPreviewModal artifacts={artifacts} onClose={onClose} />
-      );
-
       Modal.show({
-        component: Wrapper,
-        props: {},
+        component: BugReportDiagnosticsPreviewModal,
+        props: {
+          artifacts,
+        },
+        chrome: {
+          kind: 'card',
+          title: t('bugReports.composer.diagnostics.preview.title'),
+          testID: 'bug-report-diagnostics-preview-modal',
+          layout: 'fill',
+          dimensions: { size: 'md', width: 560, maxHeightRatio: 0.92 },
+        },
+        closeOnBackdrop: true,
       });
     } catch (error) {
       await Modal.alert(

@@ -17,7 +17,7 @@ export async function runMemoryHintsExecutionRun(params: Readonly<{
     cwd: params.cwd,
     sessionId: params.sessionId,
     runner: {
-      backendId: params.backendId,
+      backendTarget: { kind: 'builtInAgent', agentId: params.backendId },
       modelId: params.modelId,
       permissionMode: params.permissionMode,
     },

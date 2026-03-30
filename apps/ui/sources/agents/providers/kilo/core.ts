@@ -1,4 +1,8 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
+import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
+import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const KILO_CORE: AgentCoreConfig = {
@@ -13,15 +17,7 @@ export const KILO_CORE: AgentCoreConfig = {
         connectRoute: null,
     },
     flavorAliases: ['kilo', 'kilocode'],
-    cli: {
-        detectKey: 'kilo',
-        machineLoginKey: 'kilo',
-        installBanner: {
-            installKind: 'command',
-            installCommand: 'npm install -g @kilocode/cli@latest',
-        },
-        spawnAgent: 'kilo',
-    },
+    cli: buildCatalogProviderCliUiConfig('kilo'),
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
@@ -30,17 +26,16 @@ export const KILO_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('kilo'),
     },
     model: getAgentModelConfig('kilo'),
-    resume: {
-        vendorResumeIdField: 'kiloSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'kilo',
         uiVendorResumeIdLabelKey: 'sessionInfo.kiloSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.kiloSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },
+    tools: buildAgentToolsUiConfig({ agentId: 'kilo' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'kilo' }),
     ui: {
         agentPickerIconName: 'code-slash-outline',
         cliGlyphScale: 1.0,

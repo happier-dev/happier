@@ -1,6 +1,5 @@
+import type { PermissionMode } from '@/api/types';
 import { SDKToLogConverter } from './sdkToLogConverter';
-
-type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
 
 export const conversionContext = {
   sessionId: 'test-session-123',

@@ -3,35 +3,73 @@
  *
  * Resume behavior is agent-specific and may be:
  * - always available (vendor-native),
- * - runtime-gated per machine (capability probing), or
  * - experimental (requires explicit opt-in).
  */
 
-import type { AgentId } from '@/agents/catalog/catalog';
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { AGENTS_CORE, evaluateVendorResumeEligibility, resolveAgentIdFromFlavor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import type { Settings } from '@/sync/domains/settings/settings';
+
+import { deriveAcpBackendIdFromFlavor, isAcpFlavorPrefix } from './acpFlavor';
 
 export type ResumeCapabilityOptions = {
-    /**
-     * Experimental: enable vendor-resume for agents that require explicit opt-in.
-     */
-    allowExperimentalResumeByAgentId?: Partial<Record<AgentId, boolean>>;
-    /**
-     * Runtime: enable vendor resume for agents that can be detected dynamically per machine.
-     * (Example: Gemini ACP loadSession support.)
-     */
-    allowRuntimeResumeByAgentId?: Partial<Record<AgentId, boolean>>;
+    accountSettings?: Partial<Settings> | null;
 };
+
+function isConfiguredAcpBackendEnabled(backendId: string, options?: ResumeCapabilityOptions): boolean {
+    const backendEnabledByTargetKey = options?.accountSettings?.backendEnabledByTargetKey;
+    if (!backendEnabledByTargetKey || typeof backendEnabledByTargetKey !== 'object') {
+        return true;
+    }
+
+    const targetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId });
+    return (backendEnabledByTargetKey as Record<string, unknown>)[targetKey] !== false;
+}
+
+function getConfiguredAcpBackendId(
+    flavor: string | null | undefined,
+    metadata?: SessionMetadata | null,
+): string | null {
+    const backendIdFromFlavor = deriveAcpBackendIdFromFlavor(flavor);
+    if (backendIdFromFlavor === null) {
+        return null;
+    }
+
+    const backendIdFromMetadata =
+        typeof metadata?.acpConfiguredBackendV1 === 'object'
+            && metadata.acpConfiguredBackendV1 !== null
+            && 'backendId' in metadata.acpConfiguredBackendV1
+            && typeof metadata.acpConfiguredBackendV1.backendId === 'string'
+            ? metadata.acpConfiguredBackendV1.backendId.trim()
+            : '';
+
+    return backendIdFromMetadata.length > 0 ? backendIdFromMetadata : backendIdFromFlavor;
+}
 
 export function canAgentResume(agent: string | null | undefined, options?: ResumeCapabilityOptions): boolean {
     if (typeof agent !== 'string') return false;
+
+    if (isAcpFlavorPrefix(agent)) {
+        const backendId = getConfiguredAcpBackendId(agent);
+        return backendId !== null && isConfiguredAcpBackendEnabled(backendId, options);
+    }
+
     const agentId = resolveAgentIdFromFlavor(agent);
     if (!agentId) return false;
-    const core = getAgentCore(agentId);
-    if (core.resume.supportsVendorResume !== true) {
-        return options?.allowRuntimeResumeByAgentId?.[agentId] === true;
-    }
-    if (core.resume.experimental !== true) return true;
-    return options?.allowExperimentalResumeByAgentId?.[agentId] === true;
+
+    const resume = AGENTS_CORE[agentId]?.resume;
+    const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField : null;
+    if (!field) return false;
+
+    // Use a synthetic metadata payload to evaluate enablement without requiring
+    // a specific session's persisted vendor resume id.
+    return (
+        evaluateVendorResumeEligibility({
+            agentId,
+            metadata: { [field]: '__happier__' },
+            accountSettings: options?.accountSettings ?? null,
+        }).eligible === true
+    );
 }
 
 /**
@@ -45,41 +83,35 @@ export interface SessionMetadata {
     [key: string]: unknown;
 }
 
-export function getAgentSessionIdField(agent: string | null | undefined): string | null {
-    const agentId = resolveAgentIdFromFlavor(agent);
-    if (!agentId) return null;
-    return getAgentCore(agentId).resume.vendorResumeIdField;
-}
-
 export function canResumeSession(metadata: SessionMetadata | null | undefined): boolean {
     if (!metadata) return false;
-
-    const agent = metadata.flavor;
-    if (!canAgentResume(agent)) return false;
-
-    const field = getAgentSessionIdField(agent);
-    if (!field) return false;
-
-    const agentSessionId = metadata[field];
-    return typeof agentSessionId === 'string' && agentSessionId.length > 0;
+    return canResumeSessionWithOptions(metadata, undefined);
 }
 
 export function canResumeSessionWithOptions(metadata: SessionMetadata | null | undefined, options?: ResumeCapabilityOptions): boolean {
     if (!metadata) return false;
-    const agent = metadata.flavor;
-    if (!canAgentResume(agent, options)) return false;
-    const field = getAgentSessionIdField(agent);
-    if (!field) return false;
-    const agentSessionId = metadata[field];
-    return typeof agentSessionId === 'string' && agentSessionId.length > 0;
+    const flavor = metadata.flavor;
+
+    if (isAcpFlavorPrefix(flavor)) {
+        const backendId = getConfiguredAcpBackendId(flavor, metadata);
+        return backendId !== null && isConfiguredAcpBackendEnabled(backendId, options);
+    }
+
+    const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? resolveAgentIdFromFlavor(flavor);
+    if (!agentId) return false;
+
+    return (
+        evaluateVendorResumeEligibility({
+            agentId,
+            metadata,
+            accountSettings: options?.accountSettings ?? null,
+        }).eligible === true
+    );
 }
 
 export function getAgentSessionId(metadata: SessionMetadata | null | undefined): string | null {
     if (!metadata) return null;
-    const field = getAgentSessionIdField(metadata.flavor);
-    if (!field) return null;
-    const agentSessionId = metadata[field];
-    return typeof agentSessionId === 'string' && agentSessionId.length > 0 ? agentSessionId : null;
+    return getAgentVendorResumeId(metadata, metadata.flavor, undefined);
 }
 
 export function getAgentVendorResumeId(
@@ -88,9 +120,18 @@ export function getAgentVendorResumeId(
     options?: ResumeCapabilityOptions,
 ): string | null {
     if (!metadata) return null;
-    if (!canAgentResume(agent, options)) return null;
-    const field = getAgentSessionIdField(agent);
-    if (!field) return null;
-    const agentSessionId = metadata[field];
-    return typeof agentSessionId === 'string' && agentSessionId.length > 0 ? agentSessionId : null;
+
+    if (isAcpFlavorPrefix(metadata.flavor) || isAcpFlavorPrefix(agent)) {
+        return null;
+    }
+
+    const agentId = resolveAgentIdFromFlavor(agent) ?? resolveAgentIdFromSessionMetadata(metadata);
+    if (!agentId) return null;
+
+    const eligibility = evaluateVendorResumeEligibility({
+        agentId,
+        metadata,
+        accountSettings: options?.accountSettings ?? null,
+    });
+    return eligibility.eligible === true ? eligibility.vendorResumeId : null;
 }

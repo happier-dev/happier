@@ -21,15 +21,15 @@ const sessionListByIdFixture = {
   dataEncryptionKey: 'k1',
 } as const;
 
-const ioSpy = vi.hoisted(() => vi.fn());
 const sessionRpcSpy = vi.hoisted(() => vi.fn());
+const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
 const getCredentialsSpy = vi.hoisted(() => vi.fn());
 const createEncryptionSpy = vi.hoisted(() => vi.fn());
 const listServerProfilesSpy = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('socket.io-client', () => ({
-  io: (...args: unknown[]) => ioSpy(...args),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', () => ({
+  createEphemeralServerSocketClient: (...args: unknown[]) => createEphemeralSocketSpy(...args),
 }));
 
 vi.mock('@/sync/api/session/apiSocket', () => ({
@@ -58,8 +58,8 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 describe('sessionRpcWithServerScope', () => {
   afterEach(() => {
-    ioSpy.mockReset();
     sessionRpcSpy.mockReset();
+    createEphemeralSocketSpy.mockReset();
     getCredentialsSpy.mockReset();
     createEncryptionSpy.mockReset();
     listServerProfilesSpy.mockReset();
@@ -82,11 +82,144 @@ describe('sessionRpcWithServerScope', () => {
       sessionId: 'session-1',
       method: 'method-test',
       payload: { value: 1 },
+      timeoutMs: 5000,
     });
 
     expect(result).toEqual({ ok: true });
-    expect(sessionRpcSpy).toHaveBeenCalledWith('session-1', 'method-test', { value: 1 });
-    expect(ioSpy).not.toHaveBeenCalled();
+    expect(sessionRpcSpy).toHaveBeenCalledWith('session-1', 'method-test', { value: 1 }, { timeoutMs: 5000 });
+    expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a scoped plaintext RPC when active session RPC lacks local encryption context', async () => {
+    getActiveServerSnapshotSpy.mockReturnValue({
+      serverId: 'server-a',
+      serverUrl: 'https://server-a.example.test',
+      kind: 'custom',
+      generation: 1,
+    });
+    sessionRpcSpy.mockRejectedValueOnce(new Error('Session encryption not found for session-1'));
+    getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+
+    const initializeSessions = vi.fn(async () => {});
+    const getSessionEncryption = vi.fn(() => null);
+    createEncryptionSpy.mockResolvedValue({
+      decryptEncryptionKey: vi.fn(async () => null),
+      initializeSessions,
+      getSessionEncryption,
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          session: {
+            ...sessionListByIdFixture,
+            encryptionMode: 'plain',
+            dataEncryptionKey: null,
+          },
+        }),
+      })),
+    );
+
+    const emitWithAck = vi.fn(async () => ({ ok: true, result: { decodedPlain: true } }));
+    const fakeSocket = {
+      timeout: vi.fn(() => ({ emitWithAck })),
+      emit: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
+
+    const { sessionRpcWithServerScope } = await import('./serverScopedSessionRpc');
+    const result = await sessionRpcWithServerScope({
+      sessionId: 'session-1',
+      method: 'method-test',
+      payload: { value: 4 },
+      timeoutMs: 5000,
+    });
+
+    expect(result).toEqual({ decodedPlain: true });
+    expect(sessionRpcSpy).toHaveBeenCalledWith('session-1', 'method-test', { value: 4 }, { timeoutMs: 5000 });
+    expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+      serverUrl: 'https://server-a.example.test',
+      token: 'token-a',
+      timeoutMs: 5000,
+    }));
+    expect(initializeSessions).not.toHaveBeenCalled();
+    expect(getSessionEncryption).not.toHaveBeenCalled();
+    expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
+      method: 'session-1:method-test',
+      params: { value: 4 },
+      timeoutMs: 5000,
+    });
+    expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to a scoped plaintext RPC when active session RPC reports method not available', async () => {
+    getActiveServerSnapshotSpy.mockReturnValue({
+      serverId: 'server-a',
+      serverUrl: 'https://server-a.example.test',
+      kind: 'custom',
+      generation: 1,
+    });
+    const methodUnavailableError = new Error('RPC method not available');
+    Object.assign(methodUnavailableError, { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' });
+    sessionRpcSpy.mockRejectedValueOnce(methodUnavailableError);
+    getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+
+    const initializeSessions = vi.fn(async () => {});
+    const getSessionEncryption = vi.fn(() => null);
+    createEncryptionSpy.mockResolvedValue({
+      decryptEncryptionKey: vi.fn(async () => null),
+      initializeSessions,
+      getSessionEncryption,
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          session: {
+            ...sessionListByIdFixture,
+            encryptionMode: 'plain',
+            dataEncryptionKey: null,
+          },
+        }),
+      })),
+    );
+
+    const emitWithAck = vi.fn(async () => ({ ok: true, result: { decodedPlain: true } }));
+    const fakeSocket = {
+      timeout: vi.fn(() => ({ emitWithAck })),
+      emit: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
+
+    const { sessionRpcWithServerScope } = await import('./serverScopedSessionRpc');
+    const result = await sessionRpcWithServerScope({
+      sessionId: 'session-1',
+      method: 'method-test',
+      payload: { value: 5 },
+      timeoutMs: 5000,
+    });
+
+    expect(result).toEqual({ decodedPlain: true });
+    expect(sessionRpcSpy).toHaveBeenCalledWith('session-1', 'method-test', { value: 5 }, { timeoutMs: 5000 });
+    expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+      serverUrl: 'https://server-a.example.test',
+      token: 'token-a',
+      timeoutMs: 5000,
+    }));
+    expect(initializeSessions).not.toHaveBeenCalled();
+    expect(getSessionEncryption).not.toHaveBeenCalled();
+    expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
+      method: 'session-1:method-test',
+      params: { value: 5 },
+      timeoutMs: 5000,
+    });
+    expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
   });
 
   it('routes RPC through a scoped socket when target server differs from active server', async () => {
@@ -118,17 +251,13 @@ describe('sessionRpcWithServerScope', () => {
       })),
     );
 
+    const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
     const fakeSocket = {
-      on: vi.fn((event: string, cb: () => void) => {
-        if (event === 'connect') cb();
-      }),
-      off: vi.fn(),
-      timeout: vi.fn(() => ({
-        emitWithAck: vi.fn(async () => ({ ok: true, result: 'encrypted-result' })),
-      })),
+      timeout: vi.fn(() => ({ emitWithAck })),
+      emit: vi.fn(),
       disconnect: vi.fn(),
     };
-    ioSpy.mockReturnValue(fakeSocket);
+    createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
 
     const { sessionRpcWithServerScope } = await import('./serverScopedSessionRpc');
     const result = await sessionRpcWithServerScope({
@@ -141,26 +270,80 @@ describe('sessionRpcWithServerScope', () => {
 
     expect(result).toEqual({ decoded: true });
     expect(sessionRpcSpy).not.toHaveBeenCalled();
-    expect(ioSpy).toHaveBeenCalledWith(
-      'https://server-b.example.test',
-      expect.objectContaining({
-        path: '/v1/updates',
-        auth: expect.objectContaining({
-          token: 'token-b',
-          clientType: 'user-scoped',
-        }),
-      }),
-    );
-    const opts = ioSpy.mock.calls[0]?.[1] as any;
-    expect(opts).not.toHaveProperty('transports');
+    expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+      serverUrl: 'https://server-b.example.test',
+      token: 'token-b',
+      timeoutMs: 5000,
+    }));
     expect(initializeSessions).toHaveBeenCalledWith(new Map([['session-1', expect.any(Uint8Array)]]));
     expect(sessionEncryption.encryptRaw).toHaveBeenCalledWith({ value: 2 });
     expect(fakeSocket.timeout).toHaveBeenCalledWith(5000);
-    expect((fakeSocket.timeout as any).mock.results[0].value.emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
+    expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
       method: 'session-1:method-test',
       params: 'encrypted-payload',
+      timeoutMs: 5000,
     });
     expect(sessionEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
+    expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses an exact same-URL alternate profile context instead of the active socket', async () => {
+    getActiveServerSnapshotSpy.mockReturnValue({
+      serverId: 'server-a',
+      serverUrl: 'https://server-a.example.test/',
+      kind: 'custom',
+      generation: 1,
+    });
+    listServerProfilesSpy.mockReturnValue([
+      { id: 'server-b', serverUrl: 'https://server-a.example.test', name: 'Server A (alt id)' },
+    ]);
+    getCredentialsSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+
+    const initializeSessions = vi.fn(async () => {});
+    const sessionEncryption = {
+      encryptRaw: vi.fn(async () => 'encrypted-payload-alt'),
+      decryptRaw: vi.fn(async () => ({ ok: true, source: 'alternate-profile' })),
+    };
+    createEncryptionSpy.mockResolvedValue({
+      decryptEncryptionKey: vi.fn(async () => new Uint8Array([1])),
+      initializeSessions,
+      getSessionEncryption: vi.fn(() => sessionEncryption),
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ session: sessionListByIdFixture }),
+      })),
+    );
+
+    const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result-alt' }));
+    const fakeSocket = {
+      timeout: vi.fn(() => ({ emitWithAck })),
+      emit: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
+
+    const { sessionRpcWithServerScope } = await import('./serverScopedSessionRpc');
+    await expect(
+      sessionRpcWithServerScope({
+        sessionId: 'session-1',
+        method: 'method-test',
+        payload: { value: 6 },
+        serverId: 'server-b',
+        timeoutMs: 5000,
+      }),
+    ).resolves.toEqual({ ok: true, source: 'alternate-profile' });
+
+    expect(sessionRpcSpy).not.toHaveBeenCalled();
+    expect(getCredentialsSpy).toHaveBeenCalledWith('https://server-a.example.test', { serverId: 'server-b' });
+    expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+      serverUrl: 'https://server-a.example.test',
+      token: 'token-b',
+      timeoutMs: 5000,
+    }));
     expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
   });
 
@@ -198,14 +381,11 @@ describe('sessionRpcWithServerScope', () => {
 
     const emitWithAck = vi.fn(async () => ({ ok: true, result: { decodedPlain: true } }));
     const fakeSocket = {
-      on: vi.fn((event: string, cb: () => void) => {
-        if (event === 'connect') cb();
-      }),
-      off: vi.fn(),
       timeout: vi.fn(() => ({ emitWithAck })),
+      emit: vi.fn(),
       disconnect: vi.fn(),
     };
-    ioSpy.mockReturnValue(fakeSocket);
+    createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
 
     const { sessionRpcWithServerScope } = await import('./serverScopedSessionRpc');
     const result = await sessionRpcWithServerScope({
@@ -218,12 +398,18 @@ describe('sessionRpcWithServerScope', () => {
 
     expect(result).toEqual({ decodedPlain: true });
     expect(sessionRpcSpy).not.toHaveBeenCalled();
+    expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+      serverUrl: 'https://server-b.example.test',
+      token: 'token-b',
+      timeoutMs: 5000,
+    }));
     expect(initializeSessions).not.toHaveBeenCalled();
     expect(getSessionEncryption).not.toHaveBeenCalled();
     expect(fakeSocket.timeout).toHaveBeenCalledWith(5000);
     expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
       method: 'session-1:method-test',
       params: { value: 3 },
+      timeoutMs: 5000,
     });
     expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
   });

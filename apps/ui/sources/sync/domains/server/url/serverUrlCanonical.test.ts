@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createServerUrlComparableKey as createProtocolServerUrlComparableKey } from '@happier-dev/protocol';
 
 import {
     canonicalizeServerUrl,
@@ -27,6 +28,12 @@ describe('serverUrlCanonical', () => {
         const a = createServerUrlComparableKey('http://127.0.0.1:3012/path');
         const b = createServerUrlComparableKey('http://localhost:3012/path/');
         expect(a).toBe(b);
+
+        const c = createServerUrlComparableKey('http://qa-stack.localhost:3012/path');
+        expect(c).toBe(b);
+
+        const d = createServerUrlComparableKey('http://qa-stack.localhost.:3012/path');
+        expect(d).toBe(b);
     });
 
     it('normalizes explicit default ports for comparable identity keys', () => {
@@ -37,6 +44,13 @@ describe('serverUrlCanonical', () => {
         const httpA = createServerUrlComparableKey('http://example.com/path');
         const httpB = createServerUrlComparableKey('http://example.com:80/path/');
         expect(httpA).toBe(httpB);
+    });
+
+    it('strips path/query/hash from comparable identity keys to match the shared protocol helper', () => {
+        const rawUrl = 'https://Example.com:443/relay/path?x=1#fragment';
+
+        expect(createServerUrlComparableKey(rawUrl)).toBe('https://example.com');
+        expect(createServerUrlComparableKey(rawUrl)).toBe(createProtocolServerUrlComparableKey(rawUrl));
     });
 });
 

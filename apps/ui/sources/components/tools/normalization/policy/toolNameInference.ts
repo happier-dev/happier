@@ -40,11 +40,23 @@ export function inferToolNameForRendering(params: {
 }): InferToolNameResult {
     const legacyNormalized = normalizeToolNameForView(params.toolName);
     const normalizedOriginal = normalizeByKnownKeys(legacyNormalized, params.knownToolKeys);
+    const input = asRecord(params.toolInput);
+    const acpTitle = firstNonEmptyString(asRecord(input?._acp)?.title) ?? firstNonEmptyString(input?.title);
+    if (acpTitle && !acpTitle.includes(' ')) {
+        const normalizedAcpTitle = normalizeByKnownKeys(acpTitle, params.knownToolKeys);
+        const originalLower = normalizedOriginal.toLowerCase();
+        const prefersSpecificAcpTitle =
+            (originalLower === 'read' || originalLower === 'search' || originalLower === 'codesearch')
+            && normalizedAcpTitle.toLowerCase() !== originalLower
+            && params.knownToolKeys.includes(normalizedAcpTitle);
+        if (prefersSpecificAcpTitle) {
+            return { normalizedToolName: normalizedAcpTitle, source: 'acpTitle' };
+        }
+    }
+
     if (normalizedOriginal !== params.toolName || params.knownToolKeys.includes(params.toolName)) {
         return { normalizedToolName: normalizedOriginal, source: 'original' };
     }
-
-    const input = asRecord(params.toolInput);
 
     const acpKind = firstNonEmptyString(asRecord(input?._acp)?.kind);
     if (acpKind && acpKind.toLowerCase() !== 'unknown') {
@@ -70,7 +82,6 @@ export function inferToolNameForRendering(params: {
         }
     }
 
-    const acpTitle = firstNonEmptyString(asRecord(input?._acp)?.title);
     if (acpTitle && !acpTitle.includes(' ')) {
         const normalized = normalizeByKnownKeys(acpTitle, params.knownToolKeys);
         if (normalized !== acpTitle || params.knownToolKeys.includes(acpTitle)) {

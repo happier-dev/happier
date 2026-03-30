@@ -1,36 +1,47 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
+import type { ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { installCodeBlockCommonModuleMocks } from './codeBlockTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
-    Platform: {
-        OS: 'web',
-        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+installCodeBlockCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+            Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
+            Platform: {
+                OS: 'web',
+                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
     },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: { dark: false, colors: { text: '#111', divider: '#ddd', surfaceHigh: '#fff', textSecondary: '#666' } },
+        });
+    },
+});
 
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { dark: false, colors: { text: '#111', divider: '#ddd', surfaceHigh: '#fff', textSecondary: '#666' } } }),
-    StyleSheet: { create: (v: any) => (typeof v === 'function' ? v() : v) },
 }));
 
 const featureSpy = vi.fn((id: string) => (id === 'files.diffSyntaxHighlighting' || id === 'files.syntaxHighlighting.advanced'));
@@ -45,9 +56,12 @@ const settingSpy = vi.fn((key: string): 'advanced' | 'off' | number | null => {
     if (key === 'filesDiffTokenizationMaxLineLength') return 10_000;
     return null;
 });
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => settingSpy(key),
-}));
+});
+});
 
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
@@ -68,20 +82,8 @@ vi.mock('shiki', () => ({
     createHighlighter: (...args: any[]) => createHighlighterSpy(...args),
 }));
 
-async function flushMicrotasks(): Promise<void> {
-    for (let i = 0; i < 25; i++) {
-        // eslint-disable-next-line no-await-in-loop
-        await Promise.resolve();
-    }
-}
-
 async function flushReactAsyncWork(): Promise<void> {
-    for (let i = 0; i < 10; i++) {
-        // eslint-disable-next-line no-await-in-loop
-        await renderer.act(async () => {
-            await flushMicrotasks();
-        });
-    }
+    await flushHookEffects({ cycles: 10, turns: 25 });
 }
 
 describe('CodeBlockView (web)', () => {
@@ -92,22 +94,18 @@ describe('CodeBlockView (web)', () => {
 
         const { CodeBlockView } = await import('./CodeBlockView.web');
 
-        let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeBlockView
+        const screen = await renderScreen(<CodeBlockView
                     code={'const x = 1;'}
                     language={'typescript'}
                     showCopyButton={false}
                     wrap={true}
-                />,
-            );
-        });
+                />);
+        const tree = screen.tree;
         let hasRed = false;
         for (let i = 0; i < 10; i++) {
             // eslint-disable-next-line no-await-in-loop
             await flushReactAsyncWork();
-            const redNodes = tree.root.findAll((n) => {
+            const redNodes = screen.findAllByType('Text').filter((n) => {
                 if ((n as any).type !== 'Text') return false;
                 const style = n.props?.style;
                 const flattened = Array.isArray(style) ? style.flat() : [style];
@@ -136,17 +134,13 @@ describe('CodeBlockView (web)', () => {
 
         const { CodeBlockView } = await import('./CodeBlockView.web');
 
-        let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeBlockView
+        let tree!: ReactTestRenderer;
+        tree = (await renderScreen(<CodeBlockView
                     code={'const x = 1;'}
                     language={'typescript'}
                     showCopyButton={false}
                     wrap={true}
-                />,
-            );
-        });
+                />)).tree;
         await flushReactAsyncWork();
 
         expect(createHighlighterSpy).toHaveBeenCalledTimes(0);

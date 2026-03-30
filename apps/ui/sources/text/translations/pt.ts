@@ -1,5 +1,502 @@
 import type { TranslationStructure } from "../_types";
 
+const mcpServersUxTranslationExtension = {
+  mcpServersConfiguredEmptySubtitle:
+    "Crie um servidor, importe JSON do host ou instale uma predefinição recomendada.",
+  mcpServersHeroSubtitle: ({
+    configuredCount,
+  }: {
+    configuredCount: number;
+  }) => `${configuredCount} configurado${configuredCount === 1 ? "" : "s"} no Happier`,
+  mcpServersHeroSubtitleEmpty:
+    "Crie servidores uma vez, visualize onde se aplicam e importe o que outras ferramentas já usam.",
+  mcpServersSegmentConfigured: "Configurados",
+  mcpServersSegmentConfiguredSubtitle: "Seu catálogo do Happier",
+  mcpServersSegmentDetected: "Detectados",
+  mcpServersSegmentDetectedSubtitle:
+    "Encontrados nos arquivos de configuração dos provedores",
+  mcpServersSegmentPreview: "Pré-visualização",
+  mcpServersSegmentPreviewSubtitle: "O que esta sessão vai receber",
+  mcpServersAdvancedTitle: "Avançado",
+  mcpServersAdvancedSubtitle: "Modo estrito e comportamento de validação",
+  mcpServersDetectedDirectoryTitle: "Diretório do projeto",
+  mcpServersDetectedDirectorySubtitle:
+    "Caminho de workspace opcional para configurações no nível do projeto",
+  mcpServersDetectedDirectoryPlaceholder: "/caminho/para/projeto",
+  mcpServersPreviewAgentTitle: "Back-end",
+  mcpServersPreviewMachineTitle: "Máquina",
+  mcpServersPreviewDeliveryTitle: "Entrega de ferramentas",
+  mcpServersPreviewDirectoryTitle: "Diretório do workspace",
+  mcpServersPreviewDirectorySubtitle:
+    "Escolha a pasta em que você pretende iniciar a sessão",
+  mcpServersPreviewDirectoryPlaceholder: "/caminho/para/workspace",
+  mcpServersPreviewRefreshTitle: "Atualizar pré-visualização",
+  mcpServersPreviewRefreshSubtitle:
+    "Resolver servidores MCP do Happier e nativos do provedor para este contexto",
+  mcpServersPreviewEmptyTitle: "Ainda não há pré-visualização",
+  mcpServersPreviewEmptySubtitle:
+    "Escolha um backend, uma máquina e um diretório, depois atualize para inspecionar o conjunto MCP efetivo.",
+  mcpServersPreviewDirectoryRequired:
+    "Escolha um diretório para pré-visualizar esta sessão.",
+  mcpServersBuiltInDescription:
+    "Sempre disponível nas sessões do Happier.",
+  mcpServersSourceHappier: "Happier",
+  mcpServersSourceBuiltIn: "Integrado",
+  mcpServersSourceDetected: "Detectado",
+  mcpServersQuickInstallTitle: "Instalação rápida",
+  mcpServersQuickInstallSubtitle:
+    "Instale servidores MCP comuns para desenvolvimento em uma etapa.",
+  mcpServersQuickInstallAction: "Instalar",
+  mcpServersQuickInstallEmptyTitle: "Escolha uma predefinição",
+  mcpServersQuickInstallEmptySubtitle:
+    "Selecione um dos servidores MCP recomendados para continuar.",
+  mcpServersEditAction: "Editar",
+  mcpServersDeleteAction: "Remover",
+  mcpServersAddServerFlowSubtitle:
+    "Configure um servidor manualmente, importe JSON do host ou comece com uma predefinição curada.",
+  mcpServersAddFlowConfigureTitle: "Configurar",
+  mcpServersAddFlowConfigureSubtitle: "Configuração manual",
+  mcpServersAddFlowImportJsonTitle: "Importar JSON",
+  mcpServersAddFlowImportJsonSubtitle: "Cole a configuração do host",
+  mcpServersAddFlowQuickInstallTitle: "Instalação rápida",
+  mcpServersAddFlowQuickInstallSubtitle: "Predefinições curadas",
+  mcpServersFieldCommandLine: "Linha de comando",
+  mcpServersFieldCommandLinePlaceholder:
+    "npx -y @modelcontextprotocol/server-playwright",
+  mcpServersTransportLocalTitle: "Comando local",
+  mcpServersTransportLocalSubtitle: "Executa na máquina selecionada",
+  mcpServersTransportHttpTitle: "HTTP remoto",
+  mcpServersTransportHttpSubtitle: "Faz a ponte a partir de um endpoint HTTP",
+  mcpServersTransportSseTitle: "SSE remoto",
+  mcpServersTransportSseSubtitle:
+    "Faz a ponte a partir de eventos enviados pelo servidor",
+  mcpServersAdvancedCommandEditorTitle: "Editor avançado de comando",
+  mcpServersAdvancedCommandEditorSubtitle:
+    "Separe manualmente o comando e os argumentos",
+  mcpServersCancelSubtitle: "Sair sem salvar este rascunho",
+  mcpServersImportJsonTitle: "Colar JSON do host MCP",
+  mcpServersImportJsonSubtitle:
+    "Oferecemos suporte a formatos comuns usados em READMEs e hosts desktop.",
+  mcpServersImportJsonPlaceholder:
+    '{"mcpServers":{"playwright":{"command":"npx","args":["-y","@playwright/mcp@latest"]}}}',
+  mcpServersImportJsonErrorTitle: "Erro de importação",
+  mcpServersImportJsonWarningsTitle: "Avisos de importação",
+  mcpServersImportJsonEmptyTitle: "Ainda não há servidores analisados",
+  mcpServersImportJsonEmptySubtitle:
+    "Cole o JSON MCP do host para visualizar os servidores antes de importar.",
+  mcpServersImportJsonAction: "Importar servidores",
+  mcpServersImportMappingSavedSecret: "Usar segredo salvo",
+  mcpServersImportMappingMachineEnv:
+    "Usar variável de ambiente da máquina",
+  mcpServersImportSecretNamePlaceholder: "Nome do segredo salvo",
+  mcpServersImportSecretValuePlaceholder: "Valor do segredo salvo",
+  mcpServersImportMachineEnvPlaceholder: "NOME_DA_VARIÁVEL_DE_AMBIENTE",
+  mcpServersImportMappingMissingSecretName: ({
+    input,
+  }: {
+    input: string;
+  }) => `Insira um nome de segredo salvo para ${input}.`,
+  mcpServersImportMappingMissingSecretValue: ({
+    input,
+  }: {
+    input: string;
+  }) =>
+    `Insira um valor de segredo salvo para ${input} ou mude para variável de ambiente da máquina.`,
+  mcpServersImportMappingMissingMachineEnvName: ({
+    input,
+  }: {
+    input: string;
+  }) => `Insira o nome da variável de ambiente da máquina para ${input}.`,
+  mcpServersAuthSavedSecret: "Segredo salvo",
+  mcpServersAuthMachineEnv: "Variável de ambiente da máquina",
+  mcpServersAuthPlainText: "Texto simples",
+  mcpServersAuthUnknown: "Autenticação desconhecida",
+  mcpServersAuthNone: "Sem autenticação",
+  mcpServersScopeAllMachines: "Todas as máquinas",
+  mcpServersScopeMachine: "Máquina",
+  mcpServersScopeWorkspace: "Espaço de trabalho",
+  mcpServersScopeProviderProject:
+    "Configuração de projeto do provedor",
+  mcpServersScopeProviderUser: "Configuração de usuário do provedor",
+  mcpServersScopeBuiltIn: "Integrado",
+  mcpServersStatusActive: "Ativo",
+  mcpServersStatusAvailable: "Disponível",
+  mcpServersStatusUnavailable: "Indisponível",
+  mcpServersStatusDetected: ({
+    provider,
+  }: {
+    provider: string;
+  }) => `Ativado em ${provider}`,
+  mcpServersStatusDisabledInProvider: ({
+    provider,
+  }: {
+    provider: string;
+  }) => `Desativado em ${provider}`,
+  mcpServersEditorAppliesTo: "Aplica-se a",
+  mcpServersEditorAppliesToSubtitle:
+    "Escolha onde o Happier deve adicionar este servidor por padrão.",
+  mcpServersAddApplyRule: "Adicionar regra de aplicação",
+  mcpServersAddApplyRuleSubtitle:
+    "Escolha onde este servidor deve se aplicar por padrão.",
+  mcpServersAddApplyRuleHelp:
+    "Salve esta regra de aplicação para torná-la parte desta configuração de servidor.",
+  mcpServersAddApplyRuleSave: "Salvar regra de aplicação",
+  mcpServersDeliveryNativeTitle: "MCP nativo",
+  mcpServersDeliveryNativeSubtitle:
+    "Este backend recebe ferramentas do Happier como servidores MCP nativos.",
+  mcpServersDeliveryShellBridgeTitle: "Bridge de shell do Happier",
+  mcpServersDeliveryShellBridgeSubtitle:
+    "Este backend chama as ferramentas do Happier pela ponte `happier tools`.",
+  mcpServersDeliveryUnsupportedTitle: "Não suportado",
+  mcpServersDeliveryUnsupportedSubtitle:
+    "Este backend ainda não recebe ferramentas do Happier.",
+};
+
+const newSessionMcpTranslationExtension = {
+  mcpChipLabel: 'MCP',
+  mcpChipLabelWithCount: ({ count }: { count: number }) => `MCP ${count}`,
+  mcpModalTitle: 'Servidores MCP',
+  mcpModalSubtitle: ({ machineName, directory }: { machineName: string; directory: string }) =>
+    `Visualize os servidores MCP disponíveis em ${machineName} para ${directory}.`,
+  mcpManagedToggleTitle: 'Servidores MCP gerenciados',
+  mcpManagedToggleSubtitle: 'Inclua servidores MCP gerenciados quando estiverem disponíveis para esta sessão.',
+  mcpOpenSettingsTitle: 'Abrir configurações de MCP',
+  mcpOpenSettingsSubtitle: 'Gerencie servidores configurados, vínculos e opções de importação.',
+  mcpUnavailableNoContextTitle: 'Escolha uma máquina e um diretório primeiro',
+  mcpUnavailableNoContextSubtitle: 'A visualização do MCP precisa de uma máquina de destino e de um diretório de trabalho.',
+  mcpSelectedSectionTitle: 'Selecionados',
+  mcpAvailableSectionTitle: 'Disponíveis',
+  mcpUnavailableSectionTitle: 'Indisponíveis',
+  mcpDetectedSectionTitle: 'Detectados nas configurações do provedor',
+  mcpDetectedSectionTitleForAgent: ({ agentName }: { agentName: string }) => `Detectados na configuração de ${agentName}`,
+  mcpDetectedEmptyTitle: 'Nenhum servidor MCP detectado',
+  mcpDetectedEmptySubtitle: 'Atualize para escanear os arquivos de configuração do provedor nesta máquina.',
+  mcpDetectedUnsupportedTitle: 'Os servidores MCP detectados não estão disponíveis',
+  mcpDetectedUnsupportedSubtitle: 'Atualize o Happier nesta máquina para habilitar a varredura de configurações do provedor.',
+  mcpHappierSectionTitle: 'Servidores MCP do Happier',
+  mcpHappierEmptyTitle: 'Nenhum servidor MCP definido no Happier',
+  mcpHappierEmptySubtitle: 'Defina servidores MCP nas configurações para usá-los nas sessões.',
+  mcpReasonActiveByDefault: 'Incluídos por padrão',
+  mcpReasonForcedIncluded: 'Obrigatórios pela configuração',
+  mcpReasonForcedExcluded: 'Excluídos pela configuração',
+  mcpReasonManagedDisabled: 'Os servidores MCP gerenciados estão desativados',
+  mcpReasonBindingDisabled: 'Desativados pelo vínculo do servidor',
+  mcpReasonAvailablePortable: 'Compatíveis com esta sessão',
+  mcpReasonNotPortable: 'Não compatíveis com esta sessão',
+} as const;
+
+const settingsAppearanceTranslationExtension = {
+  sessionListDensity: {
+    title: 'Densidade da lista de sessões',
+    subtitle: 'Escolha como as sessões são exibidas na barra lateral',
+    detailed: 'Detalhada',
+    detailedDescription: 'Linhas de tamanho completo com avatares e status',
+    cozy: 'Intermediário',
+    cozyDescription: 'Linhas menores com avatares',
+    narrow: 'Estreita',
+    narrowDescription: 'Linhas mínimas sem avatares',
+  },
+} as const;
+
+const ptAcpCatalogSettingsExtension = {
+    acpCatalog: 'Backends ACP',
+    acpCatalogSubtitle: 'Gerencie backends ACP integrados e personalizados',
+    acpCatalogBuiltIn: 'ACP integrado',
+    acpCatalogBuiltInFooter:
+        'Os agentes ACP genéricos integrados são definidos no catálogo compartilhado e executados pelo ambiente de execução ACP compartilhado.',
+    acpCatalogBackends: 'Backends personalizados',
+    acpCatalogBackendsFooter:
+        'Cada backend personalizado é uma definição CLI compatível com ACP que pode ser selecionada, com seu próprio lançador, padrões e configurações de autenticação.',
+    acpCatalogBackendsEmptyTitle: 'Nenhum backend ACP personalizado',
+    acpCatalogBackendsEmptySubtitle: 'Adicione um backend para criar uma opção selecionável de backend ACP personalizado.',
+    acpCatalogAddBackend: 'Adicionar backend ACP',
+    acpCatalogAddBackendSubtitle: 'Criar uma opção de backend ACP personalizado',
+    acpCatalogBackendEditorTitle: 'Backend ACP',
+    acpCatalogBasics: 'Básico',
+    acpCatalogLauncher: 'Lançador',
+    acpCatalogEnv: 'Ambiente',
+    acpCatalogAddEnv: 'Adicionar variável de ambiente',
+    acpCatalogAddEnvSubtitle: 'Armazene valores literais ou vincule Segredos salvos',
+    acpCatalogEnvEmptyTitle: 'Sem variáveis de ambiente',
+    acpCatalogEnvEmptySubtitle: 'Adicione variáveis de inicialização para este backend.',
+    acpCatalogAuth: 'Autenticação',
+    acpCatalogAuthSupport: 'Suporte de autenticação',
+    acpCatalogAuthParser: 'Analisador de status',
+    acpCatalogCapabilities: 'Capacidades',
+    acpCatalogTransportProfile: 'Perfil de transporte',
+    acpCatalogSupportsModes: 'Suporta modos',
+    acpCatalogSupportsModels: 'Suporta modelos',
+    acpCatalogSupportsConfigOptions: 'Suporta opções de configuração',
+    acpCatalogPromptImageSupport: 'Suporte a imagens em prompts',
+    acpCatalogFieldId: 'ID',
+    acpCatalogFieldName: 'Nome',
+    acpCatalogFieldTitle: 'Título',
+    acpCatalogFieldDescription: 'Descrição',
+    acpCatalogFieldCommand: 'Comando',
+    acpCatalogFieldArgs: 'Argumentos (um por linha)',
+    acpCatalogMachineLoginKey: 'Chave de login da máquina',
+    acpCatalogDocsUrl: 'URL da documentação',
+    acpCatalogLoginCommand: 'Comando de login',
+    acpCatalogLoginArgs: 'Argumentos de login (um por linha)',
+    acpCatalogStatusCommand: 'Tokens do comando de status (um por linha)',
+    acpCatalogDefaultMode: 'Modo padrão',
+    acpCatalogDefaultModel: 'Modelo padrão',
+    acpCatalogDeleteBackendTitle: 'Excluir backend ACP?',
+    acpCatalogDeleteBackendConfirm: ({ name }: { name: string }) => `Excluir "${name}"?`,
+    acpCatalogValidationFailed: 'As configurações do catálogo ACP são inválidas.',
+} as const;
+
+const acpCatalogTranslationExtension = {
+  settings: ptAcpCatalogSettingsExtension,
+  newSession: {},
+} as const;
+
+const memoryEmbeddingsTranslationExtension = {
+  status: {
+    embeddingsTitle: 'Tempo de execução de embeddings',
+    embeddingsProviderTitle: 'Provedor de embeddings',
+    embeddingsModelTitle: 'Modelo de embeddings',
+    embeddingsDisabled: 'Os embeddings estão desativados',
+    embeddingsReady: 'Os embeddings estão prontos',
+    embeddingsDownloading: 'O modelo de embeddings está sendo baixado',
+    embeddingsFallback: 'Embeddings indisponíveis, usando fallback apenas de texto',
+    embeddingsUnavailable: 'Embeddings indisponíveis',
+    embeddingsError: 'Falha ao inicializar embeddings',
+    embeddingsProviderLocal: 'Modelo local',
+    embeddingsProviderOpenAiCompatible: 'Endpoint compatível com OpenAI',
+  },
+  embeddings: {
+    groupTitle: 'Vetores',
+    groupFooter:
+      'Opcional: melhore o ranking de busca profunda com um modelo local ou com seu próprio endpoint compatível com OpenAI.',
+    mode: {
+      title: 'Modo de embeddings',
+      options: {
+        disabledTitle: 'Desativado',
+        disabledSubtitle: 'Usar apenas ranking de texto para busca profunda',
+        balancedTitle: 'Equilibrado',
+        balancedSubtitle: 'Preset local rápido e validado',
+        longContextTitle: 'Contexto longo',
+        longContextSubtitle: 'Melhor para blocos de conversa maiores',
+        qualityTitle: 'Qualidade',
+        qualitySubtitle: 'Preset local de maior custo para avaliação',
+        customTitle: 'Personalizado',
+        customSubtitle: 'Escolha seu próprio provedor e modelo',
+      },
+    },
+    provider: {
+      title: 'Provedor',
+      options: {
+        localTitle: 'Modelo local',
+        localSubtitle: 'Gerenciado pelo Happier e baixado no primeiro uso',
+        openAiCompatibleTitle: 'Endpoint compatível com OpenAI',
+        openAiCompatibleSubtitle: 'Use seu próprio servidor de embeddings e API key',
+      },
+    },
+    notSet: 'Não definido',
+    secretSet: 'Definido',
+    secretNotSet: 'Não definido',
+    queryPrefixTitle: 'Prefixo da consulta',
+    queryPrefixPromptBody: 'Prefixo opcional adicionado às consultas de busca do usuário antes de gerar embeddings.',
+    documentPrefixTitle: 'Prefixo do documento',
+    documentPrefixPromptBody: 'Prefixo opcional adicionado aos blocos de memória indexados antes de gerar embeddings.',
+    openAi: {
+      baseUrlTitle: 'URL base',
+      baseUrlPromptBody: 'Informe a URL base do seu endpoint de embeddings compatível com OpenAI.',
+      modelTitle: 'Modelo remoto',
+      modelPromptBody: 'Informe o id do modelo de embeddings a ser solicitado ao endpoint remoto.',
+      apiKeyTitle: 'Chave de API',
+      apiKeyPromptBody: 'Informe a chave de API usada pelo endpoint remoto de embeddings.',
+      dimensionsTitle: 'Dimensões',
+      dimensionsPromptBody: 'Substituição opcional da dimensão de saída para endpoints que a suportam.',
+    },
+    advanced: {
+      ftsWeightTitle: 'Peso da classificação textual',
+      ftsWeightPromptBody: 'Peso relativo da classificação full-text do SQLite ao combinar resultados.',
+      embeddingWeightTitle: 'Peso da classificação por embeddings',
+      embeddingWeightPromptBody: 'Peso relativo da similaridade de embeddings ao combinar resultados.',
+    },
+  },
+} as const;
+
+const promptLibraryUxRefinementTranslationExtension = {
+  pt: {
+    promptsSubtitle: 'Documentos de prompt reutilizáveis',
+    skillsSubtitle: 'Pacotes de habilidades reutilizáveis',
+    addPrompt: 'Adicionar novo prompt',
+    addPromptSubtitle: 'Criar um novo documento de prompt',
+    addSkill: 'Adicionar nova habilidade',
+    addSkillSubtitle: 'Criar um novo pacote de habilidade',
+    newTemplateSubtitle: 'Crie um modelo slash reutilizável',
+    noPrompts: 'Ainda não há prompts',
+    noPromptsSubtitle: 'Crie um prompt para começar a montar modelos e adições ao prompt do sistema.',
+    noSkills: 'Ainda não há habilidades',
+    noSkillsSubtitle: 'Crie um pacote de habilidade para reutilizar instruções do SKILL.md.',
+    imported: 'Importado',
+    builtIn: 'Integrado',
+    general: 'Geral',
+    promptNameLabel: 'Nome do prompt',
+    promptContent: 'Conteúdo do prompt',
+    skillNameLabel: 'Nome da habilidade',
+    skillContent: 'Conteúdo do SKILL.md',
+    supportingFiles: 'Arquivos de apoio',
+    supportingFilesEmptyTitle: 'Ainda não há arquivos de apoio',
+    supportingFilesEmptySubtitle: 'Adicione arquivos reutilizáveis para exportar junto com esta habilidade.',
+    supportingFilesSaveFirstTitle: 'Salve esta habilidade primeiro',
+    supportingFilesSaveFirstSubtitle: 'Crie a habilidade antes de adicionar arquivos de apoio.',
+    addSupportingFile: 'Adicionar arquivo de apoio',
+    addSupportingFileSubtitle: 'Criar outro arquivo dentro deste pacote de habilidade',
+    editSupportingFile: 'Editar arquivo de apoio',
+    newSupportingFile: 'Novo arquivo de apoio',
+    supportingFilePathLabel: 'Caminho do arquivo',
+    supportingFilePathPlaceholder: 'templates/review.md',
+    supportingFileContent: 'Conteúdo do arquivo',
+    supportingFileTextSubtitle: 'Arquivo de texto',
+    supportingFileBinarySubtitle: 'Arquivo binário · somente exportação',
+    deleteSupportingFileTitle: 'Excluir arquivo de apoio?',
+    deleteSupportingFileConfirm: 'Isso remove o arquivo do pacote de habilidade.',
+    linkedAssetsCount: ({ count }: { count: number }) => `${count} exportação${count === 1 ? '' : 'ões'}`,
+    manageExternalAssets: 'Gerenciar recursos externos',
+    deleteLibraryItemTitle: 'Excluir item da biblioteca?',
+    deleteLibraryItemBody: 'Isso remove o item da sua biblioteca e desvincula modelos ou adições ao prompt do sistema que o utilizam.',
+    folders: 'Pastas',
+    foldersSubtitle: 'Organize prompts e habilidades em pastas nomeadas',
+    addFolder: 'Adicionar pasta',
+    addFolderSubtitle: 'Crie uma pasta reutilizável para itens da biblioteca',
+    foldersEmptyTitle: 'Ainda não há pastas',
+    foldersEmptySubtitle: 'Crie uma pasta para organizar prompts e habilidades.',
+    renameFolder: 'Renomear pasta',
+    deleteFolderTitle: 'Excluir pasta?',
+    deleteFolderBody: 'Isso removerá a pasta dos prompts e habilidades que a utilizam.',
+    folderUsageCount: ({ count }: { count: number }) => `${count} item${count === 1 ? '' : 'ns'}`,
+    folderLabel: 'Pasta',
+    folderPlaceholder: 'Nome da pasta',
+    tagsLabel: 'Etiquetas',
+    tagsPlaceholder: 'tag-um, tag-dois',
+    addToStackSubtitle: 'Escolha um prompt ou habilidade para adicionar aqui',
+    externalAssetsImportAction: 'Importar',
+    externalAssetsLinkedTo: ({ title }: { title: string }) => `Vinculado a ${title}`,
+    externalAssetsExportTarget: 'Destino',
+    externalAssetsInstallMethod: 'Método de instalação',
+    externalAssetsInstallMethodCopy: 'Copiar arquivos',
+    externalAssetsInstallMethodCopySubtitle: 'Grava uma cópia independente no destino selecionado',
+    externalAssetsInstallMethodSymlink: 'Link simbólico (recomendado)',
+    externalAssetsInstallMethodSymlinkSubtitle: 'Vincula o destino a uma cópia gerida pelo Happier para atualizações mais simples',
+    registriesAddGitSourceSubtitle: 'Adicione um repositório Git ou checkout local como fonte de registro',
+    registriesSourceTitleLabel: 'Título da fonte',
+    registriesSourceUrlLabel: 'URL do repositório ou caminho local',
+    registriesSearchLabel: 'Pesquisar no registro',
+    registriesSearchPlaceholder: 'Pesquise habilidades (por exemplo: design)',
+    registriesItemSource: 'Repositório de origem',
+    registriesItemPath: 'Caminho do registro',
+    registriesItemFiles: 'Arquivos de apoio',
+    registriesItemPreview: 'Pré-visualização do SKILL.md',
+    registriesItemPreviewUnavailable: 'Nenhuma prévia de SKILL.md está disponível para este item do registro.',
+    registriesItemImportSubtitle: 'Importe este pacote de habilidade para a biblioteca do Happier',
+    registriesItemInstallAction: 'Instalar na máquina',
+    registriesItemInstallConfirmTitle: 'Instalar item do registro?',
+    registriesItemInstallConfirmBody: 'Isso importa a habilidade para a sua biblioteca e a instala no destino de máquina selecionado.',
+    templateTargetPromptLabel: 'Prompt de destino',
+    templateTargetPromptPlaceholder: 'Selecione um prompt',
+    editSelectedPrompt: 'Editar prompt selecionado',
+    editSelectedPromptDisabled: 'Selecione um prompt primeiro',
+    templateNameLabel: 'Nome do modelo',
+    templateTokenLabel: 'Comando slash',
+    templatesEmptyTitle: 'Ainda não há modelos',
+    templatesEmptySubtitle: 'Crie um modelo slash para inserir prompts rapidamente.',
+    librarySearchPlaceholder: 'Pesquisar na biblioteca',
+  },
+} as const;
+
+const sessionHandoffTranslationExtensions = {
+  pt: {
+    activeWarning: {
+      title: 'Esta sessão ainda está em execução aqui',
+      message: 'A transferência vai parar esta sessão nesta máquina antes de transferi-la para a máquina selecionada.',
+      confirm: 'Transferir e parar aqui',
+    },
+    progress: {
+      title: 'Transferindo sessao',
+      message: 'Preparando a maquina de destino e movendo o estado da sessao.',
+      planned: 'Planejado',
+      transferred: 'Transferido',
+      remaining: 'Restante',
+      timeline: {
+        scanSource: 'Escaneando origem',
+        plan: 'Planejando mudanças',
+        transferBlobs: 'Transferindo arquivos',
+        stageTarget: 'Preparando destino',
+        apply: 'Aplicando mudanças',
+        importSession: 'Importando sessão',
+        finalize: 'Finalizando',
+      },
+    },
+    failure: {
+      title: 'Falha ao transferir a sessao',
+      message: 'Nao foi possivel concluir a transferencia. Voce pode tentar novamente.',
+    },
+    recovery: {
+      title: 'A sessão foi parada aqui antes de a transferência ser concluída',
+      messageAfterSourceStop:
+        'O Happier já parou esta sessão nesta máquina, mas não conseguiu concluir a inicialização na máquina de destino. Reinicie-a aqui ou mantenha-a parada enquanto recupera a máquina de destino.',
+      restartOnSource: 'Reiniciar na origem',
+      keepStopped: 'Manter parada',
+    },
+  },
+} as const;
+
+const settingsSessionHandoffTranslationExtensions = {
+  pt: {
+    title: 'Transferencia de sessao',
+    groupTitle: 'Transferencia de sessao',
+    groupFooter: 'Escolha as opcoes padrao para mover uma sessao entre maquinas.',
+    entrySubtitle: 'Abrir padroes de transferencia',
+    workspaceTransfer: {
+      groupTitle: 'Transferencia do espaco de trabalho',
+      groupFooter: 'Decida se a transferencia deve copiar o espaco de trabalho e como os conflitos devem ser tratados por padrao.',
+      title: 'Transferir espaco de trabalho',
+      enabledSubtitle: 'Copie o espaco de trabalho para a maquina de destino por padrao.',
+      disabledSubtitle: 'Mantenha o espaco de trabalho de destino inalterado por padrao.',
+      strategy: {
+        title: 'Estrategia de transferencia do espaco de trabalho',
+        subtitle: 'Escolha entre transferir um snapshot completo ou sincronizar apenas as alteracoes.',
+        transferSnapshotTitle: 'Transferir snapshot',
+        transferSnapshotSubtitle: 'Exporte e mova um snapshot completo do espaco de trabalho.',
+        syncChangesTitle: 'Sincronizar alteracoes',
+        syncChangesSubtitle: 'Compare origem e destino e aplique apenas as alteracoes unidirecionais necessarias.',
+      },
+    },
+    conflictPolicy: {
+      title: 'Politica de conflito do espaco de trabalho',
+      subtitle: 'Escolha o que acontece quando o caminho de destino ja existe.',
+      createSiblingCopyTitle: 'Criar copia adjacente',
+      createSiblingCopySubtitle: 'Preserve o caminho de destino existente e crie uma copia adjacente para a transferencia.',
+      replaceExistingTitle: 'Substituir caminho existente',
+      replaceExistingSubtitle: 'Substitua o caminho de destino existente apos a confirmacao.',
+    },
+    includeIgnoredMode: {
+      title: 'Arquivos ignorados',
+      subtitle: 'Escolha como os arquivos ignorados pelo git sao tratados durante a transferencia do espaco de trabalho.',
+      excludeTitle: 'Excluir arquivos ignorados',
+      excludeSubtitle: 'Ignorar arquivos ignorados por padrao.',
+      includeSelectedTitle: 'Incluir arquivos ignorados selecionados',
+      includeSelectedSubtitle: 'Copie apenas os caminhos ignorados que correspondem aos globs configurados.',
+      globsTitle: 'Globs de inclusao de ignorados',
+      globsPlaceholder: 'dist/**, .env.local',
+    },
+    directTargetMode: {
+      title: 'Modo de destino para sessao direta',
+      subtitle: 'Escolha o que deve acontecer ao transferir uma sessao direta.',
+      groupTitle: 'Transferencia de sessao direta',
+      groupFooter: 'Aplica-se apenas quando a sessao de origem esta atualmente em modo direto.',
+      keepDirectTitle: 'Manter direta',
+      keepDirectSubtitle: 'Retome o destino como uma sessao direta quando o provedor oferecer suporte.',
+      convertToPersistedTitle: 'Converter para sincronizada',
+      convertToPersistedSubtitle: 'Importe a transcricao e continue como uma sessao sincronizada do Happier.',
+    },
+  },
+} as const;
+
 /**
  * Portuguese plural helper function
  * Portuguese (Brazilian) has 2 plural forms: singular, plural
@@ -25,17 +522,152 @@ function plural({
 export const pt: TranslationStructure = {
   tabs: {
     // Tab navigation labels
-    inbox: "Amigos",
-    sessions: "Terminais",
+    inbox: "Caixa de entrada",
+    friends: "Amigos",
+    sessions: "Sessões",
     settings: "Configurações",
   },
 
   inbox: {
     // Inbox screen
-    emptyTitle: "Sem atividade de amigos",
-    emptyDescription:
-      "Adicione amigos para compartilhar sessões e ver atividade aqui.",
+    emptyTitle: "Tudo em dia",
+    emptyDescription: "Nenhuma solicitação ou atualização pendente no momento.",
+    approvals: "Aprovações",
+    permissions: "Permissões",
     updates: "Atividade",
+  },
+
+  approvals: {
+    title: "Aprovação",
+    untitled: "Aprovação sem título",
+    details: "Detalhes",
+    fieldStatus: "Estado",
+    fieldAction: "Ação",
+    approve: "Aprovar",
+    reject: "Rejeitar",
+    loadError: "Falha ao carregar a aprovação.",
+    decisionError: "Falha ao atualizar a aprovação.",
+    confirmApproveTitle: "Aprovar solicitação?",
+    confirmApproveBody: "Isso executará a ação solicitada.",
+    confirmRejectTitle: "Rejeitar solicitação?",
+    confirmRejectBody: "Isso rejeitará a solicitação.",
+    status: {
+      open: "Pendente",
+      approved: "Aprovada",
+      rejected: "Rejeitada",
+      executed: "Executada",
+      failed: "Falhou",
+      canceled: "Cancelada",
+    },
+  },
+
+  promptLibrary: {
+    sections: "Seções",
+    library: "Biblioteca",
+    librarySubtitle: "Gerencie prompts e habilidades",
+    create: "Criar",
+    newPrompt: "Novo prompt",
+    newSkill: "Nova habilidade",
+    prompts: "Instruções",
+    skills: "Habilidades",
+    untitledPrompt: "Prompt sem título",
+    untitledSkill: "Habilidade sem título",
+    origin: "Origem",
+    schema: "Esquema",
+    editPrompt: "Editar prompt",
+    editSkill: "Editar habilidade",
+    titlePlaceholder: "Título",
+	    saveError: "Falha ao salvar.",
+	    templates: "Modelos",
+	    templatesSubtitle: "Crie e gerencie modelos /slash",
+	    newTemplate: "Novo modelo",
+	    stacks: "Pilhas",
+	    stacksSubtitle: "Anexe prompts e habilidades a sessões e perfis",
+        externalAssets: "Recursos externos",
+        externalAssetsSubtitle: "Importe skills e recursos de prompt de máquinas conectadas",
+        externalAssetsContext: "Contexto de descoberta",
+        externalAssetsMachine: "Máquina",
+        externalAssetsScope: "Escopo",
+        externalAssetsProjectScope: "Projeto",
+        externalAssetsProjectScopeSubtitle: "Descubra recursos dentro do caminho de um workspace",
+        externalAssetsUserScope: "Usuário",
+        externalAssetsUserScopeSubtitle: "Descubra recursos em pastas no nível do usuário",
+        externalAssetsProjectDirectory: "Diretório do projeto",
+        externalAssetsProjectDirectoryRequired: "Escolha um diretório do projeto antes de importar ou exportar recursos com escopo de projeto.",
+        externalAssetsRefresh: "Atualizar recursos externos",
+        externalAssetsRefreshSubtitle: "Descubra recursos de prompt para a máquina e o escopo selecionados",
+        externalAssetsTypes: "Tipos de recursos",
+        externalAssetsNoMachine: "Selecione uma máquina para continuar.",
+        externalAssetsNoTypes: "Nenhum tipo de recurso externo",
+        externalAssetsNoTypesSubtitle: "Esta máquina ainda não expõe adaptadores de recursos de prompt.",
+        externalAssetsNoItems: "Nenhum recurso externo encontrado",
+        externalAssetsNoItemsSubtitle: "Atualize depois de escolher uma máquina, um escopo ou um diretório.",
+        externalAssetsUnsupportedImport: "Aqui só é possível importar recursos de prompt baseados em bundle.",
+        externalAssetsExportTitle: "Exportar recurso externo",
+        externalAssetsExportOptions: "Opções de exportação",
+        externalAssetsExportType: "Tipo de recurso",
+        externalAssetsExportAction: "Exportar",
+        externalAssetsExportConfirmTitle: "Exportar recurso externo?",
+        externalAssetsExportConfirmBody: "Isto irá gravar o recurso de prompt selecionado na localização externa.",
+        externalAssetsExportTargetPathPlaceholder: "Caminho de destino (ex.: review/code.md)",
+        externalAssetsExportTargetNamePlaceholder: "Nome de destino (ex.: reviewer)",
+        externalAssetsDeleteConfirmTitle: "Eliminar recurso externo?",
+        externalAssetsDeleteConfirmBody: "Isto irá eliminar do disco o recurso externo ligado.",
+        externalAssetsLinkedTitle: "Recurso externo ligado",
+        registries: "Registros",
+        registriesSubtitle: "Navegue pelos registros de skills e importe bundles para a biblioteca",
+        registriesContext: "Contexto do registro",
+        registriesNoMachine: "Selecione uma máquina para continuar.",
+        registriesRefresh: "Atualizar registros",
+        registriesRefreshSubtitle: "Carregue as fontes de registro integradas e configuradas para a máquina selecionada",
+        registriesAddGitSource: "Adicionar fonte Git",
+        registriesAddGitSourceAction: "Salvar fonte Git",
+        registriesAddGitSourceActionSubtitle: "Salvar este repositório como fonte de registro",
+        registriesAddGitSourceError: "Adicione um título e uma URL do repositório.",
+        registriesSourceTitlePlaceholder: "Título da fonte",
+        registriesSourceUrlPlaceholder: "URL do repositório ou caminho local",
+        registriesSources: "Fontes",
+        registriesNoSources: "Nenhuma fonte de registro carregada",
+        registriesNoSourcesSubtitle: "Adicione uma fonte Git ou atualize para carregar as fontes integradas.",
+        registriesItems: "Itens do registro",
+        registriesNoItems: "Nenhum item do registro",
+        registriesNoItemsSubtitle: "Selecione uma fonte para escanear as skills disponíveis.",
+	    editTemplate: "Editar modelo",
+    tokenPlaceholder: "Token (ex.: /daily)",
+    codingStack: "Pilha de código",
+    codingStackSubtitle: "Aplicado às sessões de código",
+    voiceStack: "Pilha de voz",
+    voiceStackSubtitle: "Aplicado ao Happier Voice",
+    profileStacks: "Pilhas de perfil",
+    profileStacksSubtitle: ({ count }: { count: number }) => `${count} perfil${count === 1 ? "" : "s"}`,
+    profileStackCount: ({ count }: { count: number }) => `${count} item${count === 1 ? "" : "s"}`,
+    noProfilesTitle: "Sem perfis",
+    noProfilesSubtitle: "Crie um perfil para usar pilhas de perfil.",
+    stackEntries: "Itens da pilha",
+    stackPlacementSkill: "Instruções de habilidade",
+    stackPlacementComposer: "Inserção no compositor",
+    stackPlacementSystem: "Anexar ao sistema",
+    stackEmptyTitle: "Nada nesta pilha",
+    stackEmptySubtitle: "Adicione prompts ou habilidades para começar.",
+    actions: "Ações",
+    addToStack: "Adicionar à pilha",
+    stackAlreadyContainsPrompt: "Esta pilha já contém esse item.",
+    stackPickerNoPrompts: "Ainda não há prompts.",
+    stackPickerNoSkills: "Ainda não há habilidades.",
+    removeFromStack: "Remover da pilha?",
+    removeFromStackConfirm: "Isso removerá o item da pilha.",
+    deleteTemplate: "Excluir modelo?",
+    deleteTemplateConfirm: "Isso excluirá o modelo.",
+    templateTokenReserved: "Esse token é reservado.",
+    templateTokenConflictsWithAction: "Esse token entra em conflito com uma ação integrada.",
+    templateTokenDuplicate: "Esse token já está em uso.",
+    templateTarget: "Prompt alvo",
+    templateBehavior: "Comportamento",
+    templateBehaviorInsert: "Inserir",
+    templateBehaviorInsertAndSend: "Inserir e enviar",
+    templateAllowArgs: "Permitir argumentos",
+    templateAllowArgsSubtitle: "Se ativado, o texto após o token é passado como $args.",
+        ...promptLibraryUxRefinementTranslationExtension.pt,
   },
 
   runs: {
@@ -87,6 +719,17 @@ export const pt: TranslationStructure = {
       sendLabel: "Enviar",
       sendingLabel: "Enviando…",
       failedToSend: "Falha ao enviar",
+    },
+    delivery: {
+      title: "Entrega",
+      cardDelivery: ({ label }: { label: string }) => `Entrega: ${label}`,
+      steerLabel: "Orientar",
+      steerHelp:
+        "Envie uma mensagem de orientação enquanto a execução estiver ocupada (se houver suporte).",
+      interruptLabel: "Interromper",
+      interruptHelp:
+        "Cancele o turno atual e envie sua mensagem como um novo turno.",
+      promptLabel: "Comando",
     },
   },
 
@@ -148,7 +791,7 @@ export const pt: TranslationStructure = {
         timezoneOptional: "FUSO HORÁRIO (OPCIONAL)",
       },
       placeholders: {
-        name: "Sessão agendada",
+        name: "Resumo diário",
         description: "O que esta automação deve fazer?",
         everyMinutes: "60",
         cronExpression: "*/5 * * * *",
@@ -261,6 +904,7 @@ export const pt: TranslationStructure = {
     // Simple string constants
     add: "Adicionar",
     edit: "Editar",
+    duplicate: "Duplicar",
     actions: "Ações",
     moreActions: "Mais ações",
     moreActionsHint: "Abre um menu com mais ações",
@@ -269,16 +913,22 @@ export const pt: TranslationStructure = {
     open: "Abrir",
     done: "Concluído",
     reorder: "Reordenar",
+    moveUp: "Mover para cima",
+    moveDown: "Mover para baixo",
     authenticate: "Autenticar",
     save: "Salvar",
     saveAs: "Salvar como",
-    error: "Erro",
-    success: "Sucesso",
-    ok: "OK",
-    continue: "Continuar",
-    back: "Voltar",
-    start: "Iniciar",
-    create: "Criar",
+		    error: "Erro",
+		    success: "Sucesso",
+		    info: "Informações",
+		    comingSoon: "Em breve",
+		    ok: "OK",
+		    continue: "Continuar",
+		    back: "Voltar",
+        previous: "Anterior",
+        next: "Seguinte",
+	    start: "Iniciar",
+	    create: "Criar",
     rename: "Renomear",
     remove: "Remover",
     update: "Atualizar",
@@ -303,6 +953,7 @@ export const pt: TranslationStructure = {
     copied: "Copiado",
     copy: "Copiar",
     copyWithLabel: ({ label }: { label: string }) => `Copiar ${label}`,
+    paste: "Colar",
     expand: "Expandir",
     collapse: "Recolher",
     command: "Comando",
@@ -312,6 +963,8 @@ export const pt: TranslationStructure = {
     message: "Mensagem",
     send: "Enviar",
     attach: "Anexar",
+    addImage: "Adicionar imagem",
+    addFile: "Adicionar arquivo",
     linkFile: "Vincular arquivo",
     files: "Arquivos",
     path: "Caminho",
@@ -377,17 +1030,17 @@ export const pt: TranslationStructure = {
     unknown: "desconhecido",
   },
 
-  connectionStatus: {
-    title: "Conexão",
-    labels: {
-      server: "Servidor",
-      socket: "WebSocket",
-      authenticated: "Autenticado",
-      lastSync: "Última sincronização",
-      nextRetry: "Próxima tentativa",
-      lastError: "Último erro",
+    connectionStatus: {
+      title: "Conexão",
+      labels: {
+        server: "Servidor",
+        socket: "WebSocket",
+        authenticated: "Autenticado",
+        lastSync: "Última sincronização",
+        nextRetry: "Próxima tentativa",
+        lastError: "Último erro",
+      },
     },
-  },
 
   time: {
     justNow: "agora mesmo",
@@ -663,7 +1316,31 @@ export const pt: TranslationStructure = {
       machineLabel: ({ machine }: { machine: string }) => `Máquina: ${machine}`,
       searchPlaceholder: "Buscar na memória",
       enableLocalSearch: "Ativar busca de memória local",
+      emptyResults: "Ainda não há resultados de memória",
     },
+        status: {
+            title: "Estado do índice local",
+            diskUsageTitle: "Uso em disco",
+            disabled: "A busca de memória local está desativada nesta máquina",
+            readyLight: "O índice leve está pronto nesta máquina",
+            readyDeep: "O índice profundo está pronto nesta máquina",
+            unavailableLight: "O índice leve ainda não está pronto nesta máquina",
+            unavailableDeep: "O índice profundo ainda não está pronto nesta máquina",
+            diskUsage: ({ lightMb, deepMb }: { lightMb: number; deepMb: number }) => `Light ${lightMb} MB · Deep ${deepMb} MB`,
+            diskUsageUnavailable: "Uso em disco indisponível",
+            ...memoryEmbeddingsTranslationExtension.status,
+            embeddingsTitle: "Runtime de embeddings",
+            embeddingsProviderTitle: "Provedor de embeddings",
+            embeddingsModelTitle: "Modelo de embeddings",
+            embeddingsDisabled: "Os embeddings estão desativados",
+            embeddingsReady: "Os embeddings estão prontos",
+            embeddingsDownloading: "O modelo de embeddings está sendo baixado",
+            embeddingsFallback: "Embeddings indisponíveis; usando fallback somente de texto",
+            embeddingsUnavailable: "Embeddings indisponíveis",
+            embeddingsError: "Falha ao inicializar os embeddings",
+            embeddingsProviderLocal: "Modelo local",
+            embeddingsProviderOpenAiCompatible: "Endpoint compatível com OpenAI",
+        },
     machine: {
       title: "Máquina",
       changeTitle: "Trocar máquina",
@@ -722,15 +1399,60 @@ export const pt: TranslationStructure = {
       },
     },
     embeddings: {
-      groupTitle: "Vetores de embedding",
-      groupFooter:
-        "Opcional: baixe um modelo local para melhorar correspondências semânticas ao usar o modo Deep.",
-      enableTitle: "Ativar embeddings",
-      enableSubtitle:
-        "Melhora o ranqueamento da busca profunda (baixa um modelo no primeiro uso)",
       modelTitle: "Modelo de embeddings",
       promptBody: "Insira um id de modelo transformers local.",
       modelPlaceholder: "Xenova/all-MiniLM-L6-v2",
+      ...memoryEmbeddingsTranslationExtension.embeddings,
+      groupTitle: "Busca vetorial",
+      groupFooter:
+        "Opcional: melhore o ranqueamento da busca profunda com um modelo local ou seu próprio endpoint compatível com OpenAI.",
+      mode: {
+        title: "Modo de embeddings",
+        options: {
+          disabledTitle: "Desativado",
+          disabledSubtitle: "Usar ranqueamento somente por texto na busca profunda",
+          balancedTitle: "Equilibrado",
+          balancedSubtitle: "Predefinição local rápida e validada",
+          longContextTitle: "Contexto longo",
+          longContextSubtitle: "Melhor para trechos maiores de conversa",
+          qualityTitle: "Qualidade",
+          qualitySubtitle: "Predefinição local de maior custo para avaliação",
+          customTitle: "Personalizado",
+          customSubtitle: "Escolha seu próprio provedor e modelo",
+        },
+      },
+      provider: {
+        title: "Provedor",
+        options: {
+          localTitle: "Modelo local",
+          localSubtitle: "Gerenciado pelo Happier e baixado no primeiro uso",
+          openAiCompatibleTitle: "Endpoint compatível com OpenAI",
+          openAiCompatibleSubtitle: "Use seu próprio servidor de embeddings e chave de API",
+        },
+      },
+      notSet: "Não definido",
+      secretSet: "Definido",
+      secretNotSet: "Não definido",
+      queryPrefixTitle: "Prefixo da consulta",
+      queryPrefixPromptBody: "Prefixo opcional adicionado às buscas do usuário antes de gerar embeddings.",
+      documentPrefixTitle: "Prefixo do documento",
+      documentPrefixPromptBody: "Prefixo opcional adicionado aos trechos indexados de memória antes de gerar embeddings.",
+      openAi: {
+        baseUrlTitle: "URL base",
+        baseUrlPromptBody: "Insira a URL base do endpoint de embeddings compatível com OpenAI.",
+        modelTitle: "Modelo remoto",
+        modelPromptBody: "Insira o id do modelo de embeddings a ser solicitado ao endpoint remoto.",
+        apiKeyTitle: "Chave de API",
+        apiKeyPromptBody: "Insira a chave de API usada pelo endpoint remoto de embeddings.",
+        dimensionsTitle: "Dimensões",
+        dimensionsPromptBody: "Substituição opcional da dimensão de saída para endpoints que oferecem suporte a isso.",
+      },
+      advanced: {
+        ftsWeightTitle: "Peso do ranqueamento textual",
+        ftsWeightPromptBody: "Peso relativo do ranqueamento full-text do SQLite ao combinar resultados.",
+        embeddingWeightTitle: "Peso do ranqueamento por embeddings",
+        embeddingWeightPromptBody: "Peso relativo da similaridade de embeddings ao combinar resultados.",
+      },
     },
   },
 
@@ -798,7 +1520,7 @@ export const pt: TranslationStructure = {
       },
     },
     settings: {
-      groupTitle: "Subagente",
+      groupTitle: "Subagentes",
       disabled: {
         footer:
           "Execution runs está desativado. Ative Execution Runs em Configurações → Recursos para usar a orientação de delegação.",
@@ -809,6 +1531,32 @@ export const pt: TranslationStructure = {
       },
       footer:
         "As regras são anexadas ao prompt do sistema para que o agente principal saiba quando e como você prefere iniciar execuções de subagentes.",
+      overview: {
+        groupTitle: "Visão geral",
+        footer:
+          "Use esta página para configurar a orientação de subagentes e navegar para configurações relacionadas de provedor, backend e sessão.",
+        explainerTitle: "O que esta página controla",
+        explainerSubtitle:
+          "Orientação de delegação para Subagentes, além de links para configurações específicas de cada provedor.",
+        happierStatusTitle: "Subagentes",
+        happierStatusEnabledSubtitle:
+          "Ativado. Você pode iniciar Subagentes a partir de sessões compatíveis.",
+        happierStatusDisabledSubtitle:
+          "Desativado. Abra as configurações de Recursos para ativar Subagentes.",
+      },
+      related: {
+        groupTitle: "Configurações relacionadas",
+        footer:
+          "A inicialização e o controle de subagentes também dependem do comportamento da sessão, dos provedores e dos backends configurados.",
+        sessionTitle: "Comportamento da sessão",
+        sessionSubtitle:
+          "Envio de mensagens, direcionamento quando ocupado e comportamento de replay/retomada.",
+        providersTitle: "Provedores",
+        providersSubtitle:
+          "Configurações específicas de autenticação, runtime e agentes de cada provedor.",
+        backendsTitle: "Catálogo ACP",
+        backendsSubtitle: "Backends configurados e alvos de inicialização personalizados.",
+      },
       enableInjection: {
         title: "Ativar injeção de orientação",
       },
@@ -842,11 +1590,41 @@ export const pt: TranslationStructure = {
           "Este é o texto (truncado) anexado ao prompt do sistema.",
         systemPromptLabel: "Prompt do sistema (anexado)",
       },
+      providers: {
+        claude: {
+          title: "Agentes em equipe do Claude",
+          footer:
+            "O comportamento de subagentes específico do provedor continua sendo controlado na tela de configurações do provedor.",
+          openTitle: "Opções de subagentes do Claude",
+          openSubtitle:
+            "Gerencie Agent Teams e outros comportamentos de subagentes específicos do Claude.",
+        },
+      },
     },
   },
 
   settings: {
     title: "Configurações",
+
+    // Main settings hub category groups
+      profileAndAccount: 'Perfil e conta',
+      aiAndAgents: 'IA e agentes',
+      sessionsBehavior: 'Sessões e comportamento',
+      general: 'Geral',
+      filesAndSourceControl: 'Arquivos e controle de código-fonte',
+      system: 'Sistema',
+
+    // Renamed / promoted items
+      sessions: 'Sessões',
+      transcript: 'Transcrição',
+      transcriptSubtitle: 'Raciocínio, renderização de ferramentas e exibição de código',
+      permissions: 'Permissões',
+      permissionsSubtitle: 'Modo de permissões e comportamento de aprovações',
+    filesSourceControl: 'Arquivos e controle de código-fonte',
+    filesSourceControlSubtitle: 'Editor, diffs e integração com controle de código-fonte',
+    workspaces: 'Espaços de trabalho',
+    workspacesSubtitle: 'Gerencie workspaces vinculados, locais e checkouts',
+
     connectedAccounts: "Contas conectadas",
     connectedAccountsDisabled: "Os serviços conectados estão desativados.",
     connectAccount: "Conectar conta",
@@ -858,6 +1636,99 @@ export const pt: TranslationStructure = {
     accountSubtitle: "Gerencie os detalhes da sua conta",
     addYourPhone: "Adicionar seu telefone",
     addYourPhoneSubtitle: "Mostre um código QR para entrar no seu telefone",
+    addMachine: "Adicionar uma máquina",
+    machineSetupCurrentMachineTitle: "Este computador",
+    machineSetupCurrentMachineSubtitle: "Inicialize o Happier diretamente neste dispositivo",
+    machineSetupAdoptExistingTitle: "Adotar instalação existente",
+    machineSetupAdoptExistingSubtitle: "Use uma configuração existente do daemon/serviço neste computador",
+    machineSetupAdoptExistingProgressTitle: "Verificando instalação existente",
+    machineSetupAdoptExistingNotReady: "Nenhuma instalação pronta encontrada. Inicie a configuração neste computador.",
+    machineSetupSshMachineTitle: "Máquina remota via SSH",
+    machineSetupSshMachineSubtitle: "Conecte uma dev box, VM ou servidor com SSH",
+    machineSetupStagesTitle: "O que acontece",
+    machineSetupStageConnect: "Conectar e validar o acesso",
+    machineSetupStageInstall: "Instalar o Happier e emparelhar a máquina",
+    machineSetupStageFinish: "Concluir a configuração no terminal integrado",
+    machineSetupComingSoon: "A inicialização de máquinas estará disponível em breve.",
+    machineSetupTaskWaitingForInput: "Aguardando entrada",
+    machineSetupRemoteSshTargetLabel: "Destino SSH",
+    machineSetupRemoteSshAgentAuthLabel: "Usar agente SSH",
+    machineSetupRemoteSshKeyFileAuthLabel: "Usar arquivo de identidade",
+    machineSetupRemoteSshIdentityFileLabel: "Caminho do arquivo de identidade",
+    machineSetupRemoteRelayRuntimeLabel: "Instalar também o runtime do Relay na máquina remota",
+    machineSetupRemoteRelayRuntimeTitle: "Runtime remoto do Relay",
+    machineSetupRemoteRelayRuntimeReadyTitle: "Pronto na máquina remota",
+    machineSetupRemoteRelayRuntimeReadySubtitle: "O runtime do Relay foi instalado durante a configuração por SSH. Use a URL do Relay remoto nas próximas etapas de rede dessa máquina.",
+    machineSetupRemoteRelayRuntimeUrlTitle: "URL do Relay remoto",
+    machineSetupRemoteRelayKeepCurrentTitle: "Manter o Relay atual",
+    machineSetupRemoteRelayKeepCurrentSubtitle: "Salve esta URL do Relay sem alternar.",
+    machineSetupRemoteRelaySwitchTitle: "Alternar para este Relay",
+    machineSetupRemoteRelaySwitchSubtitle: "Alterne agora e continue a configuração com o novo Relay.",
+    machineSetupRemoteRelaySwitchConfirmTitle: "Alternar Relay?",
+    machineSetupRemoteRelaySwitchConfirmBody: ({ relayUrl }: { relayUrl: string }) =>
+      `Alternar o Happier para ${relayUrl} e continuar a configuração?`,
+    machineSetupRemotePromptTrustAction: "Confiar na chave do host",
+    machineSetupRemotePromptReplaceAction: "Substituir a chave salva",
+    machineSetupRemotePromptApproveAction: "Aprovar pareamento",
+    localRelayRuntime: {
+      title: 'Runtime local do Relay',
+      statusTitle: "Estado",
+      statusChecking: 'Verificando o runtime local do Relay',
+      statusNotInstalled: 'Ainda não instalado neste computador',
+      statusStopped: 'Instalado, mas no momento não está em execução',
+      statusRunningHealthy: 'Em execução e respondendo normalmente',
+      statusRunningNeedsAttention: 'Em execução, mas as verificações de saúde precisam de atenção',
+      versionTitle: 'Versão instalada',
+      relayUrlTitle: 'URL local do Relay',
+      installOrUpdateAction: 'Instalar ou atualizar o runtime do Relay',
+      startAction: 'Iniciar o runtime do Relay',
+      stopAction: 'Parar o runtime do Relay',
+      refreshAction: 'Atualizar o estado do Relay',
+      footer: 'Gerencie o Relay self-hosted que está em execução neste computador antes de conectar outros dispositivos.',
+      progressTitle: 'Atualizando o runtime local do Relay',
+      progressStepInspect: 'Inspecionar o runtime local do Relay',
+      progressStepHealth: 'Verificar a saúde do Relay',
+      progressStepInstall: 'Instalar o runtime do Relay',
+      progressStepStart: 'Iniciar o runtime do Relay',
+      progressStepStop: 'Parar o runtime do Relay',
+    },
+    localTailscale: {
+      title: 'Acesso privado com Tailscale',
+      statusTitle: "Estado",
+      statusUnavailable: 'Primeiro inicie o runtime local do Relay',
+      statusIdle: 'Ainda não ativado',
+      statusWorking: 'Configurando acesso privado seguro',
+      statusReady: 'Pronto para uso a partir de outros dispositivos do tailnet',
+      statusInstallRequired: 'Instale o Tailscale para continuar',
+      statusLoginRequired: 'Faça login no Tailscale para continuar',
+      statusNeedsApproval: 'Aguardando aprovação do Tailscale',
+      shareableUrlTitle: 'URL privada compartilhável',
+      approvalTitle: 'Aprovação necessária',
+      approvalSubtitle: 'Conclua o fluxo de aprovação do Tailscale e volte aqui.',
+      installTitle: 'Instalação necessária',
+      installSubtitle: 'Instale o Tailscale e volte aqui.',
+      loginTitle: 'Login necessário',
+      loginSubtitle: 'Conclua o login no Tailscale e volte aqui.',
+      enableAction: 'Ativar acesso privado com Tailscale',
+      refreshAction: 'Verificar novamente o acesso privado',
+      openApprovalAction: 'Abrir aprovação do Tailscale',
+      openInstallAction: 'Abrir download do Tailscale',
+      openLoginAction: 'Abrir login do Tailscale',
+      footer: 'Isso mantém o acesso privado dentro do tailnet. Seu telefone ou outro computador também precisam entrar no mesmo tailnet.',
+      progressTitle: 'Configurando o acesso seguro do Tailscale',
+      progressStepDetect: 'Verificar disponibilidade do Tailscale',
+      progressStepInstall: 'Instalar Tailscale',
+      progressStepLogin: 'Entrar no Tailscale',
+      progressStepServeEnable: 'Ativar o acesso privado ao Relay',
+      progressStepVerifyUrl: 'Verificar a URL compartilhável',
+    },
+    systemTaskStepPrepare: "Preparar tarefa",
+    systemTaskStepInstallRuntime: "Instalar runtime",
+    systemTaskStepFinish: "Concluir configuração",
+    systemTaskCurrentStepLabel: "Etapa atual",
+    systemTaskLatestUpdateLabel: "Última atualização",
+    systemTaskBridgeUnavailable: "As tarefas do sistema ainda não estão disponíveis nesta build.",
+    systemTaskStartFailed: "Não foi possível iniciar a tarefa do sistema.",
     appearance: "Aparência",
     appearanceSubtitle: "Personalize a aparência do aplicativo",
     voiceAssistant: "Assistente de voz",
@@ -875,6 +1746,8 @@ export const pt: TranslationStructure = {
     executionRunsSubtitle: "Execuções em várias máquinas",
     connectedServices: "Serviços conectados",
     connectedServicesSubtitle: "Assinaturas Claude/Codex e perfis OAuth",
+    channelBridges: "Pontes de canais",
+    channelBridgesSubtitle: "Conecte chats externos (Telegram) às sessões",
     featuresTitle: "Recursos",
     featuresSubtitle: "Ativar ou desativar recursos do aplicativo",
     developer: "Desenvolvedor",
@@ -883,7 +1756,7 @@ export const pt: TranslationStructure = {
     actionsSettingsAboutSubtitle:
       "Ative ou desative ações globalmente, por superfície (UI/voz/MCP) e por posicionamento (onde aparecem na interface). Ações desativadas são bloqueadas (fail-closed) em tempo de execução.",
     aboutFooter:
-      "Happier Coder é um cliente móvel para Codex e Claude Code. É totalmente criptografado ponta a ponta e sua conta é armazenada apenas no seu dispositivo. Não é afiliado à Anthropic.",
+      "Happier Coder é um cliente móvel para Codex e Claude Code. Usa criptografia de ponta a ponta por padrão, com restauração da conta nos seus outros dispositivos. Não é afiliado à Anthropic.",
     whatsNew: "Novidades",
     whatsNewSubtitle: "Veja as atualizações e melhorias mais recentes",
     reportIssue: "Relatar um problema",
@@ -912,14 +1785,174 @@ export const pt: TranslationStructure = {
     session: "Sessão",
     sessionSubtitleTmuxEnabled: "Tmux ativado",
     sessionSubtitleMessageSendingAndTmux: "Envio de mensagens e tmux",
-    servers: "Servidores",
-    serversSubtitle: "Servidores salvos, grupos e padrões",
-    systemStatus: "Status do sistema",
-    systemStatusSubtitle: "Servidores, conta, máquinas, daemon",
+        actionsSubtitle: "Escolha onde cada ação aparece no app, na voz e nas integrações.",
+    prompts: "Prompts e habilidades",
+    promptsSubtitle: "Biblioteca de prompts, modelos e pilhas",
+    servers: "Relés",
+    serversSubtitle: "Relays salvos, grupos e padrões",
+			    systemStatus: "Status do sistema",
+			    systemStatusSubtitle: "Relays, conta, máquinas, daemon",
+		    mcpServers: "Servidores MCP",
+		    mcpServersSubtitle: "Gerencie servidores MCP e vínculos",
+		    mcpServersComingSoon: "As configurações de servidores MCP estarão disponíveis em breve.",
+		    mcpServersStrictMode: "Modo estrito",
+		    mcpServersStrictModeSubtitle: "Falhar com bloqueio quando as configurações do servidor MCP forem inválidas.",
+		    mcpServersCatalogTitle: "Catálogo",
+		    mcpServersUnnamed: "Servidor sem nome",
+		    mcpServersEmptyTitle: "Ainda não há servidores MCP",
+		    mcpServersEmptySubtitle: "Adicione servidores MCP para usá-los nas sessões.",
+		    mcpServersAddServer: "Adicionar servidor",
+		    mcpServersAddServerSubtitle: "Criar uma nova entrada de servidor MCP",
+		    mcpServersEditorTitle: "Servidor MCP",
+		    mcpServersPickSecretTitle: "Escolher um segredo",
+		    mcpServersPickSecretNoneSubtitle: "Nenhum segredo selecionado",
+		    mcpServersEditorBasics: "Básico",
+		    mcpServersEditorStdio: "Entrada/saída padrão",
+		    mcpServersEditorRemote: "Remoto",
+		    mcpServersEditorBindings: "Vínculos",
+		    mcpServersFieldName: "Nome",
+		    mcpServersFieldTitle: "Título",
+		    mcpServersFieldTitlePlaceholder: "Título de exibição opcional",
+		    mcpServersFieldTransport: "Transporte",
+		    mcpServersFieldCommand: "Comando",
+		    mcpServersFieldArgs: "Argumentos",
+		    mcpServersFieldUrl: "URL",
+		    mcpServersBindingTitle: "Vínculo",
+		    mcpServersBindingEnabled: "Ativado",
+		    mcpServersBindingEnabledSubtitle: "Ative ou desative este vínculo",
+		    mcpServersBindingTarget: "Destino",
+		    mcpServersBindingTargetSubtitle: "Onde este servidor fica disponível",
+		    mcpServersBindingMachine: "Máquina",
+		    mcpServersBindingMachineSubtitle: "Selecione uma máquina",
+		    mcpServersBindingDeleteSubtitle: "Remover este vínculo",
+		    mcpServersBindingTargetAllMachines: "Todas as máquinas",
+		    mcpServersBindingTargetMachine: ({ machine }: { machine: string }) => `Máquina: ${machine}`,
+		    mcpServersBindingTargetWorkspace: ({ machine, path }: { machine: string; path: string }) =>
+		      `Espaço de trabalho: ${machine} • ${path}`,
+		    mcpServersBindingTargetAllMachinesSubtitle: "Ativar em todas as máquinas",
+		    mcpServersBindingTargetMachineTitle: "Máquina",
+		    mcpServersBindingTargetMachineSubtitle: "Ativar em uma única máquina",
+		    mcpServersBindingTargetWorkspaceTitle: "Espaço de trabalho",
+		    mcpServersBindingTargetWorkspaceSubtitle: "Ativar apenas para um caminho específico de espaço de trabalho",
+		    mcpServersValidationFailed: "As configurações do servidor MCP são inválidas.",
+		    mcpServersServerNotFound: "Servidor não encontrado.",
+		    mcpServersBindingsEmptyTitle: "Ainda não há vínculos",
+		    mcpServersBindingsEmptySubtitle: "Adicione um vínculo para usar este servidor.",
+		    mcpServersAddBinding: "Adicionar vínculo",
+		    mcpServersAddBindingSubtitle: "Ativar este servidor para máquinas ou workspaces",
+		    mcpServersSaveDisabledSubtitle: "Não há alterações para salvar.",
+		    mcpServersDeleteTitle: "Excluir servidor MCP?",
+		    mcpServersDeleteConfirm: ({ name }: { name: string }) => `Excluir "${name}"?`,
+		    mcpServersDeleteSubtitle: "Remover este servidor do seu catálogo",
+		    mcpServersNoMachineSelected: "Nenhuma máquina selecionada",
+		    mcpServersDetectedTitle: "Detectado nas configurações dos provedores",
+		    mcpServersDetectedMachineTitle: "Máquina",
+		    mcpServersDetectedRefreshTitle: "Atualizar servidores detectados",
+		    mcpServersDetectedRefreshSubtitle: "Examinar os arquivos de configuração dos provedores nesta máquina",
+		    mcpServersDetectedWarningsTitle: "Avisos de detecção",
+		    mcpServersDetectedEmptyTitle: "Nenhum servidor MCP detectado",
+		    mcpServersDetectedEmptySubtitle: "Clique em atualizar para examinar as configurações do Claude/Codex/OpenCode.",
+		    mcpServersImportTitle: "Importar servidor MCP?",
+		    mcpServersImportConfirm: ({ provider, name }: { provider: string; name: string }) =>
+		      `Importar "${name}" de ${provider}?`,
+		    mcpServersImportAction: "Importar",
+		    mcpServersBindingSummaryAllMachines: "Todas as máquinas",
+		    mcpServersBindingSummaryMachines: ({ count }: { count: number }) =>
+		      `${count} máquina${count === 1 ? "" : "s"}`,
+		    mcpServersBindingSummaryWorkspaces: ({ count }: { count: number }) =>
+		      `${count} espaço${count === 1 ? " de trabalho" : "s de trabalho"}`,
+		    mcpServersBindingSummaryNone: "Sem vínculo",
+		    mcpServersPickWorkspaceTitle: "Escolher uma raiz de espaço de trabalho",
+		    mcpServersBindingWorkspaceRootTitle: "Raiz do espaço de trabalho",
+		    mcpServersBindingOverridesTitle: "Substituições",
+		    mcpServersBindingOverridesNone: "Sem substituições",
+		    mcpServersBindingOverridesCount: ({ count }: { count: number }) =>
+		      `${count} substituição${count === 1 ? "" : "ões"}`,
+		    mcpServersEditorEnv: "Ambiente",
+		    mcpServersEnvAdd: "Adicionar variável de ambiente",
+		    mcpServersEnvAddSubtitle: "Defina variáveis de ambiente para este servidor",
+		    mcpServersEnvEmptyTitle: "Sem variáveis de ambiente",
+		    mcpServersEnvEmptySubtitle: "Adicione variáveis de ambiente ou use Segredos salvos.",
+		    mcpServersEditorHeaders: "Cabeçalhos",
+		    mcpServersHeadersAdd: "Adicionar cabeçalho",
+		    mcpServersHeadersAddSubtitle: "Defina cabeçalhos HTTP/SSE para este servidor",
+		    mcpServersHeadersEmptyTitle: "Sem cabeçalhos",
+		    mcpServersHeadersEmptySubtitle: "Adicione cabeçalhos se o servidor exigir autenticação.",
+		    mcpServersEnvEditorTitle: "Editar variável de ambiente",
+		    mcpServersHeadersEditorTitle: "Editar cabeçalho",
+		    mcpServersEnvKeyLabel: "Nome da variável de ambiente",
+		    mcpServersEnvKeyPlaceholder: "API_KEY",
+		    mcpServersHeaderKeyLabel: "Nome do cabeçalho",
+		    mcpServersHeaderKeyPlaceholder: "Authorization",
+		    mcpServersValueSourceTitle: "Origem do valor",
+		    mcpServersArgsPlaceholder: "--flag\nvalue",
+		    mcpServersValueSourceLiteral: "Valor literal",
+		    mcpServersValueSourceLiteralSubtitle: "Armazene um valor (com suporte a templates ${VAR})",
+		    mcpServersValueSourceSavedSecret: "Segredo salvo",
+		    mcpServersValueSourceSavedSecretNamed: ({ name }: { name: string }) => `Segredo salvo: ${name}`,
+		    mcpServersValueSourceSavedSecretSubtitle: "Referencie um Segredo salvo",
+		    mcpServersValueLiteralLabel: "Valor",
+		    mcpServersValueLiteralPlaceholder: "Valor ou ${ENV_VAR}",
+		    mcpServersValueSecretLabel: "Segredo salvo",
+		    mcpServersValueSecretSelect: "Selecionar segredo",
+		    mcpServersValueSecretSelectSubtitle: "Escolha um Segredo salvo",
+		    mcpServersKeyInvalid: "A chave é inválida.",
+		    mcpServersKeyAlreadyExists: "A chave já existe.",
+		    mcpServersOverridesStdioTitle: "Substituições de Stdio",
+		    mcpServersOverridesCommandTitle: "Substituir comando",
+		    mcpServersOverridesCommandSubtitle: "Usar um comando diferente para este vínculo",
+		    mcpServersOverridesArgsTitle: "Substituir argumentos",
+		    mcpServersOverridesArgsSubtitle: "Usar argumentos diferentes para este vínculo (em branco = argumentos vazios)",
+		    mcpServersOverridesRemoteTitle: "Substituições remotas",
+		    mcpServersOverridesUrlTitle: "Substituir URL",
+		    mcpServersOverridesUrlSubtitle: "Usar uma URL diferente para este vínculo",
+		    mcpServersOverridesEnvPatchTitle: "Patch de ambiente",
+		    mcpServersOverridesEnvPatchEmptyTitle: "Sem substituições de ambiente",
+		    mcpServersOverridesEnvPatchEmptySubtitle: "Adicione substituições ou exclusões para variáveis de ambiente.",
+		    mcpServersOverridesHeadersPatchTitle: "Patch de cabeçalhos",
+		    mcpServersOverridesHeadersPatchEmptyTitle: "Sem substituições de cabeçalhos",
+		    mcpServersOverridesHeadersPatchEmptySubtitle: "Adicione substituições ou exclusões para cabeçalhos.",
+		    mcpServersOverridesDeleteValue: "Excluir esta chave neste vínculo",
+		    mcpServersOverridesEnvPatchAddTitle: "Adicionar substituição de ambiente",
+		    mcpServersOverridesEnvPatchAddSubtitle: "Defina ou substitua uma variável de ambiente para este vínculo",
+		    mcpServersOverridesEnvPatchDeleteTitle: "Excluir chave de ambiente",
+		    mcpServersOverridesEnvPatchDeleteSubtitle: "Remova uma variável de ambiente deste vínculo",
+		    mcpServersOverridesHeadersPatchAddTitle: "Adicionar substituição de cabeçalho",
+		    mcpServersOverridesHeadersPatchAddSubtitle: "Defina ou substitua um cabeçalho para este vínculo",
+		    mcpServersOverridesHeadersPatchDeleteTitle: "Excluir chave de cabeçalho",
+		    mcpServersOverridesHeadersPatchDeleteSubtitle: "Remova um cabeçalho deste vínculo",
+		    mcpServersOverridesDeleteEnvTitle: "Excluir chave de ambiente",
+		    mcpServersOverridesDeleteEnvPrompt: "Insira o nome da variável de ambiente a excluir deste vínculo.",
+		    mcpServersOverridesDeleteHeaderTitle: "Excluir chave de cabeçalho",
+		    mcpServersOverridesDeleteHeaderPrompt: "Insira o nome do cabeçalho a excluir deste vínculo.",
+		    mcpServersOverridesCommandRequired: "A substituição de comando está ativada, mas vazia.",
+		    mcpServersOverridesUrlRequired: "A substituição de URL está ativada, mas vazia.",
+		    mcpServersTestTitle: "Teste",
+		    mcpServersTestFooter: "Executa na máquina selecionada. Nenhum segredo é mostrado nos resultados.",
+		    mcpServersTestMachineTitle: "Testar na máquina",
+		    mcpServersTestBindingTitle: "Usar vínculo",
+		    mcpServersTestNoBinding: "Sem vínculo",
+		    mcpServersTestNoBindingSubtitle: "Testar sem substituições do vínculo",
+		    mcpServersTestDirectoryTitle: "Diretório de trabalho",
+		    mcpServersTestDirectorySubtitle: "Toque para definir um diretório",
+		    mcpServersTestDirectoryPrompt: "Insira o diretório de trabalho para o teste.",
+		    mcpServersTestRunTitle: "Testar servidor",
+		    mcpServersTestRunSubtitle: "Conectar e listar ferramentas",
+		    mcpServersTestResultOkTitle: "Teste concluído com sucesso",
+		    mcpServersTestResultOkSubtitle: ({
+		      toolCount,
+		      durationMs,
+		    }: {
+		      toolCount: number;
+		      durationMs: number;
+		    }) => `${toolCount} ferramentas · ${durationMs}ms`,
+		    mcpServersTestResultErrorTitle: "Teste falhou",
+        ...mcpServersUxTranslationExtension,
+        ...acpCatalogTranslationExtension.settings,
 
-    // Dynamic settings messages
-    accountConnected: ({ service }: { service: string }) =>
-      `Conta ${service} conectada`,
+		    // Dynamic settings messages
+		    accountConnected: ({ service }: { service: string }) =>
+		      `Conta ${service} conectada`,
     machineStatus: ({
       name,
       status,
@@ -927,22 +1960,22 @@ export const pt: TranslationStructure = {
       name: string;
       status: "online" | "offline";
     }) => `${name} está ${status === "online" ? "online" : "offline"}`,
-  featureToggled: ({
-      feature,
-      enabled,
-    }: {
-      feature: string;
-      enabled: boolean;
-    }) => `${feature} ${enabled ? "ativado" : "desativado"}`,
-  },
+		  featureToggled: ({
+		      feature,
+		      enabled,
+		    }: {
+		      feature: string;
+		      enabled: boolean;
+		    }) => `${feature} ${enabled ? "ativado" : "desativado"}`,
+		  },
 
-  systemStatus: {
-    sections: {
-      appHealth: "Saúde do app e sincronização",
-      currentServer: "Servidor atual",
+	  systemStatus: {
+	    sections: {
+	      appHealth: "Saúde do app e sincronização",
+	      currentServer: "Relay atual",
       identity: "Identidade conectada",
-      configuredServers: "Servidores configurados",
-      machinesActiveServer: "Máquinas (servidor ativo)",
+      configuredServers: "Relays configurados",
+      machinesActiveServer: "Máquinas (relay ativo)",
       machinesOtherServer: ({ server }: { server: string }) => `Máquinas (${server})`,
       actions: "Ações",
     },
@@ -954,14 +1987,14 @@ export const pt: TranslationStructure = {
       lastSync: "Última sincronização",
     },
     server: {
-      activeServer: "Servidor ativo",
+      activeServer: "Relay ativo",
     },
     identity: {
       accountId: "ID da conta",
       username: "Nome de usuário",
     },
     servers: {
-      noneConfigured: "Nenhum servidor configurado",
+      noneConfigured: "Nenhum relay configurado",
       active: "Ativo",
     },
     machines: {
@@ -973,10 +2006,10 @@ export const pt: TranslationStructure = {
       online: "Conectada",
       offline: "Desconectada",
       fetchDoctorSnapshot: {
-        loading: "Buscando servidor/conta do daemon…",
+        loading: "Buscando relay/conta do daemon…",
         invalid: "Não foi possível ler o doctor snapshot da máquina",
       },
-      daemonAttributionUnknown: "Servidor/conta do daemon: desconhecido",
+      daemonAttributionUnknown: "Relay/conta do daemon: desconhecido",
       daemonAttribution: ({ serverUrl, accountId }: { serverUrl: string; accountId: string }) =>
         `Daemon: ${serverUrl} • ${accountId}`,
       daemonAttributionAge: ({ age }: { age: string }) => `Última verificação: ${age}`,
@@ -991,9 +2024,9 @@ export const pt: TranslationStructure = {
     },
     actions: {
       runDiagnosis: "Executar diagnóstico",
-      runDiagnosisSubtitle: "Detecta incompatibilidades de servidor/conta/daemon",
+      runDiagnosisSubtitle: "Detecta incompatibilidades de relay/conta/daemon",
       refreshMachineAttribution: "Atualizar atribuição do daemon",
-      refreshMachineAttributionSubtitle: "Busca servidor/conta do daemon para algumas máquinas online",
+      refreshMachineAttributionSubtitle: "Busca relay/conta do daemon para algumas máquinas online",
       copyJson: "Copiar JSON de Status do sistema",
       copyJsonSubtitle: "Compartilhe um snapshot redigido para suporte",
     },
@@ -1010,7 +2043,7 @@ export const pt: TranslationStructure = {
       findings: "Achados",
     },
     overview: {
-      activeServer: "Servidor ativo",
+      activeServer: "Relay ativo",
       account: "Conta",
       onlineMachines: "Máquinas online (servidor ativo)",
       cachedAttribution: ({ count }: { count: number }) => `${count} doctor snapshot(s) em cache disponível(is)`,
@@ -1383,23 +2416,15 @@ export const pt: TranslationStructure = {
         promptMessage: "Exemplo: 26214400 para 25MB.",
         invalidValueMessage: "Insira um número entre 1024 e 1073741824.",
       },
-      uploadTtl: {
-        title: "TTL do upload (ms)",
-        promptTitle: "TTL do upload (ms)",
-        promptMessage:
-          "Por quanto tempo um upload pode ficar ocioso antes de expirar.",
-        invalidValueMessage: "Insira um número entre 5000 e 3600000.",
-      },
-      chunkSize: {
-        title: "Tamanho de chunk preferido (bytes)",
-        promptTitle: "Tamanho de chunk preferido (bytes)",
-        promptMessage: "O CLI pode limitar isso a faixas seguras.",
-        invalidValueMessage: "Insira um número entre 4096 e 1048576.",
-      },
     },
   },
 
   settingsSourceControl: {
+    title: 'Arquivos e controle de código-fonte',
+    editor: 'Editor de arquivos',
+    editorFooter: 'Configure o comportamento do editor de arquivos.',
+    editorAutoSave: 'Salvamento automático',
+    editorAutoSaveDescription: 'Salva arquivos automaticamente após a edição.',
     commitStrategy: {
       title: "Estratégia de commit",
       footer:
@@ -1578,12 +2603,145 @@ export const pt: TranslationStructure = {
     },
   },
 
+  settingsDesktop: {
+    title: 'Desktop',
+    footer: 'Controls Tauri desktop integrations on this computer.',
+    startOnLoginTitle: 'Launch at login',
+    startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',
+  },
+
   settingsNotifications: {
+    badges: {
+      title: 'Badges neste dispositivo',
+      footer: 'Escolha quais atividades contribuem para o badge do ícone do app neste dispositivo.',
+      enabledTitle: 'Ativar badges',
+      enabledSubtitle: 'Mostrar um badge no ícone do app quando houver atividade que exija atenção',
+      unreadTitle: 'Sessões não lidas',
+      unreadSubtitle: 'Contar sessões que têm atividade de transcrição não lida',
+      permissionRequestsTitle: 'Solicitações de permissão',
+      permissionRequestsSubtitle: 'Contar sessões aguardando aprovação',
+      userActionsTitle: 'Solicitações de ação',
+      userActionsSubtitle: 'Contar sessões aguardando uma resposta ou confirmação',
+      queuedTitle: 'Entrada de usuário em fila',
+      queuedSubtitle: 'Contar sessões com trabalho em fila que você ainda precisa enviar',
+      friendRequestsTitle: 'Solicitações de amizade',
+      friendRequestsSubtitle: 'Adicionar solicitações de amizade recebidas ao badge numérico',
+      desktopDotTitle: 'Ponto no dock do desktop',
+      desktopDotSubtitle: 'No desktop, mostrar um ponto quando houver apenas atividade da caixa de entrada não numérica',
+    },
+    local: {
+      title: 'Notificações locais neste dispositivo',
+      footer: 'Esses controles afetam como as notificações aparecem neste dispositivo específico.',
+      enabledSubtitle: 'Permitir que este dispositivo mostre notificações locais',
+      readyTitle: 'Pronto',
+      readySubtitle: 'Mostrar uma notificação local quando um turno terminar',
+      readyPreviewTitle: 'Pré-visualizações de mensagens prontas',
+      readyPreviewSubtitle: 'Incluir a mensagem mais recente do assistente nas notificações de pronto deste dispositivo',
+      permissionRequestsTitle: 'Solicitações de permissão',
+      permissionRequestsSubtitle: 'Mostrar uma notificação local quando uma sessão precisar de aprovação',
+      userActionsTitle: 'Solicitações de ação',
+      userActionsSubtitle: 'Mostrar uma notificação local quando uma sessão precisar da sua resposta',
+    },
     push: {
       title: "Notificações push",
       footer:
         "Essas notificações são enviadas do seu CLI via Expo quando sua sessão precisa de atenção.",
       enabledSubtitle: "Permitir notificações push nesta conta",
+      troubleshootTitle: "Solucionar problemas",
+      troubleshootSubtitle: "Ver permissões e dispositivos registrados",
+    },
+    pushTroubleshooting: {
+      status: {
+        title: "Estado",
+        footer: "Verifica a configuração da conta, a permissão do sistema e o estado de registro no servidor.",
+        accountSettingTitle: "Configuração da conta",
+        accountSettingEnabledSubtitle: "As notificações push estão ativadas nesta conta",
+        accountSettingDisabledSubtitle: "As notificações push estão desativadas nesta conta",
+      },
+      permission: {
+        title: "Permissão",
+        loading: "Carregando…",
+        loadingSubtitle: "Verificando permissões de notificações",
+        unsupported: "Não suportado",
+        unsupportedSubtitle: "As permissões push não estão disponíveis na web.",
+        allowed: "Permitido",
+        allowedSubtitle: "As notificações estão permitidas para este app.",
+        denied: "Negado",
+        notRequested: "Não solicitado",
+        canAskAgainSubtitle: "Toque para solicitar permissão.",
+        openSettingsSubtitle: "Toque para abrir as configurações do sistema.",
+      },
+      token: {
+        title: "Este dispositivo",
+        subtitle: ({ fingerprint }: { fingerprint: string }) =>
+          `Token atual: ${fingerprint}`,
+        unavailableSubtitle: "Não foi possível obter um token push do Expo.",
+        registered: "Registrado",
+      },
+      actions: {
+        title: "Ações",
+        footer: "Use estas etapas se as notificações push não estiverem chegando.",
+        requestPermissionTitle: "Solicitar permissão",
+        requestPermissionSubtitle: "Peça ao sistema a permissão de notificações.",
+        reregisterTitle: "Registrar o token novamente",
+        reregisterSubtitle: "Enviar novamente o token deste dispositivo para o servidor.",
+        refreshTitle: "Atualizar",
+        refreshSubtitle: "Recarregar permissão, token e dispositivos do servidor.",
+      },
+      devices: {
+        title: "Dispositivos registrados",
+        footer: ({ count, serverUrl }: { count: string; serverUrl: string }) =>
+          `${count} token${Number(count) === 1 ? "" : "s"} em ${serverUrl}`,
+        emptyTitle: "Nenhum dispositivo",
+        emptySubtitle: "Nenhum token push está registrado no servidor para esta conta.",
+        clientServerUrl: ({ url }: { url: string }) => `Servidor: ${url}`,
+        registeredAt: ({ at }: { at: string }) => `Registrado: ${at}`,
+        lastSeenAt: ({ at }: { at: string }) => `Visto por último: ${at}`,
+        thisDevice: "Este dispositivo",
+      },
+      loadError: "Falha ao carregar o status das notificações push.",
+      authRequired: "Faça login para gerenciar notificações push.",
+      remove: {
+        confirmTitle: "Remover dispositivo",
+        confirmBody: ({ fingerprint }: { fingerprint: string }) =>
+          `Remover o token push ${fingerprint}?`,
+        error: "Falha ao remover o token push.",
+      },
+    },
+    webhooks: {
+      title: 'Notificações por webhook',
+      footer: 'Envie notificações de atividade remota para endpoints de webhook adicionais nesta conta.',
+      addTitle: 'Adicionar webhook',
+      addSubtitle: 'Entregar notificações para outro endpoint',
+      emptyTitle: 'Nenhum canal de webhook',
+      emptySubtitle: 'Adicione um webhook para entregar eventos de atividade remota fora do Expo push.',
+      enabledTitle: 'Ativar webhook',
+      enabledSubtitle: 'As notificações por webhook estão ativadas',
+      disabledSubtitle: 'As notificações por webhook estão desativadas',
+      channelEnabledSubtitle: 'Permitir que este endpoint receba notificações de atividade',
+      urlPromptTitle: 'URL do webhook',
+      urlPromptSubtitle: 'Insira a URL de destino para este webhook de notificação.',
+      urlPromptPlaceholder: 'https://hooks.example.test/notify',
+      invalidUrlTitle: 'URL de webhook inválida',
+      invalidUrlSubtitle: 'Insira uma URL HTTP ou HTTPS válida.',
+      deleteTitle: 'Remover webhook',
+      deleteConfirm: ({ url }: { url: string }) => `Parar de enviar notificações para ${url}?`,
+      signingSecretTitle: 'Segredo de assinatura',
+      signingSecretEmptySubtitle: 'Adicione um segredo compartilhado para assinar as cargas úteis do webhook',
+      signingSecretConfiguredSubtitle: 'As cargas úteis do webhook são assinadas com um segredo compartilhado',
+      signingSecretPromptTitle: 'Segredo de assinatura do webhook',
+      signingSecretPromptSubtitleAdd: 'Insira um segredo compartilhado para assinar a carga útil deste webhook.',
+      signingSecretPromptSubtitleReplace: 'Insira um novo segredo compartilhado para substituir o segredo de assinatura existente.',
+      signingSecretPromptPlaceholder: 'shared-secret',
+      signingSecretClearAction: 'Limpar segredo',
+      readyTitle: 'Pronto',
+      readySubtitle: 'Enviar quando um turno terminar e o agente estiver aguardando seu comando',
+      readyPreviewTitle: 'Pré-visualizações de mensagens prontas',
+      readyPreviewSubtitle: 'Incluir o texto da mensagem mais recente do assistente nas notificações de pronto deste webhook',
+      permissionRequestsTitle: 'Solicitações de permissão',
+      permissionRequestsSubtitle: 'Enviar quando uma sessão estiver bloqueada aguardando aprovação',
+      userActionsTitle: 'Solicitações de ação',
+      userActionsSubtitle: 'Enviar quando uma sessão precisar de uma resposta ou confirmação',
     },
     foregroundBehavior: {
       title: "Notificações no app",
@@ -1604,6 +2762,10 @@ export const pt: TranslationStructure = {
         subtitle:
           "Notificar quando um turno termina e o agente está aguardando seu comando",
       },
+      readyPreview: {
+        title: 'Pré-visualizações de mensagens prontas',
+        subtitle: 'Incluir o texto da mensagem mais recente do assistente nas notificações push de turnos prontos',
+      },
       permissionRequests: {
         title: "Solicitações de permissão",
         subtitle:
@@ -1623,6 +2785,12 @@ export const pt: TranslationStructure = {
         deny: 'Negar',
         answer: 'Responder',
       },
+      activity: {
+        defaultSessionTitle: 'Sessão',
+        readyFallbackBody: 'O turno terminou. Abra a sessão para continuar.',
+        permissionFallbackBody: 'Aprovação necessária.',
+        userActionFallbackBody: 'Esta sessão precisa da sua resposta.',
+      },
       channels: {
         default: 'Padrão',
         permissionRequests: 'Solicitações de permissão',
@@ -1635,6 +2803,10 @@ export const pt: TranslationStructure = {
         entrySubtitle: "Configure opções específicas do provedor",
         footer:
         "Configure opções específicas do provedor. Essas configurações podem afetar o comportamento da sessão.",
+      configuration: 'Configuração',
+      cliConnection: 'Conexão CLI',
+      capabilities: 'Capacidades',
+      models: 'Modelos',
       providerSubtitle: "Configurações específicas do provedor",
       stateEnabled: "Ativado",
       stateDisabled: "Desativado",
@@ -1655,16 +2827,17 @@ export const pt: TranslationStructure = {
       localControlTitle: "Controle local",
       resumeSupportSupported: "Suportado",
       resumeSupportSupportedExperimental: "Suportado (em testes)",
-      resumeSupportRuntimeGatedAcpLoadSession:
-        "Limitado em runtime via ACP loadSession",
       resumeSupportNotSupported: "Não suportado",
       sessionModeNone: "Sem modos ACP",
       sessionModeAcpPolicyPresets: "Predefinições de políticas ACP",
       sessionModeAcpAgentModes: "Modos de agente ACP",
+      sessionModeDynamicPolicyModes: "Modos dinâmicos de política",
+      sessionModeDynamicAgentModes: "Modos dinâmicos de agente",
       sessionModeStaticAgentModes: "Modos de agente estáticos",
       runtimeSwitchNone: "Sem troca em tempo de execução",
       runtimeSwitchMetadataGating: "Limitado por metadados",
       runtimeSwitchAcpSetSessionMode: "ACP: setSessionMode",
+      runtimeSwitchSessionModeApi: "API de modo de sessão",
       runtimeSwitchProviderNative: "Nativo do provedor",
       modelsTitle: "Modelos",
       modelSelectionTitle: "Seleção de modelo",
@@ -1688,6 +2861,35 @@ export const pt: TranslationStructure = {
       installSetupTitle: "Instalação / configuração",
       installInfoSeeSetupGuide: "Ver guia de configuração",
       installInfoUseProviderCliInstaller: "Use o instalador CLI do provedor",
+      setup: {
+          selectionFooter: "Escolha um ou mais provedores e conclua um de cada vez na máquina selecionada.",
+          startTitle: "Configurar provedores",
+          startDescription: "Coloque os provedores selecionados na fila e siga a instalação e o login em um único fluxo canônico.",
+          queueTitle: "Fila de configuração de provedores",
+          queueDescription: ({ provider }: { provider: string }) => `Conclua ${provider} e continue para o próximo provedor na fila.`,
+          activeDescription: "Provedor atual na fila",
+          activeStatus: "Em andamento",
+          completedStatus: "Concluído",
+          skippedStatus: "Ignorado",
+          skipAction: "Ignorar este provedor",
+          completedTitle: "Configuração de provedores concluída",
+          completedDescription: "Você chegou ao fim da fila de provedores selecionada.",
+      },
+      cliSourcePreference: {
+        title: "Preferência da origem da CLI",
+        subtitle:
+          "Escolha se o Happier deve preferir a CLI do sistema ou a instalação gerenciada quando ambas existirem.",
+        options: {
+          systemFirst: {
+            title: "Preferir instalação do sistema",
+            subtitle: "Preferir a CLI já instalada nesta máquina.",
+          },
+          managedFirst: {
+            title: "Preferir instalação gerenciada",
+            subtitle: "Preferir a CLI instalada pelo Happier para este provedor.",
+          },
+        },
+      },
       cliInstaller: {
         installTitle: ({ provider }: { provider: string }) =>
           `Instalar ${provider} CLI`,
@@ -1699,6 +2901,12 @@ export const pt: TranslationStructure = {
           "Instala o CLI do provedor na máquina selecionada (best-effort).",
         reinstallSubtitle:
           "Executa novamente o instalador do provedor mesmo se o CLI já estiver presente.",
+        confirmInstallTitle: ({ provider }: { provider: string }) => `Instalar ${provider} CLI?`,
+        confirmReinstallTitle: ({ provider }: { provider: string }) => `Reinstalar ${provider} CLI?`,
+        confirmBody: ({ provider }: { provider: string }) =>
+          `Isto executará os comandos do instalador de ${provider} na máquina selecionada. Continue apenas se confiar no provedor.`,
+        confirmInstallConfirm: "Instalar",
+        confirmReinstallConfirm: "Reinstalar",
         noMachineSelected: "Nenhuma máquina selecionada.",
         installNotSupported: "Instalação não suportada nesta máquina.",
         installFailed: "Falha na instalação.",
@@ -1706,15 +2914,231 @@ export const pt: TranslationStructure = {
         logPath: ({ logPath }: { logPath: string }) => `Log: ${logPath}`,
       },
       setupGuideUrlTitle: "URL do guia de configuração",
+      authentication: {
+        title: "Autenticação",
+        footer: "Revise o estado de autenticação local da CLI e inicie sessão quando houver suporte.",
+        terminalTitle: "Terminal de login do provedor",
+        logInTitle: "Iniciar sessão",
+        logInSubtitle: "Abra um terminal e execute o fluxo de login do provedor nesta máquina.",
+        reauthenticateTitle: "Reautenticar",
+        reauthenticateSubtitle: "Abra um terminal e renove o login do provedor nesta máquina.",
+        checkNowTitle: "Verificar agora",
+        checkNowSubtitle: "Atualize o estado de autenticação local detectado.",
+        statusTitle: "Estado",
+        loggedInAsTitle: "Sessão iniciada como",
+        methodTitle: "Método de autenticação",
+        sourceTitle: "Origem das credenciais",
+        reasonTitle: "Problema",
+        lastCheckedTitle: "Última verificação",
+        stateUnknown: "Desconhecido",
+        stateLoggedIn: "Sessão iniciada",
+        stateLoggedOut: "Sessão encerrada",
+        methods: {
+          apiKeyEnv: "Variável de ambiente da chave de API",
+          authTokenEnv: "Variável de ambiente do token de autenticação",
+          credentialsFile: "Arquivo de credenciais",
+          oauthCli: "Login OAuth da CLI",
+          configFile: "Arquivo de configuração",
+          gcloudAdc: "Credenciais padrão do aplicativo Google Cloud",
+          unknown: "Desconhecido",
+        },
+        reasons: {
+          missingCredentials: "Credenciais ausentes",
+          expired: "Credenciais expiradas",
+          cliMissing: "CLI não instalado",
+          probeFailed: "Falha na verificação de estado",
+          timeout: "A verificação de estado excedeu o tempo limite",
+          unsupported: "A autenticação local não é suportada",
+          interactiveBlocked: "O login interativo está bloqueado",
+          notConfigured: "Não configurado",
+        },
+        sources: {
+          environment: "Ambiente",
+          file: "Arquivo",
+          command: "Comando",
+          mixed: "Misto",
+        },
+      },
       connectedServiceTitle: "Serviço conectado",
       notFoundTitle: "Provedor não encontrado",
       notFoundSubtitle: "Este provedor não tem tela de configurações.",
       noOptionsAvailable: "Sem opções disponíveis",
       invalidNumber: "Número inválido",
     invalidJson: "JSON inválido",
+      plugins: {
+            claude: {
+                title: "Claude (remoto)",
+                sections: {
+                    claudeCodeExperiments: {
+                        title: "Experimentos do Claude Code",
+                        footer: "Estas configuracoes se aplicam tanto as sessoes locais do Claude (terminal) quanto as remotas (Agent SDK) iniciadas pelo Happier."
+                    },
+                    claudeRemoteSdk: {
+                        title: "Claude Agent SDK (modo remoto)",
+                        footer: "O modo remoto executa o Claude na sua maquina, mas controlado pela interface do Happier. O modo local e a TUI do Claude Code no terminal. Estas configuracoes afetam apenas o modo remoto."
+                    }
+                },
+                fields: {
+                    claudeCodeExperimentalAgentTeamsEnabled: {
+                        title: "Forcar ativacao do Agent Teams",
+                        subtitle: "Ativa o Agent Teams experimental do Claude Code (enxame de agentes) em todas as sessoes do Claude iniciadas pelo Happier."
+                    },
+                    claudeRemoteAgentSdkEnabled: {
+                        title: "Usar Agent SDK (remoto)",
+                        subtitle: "Usa o @anthropic-ai/claude-agent-sdk oficial no modo remoto."
+                    },
+                    claudeRemoteSettingSourcesV2: {
+                        title: "Fontes de configuracao",
+                        subtitle: "Controla quais configuracoes do Claude sao carregadas.",
+                        options: {
+                            user: {
+                                title: "Usuario",
+                                subtitle: "Carrega a configuracao global de usuario do Claude."
+                            },
+                            project: {
+                                title: "Projeto",
+                                subtitle: "Carrega as configuracoes do repositorio (incluindo CLAUDE.md)."
+                            },
+                            local: {
+                                title: "Local",
+                                subtitle: "Carrega substituicoes apenas locais."
+                            }
+                        }
+                    },
+                    claudeLocalPermissionBridgeEnabled: {
+                        title: "Experimental: ponte local de permissoes",
+                        subtitle: "Encaminha pedidos de permissao do modo local do Claude para o Happier, para que voce possa aprovar ou negar pela interface."
+                    },
+                    claudeLocalPermissionBridgeWaitIndefinitely: {
+                        title: "Manter pedidos abertos ate responder",
+                        subtitle: "Quando ativado, o Happier mantem os pedidos de permissao local do Claude pendentes ate voce aprovar ou negar pela interface."
+                    },
+                    claudeLocalPermissionBridgeTimeoutSeconds: {
+                        title: "Tempo limite opcional de permissao (segundos)",
+                        subtitle: "Usado apenas quando a espera indefinida estiver desligada. Depois desse tempo, o Happier volta ao prompt de terminal do Claude."
+                    },
+                    claudeRemoteEnableFileCheckpointing: {
+                        title: "Checkpoints de arquivo + /rewind",
+                        subtitle: "Ativa checkpoints de arquivo e /rewind (somente arquivos; nao rebobina a conversa). Use /checkpoints para listar e /rewind --confirm para aplicar (mais sobrecarga)."
+                    },
+                    claudeRemoteMaxThinkingTokens: {
+                        title: "Maximo de tokens de raciocinio",
+                        subtitle: "Limita o orcamento interno de raciocinio do Claude (null = padrao)."
+                    },
+                    claudeRemoteDisableTodos: {
+                        title: "Desativar TODOs",
+                        subtitle: "Impede que o Claude crie itens TODO no modo remoto."
+                    },
+                    claudeRemoteStrictMcpServerConfig: {
+                        title: "Configuracao estrita de servidor MCP",
+                        subtitle: "Falha se qualquer configuracao de servidor MCP for invalida."
+                    },
+                    claudeRemoteAdvancedOptionsJson: {
+                        title: "Opcoes avancadas (JSON)",
+                        subtitle: "Substituicoes avancadas do Agent SDK para usuarios experientes (validadas no cliente)."
+                    }
+                }
+            },
+            opencode: {
+                title: "OpenCode",
+                sections: {
+                    backendMode: {
+                        title: "Modo de backend",
+                        footer: "O modo servidor libera perguntas e fork nativo. O modo ACP e um fallback legado."
+                    },
+                    server: {
+                        title: "Conexao do servidor",
+                        footer: "Deixe vazio para usar o ciclo de vida do servidor OpenCode gerenciado pelo Happier. Defina uma URL http(s) absoluta para se conectar a um servidor OpenCode existente."
+                    }
+                },
+                fields: {
+                    opencodeBackendMode: {
+                        title: "Modo de backend do OpenCode",
+                        subtitle: "Escolha o backend de integracao.",
+                        options: {
+                            server: {
+                                title: "Servidor (recomendado)",
+                                subtitle: "Usa as APIs de servidor do OpenCode para mais recursos e confiabilidade."
+                            },
+                            acp: {
+                                title: "ACP (legado)",
+                                subtitle: "Roteia o OpenCode via ACP; com menos recursos."
+                            }
+                        }
+                    },
+                    opencodeServerBaseUrl: {
+                        title: "URL de servidor OpenCode existente",
+                        subtitle: "Substituicao opcional para um servidor OpenCode gerenciado pelo usuario."
+                    }
+                }
+            },
+            auggie: {
+                title: "Auggie"
+            },
+            copilot: {
+                title: "Copilot"
+            },
+            customAcp: {
+                title: "ACP personalizado"
+            },
+            gemini: {
+                title: "Gemini"
+            },
+            kilo: {
+                title: "Kilo"
+            },
+            kimi: {
+                title: "Kimi"
+            },
+            kiro: {
+                title: "Kiro"
+            },
+            pi: {
+                title: "Pi"
+            },
+            qwen: {
+                title: "Qwen Code"
+            },
+            codex: {
+          title: "Codex",
+          sections: {
+            backendMode: {
+              title: "Modo de roteamento",
+              footer:
+                "Escolha como o Codex é roteado. App Server é o padrão recomendado. Alternância local/remota e retomada funcionam com App Server; ACP continua disponível como fallback legado.",
+            },
+            installOverrides: {
+              title: "Substituições de origem de instalação",
+              footer:
+                "Opcional. Deixe vazio para usar as origens de instalação padrão.",
+            },
+          },
+          fields: {
+            codexBackendMode: {
+              title: "Modo de roteamento do Codex",
+              subtitle: "Selecione App Server, ACP ou MCP.",
+              options: {
+                appServer: {
+                  title: "Servidor do app",
+                  subtitle: "Modo oficial recomendado do Codex app-server",
+                },
+                acp: {
+                  title: "ACP",
+                  subtitle: "Roteie o Codex via ACP (codex-acp)",
+                },
+                mcp: {
+                  title: "MCP",
+                  subtitle: "Modo MCP padrão do Codex",
+                },
+              },
+            },
+          },
+        },
+      },
   },
 
   settingsAppearance: {
+    ...settingsAppearanceTranslationExtension,
     // Appearance settings screen
     theme: "Tema",
     themeDescription: "Escolha seu esquema de cores preferido",
@@ -1811,6 +3235,25 @@ export const pt: TranslationStructure = {
       xlarge: "Muito grande",
       xxlarge: "Muito muito grande",
     },
+    itemDensity: "Densidade dos itens",
+    itemDensityDescription: "Escolha o tamanho das linhas de listas e configurações em todo o app",
+    itemDensityOptions: {
+      comfortable: "Padrão",
+      comfortableDescription: "Usa o tamanho e espaçamento padrão das linhas",
+      cozy: "Intermediário",
+      cozyDescription: "Usa linhas um pouco mais compactas sem chegar ao layout compacto",
+      compact: "Compacto",
+      compactDescription: "Mostra mais linhas na tela com espaçamento reduzido",
+    },
+  },
+
+  settingsChannelBridges: {
+    unsupported: "As pontes de canais não são suportadas neste ambiente.",
+    enableInFeatures: "Ativar pontes de canais",
+    enableInFeaturesSubtitle: "As pontes de canais são experimentais e ficam desativadas por padrão.",
+    description: "As pontes de canais permitem anexar chats externos (Telegram) às sessões e encaminhar mensagens ao agente.",
+    telegramTitle: "Telegram",
+    telegramFooter: "Configure o Telegram via CLI e depois gerencie os vínculos no Telegram com /sessions, /attach, /detach, /help.",
   },
 
   settingsFeatures: {
@@ -1868,6 +3311,9 @@ export const pt: TranslationStructure = {
       expFilesEditor: "Editor de arquivos embutido",
       expFilesEditorSubtitle:
         "Ativar edição de arquivos diretamente no navegador de arquivos (Monaco na web/desktop, CodeMirror no nativo)",
+      expEmbeddedTerminal: "Terminal embutido",
+      expEmbeddedTerminalSubtitle:
+        "Abra um terminal real dentro das sessões.",
       expSessionType: "Seletor de tipo de sessão",
       expSessionTypeSubtitle:
         "Mostrar o seletor de tipo de sessão (simples vs worktree)",
@@ -1887,9 +3333,13 @@ export const pt: TranslationStructure = {
       expConnectedServicesQuotas: "Cotas de serviços conectados",
       expConnectedServicesQuotasSubtitle:
         "Mostrar badges de cota e medidores de uso para serviços conectados",
+      expChannelBridges: "Pontes de canal",
+      expChannelBridgesSubtitle: "Conecte Telegram e outros canais de chat a sessões do Happier (experimental)",
       expMemorySearch: "Busca de memória",
       expMemorySearchSubtitle:
         "Ativar telas e configurações de busca de memória local",
+    expSessionsDirect: "Sessões diretas",
+    expSessionsDirectSubtitle: "Liste e abra na barra lateral sessões diretas apoiadas pelo provedor",
     expFriends: "Amigos",
     expFriendsSubtitle: "Ative os recursos de amigos (aba Caixa de entrada e compartilhamento de sessões)",
     webFeatures: "Recursos web",
@@ -1954,6 +3404,9 @@ export const pt: TranslationStructure = {
     connectionTimeout: "Tempo limite da conexão esgotado",
     authenticationFailed: "Falha na autenticação",
     permissionDenied: "Permissão negada",
+    permissionDeniedReadOnlyMode: "Negado pelo modo Somente leitura (ações de escrita são negadas).",
+    permissionCanceled: "Permissão cancelada",
+    permissionCanceledSessionInactive: "A sessão está inativa — esta solicitação de permissão não pode ser aprovada.",
       fileNotFound: "Arquivo não encontrado",
       invalidFormat: "Formato inválido",
       operationFailed: "Operação falhou",
@@ -1966,6 +3419,12 @@ export const pt: TranslationStructure = {
       sessionNotFound: "Sessão não encontrada",
       voiceSessionFailed: "Falha ao iniciar sessão de voz",
       voiceServiceUnavailable: "Serviço de voz temporariamente indisponível",
+      voiceSessionLimitStarted: ({ duration }: { duration: string }) =>
+      `Limite da sessão de voz: cerca de ${duration}.`,
+      voiceSessionLimitExpiring: ({ duration }: { duration: string }) =>
+      `A sessão de voz terminará em cerca de ${duration}.`,
+      voiceSessionLimitExpired:
+      "A sessão de voz atingiu o limite de tempo atual e terminou.",
     voiceAlreadyStarting: "A voz já está iniciando em outra sessão",
     oauthInitializationFailed: "Falha ao inicializar o fluxo OAuth",
     tokenStorageFailed: "Falha ao armazenar tokens de autenticação",
@@ -2025,9 +3484,9 @@ export const pt: TranslationStructure = {
     invalidShareLink: "Link de compartilhamento inválido ou expirado",
     missingPermissionId: "Falta o id de permissão",
     codexResumeNotInstalledTitle:
-      "O Codex resume não está instalado nesta máquina",
+      "O servidor de retomada do Codex não está instalado nesta máquina",
     codexResumeNotInstalledMessage:
-      "Para retomar uma conversa do Codex, instale o servidor de retomada do Codex na máquina de destino (Detalhes da máquina → Retomada do Codex).",
+      "Para retomar uma conversa do Codex, instale o servidor de retomada do Codex na máquina de destino (Detalhes da máquina → Installables).",
     codexAcpNotInstalledTitle: "O Codex ACP não está instalado nesta máquina",
     codexAcpNotInstalledMessage:
       "Para usar o experimento Codex ACP, instale o codex-acp na máquina de destino (Detalhes da máquina → Installables) ou desative o experimento.",
@@ -2042,14 +3501,10 @@ export const pt: TranslationStructure = {
     installable: {
       codexResume: {
         title: "Servidor de retomada do Codex",
-        installSpecTitle: "Fonte de instalação do Codex resume",
       },
       codexAcp: {
         title: "Adaptador Codex ACP",
-        installSpecTitle: "Fonte de instalação do Codex ACP",
       },
-      installSpecDescription:
-        "Especificação NPM/Git/arquivo passada para `npm install` (experimental). Deixe em branco para usar o padrão do daemon.",
     },
     ui: {
       notAvailable: "Indisponível",
@@ -2074,14 +3529,14 @@ export const pt: TranslationStructure = {
       registryCheckFailed: ({ error }: { error: string }) => `Falhou: ${error}`,
       installSource: "Fonte de instalação",
       installSourceDefault: "(padrão)",
-      installSpecPlaceholder:
-        "ex.: file:/caminho/para/pkg ou github:owner/repo#branch",
       lastInstallLog: "Último log de instalação",
       installLogTitle: "Log de instalação",
     },
   },
 
   newSession: {
+    ...newSessionMcpTranslationExtension,
+    ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
     title: "Iniciar nova sessão",
     selectAiProfileTitle: "Selecionar perfil de IA",
@@ -2109,6 +3564,48 @@ export const pt: TranslationStructure = {
       "Controle o quão estritamente as ações exigem aprovação.",
     selectModelTitle: "Selecionar modelo de IA",
     selectModelDescription: "Escolha o modelo usado por esta sessão.",
+    checkout: {
+      selectTitle: "Selecionar checkout",
+      noWorktree: "Pasta atual",
+      noWorktreeSubtitle:
+        "Use a pasta já selecionada sem vincular um checkout de workspace.",
+      noWorktreeSectionTitle: "Pasta atual",
+      existingWorktreesSectionTitle: "Checkouts vinculados",
+      actionsSectionTitle: "Ações",
+      newWorktree: "Novo worktree",
+      newWorktreeSubtitle: "Crie e use um novo worktree Git para esta sessão.",
+      existingWorktree: "Worktree existente",
+      existingWorktreeSubtitle: "Escolha um worktree Git existente para esta sessão.",
+      existingWorktreeEmptyTitle: "Nenhum worktree existente",
+      existingWorktreeEmptySubtitle: "Crie um worktree Git primeiro ou escolha Novo worktree.",
+      newWorktreeDetailWorkspace:
+        "Crie um novo checkout vinculado dentro deste workspace.",
+      newWorktreeDetailBranch:
+        "Comece do estado atual do repositório e escolha um novo nome de branch/worktree.",
+      branchPickerTitle: "Começar de",
+      branchPickerCurrentHead: "Branch atual",
+      branchPickerCurrentHeadDescription: "Comece da branch atualmente em checkout neste repositório.",
+      branchPickerEmpty: "Nenhuma branch disponível para este repositório.",
+      branchPickerSearchPlaceholder: "Pesquisar branches…",
+      branchPickerRefreshA11y: "Atualizar branches",
+      branchPickerLoadingA11y: "Carregando branches",
+      branchPickerRefreshingA11y: "Atualizando branches",
+      primaryDetailDescription:
+        "Use o checkout principal vinculado deste workspace na máquina selecionada.",
+      gitWorktreeDetailDescription:
+        "Use um checkout Git worktree já vinculado para esta sessão.",
+      existingBranchWorktreeDescription:
+        "Esta branch já possui um worktree. Você pode reutilizá-lo diretamente ou criar uma nova branch a partir dela.",
+      existingBranchDescription:
+        "Esta branch pode ser usada diretamente em um novo worktree, ou você pode criar uma nova branch a partir dela.",
+      createNewBranchFromBranchHint:
+        "Use Aplicar para criar uma nova branch e um worktree a partir desta branch.",
+      useExistingBranchAction: "Usar branch existente",
+      useExistingWorktreeAction: "Usar worktree existente",
+      detailBranch: ({ branch }: { branch: string }) => `Branch: ${branch}`,
+      detailPath: ({ path }: { path: string }) => `Caminho: ${path}`,
+      detailLinkedWorkspace: "Vinculado ao espaco de trabalho atual.",
+    },
     selectSessionTypeTitle: "Selecionar tipo de sessão",
     selectSessionTypeDescription:
       "Escolha uma sessão simples ou uma vinculada a um worktree do Git.",
@@ -2120,6 +3617,11 @@ export const pt: TranslationStructure = {
     machineOfflineInlineBody:
       "Inicie o daemon nesta máquina ou escolha outra antes de criar uma sessão.",
     machineOfflineCannotStartStatus: "offline (não é possível iniciar a sessão)",
+    automationChip: {
+      default: "Automatizar",
+      interval: ({ minutes }: { minutes: number }) => `A cada ${minutes} min`,
+      cron: "Agendamento cron",
+    },
     machineDetails: "Ver detalhes da máquina →",
     directoryDoesNotExist: "Diretório não encontrado",
     createDirectoryConfirm: ({ directory }: { directory: string }) =>
@@ -2152,6 +3654,7 @@ export const pt: TranslationStructure = {
       enterPathTitle: "Inserir caminho",
       enterPathPlaceholder: "Insira um caminho...",
       customPathTitle: "Caminho personalizado",
+      truncatedDirectoryInfo: ({ count }: { count: number }) => `Mostrando os primeiros ${count} itens`,
       recentTitle: "Recentes",
       favoritesTitle: "Favoritos",
       suggestedTitle: "Sugeridos",
@@ -2171,6 +3674,9 @@ export const pt: TranslationStructure = {
       requiresAgent: ({ agent }: { agent: string }) => `Requer ${agent}`,
       cliNotDetected: ({ cli }: { cli: string }) =>
         `CLI do ${cli} não detectado`,
+    },
+    profileSelection: {
+      workspaceDefault: "Padrão do workspace",
     },
     cliBanners: {
       cliNotDetectedTitle: ({ cli }: { cli: string }) =>
@@ -2195,11 +3701,13 @@ export const pt: TranslationStructure = {
     resume: {
       title: "Retomar sessão",
       optional: "Retomar: Opcional",
+      chipOptional: ({ agent }: { agent: string }) => `Retomar sessão do ${agent}`,
       pickerTitle: "Retomar sessão",
       subtitle: ({ agent }: { agent: string }) =>
         `Cole um ID de sessão do ${agent} para retomar`,
       placeholder: ({ agent }: { agent: string }) =>
         `Cole o ID de sessão do ${agent}…`,
+      browse: "Explorar sessões",
       paste: "Colar",
       save: "Salvar",
       clearAndRemove: "Limpar",
@@ -2209,7 +3717,7 @@ export const pt: TranslationStructure = {
         "Este ID de retomada não pode ser aplicado agora. O Happier iniciará uma nova sessão em vez disso.",
     },
     codexResumeBanner: {
-      title: "Retomar Codex",
+      title: "Servidor de retomada do Codex",
       updateAvailable: "Atualização disponível",
       systemCodexVersion: ({ version }: { version: string }) =>
         `Codex do sistema: ${version}`,
@@ -2225,9 +3733,9 @@ export const pt: TranslationStructure = {
       reinstall: "Reinstalar",
     },
     codexResumeInstallModal: {
-      installTitle: "Instalar Codex resume?",
-      updateTitle: "Atualizar Codex resume?",
-      reinstallTitle: "Reinstalar Codex resume?",
+      installTitle: "Instalar o servidor de retomada do Codex?",
+      updateTitle: "Atualizar o servidor de retomada do Codex?",
+      reinstallTitle: "Reinstalar o servidor de retomada do Codex?",
       description:
         "Isso instala um wrapper experimental de servidor MCP do Codex usado apenas para operações de retomada.",
     },
@@ -2257,6 +3765,8 @@ export const pt: TranslationStructure = {
     viewAll: "Ver todas as sessões",
   },
 
+  sessionHandoff: sessionHandoffTranslationExtensions.pt,
+
   session: {
     inputPlaceholder: "Digite uma mensagem ...",
     toolCalls: "Chamadas de ferramenta",
@@ -2268,13 +3778,22 @@ export const pt: TranslationStructure = {
       openParent: "Abrir",
       openParentA11y: "Abrir sessão pai",
       forkFromMessageA11y: "Derivar desta mensagem",
-    },
-    resuming: "Retomando...",
-    resumeFailed: "Falha ao retomar a sessão",
-    resumeSupportNoteChecking:
-      "Nota: o Happier ainda está verificando se esta máquina pode retomar a sessão do provedor.",
-    resumeSupportNoteUnverified:
-      "Nota: o Happier não conseguiu verificar o suporte de retomada para esta máquina.",
+	    },
+	    rollback: {
+	      latestTurnA11y: 'Reverter o ultimo turno',
+	      beforeUserMessageA11y: 'Reverter para antes desta mensagem',
+	    },
+	    resuming: "Retomando...",
+	    resumeFailed: "Falha ao retomar a sessão",
+	    pendingQueuedResumeFailedTitle: "Mensagem na fila",
+	    pendingQueuedResumeFailedBody:
+	      "Sua mensagem foi salva na fila de pendentes, mas o Happier não conseguiu retomar esta sessão. Tente novamente para iniciá-la.",
+	    invalidLinkTitle: "Link de sessão inválido",
+	    invalidLinkDescription: "O link da sessão está ausente ou é inválido. Verifique a URL e tente novamente.",
+	    resumeSupportNoteChecking:
+	      "Nota: o Happier ainda está verificando se esta máquina pode retomar a sessão do provedor.",
+	    resumeSupportNoteUnverified:
+	      "Nota: o Happier não conseguiu verificar o suporte de retomada para esta máquina.",
     resumeSupportDetails: {
       cliNotDetected: "CLI não detectado na máquina.",
       capabilityProbeFailed: "Falha na verificação de capacidades.",
@@ -2294,6 +3813,7 @@ export const pt: TranslationStructure = {
         "A máquina está offline. Traga-a de volta online para retomar esta sessão.",
         openRuns: "Abrir execuções da sessão",
         openAutomations: "Abrir automações da sessão",
+        openSubagents: ({ count }: { count: number }) => (count > 0 ? `Abrir agentes (${count})` : 'Abrir agentes'),
         participants: {
           to: 'Para',
           lead: 'Principal',
@@ -2302,6 +3822,74 @@ export const pt: TranslationStructure = {
           executionRun: ({ runId }: { runId: string }) => `Execução ${runId}`,
           cardTo: ({ label }: { label: string }) => `Para: ${label}`,
           unsupportedAttachmentsOrReviewComments: 'Enviar para um destinatário ainda não suporta anexos nem comentários de revisão.',
+        },
+        subagents: {
+          messages: {
+            teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,
+            memberLabel: ({ memberLabel, teamId }: { memberLabel: string; teamId: string }) =>
+              `${memberLabel} · ${teamId}`,
+            launch: {
+              createTeamTitle: "Criar equipe",
+              createMemberTitle: "Iniciar colega de equipe",
+            },
+            command: {
+              deleteTeamTitle: "Excluir equipe",
+              deleteMemberTitle: "Desligar colega de equipe",
+            },
+          },
+                    panel: {
+            title: "Agentes",
+            active: "Ativos",
+            recent: "Recentes",
+            emptyActive: "Nenhum agente ativo.",
+            emptyRecent: "Ainda não há agentes recentes.",
+            openFull: "Abrir visualização completa",
+            openAdvancedRun: "Detalhes da execução",
+            send: "Enviar mensagem",
+            delete: "Excluir",
+            launchSectionTitle: "Iniciar",
+            launchSectionSubtitle: "Inicie novos agentes e execuções a partir desta sessão.",
+            sectionCount: ({ count }: { count: number }) => `${count}`,
+            groupCount: ({ count }: { count: number }) => `${count} agentes`,
+            launchExecutionRunsTitle: "Iniciar execuções",
+            launchExecutionRunsSubtitle: "Abra o iniciador de execuções com predefinições de revisão, plano ou delegação.",
+            launchExecutionRunsAdvanced: "Avançado…",
+            launchClaudeTeamsTitle: "Iniciar equipes Claude",
+            launchClaudeTeamsSubtitle: "Crie uma equipe ou inicie um colega com comandos estruturados de equipes Claude.",
+            teamIdLabel: "ID da equipe",
+            teamIdPlaceholder: "id-da-equipe",
+            teamDescriptionPlaceholder: "Pelo que esta equipe é responsável?",
+            launchClaudeTeamA11y: "Criar equipe Claude",
+            launchClaudeTeamAction: "Criar equipe",
+            teammateTeamIdLabel: "Equipe do colega",
+            teammateLabelPlaceholder: "Rótulo do colega",
+            teammateInstructionsPlaceholder: "O que este colega deve fazer?",
+            launchTeammateA11y: "Iniciar colega",
+            launchTeammateAction: "Iniciar colega",
+            typeFact: ({ value }: { value: string }) => `Tipo: ${value}`,
+            providerFact: ({ value }: { value: string }) => `Provedor: ${value}`,
+            backendFact: ({ value }: { value: string }) => `Backend: ${value}`,
+            intentFact: ({ value }: { value: string }) => `Intenção: ${value}`,
+            errors: {
+              teamIdRequired: "Informe primeiro um ID de equipe.",
+              memberTeamIdRequired: "Informe primeiro o ID da equipe do colega.",
+              memberLabelRequired: "Informe primeiro um rótulo para o colega.",
+              memberInstructionsRequired: "Informe primeiro as instruções do colega.",
+            },
+          },
+          details: {
+            unavailable: "Esta transcrição do agente não está mais disponível.",
+          },
+          kind: {
+            execution_run: "Execução",
+            agent_team_member: "Agente de equipe",
+            subagent_sidechain: "Subagente",
+          },
+          intent: {
+            review: "Revisão",
+            plan: "Plano",
+            delegate: "Delegação",
+          },
         },
         actionMenu: {
           openA11y: "Abrir ações da sessão",
@@ -2312,6 +3900,7 @@ export const pt: TranslationStructure = {
         closeA11y: "Fechar detalhes",
           openTabA11y: ({ title }: { title: string }) => `Abrir aba ${title}`,
           pinTabA11y: "Fixar aba",
+          unpinTabA11y: "Desafixar aba",
           pinnedTabA11y: "Aba fixada",
           closeTabA11y: "Fechar aba",
           enterFocusModeA11y: "Entrar no modo de foco do editor",
@@ -2320,6 +3909,10 @@ export const pt: TranslationStructure = {
   
       actionsDraft: {
         noInputHints: "Esta ação não tem dicas de entrada.",
+        validation: {
+          requiredField: ({ field }: { field: string }) =>
+            `${field} é obrigatório.`,
+        },
       },
 
     planOutput: {
@@ -2337,6 +3930,8 @@ export const pt: TranslationStructure = {
 
     reviewFindings: {
       title: ({ count }: { count: number }) => `Achados de revisão (${count})`,
+      questionsTitle: "Perguntas do revisor",
+      assumptionsTitle: "Suposições",
       findingTitle: ({
         status,
         severity,
@@ -2349,22 +3944,26 @@ export const pt: TranslationStructure = {
         title: string;
       }) => `[${status}] [${severity}/${category}] ${title}`,
       status: {
-        untriaged: "Sem triagem",
-        accept: "Aceitar",
-        reject: "Rejeitar",
-        defer: "Adiar",
-        needsRefinement: "Precisa de refinamento",
+        untriaged: "Pendente",
+        accept: "Implementar correção",
+        reject: "Ignorar",
+        defer: "Decidir depois",
+        needsRefinement: "Pedir esclarecimento",
       },
-      refinementPlaceholder: "Comentário opcional para refinamento",
+      refinementPlaceholder: "O que precisa de esclarecimento?",
       actions: {
-        applyTriage: "Aplicar triagem",
+        applyTriage: "Aplicar ações da revisão",
         applying: "Aplicando…",
-        applyAcceptedFindings: "Aplicar achados aceitos",
+        askReviewer: "Perguntar ao revisor",
+        answerQuestion: "Responder ao revisor",
+        applyAcceptedFindings: "Implementar correções selecionadas",
+        sendFollowUp: "Enviar acompanhamento",
         sending: "Enviando…",
       },
       errors: {
-        applyTriageFailed: "Falha ao aplicar a triagem.",
-        applyAcceptedFailed: "Falha ao aplicar os achados aceitos.",
+        applyTriageFailed: "Falha ao aplicar as ações da revisão.",
+        followUpFailed: "Falha ao enviar o acompanhamento da revisão.",
+        applyAcceptedFailed: "Falha ao enviar as correções selecionadas.",
       },
     },
 
@@ -2373,8 +3972,9 @@ export const pt: TranslationStructure = {
         indicator: ({ count }: { count: number }) => `Pendentes (${count})`,
         badgeLabel: ({ count }: { count: number }) =>
           count > 0 ? `Pendentes (+${count})` : "Pendentes",
-        empty: "Nenhuma mensagem pendente.",
-        actions: {
+	        empty: "Nenhuma mensagem pendente.",
+	        decryptFailed: "Não foi possível descriptografar esta mensagem pendente.",
+	        actions: {
           up: "Para cima",
           down: "Para baixo",
           edit: "Editar",
@@ -2548,6 +4148,8 @@ export const pt: TranslationStructure = {
       teleport: "Teletransportar agente de voz",
       toggleActivity: "Alternar atividade de voz",
       clearActivity: "Limpar atividade de voz",
+      bargeIn: "Interromper",
+      cancelTurn: "Cancelar resposta",
     },
   },
 
@@ -2570,86 +4172,163 @@ export const pt: TranslationStructure = {
     },
   },
 
+  devVoiceQa: {
+    menuTitle: "Painel de QA de voz",
+    menuSubtitle: "Controle o agente de voz real com prompts de texto",
+    title: "Painel de QA de voz",
+    subtitle: "Inicie o runtime de voz configurado e envie prompts sem usar o microfone.",
+    instructions: "Use esta tela para testar o agente de voz local real ou uma sessão do ElevenLabs com prompts de texto determinísticos. Deixe o ID da sessão em branco para usar o destino de voz atual ou a sessão global do agente de voz.",
+    configurationTitle: "Configuração",
+    configuredProvider: "Provedor configurado",
+    qaProvider: "Provedor de QA ativo",
+    qaStatus: "Status do QA",
+    targetSession: "Sessão de destino atual",
+    runtimeSession: "Sessão de runtime ativa",
+    inputsTitle: "Entradas",
+    sessionIdLabel: "Substituição do ID da sessão",
+    sessionIdPlaceholder: "Deixe em branco para usar o destino de voz atual",
+    initialContextLabel: "Contexto inicial",
+    initialContextPlaceholder: "Contexto opcional enviado quando a sessão de QA é iniciada",
+    promptLabel: "Comando",
+    promptPlaceholder: "Digite o texto que você quer enviar ao agente de voz",
+    contextUpdateLabel: "Atualização de contexto",
+    contextUpdatePlaceholder: "Atualização de contexto opcional de acompanhamento",
+    actionsTitle: "Ações",
+    sendContext: "Enviar contexto",
+    usesCurrentProvider: "Este painel sempre usa suas configurações atuais de voz e as integrações reais de runtime.",
+    localModeHint: "O QA local exige Local voice com o modo de conversa definido como Agent.",
+    elevenLabsHint: "O QA do ElevenLabs exige que o provedor ElevenLabs esteja configurado e que a sessão em tempo real se conecte com sucesso.",
+    transcriptTitle: "Transcrição QA",
+    transcriptEmpty: "Ainda não há transcrição QA.",
+    activityTitle: "Atividade de voz",
+    activityEmpty: "Ainda não há atividade de voz capturada para a sessão de QA ativa.",
+  },
+
   server: {
     // Used by Server Configuration screen (app/(app)/server.tsx)
-    serverConfiguration: "Configuração do servidor",
-    enterServerUrl: "Por favor, insira uma URL do servidor",
-    notValidHappyServer: "Não é um servidor Happier válido",
-    changeServer: "Alterar servidor",
-    continueWithServer: "Continuar com este servidor?",
+    serverConfiguration: "Configurações do Relay",
+    enterServerUrl: "Por favor, insira uma URL do Relay",
+    notValidHappyServer: "Não é um Relay Happier válido",
+    changeServer: "Alterar Relay",
+    continueWithServer: "Continuar com este Relay?",
     resetToDefault: "Redefinir para padrão",
-    resetServerDefault: "Redefinir servidor para padrão?",
+    resetServerDefault: "Redefinir Relay para padrão?",
     validating: "Validando...",
-    validatingServer: "Validando servidor...",
-    serverReturnedError: "O servidor retornou um erro",
-    failedToConnectToServer: "Falha ao conectar com o servidor",
-    currentlyUsingCustomServer: "Atualmente usando servidor personalizado",
-    customServerUrlLabel: "URL do servidor personalizado",
+    validatingServer: "Validando Relay...",
+    serverReturnedError: "O Relay retornou um erro",
+    failedToConnectToServer: "Falha ao conectar com o Relay",
+    currentlyUsingCustomServer: "Atualmente usando Relay personalizado",
+    customServerUrlLabel: "URL do Relay personalizado",
     advancedFeatureFooter:
-      "Este é um recurso avançado. Altere o servidor apenas se souber o que está fazendo. Você precisará sair e entrar novamente após alterar servidores.",
-    useThisServer: "Usar este servidor",
+      "Este é um recurso avançado. Altere o Relay apenas se souber o que está fazendo. Você precisará sair e entrar novamente após alterar Relays.",
+    useThisServer: "Usar este Relay",
     autoConfigHint:
-      "Se você está hospedando: configure o servidor primeiro, depois entre (ou crie uma conta) e, por fim, conecte seu terminal.",
-    renameServer: "Renomear servidor",
-    renameServerPrompt: "Digite um novo nome para este servidor.",
-    renameServerGroup: "Renomear grupo de servidores",
-    renameServerGroupPrompt: "Digite um novo nome para este grupo de servidores.",
-    serverNamePlaceholder: "Nome do servidor",
-    cannotRenameCloud: "Você não pode renomear o servidor na nuvem.",
-    removeServer: "Remover servidor",
+      "Se você está hospedando: configure o Relay primeiro, depois entre (ou crie uma conta) e, por fim, conecte seu terminal.",
+    renameServer: "Renomear Relay",
+    renameServerPrompt: "Digite um novo nome para este Relay.",
+    renameServerGroup: "Renomear grupo de Relays",
+    renameServerGroupPrompt: "Digite um novo nome para este grupo de Relays.",
+    serverNamePlaceholder: "Nome do Relay",
+    cannotRenameCloud: "Você não pode renomear o Relay na nuvem.",
+    removeServer: "Remover Relay",
     removeServerConfirm: ({ name }: { name: string }) =>
-      `Remover "${name}" dos servidores salvos?`,
-    removeServerGroup: "Remover grupo de servidores",
+      `Remover "${name}" dos Relays salvos?`,
+    removeServerGroup: "Remover grupo de Relays",
     removeServerGroupConfirm: ({ name }: { name: string }) =>
-      `Remover "${name}" dos grupos de servidores salvos?`,
-    cannotRemoveCloud: "Você não pode remover o servidor na nuvem.",
-    signOutThisServer: "Sair também deste servidor?",
+      `Remover "${name}" dos grupos de Relays salvos?`,
+    cannotRemoveCloud: "Você não pode remover o Relay na nuvem.",
+    signOutThisServer: "Sair também deste Relay?",
     signOutThisServerPrompt:
-      "Foram encontradas credenciais salvas para este servidor neste dispositivo.",
-    savedServersTitle: "Servidores salvos",
+      "Foram encontradas credenciais salvas para este Relay neste dispositivo.",
+    savedServersTitle: "Relays salvos",
     signedIn: "Conectado",
     signedOut: "Desconectado",
     authStatusUnknown: "Status de autenticação desconhecido",
-    switchToServer: "Trocar para este servidor",
+    switchToServer: "Trocar para este Relay",
     active: "Ativo",
     default: "Padrão",
-    addServerTitle: "Adicionar servidor",
+    addServerTitle: "Adicionar Relay",
     switchForThisTab: "Trocar para esta aba",
     makeDefaultOnDevice: "Definir como padrão neste dispositivo",
-    serverNameLabel: "Nome do servidor",
+    serverNameLabel: "Nome do Relay",
       addAndUse: "Adicionar e usar",
       addTargetsTitle: "Adicionar",
-      addServerSubtitle: "Adicionar um novo servidor e trocar para ele",
-      notificationAddServerHint: "Este servidor ainda não está salvo neste dispositivo. Adicione-o abaixo para continuar.",
+      addServerSubtitle: "Adicionar um novo Relay e trocar para ele",
+      notificationAddServerHint: "Este Relay ainda não está salvo neste dispositivo. Adicione-o abaixo para continuar.",
       serverCount: ({ count }: { count: number }) =>
-        `${count} ${plural({ count, singular: "servidor", plural: "servidores" })}`,
-      useCanonicalServerUrlTitle: "Usar a URL canônica do servidor?",
+        `${count} ${plural({ count, singular: "Relay", plural: "Relays" })}`,
+      useCanonicalServerUrlTitle: "Usar a URL canônica do Relay?",
     useCanonicalServerUrlBody:
-      "Este servidor anuncia uma URL canônica que deve funcionar em outros dispositivos. Usar essa URL em vez da que você inseriu?",
-    insecureHttpUrlTitle: "URL do servidor insegura",
+      "Este Relay anuncia uma URL canônica que deve funcionar em outros dispositivos. Usar essa URL em vez da que você inseriu?",
+    insecureHttpUrlTitle: "URL do Relay insegura",
     insecureHttpUrlBody:
       "Esta URL usa http:// e pode não funcionar no seu telefone ou fora da sua LAN. Use HTTPS se possível. Continuar mesmo assim?",
     signedOutSwitchConfirmTitle: "Você não está conectado",
     signedOutSwitchConfirmBody:
-      "Trocar para este servidor e continuar para a tela inicial para que você possa entrar ou criar uma conta?",
-    addServerGroupTitle: "Adicionar grupo de servidores",
-    addServerGroupSubtitle: "Criar um grupo reutilizável de servidores",
+      "Trocar para este Relay e continuar para a tela inicial para que você possa entrar ou criar uma conta?",
+    addServerGroupTitle: "Adicionar grupo de Relays",
+    addServerGroupSubtitle: "Criar um grupo reutilizável de Relays",
     serverGroupNameLabel: "Nome do grupo",
-    serverGroupNamePlaceholder: "Meu grupo de servidores",
-    serverGroupServersLabel: "Servidores",
+    serverGroupNamePlaceholder: "Meu grupo de Relays",
+    serverGroupServersLabel: "Relés",
     saveServerGroup: "Salvar grupo",
     serverGroupMustHaveServer:
-      "Um grupo de servidores deve incluir pelo menos um servidor.",
+      "Um grupo de Relays deve incluir pelo menos um Relay.",
+    relayDrift: {
+        bannerDifferentRelayTitle: 'Seu serviço em segundo plano está conectado a outro Relay',
+        bannerDifferentRelayDescription: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
+            `App: ${activeRelayUrl} · Serviço em segundo plano: ${daemonRelayUrl}`,
+        bannerNeedsAuthTitle: 'Seu serviço em segundo plano precisa entrar neste Relay',
+        bannerNeedsAuthDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `O app está usando ${activeRelayUrl}, mas o serviço em segundo plano ainda precisa de aprovação ou login.`,
+        bannerNotConfiguredTitle: 'Seu serviço em segundo plano ainda não está conectado a este Relay',
+        bannerNotConfiguredDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `O app está usando ${activeRelayUrl}, mas este computador ainda não terminou de conectar o serviço em segundo plano.`,
+        bannerNotInstalledTitle: 'Seu serviço em segundo plano não está instalado para este Relay',
+        bannerNotInstalledDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `O app está usando ${activeRelayUrl}, mas este computador ainda precisa instalar o serviço em segundo plano para isso.`,
+        bannerNotRunningTitle: 'Seu serviço em segundo plano está instalado, mas não está em execução',
+        bannerNotRunningDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `O app está usando ${activeRelayUrl}, mas o serviço em segundo plano está parado e precisa ser iniciado novamente.`,
+        repairAction: 'Conectar o serviço em segundo plano a este Relay',
+        progressTitle: 'Conectando o serviço em segundo plano a este Relay',
+        progressStepPrepare: 'Preparar o serviço em segundo plano',
+        progressStepConfigureRelay: 'Atualizar a conexão do Relay',
+        progressStepAuthenticate: 'Concluir o login e a aprovação',
+        progressStepFinish: 'Concluir reparo',
+        statusUnknown: 'Desconhecido',
+    },
+    retention: {
+      title: "Politica de retencao",
+      summary: "Resumo",
+      keepForever: "Sem exclusao automatica",
+      deleteInactiveSessionsDays: ({ count }: { count: number }) => `Exclui sessoes inativas apos ${count} ${plural({ count, singular: 'dia', plural: 'dias' })}.`,
+      deleteOlderThanDays: ({ count }: { count: number }) => `Exclui dados apos ${count} ${plural({ count, singular: 'dia', plural: 'dias' })}.`,
+      sessionNotice: ({ count }: { count: number }) => `Este servidor exclui sessoes inativas apos ${count} ${plural({ count, singular: 'dia', plural: 'dias' })} de inatividade.`,
+      sessions: "Sessoes",
+      accountChanges: "Alteracoes da conta",
+      voiceSessionLeases: "Concessoes de sessao de voz",
+      feedItems: "Itens do feed",
+      sessionShareAccessLogs: "Logs de acesso a compartilhamentos de sessao",
+      publicShareAccessLogs: "Logs de acesso a compartilhamentos publicos",
+      terminalAuthRequests: "Solicitacoes de autenticacao do terminal",
+      accountAuthRequests: "Solicitacoes de autenticacao da conta",
+      authPairingSessions: "Sessoes de pareamento de autenticacao",
+      repeatKeys: "Chaves de repeticao",
+      globalLocks: "Bloqueios globais",
+      automationRuns: "Execucoes de automacao",
+      automationRunEvents: "Eventos de execucao de automacao",
+    },
     multiServerView: {
-      title: "Visualização simultânea de vários servidores",
+      title: "Visualização simultânea de vários Relays",
       footer:
-        "Escolha se deseja combinar vários servidores em uma única lista de sessões.",
+        "Escolha se deseja combinar vários Relays em uma única lista de sessões.",
       enableTitle: "Ativar visualização simultânea",
-      enableSubtitle: "Mostrar juntas as sessões dos servidores selecionados",
+      enableSubtitle: "Mostrar juntas as sessões dos Relays selecionados",
       presentationTitle: "Modo de apresentação",
       presentation: {
-        flatWithBadges: "Lista plana com badges de servidor",
-        groupedByServer: "Agrupado por servidor",
+        flatWithBadges: "Lista plana com badges de Relay",
+        groupedByServer: "Agrupado por Relay",
       },
     },
   },
@@ -2666,7 +4345,54 @@ export const pt: TranslationStructure = {
 
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `Servidor: ${server}`,
+    storagePersistedTab: "Sincronizadas",
+    storageDirectTab: "Diretas",
+    renameWorkspace: 'Renomear área de trabalho',
+    renameWorkspacePromptTitle: 'Renomear área de trabalho',
+    renameWorkspacePromptPlaceholder: 'Digite um nome...',
+    resetWorkspaceName: 'Redefinir nome',
   },
+
+  directSessions: {
+    browseTitle: "Navegar pelas sessões do provedor",
+    browseOpenExisting: "Navegar pelas sessões do provedor",
+    browseFiltersTitle: "Selecionar origem",
+    browseMachines: "Máquinas",
+    browseProviders: "Provedores",
+    browseSources: "Fontes",
+    browseSourceCodexUserHome: "Meu diretório Codex",
+    browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
+    browseSourceClaudeDefault: "Configuração padrão do Claude",
+    browseSourceOpenCodeDefault: "Servidor padrão do OpenCode",
+    browseCandidates: "Sessões disponíveis",
+    browseNoMachines: "Ainda não há máquinas disponíveis para sessões diretas.",
+    browseNoCandidates: "Nenhuma sessão do provedor foi encontrada para esta máquina e este provedor.",
+    browseActivityRunning: "Em execução",
+        browseActivityRunningNow: "Em execução",
+    browseActivityRecent: "Recente",
+    browseActivityIdle: "Inativa",
+    browseActivityUnknown: "Desconhecida",
+        browseSearchPlaceholder: "Pesquisar sessões carregadas…",
+        browseNoSearchResults: "Nenhuma sessão carregada corresponde ainda a esta pesquisa.",
+    browseLoadMore: "Carregar mais sessões",
+    browseFailedToLoad: "Falha ao carregar sessões do provedor.",
+    browseLinkFailed: "Falha ao vincular a sessão do provedor selecionada.",
+  },
+
+    workspacePresentation: {
+        checkoutKinds: {
+            primary: 'Checkout principal',
+            git_worktree: 'worktree Git',
+        },
+    },
+    sourceControlWorkspace: {
+        createTitle: 'Criar workspace vinculado',
+        createSubtitle: 'Adicione este checkout a um espaco de trabalho vinculado e abra suas configuracoes.',
+        otherCheckoutsTitle: 'Outros checkouts',
+        unlinkedWorktreesTitle: 'Worktrees desvinculados',
+        createSessionInWorktreeTitle: 'Criar sessão aqui',
+        adoptWorktreeTitle: 'Adicionar worktree ao workspace',
+    },
 
 	  sessionInfo: {
 	    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
@@ -2677,6 +4403,16 @@ export const pt: TranslationStructure = {
     stopSessionConfirm: "Tem certeza de que deseja parar esta sessão?",
     archiveSession: "Arquivar sessão",
     archiveSessionConfirm: "Tem certeza de que deseja arquivar esta sessão?",
+    workspaceTitle: "Espaço de trabalho",
+    workspaceLabel: "Espaço de trabalho",
+    linkWorkspaceTitle: "Vincular este workspace",
+    linkWorkspaceSubtitle: "Crie um workspace vinculado a partir deste caminho de sessão e abra as respetivas definições.",
+    openWorkspaceTitle: "Abrir workspace",
+    openWorkspaceSubtitle: "Abra os detalhes e as definições do workspace vinculado.",
+    createWorktreeTitle: "Criar worktree",
+    createWorktreeSubtitle: "Inicie uma nova sessão que irá criar um Git worktree neste workspace vinculado.",
+    locationLabel: "Local",
+    checkoutLabel: "Check-out",
     happySessionIdCopied:
       "ID da sessão Happier copiado para a área de transferência",
     failedToCopySessionId: "Falha ao copiar ID da sessão Happier",
@@ -2709,6 +4445,12 @@ export const pt: TranslationStructure = {
     kiloSessionId: "ID da sessão Kilo",
     kiloSessionIdCopied:
       "ID da sessão Kilo copiado para a área de transferência",
+    kiroSessionId: "ID da sessão Kiro",
+    kiroSessionIdCopied:
+      "ID da sessão Kiro copiado para a área de transferência",
+    customAcpSessionId: "ID da sessão ACP personalizada",
+    customAcpSessionIdCopied:
+      "ID da sessão ACP personalizada copiado para a área de transferência",
     piSessionId: "ID da sessão Pi",
     piSessionIdCopied: "ID da sessão Pi copiado para a área de transferência",
     copilotSessionId: "ID da sessão do Copilot",
@@ -2775,7 +4517,7 @@ export const pt: TranslationStructure = {
     }) =>
       `Versão ${currentVersion} instalada. Atualize para ${requiredVersion} ou posterior`,
     updateCliInstructions:
-      "Por favor execute npm install -g @happier-dev/cli@latest",
+      "Por favor execute happier self update",
     deleteSession: "Excluir sessão",
     deleteSessionSubtitle: "Remover permanentemente esta sessão",
     deleteSessionConfirm: "Excluir sessão permanentemente?",
@@ -2803,7 +4545,6 @@ export const pt: TranslationStructure = {
       runIt: "Execute",
       scanQrCode: "Escaneie o código QR",
       openCamera: "Abrir câmera",
-      installCommand: "$ npm i -g @happier-dev/cli",
       runCommand: "$ happier",
     },
     emptyMessages: {
@@ -2884,6 +4625,8 @@ export const pt: TranslationStructure = {
       qwen: "Qwen Code",
       kimi: "Kimi",
       kilo: "Kilo",
+      kiro: "Kiro",
+      customAcp: "Custom ACP",
       pi: "Pi",
       copilot: "Copilot",
     },
@@ -2957,7 +4700,6 @@ export const pt: TranslationStructure = {
       sectionTitle: "Modo",
       badge: ({ name }: { name: string }) => `Modo: ${name}`,
       badgePending: ({ name }: { name: string }) => `Modo: ${name} (pendente)`,
-      badgeA11y: ({ name }: { name: string }) => `Modo: ${name}`,
       refreshModesA11y: "Atualizar modos",
       pendingSwitching: ({ from, to }: { from: string; to: string }) =>
         `Pendente: mudando de ${from} para ${to}`,
@@ -3045,25 +4787,13 @@ export const pt: TranslationStructure = {
       hide: "Ocultar",
       rawJsonDevMode: "JSON bruto (modo desenvolvedor)",
     },
-    taskView: {
-      initializing: "Inicializando agente...",
-      moreTools: ({ count }: { count: number }) =>
-        `+${count} mais ${plural({ count, singular: "ferramenta", plural: "ferramentas" })}`,
-    },
-    taskLikeSummary: {
-      createTask: "Criar tarefa",
-      createTaskWithSubject: ({ subject }: { subject: string }) =>
-        `Criar tarefa: ${subject}`,
-      listTasks: "Listar tarefas",
-      updateTask: "Atualizar tarefa",
-      updateTaskWithId: ({ id }: { id: string }) => `Atualizar tarefa ${id}`,
-      updateTaskWithIdStatus: ({
-        id,
-        status,
-      }: {
-        id: string;
-        status: string;
-      }) => `Atualizar tarefa ${id}: ${status}`,
+    agentTeamView: {
+      team: "Equipe",
+      member: "Membro",
+      type: "Tipo",
+      content: "Conteúdo",
+      status: "Estado",
+      description: "Descrição",
     },
     subAgentRunView: {
       planTitle: "Plano",
@@ -3086,6 +4816,17 @@ export const pt: TranslationStructure = {
       result: "Resultado",
       items: "Itens",
       more: ({ count }: { count: number }) => `+${count} a mais`,
+    },
+    taskLikeSummary: {
+      createTaskWithSubject: ({ subject }: { subject: string }) => `Criar subagente: ${subject}`,
+      createTask: "Criar subagente",
+      listTasks: "Listar subagentes",
+      updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `Atualizar subagente ${id} → ${status}`,
+      updateTaskWithId: ({ id }: { id: string }) => `Atualizar subagente ${id}`,
+      updateTask: "Atualizar subagente",
+    },
+    taskView: {
+      moreTools: ({ count }: { count: number }) => `+${count} ferramentas`,
     },
     workspaceIndexingPermission: {
       defaultTitle: "Indexação do workspace",
@@ -3176,6 +4917,7 @@ export const pt: TranslationStructure = {
         count: number;
       }) => `${file} e ${count} mais`,
       showingDiff: "Mostrando alterações",
+      turnDiffRecap: "Resumo das alterações deste turno",
     },
     askUserQuestion: {
       submit: "Enviar resposta",
@@ -3214,15 +4956,50 @@ export const pt: TranslationStructure = {
     createFileInvalidPath:
       "Caminho de arquivo inválido. Use um caminho relativo ao workspace como src/new-file.ts.",
     createFileFailed: "Falha ao criar o arquivo.",
-    createFolderPromptTitle: "Criar pasta",
-    createFolderPromptBody: "Digite um caminho de pasta relativo à raiz do projeto.",
-    createFolderInvalidPath:
-      "Caminho de pasta inválido. Use um caminho relativo ao workspace como src/new-folder.",
-    createFolderFailed: "Falha ao criar a pasta.",
-    changeRow: {
-      viewDiffA11y: ({ file }: { file: string }) => `Ver diff de ${file}`,
-      status: {
-        untracked: "Arquivo não rastreado",
+	    createFolderPromptTitle: "Criar pasta",
+	    createFolderPromptBody: "Digite um caminho de pasta relativo à raiz do projeto.",
+	    createFolderInvalidPath:
+	      "Caminho de pasta inválido. Use um caminho relativo ao workspace como src/new-folder.",
+	    createFolderFailed: "Falha ao criar a pasta.",
+	    repositoryTree: {
+	      actions: {
+	        copyPath: "Copiar caminho",
+	        download: "Baixar",
+	        downloadAsZip: "Baixar como ZIP",
+	      },
+	      dropToUpload: "Solte arquivos para enviar",
+	      rename: {
+	        title: "Renomear",
+	        body: "Digite um novo caminho relativo à raiz do projeto.",
+	        invalidPath:
+	          "Caminho inválido. Use um caminho relativo ao workspace como src/new-file.ts.",
+	        failed: "Falha ao renomear.",
+	        conflicts: {
+	          title: "O destino já existe",
+	          body: ({ path }: { path: string }) => `"${path}" já existe. O que você quer fazer?`,
+	        },
+	      },
+	      deleteFolder: {
+	        title: "Excluir pasta?",
+	        body: ({ path }: { path: string }) =>
+	          `Excluir a pasta ${path} e todo o seu conteúdo?`,
+	        confirm: "Excluir pasta",
+	      },
+	      deleteFile: {
+	        title: "Excluir arquivo?",
+	        body: ({ path }: { path: string }) => `Excluir o arquivo ${path}?`,
+	      },
+	      delete: {
+	        failed: "Falha ao excluir.",
+	      },
+	      download: {
+	        notReady: "O download ainda não está disponível.",
+	      },
+	    },
+	    changeRow: {
+	      viewDiffA11y: ({ file }: { file: string }) => `Ver diff de ${file}`,
+	      status: {
+	        untracked: "Arquivo não rastreado",
         added: "Novo arquivo",
         deleted: "Arquivo excluído",
         renamed: "Arquivo renomeado",
@@ -3236,6 +5013,105 @@ export const pt: TranslationStructure = {
       searchFailed: "A busca falhou. Tente novamente.",
     },
     detachedHead: "HEAD desanexado",
+    branchSwitchDialog: {
+      title: "Trocar de ramo",
+      body: "Você tem alterações não confirmadas. Como deseja lidar com elas?",
+      leaveTitle: ({ branch }: { branch: string }) => `Deixar minhas alterações em ${branch}`,
+      leaveSubtitle: "Cria um stash no ramo atual e troca.",
+      bringTitle: ({ branch }: { branch: string }) => `Levar minhas alterações para ${branch}`,
+      bringSubtitle: "Tenta trocar e manter suas alterações no novo ramo.",
+    },
+    branchMenu: {
+      openA11y: "Abrir menu de ramos",
+      failedToLoad: "Falha ao carregar ramos.",
+      unavailable: "Lista de ramos indisponível",
+      empty: "Nenhum ramo encontrado",
+      searchPlaceholder: "Pesquisar ramos...",
+      category: {
+        actions: "Ações",
+        branches: "Ramos",
+        worktrees: "Árvores de trabalho",
+        remote: "Remotos",
+        local: "Locais",
+        options: "Opções",
+      },
+      publish: {
+        title: "Publicar ramo",
+        subtitle: "Envie o ramo atual para um ramo remoto upstream",
+        short: "Publicar",
+        failed: "Falha ao publicar ramo.",
+      },
+      create: {
+        title: "Criar ramo",
+        subtitle: ({ name }: { name: string }) => `Criar \"${name}\"`,
+        failed: "Falha ao criar ramo.",
+      },
+      switch: {
+        failed: "Falha ao alternar ramo.",
+      },
+      branch: {
+        upstream: ({ upstream }: { upstream: string }) => `Upstream: ${upstream}`,
+      },
+      remotes: {
+        show: "Mostrar ramos remotos",
+        hide: "Ocultar ramos remotos",
+        subtitle: "Incluir ramos remotos na lista",
+      },
+      worktrees: {
+        createFromCurrentBranchTitle: "Novo worktree a partir da branch atual",
+        createFromCurrentBranchSubtitle: ({ branch }: { branch: string }) =>
+          `Crie um novo worktree a partir de ${branch} e inicie uma sessão nele.`,
+        createFromCurrentBranchDetachedSubtitle:
+          "Mude para uma branch antes de criar um worktree a partir da branch atual.",
+        createFromAnotherBranchTitle: "Novo worktree a partir de outra branch",
+        createFromAnotherBranchSubtitle:
+          "Abra o fluxo de nova sessão para escolher outra branch ou reutilizar um worktree existente.",
+        removeTitle: "Remover worktree",
+        removeSubtitle: ({ target }: { target: string }) =>
+          `Remove ${target} from this repository.`,
+        removeConfirmTitle: "Remover worktree?",
+        removeConfirmBody: ({ path }: { path: string }) =>
+          `Remover o worktree em ${path}? Isso não pode ser desfeito.`,
+        removeConfirmButton: "Remover worktree",
+        pruneTitle: "Limpar worktrees obsoletos",
+        pruneSubtitle: "Limpe os metadados de worktrees obsoletos deste repositório.",
+        createFailed: "Falha ao criar worktree.",
+        removeFailed: "Falha ao remover worktree.",
+        pruneFailed: "Falha ao limpar worktrees.",
+      },
+      stashOverwrite: {
+        title: "Sobrescrever o stash do ramo?",
+        body: ({ branch }: { branch: string }) =>
+          `Já existe um stash para ${branch}. Sobrescrever?`,
+        confirm: "Sobrescrever stash",
+      },
+    },
+    stash: {
+      summaryA11y: "Abrir detalhes do stash",
+      summaryTitle: "Stashes gerenciados",
+      detailsTitle: "Stashes gerenciados",
+      empty: "Nenhum stash gerenciado.",
+      failedToLoad: "Falha ao carregar stashes.",
+      failedToLoadDiff: "Falha ao carregar o diff do stash.",
+      diffTruncated: "Diff truncado (limite de saída).",
+      writeDisabled: "As operações de escrita do controle de código-fonte estão desativadas.",
+      noSelection: "Selecione um stash para continuar.",
+      selectA11y: ({ stash }: { stash: string }) => `Selecionar stash ${stash}`,
+      restore: "Restaurar",
+      discard: "Descartar",
+      restoreFailed: "Falha ao restaurar o stash.",
+      discardFailed: "Falha ao descartar o stash.",
+      restoreConfirm: {
+        title: "Restaurar alterações do stash?",
+        body: "Aplicará as alterações em stash na sua árvore de trabalho. Conflitos podem exigir resolução manual.",
+        confirm: "Restaurar",
+      },
+      discardConfirm: {
+        title: "Descartar alterações do stash?",
+        body: "Isso excluirá permanentemente este stash.",
+        confirm: "Descartar",
+      },
+    },
     summary: ({ staged, unstaged }: { staged: number; unstaged: number }) =>
       `${staged} preparados • ${unstaged} não preparados`,
     branchSummary: {
@@ -3270,6 +5146,10 @@ export const pt: TranslationStructure = {
       `Arquivos alterados no repositório (${count})`,
     sessionAttributedChanges: ({ count }: { count: number }) =>
       `Alterações atribuídas à sessão (${count})`,
+    latestTurnChanges: ({ count }: { count: number }) =>
+      `Alterações do último turno (${count})`,
+    latestTurnDescription:
+      'Alterações fornecidas pelo provedor do turno concluído mais recente.',
     otherRepositoryChanges: ({ count }: { count: number }) =>
       `Outras alterações do repositório (${count})`,
     attributionReliabilityHigh:
@@ -3283,6 +5163,8 @@ export const pt: TranslationStructure = {
       `${count} arquivo${count === 1 ? "" : "s"} inferido${count === 1 ? "" : "s"} mantido${count === 1 ? "" : "s"} nas alterações apenas do repositório.`,
     noSessionAttributedChanges:
       "Nenhuma alteração atribuída à sessão foi detectada no momento.",
+    noLatestTurnChanges:
+      "Nenhuma alteração do último turno foi detectada no momento.",
     notRepo: "Não é um repositório de controle de versão",
     notUnderSourceControl: "Este diretório não está sob controle de versão",
     searching: "Buscando arquivos...",
@@ -3316,6 +5198,7 @@ export const pt: TranslationStructure = {
         `Alterações não preparadas (${count})`,
       // File viewer strings
       fileReadFailed: "Falha ao ler o arquivo",
+      fileTooLargeToPreview: "O arquivo é grande demais para pré-visualizar",
       fileWriteFailed: "Falha ao escrever o arquivo",
       fileEditor: {
         experimentalHint:
@@ -3357,15 +5240,16 @@ export const pt: TranslationStructure = {
           },
         },
         commitRevertUnavailable: "Reverter não está disponível para este commit.",
-        commitMessageEditor: {
-          placeholder: "Mensagem de commit",
-          generate: "Gerar",
-          generating: "Gerando…",
-          applySuggestion: "Aplicar sugestão",
-          commit: "Fazer commit",
-          generateFailed: "Falha ao gerar mensagem de commit",
-          generatorDisabled: "O gerador de mensagens de commit está desativado",
-        },
+	        commitMessageEditor: {
+	          placeholder: "Mensagem de commit",
+	          generate: "Gerar",
+	          generating: "Gerando…",
+	          applySuggestion: "Aplicar sugestão",
+	          suggestionReady: "Uma sugestão está pronta. Aplicar?",
+	          commit: "Fazer commit",
+	          generateFailed: "Falha ao gerar mensagem de commit",
+	          generatorDisabled: "O gerador de mensagens de commit está desativado",
+	        },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Carregando ${fileName}...`,
         binaryFile: "Arquivo binário",
@@ -3392,14 +5276,70 @@ export const pt: TranslationStructure = {
       },
       clearSelection: "Limpar seleção",
     },
-    toolbar: {
-      changedFiles: "Arquivos alterados",
-      allRepositoryFiles: "Todos os arquivos do repositório",
+	    toolbar: {
+	      changedFiles: "Arquivos alterados",
+	      hiddenFiles: "Mostrar arquivos ocultos",
+	      details: "Detalhes",
+	      upload: "Enviar",
+	      uploadFiles: "Enviar arquivos",
+	      uploadFolder: "Enviar pasta",
+	      allRepositoryFiles: "Todos os arquivos do repositório",
       repositoryView: "Visão do repositório",
+      turnView: "Visão do turno",
       sessionView: "Visão da sessão",
       review: "Revisão",
       list: "Lista",
       scm: "Git",
+    },
+    transfers: {
+      preparingUpload: ({ count }: { count: number }) =>
+        `Preparando envio (${count} arquivos)…`,
+      uploading: ({
+        completed,
+        total,
+        uploaded,
+        totalBytes,
+      }: {
+        completed: number;
+        total: number;
+        uploaded: string;
+        totalBytes: string;
+      }) => `Enviando ${completed}/${total} · ${uploaded} / ${totalBytes}`,
+      downloading: ({
+        name,
+        downloaded,
+        totalBytes,
+      }: {
+        name: string;
+        downloaded: string;
+        totalBytes: string;
+      }) => `Baixando ${name} · ${downloaded} / ${totalBytes}`,
+    },
+    upload: {
+      conflicts: {
+        title: "Conflitos de envio",
+        body: ({
+          conflictCount,
+          totalCount,
+        }: {
+          conflictCount: number;
+          totalCount: number;
+        }) =>
+          `${conflictCount} de ${totalCount} arquivos já existem. O que você quer fazer?`,
+        keepBoth: {
+          title: "Manter ambos",
+          subtitle:
+            "Adiciona “ (1)”, “ (2)”, … aos nomes em conflito.",
+        },
+        replace: {
+          title: "Substituir",
+          subtitle: "Sobrescrever arquivos existentes.",
+        },
+        skip: {
+          title: "Ignorar",
+          subtitle: "Enviar apenas arquivos que ainda não existam.",
+        },
+      },
     },
     fileEmpty: "Arquivo está vazio",
     noChanges: "Nenhuma alteração para exibir",
@@ -3470,7 +5410,17 @@ export const pt: TranslationStructure = {
       },
     },
     details: {
+      titles: {
+        executionRun: "Execução",
+        executionRunWithIntent: ({ intent }: { intent: string }) => `${intent} · execução`,
+      },
       labels: {
+        status: "Estado",
+        statusValue: ({ value }: { value: string }) => `Status: ${value}`,
+        runId: ({ value }: { value: string }) => `Run ID: ${value}`,
+        backend: ({ value }: { value: string }) => `Backend: ${value}`,
+        permissions: ({ value }: { value: string }) => `Permissions: ${value}`,
+        mode: ({ value }: { value: string }) => `Mode: ${value}`,
         intent: "Intenção",
         backendId: "ID do backend",
         permissionMode: "Modo de permissões",
@@ -3485,7 +5435,113 @@ export const pt: TranslationStructure = {
     },
   },
 
-    settingsSession: {
+        settingsActions: {
+        aboutSubtitle: 'Escolha onde cada ação é exibida no app, na voz e nas integrações. Itens indisponíveis permanecem visíveis para que você entenda o que está bloqueado por recursos, privacidade ou suporte de runtime.',
+        aboutFooter: 'Essas configurações se aplicam globalmente aos padrões da sua conta. Itens indisponíveis explicam por que um destino está bloqueado no momento.',
+        searchPlaceholder: 'Pesquisar ações',
+        noResults: 'Nenhuma ação corresponde à sua pesquisa atual.',
+        noDescription: 'Ainda não há descrição disponível.',
+        requireApproval: 'Exigir aprovação',
+        sections: {
+            app: 'No app',
+            voice: 'Voz',
+            integrations: 'Integrações',
+        },
+        badges: {
+            unavailable: 'Indisponível',
+        },
+        reasons: {
+            voiceFeature: 'Ative as configurações do Assistente de voz para usar este destino.',
+            voiceInventoryPrivacy: 'Ative Compartilhar inventário do dispositivo nas configurações de privacidade do Assistente de voz para usar este destino.',
+            mcpFeature: 'Ative os servidores MCP para expor esta ação via MCP.',
+            executionRunsFeature: 'Ative execution runs para usar esta ação ou destino.',
+            memorySearchFeature: 'Ative a Pesquisa de memória local para usar esta ação.',
+            sessionHandoffFeature: 'Ative o suporte a handoff de sessão para usar esta ação.',
+            notAvailableInThisApp: 'Este destino ainda não é exibido neste cliente.',
+        },
+        targets: {
+            session_header: {
+                title: 'Cabeçalho da sessão',
+                subtitle: 'Visível na barra de ferramentas do cabeçalho da sessão.',
+            },
+            session_action_menu: {
+                title: 'Menu da sessão',
+                subtitle: 'Visível no menu de ações da sessão.',
+            },
+            session_info: {
+                title: 'Detalhes da sessão',
+                subtitle: 'Visível na tela de informações da sessão.',
+            },
+            command_palette: {
+                title: 'Paleta de comandos',
+                subtitle: 'Visível na paleta global de comandos.',
+            },
+            slash_command: {
+                title: 'Comando slash',
+                subtitle: 'Disponível nos seletores de ação no estilo slash-command.',
+            },
+            agent_input_chips: {
+                title: 'Chips do compositor',
+                subtitle: 'Mostrados como chips rápidos perto da entrada do agente.',
+            },
+            voice_panel: {
+                title: 'Painel de voz',
+                subtitle: 'Mostrado no painel do assistente de voz.',
+            },
+            run_list: {
+                title: 'Lista de execuções',
+                subtitle: 'Visível nas listas de execution runs.',
+            },
+            run_card: {
+                title: 'Cartões de execução',
+                subtitle: 'Visível nos cartões de execution runs.',
+            },
+            voice_tool: {
+                title: 'Ferramenta de voz',
+                subtitle: 'Disponível para o agente de voz como ferramenta chamável.',
+            },
+            voice_action_block: {
+                title: 'Bloco de ação de voz',
+                subtitle: 'Mostrado dentro de blocos e affordances de ação de voz.',
+            },
+            session_agent: {
+                title: 'Agente de sessão',
+                subtitle: 'Disponível para agentes na sessão como uma ferramenta chamável.',
+            },
+            mcp: {
+                title: 'MCP',
+                subtitle: 'Disponível por meio do catálogo de ações MCP.',
+            },
+            cli: {
+                title: 'CLI de controle de sessão',
+                subtitle: 'Disponível por meio da superfície CLI de controle de sessão.',
+            },
+            contextual_ui: {
+                title: 'UI contextual',
+                subtitle: 'Mostrado em superfícies contextuais da UI que não têm um posicionamento dedicado.',
+            },
+        },
+    },
+
+settingsSession: {
+      sessionList: {
+          title: 'Lista de sessões',
+          footer: 'Personalize o que aparece em cada linha de sessão.',
+          tagsTitle: 'Tags da sessão',
+          tagsEnabledSubtitle: 'Controles de tags visíveis na lista de sessões',
+          tagsDisabledSubtitle: 'Controles de tags ocultos',
+      },
+      input: {
+          title: 'Entrada',
+          footer: 'Configure a aparência e o comportamento da barra de entrada do agente.',
+      },
+      windows: {
+          title: 'Windows',
+          defaultModeTitle: 'Modo remoto padrão do Windows',
+      },
+      advanced: {
+          title: 'Avançado',
+      },
       messageSending: {
         title: "Envio de mensagens",
         footer:
@@ -3576,6 +5632,8 @@ export const pt: TranslationStructure = {
         entrySubtitle: "Abrir configurações da transcrição",
         footer:
           "Personalize como os chats são exibidos e como a transcrição se comporta.",
+        codeDiffs: 'Código e diffs',
+        codeDiffsFooter: 'Configure como o código e o conteúdo de diff são exibidos na transcrição.',
         layoutTitle: "Disposição",
         layoutFooter:
           "Escolha entre uma transcrição linear e o agrupamento por turnos.",
@@ -3760,11 +5818,7 @@ export const pt: TranslationStructure = {
       subAgentGuidanceEntry: {
         openSubtitle: "Abrir configurações de sub-agente",
       },
-      actionsEntry: {
-        footer:
-          "Habilite ações por superfície e posicionamento (UI, voz, MCP) e controle onde elas aparecem.",
-        openSubtitle: "Abrir configurações de ações",
-      },
+      handoff: settingsSessionHandoffTranslationExtensions.pt,
       defaultPermissions: {
         title: "Permissões padrão",
         footer:
@@ -3774,6 +5828,16 @@ export const pt: TranslationStructure = {
           "Aplicar imediatamente para sessões em execução (atualiza metadados da sessão).",
         applyPermissionChangesNextPromptSubtitle: "Aplicar somente na próxima mensagem.",
       },
+          defaultStorage: {
+              title: 'Armazenamento padrão da sessão',
+              footer: 'Escolha se novas sessões começam como sessões sincronizadas do Happier ou sessões diretas apoiadas pelo provedor.',
+              globalTitle: 'Padrão global',
+              persistedSubtitle: 'Armazene novas sessões no Happier e sincronize-as entre dispositivos por padrão.',
+              directSubtitle: 'Inicie sessões diretas vinculadas à máquina quando o provedor oferecer suporte.',
+              globalSubtitle: ({ label }: { label: string }) => `Padrão global: ${label}`,
+              useGlobalDefault: 'Usar padrão global',
+              currently: ({ label }: { label: string }) => `Atual: ${label}`,
+          },
       replayResume: {
         title: "Retomada por replay",
         footer:
@@ -3833,13 +5897,17 @@ export const pt: TranslationStructure = {
         legacySecretExportDisabledSubtitle:
           "Desativado (recomendado): provisione terminais apenas com a chave de conteúdo (Terminal Connect V2).",
       },
-    sessionList: {
-      title: "Lista de sessões",
-      footer: "Personalize o que aparece em cada linha de sessão.",
-      tagsTitle: "Tags da sessão",
-      tagsEnabledSubtitle: "Controles de tags visíveis na lista de sessões",
-      tagsDisabledSubtitle: "Controles de tags ocultos",
-    },
+  },
+  windowsRemoteSessionLaunchMode: {
+    hidden: "Oculto",
+    shortHidden: "Oculto",
+    hiddenSubtitle: "Inicia a sessão em segundo plano sem abrir uma janela de terminal.",
+    windowsTerminal: "Windows Terminal",
+    shortWindowsTerminal: "WT",
+    windowsTerminalSubtitle: "Abre a sessão em uma janela dedicada do Windows Terminal.",
+    console: "Console",
+    shortConsole: "Console",
+    consoleSubtitle: "Abre a sessão em uma janela padrão do console do Windows.",
   },
   settingsVoice: {
     // Voice settings screen
@@ -3914,13 +5982,17 @@ export const pt: TranslationStructure = {
     },
     byo: {
       title: "Usar meu ElevenLabs",
-      agentReuseDialog: {
-        title: "O agente do Happier já existe",
-        messageWithId: ({ name, id }: { name: string; id: string }) =>
-          `Encontramos um agente existente do ElevenLabs (“${name}”, id: ${id}).\n\nVocê quer atualizá-lo ou criar um novo?`,
-        messageNoId: ({ name }: { name: string }) =>
-          `Encontramos um agente existente do ElevenLabs (“${name}”).\n\nVocê quer atualizá-lo ou criar um novo?`,
-      },
+	      agentReuseDialog: {
+	        title: "O agente do Happier já existe",
+	        messageWithId: ({ name, id }: { name: string; id: string }) =>
+	          `Encontramos um agente existente do ElevenLabs (“${name}”, id: ${id}).\n\nVocê quer atualizá-lo ou criar um novo?`,
+	        messageNoId: ({ name }: { name: string }) =>
+	          `Encontramos um agente existente do ElevenLabs (“${name}”).\n\nVocê quer atualizá-lo ou criar um novo?`,
+	        actions: {
+	          createNew: "Criar novo",
+	          updateExisting: "Atualizar existente",
+	        },
+	      },
       configured:
         "Configurado. A utilização de voz será cobrada na sua conta ElevenLabs.",
       notConfigured:
@@ -4393,6 +6465,17 @@ export const pt: TranslationStructure = {
             "Permite mover o agente para outra máquina quando necessário.",
           teleportDisabledSubtitle: "Teleporte desativado.",
         },
+        machineRecovery: {
+          switchTitle: "Máquina de voz indisponível",
+          switchBody: ({ currentMachine, nextMachine }: { currentMachine: string; nextMachine: string }) =>
+            `A máquina de voz atual (${currentMachine}) está indisponível.\n\nMudar a voz para ${nextMachine}?`,
+          switchAction: "Mudar máquina",
+          replayTitle: "Trazer a conversa?",
+          replayBody: ({ nextMachine }: { nextMachine: string }) =>
+            `Você pode começar do zero em ${nextMachine} ou mudar e reproduzir o contexto de voz recente da máquina anterior.`,
+          replayAction: "Mudar e reproduzir o contexto de voz recente",
+          startFreshAction: "Começar do zero",
+        },
         agentSource: {
           followSessionTitle: "Seguir sessão",
           followSessionSubtitle:
@@ -4477,7 +6560,11 @@ export const pt: TranslationStructure = {
         streaming: {
           title: "Transmissão",
           enableTitle: "Ativar streaming",
+          enableSubtitle:
+            "Transmita texto parcial do agente conforme é gerado (usado para fala em streaming).",
           enableTtsTitle: "Ativar streaming de TTS",
+          enableTtsSubtitle:
+            "Fale a resposta enquanto ela está em streaming (requer streaming).",
           ttsChunkCharsTitle: "Caracteres do chunk de TTS",
           ttsChunkCharsPromptBody:
             "Quantos caracteres armazenar antes de solicitar o próximo chunk de TTS (32–2000).",
@@ -4795,6 +6882,36 @@ export const pt: TranslationStructure = {
       `Esta conexão é para ${serverUrl}. Trocar de servidor e continuar?`,
   },
 
+  terminalEmbedded: {
+    dockMenuA11y: "Ancorar terminal",
+    settings: {
+      locationTitle: "Local do terminal incorporado",
+    },
+    quickKeys: {
+      esc: "ESC",
+      tab: "TAB",
+      ctrlC: "Ctrl + C",
+      ctrlD: "Ctrl + D",
+      enter: "Enter ↵",
+    },
+    location: {
+      sidebar: "Barra lateral",
+      details: "Painel de detalhes",
+      bottom: "Painel inferior",
+    },
+    errors: {
+      missingMachineTarget: "Esta sessão está sem um destino de máquina.",
+      rpcTargetUnavailable: "O RPC da máquina não está disponível para esta máquina.",
+      machineUnreachable: "A máquina não está acessível.",
+      disabled: "O suporte a terminal está desativado na configuração do daemon. Ative-o e reinicie o daemon.",
+      notFound: "Sessão de terminal não encontrada. Tente reiniciar.",
+      cwdDenied: "O daemon não tem permissão para usar este diretório de trabalho.",
+      spawnFailed: "Falha ao iniciar o processo do terminal.",
+      invalidRequest: "Solicitação de terminal inválida.",
+      busy: "O terminal está ocupado. Tente novamente.",
+    },
+  },
+
   modals: {
     // Used across connect flows and settings
     authenticateTerminal: "Autenticar terminal",
@@ -4864,7 +6981,7 @@ export const pt: TranslationStructure = {
     // Main welcome screen for unauthenticated users
     title: "Cliente móvel Codex e Claude Code",
     subtitle:
-      "Criptografado ponta a ponta e sua conta é armazenada apenas no seu dispositivo.",
+      "Criptografia de ponta a ponta por padrão, com restauração da conta nos seus outros dispositivos.",
     createAccount: "Criar conta",
     chooseEncryptionTitle: "Escolha a criptografia",
     chooseEncryptionBody: "Este servidor oferece suporte a contas criptografadas e não criptografadas. Escolha como você quer armazenar os dados da sua conta.",
@@ -4875,13 +6992,178 @@ export const pt: TranslationStructure = {
     signInWithCertificate: "Entrar com certificado",
     linkOrRestoreAccount: "Vincular ou restaurar conta",
     loginWithMobileApp: "Fazer login com aplicativo móvel",
-    serverUnavailableTitle: "Não é possível conectar ao servidor",
+    serverUnavailableTitle: "Não é possível conectar ao Relay",
     serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
-      `Não conseguimos conectar a ${serverUrl}. Tente novamente ou altere o servidor para continuar.`,
-    serverIncompatibleTitle: "Servidor não suportado",
+      `Não conseguimos conectar a ${serverUrl}. Tente novamente ou escolha outro Relay para continuar.`,
+    serverIncompatibleTitle: "Relay não suportado",
     serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
-      `O servidor em ${serverUrl} retornou uma resposta inesperada. Atualize o servidor ou altere o servidor para continuar.`,
+      `O Relay em ${serverUrl} retornou uma resposta inesperada. Atualize esse Relay ou escolha outro Relay para continuar.`,
   },
+
+      sessionGettingStarted: {
+
+          title: {
+
+              connectMachine: 'Configura este computador',
+
+              startDaemon: 'Reconecta este computador',
+
+              createSession: 'Cria uma sessão',
+
+              selectSession: 'Seleciona uma sessão',
+
+              loading: 'Carregando…',
+
+          },
+        cliFollowUpTitle: 'Alternativa pelo terminal (opcional)',
+        manualDisclosure: {
+            show: 'Mostrar os passos manuais do terminal',
+            hide: 'Ocultar os passos manuais do terminal',
+        },
+
+          subtitle: {
+
+              connectMachine: ({ targetLabel }: { targetLabel: string }) =>
+
+                  `Use o fluxo de configuração da área de trabalho para conectar este computador a ${targetLabel}. Abra os passos manuais apenas se preferir o caminho do terminal.`,
+
+              startDaemon: ({ targetLabel }: { targetLabel: string }) =>
+
+                  `Use o fluxo de configuração da área de trabalho para reconectar o serviço em segundo plano de ${targetLabel}. Abra os passos manuais apenas se você já estiver nesse computador.`,
+
+              createSession: 'Comece uma sessão nova com o botão + ou a partir do terminal.',
+
+              selectSession: 'Escolha uma sessão na barra lateral para vê-la aqui.',
+
+              loading: 'Buscando suas máquinas e sessões…',
+
+          },
+
+          steps: {
+
+              openSetup: {
+
+                  title: 'Use o fluxo de configuração da área de trabalho',
+
+                  description: 'Este é o caminho recomendado. Ele configura o Relay, instala o serviço em segundo plano e mantém o restante da configuração no app.',
+
+              },
+
+              startDaemonOpenSetup: {
+
+                  description: 'Use o fluxo de configuração da área de trabalho para reconectar ou reparar o serviço em segundo plano neste computador antes de recorrer aos comandos do terminal.',
+
+              },
+
+              installCli: {
+
+                  title: 'Instale a CLI',
+
+                  description: 'Execute isto uma vez na máquina que você quer conectar.',
+
+                  copyLabel: 'Comando de instalação',
+
+              },
+
+              serverSetup: {
+
+                  title: 'Defina o Relay ativo',
+
+                  description: 'É uma configuração única para que os próximos comandos apontem para o Relay correto.',
+
+                  copyLabel: 'Configuração do Relay',
+
+              },
+
+              authLogin: {
+
+                  title: 'Entrar',
+
+                  description: 'Isso mostra um QR / link para conectar seu terminal à sua conta.',
+
+                  copyLabel: 'Login de autenticação',
+
+              },
+
+              daemonInstall: {
+
+                  title: 'Instale o serviço em segundo plano (recomendado)',
+
+                  description: 'Mantém o Happier pronto em segundo plano para inicializações remotas.',
+
+                  copyLabel: 'Instalação do daemon',
+
+              },
+
+              startDaemonInstall: {
+
+                  description: 'Instala um serviço de usuário sempre ativo e o inicia.',
+
+              },
+
+              daemonStart: {
+
+                  title: 'Inicie o serviço em segundo plano uma vez',
+
+                  description: 'Use isto se você só precisa que ele esteja em execução agora.',
+
+                  copyLabel: 'Inicialização do daemon',
+
+              },
+
+              createSession: {
+
+                  title: 'Crie uma sessão',
+
+                  description: 'Use o botão + no app ou execute uma destas opções no terminal.',
+
+                  copyLabel: 'Criar sessão',
+
+              },
+
+              startSession: {
+
+                  title: 'Inicie uma sessão a partir do seu computador',
+
+                  description: 'Ou use o botão + no app.',
+
+                  copyLabel: 'Iniciar sessão',
+
+              },
+
+          },
+
+      },
+
+
+  setupOnboarding: {
+          screenTitle: 'Configura este computador',
+          webDesktopOnlyTitle: 'É necessário o app de desktop',
+          webDesktopOnlyBody: 'Abra o app de desktop para configurar este computador. O app web pode mostrar o status, mas não pode instalar ou configurar o serviço em segundo plano.',
+          preAuthTitle: 'Escolha o seu Relay antes de entrar',
+          preAuthBody: 'Escolha o Relay que você quer usar neste computador antes de criar, restaurar ou entrar em uma conta.',
+          preAuthContinueHint: 'Quando você continuar, o Happier o levará de volta para entrar no Relay selecionado e depois retornará aqui para concluir a configuração.',
+    currentRelayTitle: 'Relay selecionado',
+    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Relay selecionado: ${relayUrl}`,
+    savedRelaysTitle: 'Relays salvos',
+    customRelayUrlLabel: 'URL do Relay',
+    relayNameLabel: 'Nome do Relay',
+    addAndUseRelay: 'Adicionar Relay',
+    changeRelayAction: 'Usar uma URL de Relay diferente',
+          continueToAuth: 'Continuar com o Relay selecionado',
+          continueWithLocalRelayAction: 'Continuar com este Relay local',
+    postAuthTitle: 'Concluir a configuração deste computador',
+    postAuthBody: 'Você entrou. Continue com o fluxo de configuração local para deixar este computador pronto para o Relay selecionado.',
+    controlPanelTitle: 'Resumo de prontidão',
+    activeRelaySummaryTitle: 'Relay ativo',
+    thisComputerSummaryTitle: 'Este computador',
+    nextActionSummaryTitle: 'Próxima ação',
+    thisComputerReady: 'Pronto para este Relay',
+    nextActionReady: 'Crie sua primeira sessão ou adicione outro computador abaixo.',
+    resumeIntentTitle: 'Continuar a configuração neste computador',
+          resumeIntentBody: 'Entre ou crie uma conta para continuar configurando este computador para o Relay selecionado.',
+          openSetupAction: 'Configurar este computador',
+      },
 
   review: {
     // Used by utils/requestReview.ts
@@ -4891,17 +7173,18 @@ export const pt: TranslationStructure = {
     notReally: "Não muito",
   },
 
-  items: {
-    // Used by Item component for copy toast
-    copiedToClipboard: ({ label }: { label: string }) =>
-      `${label} copiado para a área de transferência`,
-  },
+	  items: {
+	    // Used by Item component for copy toast
+	    copiedToClipboard: ({ label }: { label: string }) =>
+	      `${label} copiado para a área de transferência`,
+	    failedToCopyToClipboard: "Falha ao copiar para a área de transferência",
+	  },
 
     machine: {
     offlineUnableToSpawn:
       "Inicializador desativado enquanto a máquina está offline",
     offlineHelp:
-      "• Verifique se seu computador está online\n• Execute `happier daemon status` para diagnosticar\n• Você está usando a versão mais recente do CLI? Atualize com `npm install -g @happier-dev/cli@latest`",
+      "• Verifique se seu computador está online\n• Execute `happier daemon status` para diagnosticar\n• Você está usando a versão mais recente do CLI? Execute `happier self update`",
     launchNewSessionInDirectory: "Iniciar nova sessão no diretório",
     customPathPlaceholder: "Digite um caminho personalizado",
     tools: {
@@ -4977,6 +7260,7 @@ export const pt: TranslationStructure = {
     never: "Nunca",
     metadataVersion: "Versão dos metadados",
     detectedClis: "CLIs detectados",
+    detectedCliDetected: "Detectado",
     detectedCliNotDetected: "Não detectado",
     detectedCliUnknown: "Desconhecido",
     detectedCliNotSupported: "Não suportado (atualize o @happier-dev/cli)",
@@ -5005,6 +7289,13 @@ export const pt: TranslationStructure = {
         "Sessões remotas iniciam ocultas para evitar janelas abrindo/fechando.",
       remoteSessionConsoleUpdateFailed:
         "Falha ao atualizar a configuração do console de sessão no Windows.",
+      remoteSessionModeTitle: "Modo de sessão remota",
+      remoteSessionModeOverrideTitle: "Substituir o modo global de sessão do Windows",
+      remoteSessionModeOverrideEnabledSubtitle:
+        "Esta máquina usa seu próprio modo de sessão remota do Windows.",
+      remoteSessionModeOverrideDisabledSubtitle:
+        "Esta máquina segue o seu modo global de sessão remota do Windows.",
+      windowsTerminalUnavailableSuffix: "Windows Terminal não foi detectado nesta máquina.",
     },
   },
 
@@ -5022,15 +7313,31 @@ export const pt: TranslationStructure = {
       "As permissões são mostradas apenas no terminal. Redefina ou envie uma mensagem para controlar pelo app.",
     sessionRunningLocally:
       "Esta sessão está sendo executada localmente neste computador. Você pode alternar para remoto para controlar pelo app.",
-    switchToRemote: "Alternar para remoto",
-    localModeAvailable: "O modo local está disponível para esta sessão.",
-    localModeUnavailableMachineOffline:
-      "O modo local não está disponível enquanto esta máquina estiver offline.",
-    localModeUnavailableDaemonStarted:
-      "O modo local não está disponível para sessões iniciadas pelo daemon.",
-    localModeUnavailableNeedsResume:
-      "O modo local requer suporte de retomada para este provedor.",
+    sessionRunningLocallyAndRemotely:
+      "Esta sessão está conectada localmente no OpenCode e ainda pode ser controlada pelo app.",
+    switchingToRemote: "Alternando para o modo remoto…",
     switchToLocal: "Alternar para local",
+    switchToRemote: "Alternar para remoto",
+    detachLocalTerminal: "Desconectar terminal",
+    directSessionTakeoverAvailable:
+      "Esta sessão direta está disponível na sua máquina. Assuma o controle no Happier para controlá-la aqui.",
+    directSessionMachineOffline:
+      "Esta sessão direta está indisponível no momento porque a máquina está offline.",
+    switchingToDirectTakeover: "Assumindo o controle desta sessão direta…",
+    switchingToPersistedTakeover: "Assumindo o controle e sincronizando esta sessão…",
+    takeOverDirect: "Assumir controle",
+    takeOverPersist: "Assumir controle + Sincronizar",
+    directTakeoverDialogTitle: "Continuar esta sessão direta no Happier?",
+    directTakeoverDialogBody: "Escolha como o Happier deve assumir o controle. Direto continua usando a transcrição do provedor. Sincronizar importa a transcrição para o Happier.",
+    directTakeoverDialogDirectTitle: "Assumir controle",
+    directTakeoverDialogDirectBody: "Controle esta sessão no Happier sem sincronizar a transcrição para o Happier.",
+    directTakeoverDialogPersistTitle: "Assumir controle + Sincronizar",
+    directTakeoverDialogPersistBody: "Importe a transcrição para o Happier e continue com todos os recursos de sessão sincronizada.",
+    directTakeoverDialogForceStopTitle: "Tentar parar primeiro o processo local",
+    directTakeoverDialogForceStopBody: "O Happier encontrou um processo local confiável para esta sessão. Ative isto se quiser que o Happier o pare antes de assumir o controle.",
+    directTakeoverForceStopConfirmTitle: "Parar primeiro o processo local?",
+    directTakeoverForceStopConfirmBody: "O Happier encontrou um processo local confiável para esta sessão direta. Pará-lo antes de assumir o controle aqui?",
+    directTakeoverForceStopConfirmAction: "Parar e assumir o controle",
   },
 
     codex: {
@@ -5138,6 +7445,9 @@ export const pt: TranslationStructure = {
     howToFind: "Como encontrar amigos",
     findInstructions:
       "Procure amigos pelo nome de usuário. Dependendo do seu servidor, talvez seja necessário conectar um provedor ou escolher um nome de usuário para usar Amigos.",
+    emptyTitle: "Sem atividade de amigos",
+    emptyDescription: "Adicione amigos para compartilhar sessões e ver atividade aqui.",
+    activity: "Atividade",
     requestSent: "Solicitação de amizade enviada!",
     requestAccepted: "Solicitação de amizade aceita!",
     requestRejected: "Solicitação de amizade rejeitada",
@@ -5378,7 +7688,6 @@ export const pt: TranslationStructure = {
         useOnceButton: "Usar uma vez (apenas sessão)",
       },
     },
-    defaultSessionType: "Tipo de sessão padrão",
     defaultPermissionMode: {
       title: "Modo de permissão padrão",
       descriptions: {
@@ -5397,6 +7706,13 @@ export const pt: TranslationStructure = {
       useAccountDefault: "Usar padrão da conta",
       currently: ({ label }: { label: string }) => `Atual: ${label}`,
     },
+    defaultStorage: {
+      title: 'Armazenamento padrão da sessão',
+      footer: 'Substitui o modo padrão sincronizado/direto no nível da conta para novas sessões quando este perfil estiver selecionado.',
+      accountDefaultSubtitle: ({ label }: { label: string }) => `Padrão da conta: ${label}`,
+      useAccountDefault: 'Usar padrão da conta',
+      currently: ({ label }: { label: string }) => `Atual: ${label}`,
+    },
     aiBackend: {
       title: "Backend de IA",
       selectAtLeastOneError: "Selecione pelo menos um backend de IA.",
@@ -5408,6 +7724,8 @@ export const pt: TranslationStructure = {
       qwenSubtitleExperimental: "CLI do Qwen Code (experimental)",
       kimiSubtitleExperimental: "CLI do Kimi (experimental)",
       kiloSubtitleExperimental: "CLI do Kilo (experimental)",
+      kiroSubtitleExperimental: "CLI do Kiro (experimental)",
+      customAcpSubtitleExperimental: "CLI de ACP personalizada (experimental)",
       piSubtitleExperimental: "CLI do Pi (experimental)",
       copilotSubtitleExperimental: "GitHub Copilot CLI (em testes)",
     },

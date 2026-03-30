@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createAcpRuntime } from '../createAcpRuntime';
-import { createApprovedPermissionHandler, createFakeAcpRuntimeBackend } from '../createAcpRuntime.testkit';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 
 describe('createAcpRuntime (token-count forwarding)', () => {
   it('forwards token-count agent messages as token_count session messages', async () => {

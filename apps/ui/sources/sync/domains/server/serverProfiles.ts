@@ -2,6 +2,8 @@ import { MMKV } from 'react-native-mmkv';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { isStackContext } from './serverContext';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
+import { sanitizeServerUrlForShareableLink } from './url/shareableServerUrl';
+import { readConfiguredServerUrlEnv, readConfiguredServerUrlEnvRaw } from './readConfiguredServerUrlEnv';
 
 export type ServerProfileSource = 'manual' | 'url' | 'stack-env' | 'notification' | 'preconfigured';
 
@@ -9,6 +11,7 @@ export type ServerProfile = Readonly<{
     id: string;
     name: string;
     serverUrl: string;
+    shareableServerUrl?: string | null;
     createdAt: number;
     updatedAt: number;
     lastUsedAt: number;
@@ -18,6 +21,8 @@ export type ServerProfile = Readonly<{
 export type ActiveServerSnapshot = Readonly<{
     serverId: string;
     serverUrl: string;
+    activeShareableServerUrl?: string | null;
+    activeLocalRelayUrl?: string | null;
     generation: number;
 }>;
 
@@ -31,6 +36,7 @@ type PreconfiguredServer = Readonly<{
     name: string;
     source: ServerProfileSource;
     url: string;
+    idSeed?: string;
 }>;
 
 const SESSION_STORAGE_ACTIVE_ID_KEY = 'activeServerId';
@@ -38,6 +44,7 @@ const STATE_KEY = 'server-state-v1';
 
 let activeServerGeneration = 0;
 const activeServerListeners = new Set<(snapshot: ActiveServerSnapshot) => void>();
+let activeServerSnapshotCache: ActiveServerSnapshot | null = null;
 
 function isWebRuntime(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -92,20 +99,82 @@ function storageId(): string {
     return scopedStorageId('server-profiles', scope);
 }
 
-const storage = new MMKV({ id: storageId() });
+type PersistedStateStorage = Readonly<{
+    getString: (key: string) => string | undefined;
+    set: (key: string, value: string) => void;
+}>;
+
+let persistedStateStorage: PersistedStateStorage | null = null;
+
+function resolveWebStorageBackend(): Storage | null {
+    const windowStorage = (globalThis as any).window?.localStorage;
+    if (windowStorage && typeof windowStorage.getItem === 'function') return windowStorage as Storage;
+    const localStorage = (globalThis as any).localStorage;
+    if (localStorage && typeof localStorage.getItem === 'function') return localStorage as Storage;
+    const sessionStorage = (globalThis as any).sessionStorage;
+    if (sessionStorage && typeof sessionStorage.getItem === 'function') return sessionStorage as Storage;
+    return null;
+}
+
+function createWebPersistedStateStorage(): PersistedStateStorage {
+    const storage = resolveWebStorageBackend();
+    const fallback = new Map<string, string>();
+    const prefix = `${storageId()}:`;
+    const resolveKey = (key: string) => `${prefix}${key}`;
+
+    return {
+        getString: (key: string) => {
+            const resolvedKey = resolveKey(key);
+            try {
+                const value = storage?.getItem(resolvedKey) ?? null;
+                return typeof value === 'string' ? value : fallback.get(resolvedKey);
+            } catch {
+                return fallback.get(resolvedKey);
+            }
+        },
+        set: (key: string, value: string) => {
+            const resolvedKey = resolveKey(key);
+            try {
+                storage?.setItem(resolvedKey, value);
+            } catch {
+                // ignore
+            }
+            fallback.set(resolvedKey, value);
+        },
+    };
+}
+
+function createNativePersistedStateStorage(): PersistedStateStorage {
+    const storage = new MMKV({ id: storageId() });
+    return {
+        getString: (key: string) => storage.getString(key),
+        set: (key: string, value: string) => storage.set(key, value),
+    };
+}
+
+function getPersistedStateStorage(): PersistedStateStorage {
+    if (persistedStateStorage) return persistedStateStorage;
+    persistedStateStorage = isWebRuntime() ? createWebPersistedStateStorage() : createNativePersistedStateStorage();
+    return persistedStateStorage;
+}
 
 function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
     const entries: PreconfiguredServer[] = [];
     const seenUrlKeys = new Set<string>();
 
-    const append = (urlRaw: unknown, nameRaw: unknown, source: ServerProfileSource): void => {
+    const append = (
+        urlRaw: unknown,
+        nameRaw: unknown,
+        source: ServerProfileSource,
+        opts: Readonly<{ idSeed?: string }> = {},
+    ): void => {
         const url = normalizeUrl(String(urlRaw ?? ''));
         if (!url) return;
         const key = comparableUrlKey(url);
         if (seenUrlKeys.has(key)) return;
         seenUrlKeys.add(key);
         const name = String(nameRaw ?? '').trim();
-        entries.push({ name, source, url });
+        entries.push({ name, source, url, ...(opts.idSeed ? { idSeed: opts.idSeed } : {}) });
     };
 
     const rawPreconfigured = String(process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS ?? '').trim();
@@ -128,14 +197,17 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
         }
     }
 
-    const singleUrl = normalizeUrl(String(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? ''));
+    const rawSingleUrl = normalizeUrl(readConfiguredServerUrlEnvRaw());
+    const singleUrl = normalizeUrl(readConfiguredServerUrlEnv());
     if (singleUrl) {
-        append(singleUrl, '', isStackContext() ? 'stack-env' : 'url');
+        const inStack = isStackContext();
+        const idSeed = rawSingleUrl && rawSingleUrl !== singleUrl ? deriveServerIdFromUrl(rawSingleUrl) : undefined;
+        append(singleUrl, '', inStack ? 'stack-env' : 'url', inStack ? { idSeed } : {});
     }
 
     // On web with no explicitly configured server, fall back to same-origin so that
     // self-hosted deployments (e.g. https://happier.example.com) get a server profile
-    // without needing EXPO_PUBLIC_HAPPY_SERVER_URL set at build time.
+    // without needing EXPO_PUBLIC_HAPPIER_SERVER_URL set at build time.
     if (entries.length === 0) {
         const origin = getWebSameOriginServerUrl();
         if (origin) {
@@ -180,7 +252,26 @@ function applyRuntimeSeedPolicy(servers: Record<string, ServerProfile>): Record<
     for (const configured of parsePreconfiguredServersFromEnv()) {
         const existing = findProfileByEquivalentUrl(next, configured.url);
         if (existing) continue;
-        const id = createUniqueServerId(next, deriveServerIdFromUrl(configured.url), configured.url);
+
+        const idSeed = String(configured.idSeed ?? '').trim();
+        if (idSeed && idSeed in next) {
+            const current = next[idSeed]!;
+            if (
+                current.source === 'stack-env'
+                && configured.source === 'stack-env'
+                && comparableUrlKey(current.serverUrl) !== comparableUrlKey(configured.url)
+            ) {
+                const now = nowMs();
+                next[idSeed] = {
+                    ...current,
+                    serverUrl: configured.url,
+                    updatedAt: now,
+                };
+                continue;
+            }
+        }
+
+        const id = createUniqueServerId(next, idSeed || deriveServerIdFromUrl(configured.url), configured.url);
         const now = nowMs();
         next[id] = {
             id,
@@ -233,6 +324,9 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
         id: sid,
         name,
         serverUrl,
+        ...(typeof record.shareableServerUrl === 'string'
+            ? { shareableServerUrl: sanitizeServerUrlForShareableLink(record.shareableServerUrl) }
+            : {}),
         createdAt: Number(record.createdAt ?? 0) || 0,
         updatedAt: Number(record.updatedAt ?? 0) || 0,
         lastUsedAt: Number(record.lastUsedAt ?? 0) || 0,
@@ -240,8 +334,110 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
     };
 }
 
+function pickPreferredEquivalentProfile(
+    profiles: readonly ServerProfile[],
+    opts: Readonly<{ sameOriginServerUrl: string | null; preferredServerId: string | null }>,
+): ServerProfile {
+    if (profiles.length === 1) return profiles[0]!;
+
+    const sameOrigin = opts.sameOriginServerUrl ? normalizeUrl(opts.sameOriginServerUrl) : '';
+    if (sameOrigin) {
+        const sameOriginMatch = profiles.find((p) => normalizeUrl(p.serverUrl) === sameOrigin);
+        if (sameOriginMatch) return sameOriginMatch;
+    }
+
+    const preferredId = normalizeServerId(opts.preferredServerId);
+    if (preferredId) {
+        const preferredMatch = profiles.find((p) => normalizeServerId(p.id) === preferredId);
+        if (preferredMatch) return preferredMatch;
+    }
+
+    const sourceRank: Record<ServerProfileSource, number> = {
+        'stack-env': 0,
+        preconfigured: 1,
+        url: 2,
+        notification: 3,
+        manual: 4,
+    };
+
+    return [...profiles].sort((a, b) => {
+        const aRank = a.source ? (sourceRank[a.source] ?? 10) : 10;
+        const bRank = b.source ? (sourceRank[b.source] ?? 10) : 10;
+        if (aRank !== bRank) return aRank - bRank;
+
+        const aUsed = Number(a.lastUsedAt ?? 0) || 0;
+        const bUsed = Number(b.lastUsedAt ?? 0) || 0;
+        if (aUsed !== bUsed) return bUsed - aUsed;
+
+        const aUpdated = Number(a.updatedAt ?? 0) || 0;
+        const bUpdated = Number(b.updatedAt ?? 0) || 0;
+        if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+
+        const aCreated = Number(a.createdAt ?? 0) || 0;
+        const bCreated = Number(b.createdAt ?? 0) || 0;
+        return aCreated - bCreated;
+    })[0]!;
+}
+
+function dedupeEquivalentProfiles(params: Readonly<{
+    servers: Record<string, ServerProfile>;
+    sameOriginServerUrl: string | null;
+    preferredServerId: string | null;
+}>): Readonly<{
+    servers: Record<string, ServerProfile>;
+    idRewrite: Map<string, string>;
+    changed: boolean;
+}> {
+    const groupsByKey = new Map<string, ServerProfile[]>();
+    for (const profile of Object.values(params.servers)) {
+        const key = comparableUrlKey(profile.serverUrl) || `id:${profile.id}`;
+        const group = groupsByKey.get(key);
+        if (group) group.push(profile);
+        else groupsByKey.set(key, [profile]);
+    }
+
+    let changed = false;
+    const idRewrite = new Map<string, string>();
+    const next: Record<string, ServerProfile> = {};
+
+    for (const group of groupsByKey.values()) {
+        if (group.length === 1) {
+            const only = group[0]!;
+            next[only.id] = only;
+            continue;
+        }
+
+        changed = true;
+        const preferred = pickPreferredEquivalentProfile(group, {
+            sameOriginServerUrl: params.sameOriginServerUrl,
+            preferredServerId: params.preferredServerId,
+        });
+        const merged: ServerProfile = group.reduce<ServerProfile>((acc, current) => {
+            if (current.id === acc.id) return acc;
+            return {
+                ...acc,
+                createdAt: Math.min(acc.createdAt, current.createdAt),
+                updatedAt: Math.max(acc.updatedAt, current.updatedAt),
+                lastUsedAt: Math.max(acc.lastUsedAt, current.lastUsedAt),
+                ...(acc.shareableServerUrl ?? current.shareableServerUrl
+                    ? { shareableServerUrl: acc.shareableServerUrl ?? current.shareableServerUrl ?? null }
+                    : {}),
+            };
+        }, preferred);
+
+        next[merged.id] = merged;
+
+        for (const current of group) {
+            if (current.id === merged.id) continue;
+            idRewrite.set(current.id, merged.id);
+        }
+    }
+
+    return { servers: next, idRewrite, changed };
+}
+
 function readPersistedState(): Required<PersistedServerState> {
-    const raw = storage.getString(STATE_KEY);
+    const raw = getPersistedStateStorage().getString(STATE_KEY);
     if (!raw) {
         const seeded = applyRuntimeSeedPolicy({});
         return {
@@ -261,14 +457,31 @@ function readPersistedState(): Required<PersistedServerState> {
             servers[profile.id] = profile;
         }
         const desiredActive = normalizeServerId(parsed.activeServerId);
-        const activeServerId = resolvePrimaryActiveServerId(servers, desiredActive);
         const activeServerIdIsExplicit = parsed.activeServerIdIsExplicit === true;
 
-        return {
+        const deduped = dedupeEquivalentProfiles({
+            servers,
+            sameOriginServerUrl: getWebSameOriginServerUrl(),
+            preferredServerId: desiredActive,
+        });
+
+        const rewrittenDesiredActive =
+            desiredActive && deduped.idRewrite.has(desiredActive)
+                ? deduped.idRewrite.get(desiredActive)!
+                : desiredActive;
+        const activeServerId = resolvePrimaryActiveServerId(deduped.servers, rewrittenDesiredActive);
+
+        const state: Required<PersistedServerState> = {
             activeServerIdIsExplicit,
             activeServerId,
-            servers,
+            servers: deduped.servers,
         };
+
+        if (deduped.changed) {
+            writePersistedState(state);
+        }
+
+        return state;
     } catch {
         const seeded = applyRuntimeSeedPolicy({});
         return {
@@ -280,7 +493,7 @@ function readPersistedState(): Required<PersistedServerState> {
 }
 
 function writePersistedState(state: Required<PersistedServerState>): void {
-    storage.set(STATE_KEY, JSON.stringify(state));
+    getPersistedStateStorage().set(STATE_KEY, JSON.stringify(state));
 }
 
 function readTabActiveServerId(): string | null {
@@ -314,7 +527,7 @@ function getWebSameOriginServerUrl(): string | null {
         const parsed = new URL(origin);
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
         // Official hosted web app (app.happier.dev) is a static SPA; the API lives on api.happier.dev.
-        // When builds are missing EXPO_PUBLIC_HAPPY_SERVER_URL, this prevents the default server
+        // When builds are missing EXPO_PUBLIC_HAPPIER_SERVER_URL (and legacy aliases), this prevents the default server
         // from incorrectly pointing at the web host.
         if (parsed.hostname.toLowerCase() === 'app.happier.dev') {
             return 'https://api.happier.dev';
@@ -331,27 +544,56 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
         ? tabId
         : resolvePrimaryActiveServerId(state.servers, state.activeServerId);
     const selected = selectedId ? state.servers[selectedId] : null;
+    const sameOriginUrl = getWebSameOriginServerUrl();
 
     if (selected) {
         return {
             serverId: selected.id,
             serverUrl: selected.serverUrl,
+            activeShareableServerUrl: selected.shareableServerUrl ?? null,
+            activeLocalRelayUrl: sameOriginUrl && comparableUrlKey(sameOriginUrl) !== comparableUrlKey(selected.serverUrl)
+                ? sameOriginUrl
+                : null,
             generation: activeServerGeneration,
         };
     }
 
     return {
         serverId: selectedId || '',
-        serverUrl: getWebSameOriginServerUrl() ?? '',
+        serverUrl: sameOriginUrl ?? '',
+        activeShareableServerUrl: null,
+        activeLocalRelayUrl: sameOriginUrl,
         generation: activeServerGeneration,
     };
 }
 
+function getStableActiveServerSnapshot(next: ActiveServerSnapshot): ActiveServerSnapshot {
+    const cached = activeServerSnapshotCache;
+    if (
+        cached
+        && cached.serverId === next.serverId
+        && cached.serverUrl === next.serverUrl
+        && (cached.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
+        && (cached.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
+        && cached.generation === next.generation
+    ) {
+        return cached;
+    }
+    activeServerSnapshotCache = next;
+    return next;
+}
+
 function emitActiveServerChanged(previous: ActiveServerSnapshot | null): void {
     const next = getActiveServerSnapshot();
-    if (previous && previous.serverId === next.serverId && previous.serverUrl === next.serverUrl) return;
+    if (
+        previous
+        && previous.serverId === next.serverId
+        && previous.serverUrl === next.serverUrl
+        && (previous.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
+        && (previous.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
+    ) return;
     activeServerGeneration += 1;
-    const emitted: ActiveServerSnapshot = { ...next, generation: activeServerGeneration };
+    const emitted: ActiveServerSnapshot = getStableActiveServerSnapshot({ ...next, generation: activeServerGeneration });
     for (const listener of activeServerListeners) listener(emitted);
 }
 
@@ -370,6 +612,7 @@ export function upsertServerProfile(
         serverUrl: string;
         name?: string;
         source?: ServerProfileSource;
+        replaceEquivalentStoredUrl?: boolean;
     }>,
 ): ServerProfile {
     const url = normalizeUrl(params.serverUrl);
@@ -391,7 +634,15 @@ export function upsertServerProfile(
             ?? defaultServerNameFromUrl(url)
             ?? id,
         ).trim() || id,
-        serverUrl: existingEquivalent?.serverUrl ?? url,
+        serverUrl:
+            existingEquivalent && params.replaceEquivalentStoredUrl !== true
+                ? existingEquivalent.serverUrl
+                : url,
+        ...(existingEquivalent?.shareableServerUrl
+            ? { shareableServerUrl: existingEquivalent.shareableServerUrl }
+            : existing?.shareableServerUrl
+                ? { shareableServerUrl: existing.shareableServerUrl }
+                : {}),
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
         lastUsedAt: existing?.lastUsedAt ?? 0,
@@ -491,7 +742,7 @@ export function getActiveServerUrl(): string {
 
 export function getActiveServerSnapshot(): ActiveServerSnapshot {
     const state = readPersistedState();
-    return buildActiveSnapshotFromState(state);
+    return getStableActiveServerSnapshot(buildActiveSnapshotFromState(state));
 }
 
 export function subscribeActiveServer(listener: (snapshot: ActiveServerSnapshot) => void): () => void {
@@ -547,6 +798,31 @@ export function renameServerProfile(idRaw: string, nameRaw: string): void {
         servers: {
             ...state.servers,
             [id]: updated,
+        },
+    });
+    emitActiveServerChanged(previousSnapshot);
+}
+
+export function setServerProfileShareableUrl(idRaw: string, shareableServerUrl: string | null | undefined): void {
+    const id = normalizeServerId(idRaw);
+    if (!id) return;
+
+    const normalized = sanitizeServerUrlForShareableLink(shareableServerUrl ?? null);
+    const state = readPersistedState();
+    const existing = state.servers[id];
+    if (!existing) return;
+    if ((existing.shareableServerUrl ?? null) === normalized) return;
+
+    const previousSnapshot = getActiveServerSnapshot();
+    writePersistedState({
+        ...state,
+        servers: {
+            ...state.servers,
+            [id]: {
+                ...existing,
+                shareableServerUrl: normalized,
+                updatedAt: nowMs(),
+            },
         },
     });
     emitActiveServerChanged(previousSnapshot);

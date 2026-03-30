@@ -32,9 +32,10 @@ vi.mock("@/storage/inTx", () => {
             session: {
                 findFirst: vi.fn(async () => ({
                     id: "s1",
+                    accountId: "owner",
                     shares: [{ sharedWithUserId: "u2" }],
                 })),
-                delete: vi.fn(async () => ({})),
+                deleteMany: vi.fn(async () => ({ count: 1 })),
             },
             sessionMessage: { deleteMany: vi.fn(async () => ({ count: 0 })) },
             usageReport: { deleteMany: vi.fn(async () => ({ count: 0 })) },

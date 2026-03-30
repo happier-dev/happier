@@ -1,8 +1,4 @@
-function normalizeLoopbackHost(rawHost: string): string {
-    const host = String(rawHost ?? '').trim().toLowerCase();
-    if (host === '127.0.0.1' || host === '::1' || host === '[::1]') return 'localhost';
-    return host;
-}
+import { createServerUrlComparableKey as createProtocolServerUrlComparableKey } from '@happier-dev/protocol';
 
 export function canonicalizeServerUrl(raw: string): string {
     const value = String(raw ?? '').trim();
@@ -23,19 +19,8 @@ export function createServerUrlComparableKey(raw: string): string {
     const canonical = canonicalizeServerUrl(raw);
     if (!canonical) return '';
     try {
-        const parsed = new URL(canonical);
-        const protocol = parsed.protocol.toLowerCase();
-        const host = normalizeLoopbackHost(parsed.hostname);
-        const explicitPort = parsed.port;
-        const port = (() => {
-            if (!explicitPort) return '';
-            if (protocol === 'https:' && explicitPort === '443') return '';
-            if (protocol === 'http:' && explicitPort === '80') return '';
-            return `:${explicitPort}`;
-        })();
-        const path = parsed.pathname.replace(/\/+$/, '');
-        return `${protocol}//${host}${port}${path}`;
+        return createProtocolServerUrlComparableKey(canonical);
     } catch {
-        return canonical.toLowerCase();
+        return '';
     }
 }

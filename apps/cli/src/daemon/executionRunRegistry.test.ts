@@ -5,11 +5,13 @@ import { join } from 'node:path';
 
 describe('executionRunRegistry', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+  const originalReleaseRing = process.env.HAPPIER_RELEASE_RING;
   let happyHomeDir: string;
 
   beforeEach(() => {
     happyHomeDir = join(tmpdir(), `happier-cli-exec-run-registry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    delete process.env.HAPPIER_RELEASE_RING;
     vi.resetModules();
   });
 
@@ -21,6 +23,11 @@ describe('executionRunRegistry', () => {
       delete process.env.HAPPIER_HOME_DIR;
     } else {
       process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+    }
+    if (originalReleaseRing === undefined) {
+      delete process.env.HAPPIER_RELEASE_RING;
+    } else {
+      process.env.HAPPIER_RELEASE_RING = originalReleaseRing;
     }
   });
 
@@ -58,6 +65,33 @@ describe('executionRunRegistry', () => {
     const parsed = JSON.parse(raw);
     expect(parsed.happyHomeDir).toBe(configuration.happyHomeDir);
     expect(parsed.runId).toBe('run_1');
+  });
+
+  it('writes markers into a channel-scoped tmp dir for the dev public ring', async () => {
+    process.env.HAPPIER_RELEASE_RING = 'dev';
+    vi.resetModules();
+
+    const { configuration } = await import('@/configuration');
+    const { writeExecutionRunMarker } = await import('./executionRunRegistry');
+
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'sess-1',
+      runId: 'run_dev_scoped',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'review',
+      backendId: 'claude',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'running',
+      startedAtMs: 1,
+      updatedAtMs: 1,
+    });
+
+    const filePath = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs.dev', 'run-run_dev_scoped.json');
+    expect(existsSync(filePath)).toBe(true);
   });
 
   it('uses a unique temp file per marker write to avoid cross-write corruption', async () => {
@@ -176,6 +210,71 @@ describe('executionRunRegistry', () => {
 
     const markers = await listExecutionRunMarkers();
     expect(markers).toEqual([]);
+  });
+
+  it('recovers a valid orphan temp marker when the final marker file is missing', async () => {
+    const { configuration } = await import('@/configuration');
+    const { listExecutionRunMarkers } = await import('./executionRunRegistry');
+
+    const dir = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'run-run_tmp_only.json.tmp-123'),
+      JSON.stringify({
+        happyHomeDir: configuration.happyHomeDir,
+        pid: 123,
+        happySessionId: 'sess-1',
+        runId: 'run_tmp_only',
+        callId: 'call_1',
+        sidechainId: 'side_1',
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        permissionMode: 'workspace_write',
+        runClass: 'long_lived',
+        ioMode: 'request_response',
+        retentionPolicy: 'resumable',
+        status: 'running',
+        startedAtMs: 1,
+        updatedAtMs: 2,
+      }),
+      'utf-8',
+    );
+
+    const markers = await listExecutionRunMarkers();
+    expect(markers.map((marker) => marker.runId)).toEqual(['run_tmp_only']);
+  });
+
+  it('removeExecutionRunMarker also removes orphan temp marker files for the run', async () => {
+    const { configuration } = await import('@/configuration');
+    const { removeExecutionRunMarker } = await import('./executionRunRegistry');
+
+    const dir = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
+    mkdirSync(dir, { recursive: true });
+    const tempPath = join(dir, 'run-run_tmp_cleanup.json.tmp-123');
+    writeFileSync(
+      tempPath,
+      JSON.stringify({
+        happyHomeDir: configuration.happyHomeDir,
+        pid: 123,
+        happySessionId: 'sess-1',
+        runId: 'run_tmp_cleanup',
+        callId: 'call_1',
+        sidechainId: 'side_1',
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        permissionMode: 'workspace_write',
+        runClass: 'long_lived',
+        ioMode: 'request_response',
+        retentionPolicy: 'resumable',
+        status: 'running',
+        startedAtMs: 1,
+        updatedAtMs: 2,
+      }),
+      'utf-8',
+    );
+
+    await removeExecutionRunMarker('run_tmp_cleanup');
+    expect(existsSync(tempPath)).toBe(false);
   });
 
   it('gcExecutionRunMarkers removes stale terminal markers and markers for dead pids', async () => {

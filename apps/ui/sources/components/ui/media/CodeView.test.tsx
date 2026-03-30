@@ -1,6 +1,10 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
+import { renderScreen } from '@/dev/testkit';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { installMediaCommonModuleMocks } from './mediaTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,18 +22,18 @@ const useSettingSpy = vi.fn((key: string): number | null => {
     return null;
 });
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => useSettingSpy(key),
-}));
+installMediaCommonModuleMocks({
+    storage: async () => createStorageModuleStub({
+        useSetting: (key: string) => useSettingSpy(key),
+    }),
+});
 
 describe('CodeView', () => {
     it('renders CodeBlockView with the provided code and language', async () => {
         codeBlockSpy.mockClear();
         const { CodeView } = await import('./CodeView');
 
-        await act(async () => {
-            renderer.create(React.createElement(CodeView, { code: '{"ok":true}', language: 'json' }));
-        });
+        await renderScreen(React.createElement(CodeView, { code: '{"ok":true}', language: 'json' }));
 
         expect(codeBlockSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -44,9 +48,7 @@ describe('CodeView', () => {
         useSettingSpy.mockClear();
         const { CodeView } = await import('./CodeView');
 
-        await act(async () => {
-            renderer.create(React.createElement(CodeView, { code: JSON.stringify({ ok: true }, null, 2) }));
-        });
+        await renderScreen(React.createElement(CodeView, { code: JSON.stringify({ ok: true }, null, 2) }));
 
         expect(codeBlockSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -70,9 +72,7 @@ describe('CodeView', () => {
         const { CodeView } = await import('./CodeView');
         const bigJsonLike = `{${'a'.repeat(100)}}`;
 
-        await act(async () => {
-            renderer.create(React.createElement(CodeView, { code: bigJsonLike }));
-        });
+        await renderScreen(React.createElement(CodeView, { code: bigJsonLike }));
 
         expect(parseSpy).toHaveBeenCalledTimes(0);
         expect(codeBlockSpy).toHaveBeenCalledWith(

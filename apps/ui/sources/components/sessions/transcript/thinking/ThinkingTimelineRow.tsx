@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { ThinkingPulseLabel } from '@/components/sessions/transcript/motion/ThinkingPulseLabel';
+import { Typography } from '@/constants/Typography';
 
 export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props: {
     id: string;
@@ -119,7 +120,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     labelText: {
         fontSize: 13,
-        fontWeight: '600',
+        ...Typography.default('semiBold'),
         color: theme.colors.text,
     },
     headerRight: {
@@ -133,7 +134,6 @@ const styles = StyleSheet.create((theme) => ({
         marginLeft: 8,
         color: theme.colors.textSecondary,
         fontSize: 13,
-        fontWeight: '500',
         fontStyle: 'italic',
         opacity: 0.95,
     },

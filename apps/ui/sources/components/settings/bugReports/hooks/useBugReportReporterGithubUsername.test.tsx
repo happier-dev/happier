@@ -1,15 +1,14 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { Profile } from '@/sync/domains/profiles/profile';
+import { installBugReportHooksCommonModuleMocks } from './bugReportHooksTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-// Minimal RN mocks for hook tests.
-vi.mock('react-native', () => ({
-    Text: 'Text',
-}));
+installBugReportHooksCommonModuleMocks();
 
 describe('useBugReportReporterGithubUsername', () => {
     it('does not crash when profile is null', async () => {
@@ -21,9 +20,7 @@ describe('useBugReportReporterGithubUsername', () => {
             return React.createElement('Text', { value: reporterGithubUsername });
         }
 
-        await act(async () => {
-            expect(() => renderer.create(<TestComponent profile={null} />)).not.toThrow();
-        });
+        await expect(renderScreen(<TestComponent profile={null} />)).resolves.toBeDefined();
     });
 
     it('defaults to @login when github provider is linked', async () => {
@@ -45,17 +42,12 @@ describe('useBugReportReporterGithubUsername', () => {
             return React.createElement('Text', { value: reporterGithubUsername });
         }
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<TestComponent profile={profile} />);
-        });
+        const screen = await renderScreen(<TestComponent profile={profile} />);
         for (let i = 0; i < 10; i += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            const text = tree!.root.findByType('Text' as any);
+            await flushHookEffects({ cycles: 1, turns: 1 });
+            const text = screen.findByType('Text' as any);
             if (text.props.value === '@octocat') break;
         }
-        expect(tree!.root.findByType('Text' as any).props.value).toBe('@octocat');
+        expect(screen.findByType('Text' as any).props.value).toBe('@octocat');
     });
 });

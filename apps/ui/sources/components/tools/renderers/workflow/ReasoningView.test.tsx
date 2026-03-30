@@ -1,31 +1,25 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import {
+    installWorkflowRendererCommonModuleMocks,
+} from './workflowRendererTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const markdownViewSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-}));
+installWorkflowRendererCommonModuleMocks();
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: any) => {
         markdownViewSpy(props);
         return React.createElement('MarkdownView', props);
     },
-}));
-
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 describe('ReasoningView', () => {
@@ -40,14 +34,10 @@ describe('ReasoningView', () => {
 
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { ReasoningView } = await import('./ReasoningView');
-        await act(async () => {
-            renderer.create(
-                React.createElement(
+        await renderScreen(React.createElement(
                     ReasoningView,
                     makeToolViewProps(tool, { sessionId: 's1', ...(detailLevel ? { detailLevel } : {}) }),
-                ),
-            );
-        });
+                ));
     }
 
     it('renders tool.result.content as markdown', async () => {

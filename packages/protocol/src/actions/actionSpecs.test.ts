@@ -2,9 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { ExecutionRunIntentSchema } from '../executionRuns.js';
-import { ActionSpecSchema, getActionSpec, listActionSpecs } from './actionSpecs.js';
+import { ActionSpecSchema, ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs } from './actionSpecs.js';
 
 describe('Action Spec Registry', () => {
+  it('supports session_agent as an action surface', () => {
+    const parsed = ActionSurfaceSchema.parse({
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: false,
+      cli: false,
+      session_agent: true,
+    });
+
+    expect(parsed.session_agent).toBe(true);
+  });
+
   it('exposes stable action specs', () => {
     const all = listActionSpecs();
     expect(all.length).toBeGreaterThan(0);
@@ -20,8 +34,114 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.voice_tool).toBe(true);
   });
 
-  it('does not expose de-surfaced legacy execution.run.start action', () => {
-    expect(() => getActionSpec('execution.run.start' as any)).toThrow();
+  it('surfaces action discovery tools on both session_agent and external mcp', () => {
+    const spec = getActionSpec('action.spec.search');
+    expect(spec.surfaces.session_agent).toBe(true);
+    expect(spec.surfaces.mcp).toBe(true);
+  });
+
+  it('surfaces session targeting + listing tools on external mcp', () => {
+    expect(getActionSpec('session.target.primary.set').surfaces.mcp).toBe(true);
+    expect(getActionSpec('session.target.tracked.set').surfaces.mcp).toBe(true);
+    expect(getActionSpec('session.list').surfaces.mcp).toBe(true);
+    expect(getActionSpec('session.activity.get').surfaces.mcp).toBe(true);
+    expect(getActionSpec('session.messages.recent.get').surfaces.mcp).toBe(true);
+  });
+
+  it('accepts session.list filter fields in the action schema', () => {
+    const spec = getActionSpec('session.list');
+
+    expect(
+      spec.inputSchema.parse({
+        limit: 200,
+        cursor: 'cursor-1',
+        includeLastMessagePreview: false,
+        activeOnly: true,
+        archivedOnly: false,
+        includeSystem: true,
+        resumableOnly: true,
+      }),
+    ).toEqual({
+      limit: 200,
+      cursor: 'cursor-1',
+      includeLastMessagePreview: false,
+      activeOnly: true,
+      archivedOnly: false,
+      includeSystem: true,
+      resumableOnly: true,
+    });
+  });
+
+  it('surfaces approval actions on external mcp and cli (power user/internal)', () => {
+    expect(getActionSpec('approval.request.create').surfaces.mcp).toBe(true);
+    expect(getActionSpec('approval.request.create').surfaces.cli).toBe(true);
+    expect(getActionSpec('approval.request.decide').surfaces.mcp).toBe(true);
+    expect(getActionSpec('approval.request.decide').surfaces.cli).toBe(true);
+  });
+
+  it('accepts explicit execution.run.list filter fields in the action schema', () => {
+    const spec = getActionSpec('execution.run.list');
+
+    expect(
+      spec.inputSchema.parse({
+        sessionId: 'session_1',
+        backendId: 'claude',
+        status: 'running',
+        limit: 5,
+      }),
+    ).toEqual({
+      sessionId: 'session_1',
+      backendId: 'claude',
+      status: 'running',
+      limit: 5,
+    });
+  });
+
+  it('requires backendTargetKey when listing models for customAcp', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'customAcp',
+        machineId: 'machine-1',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects mismatched agentId and backendTargetKey when listing models', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'claude',
+        backendTargetKey: 'agent:codex',
+        machineId: 'machine-1',
+      }),
+    ).toThrow();
+  });
+
+  it('registers both friendly and namespaced slash aliases for review.start', () => {
+    const spec = getActionSpec('review.start');
+    expect(spec.slash?.tokens).toEqual(['/review', '/h.review']);
+  });
+
+  it('exposes execution.run.start for cli and external mcp surfaces', () => {
+    const spec = getActionSpec('execution.run.start' as any);
+    expect(spec.surfaces.cli).toBe(true);
+    expect(spec.surfaces.mcp).toBe(true);
+  });
+
+  it('exposes execution.run.wait for cli and external mcp surfaces', () => {
+    const spec = getActionSpec('execution.run.wait' as any);
+    expect(spec.surfaces.cli).toBe(true);
+    expect(spec.surfaces.mcp).toBe(true);
+    expect(spec.bindings?.mcpToolName).toBe('execution_run_wait');
+  });
+
+  it('exposes session.spawn_new as an MCP tool', () => {
+    const spec = getActionSpec('session.spawn_new');
+    expect(spec.surfaces.mcp).toBe(true);
+    expect(spec.bindings?.mcpToolName).toBe('session_spawn_new');
   });
 
   it('does not expose legacy voice_mediator intent in ExecutionRunIntentSchema', () => {
@@ -32,6 +152,13 @@ describe('Action Spec Registry', () => {
   it('binds global voice reset to resetGlobalVoiceAgent', () => {
     const spec = getActionSpec('ui.voice_global.reset');
     expect(spec.bindings?.voiceClientToolName).toBe('resetGlobalVoiceAgent');
+  });
+
+  it('binds voice teleport to teleportVoiceAgentToSessionRoot', () => {
+    const spec = getActionSpec('ui.voice_agent.teleport');
+    expect(spec.bindings?.voiceClientToolName).toBe('teleportVoiceAgentToSessionRoot');
+    expect(spec.surfaces.voice_tool).toBe(true);
+    expect(spec.surfaces.voice_action_block).toBe(true);
   });
 
   it('exposes memory action specs', () => {
@@ -45,6 +172,61 @@ describe('Action Spec Registry', () => {
     expect(spec.id).toBe('session.fork');
     expect(spec.surfaces.ui_button).toBe(true);
     expect(spec.placements).toContain('session_action_menu');
+  });
+
+  it('exposes session rollback action spec', () => {
+    const spec = getActionSpec('session.rollback' as any);
+    expect(spec.id).toBe('session.rollback');
+    expect(spec.surfaces.ui_button).toBe(true);
+    expect(spec.placements).toContain('session_action_menu');
+  });
+
+  it('exposes session open action spec', () => {
+    const spec = getActionSpec('session.open');
+    expect(spec.id).toBe('session.open');
+    expect(spec.surfaces.ui_button).toBe(true);
+    expect(spec.placements).toContain('command_palette');
+    expect(spec.placements).toContain('session_info');
+  });
+
+  it('treats approval decisions as danger-class actions', () => {
+    const spec = getActionSpec('approval.request.decide');
+    expect(spec.safety).toBe('danger');
+  });
+
+  it('exposes prompt library mutation actions for approval workflows', () => {
+    expect(getActionSpec('prompt_doc.update').safety).toBe('danger');
+    expect(getActionSpec('prompt_bundle.update').safety).toBe('danger');
+    expect(getActionSpec('prompt_asset.export').safety).toBe('danger');
+    expect(getActionSpec('prompt_registry.install').safety).toBe('danger');
+  });
+
+  it('accepts installMode for prompt asset export and registry install actions', () => {
+    const exportParsed = getActionSpec('prompt_asset.export').inputSchema.parse({
+      artifactId: 'doc-1',
+      machineId: 'machine-1',
+      assetTypeId: 'agents.skill',
+      scope: 'project',
+      directory: '/tmp/project',
+      targetName: 'reviewer',
+      installMode: 'symlink',
+    });
+    const registryParsed = getActionSpec('prompt_registry.install').inputSchema.parse({
+      machineId: 'machine-1',
+      sourceId: 'skills_sh:featured',
+      itemId: 'skills_sh:featured:web-design-guidelines',
+      configuredSources: [],
+      installTarget: {
+        assetTypeId: 'agents.skill',
+        scope: 'project',
+        directory: '/tmp/project',
+        targetName: 'reviewer',
+        installMode: 'symlink',
+      },
+    });
+
+    expect((exportParsed as any).installMode).toBe('symlink');
+    expect((registryParsed as any).installTarget?.installMode).toBe('symlink');
   });
 
   it('provides input hints for every ActionSpec (single source of truth for elicitation)', () => {
@@ -66,8 +248,9 @@ describe('Action Spec Registry', () => {
           ui_slash_command: true,
           voice_tool: true,
           voice_action_block: true,
+          session_agent: false,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -83,6 +266,43 @@ describe('Action Spec Registry', () => {
     ).toThrow();
   });
 
+  it('accepts disabled static options in input hints', () => {
+    const parsed = ActionSpecSchema.parse({
+      id: 'review.start',
+      title: 'Start review',
+      safety: 'safe',
+      placements: [],
+      surfaces: {
+        ui_button: true,
+        ui_slash_command: true,
+        voice_tool: true,
+        voice_action_block: true,
+        session_agent: false,
+        mcp: true,
+        cli: true,
+      },
+      inputSchema: z.object({}).strict(),
+      inputHints: {
+        fields: [
+          {
+            path: 'engineId',
+            title: 'Engine',
+            widget: 'select',
+            options: [
+              { value: 'codex', label: 'Codex' },
+              { value: 'legacy', label: 'Legacy', disabled: true },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(parsed.inputHints?.fields[0]?.options).toEqual([
+      { value: 'codex', label: 'Codex' },
+      { value: 'legacy', label: 'Legacy', disabled: true },
+    ]);
+  });
+
   it('requires select/multiselect hints to declare options or optionsSourceId', () => {
     expect(() =>
       ActionSpecSchema.parse({
@@ -96,7 +316,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -123,7 +343,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -152,7 +372,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -169,8 +389,8 @@ describe('Action Spec Registry', () => {
   });
 
   it('provides input hints for intent start actions surfaced as drafts', () => {
-    const plan = getActionSpec('plan.start');
-    const delegate = getActionSpec('delegate.start');
+    const plan = getActionSpec('subagents.plan.start');
+    const delegate = getActionSpec('subagents.delegate.start');
 
     expect(plan.surfaces.ui_button).toBe(true);
     expect(delegate.surfaces.ui_button).toBe(true);
@@ -181,16 +401,16 @@ describe('Action Spec Registry', () => {
     expect(Array.isArray(planFields)).toBe(true);
     expect(Array.isArray(delegateFields)).toBe(true);
 
-    expect(planFields.map((f: any) => f.path)).toContain('backendIds');
+    expect(planFields.map((f: any) => f.path)).toContain('backendTargetKeys');
     expect(planFields.map((f: any) => f.path)).toContain('instructions');
-    expect(delegateFields.map((f: any) => f.path)).toContain('backendIds');
+    expect(delegateFields.map((f: any) => f.path)).toContain('backendTargetKeys');
     expect(delegateFields.map((f: any) => f.path)).toContain('instructions');
   });
 
   it('defaults delegate start permission mode to workspace_write', () => {
-    const spec = getActionSpec('delegate.start');
+    const spec = getActionSpec('subagents.delegate.start');
     const parsed = (spec.inputSchema as any).parse({
-      backendIds: ['codex'],
+      backendTargetKeys: ['agent:codex'],
       instructions: 'Do it.',
     });
     expect(parsed.permissionMode).toBe('workspace_write');
@@ -199,11 +419,28 @@ describe('Action Spec Registry', () => {
   it('defaults voice agent start to long-lived streaming', () => {
     const spec = getActionSpec('voice_agent.start');
     const parsed = (spec.inputSchema as any).parse({
-      backendIds: ['codex'],
+      backendTargetKeys: ['agent:codex'],
       instructions: 'Voice.',
     });
     expect(parsed.runClass).toBe('long_lived');
     expect(parsed.ioMode).toBe('streaming');
+  });
+
+	  it('filters action specs by surfaced availability', () => {
+	    expect(isActionSpecSurfacedOn(getActionSpec('session.mode.set'), 'voice_tool')).toBe(true);
+	    expect(isActionSpecSurfacedOn(getActionSpec('session.mode.set'), 'mcp')).toBe(true);
+	    expect(listActionSpecsForSurface('mcp').some((spec) => spec.id === 'session.mode.set')).toBe(true);
+	    expect(listActionSpecsForSurface('voice_tool').some((spec) => spec.id === 'session.mode.set')).toBe(true);
+	  });
+
+  it('derives the voice prompt hot-path inventory from ActionSpec metadata', () => {
+    const hotPathIds = listVoicePromptHotPathSpecs().map((spec) => spec.id);
+
+    expect(hotPathIds).toContain('action.spec.search');
+    expect(hotPathIds).toContain('session.mode.set');
+    expect(hotPathIds).toContain('subagents.plan.start');
+    expect(hotPathIds).toContain('subagents.delegate.start');
+    expect(hotPathIds).not.toContain('memory.get_window');
   });
 
   it('exposes core voice session controls as voice surfaces', () => {
@@ -217,19 +454,38 @@ describe('Action Spec Registry', () => {
     // Baseline expectations: these must exist so local voice and realtime voice can share one tool surface.
     expect(byVoiceToolName.has('sendSessionMessage')).toBe(true);
     expect(byVoiceToolName.has('processPermissionRequest')).toBe(true);
+    expect(byVoiceToolName.has('answerUserActionRequest')).toBe(true);
     expect(byVoiceToolName.has('setPrimaryActionSession')).toBe(true);
     expect(byVoiceToolName.has('setTrackedSessions')).toBe(true);
     expect(byVoiceToolName.has('listSessions')).toBe(true);
     expect(byVoiceToolName.has('getSessionActivity')).toBe(true);
     expect(byVoiceToolName.has('getSessionRecentMessages')).toBe(true);
+    expect(byVoiceToolName.has('teleportVoiceAgentToSessionRoot')).toBe(true);
 
     // Inventory + discovery tools (safe by default; may be gated by user settings in the UI).
     expect(byVoiceToolName.has('spawnSessionPicker')).toBe(true);
-    expect(byVoiceToolName.has('listRecentWorkspaces')).toBe(true);
     expect(byVoiceToolName.has('listRecentPaths')).toBe(true);
     expect(byVoiceToolName.has('listMachines')).toBe(true);
     expect(byVoiceToolName.has('listServers')).toBe(true);
+    expect(byVoiceToolName.has('listReviewEngines')).toBe(true);
     expect(byVoiceToolName.has('listAgentBackends')).toBe(true);
     expect(byVoiceToolName.has('listAgentModels')).toBe(true);
+  });
+
+  it('uses concrete schema-shaped voice args examples for all voice surfaces', () => {
+    const placeholderFragments = ['...optional...', '"..."', 'allow|deny', '...|null'];
+
+    for (const spec of listActionSpecs().filter((entry) => entry.surfaces.voice_tool || entry.surfaces.voice_action_block)) {
+      const argsExample = spec.examples?.voice?.argsExample;
+      expect(typeof argsExample).toBe('string');
+      const exampleText = String(argsExample ?? '').trim();
+      expect(exampleText.length).toBeGreaterThan(0);
+      for (const fragment of placeholderFragments) {
+        expect(exampleText).not.toContain(fragment);
+      }
+
+      const parsedJson = JSON.parse(exampleText);
+      expect((spec.inputSchema as any).safeParse(parsedJson).success).toBe(true);
+    }
   });
 });

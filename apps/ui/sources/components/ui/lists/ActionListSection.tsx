@@ -8,6 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 
 export type ActionListItem = Readonly<{
     id: string;
+    testID?: string;
     label: string;
     subtitle?: string;
     icon?: React.ReactNode;
@@ -71,6 +72,7 @@ export function ActionListSection(props: {
             {actions.map((action) => (
                 <SelectableRow
                     key={action.id}
+                    testID={action.testID}
                     disabled={action.disabled}
                     onPress={action.onPress}
                     left={action.icon ? <View>{renderActionIcon(action.icon)}</View> : null}

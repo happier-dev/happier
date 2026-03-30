@@ -9,7 +9,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { ProfileCompatibilityIcon } from '@/components/sessions/new/components/ProfileCompatibilityIcon';
 import { ProfileRequirementsBadge } from '@/components/profiles/ProfileRequirementsBadge';
 import { ignoreNextRowPress } from '@/utils/ui/ignoreNextRowPress';
@@ -22,7 +22,9 @@ import { Typography } from '@/constants/Typography';
 import { hasRequiredSecret } from '@/sync/domains/profiles/profileSecrets';
 import { useSetting } from '@/sync/domains/state/storage';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { Text } from '@/components/ui/text/Text';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
 
 export interface ProfilesListProps {
@@ -77,6 +79,7 @@ export interface ProfilesListProps {
 }
 
 type ProfileRowProps = {
+    testID: string;
     profile: AIBackendProfile;
     displayName: string;
     isSelected: boolean;
@@ -140,6 +143,7 @@ const ProfileRow = React.memo(function ProfileRow(props: ProfileRowProps) {
 
     return (
         <Item
+            testID={props.testID}
             key={props.profile.id}
             title={props.displayName}
             subtitle={subtitle}
@@ -156,10 +160,18 @@ const ProfileRow = React.memo(function ProfileRow(props: ProfileRowProps) {
 
 export function ProfilesList(props: ProfilesListProps) {
     const { theme, rt } = useUnistyles();
-    const backendEnabledById = useSetting('backendEnabledById');
+    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const enabledAgentIds = React.useMemo(() => {
-        return getEnabledAgentIds({ backendEnabledById });
-    }, [backendEnabledById]);
+        return getEnabledAgentIds({ backendEnabledByTargetKey });
+    }, [backendEnabledByTargetKey]);
+    const resolvedBackendEntries = React.useMemo(() => {
+        return getResolvedBackendCatalogEntries({
+            enabledAgentIds,
+            acpCatalogSettingsV1,
+            backendEnabledByTargetKey,
+        });
+    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, enabledAgentIds]);
     const strings = React.useMemo(() => getDefaultProfileListStrings(enabledAgentIds), [enabledAgentIds]);
     const {
         extraActions,
@@ -247,7 +259,9 @@ export function ProfilesList(props: ProfilesListProps) {
         return (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                 <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name="checkmark-circle" size={24} color={selectedIndicatorColor} style={{ opacity: isSelected ? 1 : 0 }} />
+                    {normalizeNodeForView(
+                        <Ionicons name="checkmark-circle" size={24} color={selectedIndicatorColor} style={{ opacity: isSelected ? 1 : 0 }} />,
+                    )}
                 </View>
                 <ItemRowActions
                     title={t('profiles.noProfile')}
@@ -283,7 +297,9 @@ export function ProfilesList(props: ProfilesListProps) {
                     />
                 )}
                 <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name="checkmark-circle" size={24} color={selectedIndicatorColor} style={{ opacity: isSelected ? 1 : 0 }} />
+                    {normalizeNodeForView(
+                        <Ionicons name="checkmark-circle" size={24} color={selectedIndicatorColor} style={{ opacity: isSelected ? 1 : 0 }} />,
+                    )}
                 </View>
                 <ItemRowActions
                     title={displayName}
@@ -316,6 +332,7 @@ export function ProfilesList(props: ProfilesListProps) {
                 >
                     {props.includeDefaultEnvironmentRow && isDefaultEnvironmentFavorite && (
                         <Item
+                            testID="profiles-list-row:default-environment"
                             title={t('profiles.noProfile')}
                             subtitle={t('profiles.noProfileDescription')}
                             leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.textSecondary} />}
@@ -337,13 +354,19 @@ export function ProfilesList(props: ProfilesListProps) {
                         const isLast = index === groups.favoriteProfiles.length - 1;
                         const isSelected = props.selectedProfileId === profile.id;
                         const isDisabled = props.getProfileDisabled ? props.getProfileDisabled(profile) : false;
-                        const baseSubtitle = getProfileSubtitle({ profile, enabledAgentIds, strings });
+                        const baseSubtitle = getProfileSubtitle({
+                            profile,
+                            enabledAgentIds,
+                            backendEntries: resolvedBackendEntries,
+                            strings,
+                        });
                         const extra = props.getProfileSubtitleExtra?.(profile);
                         const subtitleText = extra ? `${baseSubtitle} · ${extra}` : baseSubtitle;
                         const showMobileBadge = isMobile && hasRequiredSecret(profile) && Boolean(props.onSecretBadgePress);
                         return (
                             <ProfileRow
                                 key={profile.id}
+                                testID={`profiles-list-row:${profile.id}`}
                                 profile={profile}
                                 displayName={displayName}
                                 isSelected={isSelected}
@@ -377,13 +400,19 @@ export function ProfilesList(props: ProfilesListProps) {
                         const isFavorite = groups.favoriteIds.has(profile.id);
                         const isSelected = props.selectedProfileId === profile.id;
                         const isDisabled = props.getProfileDisabled ? props.getProfileDisabled(profile) : false;
-                        const baseSubtitle = getProfileSubtitle({ profile, enabledAgentIds, strings });
+                        const baseSubtitle = getProfileSubtitle({
+                            profile,
+                            enabledAgentIds,
+                            backendEntries: resolvedBackendEntries,
+                            strings,
+                        });
                         const extra = props.getProfileSubtitleExtra?.(profile);
                         const subtitleText = extra ? `${baseSubtitle} · ${extra}` : baseSubtitle;
                         const showMobileBadge = isMobile && hasRequiredSecret(profile) && Boolean(props.onSecretBadgePress);
                         return (
                             <ProfileRow
                                 key={profile.id}
+                                testID={`profiles-list-row:${profile.id}`}
                                 profile={profile}
                                 displayName={displayName}
                                 isSelected={isSelected}
@@ -418,6 +447,7 @@ export function ProfilesList(props: ProfilesListProps) {
             >
                 {props.includeDefaultEnvironmentRow && !isDefaultEnvironmentFavorite && (
                     <Item
+                        testID="profiles-list-row:default-environment"
                         title={t('profiles.noProfile')}
                         subtitle={t('profiles.noProfileDescription')}
                         leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.textSecondary} />}
@@ -440,13 +470,19 @@ export function ProfilesList(props: ProfilesListProps) {
                     const isFavorite = groups.favoriteIds.has(profile.id);
                     const isSelected = props.selectedProfileId === profile.id;
                     const isDisabled = props.getProfileDisabled ? props.getProfileDisabled(profile) : false;
-                    const baseSubtitle = getProfileSubtitle({ profile, enabledAgentIds, strings });
+                    const baseSubtitle = getProfileSubtitle({
+                        profile,
+                        enabledAgentIds,
+                        backendEntries: resolvedBackendEntries,
+                        strings,
+                    });
                     const extra = props.getProfileSubtitleExtra?.(profile);
                     const subtitleText = extra ? `${baseSubtitle} · ${extra}` : baseSubtitle;
                     const showMobileBadge = isMobile && hasRequiredSecret(profile) && Boolean(props.onSecretBadgePress);
                     return (
                         <ProfileRow
                             key={profile.id}
+                            testID={`profiles-list-row:${profile.id}`}
                             profile={profile}
                             displayName={displayName}
                             isSelected={isSelected}
@@ -471,6 +507,7 @@ export function ProfilesList(props: ProfilesListProps) {
             {props.includeAddProfileRow && props.onAddProfilePress && (
                 <ItemGroup title="" selectableItemCountOverride={1}>
                     <Item
+                        testID="profiles-list-add-profile"
                         title={t('profiles.addProfile')}
                         subtitle={t('profiles.subtitle')}
                         leftElement={<Ionicons name="add-circle-outline" size={29} color={theme.colors.button.secondary.tint} />}

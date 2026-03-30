@@ -41,4 +41,32 @@ describe('PauseController', () => {
     pause.resume();
     await Promise.all([a, b]);
   });
+
+  it('remains paused until all pause reasons are resumed', async () => {
+    vi.useFakeTimers();
+    try {
+      const pause = new PauseController();
+      pause.pause('app');
+      pause.pause('endpoint');
+
+      expect(pause.isPaused()).toBe(true);
+      pause.resume('endpoint');
+      expect(pause.isPaused()).toBe(true);
+
+      let resolved = false;
+      const p = pause.waitUntilResumed().then(() => {
+        resolved = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(resolved).toBe(false);
+
+      pause.resume('app');
+      await vi.runAllTicks();
+      await p;
+      expect(resolved).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

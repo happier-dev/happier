@@ -6,16 +6,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { stopLocalDaemon } from './daemon.mjs';
+import { spawnDetachedTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 
 async function writeStubHappyCli({ cliDir }) {
-  await mkdir(join(cliDir, 'bin'), { recursive: true });
-  await mkdir(join(cliDir, 'dist'), { recursive: true });
-  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
-
-  // Ensure stopLocalDaemon launches via dist entrypoint (preferred).
-  await writeFile(join(cliDir, 'bin', 'happier.mjs'), 'process.exit(0);\n', 'utf-8');
-
   const script = `
 import { writeFileSync } from 'node:fs';
 
@@ -29,9 +24,39 @@ if (args[0] === 'daemon' && args[1] === 'stop') {
 }
 process.exit(0);
 `.trimStart();
+  const monoRoot = join(cliDir, '..', '..');
+  const { cliBinDir } = await writeStubHappierCliFiles(monoRoot, {
+    packageJsonContent: '{}\n',
+    distIndexScript: script,
+    // Ensure stopLocalDaemon launches via dist entrypoint (preferred).
+    binHappierScript: 'process.exit(0);\n',
+  });
+  return join(cliBinDir, 'happier.mjs');
+}
 
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), script, 'utf-8');
-  return join(cliDir, 'bin', 'happier.mjs');
+async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
+  const logDir = join(cliHomeDir, 'logs');
+  await mkdir(logDir, { recursive: true });
+  const ownedLogPath = join(logDir, 'daemon-owned.log');
+  const child = spawnDetachedTestProcess(
+    process.execPath,
+    [
+      '-e',
+      "const fs = require('node:fs'); const p = process.env.DAEMON_OWNED_LOG_PATH || ''; if (!p) process.exit(2); const fd = fs.openSync(p, 'a'); fs.writeSync(fd, 'ready\\n'); setInterval(() => {}, 1000);",
+      'daemon',
+      'start-sync',
+    ],
+    {
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        DAEMON_OWNED_LOG_PATH: ownedLogPath,
+        HAPPIER_HOME_DIR: cliHomeDir,
+        HAPPIER_SERVER_URL: internalServerUrl,
+      },
+    },
+  );
+  return child.pid;
 }
 
 test('stopLocalDaemon skips stop when expectedPid does not match current daemon state pid', async () => {
@@ -69,3 +94,38 @@ test('stopLocalDaemon skips stop when expectedPid does not match current daemon 
   }
 });
 
+test('stopLocalDaemon stops a live daemon from daemon.state.json when cli dist is missing', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-daemon-missing-dist-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliHomeDir = join(tmp, 'cli-home');
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    const internalServerUrl = 'http://127.0.0.1:3005';
+
+    await mkdir(join(cliDir, 'bin'), { recursive: true });
+    await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
+    await writeFile(join(cliBin), "throw new Error('cli bin should not run when dist is missing');\n", 'utf-8');
+
+    const daemonPid = await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl });
+    const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: {} });
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ pid: daemonPid, httpPort: 0 }) + '\n', 'utf-8');
+
+    await stopLocalDaemon({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      env: process.env,
+    });
+
+    let alive = true;
+    try {
+      process.kill(daemonPid, 0);
+    } catch {
+      alive = false;
+    }
+    assert.equal(alive, false, `expected daemon pid ${daemonPid} to be stopped`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

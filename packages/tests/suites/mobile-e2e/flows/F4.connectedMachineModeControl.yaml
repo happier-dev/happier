@@ -1,0 +1,21 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: false
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: _shared/gotoNewSessionComposer.yaml
+
+- assertVisible:
+    id: agent-input-session-mode-chip
+- tapOn:
+    id: agent-input-session-mode-chip
+
+- assertVisible:
+    id: 'agent-input-session-mode-chip-label:plan'
+
+- tapOn:
+    point: 10%,10%

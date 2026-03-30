@@ -1,29 +1,33 @@
 import { useSocketStatus, useFriendRequests, useSetting, useSyncError } from '@/sync/domains/state/storage';
 import * as React from 'react';
-import { Platform, View, Pressable, useWindowDimensions } from 'react-native';
+import { Platform, View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
-import { StatusDot } from '@/components/ui/status/StatusDot';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { MainView } from './MainView';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
-import { Ionicons } from '@expo/vector-icons';
+import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
+import { Ionicons, Octicons } from '@expo/vector-icons';
 import { sync } from '@/sync/sync';
-import { PopoverBoundaryProvider } from '@/components/ui/popover';
+import { PopoverScope } from '@/components/ui/popover';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
-import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { config } from '@/config';
 import { isStackContext } from '@/sync/domains/server/serverContext';
 import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
 import { resolveVisibleAppEnvironmentBadge } from '@/sync/runtime/appVariant';
 import { Text } from '@/components/ui/text/Text';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
 export type SidebarViewProps = Readonly<{
     sidebarWidthPx?: number | null;
@@ -54,16 +58,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         height: 24,
         width: 24,
     },
-    titleContainer: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        flexDirection: 'column',
-        alignItems: 'center',
-        overflow: 'visible',
-    },
     titleContainerLeft: {
-        flex: 1,
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 0,
+        minWidth: 0,
         flexDirection: 'column',
         alignItems: 'flex-start',
         marginLeft: 8,
@@ -71,8 +70,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         overflow: 'visible',
     },
     titleText: {
-        fontSize: 17,
-        fontWeight: '600',
+        fontSize: 16,
         color: theme.colors.header.tint,
         ...Typography.default('semiBold'),
     },
@@ -80,6 +78,15 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
+    },
+    statusControlWrapper: {
+        alignSelf: 'stretch',
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
     },
     envBadge: {
         marginTop: -4,
@@ -107,7 +114,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     statusText: {
         fontSize: 11,
-        fontWeight: '500',
+        ...Typography.default('regular'),
         lineHeight: 16,
         ...Typography.default(),
     },
@@ -164,8 +171,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     indicatorDot: {
         position: 'absolute',
-        top: 0,
-        right: -2,
+        top: 4,
+        right: 2,
         width: 6,
         height: 6,
         borderRadius: 3,
@@ -218,10 +225,8 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     const friendRequests = useFriendRequests();
     const inboxHasContent = useInboxHasContent();
     const showEnvironmentBadge = useSetting('showEnvironmentBadge');
-    const inboxFriendsEnabled = useFriendsEnabled();
-    const automationsSupport = useAutomationsSupport();
-    const showAutomations = automationsSupport?.enabled !== false;
-
+    const friendsEnabled = useFriendsEnabled();
+    const inboxEnabled = useInboxAvailable();
     // Compute connection status once per render (theme-reactive, no stale memoization)
     const connectionStatus = (() => {
         const { status } = socketStatus;
@@ -264,17 +269,7 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
         }
     })();
 
-    // Calculate sidebar width and determine title positioning
-    // Uses same formula as SidebarNavigator.tsx:18 for consistency
-    const { width: windowWidth } = useWindowDimensions();
-    const sidebarWidth = typeof props.sidebarWidthPx === 'number' && Number.isFinite(props.sidebarWidthPx)
-        ? props.sidebarWidthPx
-        : Math.min(Math.max(Math.floor(windowWidth * 0.3), 250), 360);
-    const showZen = useFeatureEnabled('zen.navigation');
     const voiceEnabled = useFeatureEnabled('voice');
-    // With Zen enabled: 4 icons (148px total), threshold 408px > max 360px → always left-justify
-    // Without Zen: 3 icons (108px total), threshold 328px → left-justify below ~340px
-    const shouldLeftJustify = showZen || sidebarWidth < 340;
     const environmentBadge = resolveVisibleAppEnvironmentBadge({
         showEnvironmentBadge,
         appVariant: config.variant,
@@ -285,16 +280,113 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     });
 
     const handleNewSession = React.useCallback(() => {
-        router.push('/new');
+        const result = runGuardedNavigation(() => router.push('/new'));
+        if (result !== true) {
+            fireAndForget(result, { tag: 'SidebarView.nav.newSession' });
+        }
     }, [router]);
 
     const handleHome = React.useCallback(() => {
-        router.push('/');
+        const result = runGuardedNavigation(() => router.push('/'));
+        if (result !== true) {
+            fireAndForget(result, { tag: 'SidebarView.nav.home' });
+        }
     }, [router]);
 
-    const handleAutomations = React.useCallback(() => {
-        router.push('/automations');
-    }, [router]);
+    const headerActions = React.useMemo((): ItemAction[] => {
+        const out: ItemAction[] = [];
+
+        if (inboxEnabled) {
+            out.push({
+                id: 'inbox',
+                title: t('tabs.inbox'),
+                inlineTestID: 'sidebar-inbox-button',
+                icon: (
+                    <View style={[styles.iconButton, styles.notificationButton]}>
+                        <Octicons name="inbox" size={20} color={theme.colors.header.tint} />
+                        {inboxHasContent ? <View style={styles.indicatorDot} /> : null}
+                    </View>
+                ),
+                onPress: () => {
+                    const result = runGuardedNavigation(() => router.push('/(app)/inbox'));
+                    if (result !== true) {
+                        fireAndForget(result, { tag: 'SidebarView.nav.inbox' });
+                    }
+                },
+            });
+        }
+
+        if (friendsEnabled) {
+            const count = friendRequests.length;
+            out.push({
+                id: 'friends',
+                title: t('tabs.friends'),
+                icon: (
+                    <View style={[styles.iconButton, styles.notificationButton]}>
+                        <Ionicons name="people-outline" size={24} color={theme.colors.header.tint} />
+                        {count > 0 ? (
+                            <View style={styles.badge}>
+                                <Text style={styles.badgeText}>
+                                    {count > 99 ? '99+' : count}
+                                </Text>
+                            </View>
+                        ) : null}
+                    </View>
+                ),
+                onPress: () => {
+                    const result = runGuardedNavigation(() => router.push('/(app)/friends'));
+                    if (result !== true) {
+                        fireAndForget(result, { tag: 'SidebarView.nav.friends' });
+                    }
+                },
+            });
+        }
+
+        out.push({
+            id: 'settings',
+            title: t('settings.title'),
+            inlineTestID: 'nav-settings',
+            icon: (
+                <View style={styles.iconButton}>
+                    <Ionicons name="cog-outline" size={24} color={theme.colors.header.tint} />
+                </View>
+            ),
+            onPress: () => {
+                const result = runGuardedNavigation(() => router.push('/settings'));
+                if (result !== true) {
+                    fireAndForget(result, { tag: 'SidebarView.nav.settings' });
+                }
+            },
+        });
+
+        out.push({
+            id: 'newSession',
+            title: t('newSession.title'),
+            inlineTestID: 'nav-new-session',
+            icon: (
+                <View style={styles.iconButton}>
+                    <Ionicons name="add-outline" size={24} color={theme.colors.header.tint} />
+                </View>
+            ),
+            onPress: handleNewSession,
+        });
+
+        return out;
+    }, [
+        friendRequests.length,
+        friendsEnabled,
+        handleNewSession,
+        inboxEnabled,
+        inboxHasContent,
+        router,
+        styles.badge,
+        styles.badgeText,
+        styles.iconButton,
+        styles.indicatorDot,
+        styles.notificationButton,
+        t,
+        theme.colors.header.tint,
+    ]);
 
     // Title content used in both centered and left-justified modes (DRY)
     const titleContent = (
@@ -308,10 +400,15 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                 ) : null}
             </View>
             {connectionStatus.text ? (
-                <View style={Platform.OS === 'web' ? ({ pointerEvents: 'auto' } as any) : undefined}>
+                <View
+                    style={[
+                        styles.statusControlWrapper,
+                        Platform.OS === 'web' ? ({ pointerEvents: 'auto' } as any) : null,
+                    ]}
+                >
                     <ConnectionStatusControl
                         variant="sidebar"
-                        alignSelf={shouldLeftJustify ? 'flex-start' : 'center'}
+                        alignSelf="stretch"
                     />
                 </View>
             ) : null}
@@ -321,7 +418,7 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     return (
         <>
             <View ref={popoverBoundaryRef} style={[styles.container, { paddingTop: safeArea.top }]}>
-                <PopoverBoundaryProvider boundaryRef={popoverBoundaryRef}>
+                <PopoverScope boundaryRef={popoverBoundaryRef}>
                 <View style={[styles.header, { height: headerHeight }]}>
                     {/* Logo - always first */}
                     <Pressable
@@ -337,92 +434,54 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                             style={[styles.logo, { height: 24, width: 24 }]}
                         />
                     </Pressable>
-                    {showAutomations ? (
-                        <Pressable
-                            onPress={handleAutomations}
-                            hitSlop={15}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('automations.openA11y')}
-                            style={styles.iconButton}
-                        >
-                            <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
-                        </Pressable>
-                    ) : null}
-
-                    {/* Left-justified title - in document flow, prevents overlap */}
-                    {shouldLeftJustify && (
-                        <View style={styles.titleContainerLeft}>
-                            {titleContent}
-                        </View>
-                    )}
+                    {/* Title - left-justified next to logo */}
+                    <View style={styles.titleContainerLeft}>
+                        {titleContent}
+                    </View>
 
                     {/* Navigation icons */}
                     <View style={styles.rightContainer}>
-                        {showZen && (
-                            <Pressable
-                                onPress={() => router.push('/(app)/zen')}
-                                hitSlop={15}
-                                style={styles.iconButton}
-                            >
-                                <Image
-                                    source={require('@/assets/images/brutalist/Brutalism 3.png')}
-                                    contentFit="contain"
-                                    style={[{ width: 32, height: 32 }]}
-                                    tintColor={theme.colors.header.tint}
-                                />
-                            </Pressable>
-                        )}
-                        {inboxFriendsEnabled && (
-                            <Pressable
-                                onPress={() => router.push('/(app)/friends')}
-                                hitSlop={15}
-                                style={[styles.iconButton, styles.notificationButton]}
-                            >
-                                <Ionicons name="people-outline" size={24} color={theme.colors.header.tint} />
-                                {friendRequests.length > 0 && (
-                                    <View style={styles.badge}>
-                                        <Text style={styles.badgeText}>
-                                            {friendRequests.length > 99 ? '99+' : friendRequests.length}
-                                        </Text>
-                                    </View>
-                                )}
-                                {inboxHasContent && friendRequests.length === 0 && (
-                                    <View style={styles.indicatorDot} />
-                                )}
-                            </Pressable>
-                        )}
-                        <Pressable
-                            onPress={() => router.push('/settings')}
-                            hitSlop={15}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('settings.title')}
-                            style={styles.iconButton}
-                        >
-                            <Ionicons name="cog-outline" size={24} color={theme.colors.header.tint} />
-                        </Pressable>
-                        <Pressable
-                            onPress={handleNewSession}
-                            hitSlop={15}
-                            testID="nav-new-session"
-                            accessibilityRole="button"
-                            accessibilityLabel={t('newSession.title')}
-                            style={styles.iconButton}
-                        >
-                            <Ionicons name="add-outline" size={24} color={theme.colors.header.tint} />
-                        </Pressable>
+                        <ItemRowActions
+                            title={t('common.moreActions')}
+                            actions={headerActions}
+                            layoutWidthPx={props.sidebarWidthPx ?? null}
+                            compactThreshold={SIDEBAR_DOCK_MIN_WIDTH_PX + 120}
+                            compactActionIds={['settings', 'newSession']}
+                            pinnedActionIds={['settings', 'newSession']}
+                            overflowPosition="beforePinned"
+                            overflowTriggerTestID="sidebar-header-actions-overflow"
+                            popoverBoundaryRef={popoverBoundaryRef}
+                            gap={4}
+                            renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => {
+                                const shouldShowBadge = friendRequests.length > 0;
+                                const shouldShowDot = !shouldShowBadge && inboxHasContent;
+                                return (
+                                    <Pressable
+                                        testID={testID}
+                                        hitSlop={15}
+                                        style={[styles.iconButton, styles.notificationButton, open ? { opacity: 0 } : null]}
+                                        onPress={toggle}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={accessibilityLabel}
+                                        accessibilityHint={accessibilityHint}
+                                        accessibilityState={{ expanded: open }}
+                                    >
+                                        <Ionicons name="ellipsis-horizontal" size={24} color={theme.colors.header.tint} />
+                                        {shouldShowBadge ? (
+                                            <View style={styles.badge}>
+                                                <Text style={styles.badgeText}>
+                                                    {friendRequests.length > 99 ? '99+' : friendRequests.length}
+                                                </Text>
+                                            </View>
+                                        ) : shouldShowDot ? (
+                                            <View style={styles.indicatorDot} />
+                                        ) : null}
+                                    </Pressable>
+                                );
+                            }}
+                        />
                     </View>
 
-                    {/* Centered title - absolute positioned over full header */}
-                    {!shouldLeftJustify && (
-                        <View
-                            // On native, this overlay must be `box-none` so it doesn't block the header buttons.
-                            // On web, use CSS-compatible pointer-events values (RN `box-none` isn't valid CSS).
-                            pointerEvents={Platform.OS === 'web' ? undefined : 'box-none'}
-                            style={[styles.titleContainer, Platform.OS === 'web' ? ({ pointerEvents: 'none' } as any) : null]}
-                        >
-                            {titleContent}
-                        </View>
-                    )}
                 </View>
                 {(syncError || socketStatus.status === 'error' || socketStatus.status === 'disconnected') && (
                     <View style={styles.banner}>
@@ -433,7 +492,12 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                         </Text>
                         {syncError?.kind === 'auth' ? (
                             <Pressable
-                                onPress={() => router.push('/restore')}
+                                onPress={() => {
+                                    const result = runGuardedNavigation(() => router.push('/restore'));
+                                    if (result !== true) {
+                                        fireAndForget(result, { tag: 'SidebarView.nav.restore' });
+                                    }
+                                }}
                                 style={styles.bannerButton}
                                 accessibilityRole="button"
                             >
@@ -452,7 +516,7 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                 )}
                 {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
                 <MainView variant="sidebar" />
-                </PopoverBoundaryProvider>
+                </PopoverScope>
             </View>
         </>
     )

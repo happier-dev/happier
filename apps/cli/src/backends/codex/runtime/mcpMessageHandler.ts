@@ -2,15 +2,22 @@ import { randomUUID } from 'node:crypto';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 import { nextCodexLifecycleAcpMessages } from '../utils/codexAcpLifecycle';
 import { formatCodexEventForUi } from '../utils/formatCodexEventForUi';
 import { extractMcpToolCallResultOutput } from './sessionTurnLifecycle';
+import { canonicalizeCodexMcpToolName } from '../utils/canonicalizeCodexMcpToolName';
 
 type SessionSubset = Pick<
   ApiSessionClient,
-  'sendAgentMessage' | 'sendCodexMessage' | 'sendSessionEvent' | 'keepAlive'
+  | 'sendAgentMessage'
+  | 'sendAgentMessageCommitted'
+  | 'sendCodexMessage'
+  | 'sendSessionEvent'
+  | 'keepAlive'
 >;
 
 type DiffProcessorSubset = {
@@ -54,9 +61,14 @@ export function createCodexMcpMessageHandler(opts: {
 }): (msg: unknown) => void {
   let accumulatedReasoning = '';
   let sawReasoningDelta = false;
+  const streamedTranscriptWriter = createStreamedTranscriptWriter({
+    provider: 'codex',
+    session: opts.session,
+  });
+  const shapeLogger = createEventShapeLoggerForLog({ logger: opts.logger, scope: 'codex' });
 
   return (msg: unknown): void => {
-    opts.logger.debug('[Codex] MCP message:', msg);
+    shapeLogger.log('mcp', msg);
 
     opts.publishCodexThreadIdToMetadata();
 
@@ -96,10 +108,14 @@ export function createCodexMcpMessageHandler(opts: {
       opts.messageBuffer.addMessage('Starting task...', 'status');
     } else if (message?.type === 'task_complete') {
       opts.messageBuffer.addMessage('Task completed', 'status');
-      opts.sendReady();
+      void streamedTranscriptWriter.flushAll({ reason: 'turn-end' }).finally(() => {
+        opts.sendReady();
+      });
     } else if (message?.type === 'turn_aborted') {
       opts.messageBuffer.addMessage('Turn aborted', 'status');
-      opts.sendReady();
+      void streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'turn_aborted' }).finally(() => {
+        opts.sendReady();
+      });
     }
 
     if (message?.type === 'task_started') {
@@ -119,7 +135,7 @@ export function createCodexMcpMessageHandler(opts: {
 
     if (message?.type === 'agent_reasoning_section_break') {
       if (accumulatedReasoning) {
-        opts.session.sendAgentMessage('codex', { type: 'thinking', text: '\n\n' });
+        streamedTranscriptWriter.appendThinkingDelta('\n\n');
       }
       accumulatedReasoning = '';
       sawReasoningDelta = false;
@@ -127,7 +143,7 @@ export function createCodexMcpMessageHandler(opts: {
     if (message?.type === 'agent_reasoning_delta') {
       const delta = typeof message.delta === 'string' ? message.delta : '';
       // Preserve whitespace-only deltas for correct transcript rendering.
-      opts.session.sendAgentMessage('codex', { type: 'thinking', text: delta });
+      streamedTranscriptWriter.appendThinkingDelta(delta);
       accumulatedReasoning += delta;
       if (delta.length > 0) sawReasoningDelta = true;
     }
@@ -135,30 +151,30 @@ export function createCodexMcpMessageHandler(opts: {
       const full = typeof message.text === 'string' ? message.text : '';
       if (full) {
         if (!sawReasoningDelta) {
-          opts.session.sendAgentMessage('codex', { type: 'thinking', text: full });
+          streamedTranscriptWriter.appendThinkingDelta(full);
         } else if (accumulatedReasoning && full.startsWith(accumulatedReasoning)) {
           const suffix = full.slice(accumulatedReasoning.length);
           if (suffix) {
-            opts.session.sendAgentMessage('codex', { type: 'thinking', text: suffix });
+            streamedTranscriptWriter.appendThinkingDelta(suffix);
           }
         } else if (accumulatedReasoning && full !== accumulatedReasoning) {
           // Defensive fallback: if deltas don't match the final payload, surface the final text
           // rather than losing reasoning content.
-          opts.session.sendAgentMessage('codex', { type: 'thinking', text: '\n\n' });
-          opts.session.sendAgentMessage('codex', { type: 'thinking', text: full });
+          streamedTranscriptWriter.appendThinkingDelta('\n\n');
+          streamedTranscriptWriter.appendThinkingDelta(full);
         }
       }
       accumulatedReasoning = '';
       sawReasoningDelta = false;
     }
     if (message?.type === 'agent_message') {
-      opts.session.sendCodexMessage({
-        type: 'message',
-        message: message.message,
-        id: randomUUID(),
-      });
+      const assistantText = typeof message.message === 'string' ? message.message : '';
+      if (assistantText) {
+        streamedTranscriptWriter.appendAssistantDelta(assistantText);
+      }
     }
     if (message?.type === 'exec_command_begin' || message?.type === 'exec_approval_request') {
+      void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
       const { call_id, type, ...inputs } = message;
       opts.session.sendCodexMessage({
         type: 'tool-call',
@@ -184,6 +200,7 @@ export function createCodexMcpMessageHandler(opts: {
       });
     }
     if (message?.type === 'patch_apply_begin') {
+      void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
       const { call_id, auto_approved, changes } = message;
       const changeCount = Object.keys(changes).length;
       const filesMsg = changeCount === 1 ? '1 file' : `${changeCount} files`;
@@ -223,8 +240,9 @@ export function createCodexMcpMessageHandler(opts: {
       opts.diffProcessor.processDiff(message.unified_diff);
     }
     if (message?.type === 'mcp_tool_call_begin') {
+      void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
       const { call_id, invocation } = message;
-      const toolName = `mcp__${invocation.server}__${invocation.tool}`;
+      const toolName = canonicalizeCodexMcpToolName(`mcp__${invocation.server}__${invocation.tool}`);
       opts.session.sendCodexMessage({
         type: 'tool-call',
         name: toolName,

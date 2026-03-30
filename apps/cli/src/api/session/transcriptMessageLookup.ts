@@ -13,6 +13,9 @@ export type TranscriptMessageLookupResult = {
     id: string;
     seq: number;
     localId: string | null;
+    sidechainId: string | null;
+    createdAt: number;
+    updatedAt: number;
     content: SessionMessageContent;
 };
 
@@ -45,7 +48,15 @@ function parseTranscriptLookupMessageFromUnknown(found: any): TranscriptMessageL
     if (typeof found.id !== 'string') return null;
     if (typeof found.seq !== 'number') return null;
     const foundLocalId = typeof found.localId === 'string' ? found.localId : null;
-    return { id: found.id, seq: found.seq, localId: foundLocalId, content: content.data };
+    const sidechainIdRaw = found.sidechainId;
+    const sidechainId = typeof sidechainIdRaw === 'string' ? (sidechainIdRaw.trim() || null) : null;
+    const createdAtRaw = found.createdAt;
+    if (!(typeof createdAtRaw === 'number' && Number.isFinite(createdAtRaw) && createdAtRaw >= 0)) return null;
+    const createdAt = Math.trunc(createdAtRaw);
+    const updatedAtRaw = found.updatedAt;
+    if (!(typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw) && updatedAtRaw >= 0)) return null;
+    const updatedAt = Math.trunc(updatedAtRaw);
+    return { id: found.id, seq: found.seq, localId: foundLocalId, sidechainId, createdAt, updatedAt, content: content.data };
 }
 
 async function findTranscriptEncryptedMessageByLocalIdV2(params: {

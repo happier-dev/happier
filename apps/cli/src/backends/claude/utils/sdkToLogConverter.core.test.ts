@@ -139,19 +139,6 @@ describe('SDKToLogConverter core conversion', () => {
       expect(record.requestId).toBe('req_123');
     });
 
-    it('does not emit log messages for synthetic partial assistant updates', () => {
-      const sdkMessage: SDKAssistantMessage = {
-        type: 'assistant',
-        happierPartial: true,
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'partial' }],
-        },
-      };
-
-      expect(converter.convert(sdkMessage)).toBeNull();
-    });
-
     it('normalizes Claude Agent Teams tool_use names to canonical tool names', () => {
       const sdkMessage: SDKAssistantMessage = {
         type: 'assistant',
@@ -248,6 +235,17 @@ describe('SDKToLogConverter core conversion', () => {
 
       const logMessage = converter.convert(sdkMessage);
       expect(logMessage).toBeFalsy();
+    });
+  });
+
+  describe('Internal Claude events', () => {
+    it('does not convert rate_limit_event messages (telemetry, not transcript content)', () => {
+      const logMessage = converter.convert({
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'allowed' },
+      } as any);
+
+      expect(logMessage).toBeNull();
     });
   });
 });

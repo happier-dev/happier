@@ -1,6 +1,4 @@
 import { createQwenBackend } from '@/backends/qwen/acp/backend';
-import type { ExecutionRunBackendFactory } from '@/backends/executionRuns/types';
+import { createSimpleExecutionRunBackendFactory } from '@/backends/shared/createSimpleExecutionRunBackendFactory';
 
-export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => {
-  return createQwenBackend({ cwd: opts.cwd, env: opts.isolation?.env, permissionHandler: opts.permissionHandler });
-};
+export const executionRunBackendFactory = createSimpleExecutionRunBackendFactory(createQwenBackend);

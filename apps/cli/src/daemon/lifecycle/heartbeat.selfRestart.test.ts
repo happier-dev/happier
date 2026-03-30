@@ -16,8 +16,8 @@ vi.mock('@/persistence', () => ({
   writeDaemonState: vi.fn(),
 }));
 
-vi.mock('@/utils/spawnHappyCLI', () => ({
-  spawnHappyCLI: vi.fn(),
+vi.mock('@/daemon/runtime/spawnDetachedDaemonStartSync', () => ({
+  spawnDetachedDaemonStartSync: vi.fn(),
 }));
 
 vi.mock('@/ui/logger', () => ({
@@ -32,7 +32,7 @@ vi.mock('@/ui/logger', () => ({
 import { readFileSync } from 'fs';
 
 import { readDaemonState } from '@/persistence';
-import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
+import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 
 describe('startDaemonHeartbeatLoop daemon self-restart', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
@@ -79,7 +79,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       })
       .mockReturnValue(JSON.stringify({ version: '1.0.0' }) as any);
 
-    vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
+    vi.mocked(spawnDetachedDaemonStartSync).mockResolvedValue({ unref: vi.fn() } as any);
     vi.mocked(readDaemonState).mockResolvedValue({
       pid: process.pid,
       httpPort: 4001,
@@ -117,7 +117,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     }
 
     await tick!();
-    expect(spawnHappyCLI).not.toHaveBeenCalled();
+    expect(spawnDetachedDaemonStartSync).not.toHaveBeenCalled();
   }, 15_000);
 
   it('uses start-sync and keeps the current daemon alive if replacement is not confirmed', async () => {
@@ -139,7 +139,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       }) as any);
 
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
-    vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
+    vi.mocked(spawnDetachedDaemonStartSync).mockResolvedValue({ unref: vi.fn() } as any);
     vi.mocked(readDaemonState).mockResolvedValue({
       pid: process.pid,
       httpPort: 4001,
@@ -173,10 +173,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     expect(tick).toBeTypeOf('function');
     await tick!();
 
-    expect(spawnHappyCLI).toHaveBeenCalledWith(
-      ['daemon', 'start-sync'],
-      expect.objectContaining({ detached: true, stdio: 'ignore' }),
-    );
+    expect(spawnDetachedDaemonStartSync).toHaveBeenCalledTimes(1);
     expect(exitSpy).not.toHaveBeenCalled();
 
     clearInterval(interval);
@@ -201,7 +198,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       }) as any);
 
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
-    vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
+    vi.mocked(spawnDetachedDaemonStartSync).mockResolvedValue({ unref: vi.fn() } as any);
     vi.mocked(readDaemonState)
       .mockResolvedValueOnce({
         pid: process.pid,
@@ -240,10 +237,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     expect(tick).toBeTypeOf('function');
     await tick!();
 
-    expect(spawnHappyCLI).toHaveBeenCalledWith(
-      ['daemon', 'start-sync'],
-      expect.objectContaining({ detached: true, stdio: 'ignore' }),
-    );
+    expect(spawnDetachedDaemonStartSync).toHaveBeenCalledTimes(1);
     expect(exitSpy).toHaveBeenCalledWith(0);
 
     clearInterval(interval);

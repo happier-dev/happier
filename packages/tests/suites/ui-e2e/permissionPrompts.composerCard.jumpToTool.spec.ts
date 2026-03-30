@@ -4,9 +4,10 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { repoRootDir } from '../../src/testkit/paths';
@@ -25,7 +26,17 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_SERVER_URL: '',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+      HAPPIER_E2E_UI_WEB_MODE: 'metro',
+      HAPPIER_E2E_UI_WEB_NO_DEV: '0',
+      HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS ?? '480000',
+      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+    };
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
 
     server = await startServerLight({
@@ -45,10 +56,8 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
+        ...uiWebEnv,
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
       },
     });
 
@@ -143,6 +152,7 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
       await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
       await page.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
+      await acknowledgeTerminalConnectSuccessIfPresent(page);
 
       const fakeClaudePath = fakeClaudeFixturePath();
       const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));

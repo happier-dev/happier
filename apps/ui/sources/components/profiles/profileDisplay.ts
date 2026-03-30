@@ -1,4 +1,4 @@
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { getBuiltInProfileNameKey } from '@/sync/domains/profiles/profileUtils';
 import { t } from '@/text';
 
@@ -11,4 +11,3 @@ export function getProfileDisplayName(profile: Pick<AIBackendProfile, 'id' | 'na
     }
     return profile.name;
 }
-

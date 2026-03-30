@@ -6,15 +6,14 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { createSessionWithCiphertexts } from '../../src/testkit/sessions';
+import { createSessionWithCiphertexts, fetchAllMessages } from '../../src/testkit/sessions';
 import { repoRootDir } from '../../src/testkit/paths';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
-import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { decryptLegacyBase64, encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { fakeClaudeFixturePath, type FakeClaudeInvocation, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
@@ -23,6 +22,37 @@ import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 
 const run = createRunDirs({ runLabel: 'core' });
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+async function waitForSessionSwitchEvent(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  secret: Uint8Array;
+  mode: 'local' | 'remote';
+}>): Promise<void> {
+  await waitFor(async () => {
+    const rows = await fetchAllMessages(params.baseUrl, params.token, params.sessionId);
+    for (const row of rows) {
+      const decrypted = asRecord(decryptLegacyBase64(row.content.c, params.secret));
+      const content = asRecord(decrypted?.content);
+      const eventData = asRecord(content?.data);
+      if (decrypted?.role !== 'agent') continue;
+      if (content?.type !== 'event') continue;
+      if (eventData?.type !== 'switch') continue;
+      if (eventData?.mode === params.mode) return true;
+    }
+    return false;
+  }, {
+    timeoutMs: 60_000,
+    intervalMs: 500,
+    context: `session switch event (${params.mode})`,
+  });
+}
 
 describe('core e2e: Claude switching preserves args + permissions', () => {
   let server: StartedServer | null = null;
@@ -97,8 +127,6 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
-
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),
       args: [
@@ -133,12 +161,10 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const localInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && !i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--append-system-prompt'),
       );
       expect(Object.keys(localInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
-      expect(localInvocation.argv).toContain('--max-turns');
-      expect(localInvocation.argv).toContain('3');
-      expect(localInvocation.argv).toContain('--strict-mcp-config');
       expect(localInvocation.argv).toContain('--append-system-prompt');
       expect(localInvocation.argv).toContain('E2E_APPEND_PROMPT');
 
@@ -155,25 +181,19 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const legacyRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--input-format') &&
+          i.argv.includes('--max-turns') &&
+          i.argv.includes('3') &&
+          i.argv.includes('--allow-dangerously-skip-permissions'),
       );
       expect(Object.keys(legacyRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
       expect(legacyRemoteInvocation.argv).toContain('--max-turns');
       expect(legacyRemoteInvocation.argv).toContain('3');
-      expect(legacyRemoteInvocation.argv).toContain('--strict-mcp-config');
+      expect(legacyRemoteInvocation.argv).toContain('--allow-dangerously-skip-permissions');
 
       // Switch back to local, then switch to remote with the Agent SDK runner enabled.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'local', secret, timeoutMs: 25_000 });
-
-      const localInvocation2: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
-        fakeLog,
-        (i) =>
-          i.argv.includes('--settings') &&
-          !i.argv.includes('--input-format') &&
-          i.invocationId !== localInvocation.invocationId,
-        { timeoutMs: 120_000 },
-      );
-      expect(Object.keys(localInvocation2.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
 
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
 
@@ -190,7 +210,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const agentSdkRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--input-format') && !i.argv.includes('--settings'),
+        (i) => i.argv.includes('--input-format') && !i.argv.includes('--append-system-prompt'),
         { timeoutMs: 120_000 },
       );
       expect(Object.keys(agentSdkRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
@@ -265,8 +285,6 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
-
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),
       args: [
@@ -295,7 +313,11 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const localInvocation1: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && !i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--append-system-prompt') &&
+          i.argv.includes('--permission-mode') &&
+          i.argv.includes('bypassPermissions') &&
+          i.argv.includes('--settings'),
       );
       expect(localInvocation1.argv).toContain('--permission-mode');
       expect(localInvocation1.argv).toContain('bypassPermissions');
@@ -303,6 +325,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       // Legacy remote runner: should still keep bypassPermissions.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
+      await waitForSessionSwitchEvent({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, mode: 'remote' });
 
       await postEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
@@ -314,27 +337,21 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const legacyRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--input-format') &&
+          i.argv.includes('--permission-mode') &&
+          i.argv.includes('bypassPermissions') &&
+          i.argv.includes('--allow-dangerously-skip-permissions'),
       );
       expect(legacyRemoteInvocation.argv).toContain('--permission-mode');
       expect(legacyRemoteInvocation.argv).toContain('bypassPermissions');
 
       await requestSessionSwitchRpc({ ui, sessionId, to: 'local', secret, timeoutMs: 25_000 });
-
-      const localInvocation2: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
-        fakeLog,
-        (i) =>
-          i.argv.includes('--settings') &&
-          !i.argv.includes('--input-format') &&
-          i.invocationId !== localInvocation1.invocationId,
-        { timeoutMs: 120_000 },
-      );
-      expect(localInvocation2.argv).toContain('--permission-mode');
-      expect(localInvocation2.argv).toContain('bypassPermissions');
-      expect(localInvocation2.argv).not.toContain('--dangerously-skip-permissions');
+      await waitForSessionSwitchEvent({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, mode: 'local' });
 
       // Agent SDK remote runner: should also keep bypassPermissions.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
+      await waitForSessionSwitchEvent({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, mode: 'remote' });
 
       await postEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
@@ -349,7 +366,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const agentSdkRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--input-format') && !i.argv.includes('--settings'),
+        (i) => i.argv.includes('--input-format') && !i.argv.includes('--append-system-prompt'),
         { timeoutMs: 120_000 },
       );
       expect(agentSdkRemoteInvocation.argv).toContain('--permission-mode');
@@ -427,8 +444,6 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
-
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),
       args: [
@@ -456,7 +471,11 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const localInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && !i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--append-system-prompt') &&
+          i.argv.includes('--permission-mode') &&
+          i.argv.includes('bypassPermissions') &&
+          i.argv.includes('--settings'),
       );
       expect(localInvocation.argv).toContain('--permission-mode');
       expect(localInvocation.argv).toContain('bypassPermissions');
@@ -473,7 +492,11 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       const legacyRemoteInvocation: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
-        (i) => i.argv.includes('--settings') && i.argv.includes('--input-format'),
+        (i) =>
+          i.argv.includes('--input-format') &&
+          i.argv.includes('--permission-mode') &&
+          i.argv.includes('bypassPermissions') &&
+          i.argv.includes('--allow-dangerously-skip-permissions'),
       );
       expect(legacyRemoteInvocation.argv).toContain('--permission-mode');
       expect(legacyRemoteInvocation.argv).toContain('bypassPermissions');

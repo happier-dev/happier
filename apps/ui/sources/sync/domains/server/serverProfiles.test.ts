@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MMKV } from 'react-native-mmkv';
+
+import { scopedStorageId } from '@/utils/system/storageScope';
 
 function randomScope(): string {
     return `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -22,15 +25,17 @@ function stubWebRuntime(origin: string) {
     vi.stubGlobal('document', {});
 }
 
-async function importFresh() {
-    vi.resetModules();
+async function importFresh(options: Readonly<{ resetModules?: boolean }> = {}) {
+    if (options.resetModules !== false) vi.resetModules();
     return await import('./serverProfiles');
 }
 
 describe('serverProfiles', () => {
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
     const previousServerContext = process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
+    const previousCanonicalServerUrl = process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
     const previousServerUrl = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+    const previousLegacyGenericServerUrl = process.env.EXPO_PUBLIC_SERVER_URL;
     const previousPreconfigured = process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
 
     afterEach(() => {
@@ -39,8 +44,12 @@ describe('serverProfiles', () => {
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
         if (previousServerContext === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
         else process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = previousServerContext;
+        if (previousCanonicalServerUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        else process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = previousCanonicalServerUrl;
         if (previousServerUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
         else process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = previousServerUrl;
+        if (previousLegacyGenericServerUrl === undefined) delete process.env.EXPO_PUBLIC_SERVER_URL;
+        else process.env.EXPO_PUBLIC_SERVER_URL = previousLegacyGenericServerUrl;
         if (previousPreconfigured === undefined) delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
         else process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS = previousPreconfigured;
     });
@@ -64,6 +73,52 @@ describe('serverProfiles', () => {
         profiles.setActiveServerId(tabProfile.id, { scope: 'tab' });
 
         expect(profiles.getActiveServerUrl()).toBe('https://tab.example.test');
+    });
+
+    it('returns a stable active server snapshot reference until the store changes', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('https://origin.example.test');
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({
+            serverUrl: 'https://device.example.test',
+            name: 'Device',
+        });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+
+        const first = profiles.getActiveServerSnapshot();
+        const second = profiles.getActiveServerSnapshot();
+
+        expect(second).toBe(first);
+
+        const next = profiles.upsertServerProfile({
+            serverUrl: 'https://next.example.test',
+            name: 'Next',
+        });
+        profiles.setActiveServerId(next.id, { scope: 'device' });
+
+        const third = profiles.getActiveServerSnapshot();
+        expect(third).not.toBe(first);
+        expect(third.serverUrl).toBe('https://next.example.test');
+    });
+
+    it('persists a shareable relay URL on the active server snapshot', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('https://origin.example.test');
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({
+            serverUrl: 'https://relay.example.test',
+            name: 'Relay',
+        });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+        profiles.setServerProfileShareableUrl(created.id, 'https://relay.example.ts.net/path?token=abc#frag');
+
+        const snapshot = profiles.getActiveServerSnapshot();
+        expect(snapshot.activeShareableServerUrl).toBe('https://relay.example.ts.net/path');
+        expect(profiles.getActiveServerUrl()).toBe('https://relay.example.test');
     });
 
     it('exposes device default and tab override server ids separately on web', async () => {
@@ -109,6 +164,87 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://selfhost.example.test')).toBe(true);
         expect(profiles.getActiveServerUrl()).toBe('https://selfhost.example.test');
         expect(profiles.getActiveServerId()).toBeTruthy();
+    });
+
+    it('dedupes loopback-equivalent servers and prefers same-origin on web', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('http://qa-stack.localhost:24577');
+
+        const storage = new MMKV({ id: scopedStorageId('server-profiles', scope) });
+        storage.set(
+            'server-state-v1',
+            JSON.stringify({
+                activeServerIdIsExplicit: true,
+                activeServerId: 'localhost-24577',
+                servers: {
+                    'qa-stack.localhost-24577': {
+                        id: 'qa-stack.localhost-24577',
+                        name: 'Stack',
+                        serverUrl: 'http://qa-stack.localhost:24577/',
+                        createdAt: 100,
+                        updatedAt: 200,
+                        lastUsedAt: 200,
+                        source: 'url',
+                    },
+                    'localhost-24577': {
+                        id: 'localhost-24577',
+                        name: 'Local',
+                        serverUrl: 'http://localhost:24577/',
+                        createdAt: 150,
+                        updatedAt: 250,
+                        lastUsedAt: 250,
+                        source: 'url',
+                    },
+                },
+            }),
+        );
+
+        const profiles = await importFresh();
+        const all = profiles.listServerProfiles();
+
+        expect(all.length).toBe(1);
+        expect(profiles.getActiveServerUrl()).toBe('http://qa-stack.localhost:24577');
+        expect(profiles.getActiveServerId()).toBe('qa-stack.localhost-24577');
+    });
+
+    it('dedupes equivalent servers without rewriting the explicit active server id when no same-origin override exists', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const storage = new MMKV({ id: scopedStorageId('server-profiles', scope) });
+        storage.set(
+            'server-state-v1',
+            JSON.stringify({
+                activeServerIdIsExplicit: true,
+                activeServerId: 'manual-id',
+                servers: {
+                    'manual-id': {
+                        id: 'manual-id',
+                        name: 'Manual Active',
+                        serverUrl: 'https://api.example.test',
+                        createdAt: 100,
+                        updatedAt: 200,
+                        lastUsedAt: 999,
+                        source: 'manual',
+                    },
+                    'stack-id': {
+                        id: 'stack-id',
+                        name: 'Stack Seeded',
+                        serverUrl: 'https://api.example.test',
+                        createdAt: 150,
+                        updatedAt: 250,
+                        lastUsedAt: 0,
+                        source: 'stack-env',
+                    },
+                },
+            }),
+        );
+
+        const profiles = await importFresh();
+        expect(profiles.listServerProfiles()).toHaveLength(1);
+        expect(profiles.getActiveServerUrl()).toBe('https://api.example.test');
+        expect(profiles.getActiveServerId()).toBe('manual-id');
     });
 
     it('seeds api.happier.dev on app.happier.dev web origin when no preconfigured env exists', async () => {
@@ -166,6 +302,8 @@ describe('serverProfiles', () => {
     it('seeds a preconfigured server from EXPO_PUBLIC_HAPPY_SERVER_URL', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_SERVER_URL;
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:3999';
 
         const profiles = await importFresh();
@@ -173,6 +311,73 @@ describe('serverProfiles', () => {
 
         expect(all.some((p) => p.serverUrl === 'http://localhost:3999')).toBe(true);
         expect(profiles.getActiveServerUrl()).toBe('http://localhost:3999');
+    });
+
+    it('preserves the stack-env server profile id when rewriting a private IP URL to a loopback hostname on web', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_SERVER_URL;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://172.20.10.4:53288';
+        stubWebRuntime('http://happier-dev.localhost:19364');
+
+        const profiles = await importFresh();
+        const all = profiles.listServerProfiles();
+
+        expect(all.some((p) => p.id === '172.20.10.4-53288' && p.serverUrl === 'http://happier-dev.localhost:53288')).toBe(true);
+        expect(profiles.getActiveServerUrl()).toBe('http://happier-dev.localhost:53288');
+    });
+
+    it('updates an existing stack-env server profile URL without changing its id when the web loopback hostname changes', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_SERVER_URL;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://172.20.10.4:53288';
+
+        stubWebRuntime('http://172.20.10.4:19364');
+        const initial = await importFresh();
+        expect(initial.listServerProfiles().some((p) => p.id === '172.20.10.4-53288' && p.serverUrl === 'http://172.20.10.4:53288')).toBe(true);
+
+        stubWebRuntime('http://happier-dev.localhost:19364');
+        const updated = await importFresh();
+        const all = updated.listServerProfiles();
+
+        expect(all.filter((p) => p.id.startsWith('172.20.10.4-53288')).length).toBe(1);
+        expect(all.some((p) => p.id === '172.20.10.4-53288' && p.serverUrl === 'http://happier-dev.localhost:53288')).toBe(true);
+        expect(updated.getActiveServerUrl()).toBe('http://happier-dev.localhost:53288');
+    });
+
+    it('seeds from EXPO_PUBLIC_HAPPIER_SERVER_URL and prefers it over legacy aliases', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = 'https://canonical.example.test';
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://legacy-happy.example.test';
+        process.env.EXPO_PUBLIC_SERVER_URL = 'https://legacy-generic.example.test';
+
+        const profiles = await importFresh();
+        const all = profiles.listServerProfiles();
+
+        expect(all.some((p) => p.serverUrl === 'https://canonical.example.test')).toBe(true);
+        expect(all.some((p) => p.serverUrl === 'https://legacy-happy.example.test')).toBe(false);
+        expect(all.some((p) => p.serverUrl === 'https://legacy-generic.example.test')).toBe(false);
+        expect(profiles.getActiveServerUrl()).toBe('https://canonical.example.test');
+    });
+
+    it('uses EXPO_PUBLIC_SERVER_URL as a final alias when canonical and happy aliases are unset', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        process.env.EXPO_PUBLIC_SERVER_URL = 'https://legacy-generic.example.test';
+
+        const profiles = await importFresh();
+        const all = profiles.listServerProfiles();
+
+        expect(all.some((p) => p.serverUrl === 'https://legacy-generic.example.test')).toBe(true);
+        expect(profiles.getActiveServerUrl()).toBe('https://legacy-generic.example.test');
     });
 
     it('seeds multiple preconfigured servers from EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS', async () => {
@@ -260,7 +465,7 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
     });
 
-    it('dedupes localhost and 127.0.0.1 loopback URLs into one profile', async () => {
+    it('dedupes localhost and 127.0.0.1 loopback URLs into one profile without rewriting the stored host form', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 

@@ -4,54 +4,73 @@ import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent } from '.
 import { run } from '../proc/proc.mjs';
 import { spawnProc } from '../proc/proc.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from './expo.mjs';
+import { coerceHappyMonorepoRootFromPath } from '../paths/paths.mjs';
+import { pathExists } from '../fs/fs.mjs';
+import { applyExpoNodeHeapEnv } from './expoNodeHeapEnv.mjs';
 
-const DEFAULT_EXPO_MAX_OLD_SPACE_SIZE_MB = 8192;
+const DEFAULT_EXPO_EXPORT_MAX_WORKERS_NONINTERACTIVE = 1;
 
-function coercePositiveInt(v) {
-  const n = Number(String(v ?? '').trim());
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+async function resolveExpoBin(runnerDir) {
+  const workspaceBin = join(runnerDir, 'node_modules', '.bin', 'expo');
+  if (await pathExists(workspaceBin)) return workspaceBin;
+
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(runnerDir);
+  if (monorepoRoot) {
+    const rootBin = join(monorepoRoot, 'node_modules', '.bin', 'expo');
+    if (await pathExists(rootBin)) return rootBin;
+  }
+
+  return workspaceBin;
 }
 
-function parseExpoMaxOldSpaceSizeMb(env) {
-  const raw = (env?.HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB ?? '').toString().trim();
+function hasFlag(args, name) {
+  const needle = String(name ?? '').trim();
+  if (!needle) return false;
+  for (const a of args ?? []) {
+    if (a === needle) return true;
+    if (typeof a === 'string' && a.startsWith(`${needle}=`)) return true;
+  }
+  return false;
+}
+
+function coerceNonNegativeInt(v) {
+  const n = Number(String(v ?? '').trim());
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+function parseExpoExportMaxWorkers(env) {
+  const raw = (env?.HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS ?? '').toString().trim();
   if (!raw) return { explicit: false, value: null };
   if (raw === '0') return { explicit: true, value: 0 };
-  const n = coercePositiveInt(raw);
-  return { explicit: true, value: n ?? null };
+  const n = coerceNonNegativeInt(raw);
+  return { explicit: true, value: n };
 }
 
-function hasMaxOldSpaceSizeFlag(nodeOptions) {
-  const s = String(nodeOptions ?? '');
-  return /(^|\s)--max-old-space-size(=|\s)\d+(\s|$)/.test(s);
+function resolveDefaultExpoExportMaxWorkers() {
+  // Only apply a conservative default in non-interactive contexts, where Expo/Metro
+  // can be more sensitive to high worker fan-out (e.g. in Docker/CI).
+  const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  if (isInteractive) return null;
+  return DEFAULT_EXPO_EXPORT_MAX_WORKERS_NONINTERACTIVE;
 }
 
-function setOrReplaceMaxOldSpaceSizeFlag(nodeOptions, sizeMb) {
-  const s = String(nodeOptions ?? '').trim();
-  const desired = `--max-old-space-size=${sizeMb}`;
-  if (!s) return desired;
+function applyExpoExportMaxWorkersArgs(args, env) {
+  const a = Array.isArray(args) ? [...args] : [];
+  if (a[0] !== 'export') return a;
+  if (hasFlag(a, '--max-workers')) return a;
 
-  // Replace any existing `--max-old-space-size` value (supports `=` or space form).
-  const replaced = s.replace(/(^|\s)--max-old-space-size(=|\s)\d+(\s|$)/g, `$1${desired}$3`).trim();
-  if (replaced !== s) return replaced;
+  const { explicit, value } = parseExpoExportMaxWorkers(env);
+  if (explicit) {
+    // Explicit disable (0) or invalid value: do not inject a default.
+    if (value === 0 || value == null) return a;
+    a.push('--max-workers', String(value));
+    return a;
+  }
 
-  // Append if missing.
-  return `${s} ${desired}`.trim();
-}
-
-function applyExpoNodeHeapEnv(baseEnv) {
-  const env = { ...(baseEnv ?? process.env) };
-  const { explicit, value } = parseExpoMaxOldSpaceSizeMb(env);
-  const desired =
-    explicit && typeof value === 'number'
-      ? value
-      : DEFAULT_EXPO_MAX_OLD_SPACE_SIZE_MB;
-
-  // Explicit disable: allow opting out entirely (useful for debugging / reproducing).
-  if (explicit && value === 0) return env;
-
-  const existing = env.NODE_OPTIONS ?? '';
-  env.NODE_OPTIONS = setOrReplaceMaxOldSpaceSizeFlag(existing, desired);
-  return env;
+  const def = resolveDefaultExpoExportMaxWorkers();
+  if (def == null) return a;
+  a.push('--max-workers', String(def));
+  return a;
 }
 
 export async function prepareExpoCommandEnv({
@@ -94,9 +113,12 @@ export async function expoExec({
   await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
   const workspaceDepsDir = projectDir ?? runnerDir;
   await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
-  const expoBin = join(runnerDir, 'node_modules', '.bin', 'expo');
-  const effectiveEnv = applyExpoNodeHeapEnv(env);
-  await run(expoBin, args, { cwd, env: effectiveEnv, stdio: quiet ? 'ignore' : 'inherit' });
+  const expoBin = await resolveExpoBin(runnerDir);
+  const effectiveEnv = applyExpoNodeHeapEnv(env, {
+    envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
+  });
+  const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
+  await run(expoBin, effectiveArgs, { cwd, env: effectiveEnv, stdio: quiet ? 'ignore' : 'inherit' });
 }
 
 export async function expoSpawn({
@@ -114,7 +136,10 @@ export async function expoSpawn({
   await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
   const workspaceDepsDir = projectDir ?? runnerDir;
   await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
-  const expoBin = join(runnerDir, 'node_modules', '.bin', 'expo');
-  const effectiveEnv = applyExpoNodeHeapEnv(env);
-  return spawnProc(label, expoBin, args, effectiveEnv, { cwd, ...(options ?? {}) });
+  const expoBin = await resolveExpoBin(runnerDir);
+  const effectiveEnv = applyExpoNodeHeapEnv(env, {
+    envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
+  });
+  const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
+  return spawnProc(label, expoBin, effectiveArgs, effectiveEnv, { cwd, ...(options ?? {}) });
 }

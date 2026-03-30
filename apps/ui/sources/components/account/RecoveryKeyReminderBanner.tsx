@@ -7,18 +7,23 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
-import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
+import { getCachedReadyServerFeatures, getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { SecretKeyBackupModal } from '@/components/account/SecretKeyBackupModal';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
+function isRecoveryKeyReminderEnabled(features: ReturnType<typeof getCachedReadyServerFeatures>): boolean | null {
+    if (!features) return null;
+    return features.features?.auth?.ui?.recoveryKeyReminder?.enabled === true;
+}
+
 export const RecoveryKeyReminderBanner = React.memo(() => {
     const { theme } = useUnistyles();
     const auth = useAuth();
 
-    const [dismissed, setDismissed] = React.useState<boolean | null>(null);
-    const [enabled, setEnabled] = React.useState<boolean | null>(null);
+    const [dismissed, setDismissed] = React.useState<boolean | null>(() => TokenStorage.getCachedRecoveryKeyReminderDismissed());
+    const [enabled, setEnabled] = React.useState<boolean | null>(() => isRecoveryKeyReminderEnabled(getCachedReadyServerFeatures()));
 
     React.useEffect(() => {
         let mounted = true;
@@ -28,7 +33,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
                 getReadyServerFeatures({ timeoutMs: 800 }).catch(() => null),
             ]);
 
-            const featureEnabled = features?.features?.auth?.ui?.recoveryKeyReminder?.enabled === true;
+            const featureEnabled = isRecoveryKeyReminderEnabled(features);
             if (!mounted) return;
             setDismissed(isDismissed);
             setEnabled(featureEnabled);

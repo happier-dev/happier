@@ -32,14 +32,17 @@ export function ensureTauriSigningKeyFile(opts) {
   }
 
   const normalized = raw.includes('\\n') ? raw.replaceAll('\\n', '\n') : raw;
-  const withNewline = normalized.endsWith('\n') ? normalized : `${normalized}\n`;
+  const preservesFormatting =
+    normalized.startsWith('untrusted comment:') || normalized.includes('BEGIN ');
+  const collapsed = preservesFormatting ? normalized : normalized.replace(/\s+/g, '');
+  const output = preservesFormatting && !collapsed.endsWith('\n') ? `${collapsed}\n` : collapsed;
 
   const tmpRoot = path.resolve(String(opts.tmpRoot ?? '').trim() || process.cwd());
   const outPath = path.join(tmpRoot, 'tauri.signing.key');
 
   if (!opts.dryRun) {
     fs.mkdirSync(tmpRoot, { recursive: true });
-    fs.writeFileSync(outPath, withNewline, { encoding: 'utf8', mode: 0o600 });
+    fs.writeFileSync(outPath, output, { encoding: 'utf8', mode: 0o600 });
     try {
       fs.chmodSync(outPath, 0o600);
     } catch {

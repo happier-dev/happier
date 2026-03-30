@@ -100,4 +100,33 @@ describe('PermissionHandler (ExitPlanMode transition)', () => {
     await client.rpcHandlerManager.getHandler('permission')?.({ id: 'toolu_bash_after_reset_1', approved: true } as any);
     await expect(afterResetPromise).resolves.toMatchObject({ behavior: 'allow' });
   });
+
+  it('clears both metadata keys using the canonical key as the monotonic source', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(50);
+    try {
+      const { session, client } = createPermissionHandlerSessionStubWithMetadata({
+        sessionId: 's1',
+        metadata: {
+          sessionModeOverrideV1: { v: 1, updatedAt: 100, modeId: 'plan' },
+          acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
+        },
+      });
+
+      const { PermissionHandler } = await import('./permissionHandler');
+      const handler = new PermissionHandler(session);
+
+      const controller = new AbortController();
+      const mode = { permissionMode: 'yolo', agentModeId: 'plan', localId: 'm1' } as EnhancedMode;
+
+      handler.onMessage(exitPlanToolUseMessage());
+      const exitPromise = handler.handleToolCall('ExitPlanMode', { plan: 'p1' }, mode, { signal: controller.signal });
+      await client.rpcHandlerManager.getHandler('permission')?.({ id: 'toolu_exit_1', approved: true } as any);
+      await expect(exitPromise).resolves.toEqual({ behavior: 'allow', updatedInput: { plan: 'p1' } });
+
+      expect((client.metadata as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 101, modeId: null });
+      expect((client.metadata as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 101, modeId: null });
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });

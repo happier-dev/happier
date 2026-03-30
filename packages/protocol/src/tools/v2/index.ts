@@ -17,7 +17,21 @@ export {
   type ToolNormalizationProtocol,
 } from './meta.js';
 
-export { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias, type ChangeTitleToolNameAlias } from './aliases.js';
+export {
+  CHANGE_TITLE_TOOL_NAME_ALIASES,
+  isChangeTitleToolLikeName,
+  isChangeTitleToolNameAlias,
+  type ChangeTitleToolNameAlias,
+} from './aliases.js';
+export {
+  LEGACY_SUBAGENT_TOOL_NAME_ALIASES,
+  GENERIC_SUBAGENT_TOOL_NAME_ALIASES,
+  canonicalizeGenericSubAgentToolName,
+  isGenericSubAgentToolName,
+  isSubAgentTranscriptToolName,
+  type LegacySubAgentToolNameAlias,
+  type GenericSubAgentToolNameAlias,
+} from './subAgentFamilies.js';
 
 export {
   getToolInputSchemaV2,
@@ -48,6 +62,8 @@ export {
   TodoWriteInputV2Schema,
   TodoReadInputV2Schema,
   TodoResultV2Schema,
+  SubAgentInputV2Schema,
+  SubAgentResultV2Schema,
   TaskInputV2Schema,
   TaskResultV2Schema,
   ReasoningInputV2Schema,
@@ -58,6 +74,12 @@ export {
   AskUserQuestionResultV2Schema,
   SubAgentRunInputV2Schema,
   SubAgentRunResultV2Schema,
+  AgentTeamCreateInputV2Schema,
+  AgentTeamCreateResultV2Schema,
+  AgentTeamDeleteInputV2Schema,
+  AgentTeamDeleteResultV2Schema,
+  AgentTeamSendMessageInputV2Schema,
+  AgentTeamSendMessageResultV2Schema,
   AcpHistoryImportInputV2Schema,
   WorkspaceIndexingPermissionInputV2Schema,
   ChangeTitleInputV2Schema,

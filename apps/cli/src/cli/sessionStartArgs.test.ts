@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
+
 import { applyDeprecatedSessionStartAliasesForAgent, parseSessionStartArgs } from './sessionStartArgs';
 
 type ParseSessionStartArgsResult = ReturnType<typeof parseSessionStartArgs>;
@@ -10,22 +12,18 @@ function withProcessTrap<T>(fn: () => T): {
   stderr: string[];
 } {
   const originalExit = process.exit;
-  const originalConsoleError = console.error;
-  const stderr: string[] = [];
+  const output = captureConsoleText();
 
   try {
-    console.error = (...args: unknown[]) => {
-      stderr.push(args.map((value) => String(value)).join(' '));
-    };
     process.exit = ((code?: number) => {
       throw new Error(`process.exit:${typeof code === 'number' ? code : 'unknown'}`);
     }) as typeof process.exit;
-    return { value: fn(), error: null, stderr };
+    return { value: fn(), error: null, stderr: output.lines };
   } catch (error) {
-    return { value: null, error, stderr };
+    return { value: null, error, stderr: output.lines };
   } finally {
     process.exit = originalExit;
-    console.error = originalConsoleError;
+    output.restore();
   }
 }
 

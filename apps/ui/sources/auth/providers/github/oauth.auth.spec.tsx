@@ -15,6 +15,8 @@ import {
     setActiveServerSnapshot,
     upsertAndActivateServerSpy,
 } from './test/oauthReturnHarness';
+import { renderScreen } from '@/dev/testkit';
+
 
 type FetchResult = {
     ok: boolean;
@@ -45,6 +47,11 @@ function stubFetch(
     return fetchMock;
 }
 
+async function handleHealthCheck(url: string): Promise<FetchResult | null> {
+    if (!url.endsWith('/health')) return null;
+    return { ok: true, body: { ok: true } };
+}
+
 afterEach(() => {
     resetOAuthHarness();
     vi.restoreAllMocks();
@@ -66,6 +73,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url === 'http://api.example.test/v1/auth/external/github/finalize') {
                 expect(init?.method).toBe('POST');
                 return { ok: true, body: { success: true, token: 'tok_1' } };
@@ -101,6 +110,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         };
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 expect(init?.method).toBe('POST');
                 return { ok: true, body: { success: true, token: 'tok_1' } };
@@ -144,6 +155,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         };
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 expect(init?.method).toBe('POST');
                 const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
@@ -182,6 +195,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 expect(init?.method).toBe('POST');
                 const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
@@ -247,6 +262,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
                 expect(body.username).toBe('octocat_2');
@@ -255,24 +272,25 @@ describe('/oauth/[provider] (auth flow)', () => {
             throw new Error(`Unexpected fetch: ${url}`);
         });
 
-        await runWithOAuthScreen(async (tree) => {
-            await flushOAuthEffects();
-            expect(fetchMock).not.toHaveBeenCalled();
+        const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushOAuthEffects();
+        expect(fetchMock).not.toHaveBeenCalledWith(
+            expect.stringContaining('/v1/auth/external/github/finalize'),
+            expect.anything(),
+        );
 
-            const input = tree.root.findByProps({ testID: 'oauth-username-input' });
-            act(() => {
-                input.props.onChangeText('octocat_2');
-            });
-
-            const save = tree.root.findByProps({ testID: 'oauth-username-save' });
-            await act(async () => {
-                await save.props.onPress();
-            });
-            await flushOAuthEffects();
-
-            expect(loginSpy).toHaveBeenCalledWith('tok_1', OAUTH_SECRET);
-            expect(replaceSpy).toHaveBeenCalledWith('/');
+        const input = screen.findByTestId('oauth-username-input');
+        expect(input).toBeTruthy();
+        act(() => {
+            input?.props.onChangeText('octocat_2');
         });
+
+        await screen.pressByTestIdAsync('oauth-username-save');
+        await flushOAuthEffects();
+
+        expect(loginSpy).toHaveBeenCalledWith('tok_1', OAUTH_SECRET);
+        expect(replaceSpy).toHaveBeenCalledWith('/');
     });
 
     it('redirects to the pending external auth returnTo after login when provided', async () => {
@@ -289,6 +307,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         stubFetch(async (url) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 return { ok: true, body: { success: true, token: 'tok_1' } };
             }
@@ -323,6 +343,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
                 expect(body.reset).toBe(true);
@@ -364,6 +386,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 return await finalizeDeferred;
             }
@@ -374,9 +398,7 @@ describe('/oauth/[provider] (auth flow)', () => {
         const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
+        tree = (await renderScreen(React.createElement(Screen))).tree;
         if (!tree) throw new Error('Expected OAuth screen to render');
         const ensuredTree = tree;
         try {
@@ -429,6 +451,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 return await finalizeDeferred;
             }
@@ -439,9 +463,7 @@ describe('/oauth/[provider] (auth flow)', () => {
         const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
+        tree = (await renderScreen(React.createElement(Screen))).tree;
         if (!tree) throw new Error('Expected OAuth screen to render');
         const ensuredTree = tree;
         try {

@@ -34,6 +34,10 @@
       "types": "./dist/installables.d.ts",
       "default": "./dist/installables.js"
     },
+    "./installablesPolicy": {
+      "types": "./dist/installablesPolicy.d.ts",
+      "default": "./dist/installablesPolicy.js"
+    },
     "./capabilities": {
       "types": "./dist/capabilities.d.ts",
       "default": "./dist/capabilities.js"
@@ -49,6 +53,10 @@
     "./updates": {
       "types": "./dist/updates.d.ts",
       "default": "./dist/updates.js"
+    },
+    "./workspaces": {
+      "types": "./dist/workspaces/index.d.ts",
+      "default": "./dist/workspaces/index.js"
     }
   },
   "files": [
@@ -58,8 +66,7 @@
   ],
   "scripts": {
     "build": "node scripts/generate-embedded-feature-policies.mjs && tsc -p tsconfig.json",
-    "test": "vitest run",
-    "pretest": "yarn -s build",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts",
     "pretypecheck": "node scripts/generate-embedded-feature-policies.mjs",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'protocol',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}const has=(p)=>{try{return fs.existsSync(p)}catch{return false}};if(!has('tsconfig.json')||!has('../agents/tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",

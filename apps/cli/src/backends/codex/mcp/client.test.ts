@@ -47,4 +47,18 @@ describe('createCodexTransport', () => {
       }),
     );
   });
+
+  it('uses the current happier cli fallback command when codex is unavailable', async () => {
+    mockGetCodexVersionInfo.mockReturnValue({ raw: null, parsed: false, major: 0, minor: 0, patch: 0 });
+
+    const { createCodexTransport } = await import('./client');
+
+    expect(() =>
+      createCodexTransport({
+        codexCommand: 'codex',
+        mode: 'codex-cli',
+        mcpServerArgs: [],
+      }),
+    ).toThrow(/happier claude/);
+  });
 });

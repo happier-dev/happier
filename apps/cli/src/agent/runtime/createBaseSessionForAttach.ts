@@ -21,10 +21,6 @@ export async function createBaseSessionForAttach(opts: Readonly<{
       id: existingSessionId,
       seq: 0,
       encryptionMode: 'plain',
-      // Plaintext sessions should not require encryption materials. Keep dummy values to satisfy
-      // the legacy Session shape; downstream code must branch on encryptionMode.
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'dataKey',
       metadata: opts.metadata,
       metadataVersion: -1,
       agentState: opts.state,

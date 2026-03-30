@@ -1,13 +1,18 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { createCapturingComponent, createPassThroughComponent } from '@/dev/testkit/mocks/components';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { installProfilesCommonModuleMocks } from '@/components/profiles/profilesTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
+
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
 type ProfileCompatibility = {
     claude: boolean;
     codex: boolean;
@@ -25,70 +30,64 @@ type CapturedProfilesListProps = {
     onEditProfile?: (profile: ProfileRow) => void;
 };
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'ios' },
-        View: (props: NativeChildrenProps) => React.createElement('View', props, props.children),
-        Pressable: (props: NativeChildrenProps) => React.createElement('Pressable', props, props.children),
-    };
-});
-
-vi.mock('@expo/vector-icons', () => {
-    const React = require('react');
-    return {
-        Ionicons: (props: NativeChildrenProps) => React.createElement('Ionicons', props, props.children),
-    };
-});
-
-const routerMock = {
-    push: vi.fn(),
-    back: vi.fn(),
+const profileEditPath = '/new/pick/profile-edit' as const;
+const testProfileCompatibility: ProfileCompatibility = {
+    claude: true,
+    codex: true,
+    gemini: true,
+};
+const testProfileRow: ProfileRow = {
+    id: 'p1',
+    name: 'Test profile',
+    isBuiltIn: false,
+    compatibility: testProfileCompatibility,
 };
 
-vi.mock('expo-router', () => ({
-    useRouter: () => routerMock,
-    useNavigation: () => ({ setOptions: vi.fn() }),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: { colors: { groupped: { background: '#ffffff' }, surface: '#ffffff', divider: '#dddddd' } },
-        rt: { insets: { bottom: 0 } },
+installProfilesCommonModuleMocks({
+    reactNative: () => createReactNativeWebMock({
+        Platform: {
+            OS: 'ios',
+        },
     }),
-    StyleSheet: {
-        create: (fn: (theme: { colors: { groupped: { background: string }; divider: string } }) => unknown) =>
-            fn({ colors: { groupped: { background: '#ffffff' }, divider: '#dddddd' } }),
-    },
+    storage: () => createStorageModuleStub({
+        useSetting: () => false,
+        useSettingMutable: () => [[], vi.fn()],
+    }),
+});
+
+const routerMock = vi.hoisted(() => ({
+    push: vi.fn(),
+    back: vi.fn(),
+    replace: vi.fn(),
+    setParams: vi.fn(),
+    navigationSetOptions: vi.fn(),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: () => false,
-    useSettingMutable: () => [[], vi.fn()],
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), show: vi.fn() },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        navigation: { setOptions: routerMock.navigationSetOptions },
+    });
+    routerMock.push = expoRouterMock.spies.push;
+    routerMock.back = expoRouterMock.spies.back;
+    routerMock.replace = expoRouterMock.spies.replace;
+    routerMock.setParams = expoRouterMock.spies.setParams;
+    return expoRouterMock.module;
+});
 
 vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
     promptUnsavedChangesAlert: vi.fn(async () => 'keep'),
 }));
 
 vi.mock('@/components/profiles/edit', () => ({
-    ProfileEditForm: () => React.createElement('ProfileEditForm'),
+    ProfileEditForm: createPassThroughComponent('ProfileEditForm'),
 }));
 
 let capturedProfilesListProps: CapturedProfilesListProps | null = null;
 vi.mock('@/components/profiles/ProfilesList', () => ({
-    ProfilesList: (props: CapturedProfilesListProps) => {
-        capturedProfilesListProps = props;
-        return React.createElement('ProfilesList');
-    },
+    ProfilesList: createCapturingComponent('ProfilesList', (props) => {
+        capturedProfilesListProps = props as CapturedProfilesListProps;
+    }),
 }));
 
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({
@@ -104,20 +103,20 @@ vi.mock('@/sync/domains/profiles/profileMutations', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: NativeChildrenProps) => React.createElement('ItemList', props, props.children),
+    ItemList: createPassThroughComponent('ItemList'),
 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: NativeChildrenProps) => React.createElement('ItemGroup', props, props.children),
+    ItemGroup: createPassThroughComponent('ItemGroup'),
 }));
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: NativeChildrenProps) => React.createElement('Item', props, props.children),
+    Item: createPassThroughComponent('Item'),
 }));
 vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: NativeChildrenProps) => React.createElement('Switch', props, props.children),
+    Switch: createPassThroughComponent('Switch'),
 }));
 
 vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementModal: () => React.createElement('SecretRequirementModal'),
+    SecretRequirementModal: createPassThroughComponent('SecretRequirementModal'),
 }));
 
 vi.mock('@/utils/secrets/secretSatisfaction', () => ({
@@ -132,9 +131,7 @@ describe('ProfileManager (native)', () => {
     async function renderProfileManager() {
         const ProfileManager = (await import('@/app/(app)/settings/profiles')).default;
         capturedProfilesListProps = null;
-        await act(async () => {
-            renderer.create(React.createElement(ProfileManager));
-        });
+        await renderScreen(React.createElement(ProfileManager));
     }
 
     it('navigates to the profile edit screen when adding a profile', async () => {
@@ -148,7 +145,7 @@ describe('ProfileManager (native)', () => {
 
         expect(routerMock.push).toHaveBeenCalledTimes(1);
         expect(routerMock.push).toHaveBeenCalledWith({
-            pathname: '/new/pick/profile-edit',
+            pathname: profileEditPath,
             params: {},
         });
     });
@@ -159,18 +156,13 @@ describe('ProfileManager (native)', () => {
 
         expect(typeof capturedProfilesListProps?.onEditProfile).toBe('function');
         await act(async () => {
-            capturedProfilesListProps?.onEditProfile?.({
-                id: 'p1',
-                name: 'Test profile',
-                isBuiltIn: false,
-                compatibility: { claude: true, codex: true, gemini: true },
-            });
+            capturedProfilesListProps?.onEditProfile?.(testProfileRow);
         });
 
         expect(routerMock.push).toHaveBeenCalledTimes(1);
         expect(routerMock.push).toHaveBeenCalledWith({
-            pathname: '/new/pick/profile-edit',
-            params: { profileId: 'p1' },
+            pathname: profileEditPath,
+            params: { profileId: testProfileRow.id },
         });
     });
 
@@ -180,18 +172,13 @@ describe('ProfileManager (native)', () => {
 
         expect(typeof capturedProfilesListProps?.onDuplicateProfile).toBe('function');
         await act(async () => {
-            capturedProfilesListProps?.onDuplicateProfile?.({
-                id: 'p1',
-                name: 'Test profile',
-                isBuiltIn: false,
-                compatibility: { claude: true, codex: true, gemini: true },
-            });
+            capturedProfilesListProps?.onDuplicateProfile?.(testProfileRow);
         });
 
         expect(routerMock.push).toHaveBeenCalledTimes(1);
         expect(routerMock.push).toHaveBeenCalledWith({
-            pathname: '/new/pick/profile-edit',
-            params: { cloneFromProfileId: 'p1' },
+            pathname: profileEditPath,
+            params: { cloneFromProfileId: testProfileRow.id },
         });
     });
 });

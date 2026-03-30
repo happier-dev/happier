@@ -1,4 +1,9 @@
 import { Platform } from 'react-native';
+import {
+    buildDarkShadowLevels,
+    buildLightShadowLevels,
+    buildShadowPopoverArrowBoxShadow,
+} from './shadowElevation';
 
 // Shared spacing, sizing constants (DRY - used by both themes)
 const sharedSpacing = {
@@ -39,8 +44,9 @@ export const lightTheme = {
         //
 
         text: '#000000',
-        textDestructive: Platform.select({ ios: '#FF3B30', default: '#F44336' }),
-        textSecondary: Platform.select({ ios: '#8E8E93', default: '#49454F' }),
+        textDestructive: '#FF3B30',
+        textSecondary: '#6c6c70',
+        textTertiary: '#99999d',
         textLink: '#2BACCC',
         accent: {
             blue: '#007AFF',
@@ -57,9 +63,9 @@ export const lightTheme = {
         success: '#34C759',
         surface: '#ffffff',
         surfaceRipple: 'rgba(0, 0, 0, 0.08)',
-        surfacePressed: '#f0f0f2',
-        surfaceSelected: Platform.select({ ios: '#eaeaea', default: '#eaeaea' }),
-        surfacePressedOverlay: Platform.select({ ios: '#D1D1D6', default: 'transparent' }),
+        surfacePressed: '#fafafa',
+        surfaceSelected: '#f8f8f8',
+        surfacePressedOverlay: '#fafafa',
         overlay: {
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
@@ -69,10 +75,13 @@ export const lightTheme = {
         surfaceHigh: '#F8F8F8',
         surfaceHighest: '#f0f0f0',
         divider: Platform.select({ ios: '#eaeaea', default: '#eaeaea' }),
+        /** Legacy tint helper (`Color(theme.colors.shadow.color)...`); prefer `shadowLevels` for cast shadows. */
         shadow: {
-            color: Platform.select({ default: '#000000', web: 'rgba(0, 0, 0, 0.1)' }),
+            color: '#000000',
             opacity: 0.1,
         },
+        shadowLevels: buildLightShadowLevels(),
+        shadowPopoverArrowBoxShadow: buildShadowPopoverArrowBoxShadow(false),
 
         //
         // System components
@@ -145,6 +154,7 @@ export const lightTheme = {
         status: {
             connected: '#34C759',
             connecting: '#007AFF',
+            actionRequired: '#FF9500',
             disconnected: '#999999',
             error: '#FF3B30',
             default: '#8E8E93',
@@ -263,8 +273,9 @@ export const darkTheme = {
         //
 
         text: '#ffffff',
-        textDestructive: Platform.select({ ios: '#FF453A', default: '#F48FB1' }),
-        textSecondary: Platform.select({ ios: '#8E8E93', default: '#CAC4D0' }),
+        textDestructive: '#FF453A',
+        textSecondary: '#99999d',
+        textTertiary: '#747478',
         textLink: '#2BACCC',
         accent: {
             blue: '#0A84FF',
@@ -295,9 +306,11 @@ export const darkTheme = {
         surfaceHighest: Platform.select({ ios: '#38383A', default: '#292929' }),
         divider: Platform.select({ ios: '#38383A', default: '#292929' }),
         shadow: {
-            color: Platform.select({ default: '#000000', web: 'rgba(0, 0, 0, 0.1)' }),
+            color: '#000000',
             opacity: 0.1,
         },
+        shadowLevels: buildDarkShadowLevels(),
+        shadowPopoverArrowBoxShadow: buildShadowPopoverArrowBoxShadow(true),
 
         //
         // System components
@@ -370,6 +383,7 @@ export const darkTheme = {
         status: { // App Connection Status
             connected: '#34C759',
             connecting: '#FFFFFF',
+            actionRequired: '#FF9F0A',
             disconnected: '#8E8E93',
             error: '#FF453A',
             default: '#8E8E93',

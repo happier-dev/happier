@@ -7,6 +7,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
 import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
+import { getAgentBehavior } from '@/agents/catalog/catalog';
 import { extractShellCommand } from '@/components/tools/normalization/parse/shellCommand';
 import { parseParenIdentifier } from '@/components/tools/normalization/parse/parseParenIdentifier';
 import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
@@ -53,11 +54,10 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     
     const agentId = resolveAgentIdForPermissionUi({ flavor: metadata?.flavor, toolName });
     const copy = getPermissionFooterCopy(agentId);
+    const permissionFooterBehavior = getAgentBehavior(agentId).permissions?.footer;
     const isCodexDecision = copy.protocol === 'codexDecision';
-    const isNativeCodexAgent = agentId === 'codex';
-    const shouldUseClaudePermissionUpdates = agentId === 'claude' || Array.isArray(permission?.suggestions);
-    const shouldForceReadOnlyAfterStop = !isCodexDecision;
-    // Codex always provides proposed_execpolicy_amendment
+    const shouldUsePermissionUpdates = permissionFooterBehavior?.usePermissionUpdates === true || Array.isArray(permission?.suggestions);
+    const shouldForceReadOnlyAfterStop = permissionFooterBehavior?.forceReadOnlyAfterStop === true;
     const execPolicyCommand = (() => {
         const proposedAmendment = toolInput?.proposedExecpolicyAmendment ?? toolInput?.proposed_execpolicy_amendment;
         if (Array.isArray(proposedAmendment)) {
@@ -65,7 +65,12 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         }
         return [];
     })();
-    const canApproveExecPolicy = isCodexDecision && isNativeCodexAgent && execPolicyCommand.length > 0;
+    const canApproveExecPolicy = permissionFooterBehavior?.supportsExecPolicyAmendment === true && execPolicyCommand.length > 0;
+    const shouldHandleStopWithoutSessionAbort = permissionFooterBehavior?.stopHandling === 'denyOnly';
+
+    if (disabledReason === 'inactive') {
+        return null;
+    }
 
     if (!canApprovePermissions && permission.status === 'pending') {
         const summary = formatPermissionRequestSummary({ toolName, toolInput });
@@ -74,8 +79,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 ? t('session.sharing.permissionApprovalsDisabledPublic')
                 : disabledReason === 'readOnly'
                     ? t('session.sharing.permissionApprovalsDisabledReadOnly')
-                    : disabledReason === 'inactive'
-                        ? t('session.sharing.permissionApprovalsDisabledInactive')
                     : t('session.sharing.permissionApprovalsDisabledNotGranted');
         return (
             <View style={{ marginTop: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
@@ -119,7 +122,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
         setLoadingAllEdits(true);
         try {
-            if (shouldUseClaudePermissionUpdates) {
+            if (shouldUsePermissionUpdates) {
                 await sessionAllowWithPermissionUpdates(sessionId, permission.id, {
                     mode: 'acceptEdits',
                     updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
@@ -141,15 +144,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
         setLoadingForSession(true);
         try {
-            // Special handling for shell/exec tools - include exact command
             let toolIdentifier = toolName;
-            const command = extractShellCommand(toolInput);
-            const lower = toolName.toLowerCase();
-            if (command && (lower === 'bash' || lower === 'execute' || lower === 'shell')) {
-                toolIdentifier = `${toolName}(${command})`;
-            }
-
-            if (shouldUseClaudePermissionUpdates) {
+            if (shouldUsePermissionUpdates) {
                 const parsed = parseParenIdentifier(toolIdentifier);
                 const rules = [
                     parsed
@@ -192,7 +188,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         setLoadingForSessionPrefix(true);
         try {
             const toolIdentifier = `${toolName}(${cmd} ${sub}:*)`;
-            if (shouldUseClaudePermissionUpdates) {
+            if (shouldUsePermissionUpdates) {
                 const parsed = parseParenIdentifier(toolIdentifier);
                 const rules = [
                     parsed
@@ -227,7 +223,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         setLoadingForSessionCommandName(true);
         try {
             const toolIdentifier = `${toolName}(${first}:*)`;
-            if (shouldUseClaudePermissionUpdates) {
+            if (shouldUsePermissionUpdates) {
                 const parsed = parseParenIdentifier(toolIdentifier);
                 const rules = [
                     parsed
@@ -253,11 +249,23 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
         setLoadingButton('deny');
         try {
+            await sessionDeny(sessionId, permission.id, undefined, undefined, 'denied');
+        } catch (error) {
+            console.error('Failed to deny permission:', error);
+        } finally {
+            setLoadingButton(null);
+        }
+    };
+
+    const handleStop = async () => {
+        if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingForSession) return;
+
+        setLoadingButton('abort');
+        try {
             await sessionDeny(sessionId, permission.id, undefined, undefined, 'abort');
             // Denying a single tool call is not always enough to stop the agent from continuing.
             // Also abort the current session run so the agent stops and waits for the user.
             await sessionAbort(sessionId);
-            // Only legacy/non-Codex decision flows should force read-only mode on stop.
             if (shouldForceReadOnlyAfterStop) {
                 storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
             }
@@ -268,8 +276,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         }
     };
     
-    // Codex-specific handlers
-    const handleCodexApprove = async () => {
+    const handleDecisionApprove = async () => {
         if (permission.status !== 'pending' || loadingButton !== null || loadingForSession || loadingExecPolicy) return;
         
         setLoadingButton('allow');
@@ -282,7 +289,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         }
     };
     
-    const handleCodexApproveForSession = async () => {
+    const handleDecisionApproveForSession = async () => {
         if (permission.status !== 'pending' || loadingButton !== null || loadingForSession || loadingExecPolicy) return;
         
         setLoadingForSession(true);
@@ -295,7 +302,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         }
     };
 
-    const handleCodexApproveExecPolicy = async () => {
+    const handleDecisionApproveExecPolicy = async () => {
         if (permission.status !== 'pending' || loadingButton !== null || loadingForSession || loadingExecPolicy || !canApproveExecPolicy) return;
 
         setLoadingExecPolicy(true);
@@ -315,16 +322,12 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         }
     };
     
-    const handleCodexAbort = async () => {
+    const handleDecisionDenyWithoutSessionAbort = async () => {
         if (permission.status !== 'pending' || loadingButton !== null || loadingForSession || loadingExecPolicy) return;
         
         setLoadingButton('abort');
         try {
-            // Codex `abort` decisions can leave the in-flight turn unresolved in MCP mode.
-            // Use an explicit denial decision instead so the turn completes cleanly.
             await sessionDeny(sessionId, permission.id, undefined, undefined, 'denied');
-            // Avoid synthetic follow-up prompts for Codex; they can leave the turn waiting forever
-            // after an abort and block subsequent user-authored prompts.
         } catch (error) {
             console.error('Failed to abort permission:', error);
         } finally {
@@ -335,6 +338,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const isApproved = permission.status === 'approved';
     const isDenied = permission.status === 'denied';
     const isPending = permission.status === 'pending';
+    const isStopped = isDenied && permission.decision === 'abort';
+    const isDeniedViaNo = isDenied && !isStopped;
 
     // Helper function to check if tool matches allowed pattern
     const getAllowedToolsList = (permission: any): string[] | undefined => {
@@ -458,6 +463,11 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         return false;
     })();
 
+    const isApprovedForSessionToolWide = (() => {
+        if (!isApproved || !allowedTools || !isShellTool) return false;
+        return allowedTools.some((item) => typeof item === 'string' && item.toLowerCase() === toolName.toLowerCase());
+    })();
+
     const isApprovedForSessionCommandName = (() => {
         if (!isApproved || !allowedTools || !isShellTool || !commandForShell) return false;
         const effective = stripSimpleEnvPrelude(commandForShell);
@@ -475,14 +485,14 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
     const isApprovedForSession = isApproved && (
         isShellTool
-            ? (isApprovedForSessionExact || isApprovedForSessionSubcommand)
+            ? (isApprovedForSessionToolWide || isApprovedForSessionExact || isApprovedForSessionSubcommand || isApprovedForSessionCommandName)
             : isToolAllowed(toolName, toolInput, allowedTools)
     );
 
     const isApprovedViaAllow = isApproved && permission.mode !== 'acceptEdits' && !isApprovedForSession;
     const isApprovedViaAllEdits = isApproved && permission.mode === 'acceptEdits';
     
-    // Codex-specific status detection with fallback
+    // Decision-protocol status detection with fallback
     const isCodexApproved = isCodexDecision && isApproved && (permission.decision === 'approved' || !permission.decision);
     const isCodexApprovedForSession = isCodexDecision && isApproved && permission.decision === 'approved_for_session';
     const isCodexApprovedExecPolicy = isCodexDecision && isApproved && permission.decision === 'approved_execpolicy_amendment';
@@ -497,21 +507,20 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             paddingVertical: embedded ? 0 : 8,
         },
         buttonContainer: {
-            flexDirection: 'column',
-            gap: 4,
-            alignItems: 'flex-start',
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 6,
         },
         button: {
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 1,
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 8,
             backgroundColor: 'transparent',
-            alignItems: 'flex-start',
-            justifyContent: 'center',
-            minHeight: 32,
             borderLeftWidth: 3,
             borderLeftColor: 'transparent',
-            alignSelf: 'stretch',
+            flexShrink: 1,
+            maxWidth: '100%',
         },
         buttonAllow: {
             backgroundColor: 'transparent',
@@ -533,15 +542,17 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             flexDirection: 'row',
             alignItems: 'center',
             gap: 4,
-            minHeight: 20,
+            minHeight: 18,
+            flexShrink: 1,
         },
         icon: {
             marginRight: 2,
         },
         buttonText: {
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: '400',
             color: theme.colors.textSecondary,
+            flexShrink: 1,
         },
         buttonTextAllow: {
             color: theme.colors.permissionButton.allow.background,
@@ -591,15 +602,16 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         return (
             <View style={styles.container}>
                 <View style={styles.buttonContainer}>
-                    {/* Codex: Yes button */}
+                    {/* Decision protocol: Yes button */}
                     <TouchableOpacity
+                        testID="permission-footer.allow"
                         style={[
                             styles.button,
                             isPending && styles.buttonAllow,
                             isCodexApproved && styles.buttonSelected,
                             (isCodexAborted || isCodexApprovedForSession || isCodexApprovedExecPolicy) && styles.buttonInactive
                         ]}
-                        onPress={handleCodexApprove}
+                        onPress={handleDecisionApprove}
                         disabled={!isPending || loadingButton !== null || loadingForSession || loadingExecPolicy}
                         activeOpacity={isPending ? 0.7 : 1}
                     >
@@ -620,16 +632,17 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         )}
                     </TouchableOpacity>
 
-                    {/* Codex: Yes, always allow this command button */}
+                    {/* Decision protocol: Yes, always allow this command button */}
                     {canApproveExecPolicy && (
                         <TouchableOpacity
+                            testID="permission-footer.allow-execpolicy"
                             style={[
                                 styles.button,
                                 isPending && styles.buttonForSession,
                                 isCodexApprovedExecPolicy && styles.buttonSelected,
                                 (isCodexAborted || isCodexApproved || isCodexApprovedForSession) && styles.buttonInactive
                             ]}
-                            onPress={handleCodexApproveExecPolicy}
+                            onPress={handleDecisionApproveExecPolicy}
                             disabled={!isPending || loadingButton !== null || loadingForSession || loadingExecPolicy}
                             activeOpacity={isPending ? 0.7 : 1}
                         >
@@ -651,15 +664,16 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         </TouchableOpacity>
                     )}
 
-                    {/* Codex: Yes, and don't ask for a session button */}
+                    {/* Decision protocol: Yes, and don't ask for a session button */}
                     <TouchableOpacity
+                        testID="permission-footer.allow-for-session"
                         style={[
                             styles.button,
                             isPending && styles.buttonForSession,
                             isCodexApprovedForSession && styles.buttonSelected,
                             (isCodexAborted || isCodexApproved || isCodexApprovedExecPolicy) && styles.buttonInactive
                         ]}
-                        onPress={handleCodexApproveForSession}
+                        onPress={handleDecisionApproveForSession}
                         disabled={!isPending || loadingButton !== null || loadingForSession || loadingExecPolicy}
                         activeOpacity={isPending ? 0.7 : 1}
                     >
@@ -680,15 +694,49 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         )}
                     </TouchableOpacity>
 
-                    {/* Codex-style decision UI: only native Codex uses the abort workaround. */}
                     <TouchableOpacity
+                        testID="permission-footer.deny"
+                        style={[
+                            styles.button,
+                            isPending && styles.buttonDeny,
+                            isDeniedViaNo && styles.buttonSelected,
+                            (isCodexAborted || isCodexApproved || isCodexApprovedForSession || isCodexApprovedExecPolicy) && styles.buttonInactive,
+                        ]}
+                        onPress={handleDeny}
+                        disabled={!isPending || loadingButton !== null || loadingForSession || loadingExecPolicy}
+                        activeOpacity={isPending ? 0.7 : 1}
+                    >
+                        {loadingButton === 'deny' && isPending ? (
+                            <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
+                                <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorDeny.color} />
+                            </View>
+                        ) : (
+                            <View style={styles.buttonContent}>
+                                <Text
+                                    style={[
+                                        styles.buttonText,
+                                        isPending && styles.buttonTextDeny,
+                                        isDeniedViaNo && styles.buttonTextSelected,
+                                    ]}
+                                    numberOfLines={1}
+                                    ellipsizeMode="tail"
+                                >
+                                    {t('common.no')}
+                                </Text>
+                            </View>
+                        )}
+                    </TouchableOpacity>
+
+                    {/* Decision-protocol providers can customize stop handling through registry behavior. */}
+                    <TouchableOpacity
+                        testID="permission-footer.stop"
                         style={[
                             styles.button,
                             isPending && styles.buttonDeny,
                             isCodexAborted && styles.buttonSelected,
                             (isCodexApproved || isCodexApprovedForSession || isCodexApprovedExecPolicy) && styles.buttonInactive
                         ]}
-                        onPress={isNativeCodexAgent ? handleCodexAbort : handleDeny}
+                        onPress={shouldHandleStopWithoutSessionAbort ? handleDecisionDenyWithoutSessionAbort : handleStop}
                         disabled={!isPending || loadingButton !== null || loadingForSession || loadingExecPolicy}
                         activeOpacity={isPending ? 0.7 : 1}
                     >
@@ -713,7 +761,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         );
     }
 
-    // Render Claude buttons (existing behavior)
+    // Render rule-update buttons for the non-decision protocol.
     const showAllowForSessionSubcommand = isShellTool && typeof commandForShell === 'string' && (() => {
         const stripped = stripSimpleEnvPrelude(String(commandForShell));
         const parts = stripped.split(/\s+/).filter(Boolean);
@@ -723,9 +771,10 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     })();
     const showAllowForSessionCommandName = isShellTool && typeof commandForShell === 'string' && commandForShell.length > 0 && Boolean(stripSimpleEnvPrelude(String(commandForShell)).split(/\s+/).filter(Boolean)[0]);
     return (
-        <View style={styles.container}>
+            <View style={styles.container}>
             <View style={styles.buttonContainer}>
                 <TouchableOpacity
+                    testID="permission-footer.allow"
                     style={[
                         styles.button,
                         isPending && styles.buttonAllow,
@@ -790,7 +839,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         style={[
                             styles.button,
                             isPending && styles.buttonForSession,
-                            ((isShellTool ? isApprovedForSessionExact : isApprovedForSession) && styles.buttonSelected),
+                            ((isShellTool ? isApprovedForSessionToolWide : isApprovedForSession) && styles.buttonSelected),
                             (isDenied || isApprovedViaAllow || isApprovedViaAllEdits) && styles.buttonInactive
                         ]}
                         onPress={handleApproveForSession}
@@ -806,7 +855,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                                 <Text style={[
                                     styles.buttonText,
                                     isPending && styles.buttonTextForSession,
-                                    (isShellTool ? isApprovedForSessionExact : isApprovedForSession) && styles.buttonTextSelected
+                                    (isShellTool ? isApprovedForSessionToolWide : isApprovedForSession) && styles.buttonTextSelected
                                 ]} numberOfLines={1} ellipsizeMode="tail">
                                     {t(copy.yesForToolKey)}
                                 </Text>
@@ -822,7 +871,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                             styles.button,
                             isPending && styles.buttonForSession,
                             (isApprovedForSessionSubcommand && !isApprovedForSessionCommandName) && styles.buttonSelected,
-                            (isDenied || isApprovedViaAllow || isApprovedViaAllEdits || (isShellTool ? isApprovedForSessionExact : isApprovedForSession)) && styles.buttonInactive
+                            (isDenied || isApprovedViaAllow || isApprovedViaAllEdits || isApprovedForSessionToolWide || isApprovedForSessionExact) && styles.buttonInactive
                         ]}
                         onPress={handleApproveForSessionSubcommand}
                         disabled={!isPending || loadingButton !== null || loadingAllEdits || loadingForSession || loadingForSessionPrefix || loadingForSessionCommandName}
@@ -859,7 +908,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                             styles.button,
                             isPending && styles.buttonForSession,
                             isApprovedForSessionCommandName && styles.buttonSelected,
-                            (isDenied || isApprovedViaAllow || isApprovedViaAllEdits || (isShellTool ? isApprovedForSessionExact : isApprovedForSession)) && styles.buttonInactive
+                            (isDenied || isApprovedViaAllow || isApprovedViaAllEdits || isApprovedForSessionToolWide || isApprovedForSessionExact || isApprovedForSessionSubcommand) && styles.buttonInactive
                         ]}
                         onPress={handleApproveForSessionCommandName}
                         disabled={!isPending || loadingButton !== null || loadingAllEdits || loadingForSession || loadingForSessionPrefix || loadingForSessionCommandName}
@@ -884,11 +933,12 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 )}
 
                 <TouchableOpacity
+                    testID="permission-footer.deny"
                     style={[
                         styles.button,
                         isPending && styles.buttonDeny,
-                        isDenied && styles.buttonSelected,
-                        (isApproved) && styles.buttonInactive
+                        isDeniedViaNo && styles.buttonSelected,
+                        (isApproved || isStopped) && styles.buttonInactive,
                     ]}
                     onPress={handleDeny}
                     disabled={!isPending || loadingButton !== null || loadingAllEdits || loadingForSession}
@@ -900,11 +950,48 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         </View>
                     ) : (
                         <View style={styles.buttonContent}>
-                            <Text style={[
-                                styles.buttonText,
-                                isPending && styles.buttonTextDeny,
-                                isDenied && styles.buttonTextSelected
-                            ]} numberOfLines={1} ellipsizeMode="tail">
+                            <Text
+                                style={[
+                                    styles.buttonText,
+                                    isPending && styles.buttonTextDeny,
+                                    isDeniedViaNo && styles.buttonTextSelected,
+                                ]}
+                                numberOfLines={1}
+                                ellipsizeMode="tail"
+                            >
+                                {t('common.no')}
+                            </Text>
+                        </View>
+                    )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                    testID="permission-footer.stop"
+                    style={[
+                        styles.button,
+                        isPending && styles.buttonDeny,
+                        isStopped && styles.buttonSelected,
+                        (isApproved || isDeniedViaNo) && styles.buttonInactive,
+                    ]}
+                    onPress={handleStop}
+                    disabled={!isPending || loadingButton !== null || loadingAllEdits || loadingForSession}
+                    activeOpacity={isPending ? 0.7 : 1}
+                >
+                    {loadingButton === 'abort' && isPending ? (
+                        <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
+                            <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorDeny.color} />
+                        </View>
+                    ) : (
+                        <View style={styles.buttonContent}>
+                            <Text
+                                style={[
+                                    styles.buttonText,
+                                    isPending && styles.buttonTextDeny,
+                                    isStopped && styles.buttonTextSelected,
+                                ]}
+                                numberOfLines={1}
+                                ellipsizeMode="tail"
+                            >
                                 {t(copy.stopKey)}
                             </Text>
                         </View>

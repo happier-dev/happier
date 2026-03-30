@@ -2,7 +2,7 @@ import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
 import { join } from 'node:path';
 
-import { requireConnectedServiceOauthCredentialRecord } from '@/backends/connectedServices/connectedServiceCredentialRecord';
+import { requireConnectedServiceOauthCredentialRecord } from '@/daemon/connectedServices/shared/connectedServiceCredentialRecord';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 export async function materializeGeminiConnectedServiceAuth(params: Readonly<{

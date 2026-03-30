@@ -26,6 +26,35 @@ const { readCredentialsMock, readSettingsMock } = vi.hoisted(() => ({
   })),
 }));
 
+const { readDaemonStatusSnapshotMock } = vi.hoisted(() => ({
+  readDaemonStatusSnapshotMock: vi.fn(async () => ({
+    server: {
+      activeServerId: 'stack_main__id_default',
+      serverUrl: 'http://127.0.0.1:3005',
+      localServerUrl: 'http://127.0.0.1:3005',
+      publicServerUrl: 'https://relay.happier.dev?token=abc',
+      webappUrl: 'https://app.happier.dev?token=abc',
+      comparableKey: 'https://relay.happier.dev',
+    },
+    daemon: {
+      running: true,
+      pid: 7777,
+      httpPort: 3005,
+    },
+    service: {
+      installed: true,
+      running: true,
+    },
+    auth: {
+      authenticated: true,
+      machineRegistered: false,
+      machineId: null,
+      needsAuth: true,
+      accountId: 'acct_123',
+    },
+  })),
+}));
+
 vi.mock('@/configuration', () => ({
   configuration: {
     activeServerId: 'stack_main__id_default',
@@ -38,6 +67,10 @@ vi.mock('@/configuration', () => ({
 vi.mock('@/persistence', () => ({
   readCredentials: () => readCredentialsMock(),
   readSettings: () => readSettingsMock(),
+}));
+
+vi.mock('@/daemon/statusSnapshot', () => ({
+  readDaemonStatusSnapshot: () => readDaemonStatusSnapshotMock(),
 }));
 
 import { buildDoctorSnapshot } from './doctorSnapshot';
@@ -54,7 +87,8 @@ describe('buildDoctorSnapshot', () => {
     expect(snapshot.settings.activeServerId).toBe('cloud');
     expect(snapshot.settings.servers.map((entry) => entry.id)).toContain('cloud');
     expect(snapshot.accountId).toBe('acct_123');
+    expect(snapshot.daemonStatus?.auth.needsAuth).toBe(true);
+    expect(snapshot.daemonStatus?.server.publicServerUrl).toBe('https://relay.happier.dev');
     expect(JSON.stringify(snapshot)).not.toContain('?token=');
   });
 });
-

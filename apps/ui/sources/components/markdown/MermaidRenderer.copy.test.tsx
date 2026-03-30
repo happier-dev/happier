@@ -1,6 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,11 +12,20 @@ const clipboardMocks = vi.hoisted(() => ({
 }));
 vi.mock('expo-clipboard', () => clipboardMocks);
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: vi.fn(),
-  },
-}));
+installMarkdownCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+        });
+    },
+    storage: async () =>
+        await vi.importActual<typeof import('@/sync/domains/state/storage')>(
+            '@/sync/domains/state/storage',
+        ),
+});
 
 let lastWebViewHtml: string | null = null;
 vi.mock('react-native-webview', () => ({
@@ -29,19 +41,13 @@ describe('MermaidRenderer', () => {
 
     let tree: ReturnType<typeof renderer.create> | undefined;
     try {
-      await act(async () => {
-        tree = renderer.create(<MermaidRenderer content={'graph TD\\nA-->B'} />);
-      });
+      const screen = await renderScreen(<MermaidRenderer content={'graph TD\\nA-->B'} />);
+      tree = screen.tree;
 
-      const copyButtons =
-        tree?.root.findAll((n) => n.props?.testID === 'mermaid-copy-button') ?? [];
-      expect(copyButtons).toHaveLength(1);
-      expect(typeof copyButtons[0]!.props?.onPress).toBe('function');
+      expect(screen.findByTestId('mermaid-copy-button')).not.toBeNull();
 
       clipboardMocks.setStringAsync.mockClear();
-      await act(async () => {
-        await copyButtons[0]!.props.onPress();
-      });
+      await screen.pressByTestIdAsync('mermaid-copy-button');
 
       expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith('graph TD\\nA-->B');
     } finally {
@@ -59,9 +65,7 @@ describe('MermaidRenderer', () => {
 
     let tree: ReturnType<typeof renderer.create> | undefined;
     try {
-      await act(async () => {
-        tree = renderer.create(<MermaidRenderer content={payload} />);
-      });
+      tree = (await renderScreen(<MermaidRenderer content={payload} />)).tree;
 
       expect(typeof lastWebViewHtml).toBe('string');
       expect(lastWebViewHtml).toContain('<div id=\"mermaid-container\"></div>');

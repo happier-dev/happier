@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join, resolve as resolvePath } from 'node:path';
 
-import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
+import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
 import { runLoggedCommand } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
 
@@ -42,20 +42,38 @@ export async function runCliJson(params: Readonly<{
   label: string;
   args: string[];
   timeoutMs?: number;
+  launchOptions?: Readonly<{
+    preferSourceEntrypoint?: boolean;
+    skipSourceFreshnessCheck?: boolean;
+    skipSharedDepsBuild?: boolean;
+  }>;
 }>): Promise<JsonEnvelope> {
-  const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
+  const cliLaunchSpec = await resolveCliTestLaunchSpec(
     { testDir: params.testDir, env: params.env },
-    { snapshotDir: resolvePath(join(params.testDir, 'cli-dist')) },
+    {
+      snapshotDir: resolvePath(join(params.testDir, 'cli-dist')),
+      preferSourceEntrypoint: params.launchOptions?.preferSourceEntrypoint,
+      skipSourceFreshnessCheck: params.launchOptions?.skipSourceFreshnessCheck,
+    },
   );
   const stdoutPath = resolvePath(join(params.testDir, `cli.${params.label}.stdout.log`));
   const stderrPath = resolvePath(join(params.testDir, `cli.${params.label}.stderr.log`));
+  const env = {
+    ...params.env,
+    ...(params.launchOptions?.skipSharedDepsBuild
+      ? {
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
+        }
+      : {}),
+  };
 
   await runLoggedCommand({
-    command: process.execPath,
-    args: [cliDistEntrypoint, ...params.args],
+    command: cliLaunchSpec.command,
+    args: [...cliLaunchSpec.args, ...params.args],
     cwd: repoRootDir(),
     env: {
-      ...params.env,
+      ...env,
+      ...(cliLaunchSpec.env ?? {}),
       CI: '1',
       HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
       HAPPIER_HOME_DIR: params.cliHomeDir,

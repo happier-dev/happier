@@ -1,6 +1,9 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,19 +11,6 @@ vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: (props: any) => React.createElement('Swipeable', props),
-}));
-
-vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'ios' },
-    };
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -60,22 +50,57 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useHasUnreadMessages: () => false,
-    useProfile: () => ({ id: 'u1' }),
-    useSession: () => null,
-}));
-
 const promptSpy = vi.fn(async () => 'new-tag');
-vi.mock('@/modal', () => ({
-    Modal: { prompt: promptSpy, alert: vi.fn() },
-}));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: promptSpy,
+                alert: vi.fn(),
+            },
+        }).module;
+    },
+    storage: async (_importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useHasUnreadMessages: () => false,
+            useProfile: () => ({
+                id: 'u1',
+                timestamp: 0,
+                firstName: null,
+                lastName: null,
+                username: null,
+                avatar: null,
+                linkedProviders: [],
+                connectedServices: [],
+                connectedServicesV2: [],
+            }),
+            useSession: () => null,
+            useSessionListRenderable: () => null,
+            useSessionListMeaningfulActivityAt: () => null,
+        });
+    },
+});
 
 describe('SessionItem tags (new tag)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('creates a new tag via the tag dropdown create action and adds it to active tags', async () => {
         promptSpy.mockClear();
         const onSetTags = vi.fn();
@@ -98,42 +123,50 @@ describe('SessionItem tags (new tag)', () => {
             presence: 'online',
         } as any;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_a"
-                    serverName="Server A"
-                    showServerBadge={true}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                    tagsEnabled={true}
-                    tags={[]}
-                    allKnownTags={[]}
-                    onSetTags={onSetTags}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_a"
+                serverName="Server A"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                tagsEnabled={true}
+                tags={[]}
+                allKnownTags={[]}
+                onSetTags={onSetTags}
+            />,
+        );
 
-        const stableItemLocator = (tree as any).root.findAll((node: any) => {
+        const stableItemLocator = screen.findAll((node: any) => {
             return node.type === 'Pressable' && node.props?.testID === 'session-list-item-sess_1';
         });
         expect(stableItemLocator).toHaveLength(1);
 
-        const tagButton = (tree as any).root.findAll((node: any) => {
-            return node.type === 'Pressable' && node.props?.accessibilityLabel === 'sessionTags.editTagsLabel';
-        })[0];
-        expect(tagButton).toBeTruthy();
         await act(async () => {
-            tagButton.props.onPress();
+            invokeTestInstanceHandler(stableItemLocator[0], 'onLongPress');
         });
 
-        const dropdown = (tree as any).root.findByType('DropdownMenu');
+        const dropdowns = screen.findAllByType('DropdownMenu');
+        const contextMenu = dropdowns.find((d: any) => d.props.search !== true);
+        expect(contextMenu).toBeTruthy();
+        if (!contextMenu) {
+            throw new Error('Context menu not found');
+        }
+
+        await act(async () => {
+            invokeTestInstanceHandler(contextMenu, 'onSelect', 'tags');
+        });
+
+        const dropdown = screen.findAllByType('DropdownMenu').find((d: any) => d.props.search === true);
+        expect(dropdown).toBeTruthy();
+        if (!dropdown) {
+            throw new Error('Tag dropdown not found');
+        }
         expect(dropdown.props.emptyLabel).toBe(null);
         expect(dropdown.props.showCategoryTitles).toBe(false);
         expect(typeof dropdown.props.createItemDisplay).toBe('function');
@@ -144,7 +177,7 @@ describe('SessionItem tags (new tag)', () => {
         expect(createDisplay.rowContainerStyle).toMatchObject({ paddingVertical: 6 });
 
         await act(async () => {
-            dropdown.props.onCreateItem('new-tag');
+            invokeTestInstanceHandler(dropdown, 'onCreateItem', 'new-tag');
         });
 
         expect(promptSpy).not.toHaveBeenCalled();

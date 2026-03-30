@@ -1,30 +1,34 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedTimingConfigs: any[] = [];
 
-vi.mock('react-native', async () => {
-  const ReactMod = await import('react');
-  const stub = await import('@/dev/reactNativeStub');
-  return {
-    ...stub,
-    Platform: { ...(stub as any).Platform, OS: 'web' },
-    Animated: {
-      ...(stub as any).Animated,
-      Value: function Value(this: any, initial: number) {
-        this.__value = initial;
+installTranscriptMotionCommonModuleMocks({
+  reactNative: async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+      Platform: {
+        OS: 'web',
       },
-      timing: (_value: any, config: any) => {
-        capturedTimingConfigs.push(config);
-        return { start: () => undefined };
+      Animated: {
+        Value: function Value(this: any, initial: number) {
+          this.__value = initial;
+        },
+        timing: (_value: any, config: any) => {
+          capturedTimingConfigs.push(config);
+          return { start: () => undefined };
+        },
+        parallel: (_anims: any[]) => ({ start: () => undefined }),
       },
-      parallel: (_anims: any[]) => ({ start: () => undefined }),
-    },
-    View: (props: any) => ReactMod.createElement('View', props, props.children),
-  };
+      View: (props: any) => React.createElement('View', props, props.children),
+    });
+  },
 });
 
 vi.mock('./TranscriptMotionContext', () => ({
@@ -42,13 +46,10 @@ describe('TranscriptEnterWrapper (web native driver)', () => {
   it('does not use native driver on web (avoids Animated warnings and jitter)', async () => {
     const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
 
-    await act(async () => {
-      renderer.create(
-        <TranscriptEnterWrapper id="m1" createdAt={1}>
+    await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
           <div />
-        </TranscriptEnterWrapper>,
-      );
-    });
+        </TranscriptEnterWrapper>);
+    await flushHookEffects();
 
     expect(capturedTimingConfigs.length).toBeGreaterThan(0);
     for (const cfg of capturedTimingConfigs) {
@@ -59,13 +60,10 @@ describe('TranscriptEnterWrapper (web native driver)', () => {
   it('does not animate translateY on web (avoids hit-target overlap during enter)', async () => {
     const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
 
-    await act(async () => {
-      renderer.create(
-        <TranscriptEnterWrapper id="m1" createdAt={1}>
+    await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
           <div />
-        </TranscriptEnterWrapper>,
-      );
-    });
+        </TranscriptEnterWrapper>);
+    await flushHookEffects();
 
     // The translateY timing uses `toValue: 0`. On web we skip it to avoid
     // temporarily overlapping neighboring rows and intercepting pointer events.

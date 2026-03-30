@@ -18,6 +18,7 @@ describe('machines ops server-scoped routing', () => {
         const result = await machineSpawnNewSession({
             machineId: 'machine-1',
             directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             serverId: 'server-b',
         });
 

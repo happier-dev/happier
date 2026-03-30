@@ -78,4 +78,30 @@ describe('buildCodeMirrorWebViewHtml', () => {
 
         expect(html).toContain('cdn.jsdelivr.net');
     });
+
+    it('supports requestDoc/docSnapshot messages for reliable host-side flush', async () => {
+        vi.resetModules();
+        vi.doMock('./codemirrorWebViewBundle.generated', () => ({
+            CODEMIRROR_WEBVIEW_BUNDLE_JS: '',
+        }));
+
+        const { buildCodeMirrorWebViewHtml } = await import('./codemirrorWebViewHtml');
+        const html = buildCodeMirrorWebViewHtml({
+            theme: {
+                backgroundColor: '#000',
+                textColor: '#fff',
+                dividerColor: '#333',
+                isDark: true,
+            },
+            wrapLines: true,
+            showLineNumbers: true,
+            changeDebounceMs: 100,
+            maxChunkBytes: 64_000,
+            uiFontScale: 1,
+            osFontScale: 1,
+        } as any);
+
+        expect(html).toContain('requestDoc');
+        expect(html).toContain('docSnapshot');
+    });
 });

@@ -3,8 +3,8 @@ import type { Credentials } from '@/persistence';
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
 import { findTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
 import { configuration } from '@/configuration';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { readMemorySynopsisPointerV1FromSessionMetadata } from '@/session/memoryArtifacts/memorySynopsisPointerV1';
 
 import type { HappierReplayDialogItem } from './types';
@@ -132,7 +132,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     if (visited.has(currentSessionId)) break;
     visited.add(currentSessionId);
 
-    const rawSession = await fetchSessionById({ token: params.credentials.token, sessionId: currentSessionId }).catch(() => null);
+    const rawSession = await fetchSessionByIdCompat({ token: params.credentials.token, sessionId: currentSessionId }).catch(() => null);
     if (!rawSession) break;
 
     segments.push({

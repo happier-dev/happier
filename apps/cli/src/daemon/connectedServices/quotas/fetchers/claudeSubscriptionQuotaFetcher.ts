@@ -10,7 +10,7 @@ import { isRecord, normalizePct, resolveConnectedServiceQuotaAccountLabel } from
 import {
   resolveClaudeSubscriptionOauthClientId,
   resolveClaudeSubscriptionOauthTokenUrl,
-} from '../../../../backends/connectedServices/oauthConfig';
+} from '@/daemon/connectedServices/shared/oauthConfig';
 
 function parseIsoDateMs(value: unknown): number | null {
   if (typeof value !== 'string') return null;

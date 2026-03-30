@@ -1,3 +1,4 @@
+import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { createTtsChunker, resolveStreamingTtsChunkChars } from '@/voice/output/TtsChunker';
@@ -5,11 +6,20 @@ import { speakAssistantText } from '@/voice/output/speakAssistantText';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { waitForNextAssistantTextMessage } from '@/voice/runtime/waitForNextAssistantTextMessage';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
-import { createVoiceToolHandlers } from '@/voice/tools/handlers';
-import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
+import {
+  appendVoiceConversationAssistantText,
+  appendVoiceConversationNoteText,
+  appendVoiceConversationUserText,
+} from '@/voice/sessionBinding/voiceConversationTranscript';
+import {
+  resolveVoiceSessionBindingByControlSessionId,
+  resolveVoiceSessionBindingByConversationSessionId,
+} from '@/voice/sessionBinding/resolveVoiceSessionBinding';
+import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
 import { patchLocalVoiceState, setIdleStateUnlessRecording } from './localVoiceState';
 import { resolveLocalVoiceAdapterSettings } from './localVoiceSettings';
+import { runVoiceAgentTurnWithTools, type LocalVoiceAgentToolResultEntry } from './runVoiceAgentTurnWithTools';
 
 type VoicePlaybackControllerLike = Readonly<{
   registerStopper: (stopper: () => void) => () => void;
@@ -25,6 +35,7 @@ type VoiceAgentSessionsLike = Readonly<{
     opts?:
       | {
           onTextDelta?: (delta: string) => void;
+          signal?: AbortSignal;
         }
       | undefined,
   ) => Promise<{ assistantText: string; actions?: ReadonlyArray<unknown> }>;
@@ -36,14 +47,60 @@ export async function sendVoiceTextTurn(params: {
   userText: string;
   playbackController: VoicePlaybackControllerLike;
   voiceAgentSessions: VoiceAgentSessionsLike;
+  signal?: AbortSignal;
 }): Promise<void> {
   const { sessionId, settings, userText } = params;
   const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
   const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
   const conversationMode =
     adapterId === 'local_conversation' ? ((config?.conversationMode ?? 'direct_session') as 'direct_session' | 'agent') : 'direct_session';
+  const sessionBinding =
+    resolveVoiceSessionBindingByControlSessionId({ controlSessionId: sessionId })
+    ?? resolveVoiceSessionBindingByConversationSessionId({ conversationSessionId: sessionId })
+    ?? null;
+  const syntheticTranscriptBinding = resolveVoiceSessionBindingByControlSessionId({ controlSessionId: sessionId });
+  const syntheticConversationSessionId =
+    syntheticTranscriptBinding?.transcriptMode === 'synthetic'
+      ? syntheticTranscriptBinding.conversationSessionId
+      : null;
+  const currentToolSessionId =
+    sessionBinding?.targetSessionId
+    ?? (sessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : sessionId);
 
   voiceActivityController.appendUserText(sessionId, adapterId, userText);
+  if (syntheticConversationSessionId) {
+    appendVoiceConversationUserText({
+      conversationSessionId: syntheticConversationSessionId,
+      text: userText,
+    });
+  }
+
+  const isTurnAbortedError = (error: unknown): boolean => {
+    const err: any = error;
+    if (err?.name === 'AbortError' && typeof err?.message === 'string' && err.message.includes('turn_aborted')) return true;
+    if (typeof err?.message === 'string' && err.message.includes('turn_aborted')) return true;
+    if (typeof err === 'string' && err.includes('turn_aborted')) return true;
+    return false;
+  };
+
+  const appendSyntheticToolResultNotes = (toolResults: ReadonlyArray<{ t?: unknown; result?: any }>) => {
+    if (!syntheticConversationSessionId) return;
+    for (const toolResult of toolResults) {
+      const toolName = typeof toolResult?.t === 'string' ? toolResult.t.trim() : '';
+      if (!toolName) continue;
+      const succeeded = toolResult?.result?.ok !== false;
+      appendVoiceConversationNoteText({
+        conversationSessionId: syntheticConversationSessionId,
+        text: `[Voice] Tool result: ${toolName} ${succeeded ? 'succeeded' : 'failed'}`,
+      });
+    }
+  };
+
+  const throwIfAborted = () => {
+    if (params.signal?.aborted) {
+      throw Object.assign(new Error('turn_aborted'), { name: 'AbortError' });
+    }
+  };
 
   if (conversationMode === 'agent') {
     const autoSpeak = config?.tts?.autoSpeakReplies !== false;
@@ -70,34 +127,20 @@ export async function sendVoiceTextTurn(params: {
 
     patchLocalVoiceState({ status: 'sending' });
     try {
-      type VoiceToolAction = Readonly<{ t?: unknown; args?: unknown }>;
-      type ToolResultEntry = Readonly<{
-        t: string;
-        args: unknown;
-        result: unknown;
-      }>;
-
-      const parseToolResult = (value: string): unknown => {
-        const trimmed = String(value ?? '').trim();
-        if (!trimmed) return '';
-        try {
-          return JSON.parse(trimmed);
-        } catch {
-          return trimmed;
-        }
-      };
-
+      throwIfAborted();
       const chunker = streamingSpeechEnabled ? createTtsChunker(streamingChunkChars) : null;
       const playbackEpoch = params.playbackController.captureEpoch();
       let queuedChunkCount = 0;
       let chunkPlaybackQueue: Promise<void> = Promise.resolve();
 
       const queueSpokenChunk = (chunkText: string) => {
+        if (params.signal?.aborted) return;
         const trimmed = chunkText.trim();
         if (!trimmed) return;
         queuedChunkCount += 1;
         chunkPlaybackQueue = chunkPlaybackQueue
           .then(async () => {
+            if (params.signal?.aborted) return;
             if (!params.playbackController.isEpochCurrent(playbackEpoch)) return;
             await speakAssistantText({
               text: trimmed,
@@ -110,90 +153,36 @@ export async function sendVoiceTextTurn(params: {
           .catch(() => {});
       };
 
-      const { assistantText, actions: _actions } = await params.voiceAgentSessions.sendTurn(
-        sessionId,
-        userText,
-        chunker
-          ? {
-              onTextDelta: (textDelta) => {
-                const nextChunks = chunker.push(textDelta);
-                nextChunks.forEach((chunk) => queueSpokenChunk(chunk));
-              },
-            }
-          : undefined,
-      );
+      const sendOptions = chunker
+        ? {
+            onTextDelta: (textDelta: string) => {
+              if (params.signal?.aborted) return;
+              const nextChunks = chunker.push(textDelta);
+              nextChunks.forEach((chunk) => queueSpokenChunk(chunk));
+            },
+            signal: params.signal,
+          }
+        : params.signal
+          ? { signal: params.signal }
+          : undefined;
 
-      voiceActivityController.appendAssistantText(sessionId, adapterId, assistantText);
-
-      const tools = createVoiceToolHandlers({
-        resolveSessionId: (explicitSessionId) =>
-          resolveToolSessionId({
-            explicitSessionId,
-            currentSessionId: null,
-          }),
-      });
       const canSpeak =
         autoSpeak &&
         (ttsProvider === 'device' ||
           ttsProvider === 'local_neural' ||
           (ttsProvider === 'openai_compat' && Boolean(openaiCompatBaseUrl)));
-
-      const runActionsOnce = async (actions: ReadonlyArray<unknown>): Promise<ToolResultEntry[]> => {
-        const results: ToolResultEntry[] = [];
-        for (const actionRaw of actions) {
-          const action = actionRaw as VoiceToolAction;
-          const toolName = typeof action?.t === 'string' ? action.t.trim() : '';
-          if (!toolName) continue;
-          const handler = (tools as any)[toolName] as ((params: unknown) => Promise<string>) | undefined;
-          if (typeof handler !== 'function') {
-            results.push({
-              t: toolName,
-              args: action?.args ?? null,
-              result: { ok: false, errorCode: 'tool_not_supported', errorMessage: 'tool_not_supported' },
-            });
-            continue;
+      const speakAssistantReply = async (assistantText: string, turnIndex: number) => {
+        if (!canSpeak || !assistantText.trim()) return;
+        if (turnIndex === 0 && chunker) {
+          chunker.flush().forEach((chunk) => queueSpokenChunk(chunk));
+          if (queuedChunkCount === 0) {
+            queueSpokenChunk(assistantText);
           }
-          try {
-            const value = await handler(action?.args ?? null);
-            results.push({ t: toolName, args: action?.args ?? null, result: parseToolResult(value) });
-          } catch (error) {
-            results.push({
-              t: toolName,
-              args: action?.args ?? null,
-              result: {
-                ok: false,
-                errorCode: 'tool_failed',
-                errorMessage: error instanceof Error ? error.message : 'tool_failed',
-              },
-            });
-          }
+          await chunkPlaybackQueue;
+          return;
         }
-        return results;
-      };
 
-      const MAX_TOOL_ROUNDS = 3;
-      const initialActions = _actions ?? [];
-      const initialToolResults = await runActionsOnce(initialActions);
-
-      if (!canSpeak) {
-        // Even when autoSpeak is disabled, we still run a tool request/response loop so the agent can see outcomes.
-        let toolResults = initialToolResults;
-        for (let i = 0; i < MAX_TOOL_ROUNDS && toolResults.length > 0; i++) {
-          const toolResultsMessage = `VOICE_TOOL_RESULTS_JSON:\n${JSON.stringify({ toolResults })}`;
-          const followUp = await params.voiceAgentSessions.sendTurn(sessionId, toolResultsMessage);
-          voiceActivityController.appendAssistantText(sessionId, adapterId, followUp.assistantText);
-          toolResults = await runActionsOnce(followUp.actions ?? []);
-        }
-        return;
-      }
-
-      if (chunker) {
-        chunker.flush().forEach((chunk) => queueSpokenChunk(chunk));
-        if (queuedChunkCount === 0 && assistantText.trim().length > 0) {
-          queueSpokenChunk(assistantText);
-        }
-        await chunkPlaybackQueue;
-      } else {
+        throwIfAborted();
         await speakAssistantText({
           text: assistantText,
           settings,
@@ -201,36 +190,51 @@ export async function sendVoiceTextTurn(params: {
           registerPlaybackStopper: params.playbackController.registerStopper,
           onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
         });
-      }
+      };
 
-      let toolResults = initialToolResults;
-      for (let i = 0; i < MAX_TOOL_ROUNDS && toolResults.length > 0; i++) {
-        const toolResultsMessage = `VOICE_TOOL_RESULTS_JSON:\n${JSON.stringify({ toolResults })}`;
-        const followUp = await params.voiceAgentSessions.sendTurn(sessionId, toolResultsMessage);
-        voiceActivityController.appendAssistantText(sessionId, adapterId, followUp.assistantText);
-        if (followUp.assistantText.trim().length > 0) {
-          await speakAssistantText({
-            text: followUp.assistantText,
-            settings,
-            networkTimeoutMs,
-            registerPlaybackStopper: params.playbackController.registerStopper,
-            onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
-          });
-        }
-        toolResults = await runActionsOnce(followUp.actions ?? []);
-      }
-
+      await runVoiceAgentTurnWithTools({
+        sessionId,
+        userText,
+        currentToolSessionId,
+        voiceAgentSessions: params.voiceAgentSessions,
+        signal: params.signal,
+        onTextDelta: chunker
+          ? (textDelta) => {
+              if (params.signal?.aborted) return;
+              const nextChunks = chunker.push(textDelta);
+              nextChunks.forEach((chunk) => queueSpokenChunk(chunk));
+            }
+          : undefined,
+        onAssistantTurn: async ({ assistantText, turnIndex }) => {
+          throwIfAborted();
+          voiceActivityController.appendAssistantText(sessionId, adapterId, assistantText);
+          if (syntheticConversationSessionId) {
+            appendVoiceConversationAssistantText({
+              conversationSessionId: syntheticConversationSessionId,
+              text: assistantText,
+            });
+          }
+          await speakAssistantReply(assistantText, turnIndex);
+        },
+        onToolResults: async ({ toolResults }) => {
+          appendSyntheticToolResultNotes(toolResults as ReadonlyArray<LocalVoiceAgentToolResultEntry>);
+        },
+      });
       return;
     } catch (error) {
+      if (isTurnAbortedError(error) || params.signal?.aborted) {
+        patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+        return;
+      }
       voiceActivityController.appendError(sessionId, adapterId, 'voice_agent_send_failed', error instanceof Error ? error.message : 'send_failed');
       patchLocalVoiceState({ status: 'idle', sessionId, error: 'send_failed' });
-      return;
+      throw error instanceof Error ? error : new Error('send_failed');
     } finally {
       setIdleStateUnlessRecording(sessionId);
     }
   }
 
-  const baselineMessages = ((storage.getState() as any).sessionMessages?.[sessionId]?.messages ?? []) as any[];
+  const baselineMessages = readStoredSessionMessages(storage.getState(), sessionId) as any[];
   const baselineCount = baselineMessages.length;
   const baselineIds = new Set<string>(
     baselineMessages
@@ -254,12 +258,20 @@ export async function sendVoiceTextTurn(params: {
     return;
   }
 
-  const assistantText = await waitForNextAssistantTextMessage(sessionId, baselineIds, baselineCount, 60_000);
+  const assistantText = await waitForNextAssistantTextMessage(sessionId, baselineIds, baselineCount, 60_000, params.signal);
+  if (params.signal?.aborted) {
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    return;
+  }
   if (!assistantText) {
     patchLocalVoiceState({ status: 'idle', sessionId, error: null });
     return;
   }
 
+  if (params.signal?.aborted) {
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    return;
+  }
   await speakAssistantText({
     text: assistantText,
     settings,
@@ -269,4 +281,3 @@ export async function sendVoiceTextTurn(params: {
   });
   setIdleStateUnlessRecording(sessionId);
 }
-

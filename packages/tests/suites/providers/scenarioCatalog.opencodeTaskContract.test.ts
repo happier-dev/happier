@@ -18,11 +18,11 @@ describe('scenarioCatalog: opencode task_subagent_reply', () => {
   it('accepts provider-specific task aliases for call/result fixtures', () => {
     const scenario = scenarioCatalog.task_subagent_reply(opencodeProvider());
     expect(scenario.requiredAnyFixtureKeys).toEqual([
-      ['acp/opencode/tool-call/Task', 'acp/opencode/tool-call/change_title'],
-      ['acp/opencode/tool-result/Task', 'acp/opencode/tool-result/change_title'],
+      ['acp/opencode/tool-call/SubAgent', 'acp/opencode/tool-call/change_title'],
+      ['acp/opencode/tool-result/SubAgent', 'acp/opencode/tool-result/change_title'],
     ]);
     expect(scenario.requiredFixtureKeys).toBeUndefined();
     expect(scenario.requiredTraceSubstrings).toBeUndefined();
-    expect(scenario.postSatisfy?.waitForAcpSidechainFromToolName).toBe('Task');
+    expect(scenario.postSatisfy?.waitForAcpSidechainFromToolName).toBe('SubAgent');
   });
 });

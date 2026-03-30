@@ -1,8 +1,10 @@
-import axios from 'axios';
 import { randomUUID } from 'node:crypto';
 
-import { configuration } from '@/configuration';
 import { decodeBase64, encodeBase64, encrypt } from '@/api/encryption';
+import {
+  enqueuePendingQueueV2MessageViaHttp,
+  materializeNextPendingQueueV2MessageViaHttp,
+} from '@/api/session/pendingQueueV2Transport';
 
 type PendingMessageCiphertextPayload = Readonly<{
   role: 'user';
@@ -16,13 +18,6 @@ type PendingMessageCiphertextPayload = Readonly<{
     displayText?: string;
   };
 }>;
-
-function authHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json',
-  };
-}
 
 function buildPendingCiphertext(params: {
   prompt: string;
@@ -54,38 +49,58 @@ export async function enqueueAndMaterializeAutomationPrompt(params: {
   sessionId: string;
   prompt: string;
   displayText?: string;
-  sessionEncryptionKeyBase64: string;
+  sessionEncryptionMode: 'e2ee' | 'plain';
+  sessionEncryptionKeyBase64?: string;
 }): Promise<void> {
   const prompt = params.prompt.trim();
   if (!prompt) {
     return;
   }
 
-  const ciphertext = buildPendingCiphertext({
-    prompt,
-    ...(typeof params.displayText === 'string' ? { displayText: params.displayText } : {}),
-    sessionEncryptionKeyBase64: params.sessionEncryptionKeyBase64,
-  });
   const localId = randomUUID();
+  const displayText = typeof params.displayText === 'string' ? params.displayText : undefined;
 
-  await axios.post(
-    `${configuration.apiServerUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`,
-    {
-      localId,
-      ciphertext,
-    },
-    {
-      headers: authHeaders(params.token),
-      timeout: 15_000,
-    },
-  );
+  const body = params.sessionEncryptionMode === 'plain'
+    ? {
+        localId,
+        content: {
+          t: 'plain' as const,
+          v: {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: prompt,
+            },
+            meta: {
+              sentFrom: 'cli' as const,
+              source: 'automation' as const,
+              ...(typeof displayText === 'string' && displayText.trim().length > 0
+                ? { displayText }
+                : {}),
+            },
+          },
+        },
+      }
+    : {
+        localId,
+        ciphertext: buildPendingCiphertext({
+          prompt,
+          ...(displayText ? { displayText } : {}),
+          sessionEncryptionKeyBase64: String(params.sessionEncryptionKeyBase64 ?? ''),
+        }),
+      };
 
-  await axios.post(
-    `${configuration.apiServerUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending/materialize-next`,
-    {},
-    {
-      headers: authHeaders(params.token),
-      timeout: 15_000,
-    },
-  );
+  await enqueuePendingQueueV2MessageViaHttp({
+    token: params.token,
+    sessionId: params.sessionId,
+    body,
+  });
+
+  const materialized = await materializeNextPendingQueueV2MessageViaHttp({
+    token: params.token,
+    sessionId: params.sessionId,
+  });
+  if (!materialized) {
+    throw new Error('Failed to materialize automation prompt');
+  }
 }

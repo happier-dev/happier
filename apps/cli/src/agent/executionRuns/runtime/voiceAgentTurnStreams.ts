@@ -6,12 +6,13 @@ import type { ExecutionRunController, ExecutionRunVoiceAgentController } from '@
 
 export async function startVoiceAgentTurnStream(args: Readonly<{
   runId: string;
-  params: Readonly<{ message: string }>;
+  params: Readonly<{ message: string; displayMessage?: string }>;
   runs: ReadonlyMap<string, ExecutionRunState>;
   controllers: ReadonlyMap<string, ExecutionRunController>;
   voiceAgentManager: VoiceAgentManager;
   transcriptWriter: Readonly<{
     appendUserText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
+    appendUserTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
   }> | null;
 }>): Promise<{ ok: true; streamId: string } | { ok: false; errorCode: string; error: string }> {
   const run = args.runs.get(args.runId) ?? null;
@@ -28,6 +29,7 @@ export async function startVoiceAgentTurnStream(args: Readonly<{
 
   const userText = String(args.params.message ?? '');
   if (!userText.trim()) return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid params' };
+  const transcriptUserText = String(args.params.displayMessage ?? userText);
 
   // Persist user turn (optional).
   if (args.transcriptWriter && ctrl.transcript.persistenceMode === 'persistent') {
@@ -45,7 +47,11 @@ export async function startVoiceAgentTurnStream(args: Readonly<{
         },
       },
     };
-    void args.transcriptWriter.appendUserText(userText, meta);
+    if (typeof args.transcriptWriter.appendUserTextCommitted === 'function') {
+      await args.transcriptWriter.appendUserTextCommitted(transcriptUserText, meta);
+    } else {
+      await args.transcriptWriter.appendUserText(transcriptUserText, meta);
+    }
   }
 
   try {
@@ -72,6 +78,7 @@ export async function readVoiceAgentTurnStream(args: Readonly<{
   voiceAgentManager: VoiceAgentManager;
   transcriptWriter: Readonly<{
     appendAssistantText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
+    appendAssistantTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
   }> | null;
   writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean }>) => Promise<void>;
   getNowMs: () => number;
@@ -122,7 +129,11 @@ export async function readVoiceAgentTurnStream(args: Readonly<{
             },
           },
         };
-        void args.transcriptWriter.appendAssistantText(done.assistantText, meta);
+        if (typeof args.transcriptWriter.appendAssistantTextCommitted === 'function') {
+          await args.transcriptWriter.appendAssistantTextCommitted(done.assistantText, meta);
+        } else {
+          await args.transcriptWriter.appendAssistantText(done.assistantText, meta);
+        }
       }
     }
 

@@ -6,7 +6,14 @@ type PlatformMock = {
 };
 
 async function loadIsRunningOnMac(params: { platform: PlatformMock }) {
-    vi.doMock('react-native', () => ({ Platform: params.platform }));
+    vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: params.platform,
+        }
+    );
+});
     vi.doMock('react-native-device-info', () => {
         throw new Error('react-native-device-info should not be imported');
     });
@@ -20,7 +27,16 @@ describe('isRunningOnMac', () => {
     });
 
     it('does not import react-native-device-info for web builds', async () => {
-        vi.doMock('react-native', () => ({ Platform: { OS: 'web' } }));
+        vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+            },
+        }
+    );
+});
         vi.doMock('react-native-device-info', () => {
             throw new Error('react-native-device-info should not be imported on web');
         });

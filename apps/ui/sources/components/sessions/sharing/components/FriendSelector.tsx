@@ -1,19 +1,20 @@
-import React, { memo, useMemo, useState } from 'react';
-import { View, FlatList, ScrollView, Pressable, useWindowDimensions, Platform, Switch } from 'react-native';
+import React, { memo, useCallback, useMemo, useState } from 'react';
+import { View, FlatList, ScrollView, Platform, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import { UserProfile, getDisplayName } from '@/sync/domains/social/friendTypes';
 import { ShareAccessLevel } from '@/sync/domains/social/sharingTypes';
 import { UserCard } from '@/components/ui/cards/UserCard';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
-import { BaseModal } from '@/modal/components/BaseModal';
+import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 
 
 /**
@@ -26,8 +27,6 @@ export interface FriendSelectorProps {
     excludedUserIds: string[];
     /** Callback when a friend is selected */
     onSelect: (userId: string, accessLevel: ShareAccessLevel, canApprovePermissions?: boolean) => Promise<void> | void;
-    /** Close without selecting */
-    onCancel: () => void;
     /** Whether the current user can grant permission approvals to recipients */
     canManagePermissionDelegation?: boolean;
     /** Currently selected user ID (optional) */
@@ -48,14 +47,14 @@ export const FriendSelector = memo(function FriendSelector({
     friends,
     excludedUserIds,
     onSelect,
-    onCancel,
+    onClose,
+    setChrome,
     canManagePermissionDelegation = false,
     selectedUserId: initialSelectedUserId = null,
     selectedAccessLevel: initialSelectedAccessLevel = 'view',
-}: FriendSelectorProps) {
-    const { theme } = useUnistyles();
+}: FriendSelectorProps & CustomModalInjectedProps) {
+    useUnistyles();
     const styles = stylesheet;
-    const { height: windowHeight } = useWindowDimensions();
 
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedUserId, setSelectedUserId] = useState<string | null>(initialSelectedUserId);
@@ -82,11 +81,10 @@ export const FriendSelector = memo(function FriendSelector({
         return friends.find(f => f.id === selectedUserId);
     }, [friends, selectedUserId]);
 
-    const maxHeight = React.useMemo(() => {
-        return Math.min(760, Math.max(420, Math.floor(windowHeight * 0.85)));
-    }, [windowHeight]);
+    const scrollRef = React.useRef<ScrollView>(null);
+    const wheelScrollHandlers = useScrollViewWheelScrollTo(scrollRef);
 
-    const handleConfirm = async () => {
+    const handleConfirm = useCallback(async () => {
         if (!selectedUserId) return;
         if (isSubmitting) return;
         setIsSubmitting(true);
@@ -96,6 +94,7 @@ export const FriendSelector = memo(function FriendSelector({
                 selectedAccessLevel,
                 canManagePermissionDelegation ? canApprovePermissions : undefined,
             ));
+            onClose();
         } catch (e) {
             const message =
                 e instanceof HappyError ? e.message :
@@ -105,27 +104,46 @@ export const FriendSelector = memo(function FriendSelector({
         } finally {
             setIsSubmitting(false);
         }
-    };
+    }, [
+        canApprovePermissions,
+        canManagePermissionDelegation,
+        isSubmitting,
+        onClose,
+        onSelect,
+        selectedAccessLevel,
+        selectedUserId,
+    ]);
+
+    const footer = useMemo(() => (
+        <View style={styles.footer}>
+            <RoundButton
+                title={t('session.sharing.addShare')}
+                onPress={handleConfirm}
+                disabled={!selectedUserId || isSubmitting}
+                size="large"
+                style={{ width: '100%', maxWidth: 420, alignSelf: 'center' }}
+            />
+        </View>
+    ), [handleConfirm, isSubmitting, selectedUserId, styles.footer]);
+
+    useModalCardChrome(setChrome, useMemo(() => ({
+        kind: 'card' as const,
+        footer,
+    }), [footer]));
 
     return (
-        <BaseModal visible={true} onClose={onCancel}>
-            <View style={[styles.modal, { height: maxHeight, maxHeight }]}>
-                <View style={styles.header}>
-                    <Text style={styles.headerTitle}>{t('session.sharing.addShare')}</Text>
-                    <Pressable
-                        onPress={onCancel}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
-                    >
-                        <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
-                    </Pressable>
-                </View>
-
-                <ScrollView
-                    style={styles.scroll}
-                    contentContainerStyle={styles.scrollContent}
-                    keyboardShouldPersistTaps="handled"
-                >
+        <View
+            style={styles.body}
+            {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
+        >
+            <ScrollView
+                ref={scrollRef}
+                style={styles.scroll}
+                contentContainerStyle={styles.scrollContent}
+                keyboardShouldPersistTaps="handled"
+                onScroll={wheelScrollHandlers.onScroll}
+                scrollEventThrottle={16}
+            >
                     <TextInput
                         style={styles.searchInput}
                         placeholder={t('friends.searchPlaceholder')}
@@ -231,46 +249,15 @@ export const FriendSelector = memo(function FriendSelector({
                             ) : null}
                         </View>
                     ) : null}
-
-                    <View style={styles.footer}>
-                        <RoundButton
-                            title={t('session.sharing.addShare')}
-                            onPress={handleConfirm}
-                            disabled={!selectedUserId || isSubmitting}
-                            size="large"
-                            style={{ width: '100%', maxWidth: 420, alignSelf: 'center' }}
-                        />
-                    </View>
-                </ScrollView>
-            </View>
-        </BaseModal>
+            </ScrollView>
+        </View>
     );
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
-    modal: {
-        width: '92%',
-        maxWidth: 560,
-        backgroundColor: theme.colors.groupped.background,
-        borderRadius: 16,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        flexShrink: 1,
-    },
-    header: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    headerTitle: {
-        fontSize: 17,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
+    body: {
+        flex: 1,
+        minHeight: 0,
     },
     scroll: {
         flex: 1,

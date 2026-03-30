@@ -11,6 +11,7 @@ import { inTx } from "@/storage/inTx";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
+import { reserveNextPendingQueuePosition } from "@/app/session/pending/reserveNextPendingQueuePosition";
 
 type ParticipantCursor = SessionParticipantCursor;
 
@@ -50,7 +51,7 @@ export async function listPendingMessages(params: {
         if (!includeDiscarded) {
             const rows = await db.sessionPendingMessage.findMany({
                 where: { sessionId, status: "queued" },
-                orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+                orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
                 select,
             });
             return { ok: true, pending: rows.map(mapPendingMessageRow) };
@@ -59,7 +60,7 @@ export async function listPendingMessages(params: {
         const [queued, discarded] = await Promise.all([
             db.sessionPendingMessage.findMany({
                 where: { sessionId, status: "queued" },
-                orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+                orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
                 select,
             }),
             db.sessionPendingMessage.findMany({
@@ -82,6 +83,7 @@ export type EnqueuePendingMessageResult =
         pending: PendingMessageRow;
         pendingCount: number;
         pendingVersion: number;
+        badgeAttentionChanged: boolean;
         participantCursors: ParticipantCursor[];
       }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal"; code?: EncryptionPolicyRejectionCode };
@@ -152,16 +154,12 @@ export async function enqueuePendingMessage(params: {
                     pending: mapPendingMessageRow(existing),
                     pendingCount: session.pendingCount ?? 0,
                     pendingVersion: session.pendingVersion ?? 0,
+                    badgeAttentionChanged: false,
                     participantCursors: [],
                 };
             }
 
-            const lastQueued = await tx.sessionPendingMessage.findFirst({
-                where: { sessionId, status: "queued" },
-                orderBy: [{ position: "desc" }, { createdAt: "desc" }],
-                select: { position: true },
-            });
-            const position = (lastQueued?.position ?? 0) + 1;
+            const position = await reserveNextPendingQueuePosition(tx, sessionId);
 
             const created = await tx.sessionPendingMessage.create({
                 data: {
@@ -185,7 +183,7 @@ export async function enqueuePendingMessage(params: {
                 },
             });
 
-            const { pendingCount, pendingVersion, participantCursors } = await applyPendingSessionStateChange({
+            const { pendingCount, pendingVersion, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
                 pendingCountDelta: 1,
@@ -197,6 +195,7 @@ export async function enqueuePendingMessage(params: {
                 pending: mapPendingMessageRow(created),
                 pendingCount,
                 pendingVersion,
+                badgeAttentionChanged,
                 participantCursors,
             };
         });
@@ -206,7 +205,7 @@ export async function enqueuePendingMessage(params: {
 }
 
 export type UpdatePendingMessageResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[] }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "internal"; code?: EncryptionPolicyRejectionCode };
 
 export async function updatePendingMessage(params: {
@@ -265,11 +264,11 @@ export async function updatePendingMessage(params: {
                 data: { content },
             });
 
-            const { pendingVersion, pendingCount, participantCursors } = await applyPendingSessionStateChange({
+            const { pendingVersion, pendingCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
             });
-            return { ok: true, pendingVersion, pendingCount, participantCursors };
+            return { ok: true, pendingVersion, pendingCount, participantCursors, badgeAttentionChanged };
         });
     } catch {
         return { ok: false, error: "internal" };
@@ -277,7 +276,7 @@ export async function updatePendingMessage(params: {
 }
 
 export type DeletePendingMessageResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[] }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal" };
 
 export async function deletePendingMessage(params: {
@@ -311,6 +310,7 @@ export async function deletePendingMessage(params: {
                     pendingVersion: session?.pendingVersion ?? 0,
                     pendingCount: session?.pendingCount ?? 0,
                     participantCursors: [],
+                    badgeAttentionChanged: false,
                 };
             }
 
@@ -318,12 +318,12 @@ export async function deletePendingMessage(params: {
                 where: { sessionId_localId: { sessionId, localId } },
             });
 
-            const { pendingVersion, pendingCount, participantCursors } = await applyPendingSessionStateChange({
+            const { pendingVersion, pendingCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
                 pendingCountDelta: existing.status === "queued" ? -1 : 0,
             });
-            return { ok: true, pendingVersion, pendingCount, participantCursors };
+            return { ok: true, pendingVersion, pendingCount, participantCursors, badgeAttentionChanged };
         });
     } catch {
         return { ok: false, error: "internal" };
@@ -331,7 +331,7 @@ export async function deletePendingMessage(params: {
 }
 
 export type DiscardPendingMessageResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[] }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "internal" };
 
 export async function discardPendingMessage(params: {
@@ -370,6 +370,7 @@ export async function discardPendingMessage(params: {
                     pendingVersion: session?.pendingVersion ?? 0,
                     pendingCount: session?.pendingCount ?? 0,
                     participantCursors: [],
+                    badgeAttentionChanged: false,
                 } as const;
             }
 
@@ -378,12 +379,12 @@ export async function discardPendingMessage(params: {
                 data: { status: "discarded", discardedAt: now, discardedReason: reason },
             });
 
-            const { pendingVersion, pendingCount, participantCursors } = await applyPendingSessionStateChange({
+            const { pendingVersion, pendingCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
                 pendingCountDelta: -1,
             });
-            return { ok: true, pendingVersion, pendingCount, participantCursors };
+            return { ok: true, pendingVersion, pendingCount, participantCursors, badgeAttentionChanged };
         });
     } catch {
         return { ok: false, error: "internal" };
@@ -391,7 +392,7 @@ export async function discardPendingMessage(params: {
 }
 
 export type RestorePendingMessageResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[] }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "internal" };
 
 export async function restorePendingMessage(params: {
@@ -417,12 +418,7 @@ export async function restorePendingMessage(params: {
             if (!existing) return { ok: false, error: "not-found" } as const;
 
             if (existing.status === "discarded") {
-                const lastQueued = await tx.sessionPendingMessage.findFirst({
-                    where: { sessionId, status: "queued" },
-                    orderBy: [{ position: "desc" }, { createdAt: "desc" }],
-                    select: { position: true },
-                });
-                const position = (lastQueued?.position ?? 0) + 1;
+                const position = await reserveNextPendingQueuePosition(tx, sessionId);
 
                 await tx.sessionPendingMessage.update({
                     where: { sessionId_localId: { sessionId, localId } },
@@ -430,12 +426,12 @@ export async function restorePendingMessage(params: {
                 });
             }
 
-            const { pendingVersion, pendingCount, participantCursors } = await applyPendingSessionStateChange({
+            const { pendingVersion, pendingCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
                 pendingCountDelta: existing.status === "discarded" ? 1 : 0,
             });
-            return { ok: true, pendingVersion, pendingCount, participantCursors };
+            return { ok: true, pendingVersion, pendingCount, participantCursors, badgeAttentionChanged };
         });
     } catch {
         return { ok: false, error: "internal" };
@@ -443,7 +439,7 @@ export async function restorePendingMessage(params: {
 }
 
 export type ReorderPendingMessagesResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[] }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal" };
 
 export async function reorderPendingMessages(params: {
@@ -484,11 +480,11 @@ export async function reorderPendingMessages(params: {
                 position++;
             }
 
-            const { pendingVersion, pendingCount, participantCursors } = await applyPendingSessionStateChange({
+            const { pendingVersion, pendingCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
             });
-            return { ok: true, pendingVersion, pendingCount, participantCursors };
+            return { ok: true, pendingVersion, pendingCount, participantCursors, badgeAttentionChanged };
         });
     } catch {
         return { ok: false, error: "internal" };

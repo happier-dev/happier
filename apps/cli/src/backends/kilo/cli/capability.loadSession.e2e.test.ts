@@ -6,10 +6,11 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 import { cliCapability as kiloCliCapability } from './capability';
+import type { DetectCliEntry, DetectCliSnapshot } from '@/capabilities/snapshots/cliSnapshot';
 
 type DetectArgs = Parameters<NonNullable<typeof kiloCliCapability.detect>>[0];
 
-function makeUnavailableCliEntry() {
+function makeUnavailableCliEntry(): DetectCliEntry {
   return { available: false, resolvedPath: undefined };
 }
 
@@ -89,11 +90,14 @@ describe('cli.kilo capability (ACP)', () => {
             qwen: makeUnavailableCliEntry(),
             kimi: makeUnavailableCliEntry(),
             kilo: { available: true, resolvedPath },
+            kiro: makeUnavailableCliEntry(),
+            customAcp: makeUnavailableCliEntry(),
             pi: makeUnavailableCliEntry(),
             copilot: makeUnavailableCliEntry(),
           },
           tmux: { available: false },
-        },
+          windowsTerminal: { available: false },
+        } satisfies DetectCliSnapshot,
       };
 
       const res = await kiloCliCapability.detect({ request, context }) as {

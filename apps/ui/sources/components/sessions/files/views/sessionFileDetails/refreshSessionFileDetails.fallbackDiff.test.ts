@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { refreshSessionFileDetails } from './refreshSessionFileDetails';
+import { installSessionFileDetailsCommonModuleMocks } from './sessionFileDetailsTestHelpers';
 
 const sessionScmDiffFileSpy = vi.fn(async (..._args: any[]) => ({
     success: true,
@@ -14,6 +15,7 @@ const sessionReadFileSpy = vi.fn(async (..._args: any[]) => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: (...args: any[]) => sessionScmDiffFileSpy(...args),
+    sessionStatFile: vi.fn(async () => ({ success: true, exists: true, kind: 'file', sizeBytes: 1024, modifiedMs: 1 })),
     sessionReadFile: (...args: any[]) => sessionReadFileSpy(...args),
 }));
 
@@ -21,9 +23,7 @@ vi.mock('@/hooks/session/files/sessionPathState', () => ({
     resolveSessionPathState: () => ({ status: 'ready', sessionPath: '/repo', homeDir: null }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+installSessionFileDetailsCommonModuleMocks();
 
 vi.mock('@/scm/utils/filePresentation', () => ({
     getImageMimeTypeFromPath: () => null,

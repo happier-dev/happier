@@ -1,6 +1,13 @@
+import { listPublicReleaseRingCatalogEntries } from '@happier-dev/release-runtime/releaseRings';
+
 export const MANIFEST_SCHEMA_VERSION = 'v1';
 
 const PRODUCT_NAMES = new Set(['happier', 'hstack', 'happier-server']);
+const RELEASE_CHANNELS = new Set(
+  listPublicReleaseRingCatalogEntries()
+    .map((entry) => entry.manifestChannel)
+    .filter((channel) => typeof channel === 'string' && channel.length > 0)
+);
 
 // @ts-check
 
@@ -23,7 +30,7 @@ export function assertValidProduct(product) {
 export function buildManifestRecord(params) {
   const product = assertValidProduct(params.product);
   const channel = String(params.channel ?? '').trim();
-  if (channel !== 'stable' && channel !== 'preview') {
+  if (!RELEASE_CHANNELS.has(channel)) {
     throw new Error(`[release] invalid channel "${channel}"`);
   }
   const version = String(params.version ?? '').trim();

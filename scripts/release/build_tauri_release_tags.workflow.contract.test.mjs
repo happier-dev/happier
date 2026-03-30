@@ -19,12 +19,27 @@ test('build-tauri publishes desktop releases under ui-desktop-* tags', async () 
   const raw = await loadWorkflow('build-tauri.yml');
 
   assert.match(raw, /tag:\s*ui-desktop-preview\b/);
+  assert.match(raw, /tag:\s*ui-desktop-dev\b/);
   assert.match(raw, /tag:\s*ui-desktop-v\$\{\{\s*needs\.prepare_assets\.outputs\.ui_version\s*\}\}/);
   assert.match(raw, /tag:\s*ui-desktop-stable\b/);
 
   assert.doesNotMatch(raw, /tag:\s*ui-preview\b/);
   assert.doesNotMatch(raw, /tag:\s*ui-stable\b/);
   assert.doesNotMatch(raw, /tag:\s*ui-v\$\{\{/);
+});
+
+test('build-tauri keeps the public manual workflow surface on dev while retaining internal dev release tags', async () => {
+  const raw = await loadWorkflow('build-tauri.yml');
+
+  assert.match(raw, /Environment — Controls config \(preview\|dev\|production\)/);
+  assert.match(raw, /options:\s*\n(?:\s+- .*\n)*\s+- dev\b/);
+  assert.doesNotMatch(raw, /Environment — Controls config \(preview\|publicdev\|production\)/);
+  assert.doesNotMatch(raw, /^\s+- publicdev$/m);
+
+  assert.match(raw, /publish_dev:/);
+  assert.doesNotMatch(raw, /publish_publicdev:/);
+  assert.match(raw, /tag:\s*ui-desktop-dev\b/);
+  assert.doesNotMatch(raw, /inputs\.environment\s*==\s*'publicdev'/);
 });
 
 test('build-tauri latest.json generator uses ui-desktop-* release tags and publish assets are namespaced', async () => {
@@ -34,10 +49,12 @@ test('build-tauri latest.json generator uses ui-desktop-* release tags and publi
 
   const script = await loadFile('scripts/pipeline/tauri/prepare-publish-assets.mjs');
   assert.match(script, /ui-desktop-preview/);
+  assert.match(script, /ui-desktop-dev/);
   assert.match(script, /ui-desktop-v\$\{uiVersion\}/);
 
   assert.match(script, /dist\/tauri\/publish/);
   assert.match(script, /ui-desktop-preview/);
+  assert.match(script, /ui-desktop-dev/);
   assert.match(script, /ui-desktop-v/);
   assert.match(script, /ui-desktop-stable/);
 
@@ -46,6 +63,7 @@ test('build-tauri latest.json generator uses ui-desktop-* release tags and publi
   assert.doesNotMatch(raw, /dist\/tauri\/publish\/ui-stable\b/);
 
   assert.match(raw, /assets_dir:\s*dist\/ui-desktop-assets\/ui-desktop-preview/);
+  assert.match(raw, /assets_dir:\s*dist\/ui-desktop-assets\/ui-desktop-dev/);
   assert.match(raw, /assets_dir:\s*dist\/ui-desktop-assets\/ui-desktop-v/);
   assert.match(raw, /assets_dir:\s*dist\/ui-desktop-assets\/ui-desktop-stable/);
 });

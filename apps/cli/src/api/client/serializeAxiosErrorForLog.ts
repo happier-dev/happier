@@ -4,14 +4,18 @@ function redactUrlForLog(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const value = raw.trim();
   if (!value) return undefined;
+  const redactTelegramBotTokenPath = (input: string): string => input.replace(
+    /\/bot[^/?#]+(?=\/|$)/u,
+    '/<redacted>',
+  );
   try {
     const parsed = new URL(value);
     parsed.search = '';
     parsed.hash = '';
-    return parsed.toString();
+    return redactTelegramBotTokenPath(parsed.toString());
   } catch {
     // Best-effort: strip query/hash to avoid leaking secrets in URLs.
-    return value.split('?')[0]?.split('#')[0];
+    return redactTelegramBotTokenPath(value.split('?')[0]?.split('#')[0] ?? value);
   }
 }
 
@@ -34,4 +38,3 @@ export function serializeAxiosErrorForLog(error: unknown): Record<string, unknow
 
   return { message: String(error) };
 }
-

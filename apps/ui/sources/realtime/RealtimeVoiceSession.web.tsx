@@ -1,17 +1,48 @@
 import React, { useEffect, useRef } from 'react';
 import { useConversation } from '@elevenlabs/react';
-import { registerVoiceSession } from './RealtimeSession';
+import type { MessagePayload, Mode, Status } from '@elevenlabs/types';
+import { getCurrentRealtimeControlSessionId, registerVoiceSession, setCurrentRealtimeControlSessionId } from './RealtimeSession';
 import { storage } from '@/sync/domains/state/storage';
 import { realtimeClientTools } from './realtimeClientTools';
 import { getElevenLabsCodeFromPreference } from '@/constants/Languages';
 import type { VoiceSession, VoiceSessionConfig } from './types';
+import { useVoiceQaStore } from '@/voice/qa/voiceQaStore';
+import { resolveVoiceSessionBindingByControlSessionId } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
+import { appendRealtimeVoiceTranscriptEvent } from './realtimeVoiceTranscriptBridge';
 
-// Static reference to the conversation hook instance
-let conversationInstance: ReturnType<typeof useConversation> | null = null;
+// Static references to the conversation hook instances
+let voiceConversationInstance: ReturnType<typeof useConversation> | null = null;
+let textConversationInstance: ReturnType<typeof useConversation> | null = null;
+let activeConversationInstance: ReturnType<typeof useConversation> | null = null;
+const CONVERSATION_INSTANCE_READY_TIMEOUT_MS = 500;
 
 function debugLog(...args: unknown[]) {
     if (!__DEV__) return;
     console.debug(...args);
+}
+
+function getRealtimeVoiceErrorMessage(error: unknown): string {
+    if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
+        return error.message;
+    }
+    return 'realtime_voice_error';
+}
+
+function resolveConversationInstance(textOnly: boolean): ReturnType<typeof useConversation> | null {
+    return textOnly ? textConversationInstance : voiceConversationInstance;
+}
+
+async function waitForConversationInstanceReady(
+    textOnly: boolean,
+    timeoutMs: number,
+): Promise<ReturnType<typeof useConversation> | null> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+        const readyConversation = resolveConversationInstance(textOnly);
+        if (readyConversation) return readyConversation;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return resolveConversationInstance(textOnly);
 }
 
 // Global voice session implementation
@@ -19,7 +50,11 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
 
     async startSession(config: VoiceSessionConfig): Promise<string | null> {
         debugLog('[RealtimeVoiceSessionImpl] startSession');
-        if (!conversationInstance) {
+        const wantsTextOnly = config.textOnly === true;
+        const readyConversation =
+            resolveConversationInstance(wantsTextOnly)
+            ?? await waitForConversationInstanceReady(wantsTextOnly, CONVERSATION_INSTANCE_READY_TIMEOUT_MS);
+        if (!readyConversation) {
             console.warn('Realtime voice session not initialized - conversationInstance is null');
             throw new Error('Realtime voice session not initialized');
         }
@@ -34,38 +69,48 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
             const userLanguagePreference = adapterLanguagePreference ?? voice?.assistantLanguage ?? null;
             const elevenLabsLanguage = getElevenLabsCodeFromPreference(userLanguagePreference);
             
-            if (!config.token) {
+            const useSignedWebsocket = wantsTextOnly && typeof config.signedUrl === 'string' && config.signedUrl.trim().length > 0;
+            if (!useSignedWebsocket && !config.token) {
                 throw new Error('Missing conversation token');
             }
             
             const sessionConfig: any = {
-                connectionType: 'webrtc',
+                connectionType: useSignedWebsocket ? 'websocket' : 'webrtc',
                 dynamicVariables: {
                     sessionId: config.sessionId,
                     initialConversationContext: config.initialContext || ''
                 },
                 overrides: {
+                    conversation: {
+                        textOnly: config.textOnly === true,
+                    },
                     agent: {
                         language: elevenLabsLanguage
                     }
                 },
-                conversationToken: config.token,
             };
+            if (useSignedWebsocket) {
+                sessionConfig.signedUrl = config.signedUrl;
+            } else {
+                sessionConfig.conversationToken = config.token;
+            }
             
-            const rawConversationId = await conversationInstance.startSession(sessionConfig);
+            const rawConversationId = await readyConversation.startSession(sessionConfig);
             const conversationId =
                 (typeof rawConversationId === 'string' && rawConversationId.trim().length > 0
                     ? rawConversationId
-                    : (conversationInstance.getId() ?? null));
+                    : (readyConversation.getId() ?? null));
             if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
                 debugLog('[RealtimeVoiceSessionImpl] startSession returned no valid conversationId', {
                     rawConversationId,
-                    fallbackConversationId: conversationInstance.getId?.(),
+                    fallbackConversationId: readyConversation.getId?.(),
                 });
                 return null;
             }
 
             debugLog('Started conversation');
+            activeConversationInstance = readyConversation;
+            setCurrentRealtimeControlSessionId(config.sessionId);
             return conversationId;
         } catch (error) {
             console.error('Failed to start realtime session:', error);
@@ -75,12 +120,15 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
     }
 
     async endSession(): Promise<void> {
-        if (!conversationInstance) {
+        const conversation = activeConversationInstance ?? voiceConversationInstance ?? textConversationInstance;
+        if (!conversation) {
             return;
         }
 
         try {
-            await conversationInstance.endSession();
+            await conversation.endSession();
+            activeConversationInstance = null;
+            setCurrentRealtimeControlSessionId(null);
             storage.getState().setRealtimeStatus('disconnected');
         } catch (error) {
             console.error('Failed to end realtime session:', error);
@@ -88,42 +136,56 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
     }
 
     sendTextMessage(message: string): void {
-        if (!conversationInstance) {
+        const conversation = activeConversationInstance ?? textConversationInstance ?? voiceConversationInstance;
+        if (!conversation) {
             console.warn('Realtime voice session not initialized');
             return;
         }
 
-        conversationInstance.sendUserMessage(message);
+        conversation.sendUserMessage(message);
     }
 
     sendContextualUpdate(update: string): void {
-        if (!conversationInstance) {
+        const conversation = activeConversationInstance ?? textConversationInstance ?? voiceConversationInstance;
+        if (!conversation) {
             console.warn('Realtime voice session not initialized');
             return;
         }
 
-        conversationInstance.sendContextualUpdate(update);
+        conversation.sendContextualUpdate(update);
     }
 }
 
 export const RealtimeVoiceSession: React.FC = () => {
-    const conversation = useConversation({
+    const buildConversationOptions = (textOnly: boolean) => ({
         clientTools: realtimeClientTools,
+        textOnly,
         onConnect: () => {
             debugLog('Realtime session connected');
             storage.getState().setRealtimeStatus('connected');
             storage.getState().setRealtimeMode('idle');
+            useVoiceQaStore.getState().appendSystem('Realtime ElevenLabs session connected');
         },
         onDisconnect: () => {
             debugLog('Realtime session disconnected');
             storage.getState().setRealtimeStatus('disconnected');
             storage.getState().setRealtimeMode('idle', true); // immediate mode change
             storage.getState().clearRealtimeModeDebounce();
+            useVoiceQaStore.getState().appendSystem('Realtime ElevenLabs session disconnected');
         },
-        onMessage: (data) => {
+        onMessage: (data: MessagePayload) => {
             debugLog('Realtime message received');
+            useVoiceQaStore.getState().appendRealtimeProviderPayload(data);
+            const controlSessionId = getCurrentRealtimeControlSessionId();
+            const binding = controlSessionId
+                ? resolveVoiceSessionBindingByControlSessionId({ controlSessionId, adapterId: 'realtime_elevenlabs' })
+                : null;
+            appendRealtimeVoiceTranscriptEvent({
+                conversationSessionId: binding?.conversationSessionId ?? null,
+                payload: data,
+            });
         },
-        onError: (error) => {
+        onError: (error: string) => {
             // Log but don't block app - voice features will be unavailable
             // This prevents initialization errors from showing "Terminals error" on startup
             console.warn('Realtime voice not available:', error);
@@ -131,11 +193,12 @@ export const RealtimeVoiceSession: React.FC = () => {
             // This allows the app to continue working without voice features
             storage.getState().setRealtimeStatus('disconnected');
             storage.getState().setRealtimeMode('idle', true); // immediate mode change
+            useVoiceQaStore.getState().appendError(getRealtimeVoiceErrorMessage(error));
         },
-        onStatusChange: (data) => {
+        onStatusChange: (_data: { status: Status }) => {
             debugLog('Realtime status change');
         },
-        onModeChange: (data) => {
+        onModeChange: (data: { mode: Mode }) => {
             debugLog('Realtime mode change');
             
             // Only animate when speaking
@@ -145,17 +208,19 @@ export const RealtimeVoiceSession: React.FC = () => {
             // Use centralized debounce logic from storage
             storage.getState().setRealtimeMode(isSpeaking ? 'speaking' : 'idle');
         },
-        onDebug: (message) => {
+        onDebug: (message: unknown) => {
             debugLog('Realtime debug:', message);
         }
     });
+    const voiceConversation = useConversation(buildConversationOptions(false));
+    const textConversation = useConversation(buildConversationOptions(true));
 
     const hasRegistered = useRef(false);
 
     useEffect(() => {
-        // Store the conversation instance globally
         debugLog('[RealtimeVoiceSession] Setting conversationInstance');
-        conversationInstance = conversation;
+        voiceConversationInstance = voiceConversation;
+        textConversationInstance = textConversation;
 
         // Register the voice session once
         if (!hasRegistered.current) {
@@ -171,9 +236,11 @@ export const RealtimeVoiceSession: React.FC = () => {
 
         return () => {
             // Clean up on unmount
-            conversationInstance = null;
+            voiceConversationInstance = null;
+            textConversationInstance = null;
+            activeConversationInstance = null;
         };
-    }, [conversation]);
+    }, [voiceConversation, textConversation]);
 
     // This component doesn't render anything visible
     return null;

@@ -2,7 +2,6 @@
 *-error.log
 **/.DS_Store
 /.idea
-/dist
 /tmp
 /node_modules
 oclif.manifest.json
@@ -25,6 +24,7 @@ pnpm-lock.yaml
 # Local installation and data directories
 .happy/
 .happy-dev/
+.happier/
 
 **/*.log
 .release-notes-temp.md
@@ -36,6 +36,8 @@ claude-docs/
 note/
 happier-dev-cli-*.tgz
 happy-coder-*.tgz
+/dist/
+/package-dist/
 
 # npm auth token (never commit)
 .npmrc

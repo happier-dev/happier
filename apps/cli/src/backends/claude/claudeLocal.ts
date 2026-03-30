@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { resolve, join } from "node:path";
 import { createInterface } from "node:readline";
 import { mkdirSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -8,14 +7,17 @@ import { attachProcessSignalForwardingToChild } from '@/agent/runtime/signalForw
 import { claudeCheckSession } from "./utils/claudeCheckSession";
 import { claudeFindLastSession } from "./utils/claudeFindLastSession";
 import { getProjectPath } from "./utils/path";
-import { projectPath } from "@/projectPath";
-import { systemPrompt } from "./utils/systemPrompt";
+import { getClaudeSystemPrompt } from "./utils/systemPrompt";
 import { restoreStdinBestEffort } from "@/ui/ink/restoreStdinBestEffort";
 import { isClaudeCliJavaScriptFile, resolveClaudeCliPath } from "./utils/resolveClaudeCliPath";
-import { isBun } from "@/utils/runtime";
 import { stripNestedSessionDetectionEnv } from "@/utils/processEnv/stripNestedSessionDetectionEnv";
+import { ensureClaudeJsRuntimeExecutable } from "./utils/ensureClaudeJsRuntimeExecutable";
 import { resolveClaudeConfigDirOverride } from "./utils/resolveClaudeConfigDirOverride";
+import { buildMissingJavaScriptRuntimeMessage } from "@/runtime/js/buildMissingJavaScriptRuntimeMessage";
+import { isEmbeddedBunBundlePath } from "@/runtime/js/isEmbeddedBunBundlePath";
 import { resolveWindowsCommandInvocation, type CommandInvocation } from '@happier-dev/cli-common/process';
+import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from '@happier-dev/protocol';
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -32,7 +34,7 @@ export class ExitCodeError extends Error {
 
 
 // Get Claude CLI path from project root
-export const claudeCliPath = resolve(join(projectPath(), 'scripts', 'claude_local_launcher.cjs'))
+export const claudeCliPath = resolveCliRuntimeAssetPath('scripts', 'claude_local_launcher.cjs');
 
 export async function claudeLocal(opts: {
     abort: AbortSignal,
@@ -47,6 +49,8 @@ export async function claudeLocal(opts: {
     happierMcpConfigJson?: string,
     /** Path to temporary settings file with SessionStart hook (optional - for session tracking) */
     hookSettingsPath?: string
+    /** Effective session prompt text for new sessions; falls back to Claude-specific provider behavior blocks. */
+    systemPromptText?: string | null,
 }) {
 
     const claudeConfigDir = resolveClaudeConfigDirOverride(process.env);
@@ -194,6 +198,11 @@ export async function claudeLocal(opts: {
     try {
         // Start the interactive process
         restoreStdinBestEffort({ stdin: process.stdin as any });
+        const resolvedClaudeCliPath = resolveClaudeCliPath();
+        const shouldUseNodeLauncher = isClaudeCliJavaScriptFile(resolvedClaudeCliPath);
+        const nodeExecutable = shouldUseNodeLauncher
+            ? await ensureClaudeJsRuntimeExecutable()
+            : null;
         await new Promise<void>((r, reject) => {
             const args: string[] = []
 
@@ -216,24 +225,35 @@ export async function claudeLocal(opts: {
             }
             // If hasResumeFlag && !startFrom: --resume is in claudeArgs, let Claude handle it
 
-            args.push('--append-system-prompt', systemPrompt());
+            const systemPromptText = typeof opts.systemPromptText === 'string' ? opts.systemPromptText.trim() : '';
+            const fallbackPrompt = (() => {
+                const providerBlocks = getClaudeSystemPrompt();
+                const base = HAPPIER_BASE_SYSTEM_PROMPT_V1;
+                return providerBlocks.trim().length > 0 ? `${base}\n\n${providerBlocks}` : base;
+            })();
+            args.push('--append-system-prompt', systemPromptText || fallbackPrompt);
 
             // Claude CLI treats the first non-flag token as the prompt. If a positional prompt
             // is provided before later flags, those flags can be mis-parsed as prompt text.
             // Ensure positional args come after all flags (including our injected --settings).
             const flagArgs: string[] = [];
             const positionalArgs: string[] = [];
-            const flagsWithValue = new Set<string>([
-                '--model',
-                '--permission-mode',
-                '--settings',
-                '--mcp-config',
+	            const flagsWithValue = new Set<string>([
+	                '--model',
+	                '--effort',
+	                '--permission-mode',
+	                '--settings',
+	                '--mcp-config',
+	                '--max-turns',
+                '-p',
                 '--allowedTools',
                 '--disallowedTools',
                 '--output-format',
                 '--input-format',
                 '--print',
                 '--append-system-prompt',
+                '--fallback-model',
+                '--setting-sources',
                 '--resume',
                 '--session-id',
             ]);
@@ -272,6 +292,18 @@ export async function claudeLocal(opts: {
                 args.push(...flagArgs);
             }
             if (positionalArgs.length > 0) {
+                // Claude Code treats some flags (notably `--mcp-config`) as variadic, so they will
+                // greedily consume subsequent non-flag tokens. Without a `--` delimiter, a user
+                // prompt can be mis-parsed as an additional MCP config path, causing the session
+                // to start without the initial prompt (or erroring if the prompt is not a file).
+                //
+                // Delimit positional args whenever a variadic flag is present in the final args.
+                const hasVariadicFlag =
+                    flagArgs.includes('--mcp-config') ||
+                    flagArgs.some((arg) => typeof arg === 'string' && arg.startsWith('--mcp-config='));
+                if (hasVariadicFlag) {
+                    args.push('--');
+                }
                 args.push(...positionalArgs);
             }
 
@@ -288,11 +320,8 @@ export async function claudeLocal(opts: {
             // Never forward it into the Claude Code subprocess environment.
             delete env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
 
-            const resolvedClaudeCliPath = resolveClaudeCliPath();
-            const shouldUseNodeLauncher = isClaudeCliJavaScriptFile(resolvedClaudeCliPath);
-
             if (shouldUseNodeLauncher) {
-                if (!claudeCliPath || !existsSync(claudeCliPath)) {
+                if (!claudeCliPath || (!existsSync(claudeCliPath) && !isEmbeddedBunBundlePath(claudeCliPath))) {
                     throw new Error('Claude local launcher not found. Please ensure HAPPIER_PROJECT_ROOT is set correctly for development.');
                 }
 
@@ -307,10 +336,13 @@ export async function claudeLocal(opts: {
             );
             logger.debug(`[ClaudeLocal] Args: ${JSON.stringify(args)}`);
 
-            const nodeExecutable = isBun() ? 'node' : process.execPath;
+            // Fail closed if node launcher is required but no JavaScript runtime is available
+            if (shouldUseNodeLauncher && !nodeExecutable) {
+                throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('Claude Code launcher'));
+            }
 
             const invocation: CommandInvocation = shouldUseNodeLauncher
-                ? { command: nodeExecutable, args: [claudeCliPath, ...args] }
+                ? { command: nodeExecutable!, args: [claudeCliPath, ...args] }
                 : resolveWindowsCommandInvocation({ command: resolvedClaudeCliPath, args, env });
 
             const child = spawn(invocation.command, invocation.args, {

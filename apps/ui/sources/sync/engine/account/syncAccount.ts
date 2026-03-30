@@ -2,12 +2,12 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { registerPushToken as registerPushTokenApi } from '@/sync/api/session/apiPush';
+import { deletePushToken as deletePushTokenApi, registerPushToken as registerPushTokenApi } from '@/sync/api/session/apiPush';
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { Profile } from '@/sync/domains/profiles/profile';
 import { profileParse } from '@/sync/domains/profiles/profile';
 import { settingsParse, SUPPORTED_SCHEMA_VERSION } from '@/sync/domains/settings/settings';
-import { pickLocalOnlyServerSelectionSettings } from '@/sync/domains/settings/localOnlyServerSelectionSettings';
+import { pickLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
@@ -15,6 +15,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { serverFetch } from '@/sync/http/client';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import { deriveSettingsSecretsKey, sealSecretsDeep } from '@/sync/encryption/secretSettings';
+import { loadLastRegisteredExpoPushToken, saveLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
 
 export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
@@ -77,10 +78,10 @@ export async function handleUpdateAccountSocketUpdate(params: {
             const sealedSettings = sealSecretsDeep(parsedSettings, secretsKey);
 
             const localSettings = settingsParse(getLocalSettings ? getLocalSettings() : {});
-            const localServerSelectionSettings = pickLocalOnlyServerSelectionSettings(localSettings);
+            const localOnlyAccountSettings = pickLocalOnlyAccountSettings(localSettings);
             const mergedSettings = {
                 ...sealedSettings,
-                ...localServerSelectionSettings,
+                ...localOnlyAccountSettings,
             };
 
             applySettings(mergedSettings, version);
@@ -110,10 +111,10 @@ export async function handleUpdateAccountSocketUpdate(params: {
             }
 
             const localSettings = settingsParse(getLocalSettings ? getLocalSettings() : {});
-            const localServerSelectionSettings = pickLocalOnlyServerSelectionSettings(localSettings);
+            const localOnlyAccountSettings = pickLocalOnlyAccountSettings(localSettings);
             const mergedSettings = {
                 ...parsedSettings,
-                ...localServerSelectionSettings,
+                ...localOnlyAccountSettings,
             };
 
             applySettings(mergedSettings, accountUpdate.settings.version);
@@ -196,6 +197,7 @@ export async function registerPushTokenIfAvailable(params: {
     try {
         const profiles = listServerProfiles();
         const token = tokenData.data;
+        const previousToken = loadLastRegisteredExpoPushToken();
         const normalizeServerUrl = (serverUrl: string) => serverUrl.replace(/\/+$/, '');
         let activeServerUrl: string | null = null;
         try {
@@ -205,6 +207,7 @@ export async function registerPushTokenIfAvailable(params: {
         }
 
         let didRegisterActiveServer = false;
+        let didRegisterAnyServer = false;
         for (const profile of profiles) {
             let serverCredentials: AuthCredentials | null = null;
             try {
@@ -216,9 +219,12 @@ export async function registerPushTokenIfAvailable(params: {
 
             try {
                 await registerPushTokenApi(serverCredentials, token, {
+                    serverId: profile.id,
                     apiEndpoint: profile.serverUrl,
                     clientServerUrl: profile.serverUrl,
+                    retry: 'none',
                 });
+                didRegisterAnyServer = true;
                 if (activeServerUrl && normalizeServerUrl(profile.serverUrl) === activeServerUrl) {
                     didRegisterActiveServer = true;
                 }
@@ -232,7 +238,37 @@ export async function registerPushTokenIfAvailable(params: {
         if (!didRegisterActiveServer) {
             await registerPushTokenApi(credentials, token, {
                 clientServerUrl: activeServerUrl ?? undefined,
+                retry: 'none',
             });
+            didRegisterAnyServer = true;
+        }
+
+        if (didRegisterAnyServer) {
+            saveLastRegisteredExpoPushToken(token);
+        }
+
+        // Best-effort cleanup when Expo rotates the token: remove the old token from servers we can still reach.
+        if (didRegisterAnyServer && previousToken && previousToken !== token) {
+            const unregisterPreviousToken = async (serverCredentials: AuthCredentials, apiEndpoint?: string) => {
+                try {
+                    await deletePushTokenApi(serverCredentials, previousToken, { apiEndpoint });
+                } catch {
+                    // best-effort; ignore
+                }
+            };
+
+            for (const profile of profiles) {
+                let serverCredentials: AuthCredentials | null = null;
+                try {
+                    serverCredentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                } catch {
+                    serverCredentials = null;
+                }
+                if (!serverCredentials) continue;
+                await unregisterPreviousToken(serverCredentials, profile.serverUrl);
+            }
+
+            await unregisterPreviousToken(credentials, activeServerUrl ?? undefined);
         }
         log.log('Push token registered successfully');
     } catch (error) {

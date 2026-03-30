@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { installPrismaModuleMock } from "../api/testkit/dbMocks";
 import { createInTxWithAccountLookup, createSocialAccount } from "./socialTestHarness";
 
 const markAccountChanged = vi.fn(async () => 1);
@@ -26,7 +28,7 @@ vi.mock("./type", () => ({
     buildUserProfile: (user: any, status: any, _githubProfile: any) => ({ id: user.id, status }),
 }));
 
-vi.mock("@/storage/prisma", () => ({
+installPrismaModuleMock({
     RelationshipStatus: {
         none: "none",
         requested: "requested",
@@ -34,7 +36,7 @@ vi.mock("@/storage/prisma", () => ({
         friend: "friend",
         rejected: "rejected",
     },
-}));
+});
 
 let txAccountFindUnique: any;
 const setAccountLookup = (accountsById: Record<string, any>) => {

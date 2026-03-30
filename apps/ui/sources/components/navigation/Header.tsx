@@ -7,6 +7,7 @@ import { layout } from '../ui/layout/layout';
 import { useHeaderHeight, useIsTablet } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
 
 
@@ -129,7 +130,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
         if (typeof options.headerTitle === 'string') {
             title = (
                 <Text style={[
-                    { fontSize: 17, fontWeight: '600', textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
+                    { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
                     Typography.default('semiBold'),
                     options.headerTitleStyle
                 ]}>
@@ -143,7 +144,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
     } else if (typeof options.title === 'string') {
         title = (
             <Text style={[
-                { fontSize: 17, fontWeight: '600', textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
+                { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
                 Typography.default('semiBold'),
                 options.headerTitleStyle
             ]}>
@@ -236,8 +237,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'flex-end',
     },
     title: {
-        fontSize: 17,
-        fontWeight: '600',
+        fontSize: 16,
         textAlign: 'center',
         color: theme.colors.header.tint,
         ...Typography.default('semiBold'),
@@ -251,12 +251,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('regular'),
     },
     shadow: {
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: theme.colors.shadow.opacity,
-        shadowRadius: 3,
-        elevation: 4,
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.15)',
+        ...shadowLevelStyle(theme.colors.shadowLevels[3]),
     },
     backButton: {
         color: theme.colors.header.tint,

@@ -1,19 +1,38 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
+import { Platform, Pressable, View } from 'react-native';
+import { Ionicons, Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
 import { t } from '@/text';
 import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
+import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+
+const SourceControlBranchMenuLazy = React.lazy(async () => {
+    const mod = await import('@/components/sessions/sourceControl/branches/SourceControlBranchMenu');
+    return { default: mod.SourceControlBranchMenu };
+});
 
 type SourceControlBranchSummaryProps = {
     theme: any;
     scmStatusFiles: ScmStatusFiles;
     variant?: 'screen' | 'rail';
+    sessionId?: string;
+    scmSnapshot?: ScmWorkingSnapshot | null;
+    scmWriteEnabled?: boolean;
+    disabled?: boolean;
 };
 
-export function SourceControlBranchSummary({ theme, scmStatusFiles, variant = 'screen' }: SourceControlBranchSummaryProps) {
+export function SourceControlBranchSummary({
+    theme,
+    scmStatusFiles,
+    variant = 'screen',
+    sessionId,
+    scmSnapshot,
+    scmWriteEnabled,
+    disabled,
+}: SourceControlBranchSummaryProps) {
     const ahead = Number(scmStatusFiles.ahead ?? 0);
     const behind = Number(scmStatusFiles.behind ?? 0);
     const showTracking = Boolean(scmStatusFiles.upstream) || ahead > 0 || behind > 0;
@@ -60,6 +79,19 @@ export function SourceControlBranchSummary({ theme, scmStatusFiles, variant = 's
         );
     };
 
+    const isRail = variant === 'rail';
+    const canShowBranchMenu =
+        isRail
+        && Boolean(sessionId)
+        && scmSnapshot?.capabilities?.readBranches === true;
+
+    const { canPublish, publishBusy, publishBranch } = usePublishBranchAction({
+        sessionId,
+        snapshot: scmSnapshot,
+        writeEnabled: scmWriteEnabled === true && isRail,
+        disabled,
+    });
+
     if (variant === 'rail') {
         return (
             <View
@@ -76,19 +108,73 @@ export function SourceControlBranchSummary({ theme, scmStatusFiles, variant = 's
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
                         <Octicons name="git-branch" size={15} color={theme.colors.textSecondary} />
-                        <Text
-                            numberOfLines={1}
-                            style={{
-                                fontSize: 14,
-                                color: theme.colors.text,
-                                ...Typography.default('semiBold'),
-                            }}
-                        >
-                            {scmStatusFiles.branch || t('files.detachedHead')}
-                        </Text>
+                        {canShowBranchMenu && sessionId ? (
+                            <React.Suspense
+                                fallback={(
+                                    <Text
+                                        numberOfLines={1}
+                                        style={{
+                                            fontSize: 14,
+                                            color: theme.colors.text,
+                                            ...Typography.default('semiBold'),
+                                        }}
+                                    >
+                                        {scmStatusFiles.branch || t('files.detachedHead')}
+                                    </Text>
+                                )}
+                            >
+                                <SourceControlBranchMenuLazy
+                                    sessionId={sessionId}
+                                    currentBranch={scmStatusFiles.branch}
+                                    snapshot={scmSnapshot ?? null}
+                                    writeEnabled={scmWriteEnabled}
+                                    disabled={disabled === true || publishBusy}
+                                    testID="scm-branch-menu-trigger"
+                                />
+                            </React.Suspense>
+                        ) : (
+                            <Text
+                                numberOfLines={1}
+                                style={{
+                                    fontSize: 14,
+                                    color: theme.colors.text,
+                                    ...Typography.default('semiBold'),
+                                }}
+                            >
+                                {scmStatusFiles.branch || t('files.detachedHead')}
+                            </Text>
+                        )}
                     </View>
 
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                        {canPublish ? (
+                            <Pressable
+                                testID="scm-publish-branch"
+                                accessibilityRole="button"
+                                accessibilityLabel={t('files.branchMenu.publish.title')}
+                                onPress={() => {
+                                    void publishBranch();
+                                }}
+                                disabled={publishBusy || disabled === true}
+                                style={({ pressed }) => ({
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 6,
+                                    borderRadius: 999,
+                                    borderWidth: 1,
+                                    borderColor: theme.colors.textLink,
+                                    backgroundColor: theme.colors.surfaceHigh,
+                                    opacity: publishBusy || disabled === true ? 0.6 : pressed ? 0.85 : 1,
+                                })}
+                            >
+                                <Ionicons name="cloud-upload-outline" size={14} color={theme.colors.textLink} />
+                                <Text style={{ fontSize: 12, color: theme.colors.textLink, ...Typography.default('semiBold') }}>
+                                    {t('files.branchMenu.publish.short')}
+                                </Text>
+                            </Pressable>
+                        ) : null}
                         <InlineStat value={staged} iconName="diff-added" />
                         <InlineStat value={unstaged} iconName="diff-modified" />
                         {showTracking ? <InlineStat value={ahead} iconName="arrow-up" /> : null}

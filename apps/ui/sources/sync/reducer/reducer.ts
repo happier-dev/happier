@@ -174,6 +174,7 @@ export type ReducerMessage = {
     id: string;
     realID: string | null;
     seq: number | null;
+    localId: string | null;
     createdAt: number;
     role: 'user' | 'agent';
     text: string | null;
@@ -208,18 +209,25 @@ export type ReducerState = {
     messages: Map<string, ReducerMessage>;
     sidechains: Map<string, ReducerMessage[]>;
     tracerState: TracerState; // Tracer state for sidechain processing
-	    streamMergeCursor: { messageId: string; streamKey: string } | null;
-	    /**
-	     * Tracks the most recent main-timeline thinking message so streamed thinking deltas can append
-	     * even when server sequence metadata is missing or arrives later than the deltas.
-	     */
-	    thinkingMergeCursor: string | null;
-	    /**
-	     * Tracks the most recent thinking message for each sidechain. This allows streamed deltas to append
-	     * even when providers emit interleaved keepalive chunks or the reducer processes messages in separate invocations.
-	     */
-	    sidechainThinkingMergeCursors: Map<string, string>;
-	    latestTodos?: {
+    streamMergeCursor: { messageId: string; streamKey: string } | null;
+    /**
+     * Tracks the most recent main-timeline thinking message so streamed thinking deltas can append
+     * even when server sequence metadata is missing or arrives later than the deltas.
+     */
+    thinkingMergeCursor: string | null;
+    /**
+     * Tracks main-timeline thinking messages by a stable segment key derived from provider UUID
+     * plus a per-message thinking run index. This lets late-arriving or out-of-order thinking
+     * updates merge into the existing rendered block even if merge cursors were cleared by
+     * interleaved tool calls or text blocks.
+     */
+    thinkingSegmentKeyToMessageId: Map<string, string>;
+    /**
+     * Tracks the most recent thinking message for each sidechain. This allows streamed deltas to append
+     * even when providers emit interleaved keepalive chunks or the reducer processes messages in separate invocations.
+     */
+    sidechainThinkingMergeCursors: Map<string, string>;
+    latestTodos?: {
         todos: Array<{
             content: string;
             status: 'pending' | 'in_progress' | 'completed';
@@ -248,12 +256,13 @@ export function createReducer(): ReducerState {
         localIds: new Map(),
         messageIds: new Map(),
         sidechains: new Map(),
-	        tracerState: createTracer(),
-	        streamMergeCursor: null,
-	        thinkingMergeCursor: null,
-	        sidechainThinkingMergeCursors: new Map(),
-	    }
-	};
+        tracerState: createTracer(),
+        streamMergeCursor: null,
+        thinkingMergeCursor: null,
+        thinkingSegmentKeyToMessageId: new Map(),
+        sidechainThinkingMergeCursors: new Map(),
+    };
+}
 
 const ENABLE_LOGGING = false;
 
@@ -356,8 +365,8 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         }
     }
 
-    const lastMain = lastMainMessageId ? state.messages.get(lastMainMessageId) : null;
-    const cursorThinking = state.thinkingMergeCursor ? state.messages.get(state.thinkingMergeCursor) : null;
+    const lastMain = lastMainMessageId != null ? state.messages.get(lastMainMessageId) : null;
+    const cursorThinking = state.thinkingMergeCursor != null ? state.messages.get(state.thinkingMergeCursor) : null;
     const lastMainThinkingMessageId =
         cursorThinking && cursorThinking.role === 'agent' && cursorThinking.isThinking && typeof cursorThinking.text === 'string'
             ? state.thinkingMergeCursor
@@ -543,21 +552,16 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     // Collect changed messages (only root-level messages)
     //
 
-    // Sidechain children should never be emitted as top-level transcript updates when the owning
-    // tool-call exists (they are serialized as nested children of that tool-call instead).
-    //
-    // However, in some provider/import flows (notably ACP history imports), we can receive sidechain
-    // messages without ever receiving the owning tool-call message. In that orphan case, we must
-    // emit the sidechain messages as root transcript entries so the transcript doesn't appear empty.
-    const attachedSidechainChildIds = new Set<string>();
-    for (const [sidechainId, chain] of state.sidechains.entries()) {
-        if (!state.toolIdToMessageId.has(sidechainId)) continue;
-        for (const m of chain) attachedSidechainChildIds.add(m.id);
+    // Sidechain children should never be emitted as top-level transcript updates. They belong to
+    // sidechain state only and are rendered under the owning tool-call when that tool-call exists.
+    const sidechainChildIds = new Set<string>();
+    for (const chain of state.sidechains.values()) {
+        for (const m of chain) sidechainChildIds.add(m.id);
     }
 
     const filteredSidechainChildIds: string[] = [];
     for (let id of changed) {
-        if (attachedSidechainChildIds.has(id)) {
+        if (sidechainChildIds.has(id)) {
             if (DEBUG_SIDECHAINS) filteredSidechainChildIds.push(id);
             continue;
         }
@@ -629,8 +633,9 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
         const displayText = typeof reducerMsg.meta?.displayText === 'string' ? reducerMsg.meta.displayText : undefined;
         return {
             id: reducerMsg.id,
+            realID: reducerMsg.realID,
             ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
-            localId: null,
+            localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'user-text',
             text: reducerMsg.text,
@@ -640,8 +645,9 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
     } else if (reducerMsg.role === 'agent' && reducerMsg.text !== null) {
         return {
             id: reducerMsg.id,
+            realID: reducerMsg.realID,
             ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
-            localId: null,
+            localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'agent-text',
             text: reducerMsg.text,
@@ -666,8 +672,9 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
 
         return {
             id: reducerMsg.id,
+            realID: reducerMsg.realID,
             ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
-            localId: null,
+            localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'tool-call',
             tool: { ...reducerMsg.tool },
@@ -677,6 +684,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
     } else if (reducerMsg.role === 'agent' && reducerMsg.event !== null) {
         return {
             id: reducerMsg.id,
+            realID: reducerMsg.realID,
             ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
             createdAt: reducerMsg.createdAt,
             kind: 'agent-event',

@@ -1,6 +1,5 @@
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import type { PermissionMode } from '@/api/types';
-import { mapToClaudeMode } from './permissionMode';
 
 export function syncClaudePermissionModeFromMetadata(opts: {
   session: {
@@ -14,10 +13,9 @@ export function syncClaudePermissionModeFromMetadata(opts: {
   });
   if (!resolved) return null;
 
-  const claudeMode = mapToClaudeMode(resolved.intent);
-  const didChange = opts.session.adoptLastPermissionModeFromMetadata(claudeMode, resolved.updatedAt);
+  const didChange = opts.session.adoptLastPermissionModeFromMetadata(resolved.intent, resolved.updatedAt);
   if (!didChange) return null;
 
-  opts.permissionHandler.handleModeChange(claudeMode);
-  return claudeMode;
+  opts.permissionHandler.handleModeChange(resolved.intent);
+  return resolved.intent;
 }

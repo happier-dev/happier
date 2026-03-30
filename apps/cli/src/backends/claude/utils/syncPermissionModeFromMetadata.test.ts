@@ -11,7 +11,7 @@ type SessionStub = {
 type PermissionHandlerStub = { handleModeChange: (mode: PermissionMode) => void };
 
 describe('syncClaudePermissionModeFromMetadata', () => {
-  it('normalizes metadata permission mode for Claude and updates the permission handler', () => {
+  it('adopts the canonical metadata permission mode and updates the permission handler', () => {
     const modeChanges: string[] = [];
     const session: SessionStub = {
       client: {
@@ -27,8 +27,8 @@ describe('syncClaudePermissionModeFromMetadata', () => {
     };
 
     const res = syncClaudePermissionModeFromMetadata({ session, permissionHandler });
-    expect(res).toBe('acceptEdits');
-    expect(modeChanges).toEqual(['acceptEdits']);
+    expect(res).toBe('safe-yolo');
+    expect(modeChanges).toEqual(['safe-yolo']);
   });
 
   it('does nothing when the session rejects the metadata update', () => {

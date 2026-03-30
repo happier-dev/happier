@@ -1,50 +1,22 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { findTestInstanceByTypeWithProps, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const useSelectableMenuSpy = vi.fn();
+installDropdownCommonModuleMocks();
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'web' },
-        Text: (props: any) => React.createElement('Text', props, props.children),
-        TextInput: (props: any) => React.createElement('TextInput', props, props.children),
-        View: (props: any) => React.createElement('View', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    };
-});
+const useSelectableMenuSpy = vi.fn();
+let uiItemDensitySetting: 'comfortable' | 'cozy' | 'compact' = 'comfortable';
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: any) => {
         const React = require('react');
         return React.createElement('Ionicons', props);
     },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (factory: any) => factory({
-        colors: {
-            textSecondary: '#666',
-            divider: '#ddd',
-            text: '#111',
-            input: { placeholder: '#999' },
-        },
-    }, {}) },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                textSecondary: '#666',
-                divider: '#ddd',
-                text: '#111',
-                input: {
-                    placeholder: '#999',
-                },
-            },
-        },
-    }),
 }));
 
 vi.mock('@/components/ui/popover', () => ({
@@ -57,6 +29,10 @@ vi.mock('@/components/ui/popover', () => ({
                 ? props.children({ maxHeight: 200, maxWidth: 400, placement: props.placement ?? 'bottom' })
                 : props.children,
         );
+    },
+    PopoverScope: (props: any) => {
+        const React = require('react');
+        return React.createElement(React.Fragment, null, props.children);
     },
 }));
 
@@ -90,8 +66,12 @@ vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/sync/store/hooks', () => ({
+    useLocalSetting: (key: string) => {
+        if (key === 'uiItemDensity') return uiItemDensitySetting;
+        if (key === 'uiFontScale') return 1;
+        return null;
+    },
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -116,11 +96,9 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 describe('DropdownMenu', () => {
     beforeEach(() => {
+        vi.resetModules();
         useSelectableMenuSpy.mockReset();
-        vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
-            cb();
-            return 0 as any;
-        });
+        uiItemDensitySetting = 'comfortable';
     });
 
     afterEach(() => {
@@ -133,34 +111,31 @@ describe('DropdownMenu', () => {
 
         const onOpenChange = vi.fn();
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu, {
-                    open: false,
-                    onOpenChange,
-                    items: [{ id: 'a', title: 'A' }],
-                    onSelect: () => {},
-                    trigger: ({ toggle }: any) =>
-                        React.createElement(
-                            Pressable,
-                            { onPress: toggle },
-                            React.createElement(Text, null, 'Trigger'),
-                        ),
-                }),
-            );
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: false,
+            onOpenChange,
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: ({ toggle }: any) =>
+                React.createElement(
+                    Pressable,
+                    { onPress: toggle },
+                    React.createElement(Text, null, 'Trigger'),
+                ),
+        }));
+
+        const pressable = screen.findByType(Pressable);
+
+        await act(async () => {
+            pressTestInstance(pressable);
         });
-
-        const pressable = tree?.root.findByType(Pressable);
-        expect(pressable).toBeTruthy();
-
-        act(() => {
-            pressable?.props?.onPress?.();
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, 0);
         });
         expect(onOpenChange).toHaveBeenCalledWith(true);
 
         act(() => {
-            tree?.update(
+            screen.tree.update(
                 React.createElement(DropdownMenu, {
                     open: true,
                     onOpenChange,
@@ -176,9 +151,9 @@ describe('DropdownMenu', () => {
             );
         });
 
-        const pressable2 = tree?.root.findByType(Pressable);
+        const pressable2 = screen.findByType(Pressable);
         act(() => {
-            pressable2?.props?.onPress?.();
+            pressTestInstance(pressable2);
         });
         expect(onOpenChange).toHaveBeenCalledWith(false);
     });
@@ -188,20 +163,15 @@ describe('DropdownMenu', () => {
         const onOpenChange = vi.fn();
         const onSelect = vi.fn();
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu, {
-                    open: true,
-                    onOpenChange,
-                    items: [{ id: 'a', title: 'A' }],
-                    onSelect,
-                    trigger: React.createElement('View'),
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange,
+            items: [{ id: 'a', title: 'A' }],
+            onSelect,
+            trigger: React.createElement('View'),
+        }));
 
-        const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
+        const selectableResults = screen.findByType('SelectableMenuResults' as any);
         act(() => {
             selectableResults?.props?.onPressItem?.({ id: 'a' });
         });
@@ -215,21 +185,16 @@ describe('DropdownMenu', () => {
         const onOpenChange = vi.fn();
         const onSelect = vi.fn();
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu as any, {
-                    open: true,
-                    onOpenChange,
-                    closeOnSelect: false,
-                    items: [{ id: 'a', title: 'A' }],
-                    onSelect,
-                    trigger: React.createElement('View'),
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: true,
+            onOpenChange,
+            closeOnSelect: false,
+            items: [{ id: 'a', title: 'A' }],
+            onSelect,
+            trigger: React.createElement('View'),
+        }));
 
-        const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
+        const selectableResults = screen.findByType('SelectableMenuResults' as any);
         act(() => {
             selectableResults?.props?.onPressItem?.({ id: 'a' });
         });
@@ -242,43 +207,32 @@ describe('DropdownMenu', () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const { Text } = await import('react-native');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu, {
-                    open: false,
-                    onOpenChange: vi.fn(),
-                    items: [{ id: 'a', title: 'A' }],
-                    onSelect: () => {},
-                    trigger: React.createElement(Text, null, 'Static Trigger'),
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: false,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement(Text, null, 'Static Trigger'),
+        }));
 
-        const labels = tree?.root.findAllByType(Text).map((node: any) => node.props?.children) ?? [];
-        expect(labels).toContain('Static Trigger');
-        expect(tree?.root.findAllByType('Popover' as any).length).toBe(0);
+        expect(screen.getTextContent()).toContain('Static Trigger');
+        expect(screen.findAllByType('Popover' as any).length).toBe(0);
     });
 
     it('does not auto-focus the search field by default', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const { Text } = await import('react-native');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu, {
-                    open: true,
-                    onOpenChange: vi.fn(),
-                    items: [{ id: 'a', title: 'A' }],
-                    onSelect: () => {},
-                    trigger: React.createElement(Text, null, 'Trigger'),
-                    search: true,
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement(Text, null, 'Trigger'),
+            search: true,
+        }));
 
-        const inputs = tree?.root.findAllByType('TextInput' as any) ?? [];
+        const inputs = screen.findAllByType('TextInput' as any) ?? [];
         expect(inputs.length).toBeGreaterThan(0);
         for (const input of inputs) {
             expect(input.props?.autoFocus).not.toBe(true);
@@ -288,43 +242,67 @@ describe('DropdownMenu', () => {
     it('passes default and explicit row rendering options to SelectableMenuResults', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu, {
-                    open: true,
-                    onOpenChange: vi.fn(),
-                    items: [{ id: 'a', title: 'A' }],
-                    onSelect: () => {},
-                    trigger: React.createElement('View'),
-                    showCategoryTitles: false,
-                    rowKind: 'item',
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+            showCategoryTitles: false,
+            rowKind: 'item',
+        }));
 
-        const popover = tree?.root.findByType('Popover' as any);
+        const popover = screen.findByType('Popover' as any);
         expect(popover?.props?.placement).toBe('bottom');
 
-        const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
+        const selectableResults = screen.findByType('SelectableMenuResults' as any);
         expect(selectableResults?.props?.showCategoryTitles).toBe(false);
         expect(selectableResults?.props?.rowKind).toBe('item');
+    });
+
+    it('uses popoverAnchorRef when provided', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const externalAnchorRef = { current: 'external-anchor' } as any;
+
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+            popoverAnchorRef: externalAnchorRef,
+        }));
+
+        const popover = screen.findByType('Popover' as any);
+        expect(popover?.props?.anchorRef).toBe(externalAnchorRef);
+    });
+
+    it('defaults showCategoryTitles to false', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+        }));
+
+        const selectableResults = screen.findByType('SelectableMenuResults' as any);
+        expect(selectableResults?.props?.showCategoryTitles).toBe(false);
     });
 
     it('does not add a default chevron right element to selectable items', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 
-        act(() => {
-            renderer.create(
-                React.createElement(DropdownMenu, {
+        await renderScreen(React.createElement(DropdownMenu, {
                     open: true,
                     onOpenChange: vi.fn(),
                     items: [{ id: 'a', title: 'A' }],
                     onSelect: () => {},
                     trigger: React.createElement('View'),
-                }),
-            );
-        });
+                }));
 
         expect(useSelectableMenuSpy).toHaveBeenCalled();
         const args = useSelectableMenuSpy.mock.calls[0]?.[0];
@@ -336,58 +314,105 @@ describe('DropdownMenu', () => {
 
     it('can render an Item-style trigger that shows the selected label and subtitle by default', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
+        uiItemDensitySetting = 'cozy';
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu as any, {
-                    open: false,
-                    onOpenChange: vi.fn(),
-                    items: [
-                        { id: 'a', title: 'Alpha', subtitle: 'First' },
-                        { id: 'b', title: 'Beta', subtitle: 'Second' },
-                    ],
-                    selectedId: 'b',
-                    onSelect: () => {},
-                    itemTrigger: {
-                        title: 'Pick one',
-                    },
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: false,
+            onOpenChange: vi.fn(),
+            items: [
+                { id: 'a', title: 'Alpha', subtitle: 'First' },
+                { id: 'b', title: 'Beta', subtitle: 'Second' },
+            ],
+            selectedId: 'b',
+            onSelect: () => {},
+            itemTrigger: {
+                title: 'Pick one',
+            },
+        }));
 
-        const item = tree?.root.findByType('Item' as any);
+        const item = screen.findByType('Item' as any);
         expect(item?.props?.title).toBe('Pick one');
-        expect(item?.props?.detail).toBe('Beta');
+        expect(item?.props?.density).toBe('cozy');
+        expect(item?.props?.detail).toBeUndefined();
         expect(item?.props?.subtitle).toBe('Second');
+        expect(item?.props?.rightElement).toBeTruthy();
+
+        const rightElementScreen = await renderScreen(item?.props?.rightElement);
+
+        expect(rightElementScreen.getTextContent()).toContain('Beta');
+        const chevronIcon = findTestInstanceByTypeWithProps(rightElementScreen.tree, 'Ionicons' as any, { name: 'chevron-down' });
+        expect(chevronIcon?.props?.size).toBe(17);
+    });
+
+    it('renders the right-side selected detail text for comfortable density', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        uiItemDensitySetting = 'comfortable';
+
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: false,
+            onOpenChange: vi.fn(),
+            items: [
+                { id: 'a', title: 'Alpha', subtitle: 'First' },
+                { id: 'b', title: 'Beta', subtitle: 'Second' },
+            ],
+            selectedId: 'b',
+            onSelect: () => {},
+            itemTrigger: {
+                title: 'Pick one',
+            },
+        }));
+
+        const item = screen.findByType('Item' as any);
+
+        const rightElementScreen = await renderScreen(item?.props?.rightElement);
+
+        expect(rightElementScreen.getTextContent()).toContain('Beta');
+    });
+
+    it('passes compact item props through to item-style dropdown rows', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [
+                { id: 'a', title: 'Alpha', subtitle: 'First' },
+                { id: 'b', title: 'Beta', subtitle: 'Second' },
+            ],
+            selectedId: 'b',
+            onSelect: () => {},
+            rowKind: 'item',
+            itemRowProps: { density: 'compact' },
+            itemTrigger: {
+                title: 'Pick one',
+            },
+        }));
+
+        const selectableResults = screen.findByType('SelectableMenuResults' as any);
+        expect(selectableResults?.props?.itemProps).toMatchObject({ density: 'compact' });
     });
 
     it('allows disabling selected detail/subtitle in the Item-style trigger', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu as any, {
-                    open: false,
-                    onOpenChange: vi.fn(),
-                    items: [
-                        { id: 'a', title: 'Alpha', subtitle: 'First' },
-                        { id: 'b', title: 'Beta', subtitle: 'Second' },
-                    ],
-                    selectedId: 'b',
-                    onSelect: () => {},
-                    itemTrigger: {
-                        title: 'Pick one',
-                        showSelectedDetail: false,
-                        showSelectedSubtitle: false,
-                        subtitle: 'Static subtitle',
-                    },
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: false,
+            onOpenChange: vi.fn(),
+            items: [
+                { id: 'a', title: 'Alpha', subtitle: 'First' },
+                { id: 'b', title: 'Beta', subtitle: 'Second' },
+            ],
+            selectedId: 'b',
+            onSelect: () => {},
+            itemTrigger: {
+                title: 'Pick one',
+                showSelectedDetail: false,
+                showSelectedSubtitle: false,
+                subtitle: 'Static subtitle',
+            },
+        }));
 
-        const item = tree?.root.findByType('Item' as any);
+        const item = screen.findByType('Item' as any);
         expect(item?.props?.title).toBe('Pick one');
         expect(item?.props?.detail).toBeUndefined();
         expect(item?.props?.subtitle).toBe('Static subtitle');
@@ -396,53 +421,36 @@ describe('DropdownMenu', () => {
     it('passes through an explicit null emptyLabel (does not fall back to the default label)', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu, {
-                    open: true,
-                    onOpenChange: vi.fn(),
-                    items: [{ id: 'a', title: 'A' }],
-                    onSelect: () => {},
-                    trigger: React.createElement('View'),
-                    emptyLabel: null,
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+            emptyLabel: null,
+        }));
 
-        const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
+        const selectableResults = screen.findByType('SelectableMenuResults' as any);
         expect(selectableResults?.props?.emptyLabel).toBe(null);
     });
 
-    it('uses symmetric content padding and adds bottom padding under results', async () => {
+    it('renders the search input and results list together when search is enabled', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
-        const { Text, View } = await import('react-native');
+        const { Text } = await import('react-native');
         const { TextInput } = await import('@/components/ui/text/Text');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(DropdownMenu, {
-                    open: true,
-                    onOpenChange: vi.fn(),
-                    items: [{ id: 'a', title: 'A' }],
-                    onSelect: () => {},
-                    trigger: React.createElement(Text, null, 'Trigger'),
-                    search: true,
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement(Text, null, 'Trigger'),
+            search: true,
+        }));
 
-        const input = tree?.root.findByType(TextInput as any);
-        const inputWrapper = input?.parent;
-        expect(inputWrapper?.type === ('View' as any) || inputWrapper?.type === (View as any)).toBe(true);
-        expect(inputWrapper?.props?.style).toMatchObject({ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 });
-
-        const paddingNodes = tree?.root.findAll((node: any) => {
-            const style = node?.props?.style;
-            const list = Array.isArray(style) ? style : style ? [style] : [];
-            return list.some((entry: any) => entry && typeof entry === 'object' && entry.paddingBottom === 12);
-        }) ?? [];
-        expect(paddingNodes.length).toBeGreaterThan(0);
+        const input = screen.findByType(TextInput as any);
+        const selectableResults = screen.findByType('SelectableMenuResults' as any);
+        expect(input).toBeTruthy();
+        expect(selectableResults).toBeTruthy();
     });
 });

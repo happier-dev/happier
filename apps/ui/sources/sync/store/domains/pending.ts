@@ -67,7 +67,7 @@ export function createPendingDomain<S extends PendingDomain>({
             const idx = existing.messages.findIndex((m) => m.id === message.id);
             const next = idx >= 0
                 ? [...existing.messages.slice(0, idx), message, ...existing.messages.slice(idx + 1)]
-                : [...existing.messages, message].sort((a, b) => a.createdAt - b.createdAt);
+                : [...existing.messages, message];
             return {
                 ...state,
                 sessionPending: {
@@ -96,4 +96,3 @@ export function createPendingDomain<S extends PendingDomain>({
         }),
     };
 }
-

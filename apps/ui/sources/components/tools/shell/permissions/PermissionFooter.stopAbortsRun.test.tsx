@@ -1,14 +1,15 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { PermissionFooter } from '../permissions/PermissionFooter';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const runtime = vi.hoisted(() => ({
-    flavor: 'opencode' as 'codex' | 'opencode' | 'gemini',
+    flavor: 'opencode' as 'claude' | 'codex' | 'opencode' | 'gemini',
     protocol: 'claude' as 'codexDecision' | 'claude',
-    setProtocol(protocol: 'codexDecision' | 'claude', flavor: 'codex' | 'opencode' | 'gemini') {
+    setProtocol(protocol: 'codexDecision' | 'claude', flavor: 'claude' | 'codex' | 'opencode' | 'gemini') {
         this.protocol = protocol;
         this.flavor = flavor;
     },
@@ -27,36 +28,19 @@ const syncMock = vi.hoisted(() => ({
     sendMessage: vi.fn(async (..._args: unknown[]) => {}),
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    TouchableOpacity: 'TouchableOpacity',
-    ActivityIndicator: 'ActivityIndicator',
-    Alert: { alert: vi.fn() },
-    Platform: { OS: 'ios', select: <T,>(value: { ios?: T }) => value.ios },
-    StyleSheet: { create: <T,>(styles: T) => styles },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: <T,>(styles: T) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                permissionButton: {
-                    allow: { background: '#0f0' },
-                    deny: { background: '#f00' },
-                    allowAll: { background: '#00f' },
-                },
-            },
-        },
-    }),
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
+
+installPermissionShellCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            importOriginal,
+            storage: { getState: () => sessionStore },
+        });
+    },
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionAllow: vi.fn(async () => {}),
@@ -69,14 +53,6 @@ vi.mock('@/sync/sync', () => ({
     sync: {
         sendMessage: syncMock.sendMessage,
     },
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: { getState: () => sessionStore },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
 }));
 
 vi.mock('@/agents/catalog/resolve', () => ({
@@ -127,7 +103,7 @@ describe('PermissionFooter stop action', () => {
         {
             name: 'non-codex protocol',
             protocol: 'claude' as const,
-            flavor: 'opencode' as const,
+            flavor: 'claude' as const,
             toolName: 'Read',
             toolInput: { filepath: '/etc/hosts' },
             shouldSendFollowupPrompt: false,
@@ -153,26 +129,20 @@ describe('PermissionFooter stop action', () => {
         syncMock.sendMessage.mockClear();
         sessionStore.updateSessionPermissionMode.mockClear();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(PermissionFooter, {
-                    permission: { id: 'p1', status: 'pending' },
-                    sessionId: 's1',
-                    toolName,
-                    toolInput,
-                    metadata: { flavor },
-                }),
-            );
-        });
+        const { PermissionFooter } = await import('../permissions/PermissionFooter');
+        const screen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: { id: 'p1', status: 'pending' },
+            sessionId: 's1',
+            toolName,
+            toolInput,
+            metadata: { flavor },
+        }));
 
-        const buttons = tree?.root.findAllByType('TouchableOpacity') ?? [];
+        const buttons = screen.findAllByType('TouchableOpacity' as any);
         const stopButton = buttons.at(-1);
         expect(stopButton).toBeTruthy();
 
-        await act(async () => {
-            await stopButton?.props.onPress?.();
-        });
+        await pressTestInstanceAsync(stopButton, 'stop button');
 
         expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
         expect(ops.sessionDeny.mock.calls[0]?.[4]).toBe(expectedDecision);

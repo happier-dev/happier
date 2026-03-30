@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderHook } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,40 +23,27 @@ describe('useVoiceSessionSnapshot (hook)', () => {
 
       const snapshots: unknown[] = [];
 
-      function Test({ tick }: { tick: number }) {
-        const snap = useVoiceSessionSnapshot();
-        React.useEffect(() => {
-          snapshots.push(snap);
-        }, [tick]);
-        return React.createElement('View');
-      }
+      const hook = await renderHook(
+        ({ tick }: { tick: number }) => {
+          const snap = useVoiceSessionSnapshot();
+          React.useEffect(() => {
+            snapshots.push(snap);
+          }, [tick]);
+          return snap;
+        },
+        {
+          initialProps: { tick: 0 },
+          wrapper: React.StrictMode,
+        },
+      );
 
-      let tree: renderer.ReactTestRenderer | null = null;
-      expect(() => {
-        act(() => {
-          tree = renderer.create(
-            React.createElement(
-              React.StrictMode,
-              null,
-              React.createElement(Test, { tick: 0 })
-            )
-          );
-        });
-        act(() => {
-          tree!.update(
-            React.createElement(
-              React.StrictMode,
-              null,
-              React.createElement(Test, { tick: 1 })
-            )
-          );
-        });
-      }).not.toThrow();
+      await hook.rerender({ tick: 1 });
 
       // If the underlying store hasn't changed, the snapshot should be referentially stable across renders.
       expect(snapshots.length).toBeGreaterThanOrEqual(2);
       expect(snapshots[1]).toBe(snapshots[0]);
       expect(unexpectedConsoleErrors).toEqual([]);
+      await hook.unmount();
 
       // Some test harnesses fail tests if a console spy is invoked at all; clear any
       // ignored deprecation warnings so those hooks don't flag this test.

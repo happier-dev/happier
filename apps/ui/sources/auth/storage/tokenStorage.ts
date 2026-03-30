@@ -1,9 +1,13 @@
-import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { getActiveServerId, getActiveServerUrl, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { digest } from '@/platform/digest';
 import { encodeBase64 } from '@/encryption/base64';
+import {
+    readNativeSecureStoreString,
+    removeNativeSecureStoreString,
+    writeNativeSecureStoreString,
+} from './nativeSecureStoreWithDevFallback';
 
 const AUTH_KEY = 'auth_credentials';
 const PENDING_EXTERNAL_AUTH_KEY = 'pending_external_auth';
@@ -22,6 +26,10 @@ type ScopedStorageKeys = Readonly<{
     legacy: string | null;
 }>;
 
+type ServerCredentialLookupOptions = Readonly<{
+    serverId?: string | null;
+}>;
+
 function normalizeUrlLegacy(raw: string): string {
     return String(raw ?? '').trim().replace(/\/+$/, '');
 }
@@ -32,9 +40,17 @@ function normalizeUrl(raw: string): string {
 
     try {
         const parsed = new URL(trimmed);
-        const hostname = parsed.hostname.toLowerCase();
-        if (hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]' || hostname === 'localhost') {
+        const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+        if (
+            hostname === '127.0.0.1'
+            || hostname === '::1'
+            || hostname === '[::1]'
+            || hostname === 'localhost'
+            || hostname.endsWith('.localhost')
+        ) {
             parsed.hostname = 'localhost';
+        } else {
+            parsed.hostname = hostname;
         }
 
         const normalizedPath = parsed.pathname.replace(/\/+$/, '');
@@ -55,6 +71,11 @@ function sanitizeScopeToken(raw: string): string {
     return token || 'default';
 }
 
+function normalizeServerId(raw: string | null | undefined): string | null {
+    const serverId = String(raw ?? '').trim();
+    return serverId.length > 0 ? serverId : null;
+}
+
 async function getServerHashScopeForNormalizedUrl(normalizedUrl: string): Promise<string> {
     const normalized = String(normalizedUrl ?? '').trim();
     if (!normalized) return 'default';
@@ -71,14 +92,25 @@ function makeScopedKey(baseKey: string, scopeToken: string): string {
     return scopedStorageId(`${baseKey}__srv_${scopeToken}`, scope);
 }
 
-function resolveServerIdForUrl(serverUrl: string): string | null {
+function resolveServerIdForUrl(serverUrl: string, preferredServerId?: string | null): string | null {
     const normalized = normalizeUrl(serverUrl);
     if (!normalized) return null;
-    const match = listServerProfiles().find((profile) => normalizeUrl(profile.serverUrl) === normalized);
+    const profiles = listServerProfiles();
+    const preferredId = normalizeServerId(preferredServerId);
+    if (preferredId) {
+        const preferredProfile = profiles.find((profile) => normalizeServerId(profile.id) === preferredId) ?? null;
+        if (!preferredProfile) return null;
+        return normalizeUrl(preferredProfile.serverUrl) === normalized ? preferredProfile.id : null;
+    }
+    const match = profiles.find((profile) => normalizeUrl(profile.serverUrl) === normalized);
     return match?.id ?? null;
 }
 
-async function getServerScopedKeys(baseKey: string, serverUrlOverride?: string): Promise<ScopedStorageKeys> {
+async function getServerScopedKeys(
+    baseKey: string,
+    serverUrlOverride?: string,
+    options: ServerCredentialLookupOptions = {},
+): Promise<ScopedStorageKeys> {
     const rawUrl = serverUrlOverride ?? getActiveServerUrl();
     const normalizedUrl = normalizeUrl(rawUrl);
     const legacyCandidates = new Set<string>();
@@ -99,8 +131,9 @@ async function getServerScopedKeys(baseKey: string, serverUrlOverride?: string):
 
     const legacyNormalizedUrlForHash =
         [...legacyCandidates].find((candidate) => candidate && candidate !== normalizedUrl) ?? '';
-    const resolvedServerId = resolveServerIdForUrl(normalizedUrl);
     const activeServerId = serverUrlOverride ? null : getActiveServerId();
+    const preferredServerId = normalizeServerId(options.serverId) ?? normalizeServerId(activeServerId);
+    const resolvedServerId = resolveServerIdForUrl(normalizedUrl, preferredServerId);
     const activeServerUrl = activeServerId
         ? normalizeUrl(listServerProfiles().find((profile) => profile.id === activeServerId)?.serverUrl ?? '')
         : '';
@@ -163,8 +196,25 @@ async function getRecoveryKeyReminderDismissedKey(): Promise<string> {
     return (await getServerScopedKeys(RECOVERY_KEY_REMINDER_DISMISSED_KEY)).primary;
 }
 
+function getRecoveryKeyReminderDismissedKeySync(): string | null {
+    const normalizedUrl = normalizeUrl(getActiveServerUrl());
+    if (!normalizedUrl) return null;
+
+    const activeServerId = normalizeServerId(getActiveServerId());
+    const resolvedServerId = resolveServerIdForUrl(normalizedUrl, activeServerId);
+    const profiles = listServerProfiles();
+    const activeServerUrl = activeServerId
+        ? normalizeUrl(profiles.find((profile) => profile.id === activeServerId)?.serverUrl ?? '')
+        : '';
+    const serverId = resolvedServerId ?? (activeServerUrl && activeServerUrl === normalizedUrl ? activeServerId : null);
+    if (!serverId) return null;
+
+    return makeScopedKey(RECOVERY_KEY_REMINDER_DISMISSED_KEY, sanitizeScopeToken(serverId));
+}
+
 // Cache for synchronous access
 const credentialsCacheByKey = new Map<string, string>();
+const recoveryKeyReminderDismissedCacheByKey = new Map<string, string>();
 
 export type AuthCredentials =
     | Readonly<{
@@ -260,7 +310,7 @@ async function readStoredJson<T>(
     }
 
     try {
-        const stored = await SecureStore.getItemAsync(key);
+        const stored = await readNativeSecureStoreString(key);
         if (!stored) return null;
         const parsed = safeParseJson(stored);
         return validator(parsed) ? parsed : null;
@@ -286,7 +336,7 @@ async function writeStoredJson(
     }
 
     try {
-        await SecureStore.setItemAsync(key, JSON.stringify(value));
+        await writeNativeSecureStoreString(key, JSON.stringify(value));
         return true;
     } catch (error) {
         console.error(`Error setting ${label}:`, error);
@@ -305,7 +355,7 @@ async function removeStoredValue(key: string, label: string): Promise<boolean> {
         }
     }
     try {
-        await SecureStore.deleteItemAsync(key);
+        await removeNativeSecureStoreString(key);
         return true;
     } catch (error) {
         console.error(`Error removing ${label}:`, error);
@@ -339,6 +389,12 @@ function parseCredentialsRaw(raw: string | null): AuthCredentials | null {
     }
 }
 
+function parseRecoveryKeyReminderDismissedRaw(raw: string | null): boolean {
+    if (!raw) return false;
+    const value = raw.trim().toLowerCase();
+    return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
 async function readCredentialRawByKey(key: string): Promise<string | null> {
     if (Platform.OS === 'web') {
         try {
@@ -353,7 +409,7 @@ async function readCredentialRawByKey(key: string): Promise<string | null> {
     if (cached) return cached;
 
     try {
-        const stored = await SecureStore.getItemAsync(key);
+        const stored = await readNativeSecureStoreString(key);
         if (stored) credentialsCacheByKey.set(key, stored);
         return stored;
     } catch (error) {
@@ -374,7 +430,7 @@ async function writeCredentialRawByKey(key: string, raw: string): Promise<boolea
     }
 
     try {
-        await SecureStore.setItemAsync(key, raw);
+        await writeNativeSecureStoreString(key, raw);
         credentialsCacheByKey.set(key, raw);
         return true;
     } catch (error) {
@@ -395,7 +451,7 @@ async function removeCredentialByKey(key: string): Promise<boolean> {
     }
 
     try {
-        await SecureStore.deleteItemAsync(key);
+        await removeNativeSecureStoreString(key);
         credentialsCacheByKey.delete(key);
         return true;
     } catch (error) {
@@ -456,8 +512,8 @@ export const TokenStorage = {
 
         try {
             const [scopedStored, globalStored] = await Promise.all([
-                SecureStore.getItemAsync(key),
-                SecureStore.getItemAsync(globalKey),
+                readNativeSecureStoreString(key),
+                readNativeSecureStoreString(globalKey),
             ]);
             return Math.max(parse(scopedStored), parse(globalStored));
         } catch {
@@ -482,8 +538,8 @@ export const TokenStorage = {
 
         try {
             await Promise.all([
-                SecureStore.setItemAsync(key, raw),
-                SecureStore.setItemAsync(globalKey, raw),
+                writeNativeSecureStoreString(key, raw),
+                writeNativeSecureStoreString(globalKey, raw),
             ]);
             return true;
         } catch {
@@ -498,26 +554,39 @@ export const TokenStorage = {
 
     async getRecoveryKeyReminderDismissed(): Promise<boolean> {
         const key = await getRecoveryKeyReminderDismissedKey();
-        const parse = (raw: string | null): boolean => {
-            if (!raw) return false;
-            const v = raw.trim().toLowerCase();
-            return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-        };
 
         if (Platform.OS === 'web') {
             try {
-                return parse(localStorage.getItem(key));
+                const raw = localStorage.getItem(key);
+                return parseRecoveryKeyReminderDismissedRaw(raw);
             } catch {
                 return false;
             }
         }
 
         try {
-            const stored = await SecureStore.getItemAsync(key);
-            return parse(stored);
+            const stored = await readNativeSecureStoreString(key);
+            recoveryKeyReminderDismissedCacheByKey.set(key, stored ?? '0');
+            return parseRecoveryKeyReminderDismissedRaw(stored);
         } catch {
             return false;
         }
+    },
+
+    getCachedRecoveryKeyReminderDismissed(): boolean | null {
+        const key = getRecoveryKeyReminderDismissedKeySync();
+        if (!key) return null;
+
+        if (Platform.OS === 'web') {
+            try {
+                return parseRecoveryKeyReminderDismissedRaw(localStorage.getItem(key));
+            } catch {
+                return null;
+            }
+        }
+
+        if (!recoveryKeyReminderDismissedCacheByKey.has(key)) return null;
+        return parseRecoveryKeyReminderDismissedRaw(recoveryKeyReminderDismissedCacheByKey.get(key) ?? null);
     },
 
     async setRecoveryKeyReminderDismissed(value: boolean): Promise<boolean> {
@@ -527,6 +596,7 @@ export const TokenStorage = {
         if (Platform.OS === 'web') {
             try {
                 localStorage.setItem(key, raw);
+                recoveryKeyReminderDismissedCacheByKey.set(key, raw);
                 return true;
             } catch {
                 return false;
@@ -534,7 +604,8 @@ export const TokenStorage = {
         }
 
         try {
-            await SecureStore.setItemAsync(key, raw);
+            await writeNativeSecureStoreString(key, raw);
+            recoveryKeyReminderDismissedCacheByKey.set(key, raw);
             return true;
         } catch {
             return false;
@@ -560,8 +631,11 @@ export const TokenStorage = {
         return legacyParsed;
     },
 
-    async getCredentialsForServerUrl(serverUrl: string): Promise<AuthCredentials | null> {
-        const keys = await getAuthKeys(serverUrl);
+    async getCredentialsForServerUrl(
+        serverUrl: string,
+        options: ServerCredentialLookupOptions = {},
+    ): Promise<AuthCredentials | null> {
+        const keys = await getServerScopedKeys(AUTH_KEY, serverUrl, options);
         const primaryRaw = await readCredentialRawByKey(keys.primary);
         const primaryParsed = parseCredentialsRaw(primaryRaw);
         if (primaryParsed) return primaryParsed;

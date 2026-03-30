@@ -84,4 +84,36 @@ describe('resolveServerScopedContext', () => {
             encryption: fakeEncryption,
         });
     });
+
+    it('can force scoped context for the active server', async () => {
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            generation: 1,
+        });
+        getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+        const fakeEncryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeMachines: vi.fn(async () => {}),
+            getMachineEncryption: vi.fn(),
+        };
+        createEncryptionSpy.mockResolvedValue(fakeEncryption);
+
+        const { resolveServerScopedContext } = await import('./resolveServerScopedContext');
+        const context = await resolveServerScopedContext({
+            machineId: 'machine-1',
+            forceScoped: true,
+            timeoutMs: 5000,
+        });
+
+        expect(context).toEqual({
+            scope: 'scoped',
+            machineId: 'machine-1',
+            timeoutMs: 5000,
+            targetServerId: 'server-a',
+            targetServerUrl: 'https://server-a.example.test',
+            token: 'token-a',
+            encryption: fakeEncryption,
+        });
+    });
 });

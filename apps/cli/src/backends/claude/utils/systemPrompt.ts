@@ -1,47 +1,16 @@
-import { trimIdent } from "@/utils/trimIdent";
-import { shouldIncludeCoAuthoredBy } from "./claudeSettings";
-import { CHANGE_TITLE_INSTRUCTION } from "@/agent/runtime/changeTitleInstruction";
+import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol';
+
+import { resolveCodingProviderBehaviorBlocks } from '@/agent/prompting/coding/providerPromptBehaviorRegistry';
 
 /**
- * Base system prompt shared across all configurations
- */
-const BASE_SYSTEM_PROMPT = (() => trimIdent(`
-	    RELIABILITY RULES (IMPORTANT):
-	    - Tool-use sequencing is strict. If you use "AskUserQuestion", do NOT include any other tool_use in the same assistant turn. Wait for the user's answer before calling other tools.
-
-	    ATTACHMENTS:
-	    - If a user message includes an attachments block like:
-	      [attachments]
-	      - /path/to/file
-	      [/attachments]
-	      then read each referenced path with the Read tool before answering.
-`))();
-
-/**
- * Co-authored-by credits to append when enabled
- */
-const CO_AUTHORED_CREDITS = (() => trimIdent(`
-		    When making commit messages, instead of just giving co-credit to Claude, also give credit to Happier like so:
-
-    <main commit message>
-
-	    Generated with [Claude Code](https://claude.ai/code)
-	    via [Happier](https://app.happier.dev)
-
-	    Co-Authored-By: Claude <noreply@anthropic.com>
-	    Co-Authored-By: Happier <yesreply@happier.dev>
-	`))();
-
-/**
- * System prompt with optional Co-Authored-By credits based on Happier settings.
+ * Claude-specific supplemental provider-behavior prompt blocks.
+ * Shared session instructions such as change_title belong to the centralized base prompt.
  */
 export function getClaudeSystemPrompt(): string {
-  const includeCoAuthored = shouldIncludeCoAuthoredBy();
-  const base = BASE_SYSTEM_PROMPT + '\n\n' + CHANGE_TITLE_INSTRUCTION;
-  if (includeCoAuthored) {
-    return base + '\n\n' + CO_AUTHORED_CREDITS;
-  }
-  return base;
+  return renderPromptPlanV1(buildPromptPlanV1({
+    modality: 'coding',
+    blocks: resolveCodingProviderBehaviorBlocks({ providerId: 'claude' }),
+  }));
 }
 
 // Backwards-compatible export name, but evaluated at call time (not module init).

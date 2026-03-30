@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+    loadPackagedPrismaClientModule,
     resolveGeneratedClientEntrypoint,
+    resolvePackagedDefaultPrismaClientEntrypoint,
     resolvePackagedGeneratedClientEntrypoint,
     resolvePreferredGeneratedClientEntrypoint,
 } from "./prisma";
@@ -28,6 +30,9 @@ describe("resolveGeneratedClientEntrypoint", () => {
         expect(resolvePackagedGeneratedClientEntrypoint("mysql", "/opt/happier/happier-server")).toBe(
             "/opt/happier/generated/mysql-client/index.js",
         );
+        expect(resolvePackagedDefaultPrismaClientEntrypoint("/opt/happier/happier-server")).toBe(
+            "/opt/happier/node_modules/.prisma/client/index.js",
+        );
     });
 
     it("prefers packaged generated clients when present next to executable", async () => {
@@ -39,5 +44,17 @@ describe("resolveGeneratedClientEntrypoint", () => {
 
         const resolved = resolvePreferredGeneratedClientEntrypoint("sqlite", execPath);
         expect(resolved).toBe(packaged);
+    });
+
+    it("loads a packaged default Prisma client from sidecars next to the executable", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happier-server-packaged-default-prisma-"));
+        const execPath = join(root, "happier-server");
+        const packaged = join(root, "node_modules", ".prisma", "client", "index.js");
+        await mkdir(join(root, "node_modules", ".prisma", "client"), { recursive: true });
+        await writeFile(packaged, "module.exports = { PrismaClient: class PrismaClient {} };\n", "utf-8");
+
+        const module = loadPackagedPrismaClientModule(execPath);
+        expect(typeof module?.PrismaClient).toBe("function");
+        expect(module?.PrismaClient.name).toBe("PrismaClient");
     });
 });

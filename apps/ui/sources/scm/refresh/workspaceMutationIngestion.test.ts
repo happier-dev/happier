@@ -27,29 +27,41 @@ function toolCallMessage(toolName: string, toolInput: unknown): NormalizedMessag
 
 describe('createWorkspaceMutationIngestion', () => {
     it('routes known mutations to invalidateKnownMutation and unknown-only to invalidateUnknownMutation', () => {
-        vi.useFakeTimers();
         const invalidateKnownMutation = vi.fn();
         const invalidateUnknownMutation = vi.fn();
+        let nextTimerId = 1;
+        let pendingTimers: Array<Readonly<{ id: number; fn: () => void }>> = [];
+
+        function flushNextTimer() {
+            const nextTimer = pendingTimers.shift();
+            nextTimer?.fn();
+        }
 
         const ingestion = createWorkspaceMutationIngestion({
             debounceMs: 100,
             minUnknownOnlyIntervalMs: 1500,
             now: () => 1_000,
-            setTimer: (fn, ms) => setTimeout(fn, ms),
-            clearTimer: (h) => clearTimeout(h as any),
+            setTimer: (fn) => {
+                const id = nextTimerId++;
+                pendingTimers.push({ id, fn });
+                return id;
+            },
+            clearTimer: (handle) => {
+                pendingTimers = pendingTimers.filter((timer) => timer.id !== handle);
+            },
             invalidateKnownMutation,
             invalidateUnknownMutation,
         });
 
         ingestion.ingest('s1', [toolCallMessage('file-edit', { filePath: 'a.ts' })]);
-        vi.advanceTimersByTime(100);
+        flushNextTimer();
 
         expect(invalidateKnownMutation).toHaveBeenCalledTimes(1);
         expect(invalidateKnownMutation).toHaveBeenCalledWith('s1', ['a.ts']);
         expect(invalidateUnknownMutation).not.toHaveBeenCalled();
 
         ingestion.ingest('s1', [toolCallMessage('bash', { command: 'echo hi' })]);
-        vi.advanceTimersByTime(100);
+        flushNextTimer();
 
         expect(invalidateUnknownMutation).toHaveBeenCalledTimes(1);
     });

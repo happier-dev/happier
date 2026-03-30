@@ -1,7 +1,16 @@
 import * as React from 'react';
+import {
+    consumeSessionPaneHistoryTraversalForCurrentLocation,
+    primeSessionPaneHistoryTraversalTracking,
+    readCurrentSessionPaneHistoryState,
+    scheduleCurrentSessionPaneHistoryState,
+} from './sessionPaneHistoryState';
+import { readStoredSessionPaneUrlState, writeStoredSessionPaneUrlState } from './sessionPaneStoredState';
+import { pushSessionPaneUrlParams } from './pushSessionPaneUrlParams';
 
 import type { SessionPaneUrlState } from './sessionPaneUrlState';
 import {
+    applySessionPaneUrlState,
     deriveSessionPaneUrlStateFromScopeState,
     reconcileSessionPaneScopeFromUrlState,
     serializeSessionPaneUrlState,
@@ -9,10 +18,19 @@ import {
 
 export type UseSessionPaneUrlSyncInput = Readonly<{
     enabled: boolean;
+    /**
+     * Stable key for the pane scope being synced (e.g. `session:<id>`). When this changes,
+     * the hook must treat the next effect cycle as a fresh mount so we don't reconcile the
+     * *new* scope's pane state based on the *previous* scope's URL signature.
+     */
+    scopeKey?: string;
     pane: Readonly<{
         openRight: (options?: Readonly<{ tabId?: string }>) => void;
         closeRight: () => void;
         setRightTab: (tabId: string) => void;
+        openBottom: (options?: Readonly<{ tabId?: string }>) => void;
+        closeBottom: () => void;
+        setBottomTab: (tabId: string) => void;
         openDetailsTab: (tab: any, options?: any) => void;
         closeDetails: () => void;
     }>;
@@ -21,14 +39,15 @@ export type UseSessionPaneUrlSyncInput = Readonly<{
     setParams: ((params: Record<string, unknown>) => void) | null | undefined;
 }>;
 
-function signatureFromSerialized(params: Readonly<{ right?: unknown; details?: unknown; path?: unknown; sha?: unknown }>): string {
-    return `${String(params.right ?? '')}|${String(params.details ?? '')}|${String(params.path ?? '')}|${String(params.sha ?? '')}`;
+function signatureFromSerialized(params: Readonly<{ right?: unknown; bottom?: unknown; details?: unknown; path?: unknown; sha?: unknown }>): string {
+    return `${String(params.right ?? '')}|${String(params.bottom ?? '')}|${String(params.details ?? '')}|${String(params.path ?? '')}|${String(params.sha ?? '')}`;
 }
 
-function serializeToParamShape(state: SessionPaneUrlState | null): Readonly<{ right?: string; details?: string; path?: string; sha?: string }> {
+function serializeToParamShape(state: SessionPaneUrlState | null): Readonly<{ right?: string; bottom?: string; details?: string; path?: string; sha?: string }> {
     const serialized = state ? serializeSessionPaneUrlState(state) : {};
     return {
         right: serialized.right,
+        bottom: serialized.bottom,
         details: serialized.details,
         path: serialized.path,
         sha: serialized.sha,
@@ -36,21 +55,77 @@ function serializeToParamShape(state: SessionPaneUrlState | null): Readonly<{ ri
 }
 
 export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
+    primeSessionPaneHistoryTraversalTracking();
+
     const pendingUrlWriteRef = React.useRef<null | Readonly<{ fromSig: string; toSig: string }>>(null);
     const pendingPaneReconcileRef = React.useRef<null | Readonly<{ targetUrlSig: string }>>(null);
     const prevUrlSigRef = React.useRef<string | null>(null);
     const prevDerivedSigRef = React.useRef<string | null>(null);
+    const prevScopeKeyRef = React.useRef<string | null>(null);
+    const restoredScopeKeyRef = React.useRef<string | null>(null);
+    const storedStateHydratedScopeKeyRef = React.useRef<string | null>(null);
+    const pendingStoredStateWriteSigRef = React.useRef<string | null>(null);
 
     const derivedState = React.useMemo(() => deriveSessionPaneUrlStateFromScopeState((input.scopeState ?? null) as any), [input.scopeState]);
     const derivedParams = React.useMemo(() => serializeToParamShape(derivedState), [derivedState]);
     const urlParams = React.useMemo(() => serializeToParamShape(input.urlState), [input.urlState]);
     const derivedSig = React.useMemo(() => signatureFromSerialized(derivedParams), [derivedParams]);
     const urlSig = React.useMemo(() => signatureFromSerialized(urlParams), [urlParams]);
+    const scopeKey = input.scopeKey ?? 'default';
+    const currentHistoryPaneState = React.useMemo(() => readCurrentSessionPaneHistoryState(scopeKey), [scopeKey, urlSig]);
+    const storedState = React.useMemo(() => {
+        if (input.urlState) return null;
+        return readStoredSessionPaneUrlState(scopeKey);
+    }, [input.urlState, scopeKey]);
 
     React.useEffect(() => {
         if (!input.enabled) return;
-        const prevUrlSig = prevUrlSigRef.current;
-        const prevDerivedSig = prevDerivedSigRef.current;
+        if (restoredScopeKeyRef.current === scopeKey) return;
+        restoredScopeKeyRef.current = scopeKey;
+
+        if (input.urlState || !storedState) {
+            return;
+        }
+
+        if (currentHistoryPaneState?.urlSig === urlSig) {
+            return;
+        }
+
+        if (consumeSessionPaneHistoryTraversalForCurrentLocation()) {
+            return;
+        }
+
+        pendingStoredStateWriteSigRef.current = signatureFromSerialized(serializeToParamShape(storedState));
+        applySessionPaneUrlState(input.pane, storedState);
+    }, [currentHistoryPaneState?.urlSig, input.enabled, input.pane, input.urlState, scopeKey, storedState, urlSig]);
+
+    React.useEffect(() => {
+        if (!input.enabled) return;
+        if (input.urlState) return;
+
+        const firstWriteForScope = storedStateHydratedScopeKeyRef.current !== scopeKey;
+        if (firstWriteForScope) {
+            storedStateHydratedScopeKeyRef.current = scopeKey;
+            if (storedState) {
+                return;
+            }
+        }
+
+        writeStoredSessionPaneUrlState(scopeKey, derivedState);
+    }, [derivedSig, derivedState, input.enabled, input.urlState, scopeKey, storedState]);
+
+    React.useEffect(() => {
+        if (!input.enabled) return;
+        const scopeChanged = prevScopeKeyRef.current !== scopeKey;
+        prevScopeKeyRef.current = scopeKey;
+        if (scopeChanged) {
+            pendingUrlWriteRef.current = null;
+            pendingPaneReconcileRef.current = null;
+            pendingStoredStateWriteSigRef.current = null;
+        }
+
+        const prevUrlSig = scopeChanged ? null : prevUrlSigRef.current;
+        const prevDerivedSig = scopeChanged ? null : prevDerivedSigRef.current;
         const isFirstRun = prevUrlSig === null && prevDerivedSig === null;
 
         prevUrlSigRef.current = urlSig;
@@ -64,6 +139,7 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
             }
             // The URL now reflects the params we wrote; clear pending state and ignore.
             if (urlSig === pending.toSig) {
+                scheduleCurrentSessionPaneHistoryState({ scopeKey, urlSig });
                 pendingUrlWriteRef.current = null;
                 return;
             }
@@ -87,8 +163,10 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
         }
 
         // Initial mount: if the URL includes pane params, apply them into pane state.
+        // Important: initial state application should be additive (open requested panes),
+        // not subtractive (closing panes the URL cannot represent, e.g. `scmReview`).
         if (isFirstRun && input.urlState) {
-            reconcileSessionPaneScopeFromUrlState(input.pane, input.urlState);
+            applySessionPaneUrlState(input.pane, input.urlState);
             pendingPaneReconcileRef.current = { targetUrlSig: urlSig };
             return;
         }
@@ -104,23 +182,39 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
         if (derivedSig === urlSig) return;
 
         // Pane state changed (or initial empty URL): serialize state back into the URL.
+        const shouldReplaceHistoryEntry = isFirstRun || pendingStoredStateWriteSigRef.current === derivedSig;
+        if (shouldReplaceHistoryEntry) {
+            pendingStoredStateWriteSigRef.current = null;
+        } else {
+            pushSessionPaneUrlParams({
+                right: derivedParams.right,
+                bottom: derivedParams.bottom,
+                details: derivedParams.details,
+                path: derivedParams.path,
+                sha: derivedParams.sha,
+            });
+        }
         pendingUrlWriteRef.current = { fromSig: urlSig, toSig: derivedSig };
         input.setParams({
             right: derivedParams.right,
+            bottom: derivedParams.bottom,
             details: derivedParams.details,
             path: derivedParams.path,
             sha: derivedParams.sha,
         });
+        scheduleCurrentSessionPaneHistoryState({ scopeKey, urlSig: derivedSig });
     }, [
+        derivedParams.bottom,
         derivedParams.details,
         derivedParams.path,
         derivedParams.right,
         derivedParams.sha,
         derivedSig,
         input.enabled,
+        scopeKey,
+        urlSig,
         input.pane,
         input.setParams,
         input.urlState,
-        urlSig,
     ]);
 }

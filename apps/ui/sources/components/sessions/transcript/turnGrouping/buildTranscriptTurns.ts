@@ -1,5 +1,5 @@
 import type { Message, ToolCallMessage, UserTextMessage } from '@/sync/domains/messages/messageTypes';
-import { isPendingUserActionRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
 
 export type TranscriptTurnToolCallsGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
 
@@ -22,6 +22,7 @@ export type TranscriptTurn = {
 
 export type TranscriptTurnsBuildCache = Readonly<{
     messageIdsOldestFirst: readonly string[];
+    messageGroupingKeysOldestFirst: readonly string[];
     groupToolCalls: boolean;
     toolCallsGroupStrategy: TranscriptTurnToolCallsGroupStrategy;
     turns: TranscriptTurn[];
@@ -44,11 +45,16 @@ function isToolMessage(m: Message): m is ToolCallMessage {
 
 function isGroupableToolMessage(m: Message): m is ToolCallMessage {
     if (!isToolMessage(m)) return false;
-    return !isPendingUserActionRequest({
-        toolName: m.tool.name,
-        requestKind: m.tool.permission?.kind,
-        permissionStatus: m.tool.permission?.status,
-    });
+    return isToolCallMessageGroupableInTranscript(m);
+}
+
+function getMessageGroupingKey(message: Message | undefined): string {
+    if (!message) return 'missing';
+    if (isUserMessage(message)) return 'user';
+    if (isToolMessage(message)) {
+        return isToolCallMessageGroupableInTranscript(message) ? 'tool:groupable' : 'tool:standalone';
+    }
+    return `message:${message.kind}`;
 }
 
 function createEmptyLastTurnState(opts: Readonly<{
@@ -168,11 +174,13 @@ export function buildTranscriptTurnsCached(opts: {
     groupToolCalls: boolean;
     toolCallsGroupStrategy: TranscriptTurnToolCallsGroupStrategy;
 }): TranscriptTurnsBuildCache {
+    const nextMessageGroupingKeysOldestFirst = opts.messageIdsOldestFirst.map((id) => getMessageGroupingKey(opts.messagesById[id]));
     const canReuse =
         opts.cache != null &&
         opts.cache.groupToolCalls === opts.groupToolCalls &&
         opts.cache.toolCallsGroupStrategy === opts.toolCallsGroupStrategy &&
-        isPrefix({ prefix: opts.cache.messageIdsOldestFirst, full: opts.messageIdsOldestFirst });
+        isPrefix({ prefix: opts.cache.messageIdsOldestFirst, full: opts.messageIdsOldestFirst }) &&
+        isPrefix({ prefix: opts.cache.messageGroupingKeysOldestFirst, full: nextMessageGroupingKeysOldestFirst });
 
     // Append-only incremental path.
     if (canReuse && opts.cache!.messageIdsOldestFirst.length <= opts.messageIdsOldestFirst.length) {
@@ -234,6 +242,7 @@ export function buildTranscriptTurnsCached(opts: {
 
         return {
             messageIdsOldestFirst: opts.messageIdsOldestFirst,
+            messageGroupingKeysOldestFirst: nextMessageGroupingKeysOldestFirst,
             groupToolCalls: opts.groupToolCalls,
             toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
             turns: nextTurns,
@@ -275,6 +284,7 @@ export function buildTranscriptTurnsCached(opts: {
 
     return {
         messageIdsOldestFirst: opts.messageIdsOldestFirst,
+        messageGroupingKeysOldestFirst: nextMessageGroupingKeysOldestFirst,
         groupToolCalls: opts.groupToolCalls,
         toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
         turns,

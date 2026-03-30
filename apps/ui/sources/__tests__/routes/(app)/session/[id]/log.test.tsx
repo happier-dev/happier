@@ -1,6 +1,9 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,24 +13,41 @@ const sessionReadLogTailMock = vi.fn(async (_sessionId?: string, _options?: unkn
     tail: 'tail line',
 }));
 
-let devModeEnabled = false;
 let sessionLogPath: string | null = null;
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ id: 'session-1' }),
-}));
-
-vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Platform: {
-            ...rn.Platform,
-            OS: 'ios',
-            select: (spec: Record<string, unknown>) =>
-                spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-        },
-    };
+installSessionRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (spec: Record<string, unknown>) =>
+                    spec && Object.prototype.hasOwnProperty.call(spec, 'ios')
+                        ? (spec as Record<string, unknown> & { ios?: unknown }).ios
+                        : (spec as Record<string, unknown> & { default?: unknown }).default,
+            },
+        });
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                // Boundary fixture: this route only reads `metadata.sessionLogPath` from the session object.
+                useSession: (() =>
+                    (sessionLogPath
+                        ? {
+                              id: 'session-1',
+                              metadata: { sessionLogPath },
+                          }
+                        : {
+                              id: 'session-1',
+                              metadata: null,
+                          }) as unknown) as typeof import('@/sync/domains/state/storage')['useSession'],
+                useIsDataReady: () => true,
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', async () => {
@@ -51,54 +71,29 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: ({ code }: { code: string }) => React.createElement('CodeView', { code }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSession: () =>
-        sessionLogPath
-            ? {
-                id: 'session-1',
-                metadata: { sessionLogPath },
-            }
-            : {
-                id: 'session-1',
-                metadata: null,
-            },
-    useLocalSetting: (name: string) => (name === 'devModeEnabled' ? devModeEnabled : null),
-    useIsDataReady: () => true,
-}));
-
 vi.mock('@/sync/ops', () => ({
     sessionReadLogTail: (sessionId: string, options?: unknown) => sessionReadLogTailMock(sessionId, options),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
 describe('Session log screen', () => {
     beforeEach(() => {
-        devModeEnabled = false;
         sessionLogPath = null;
         sessionReadLogTailMock.mockClear();
     });
 
-    it('does not fetch log tail when developer mode is disabled', async () => {
+    it('does not fetch log tail when log path is unavailable', async () => {
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
-        await act(async () => {
-            renderer.create(React.createElement(SessionLogScreen));
-        });
+        await renderScreen(React.createElement(SessionLogScreen));
 
         expect(sessionReadLogTailMock).not.toHaveBeenCalled();
     });
 
-    it('fetches session log tail when developer mode is enabled and log path exists', async () => {
-        devModeEnabled = true;
+    it('fetches session log tail when log path exists', async () => {
         sessionLogPath = '/tmp/.happier/logs/session.log';
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
-        await act(async () => {
-            renderer.create(React.createElement(SessionLogScreen));
-        });
+        await renderScreen(React.createElement(SessionLogScreen));
 
         expect(sessionReadLogTailMock).toHaveBeenCalledWith('session-1', { maxBytes: 200000 });
     });

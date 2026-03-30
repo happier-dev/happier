@@ -1,29 +1,23 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
+import { ModalCardFrame } from './WebAlertModal';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const baseModalSpy = vi.fn();
+
 vi.mock('./BaseModal', () => ({
-    BaseModal: ({ children }: any) => React.createElement('BaseModal', null, children),
+    BaseModal: (props: any) => {
+        baseModalSpy(props);
+        return React.createElement('BaseModal', props, props.children);
+    },
 }));
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        View: (props: any) => React.createElement('View', props, props.children),
-        Text: (props: any) => React.createElement('Text', props, props.children),
-        TextInput: (props: any) => React.createElement('TextInput', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        Platform: { OS: 'web', select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android },
-        AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-    };
-});
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({ theme: { colors: { surface: '#fff', shadow: { color: '#000' }, divider: '#ccc', text: '#111', textLink: '#00f', input: { background: '#fff', placeholder: '#999' } } } }),
-}));
+installModalComponentCommonModuleMocks();
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -35,17 +29,19 @@ function getTextContent(node: any): string {
     return Array.isArray(value) ? value.join('') : String(value ?? '');
 }
 
+function getNodeByTestID(screen: { findByTestId: (testID: string) => any }, testID: string) {
+    return screen.findByTestId(testID);
+}
+
 describe('WebPromptModal', () => {
-    it('renders cancel/confirm actions as accessible Pressables on web', async () => {
+    it('wraps the dialog content in the shared card frame and keeps backdrop dismissal disabled', async () => {
         const { WebPromptModal } = await import('./WebPromptModal');
 
+        baseModalSpy.mockClear();
         const onClose = vi.fn();
         const onConfirm = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <WebPromptModal
+        const screen = await renderScreen(<WebPromptModal
                     config={{
                         id: 'test-prompt',
                         type: 'prompt',
@@ -59,17 +55,114 @@ describe('WebPromptModal', () => {
                     }}
                     onClose={onClose}
                     onConfirm={onConfirm}
-                />
-            );
-        });
+                />);
 
-        const pressables = tree!.root.findAllByType('Pressable' as any);
-        expect(pressables).toHaveLength(2);
+        const [baseModalProps] = baseModalSpy.mock.calls.at(-1)!;
+        expect(baseModalProps.closeOnBackdrop).toBe(false);
+        expect(baseModalProps.showBackdrop).toBe(true);
 
-        for (const pressable of pressables) {
+        const modalCardFrame = React.Children.toArray(baseModalProps.children).find((child: any) => child.type === ModalCardFrame);
+        expect(modalCardFrame).toBeDefined();
+    });
+
+    it('renders cancel/confirm actions as accessible Pressables on web', async () => {
+        const { WebPromptModal } = await import('./WebPromptModal');
+
+        baseModalSpy.mockClear();
+        const onClose = vi.fn();
+        const onConfirm = vi.fn();
+
+        const screen = await renderScreen(<WebPromptModal
+                    config={{
+                        id: 'test-prompt',
+                        type: 'prompt',
+                        title: 'Create commit',
+                        message: 'Enter commit message',
+                        cancelText: 'Cancel',
+                        confirmText: 'OK',
+                        placeholder: 'message',
+                        defaultValue: '',
+                        inputType: 'default',
+                    }}
+                    onClose={onClose}
+                    onConfirm={onConfirm}
+                />);
+
+        for (const testID of ['web-prompt-cancel', 'web-prompt-confirm']) {
+            const pressable = getNodeByTestID(screen, testID);
             const text = getTextContent(pressable);
+
             expect(pressable.props.accessibilityRole).toBe('button');
             expect(pressable.props.accessibilityLabel).toBe(text);
         }
+    });
+
+    it('autofocuses the input and preserves text submission wiring', async () => {
+        const { WebPromptModal } = await import('./WebPromptModal');
+
+        baseModalSpy.mockClear();
+        const onClose = vi.fn();
+        const onConfirm = vi.fn();
+
+        const screen = await renderScreen(<WebPromptModal
+                    config={{
+                        id: 'test-prompt',
+                        type: 'prompt',
+                        title: 'Attach location',
+                        message: 'Enter path',
+                        cancelText: 'Cancel',
+                        confirmText: 'Attach',
+                        defaultValue: '/tmp/workspace',
+                        inputType: 'default',
+                    }}
+                    onClose={onClose}
+                    onConfirm={onConfirm}
+                />);
+
+        const input = getNodeByTestID(screen, 'web-prompt-input');
+        expect(input.props.autoFocus).toBe(true);
+        expect(input.props.onSubmitEditing).toBeTypeOf('function');
+    });
+
+    it('keeps the typed value when pointer confirm races with modal close', async () => {
+        const { WebPromptModal } = await import('./WebPromptModal');
+
+        baseModalSpy.mockClear();
+        const onClose = vi.fn();
+        const onConfirm = vi.fn();
+
+        const screen = await renderScreen(<WebPromptModal
+                    config={{
+                        id: 'test-prompt',
+                        type: 'prompt',
+                        title: 'Attach location',
+                        message: 'Enter path',
+                        cancelText: 'Cancel',
+                        confirmText: 'Attach',
+                        defaultValue: '/tmp/workspace',
+                        inputType: 'default',
+                    }}
+                    onClose={onClose}
+                    onConfirm={onConfirm}
+                />);
+
+        const input = getNodeByTestID(screen, 'web-prompt-input');
+        act(() => {
+            input.props.onChangeText('/srv/workspace');
+        });
+
+        const confirmButton = getNodeByTestID(screen, 'web-prompt-confirm');
+        expect(baseModalSpy).toHaveBeenCalled();
+        const [baseModalProps] = baseModalSpy.mock.calls.at(-1)!;
+
+        act(() => {
+            confirmButton.props.onPressIn?.();
+            baseModalProps.onClose();
+            confirmButton.props.onPress();
+        });
+
+        expect(onConfirm).toHaveBeenCalledTimes(1);
+        expect(onConfirm).toHaveBeenCalledWith('/srv/workspace');
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

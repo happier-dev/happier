@@ -1,11 +1,14 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
+
+;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const rightPanelModuleLoaded = vi.fn();
 const detailsPanelModuleLoaded = vi.fn();
+const bottomPanelModuleLoaded = vi.fn();
 
 vi.mock('@/components/appShell/panes/AppPaneProvider', () => {
     const ctx = {
@@ -31,23 +34,43 @@ vi.mock('./SessionDetailsPanel', () => {
     };
 });
 
+vi.mock('./bottom/SessionBottomPanel', () => {
+    bottomPanelModuleLoaded();
+    return {
+        SessionBottomPanel: () => React.createElement('SessionBottomPanel'),
+    };
+});
+
 describe('useRegisterSessionPaneDriver (module prefetch)', () => {
-    it('prefetches right/details pane modules after hook mount', async () => {
+    it('does not trigger duplicate eager pane-module loads when the hook mounts', async () => {
+        const { useRegisterSessionPaneDriver } = await import('./useRegisterSessionPaneDriver');
         rightPanelModuleLoaded.mockClear();
         detailsPanelModuleLoaded.mockClear();
-
-        const { useRegisterSessionPaneDriver } = await import('./useRegisterSessionPaneDriver');
+        bottomPanelModuleLoaded.mockClear();
 
         const Probe = () => {
             useRegisterSessionPaneDriver('s1');
             return React.createElement('Probe');
         };
 
-        await act(async () => {
-            renderer.create(<Probe />);
-        });
+        await renderScreen(<Probe />);
 
-        expect(rightPanelModuleLoaded).toHaveBeenCalledTimes(1);
-        expect(detailsPanelModuleLoaded).toHaveBeenCalledTimes(1);
+        expect(rightPanelModuleLoaded).not.toHaveBeenCalled();
+        expect(detailsPanelModuleLoaded).not.toHaveBeenCalled();
+        expect(bottomPanelModuleLoaded).not.toHaveBeenCalled();
+    });
+
+    it('prefetches lazily opened session pane views', async () => {
+        const mod = await import('./useRegisterSessionPaneDriver');
+        const loadSubagentDetails = vi.fn(async () => undefined);
+        mod.sessionPaneModulePrefetchLoaders.splice(
+            0,
+            mod.sessionPaneModulePrefetchLoaders.length,
+            loadSubagentDetails,
+        );
+
+        await mod.prefetchSessionPaneModules();
+
+        expect(loadSubagentDetails).toHaveBeenCalledTimes(1);
     });
 });

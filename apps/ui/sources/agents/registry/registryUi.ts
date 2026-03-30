@@ -11,12 +11,24 @@ import { AUGGIE_UI } from '@/agents/providers/auggie/ui';
 import { QWEN_UI } from '@/agents/providers/qwen/ui';
 import { KIMI_UI } from '@/agents/providers/kimi/ui';
 import { KILO_UI } from '@/agents/providers/kilo/ui';
+import { KIRO_UI } from '@/agents/providers/kiro/ui';
+import { CUSTOM_ACP_UI } from '@/agents/providers/customAcp/ui';
 import { PI_UI } from '@/agents/providers/pi/ui';
 import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 
+export type AgentIconSvgXmlResolver = (
+    theme: UnistylesThemes[keyof UnistylesThemes],
+) => string;
+
 export type AgentUiConfig = Readonly<{
     id: AgentId;
-    icon: ImageSourcePropType;
+    icon: ImageSourcePropType | null;
+    svgIconXml: AgentIconSvgXmlResolver | null;
+    /**
+     * Visual scaling for small list/picker icons (for example backend picker rows).
+     * Some marks have more inherent whitespace than others; this keeps them visually consistent.
+     */
+    pickerIconScale?: number;
     /**
      * Optional tint for the icon (Codex icon is monochrome and should match text color).
      */
@@ -43,18 +55,34 @@ export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze
     qwen: QWEN_UI,
     kimi: KIMI_UI,
     kilo: KILO_UI,
+    kiro: KIRO_UI,
+    customAcp: CUSTOM_ACP_UI,
     pi: PI_UI,
     copilot: COPILOT_UI,
 });
 
-export function getAgentIconSource(agentId: AgentId): ImageSourcePropType {
+export function getAgentIconSource(agentId: AgentId): ImageSourcePropType | null {
     return AGENTS_UI[agentId].icon;
+}
+
+export function getAgentIconSvgXml(
+    agentId: AgentId,
+    theme: UnistylesThemes[keyof UnistylesThemes],
+): string | null {
+    const resolveSvgXml = AGENTS_UI[agentId].svgIconXml;
+    return resolveSvgXml ? resolveSvgXml(theme) : null;
 }
 
 export function getAgentIconTintColor(agentId: AgentId, theme: UnistylesThemes[keyof UnistylesThemes]): string | undefined {
     const tint = AGENTS_UI[agentId].tintColor;
     if (!tint) return undefined;
     return tint(theme);
+}
+
+export function getAgentPickerIconScale(agentId: AgentId): number {
+    const cfg = AGENTS_UI[agentId];
+    if (!cfg) return 1;
+    return cfg.pickerIconScale ?? 1;
 }
 
 export function getAgentAvatarOverlaySizes(agentId: AgentId, size: number): { circleSize: number; iconSize: number } {

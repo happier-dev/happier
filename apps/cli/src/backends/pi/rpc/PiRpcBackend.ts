@@ -79,6 +79,15 @@ function asError(value: unknown): Error {
   return new Error(String(value));
 }
 
+type PiThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
+function normalizePiThinkingEffort(raw: unknown): PiThinkingEffort | null {
+  const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh') return value;
+  if (value === 'max') return 'xhigh';
+  return null;
+}
+
 export type PiRpcSpawnOptions = {
   cwd: string;
   command: string;
@@ -109,7 +118,7 @@ export class PiRpcBackend implements AgentBackend {
   private authRestartInFlight: Promise<void> | null = null;
   private currentModelProvider: string | null = null;
   private readonly modelProviderById = new Map<string, string>();
-  private sessionModelState: { currentModelId: string; availableModels: Array<{ id: string; name: string; description?: string }> } | null =
+  private sessionModelState: { currentModelId: string; availableModels: Array<{ id: string; name: string; description?: string; modelOptions?: unknown[] }> } | null =
     null;
   private lastPublishedUsageKey: string | null = null;
   private disposed = false;
@@ -389,6 +398,24 @@ export class PiRpcBackend implements AgentBackend {
     await this.publishRuntimeState(await this.getState());
   }
 
+  async setSessionConfigOption(sessionId: SessionId, configId: string, value: string | number | boolean | null): Promise<void> {
+    this.assertSession(sessionId);
+    const maybeRestart = this.maybeRestartForUpdatedAuthJson();
+    if (maybeRestart) await maybeRestart;
+
+    const normalizedId = typeof configId === 'string' ? configId.trim().toLowerCase() : '';
+    if (!normalizedId) return;
+
+    // Pi's RPC supports `set_thinking_level`. We expose it through the generic model-scoped option id.
+    if (normalizedId !== 'reasoning_effort') return;
+
+    const level = normalizePiThinkingEffort(value);
+    if (!level) return;
+
+    await this.sendCommand({ type: 'set_thinking_level', level }, 30_000);
+    await this.publishRuntimeState(await this.getState());
+  }
+
   async cancel(sessionId: SessionId): Promise<void> {
     this.assertSession(sessionId);
     await this.sendCommand({ type: 'abort' });
@@ -396,12 +423,22 @@ export class PiRpcBackend implements AgentBackend {
     this.emitMessage({ type: 'status', status: 'idle' });
   }
 
-  async waitForResponseComplete(timeoutMs = 120_000): Promise<void> {
+  async waitForResponseComplete(timeoutMs?: number | null): Promise<void> {
     if (!this.pendingTurn && this.pendingTurnBarrier) {
       await this.pendingTurnBarrier.promise;
     }
     if (!this.pendingTurn) return;
     const turn = this.pendingTurn;
+
+    const stallTimeoutMs =
+      typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? Math.trunc(timeoutMs)
+        : null;
+
+    if (stallTimeoutMs === null) {
+      await turn.promise;
+      return;
+    }
 
     let timeout: NodeJS.Timeout | null = null;
     try {
@@ -410,7 +447,7 @@ export class PiRpcBackend implements AgentBackend {
         new Promise<void>((_, reject) => {
           timeout = setTimeout(() => {
             reject(new Error('Timed out waiting for Pi response completion'));
-          }, timeoutMs);
+          }, stallTimeoutMs);
           timeout.unref?.();
         }),
       ]);
@@ -961,8 +998,9 @@ export class PiRpcBackend implements AgentBackend {
     if (currentModelProvider) {
       this.currentModelProvider = currentModelProvider;
     }
+    const thinkingLevelFromState = normalizePiThinkingEffort((state as any).thinkingLevel) ?? 'medium';
 
-    let normalized: Array<{ id: string; name: string; description: string }> =
+    let normalized: Array<{ id: string; name: string; description: string; modelOptions?: unknown[] }> =
       (this.sessionModelState?.availableModels ?? []).map((m) => ({
         id: m.id,
         name: m.name,
@@ -982,9 +1020,29 @@ export class PiRpcBackend implements AgentBackend {
           const name = asNonEmptyString(model?.name) ?? `${provider}/${id}`;
           this.modelProviderById.set(id, provider);
           this.modelProviderById.set(`${provider}/${id}`, provider);
-          return { id, name, description: provider };
+          const supportsThinking = (model as any).reasoning === true;
+          const modelOptions: unknown[] | undefined = supportsThinking
+            ? [{
+                id: 'reasoning_effort',
+                name: 'Thinking',
+                type: 'select',
+                currentValue: thinkingLevelFromState,
+                options: [
+                  { value: 'low', name: 'Low' },
+                  { value: 'medium', name: 'Medium' },
+                  { value: 'high', name: 'High' },
+                  { value: 'xhigh', name: 'Max' },
+                ],
+              }]
+            : undefined;
+          return {
+            id,
+            name,
+            description: provider,
+            ...(modelOptions ? { modelOptions } : {}),
+          };
         })
-        .filter((entry): entry is { id: string; name: string; description: string } => entry !== null);
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
     } catch {
       // Best-effort: model introspection should not block session start/resume.
     }

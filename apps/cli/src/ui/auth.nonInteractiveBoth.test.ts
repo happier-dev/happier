@@ -1,14 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import tweetnacl from 'tweetnacl';
 
-import {
-  captureConsoleLogAndMuteStdout,
-  createEnvKeyScope,
-  setStdioTtyForTest,
-} from '@/ui/testkit/authNonInteractiveGlobals.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
 const runTailscaleServeStatusMock = vi.fn<
   (params: Readonly<{ timeoutMs: number; env: NodeJS.ProcessEnv; tailscaleBin: string }>) => Promise<string>
@@ -97,7 +93,7 @@ describe.sequential('doAuth (non-interactive)', () => {
   ] as const;
 
   it('prints both web + mobile instructions when method is not specified', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-'));
+    const home = await createTempDir('happier-cli-auth-noninteractive-');
     const envScope = createEnvKeyScope(envKeys);
     const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
     const output = captureConsoleLogAndMuteStdout();
@@ -131,12 +127,12 @@ describe.sequential('doAuth (non-interactive)', () => {
       output.restore();
       restoreTty();
       envScope.restore();
-      await rm(home, { recursive: true, force: true });
+      await removeTempDir(home);
     }
   }, 15_000);
 
   it('prefers Tailscale Serve https:// URL for QR/deep links when serverUrl is loopback and public url is unset', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-tailscale-'));
+    const home = await createTempDir('happier-cli-auth-noninteractive-tailscale-');
     const envScope = createEnvKeyScope(envKeys);
     const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
     const output = captureConsoleLogAndMuteStdout();
@@ -175,13 +171,13 @@ describe.sequential('doAuth (non-interactive)', () => {
       output.restore();
       restoreTty();
       envScope.restore();
-      await rm(home, { recursive: true, force: true });
+      await removeTempDir(home);
       runTailscaleServeStatusMock.mockReset();
     }
   }, 15_000);
 
   it('prints a LAN-only hint when canonical serverUrl is local HTTP', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-lan-'));
+    const home = await createTempDir('happier-cli-auth-noninteractive-lan-');
     const envScope = createEnvKeyScope(envKeys);
     const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
     const output = captureConsoleLogAndMuteStdout();
@@ -210,12 +206,12 @@ describe.sequential('doAuth (non-interactive)', () => {
       output.restore();
       restoreTty();
       envScope.restore();
-      await rm(home, { recursive: true, force: true });
+      await removeTempDir(home);
     }
   }, 15_000);
 
   it('prints a hint when mobile links cannot embed localhost server URLs', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-loopback-'));
+    const home = await createTempDir('happier-cli-auth-noninteractive-loopback-');
     const envScope = createEnvKeyScope(envKeys);
     const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
     const output = captureConsoleLogAndMuteStdout();
@@ -246,12 +242,50 @@ describe.sequential('doAuth (non-interactive)', () => {
       output.restore();
       restoreTty();
       envScope.restore();
-      await rm(home, { recursive: true, force: true });
+      await removeTempDir(home);
+    }
+  }, 15_000);
+
+  it('keeps localhost in web auth links and describes it as same-machine only', async () => {
+    const home = await createTempDir('happier-cli-auth-noninteractive-web-loopback-');
+    const envScope = createEnvKeyScope(envKeys);
+    const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
+    const output = captureConsoleLogAndMuteStdout();
+    displayQRCodeMock.mockClear();
+
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: home,
+        HAPPIER_SERVER_URL: 'http://localhost:3010',
+        HAPPIER_WEBAPP_URL: 'http://happier-dev-auth.localhost:8082',
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_TAILSCALE_AUTO_PUBLIC_URL: '0',
+        HAPPIER_NO_BROWSER_OPEN: '1',
+        HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
+        HAPPIER_AUTH_METHOD: 'web',
+      });
+
+      vi.resetModules();
+      const { doAuth } = await import('./auth');
+
+      const creds = await doAuth();
+      expect(creds?.token).toBe('tok');
+
+      const out = output.logs.join('\n').toLowerCase();
+      expect(out).toContain(encodeURIComponent('http://localhost:3010').toLowerCase());
+      expect(out).toContain('same machine');
+      expect(out).not.toContain('same lan');
+      expect(out).toContain('does not include a server url');
+    } finally {
+      output.restore();
+      restoreTty();
+      envScope.restore();
+      await removeTempDir(home);
     }
   }, 15_000);
 
   it('uses apiServerUrl for auth API calls when HAPPIER_PUBLIC_SERVER_URL is set', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-apiServerUrl-'));
+    const home = await createTempDir('happier-cli-auth-noninteractive-apiServerUrl-');
     const envScope = createEnvKeyScope(envKeys);
     const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
     const output = captureConsoleLogAndMuteStdout();
@@ -294,12 +328,12 @@ describe.sequential('doAuth (non-interactive)', () => {
       output.restore();
       restoreTty();
       envScope.restore();
-      await rm(home, { recursive: true, force: true });
+      await removeTempDir(home);
     }
   }, 15_000);
 
   it('fails fast with a clear message when claim response token/response are invalid', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-invalid-claim-'));
+    const home = await createTempDir('happier-cli-auth-noninteractive-invalid-claim-');
     const envScope = createEnvKeyScope(envKeys);
     const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
     const output = captureConsoleLogAndMuteStdout();
@@ -347,12 +381,12 @@ describe.sequential('doAuth (non-interactive)', () => {
       output.restore();
       restoreTty();
       envScope.restore();
-      await rm(home, { recursive: true, force: true });
+      await removeTempDir(home);
     }
   }, 15_000);
 
   it('does not print a QR code when method is web', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-web-'));
+    const home = await createTempDir('happier-cli-auth-noninteractive-web-');
     const envScope = createEnvKeyScope(envKeys);
     const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
     const output = captureConsoleLogAndMuteStdout();
@@ -382,7 +416,7 @@ describe.sequential('doAuth (non-interactive)', () => {
       output.restore();
       restoreTty();
       envScope.restore();
-      await rm(home, { recursive: true, force: true });
+      await removeTempDir(home);
     }
   }, 15_000);
 });

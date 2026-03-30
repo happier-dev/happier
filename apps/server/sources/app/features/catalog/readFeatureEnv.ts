@@ -1,4 +1,5 @@
-import { parseBooleanEnv, parseIntEnv } from '@/config/env';
+import { parseBooleanEnv, parseIntEnv } from '../../../config/env';
+import { MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY, normalizeMachineTransferServerRoutedMaxBytes } from '@happier-dev/protocol';
 import { FEATURE_ENV_KEYS } from './featureEnvSchema';
 
 export type AutomationsFeatureEnv = Readonly<{
@@ -25,12 +26,32 @@ export type ConnectedServicesFeatureEnv = Readonly<{
   quotasEnabled: boolean;
 }>;
 
+export type ChannelBridgesFeatureEnv = Readonly<{
+  enabled: boolean;
+  telegramEnabled: boolean;
+}>;
+
 export type UpdatesFeatureEnv = Readonly<{
   otaEnabled: boolean;
 }>;
 
 export type AttachmentsUploadsFeatureEnv = Readonly<{
   enabled: boolean;
+}>;
+
+export type SessionHandoffFeatureEnv = Readonly<{
+  handoffEnabled: boolean;
+}>;
+
+export type MachineTransferFeatureEnv = Readonly<{
+  directPeerEnabled: boolean;
+  serverRoutedEnabled: boolean;
+  serverRoutedMaxBytes: number | null;
+  serverRoutedMaxActiveTransfersPerSocket: number;
+}>;
+
+export type TerminalFeatureEnv = Readonly<{
+  embeddedPtyEnabled: boolean;
 }>;
 
 export type SocialFriendsFeatureEnv = Readonly<{
@@ -197,6 +218,13 @@ export function readConnectedServicesFeatureEnv(env: NodeJS.ProcessEnv): Connect
   };
 }
 
+export function readChannelBridgesFeatureEnv(env: NodeJS.ProcessEnv): ChannelBridgesFeatureEnv {
+  return {
+    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.channelBridgesEnabled], true),
+    telegramEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.channelBridgesTelegramEnabled], true),
+  };
+}
+
 export function readUpdatesFeatureEnv(env: NodeJS.ProcessEnv): UpdatesFeatureEnv {
   return {
     otaEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.updatesOtaEnabled], true),
@@ -206,6 +234,44 @@ export function readUpdatesFeatureEnv(env: NodeJS.ProcessEnv): UpdatesFeatureEnv
 export function readAttachmentsUploadsFeatureEnv(env: NodeJS.ProcessEnv): AttachmentsUploadsFeatureEnv {
   return {
     enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.attachmentsUploadsEnabled], true),
+  };
+}
+
+export function readSessionHandoffFeatureEnv(env: NodeJS.ProcessEnv): SessionHandoffFeatureEnv {
+  return {
+    handoffEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsHandoffEnabled], true),
+  };
+}
+
+export function readMachineTransferFeatureEnv(env: NodeJS.ProcessEnv): MachineTransferFeatureEnv {
+  // Keep these values in sync with the CLI/server-routed transfer policy in
+  // `packages/transfers/src/policy/serverRoutedTransferPolicy.ts`.
+  const DEFAULT_SERVER_ROUTED_TRANSFER_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
+  const SERVER_ROUTED_TRANSFER_MAX_BYTES_HARD_MAX = 8 * 1024 * 1024 * 1024; // 8 GiB
+
+  const configuredServerRoutedMaxBytes = normalizeMachineTransferServerRoutedMaxBytes(
+    env[FEATURE_ENV_KEYS.machinesTransferServerRoutedMaxBytes] ?? env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY],
+  );
+  const resolvedServerRoutedMaxBytes = Math.min(
+    configuredServerRoutedMaxBytes ?? DEFAULT_SERVER_ROUTED_TRANSFER_MAX_BYTES,
+    SERVER_ROUTED_TRANSFER_MAX_BYTES_HARD_MAX,
+  );
+
+  return {
+    directPeerEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesTransferDirectPeerEnabled], true),
+    serverRoutedEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesTransferServerRoutedEnabled], true),
+    serverRoutedMaxBytes: resolvedServerRoutedMaxBytes,
+    serverRoutedMaxActiveTransfersPerSocket: parseIntEnv(
+      env[FEATURE_ENV_KEYS.machinesTransferServerRoutedMaxActiveTransfersPerSocket],
+      128,
+      { min: 1, max: 10_000 },
+    ),
+  };
+}
+
+export function readTerminalFeatureEnv(env: NodeJS.ProcessEnv): TerminalFeatureEnv {
+  return {
+    embeddedPtyEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.terminalEmbeddedPtyEnabled], true),
   };
 }
 

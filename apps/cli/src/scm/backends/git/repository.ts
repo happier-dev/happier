@@ -5,8 +5,9 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { runScmCommand } from '../../runtime';
 import { normalizeRepoRootRelativePath } from '../../runtime';
 import { buildGitSnapshot } from './statusSnapshot';
+import { inspectGitCheckoutIdentity } from './checkoutIdentity';
 import { readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const UNTRACKED_STATS_MAX_FILES = 512;
 const UNTRACKED_STATS_MAX_BYTES = 5_000_000;
@@ -58,6 +59,16 @@ async function computeUntrackedStatsByPath(repoRoot: string): Promise<Record<str
     }
 
     return statsByPath;
+}
+
+function resolveMainWorktreePathFromCheckoutIdentity(
+    checkoutIdentity: Awaited<ReturnType<typeof inspectGitCheckoutIdentity>>,
+): string | null {
+    if (!checkoutIdentity) {
+        return null;
+    }
+
+    return dirname(checkoutIdentity.commonDirPath);
 }
 
 export async function detectGitRepo(input: { cwd: string }): Promise<ScmRepoDetection> {
@@ -121,6 +132,13 @@ export async function getGitSnapshot(input: {
         args: ['diff', '--numstat', '-z'],
         timeoutMs: 10_000,
     });
+    const worktreesResult = await runScmCommand({
+        bin: 'git',
+        cwd: repoRoot,
+        args: ['worktree', 'list', '--porcelain'],
+        timeoutMs: 10_000,
+    });
+    const checkoutIdentity = await inspectGitCheckoutIdentity({ cwd: context.cwd });
 
     const statusRaw = statusResult.stdout ?? '';
     const hasUntrackedHint = /(?:^|\0)\?\s/.test(statusRaw);
@@ -132,10 +150,13 @@ export async function getGitSnapshot(input: {
             projectKey: context.projectKey,
             fetchedAt: Date.now(),
             rootPath: context.detection.rootPath,
+            currentWorktreePath: context.cwd,
+            mainWorktreePath: resolveMainWorktreePathFromCheckoutIdentity(checkoutIdentity),
             statusOutput: statusResult.stdout ?? '',
             includedNumStatOutput: includedResult.success ? (includedResult.stdout ?? '') : '',
             pendingNumStatOutput: pendingResult.success ? (pendingResult.stdout ?? '') : '',
             untrackedStatsByPath,
+            worktreesOutput: worktreesResult.success ? (worktreesResult.stdout ?? '') : '',
         }),
     };
 }

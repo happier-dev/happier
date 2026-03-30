@@ -15,6 +15,7 @@ import { TextSelectabilityScope } from '@/components/ui/text/Text';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { t } from '@/text';
+import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
 
 type ToolInlineBodyMode = 'card' | 'timeline';
 
@@ -87,25 +88,17 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         minimal = true;
     }
 
-    // When a permission is denied/canceled, the tool body often has no result payload.
-    // Render an explicit status so the user understands why the tool did not run.
-    if (tool.permission && (tool.permission.status === 'denied' || tool.permission.status === 'canceled')) {
-        const canBlameReadOnlyMode = (() => {
-            if (props.metadata?.permissionMode !== 'read-only') return false;
-            const agentId = resolveAgentIdFromFlavor(props.metadata?.flavor);
-            if (!agentId) return false;
-            const core = getAgentCore(agentId);
-            return core.permissions?.modeGroup === 'codexLike';
-        })();
-        const message =
-            tool.permission.status === 'denied'
-                ? canBlameReadOnlyMode
-                    ? 'Denied by Read Only mode (write actions are denied).'
-                    : t('errors.permissionDenied')
-                : 'Permission canceled';
+    const permissionTerminalErrorMessage = resolveToolPermissionTerminalErrorMessage({
+        tool,
+        metadata: props.metadata ?? null,
+        permissionDisabledReason: props.interaction?.permissionDisabledReason,
+    });
+    if (permissionTerminalErrorMessage) {
+        // When a permission is denied/canceled, the tool body often has no result payload.
+        // Render an explicit status so the user understands why the tool did not run.
         return (
             <TextSelectabilityScope selectable>
-                <ToolError message={message} />
+                <ToolError message={permissionTerminalErrorMessage} />
             </TextSelectabilityScope>
         );
     }

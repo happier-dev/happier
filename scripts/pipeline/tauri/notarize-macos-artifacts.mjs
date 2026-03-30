@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
+import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
 
 function fail(message) {
   console.error(message);
@@ -95,6 +96,7 @@ function main() {
   const tmpRoot = String(process.env.RUNNER_TEMP ?? '').trim() || os.tmpdir();
   const keyPath = tempFile(tmpRoot, 'apple-notary.p8');
   const signingKeyValue = String(process.env.TAURI_SIGNING_PRIVATE_KEY ?? '').trim();
+  const signingKeyPassword = resolveTauriSigningPrivateKeyPassword(process.env);
   const signingKeyPath = signingKeyValue
     ? ensureTauriSigningKeyFile({ tmpRoot, keyValue: signingKeyValue, dryRun: opts.dryRun })
     : '';
@@ -181,6 +183,7 @@ function main() {
       cwd: absUiDir,
       env: {
         ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
+        ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
       },
       stdio: ['ignore', 'pipe', 'inherit'],
       timeoutMs: 10 * 60_000,

@@ -7,14 +7,14 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI can run Expo submit in dry-run', async () => {
+test('pipeline CLI can run Expo submit for dev in dry-run', async () => {
   const out = execFileSync(
     process.execPath,
     [
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'expo-submit',
       '--environment',
-      'preview',
+      'dev',
       '--platform',
       'all',
       '--dry-run',
@@ -35,5 +35,5 @@ test('pipeline CLI can run Expo submit in dry-run', async () => {
   );
 
   assert.match(out, /scripts\/pipeline\/expo\/submit\.mjs/);
-  assert.match(out, /\[pipeline\] expo submit: environment=preview platform=all/);
+  assert.match(out, /\[pipeline\] expo submit: environment=dev platform=all/);
 });

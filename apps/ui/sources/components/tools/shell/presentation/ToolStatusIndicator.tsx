@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
+import type { UnistylesThemes } from 'react-native-unistyles';
 interface ToolStatusIndicatorProps {
     tool: ToolCall;
 }
@@ -17,7 +18,9 @@ export function ToolStatusIndicator({ tool }: ToolStatusIndicatorProps) {
     );
 }
 
-function StatusIndicator({ tool, theme }: { tool: ToolCall; theme: any }) {
+type Theme = UnistylesThemes[keyof UnistylesThemes];
+
+function StatusIndicator({ tool, theme }: { tool: ToolCall; theme: Theme }) {
     const kind = resolveToolStatusIndicatorKind(tool);
     switch (kind) {
         case 'permission_pending':

@@ -38,7 +38,8 @@ export function startCaffeinate(): boolean {
         // Spawn caffeinate with flags:
         // -i: Prevent system from idle sleeping  
         // -m: Prevent disk from sleeping
-        caffeinateProcess = spawn('caffeinate', ['-im'], {
+        // -w: Exit automatically when this process exits, even if explicit cleanup is skipped
+        caffeinateProcess = spawn('caffeinate', ['-im', '-w', String(process.pid)], {
             stdio: 'ignore',
             detached: false
         });

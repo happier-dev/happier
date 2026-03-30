@@ -1,13 +1,14 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { MultiPaneHost } from './MultiPaneHost';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('MultiPaneHost (Escape closes docked panes)', () => {
-    it('closes docked details first on Escape (web)', () => {
-        vi.useFakeTimers();
+    it('closes docked details first on Escape (web)', async () => {
         const onCloseRight = vi.fn();
         const onCloseDetails = vi.fn();
 
@@ -24,25 +25,19 @@ describe('MultiPaneHost (Escape closes docked panes)', () => {
             }
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <MultiPaneHost
-                    main={<Main />}
-                    rightPane={<Right />}
-                    detailsPane={<Details />}
-                    layout={{ kind: 'threePane', right: 'docked', details: 'docked' }}
-                    rightDockWidthPx={360}
-                    detailsDockWidthPx={520}
-                    onCloseRight={onCloseRight}
-                    onCloseDetails={onCloseDetails}
-                    onCommitRightDockWidthPx={() => {}}
-                    onCommitDetailsDockWidthPx={() => {}}
-                />
-            );
-        });
+        await renderScreen(<MultiPaneHost
+                main={<Main />}
+                rightPane={<Right />}
+                detailsPane={<Details />}
+                layout={{ kind: 'threePane', right: 'docked', details: 'docked' }}
+                rightDockWidthPx={360}
+                detailsDockWidthPx={520}
+                onCloseRight={onCloseRight}
+                onCloseDetails={onCloseDetails}
+                onCommitRightDockWidthPx={() => {}}
+                onCommitDetailsDockWidthPx={() => {}}
+            />);
 
-        expect(tree).toBeTruthy();
         act(() => {
             (globalThis as any).window.dispatchEvent(new (globalThis as any).KeyboardEvent('keydown', { key: 'Escape' }));
         });
@@ -51,8 +46,7 @@ describe('MultiPaneHost (Escape closes docked panes)', () => {
         expect(onCloseRight).toHaveBeenCalledTimes(0);
     });
 
-    it('does not close panes on Escape when event target is a text input', () => {
-        vi.useFakeTimers();
+    it('does not close panes on Escape when event target is a text input', async () => {
         const onCloseRight = vi.fn();
         const onCloseDetails = vi.fn();
 
@@ -69,9 +63,7 @@ describe('MultiPaneHost (Escape closes docked panes)', () => {
             }
         };
 
-        act(() => {
-            renderer.create(
-                <MultiPaneHost
+        await renderScreen(<MultiPaneHost
                     main={<Main />}
                     rightPane={<Right />}
                     detailsPane={<Details />}
@@ -82,9 +74,7 @@ describe('MultiPaneHost (Escape closes docked panes)', () => {
                     onCloseDetails={onCloseDetails}
                     onCommitRightDockWidthPx={() => {}}
                     onCommitDetailsDockWidthPx={() => {}}
-                />
-            );
-        });
+                />);
 
         act(() => {
             (globalThis as any).window.dispatchEvent(

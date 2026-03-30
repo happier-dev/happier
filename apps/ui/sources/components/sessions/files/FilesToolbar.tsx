@@ -17,12 +17,14 @@ type FilesToolbarProps = {
     changedFilesCount: number;
     changedFilesViewMode: ChangedFilesViewMode;
     changedFilesPresentation: ChangedFilesPresentation;
+    showTurnViewToggle?: boolean;
     showSessionViewToggle: boolean;
     onChangedFilesViewMode: (mode: ChangedFilesViewMode) => void;
     onChangedFilesPresentationChange: (mode: ChangedFilesPresentation) => void;
     scmPanelExpanded: boolean;
     onToggleScmPanel: () => void;
     onRefresh?: () => void;
+    showScmToggle?: boolean;
 };
 
 export function FilesToolbar(props: FilesToolbarProps) {
@@ -36,12 +38,14 @@ export function FilesToolbar(props: FilesToolbarProps) {
         changedFilesCount,
         changedFilesViewMode,
         changedFilesPresentation,
+        showTurnViewToggle = false,
         showSessionViewToggle,
         onChangedFilesViewMode,
         onChangedFilesPresentationChange,
         scmPanelExpanded,
         onToggleScmPanel,
         onRefresh,
+        showScmToggle = true,
     } = props;
 
     const chipStyle = (active: boolean) => ({
@@ -153,6 +157,14 @@ export function FilesToolbar(props: FilesToolbarProps) {
                             icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
                             onPress={() => onChangedFilesViewMode('repository')}
                         />
+                        {showTurnViewToggle && (
+                            <Chip
+                                active={changedFilesViewMode === 'turn'}
+                                label={t('files.toolbar.turnView')}
+                                icon={<Octicons name="clock" size={14} color={theme.colors.textSecondary} />}
+                                onPress={() => onChangedFilesViewMode('turn')}
+                            />
+                        )}
                         {showSessionViewToggle && (
                             <Chip
                                 active={changedFilesViewMode === 'session'}
@@ -177,12 +189,14 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     </>
                 ) : null}
 
-                <Chip
-                    active={scmPanelExpanded}
-                    label={t('files.toolbar.scm')}
-                    icon={<Octicons name="git-branch" size={14} color={theme.colors.textSecondary} />}
-                    onPress={onToggleScmPanel}
-                />
+                {showScmToggle ? (
+                    <Chip
+                        active={scmPanelExpanded}
+                        label={t('files.toolbar.scm')}
+                        icon={<Octicons name="git-branch" size={14} color={theme.colors.textSecondary} />}
+                        onPress={onToggleScmPanel}
+                    />
+                ) : null}
 
                 {onRefresh ? (
                     <Chip
@@ -194,7 +208,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
                 ) : null}
             </View>
 
-            {!showAllRepositoryFiles && changedFilesCount > 0 && !showSessionViewToggle && (
+            {!showAllRepositoryFiles && changedFilesCount > 0 && !showTurnViewToggle && !showSessionViewToggle && (
                 <View
                     style={{
                         marginTop: 10,

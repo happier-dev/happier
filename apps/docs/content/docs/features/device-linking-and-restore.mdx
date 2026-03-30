@@ -1,0 +1,169 @@
+---
+title: Device linking & restore
+description: How to sign in on a new phone or computer, when to use each QR flow, and what to do on self-hosted servers.
+---
+
+Happier now has a few different QR-based flows. They look similar, but they solve different problems.
+
+This page explains which one to use, what each button means, and what to do when QR scanning or server reachability gets in the way.
+
+## The three things users commonly want
+
+Most account/device questions fall into one of these buckets:
+
+- **Sign in on a new phone** using a computer that is already signed in
+- **Restore access on a new computer or browser** using another signed-in device
+- **Connect a terminal** to your account so the CLI/daemon can run sessions
+
+These are separate flows on purpose:
+
+- **Account restore / add a phone** signs a new device into the same Happier account
+- **Terminal connect** authorizes a terminal/daemon, not a new user-facing device
+
+If you remember that distinction, the rest of the UI is much easier to reason about.
+
+## What each option means
+
+### Add your phone
+
+Use **Settings → Add your phone** on desktop/web when:
+
+- you are already signed in on your computer
+- you want your phone to sign in to that same Happier account
+
+That screen shows:
+
+- a QR code
+- a copyable deep link
+- a one-time approval step when your phone requests access
+
+When your phone scans it, the computer stays in control of approval. If Happier shows a confirmation code on both devices, check that they match before approving.
+
+### Restore account
+
+Use **Restore account** on a logged-out device when you want that device to join an existing account.
+
+What happens next depends on the device:
+
+- **Phone / mobile-sized web with camera support:** Happier opens the QR scanner first so you can scan a desktop/web QR immediately
+- **Desktop / larger web layouts:** Happier shows a QR code that another already-signed-in device can scan
+
+This is why the restore screen does not look identical everywhere: the default action changes based on what is practical on that device.
+
+### Show a QR code instead
+
+On the phone restore flow, **Show a QR code instead** switches to the opposite direction:
+
+- instead of scanning a computer QR,
+- the phone shows its own QR,
+- and another signed-in device can scan it to approve the restore.
+
+This is the fallback when scanning from the current phone is not practical.
+
+### Restore with Secret Key Instead
+
+Use **Restore with Secret Key Instead** when:
+
+- you do not have another signed-in device available
+- scanning is not possible
+- you intentionally keep a manual backup / recovery path
+
+For device-key accounts, the secret key is the recovery credential that lets a new device read the same encrypted account data.
+
+### Scan QR to connect terminal
+
+Use **Scan QR to connect terminal** only when a terminal or CLI is showing a Happier terminal QR.
+
+This does **not** sign a phone or browser into your account. It approves a terminal/daemon connection.
+
+### Enter URL manually
+
+Use **Enter URL manually** when:
+
+- the camera is unavailable
+- the QR code is on another screen and you cannot scan it directly
+- you copied a Happier link from another device
+
+This is the manual fallback for QR-driven flows. It is especially useful on locked-down browsers, remote devices, or when camera permissions are unreliable.
+
+## Common user flows
+
+### Add a phone from a signed-in computer
+
+1. On the signed-in desktop/web app, open **Settings → Add your phone**
+2. On the phone, choose **Restore account**
+3. Scan the QR code from the computer
+4. Check the confirmation code if Happier shows one
+5. Approve on the computer
+
+After approval, the phone signs in to the same account.
+
+### Restore a new browser or desktop from another signed-in device
+
+1. On the new browser/computer, open **Restore account**
+2. If it shows a QR code, scan it from another device that is already signed in
+3. Approve the request on the signed-in device
+
+If you are using a phone as the new device, Happier usually opens the scanner first instead.
+
+### Connect a terminal
+
+1. Start terminal login from the CLI
+2. In the Happier app, choose **Scan QR to connect terminal**
+3. Scan the terminal QR or paste the link with **Enter URL manually**
+4. Approve the request
+
+This gives the terminal access it needs without changing which devices are signed in to your account UI.
+
+## Approval and safety checks
+
+When Happier asks an already-signed-in device to approve a restore or pairing request, treat it like a login confirmation.
+
+Recommended checks:
+
+- confirm that the request appears when you expect it
+- check the short confirmation code if both devices show one
+- verify the device label when Happier shows it
+- do not approve unexpected requests
+
+The QR code itself is not the final credential. Approval still happens from a signed-in device.
+
+## Self-hosted servers and localhost
+
+This is the main source of confusion in local development and some self-hosted setups.
+
+If your server is configured as `localhost`, `127.0.0.1`, `::1`, or another loopback-only host:
+
+- desktop/web can still talk to it locally
+- a phone cannot reach that same address, because `localhost` on the phone means the phone itself
+
+To avoid creating broken mobile links, Happier intentionally omits the server URL from mobile-oriented QR codes and deep links when the current server is loopback-only.
+
+In that situation:
+
+- configure the phone to use a server URL it can actually reach
+- then retry the scan
+
+Typical working choices:
+
+- a LAN URL such as `http://192.168.x.x:3005`
+- a Tailscale HTTPS URL such as `https://machine.tailnet.ts.net`
+- your own public/reverse-proxied domain
+
+If you operate the server yourself, set `HAPPIER_PUBLIC_SERVER_URL` so Happier can embed the right shareable URL in QR/deep links.
+
+## Which flow should I pick?
+
+Use this quick rule:
+
+- **I want my phone to sign in to my existing account** → **Add your phone**
+- **I want a new browser/computer/device to join an existing account** → **Restore account**
+- **I want the CLI/terminal to connect** → **Scan QR to connect terminal**
+- **I cannot scan right now** → **Enter URL manually** or **Restore with Secret Key Instead**
+
+## Related docs
+
+- [App](/docs/clients/app)
+- [CLI](/docs/clients/cli)
+- [Encryption model](/docs/security/encryption)
+- [Environment variables](/docs/deployment/env)

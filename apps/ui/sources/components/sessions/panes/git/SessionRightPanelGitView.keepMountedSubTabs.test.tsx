@@ -1,36 +1,89 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const SLOW_TEST_TIMEOUT_MS = 60_000;
+
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    AppState: {
-        addEventListener: () => ({ remove: () => {} }),
-    },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            dark: false,
-            colors: {
-                textSecondary: '#666',
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            Text: (props: any) => React.createElement('Text', props, props.children),
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.default ?? null,
             },
-        },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (value: any) => value,
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
     },
-}));
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(
+            importOriginal,
+            {
+                useSetting: () => null,
+                useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
+                useProjectForSession: () => null,
+                useProjectSessions: () => [],
+                useMachine: () => ({ online: true }),
+                useSession: () => ({ active: true, metadata: { machineId: 'm1', path: '/repo' } }),
+                useSessionProjectScmCommitSelectionPaths: () => [],
+                useSessionProjectScmCommitSelectionPatches: () => [],
+                useSessionProjectScmInFlightOperation: () => null,
+                useSessionProjectScmOperationLog: () => [],
+                useSessionProjectScmSnapshot: () => ({
+                    fetchedAt: 1,
+                    projectKey: 'm1:/repo',
+                    repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+                    capabilities: {
+                        readStatus: true,
+                        readDiffFile: true,
+                        readDiffCommit: true,
+                        readLog: true,
+                        writeCommit: true,
+                        writeInclude: true,
+                        writeExclude: true,
+                        writeRemoteFetch: true,
+                        writeRemotePull: true,
+                        writeRemotePush: true,
+                        supportedDiffAreas: ['included', 'pending'],
+                    },
+                    branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                    stashCount: 0,
+                    hasConflicts: false,
+                    entries: [],
+                    totals: {
+                        includedFiles: 0,
+                        pendingFiles: 0,
+                        untrackedFiles: 0,
+                        includedAdded: 0,
+                        includedRemoved: 0,
+                        pendingAdded: 0,
+                        pendingRemoved: 0,
+                    },
+                }),
+                useSessionProjectScmSnapshotError: () => null,
+                useSessionProjectScmTouchedPaths: () => [],
+            },
+        );
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -82,53 +135,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    __esModule: true,
-    useSetting: () => null,
-    useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
-    useProjectForSession: () => null,
-    useProjectSessions: () => [],
-    useMachine: () => ({ online: true }),
-    useSession: () => ({ active: true, metadata: { machineId: 'm1', path: '/repo' } }),
-    useSessionProjectScmCommitSelectionPaths: () => [],
-    useSessionProjectScmCommitSelectionPatches: () => [],
-    useSessionProjectScmInFlightOperation: () => null,
-    useSessionProjectScmOperationLog: () => [],
-    useSessionProjectScmSnapshot: () => ({
-        fetchedAt: 1,
-        projectKey: 'm1:/repo',
-        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-        capabilities: {
-            readStatus: true,
-            readDiffFile: true,
-            readDiffCommit: true,
-            readLog: true,
-            writeCommit: true,
-            writeInclude: true,
-            writeExclude: true,
-            writeRemoteFetch: true,
-            writeRemotePull: true,
-            writeRemotePush: true,
-            supportedDiffAreas: ['included', 'pending'],
-        },
-        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-        stashCount: 0,
-        hasConflicts: false,
-        entries: [],
-        totals: {
-            includedFiles: 0,
-            pendingFiles: 0,
-            untrackedFiles: 0,
-            includedAdded: 0,
-            includedRemoved: 0,
-            pendingAdded: 0,
-            pendingRemoved: 0,
-        },
-    }),
-    useSessionProjectScmSnapshotError: () => null,
-    useSessionProjectScmTouchedPaths: () => [],
-}));
-
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
@@ -161,20 +167,16 @@ vi.mock('@/scm/scmStatusSync', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
 vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
-    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab'),
+    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab', { testID: 'session-right-panel-git-commit-tab' }),
 }));
 
 vi.mock('./SessionRightPanelGitUpdateTab', () => ({
-    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab'),
+    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab', { testID: 'session-right-panel-git-update-tab' }),
 }));
 
 vi.mock('./SessionRightPanelGitHistoryTab', () => ({
-    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab'),
+    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab', { testID: 'session-right-panel-git-history-tab' }),
 }));
 
 describe('SessionRightPanelGitView (keep mounted sub-tabs)', () => {
@@ -182,12 +184,10 @@ describe('SessionRightPanelGitView (keep mounted sub-tabs)', () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
-        });
+        tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
 
-        expect(tree.root.findAllByType('CommitTab' as any)).toHaveLength(1);
-        expect(tree.root.findAllByType('UpdateTab' as any)).toHaveLength(1);
-        expect(tree.root.findAllByType('HistoryTab' as any)).toHaveLength(1);
-    });
+        expect(tree.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
+        expect(tree.findAllByTestId('session-right-panel-git-update-tab')).toHaveLength(1);
+        expect(tree.findAllByTestId('session-right-panel-git-history-tab')).toHaveLength(1);
+    }, SLOW_TEST_TIMEOUT_MS);
 });

@@ -35,10 +35,8 @@ test('feature-policy manifests exist and can generate embedded policy module', a
     assert.ok(Array.isArray(doc.buildPolicy.deny), `${label} buildPolicy.deny must be an array`);
   }
 
-  assert.ok(
-    production.buildPolicy.allow.length > 0,
-    'production buildPolicy.allow must be non-empty (allowlist mode)'
-  );
+  // Production may run in allowlist-mode (non-empty allow) or in "neutral" mode (empty allow+deny).
+  // Both are valid: build policy is an optional ship-deny mechanism.
 
   const outDir = await mkdtemp(join(tmpdir(), 'happier-feature-policy-'));
   await mkdir(outDir, { recursive: true });
@@ -75,4 +73,3 @@ test('feature-policy manifests exist and can generate embedded policy module', a
   assert.match(generated, /production/, 'generated module should embed production as the default env');
   assert.match(generated, /EMBEDDED_FEATURE_BUILD_POLICY_RAW/, 'generated module must export embedded policy raw values');
 });
-

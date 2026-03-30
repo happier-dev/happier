@@ -3,26 +3,37 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TranscriptMotionContext } from './TranscriptMotionContext';
+import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const timingSpy = vi.fn(() => ({ start: (cb?: any) => cb?.({ finished: true }) }));
-
-vi.mock('react-native', () => ({
-    Animated: {
-        Value: class {
-            constructor(_v: any) {}
-            setValue(_v: any) {}
-            interpolate(_cfg: any) { return 0; }
-        },
-        timing: timingSpy,
-        View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-    },
-    Easing: {
-        bezier: () => (t: number) => t,
-        linear: (t: number) => t,
-    },
+const hoistedAnimatedSpies = vi.hoisted(() => ({
+    timingSpy: vi.fn(() => ({ start: (cb?: any) => cb?.({ finished: true }) })),
 }));
+
+installTranscriptMotionCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Animated: {
+                Value: class {
+                    constructor(_v: any) {}
+                    setValue(_v: any) {}
+                    interpolate(_cfg: any) {
+                        return 0;
+                    }
+                },
+                timing: hoistedAnimatedSpies.timingSpy,
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            Easing: {
+                bezier: () => (t: number) => t,
+                linear: (t: number) => t,
+            },
+        });
+    },
+});
 
 describe('TranscriptCollapsible', () => {
     it('animates expand when enabled and fresh-only allows', async () => {
@@ -41,18 +52,16 @@ describe('TranscriptCollapsible', () => {
 
         const { TranscriptCollapsible } = await import('./TranscriptCollapsible');
 
+        const { renderScreen } = await import('@/dev/testkit');
+
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <TranscriptMotionContext.Provider value={runtime}>
+        tree = (await renderScreen(<TranscriptMotionContext.Provider value={runtime}>
                     <TranscriptCollapsible id="t1" createdAt={1} expanded={false}>
                         <div />
                     </TranscriptCollapsible>
-                </TranscriptMotionContext.Provider>
-            );
-        });
+                </TranscriptMotionContext.Provider>)).tree;
 
-        timingSpy.mockClear();
+        hoistedAnimatedSpies.timingSpy.mockClear();
         await act(async () => {
             tree!.update(
                 <TranscriptMotionContext.Provider value={runtime}>
@@ -64,7 +73,7 @@ describe('TranscriptCollapsible', () => {
         });
 
         expect(gate.consumeFreshness).toHaveBeenCalledTimes(1);
-        expect(timingSpy).toHaveBeenCalledTimes(1);
+        expect(hoistedAnimatedSpies.timingSpy).toHaveBeenCalledTimes(1);
     });
 
     it('does not animate when fresh-only gate rejects', async () => {
@@ -83,18 +92,16 @@ describe('TranscriptCollapsible', () => {
 
         const { TranscriptCollapsible } = await import('./TranscriptCollapsible');
 
+        const { renderScreen } = await import('@/dev/testkit');
+
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <TranscriptMotionContext.Provider value={runtime}>
+        tree = (await renderScreen(<TranscriptMotionContext.Provider value={runtime}>
                     <TranscriptCollapsible id="t1" createdAt={1} expanded={false}>
                         <div />
                     </TranscriptCollapsible>
-                </TranscriptMotionContext.Provider>
-            );
-        });
+                </TranscriptMotionContext.Provider>)).tree;
 
-        timingSpy.mockClear();
+        hoistedAnimatedSpies.timingSpy.mockClear();
         await act(async () => {
             tree!.update(
                 <TranscriptMotionContext.Provider value={runtime}>
@@ -106,6 +113,6 @@ describe('TranscriptCollapsible', () => {
         });
 
         expect(gate.consumeFreshness).toHaveBeenCalledTimes(1);
-        expect(timingSpy).toHaveBeenCalledTimes(0);
+        expect(hoistedAnimatedSpies.timingSpy).toHaveBeenCalledTimes(0);
     });
 });

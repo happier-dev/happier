@@ -6,6 +6,7 @@ import { resolveTerminalAuthRequestPolicyFromEnv } from "./terminalAuthRequestPo
 import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveAuthFeature } from "@/app/features/authFeature";
 import { resolveAuthMethodRegistry } from "@/app/auth/methods/registry";
+import { z } from "zod";
 
 function hasAnyViableNonKeyChallengeAuthMethod(env: NodeJS.ProcessEnv): boolean {
     const feature = resolveAuthFeature(env);
@@ -19,6 +20,21 @@ function hasAnyViableNonKeyChallengeAuthMethod(env: NodeJS.ProcessEnv): boolean 
 }
 
 export function authRoutes(app: Fastify): void {
+    app.get(
+        "/v1/auth/ping",
+        {
+            preHandler: app.authenticate,
+            schema: {
+                response: {
+                    200: z.object({ ok: z.literal(true) }),
+                },
+            },
+        },
+        async (_request, reply) => {
+            return reply.send({ ok: true });
+        },
+    );
+
     const terminalAuthPolicy = resolveTerminalAuthRequestPolicyFromEnv(process.env);
     const isTerminalAuthExpired = (createdAt: Date): boolean => {
         const ageMs = Date.now() - createdAt.getTime();

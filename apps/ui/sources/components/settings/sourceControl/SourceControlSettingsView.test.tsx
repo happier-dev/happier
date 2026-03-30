@@ -1,54 +1,84 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setScmCommitStrategy = vi.fn();
-const setScmGitRepoPreferredBackend = vi.fn();
-const setScmRemoteConfirmPolicy = vi.fn();
-const setScmPushRejectPolicy = vi.fn();
-const setScmDefaultDiffModeByBackend = vi.fn();
-const setFilesDiffSyntaxHighlightingMode = vi.fn();
-const setFilesDiffRendererMode = vi.fn();
-const setFilesDiffPresentationStyle = vi.fn();
-let filesDiffPresentationStyleValue: any = 'split';
-const setFilesChangedFilesRowDensity = vi.fn();
-const setScmCommitMessageGeneratorEnabled = vi.fn();
-const setScmCommitMessageGeneratorBackendId = vi.fn();
-const setScmCommitMessageGeneratorInstructions = vi.fn();
-
-const modalPrompt = vi.fn();
-
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
+const {
+    setScmCommitStrategy,
+    setScmGitRepoPreferredBackend,
+    setScmRemoteConfirmPolicy,
+    setScmPushRejectPolicy,
+    setScmDefaultDiffModeByBackend,
+    setFilesDiffSyntaxHighlightingMode,
+    setFilesDiffRendererMode,
+    setFilesDiffPresentationStyle,
+    setFilesChangedFilesRowDensity,
+    setScmCommitMessageGeneratorEnabled,
+    setScmCommitMessageGeneratorBackendId,
+    setScmCommitMessageGeneratorInstructions,
+} = vi.hoisted(() => ({
+    setScmCommitStrategy: vi.fn(),
+    setScmGitRepoPreferredBackend: vi.fn(),
+    setScmRemoteConfirmPolicy: vi.fn(),
+    setScmPushRejectPolicy: vi.fn(),
+    setScmDefaultDiffModeByBackend: vi.fn(),
+    setFilesDiffSyntaxHighlightingMode: vi.fn(),
+    setFilesDiffRendererMode: vi.fn(),
+    setFilesDiffPresentationStyle: vi.fn(),
+    setFilesChangedFilesRowDensity: vi.fn(),
+    setScmCommitMessageGeneratorEnabled: vi.fn(),
+    setScmCommitMessageGeneratorBackendId: vi.fn(),
+    setScmCommitMessageGeneratorInstructions: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (name: string) => {
-        if (name === 'scmCommitStrategy') return ['atomic', setScmCommitStrategy];
-        if (name === 'scmGitRepoPreferredBackend') return ['git', setScmGitRepoPreferredBackend];
-        if (name === 'scmRemoteConfirmPolicy') return ['always', setScmRemoteConfirmPolicy];
-        if (name === 'scmPushRejectPolicy') return ['prompt_fetch', setScmPushRejectPolicy];
-        if (name === 'scmDefaultDiffModeByBackend') return [{}, setScmDefaultDiffModeByBackend];
-        if (name === 'filesDiffSyntaxHighlightingMode') return ['off', setFilesDiffSyntaxHighlightingMode];
-        if (name === 'filesDiffRendererMode') return ['pierre', setFilesDiffRendererMode];
-        if (name === 'filesDiffPresentationStyle') return [filesDiffPresentationStyleValue, setFilesDiffPresentationStyle];
-        if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
-        if (name === 'scmCommitMessageGeneratorEnabled') return [false, setScmCommitMessageGeneratorEnabled];
-        if (name === 'scmCommitMessageGeneratorBackendId') return ['claude', setScmCommitMessageGeneratorBackendId];
-        if (name === 'scmCommitMessageGeneratorInstructions') return ['', setScmCommitMessageGeneratorInstructions];
-        return [null, vi.fn()];
+type FilesDiffPresentationStyleValue = 'split' | 'unified' | undefined;
+
+let filesDiffPresentationStyleValue: FilesDiffPresentationStyleValue = 'split';
+
+installSettingsViewCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: (name: string) => {
+                    if (name === 'scmCommitStrategy') return ['atomic', setScmCommitStrategy];
+                    if (name === 'scmGitRepoPreferredBackend') return ['git', setScmGitRepoPreferredBackend];
+                    if (name === 'scmRemoteConfirmPolicy') return ['always', setScmRemoteConfirmPolicy];
+                    if (name === 'scmPushRejectPolicy') return ['prompt_fetch', setScmPushRejectPolicy];
+                    if (name === 'scmDefaultDiffModeByBackend') return [{}, setScmDefaultDiffModeByBackend];
+                    if (name === 'filesDiffSyntaxHighlightingMode') return ['off', setFilesDiffSyntaxHighlightingMode];
+                    if (name === 'filesDiffRendererMode') return ['pierre', setFilesDiffRendererMode];
+                    if (name === 'filesDiffPresentationStyle') return [filesDiffPresentationStyleValue, setFilesDiffPresentationStyle];
+                    if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
+                    if (name === 'scmCommitMessageGeneratorEnabled') return [true, setScmCommitMessageGeneratorEnabled];
+                    if (name === 'scmCommitMessageGeneratorBackendId') return [DEFAULT_AGENT_ID, setScmCommitMessageGeneratorBackendId];
+                    if (name === 'scmCommitMessageGeneratorInstructions') return ['', setScmCommitMessageGeneratorInstructions];
+                    return [null, vi.fn()];
+                },
+            },
+        });
     },
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: modalPrompt,
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key, params) => {
+                if (key === 'settingsSourceControl.backends.defaultDiffItemTitle') {
+                    return `settingsSourceControl.backends.defaultDiffItemTitle:${String(params?.backendTitle ?? '')}:${String(params?.diffModeTitle ?? '')}`;
+                }
+                if (key === 'settingsSourceControl.commitMessageGenerator.backendItemTitle') {
+                    return `settingsSourceControl.commitMessageGenerator.backendItemTitle:${String(params?.backendId ?? '')}`;
+                }
+                return key;
+            },
+        });
     },
-}));
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
@@ -62,55 +92,26 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
-        if (key === 'settingsSourceControl.backends.defaultDiffItemTitle') {
-            return `settingsSourceControl.backends.defaultDiffItemTitle:${String(params?.backendTitle ?? '')}:${String(params?.diffModeTitle ?? '')}`;
-        }
-        if (key === 'settingsSourceControl.commitMessageGenerator.backendItemTitle') {
-            return `settingsSourceControl.commitMessageGenerator.backendItemTitle:${String(params?.backendId ?? '')}`;
-        }
-        return key;
-    },
-}));
-
 describe('SourceControlSettingsView', () => {
     it('renders commit strategy options and updates setting when selected', async () => {
         filesDiffPresentationStyleValue = 'split';
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SourceControlSettingsView));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const titles = items.map((item) => item.props.title);
-        expect(titles).toContain('settingsSourceControl.commitStrategy.options.atomic.title');
-        expect(titles).toContain('settingsSourceControl.commitStrategy.options.gitStaging.title');
-        expect(titles).toContain('settingsSourceControl.gitRoutingPreference.options.git.title');
-        expect(titles).toContain('settingsSourceControl.remoteConfirmation.options.always.title');
-
-        const gitStagingItem = items.find((item) => item.props.title === 'settingsSourceControl.commitStrategy.options.gitStaging.title');
-        expect(gitStagingItem).toBeTruthy();
-        await act(async () => {
-            gitStagingItem!.props.onPress();
-        });
+        expect(screen.findRowByTitle('settingsSourceControl.commitStrategy.options.gitStaging.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.commitStrategy.options.atomic.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.gitRoutingPreference.options.git.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.remoteConfirmation.options.always.title')).toBeTruthy();
+        screen.pressRowByTitle('settingsSourceControl.commitStrategy.options.gitStaging.title');
         expect(setScmCommitStrategy).toHaveBeenCalledWith('git_staging');
     });
 
     it('defaults diff presentation style to unified when the setting is missing', async () => {
         filesDiffPresentationStyleValue = undefined;
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SourceControlSettingsView));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const unified = items.find((item) => item.props.title === 'settingsSourceControl.filesDisplay.diffPresentation.options.unified.title');
-        const split = items.find((item) => item.props.title === 'settingsSourceControl.filesDisplay.diffPresentation.options.split.title');
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+        const unified = screen.findRowByTitle('settingsSourceControl.filesDisplay.diffPresentation.options.unified.title');
+        const split = screen.findRowByTitle('settingsSourceControl.filesDisplay.diffPresentation.options.split.title');
 
         expect(unified).toBeTruthy();
         expect(split).toBeTruthy();
@@ -120,37 +121,21 @@ describe('SourceControlSettingsView', () => {
 
     it('only renders backend-supported default diff modes', async () => {
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SourceControlSettingsView));
-        });
-
-        const titles = tree!.root.findAllByType('Item' as any).map((item) => item.props.title);
-        expect(titles).toContain('settingsSourceControl.backends.defaultDiffItemTitle:Git:settingsSourceControl.diffMode.included');
-        expect(titles).toContain('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.pending');
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+        expect(screen.findRowByTitle('settingsSourceControl.backends.defaultDiffItemTitle:Git:settingsSourceControl.diffMode.included')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.pending')).toBeTruthy();
         // When no snapshot/capabilities are available yet, Sapling conservatively only advertises "pending".
-        expect(titles).not.toContain('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.combined');
-        expect(titles).not.toContain('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.included');
+        expect(screen.findRowByTitle('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.combined')).toBeNull();
+        expect(screen.findRowByTitle('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.included')).toBeNull();
     });
 
     it('allows updating diff syntax highlighting mode', async () => {
         setFilesDiffSyntaxHighlightingMode.mockClear();
 
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SourceControlSettingsView));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const simpleItem = items.find((item) => item.props.title === 'settingsSourceControl.filesDisplay.syntaxHighlighting.options.simple.title');
-        expect(simpleItem).toBeTruthy();
-
-        await act(async () => {
-            simpleItem!.props.onPress();
-        });
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+        expect(screen.findRowByTitle('settingsSourceControl.filesDisplay.syntaxHighlighting.options.simple.title')).toBeTruthy();
+        screen.pressRowByTitle('settingsSourceControl.filesDisplay.syntaxHighlighting.options.simple.title');
 
         expect(setFilesDiffSyntaxHighlightingMode).toHaveBeenCalledWith('simple');
     });
@@ -159,19 +144,9 @@ describe('SourceControlSettingsView', () => {
         setFilesDiffRendererMode.mockClear();
 
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SourceControlSettingsView));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const happierItem = items.find((item) => item.props.title === 'settingsSourceControl.filesDisplay.diffRenderer.options.happier.title');
-        expect(happierItem).toBeTruthy();
-
-        await act(async () => {
-            happierItem!.props.onPress();
-        });
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+        expect(screen.findRowByTitle('settingsSourceControl.filesDisplay.diffRenderer.options.happier.title')).toBeTruthy();
+        screen.pressRowByTitle('settingsSourceControl.filesDisplay.diffRenderer.options.happier.title');
 
         expect(setFilesDiffRendererMode).toHaveBeenCalledWith('happier');
     });
@@ -180,19 +155,9 @@ describe('SourceControlSettingsView', () => {
         setFilesDiffPresentationStyle.mockClear();
 
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SourceControlSettingsView));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const unifiedItem = items.find((item) => item.props.title === 'settingsSourceControl.filesDisplay.diffPresentation.options.unified.title');
-        expect(unifiedItem).toBeTruthy();
-
-        await act(async () => {
-            unifiedItem!.props.onPress();
-        });
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+        expect(screen.findRowByTitle('settingsSourceControl.filesDisplay.diffPresentation.options.unified.title')).toBeTruthy();
+        screen.pressRowByTitle('settingsSourceControl.filesDisplay.diffPresentation.options.unified.title');
 
         expect(setFilesDiffPresentationStyle).toHaveBeenCalledWith('unified');
     });
@@ -201,56 +166,32 @@ describe('SourceControlSettingsView', () => {
         setFilesChangedFilesRowDensity.mockClear();
 
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SourceControlSettingsView));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const compactItem = items.find((item) => item.props.title === 'settingsSourceControl.filesDisplay.changedFilesDensity.options.compact.title');
-        expect(compactItem).toBeTruthy();
-
-        await act(async () => {
-            compactItem!.props.onPress();
-        });
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+        expect(screen.findRowByTitle('settingsSourceControl.filesDisplay.changedFilesDensity.options.compact.title')).toBeTruthy();
+        screen.pressRowByTitle('settingsSourceControl.filesDisplay.changedFilesDensity.options.compact.title');
 
         expect(setFilesChangedFilesRowDensity).toHaveBeenCalledWith('compact');
     });
 
-    it('renders commit message generator settings and allows enabling', async () => {
+    it('renders commit message generator settings and allows disabling', async () => {
         setScmCommitMessageGeneratorEnabled.mockClear();
 
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+        expect(screen.findRowByTitle('settingsSourceControl.commitMessageGenerator.title')).toBeTruthy();
+        screen.pressRowByTitle('settingsSourceControl.commitMessageGenerator.title');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SourceControlSettingsView));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const generatorItem = items.find((item) => item.props.title === 'settingsSourceControl.commitMessageGenerator.title');
-        expect(generatorItem).toBeTruthy();
-
-        await act(async () => {
-            generatorItem!.props.onPress();
-        });
-
-        expect(setScmCommitMessageGeneratorEnabled).toHaveBeenCalledWith(true);
+        expect(setScmCommitMessageGeneratorEnabled).toHaveBeenCalledWith(false);
     });
 
     it('allows editing commit message generator instructions', async () => {
         setScmCommitMessageGeneratorInstructions.mockClear();
 
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SourceControlSettingsView));
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+        const instructions = screen.findByProps({
+            placeholder: 'settingsSourceControl.commitMessageGenerator.instructionsPlaceholder',
         });
-
-        const inputs = tree!.root.findAllByType('TextInput' as any);
-        const instructions = inputs.find((n: any) => n.props.placeholder === 'settingsSourceControl.commitMessageGenerator.instructionsPlaceholder');
         expect(instructions).toBeTruthy();
 
         await act(async () => {

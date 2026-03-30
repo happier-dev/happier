@@ -1,27 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createEnvReset } from "../../testkit/env";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
-const originalEnv = { ...process.env };
+const resetEnv = createEnvReset();
+const combinedLoggingPath = "/logs-combined-from-cli-and-mobile-for-simple-ai-debugging";
 
 describe("devRoutes", () => {
     afterEach(() => {
-        process.env = { ...originalEnv };
+        resetEnv();
         vi.restoreAllMocks();
         vi.resetModules();
     });
 
     it("does not register the combined logging route when debug env is disabled", async () => {
-        delete process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING;
-        const post = vi.fn();
+        resetEnv({ DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: undefined });
 
         const { devRoutes } = await import("./devRoutes");
-        devRoutes({ post } as any);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: combinedLoggingPath,
+            registerRoutes(app) {
+                devRoutes(app as any);
+            },
+        });
 
-        expect(post).not.toHaveBeenCalled();
+        expect(route.routeExists).toBe(false);
     });
 
     it("registers the combined logging route and forwards logs to fileConsolidatedLogger", async () => {
-        process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING = "1";
-        const post = vi.fn();
+        resetEnv({ DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: "1" });
         const info = vi.fn();
         const warn = vi.fn();
         const debug = vi.fn();
@@ -32,16 +39,10 @@ describe("devRoutes", () => {
         }));
 
         const { devRoutes } = await import("./devRoutes");
-        devRoutes({ post } as any);
-
-        expect(post).toHaveBeenCalledTimes(1);
-        expect(post.mock.calls[0]?.[0]).toBe("/logs-combined-from-cli-and-mobile-for-simple-ai-debugging");
-
-        const handler = post.mock.calls[0]?.[2] as (request: any, reply: any) => Promise<unknown>;
-        const send = vi.fn((payload: unknown) => payload);
-
-        await handler(
-            {
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: combinedLoggingPath,
+            defaultRequest: {
                 body: {
                     timestamp: "2026-02-12T00:00:00.000Z",
                     level: "info",
@@ -50,8 +51,12 @@ describe("devRoutes", () => {
                     platform: "darwin",
                 },
             },
-            { send },
-        );
+            registerRoutes(app) {
+                devRoutes(app as any);
+            },
+        });
+
+        const { reply } = await route.invoke();
 
         expect(info).toHaveBeenCalledWith(
             {
@@ -61,6 +66,6 @@ describe("devRoutes", () => {
             },
             "hello",
         );
-        expect(send).toHaveBeenCalledWith({ success: true });
+        expect(reply.send).toHaveBeenCalledWith({ success: true });
     });
 });

@@ -84,8 +84,6 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
     const [vcsIgnoreStrategy, setVcsIgnoreStrategy] = useSettingMutable('attachmentsUploadsVcsIgnoreStrategy');
     const [vcsIgnoreWritesEnabled, setVcsIgnoreWritesEnabled] = useSettingMutable('attachmentsUploadsVcsIgnoreWritesEnabled');
     const [maxFileBytes, setMaxFileBytes] = useSettingMutable('attachmentsUploadsMaxFileBytes');
-    const [uploadTtlMs, setUploadTtlMs] = useSettingMutable('attachmentsUploadsUploadTtlMs');
-    const [chunkSizeBytes, setChunkSizeBytes] = useSettingMutable('attachmentsUploadsChunkSizeBytes');
 
     const effectiveUploadLocation = uploadLocation === 'os_temp' ? 'os_temp' : 'workspace';
     const effectiveIgnoreStrategy =
@@ -199,44 +197,6 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                             return;
                         }
                         setMaxFileBytes(parsed);
-                    }}
-                />
-                <Item
-                    title={t('settingsAttachments.limits.uploadTtl.title')}
-                    subtitle={typeof uploadTtlMs === 'number' ? String(uploadTtlMs) : t('common.default')}
-                    icon={renderIcon('timer-outline')}
-                    onPress={async () => {
-                        const raw = await Modal.prompt(
-                            t('settingsAttachments.limits.uploadTtl.promptTitle'),
-                            t('settingsAttachments.limits.uploadTtl.promptMessage'),
-                            { placeholder: typeof uploadTtlMs === 'number' ? String(uploadTtlMs) : String(5 * 60 * 1000) },
-                        );
-                        if (raw === null) return;
-                        const parsed = parsePositiveInt(raw, { min: 5000, max: 60 * 60 * 1000 });
-                        if (parsed == null) {
-                            Modal.alert(t('settingsAttachments.limits.invalidValueTitle'), t('settingsAttachments.limits.uploadTtl.invalidValueMessage'));
-                            return;
-                        }
-                        setUploadTtlMs(parsed);
-                    }}
-                />
-                <Item
-                    title={t('settingsAttachments.limits.chunkSize.title')}
-                    subtitle={typeof chunkSizeBytes === 'number' ? String(chunkSizeBytes) : t('common.default')}
-                    icon={renderIcon('albums-outline')}
-                    onPress={async () => {
-                        const raw = await Modal.prompt(
-                            t('settingsAttachments.limits.chunkSize.promptTitle'),
-                            t('settingsAttachments.limits.chunkSize.promptMessage'),
-                            { placeholder: typeof chunkSizeBytes === 'number' ? String(chunkSizeBytes) : String(256 * 1024) },
-                        );
-                        if (raw === null) return;
-                        const parsed = parsePositiveInt(raw, { min: 4096, max: 1024 * 1024 });
-                        if (parsed == null) {
-                            Modal.alert(t('settingsAttachments.limits.invalidValueTitle'), t('settingsAttachments.limits.chunkSize.invalidValueMessage'));
-                            return;
-                        }
-                        setChunkSizeBytes(parsed);
                     }}
                 />
             </ItemGroup>

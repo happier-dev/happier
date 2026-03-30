@@ -30,6 +30,8 @@ describe('serverUrlClassification', () => {
   it('detects loopback http URLs', () => {
     expect(isLoopbackHttpServerUrl('http://127.0.0.1:3005')).toBe(true);
     expect(isLoopbackHttpServerUrl('http://localhost:3005')).toBe(true);
+    expect(isLoopbackHttpServerUrl('http://happier-qa.localhost:3005')).toBe(true);
+    expect(isLoopbackHttpServerUrl('http://happier-qa.localhost.:3005')).toBe(true);
     expect(isLoopbackHttpServerUrl('https://localhost:3005')).toBe(false);
   });
 
@@ -43,4 +45,3 @@ describe('serverUrlClassification', () => {
     expect(isInsecureRemoteHttpServerUrl('https://example.com:3005')).toBe(false);
   });
 });
-

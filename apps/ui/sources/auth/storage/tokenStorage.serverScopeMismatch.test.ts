@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installTokenStorageWebPlatformMocks } from './tokenStorage.testHelpers';
 import { installLocalStorageMock } from './tokenStorage.web.testHelpers';
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-}));
+installTokenStorageWebPlatformMocks();
 
 vi.mock('expo-secure-store', () => ({}));
 

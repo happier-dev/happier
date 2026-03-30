@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
+import { installBugReportComponentCommonModuleMocks } from './bugReportComponentTestHelpers';
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+installBugReportComponentCommonModuleMocks();
 
 describe('openBugReportFallbackIssueUrl', () => {
     const originalOs = Platform.OS;

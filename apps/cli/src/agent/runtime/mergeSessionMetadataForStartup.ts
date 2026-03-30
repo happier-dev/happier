@@ -1,6 +1,15 @@
 import type { Metadata, PermissionMode } from '@/api/types';
-import { computeMonotonicUpdatedAt } from '@happier-dev/agents';
-import { buildAcpSessionModeOverrideV1, buildModelOverrideV1 } from '@happier-dev/protocol';
+import {
+    computeMonotonicUpdatedAt,
+    LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
+    SESSION_MODE_OVERRIDE_KEY,
+} from '@happier-dev/agents';
+import {
+    buildAcpSessionModeOverrideV1,
+    buildModelOverrideV1,
+    readSessionMcpSelectionV1FromMetadata,
+    type SessionAttachMetadataIdentityPolicy,
+} from '@happier-dev/protocol';
 
 export type PermissionModeOverride = {
     mode: PermissionMode;
@@ -8,6 +17,12 @@ export type PermissionModeOverride = {
 };
 
 export type StartupMergeMode = 'start' | 'attach';
+
+function shouldPreserveCurrentIdentityOnAttach(
+    policy: SessionAttachMetadataIdentityPolicy | null | undefined,
+): boolean {
+    return policy !== 'replace_with_runtime_identity';
+}
 
 function resolvePermissionModeForStartup(opts: {
     current: Metadata;
@@ -80,6 +95,23 @@ export type ModelOverride = {
     updatedAt?: number | null;
 };
 
+function resolveSessionMcpSelectionForStartup(opts: {
+    current: Metadata;
+    next: Metadata;
+    mode: StartupMergeMode;
+}): Record<string, unknown> | null {
+    const currentSelection = readSessionMcpSelectionV1FromMetadata(opts.current);
+    const nextSelection = readSessionMcpSelectionV1FromMetadata(opts.next);
+
+    if (opts.mode === 'attach') {
+        return currentSelection ? { mcpSelectionV1: currentSelection } : null;
+    }
+
+    if (currentSelection) return { mcpSelectionV1: currentSelection };
+    if (nextSelection) return { mcpSelectionV1: nextSelection };
+    return null;
+}
+
 function resolveAcpSessionModeOverrideForStartup(opts: {
     current: Metadata;
     next: Metadata;
@@ -87,10 +119,10 @@ function resolveAcpSessionModeOverrideForStartup(opts: {
     override?: AcpSessionModeOverride | null;
     mode: StartupMergeMode;
 }): { modeId: string; updatedAt: number } | null {
-    const currentOverride = (opts.current as any).acpSessionModeOverrideV1 as
+    const currentOverride = ((opts.current as any)[SESSION_MODE_OVERRIDE_KEY] ?? (opts.current as any)[LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY]) as
         | { v: 1; updatedAt: number; modeId: string }
         | undefined;
-    const nextOverride = (opts.next as any).acpSessionModeOverrideV1 as
+    const nextOverride = ((opts.next as any)[SESSION_MODE_OVERRIDE_KEY] ?? (opts.next as any)[LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY]) as
         | { v: 1; updatedAt: number; modeId: string }
         | undefined;
 
@@ -240,6 +272,8 @@ export function mergeSessionMetadataForStartup(opts: {
     permissionModeOverride?: PermissionModeOverride | null;
     acpSessionModeOverride?: AcpSessionModeOverride | null;
     modelOverride?: ModelOverride | null;
+    metadataKeysToUnsetOnAttach?: readonly string[] | null;
+    attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null;
     mode?: StartupMergeMode;
 }): Metadata {
     const mode: StartupMergeMode = opts.mode ?? 'start';
@@ -255,25 +289,35 @@ export function mergeSessionMetadataForStartup(opts: {
         // already-persisted metadata. The "next" metadata is derived from the currently-running CLI
         // process (often in a different working directory), and should not overwrite the session's
         // canonical workspace and host info.
-        const stableKeys: Array<keyof Metadata> = [
-            'path',
-            'host',
-            'homeDir',
-            'happyHomeDir',
-            'happyLibDir',
-            'happyToolsDir',
-            'machineId',
-            'os',
-            'version',
-            'profileId',
-            'flavor',
-        ];
-
-        for (const key of stableKeys) {
-            const value = opts.current[key];
-            if (value !== undefined && value !== null) {
-                (merged as any)[key] = value;
+        if (shouldPreserveCurrentIdentityOnAttach(opts.attachMetadataIdentityPolicy)) {
+            const stableKeys: Array<keyof Metadata> = [
+                'path',
+                'host',
+                'homeDir',
+                'happyHomeDir',
+                'happyLibDir',
+                'happyToolsDir',
+                'machineId',
+                'os',
+                'version',
+                'profileId',
+                'flavor',
+            ];
+            for (const key of stableKeys) {
+                const value = opts.current[key];
+                if (value !== undefined && value !== null) {
+                    (merged as any)[key] = value;
+                }
             }
+        }
+
+        for (const key of ['workspaceId', 'workspaceLocationId', 'workspaceCheckoutId'] as const) {
+            delete (merged as Record<string, unknown>)[key];
+        }
+
+        for (const key of opts.metadataKeysToUnsetOnAttach ?? []) {
+            if (typeof key !== 'string' || !key.trim()) continue;
+            delete (merged as any)[key];
         }
     }
 
@@ -305,10 +349,13 @@ export function mergeSessionMetadataForStartup(opts: {
         mode,
     });
     if (acpMode) {
-        (merged as any).acpSessionModeOverrideV1 = buildAcpSessionModeOverrideV1({ updatedAt: acpMode.updatedAt, modeId: acpMode.modeId });
+        const builtOverride = buildAcpSessionModeOverrideV1({ updatedAt: acpMode.updatedAt, modeId: acpMode.modeId });
+        (merged as any)[SESSION_MODE_OVERRIDE_KEY] = builtOverride;
+        (merged as any)[LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY] = builtOverride;
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived override fields.
-        delete (merged as any).acpSessionModeOverrideV1;
+        delete (merged as any)[SESSION_MODE_OVERRIDE_KEY];
+        delete (merged as any)[LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY];
     }
 
     const model = resolveModelOverrideForStartup({
@@ -323,6 +370,17 @@ export function mergeSessionMetadataForStartup(opts: {
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived override fields.
         delete (merged as any).modelOverrideV1;
+    }
+
+    const mcpSelection = resolveSessionMcpSelectionForStartup({
+        current: opts.current,
+        next: opts.next,
+        mode,
+    });
+    if (mcpSelection) {
+        Object.assign(merged, mcpSelection);
+    } else if (mode === 'attach') {
+        delete (merged as any).mcpSelectionV1;
     }
 
     return merged;

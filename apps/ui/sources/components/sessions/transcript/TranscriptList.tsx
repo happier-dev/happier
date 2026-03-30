@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, FlatList, Platform, View } from 'react-native';
-import { FlashList } from '@shopify/flash-list';
+import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { MessageView } from '@/components/sessions/transcript/MessageView';

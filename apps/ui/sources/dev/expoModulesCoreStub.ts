@@ -10,6 +10,22 @@ export const Platform = {
         (specifics as any).node ?? (specifics as any).default,
 } as const;
 
+export enum PermissionStatus {
+    GRANTED = 'granted',
+    UNDETERMINED = 'undetermined',
+    DENIED = 'denied',
+}
+
+export class NativeModule<TEvents = unknown> {
+    addListener(_eventName: keyof TEvents | string, _listener: (...args: unknown[]) => void): { remove: () => void } {
+        return {
+            remove: () => undefined,
+        };
+    }
+
+    removeListeners(_count: number): void {}
+}
+
 // Expo modules use this to access native modules (which don't exist in Vitest/node).
 export function requireOptionalNativeModule() {
     return null;
@@ -20,3 +36,10 @@ export function requireNativeModule(moduleName: string): never {
     // Tests that actually rely on native behavior should mock the specific module.
     return {} as never;
 }
+
+export default {
+    NativeModule,
+    Platform,
+    requireOptionalNativeModule,
+    requireNativeModule,
+};

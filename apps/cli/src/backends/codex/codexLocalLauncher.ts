@@ -11,16 +11,14 @@ import { createManagedChildProcess } from '@/subprocess/supervision/managedChild
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { resolveCodexCliInvocation } from './utils/resolveCodexCliInvocation';
+import { delay } from '@/utils/time';
 
 import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
 import { discoverCodexRolloutFileOnce } from './localControl/rolloutDiscovery';
 import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
 
 export type CodexLauncherResult = { type: 'switch'; resumeId: string } | { type: 'exit'; code: number };
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export type CodexRolloutDiscoveryConfig = Readonly<{
   /**
@@ -54,18 +52,54 @@ function resolveCodexSessionsRootDir(): string {
         ? process.env.HAPPY_CODEX_SESSIONS_DIR.trim()
         : '';
   if (override) return override;
+  const codexHome = typeof process.env.CODEX_HOME === 'string' ? process.env.CODEX_HOME.trim() : '';
+  if (codexHome) return join(codexHome, 'sessions');
   return join(os.homedir(), '.codex', 'sessions');
 }
 
-function resolveCodexTuiCommand(): string {
-  const override =
-    typeof process.env.HAPPIER_CODEX_TUI_BIN === 'string'
-      ? process.env.HAPPIER_CODEX_TUI_BIN.trim()
-      : typeof process.env.HAPPY_CODEX_TUI_BIN === 'string'
-        ? process.env.HAPPY_CODEX_TUI_BIN.trim()
-        : '';
-  if (override) return override;
-  return 'codex';
+async function resolveCodexTuiInvocation(opts: {
+  cwd: string;
+  resumeId?: string | null;
+  permissionMode: PermissionMode;
+}): Promise<{ command: string; args: string[] }> {
+  return await resolveCodexCliInvocation({
+    args: buildCodexTuiArgs(opts),
+    cwd: opts.cwd,
+    processEnv: process.env,
+    overrideEnvVarKeys: ['HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
+    targetLabel: 'Codex CLI',
+  });
+}
+
+function buildCodexTuiChildEnv(): NodeJS.ProcessEnv {
+  // Ensure Happy-managed Codex TUI sessions start a fresh Codex thread.
+  //
+  // The Codex Desktop app (and other wrappers) can inject Codex-internal env vars such as
+  // CODEX_THREAD_ID into child processes. When present, Codex will attach to an existing
+  // thread instead of creating a new one. That prevents the TUI from creating a new rollout
+  // file and breaks local-control discovery + switching.
+  const env: NodeJS.ProcessEnv = { ...process.env };
+
+  const preserveRaw =
+    typeof process.env.HAPPIER_CODEX_TUI_PRESERVE_CODEX_ENV_KEYS === 'string'
+      ? process.env.HAPPIER_CODEX_TUI_PRESERVE_CODEX_ENV_KEYS.trim()
+      : '';
+  const preserveKeys = new Set<string>(
+    preserveRaw
+      ? preserveRaw
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s && s.startsWith('CODEX_'))
+      : [],
+  );
+  preserveKeys.add('CODEX_HOME');
+
+  const denylist = ['CODEX_THREAD_ID', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE', 'CODEX_SHELL'] as const;
+  for (const key of denylist) {
+    if (preserveKeys.has(key)) continue;
+    delete env[key];
+  }
+  return env;
 }
 
 function buildCodexTuiArgs(opts: { cwd: string; resumeId?: string | null; permissionMode: PermissionMode }): string[] {
@@ -133,6 +167,20 @@ export async function codexLocalLauncher<TMode>(opts: {
   let mirror: CodexRolloutMirror | null = null;
   let child: ReturnType<typeof spawn> | null = null;
   let childStopRequested = false;
+
+  const publishRemoteControlState = (tag: 'switch' | 'exit' | 'launch_error'): void => {
+    try {
+      opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
+    } catch {
+      // ignore
+    }
+    updateAgentStateBestEffort(
+      opts.session,
+      (current) => ({ ...current, controlledByUser: false }),
+      '[codex]',
+      `codex_local_launcher_${tag}`,
+    );
+  };
 
   const queueCodexSessionIdPublish = (raw: unknown): void => {
     const next = normalizeCodexSessionId(raw);
@@ -232,13 +280,12 @@ export async function codexLocalLauncher<TMode>(opts: {
     // Allow the UI to request a switch explicitly.
     opts.session.rpcHandlerManager.registerHandler('switch', async (params: any) => {
       const to = params && typeof params === 'object' ? (params as any).to : undefined;
-      if (to === 'local') return false;
+      if (to === 'local') return true;
       await doSwitch();
       return true;
     });
 
-    const command = resolveCodexTuiCommand();
-    const args = buildCodexTuiArgs({
+    const { command, args } = await resolveCodexTuiInvocation({
       cwd: opts.path,
       resumeId: opts.resumeId,
       permissionMode: opts.permissionMode ?? 'default',
@@ -255,7 +302,7 @@ export async function codexLocalLauncher<TMode>(opts: {
     const maxBufferedStderrChars = 16_000;
     child = spawn(invocation.command, invocation.args, {
       cwd: opts.path,
-      env: process.env,
+      env: buildCodexTuiChildEnv(),
       stdio: interactive ? 'inherit' : 'pipe',
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
@@ -398,6 +445,7 @@ export async function codexLocalLauncher<TMode>(opts: {
 
     mirror = new CodexRolloutMirror({
       filePath: candidateFile.filePath,
+      codexHome: process.env.CODEX_HOME ?? null,
       debug,
       session: opts.session,
       onCodexSessionId: async (id) => {
@@ -441,31 +489,20 @@ export async function codexLocalLauncher<TMode>(opts: {
     mirror = null;
 
     if (exitReason) {
-      try {
-        opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
-      } catch {
-        // ignore
-      }
-      updateAgentStateBestEffort(
-        opts.session,
-        (current) => ({ ...current, controlledByUser: false }),
-        '[codex]',
-        'codex_local_launcher_switch',
-      );
+      publishRemoteControlState('switch');
       return exitReason;
     }
+    publishRemoteControlState('exit');
+    return { type: 'exit', code };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     try {
-      opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
+      opts.session.sendSessionEvent({ type: 'message', message });
     } catch {
       // ignore
     }
-    updateAgentStateBestEffort(
-      opts.session,
-      (current) => ({ ...current, controlledByUser: false }),
-      '[codex]',
-      'codex_local_launcher_exit',
-    );
-    return { type: 'exit', code };
+    publishRemoteControlState('launch_error');
+    return { type: 'exit', code: 1 };
   } finally {
     opts.messageQueue.setOnMessage(null);
     try {

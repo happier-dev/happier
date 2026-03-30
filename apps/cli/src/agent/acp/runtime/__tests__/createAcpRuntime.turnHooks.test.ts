@@ -1,58 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentMessage } from '@/agent/core/AgentMessage';
-import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
-import { createAcpRuntime, type AcpRuntimeBackend } from '../createAcpRuntime';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClient, createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
+import { createAcpRuntime } from '../createAcpRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-
-function createFakeBackend() {
-  let handler: ((msg: AgentMessage) => void) | null = null;
-  const backend = {
-    onMessage(fn: (msg: AgentMessage) => void) {
-      handler = fn;
-    },
-    async startSession() {
-      return { sessionId: 'sess_main' };
-    },
-    async sendPrompt(_sessionId: string, _prompt: string) {
-      // noop
-    },
-    async waitForResponseComplete() {
-      // noop
-    },
-    async cancel() {
-      // noop
-    },
-    async dispose() {
-      // noop
-    },
-    emit(msg: AgentMessage) {
-      handler?.(msg);
-    },
-  };
-  return backend as AcpRuntimeBackend & { emit: (msg: AgentMessage) => void };
-}
 
 describe('createAcpRuntime (turn hooks)', () => {
   it('invokes turn hooks and allows emitting additional tool calls before task_complete', async () => {
-    const backend = createFakeBackend();
+    const backend = createFakeAcpRuntimeBackend();
     const sent: any[] = [];
 
-    const session: AcpRuntimeSessionClient = {
-      keepAlive: () => {},
+    const session = createBasicSessionClientWithOverrides({
       sendAgentMessage: (_provider, body) => {
         sent.push(body);
       },
-      sendAgentMessageCommitted: async (_provider, _body, _opts) => {},
-      sendUserTextMessageCommitted: async (_text, _opts) => {},
-      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-      updateMetadata: (_handler) => {},
-    };
-
-    const permissionHandler: AcpPermissionHandler = {
-      handleToolCall: async () => ({ decision: 'approved' }),
-    };
+    });
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -60,7 +23,7 @@ describe('createAcpRuntime (turn hooks)', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler,
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend,
       hooks: {
@@ -84,7 +47,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     backend.emit({ type: 'tool-call', toolName: 'Edit', args: { file_path: 'a.txt' }, callId: 't1' });
     backend.emit({ type: 'tool-result', toolName: 'Edit', callId: 't1', result: { ok: true } });
 
-    runtime.flushTurn();
+    await runtime.flushTurn();
 
     const taskCompleteIdx = sent.findIndex((m) => m?.type === 'task_complete');
     expect(taskCompleteIdx).toBeGreaterThan(-1);
@@ -105,23 +68,14 @@ describe('createAcpRuntime (turn hooks)', () => {
   });
 
   it('treats think tool calls as thinking (does not invoke onToolResult)', async () => {
-    const backend = createFakeBackend();
+    const backend = createFakeAcpRuntimeBackend();
     const sent: any[] = [];
 
-    const session: AcpRuntimeSessionClient = {
-      keepAlive: () => {},
+    const session = createBasicSessionClientWithOverrides({
       sendAgentMessage: (_provider, body) => {
         sent.push(body);
       },
-      sendAgentMessageCommitted: async (_provider, _body, _opts) => {},
-      sendUserTextMessageCommitted: async (_text, _opts) => {},
-      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-      updateMetadata: (_handler) => {},
-    };
-
-    const permissionHandler: AcpPermissionHandler = {
-      handleToolCall: async () => ({ decision: 'approved' }),
-    };
+    });
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -129,7 +83,7 @@ describe('createAcpRuntime (turn hooks)', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler,
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend,
       hooks: {
@@ -144,7 +98,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     runtime.beginTurn();
     backend.emit({ type: 'tool-call', toolName: 'think', args: { thinking: 'Hello' }, callId: 't1' });
     backend.emit({ type: 'tool-result', toolName: 'think', callId: 't1', result: { ok: true } });
-    runtime.flushTurn();
+    await runtime.flushTurn();
 
     expect(sent.some((m) => m?.type === 'tool-call' && String(m?.name ?? '').toLowerCase() === 'think')).toBe(false);
     expect(sent.some((m) => m?.type === 'tool-result' && m?.callId === 't1')).toBe(false);
@@ -153,28 +107,15 @@ describe('createAcpRuntime (turn hooks)', () => {
   });
 
   it('clears in-flight turn state on cancel', async () => {
-    const backend = createFakeBackend();
-
-    const session: AcpRuntimeSessionClient = {
-      keepAlive: () => {},
-      sendAgentMessage: () => {},
-      sendAgentMessageCommitted: async () => {},
-      sendUserTextMessageCommitted: async () => {},
-      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-      updateMetadata: () => {},
-    };
-
-    const permissionHandler: AcpPermissionHandler = {
-      handleToolCall: async () => ({ decision: 'approved' }),
-    };
+    const backend = createFakeAcpRuntimeBackend();
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
       directory: '/tmp',
-      session,
+      session: createBasicSessionClient(),
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler,
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend,
     });

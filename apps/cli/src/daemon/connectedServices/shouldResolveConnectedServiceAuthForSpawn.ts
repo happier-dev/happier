@@ -23,6 +23,5 @@ function hasConnectedServiceBinding(payload: unknown): boolean {
 }
 
 export function shouldResolveConnectedServiceAuthForSpawn(options: SpawnSessionOptions): boolean {
-  if (typeof options.token === 'string' && options.token.trim().length > 0) return false;
   return hasConnectedServiceBinding(options.connectedServices);
 }

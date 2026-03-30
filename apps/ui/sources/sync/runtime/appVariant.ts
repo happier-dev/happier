@@ -27,10 +27,21 @@ function normalizeAppVariant(value: unknown): AppVariant | null {
     if (normalized === 'preview' || normalized.includes('preview')) {
         return 'preview';
     }
-    if (normalized === 'development' || normalized === 'dev' || normalized.includes('development')) {
+    if (
+        normalized === 'development' ||
+        normalized === 'dev' ||
+        normalized.endsWith('dev') ||
+        normalized.includes('development')
+    ) {
         return 'development';
     }
-    if (normalized === 'production' || normalized === 'prod' || normalized === 'stable' || normalized.includes('production')) {
+    if (
+        normalized === 'production' ||
+        normalized === 'prod' ||
+        normalized === 'stable' ||
+        normalized.includes('production') ||
+        normalized.includes('stable')
+    ) {
         return 'production';
     }
 

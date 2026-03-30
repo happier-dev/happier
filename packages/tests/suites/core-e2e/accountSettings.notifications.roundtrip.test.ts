@@ -1,7 +1,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
-import { accountSettingsParse, getNotificationsSettingsV1FromAccountSettings } from '@happier-dev/protocol';
+import {
+  BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
+  accountSettingsParse,
+  getNotificationsSettingsV1FromAccountSettings,
+  resolveNotificationChannelsV1FromAccountSettings,
+} from '@happier-dev/protocol';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -57,6 +62,20 @@ describe('core e2e: account settings notifications roundtrip', () => {
     const nextSettings = {
       schemaVersion: 2,
       notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: false },
+      notificationChannelsV1: [
+        {
+          v: 1,
+          id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
+          kind: 'expo_push',
+          enabled: true,
+          topics: {
+            ready: true,
+            permissionRequest: false,
+            userActionRequest: true,
+          },
+          readyIncludeMessageText: false,
+        },
+      ],
       unknownFutureKey: { nested: true },
     };
 
@@ -95,9 +114,22 @@ describe('core e2e: account settings notifications roundtrip', () => {
     expect(notifications.pushEnabled).toBe(true);
     expect(notifications.ready).toBe(true);
     expect(notifications.permissionRequest).toBe(false);
+    expect(resolveNotificationChannelsV1FromAccountSettings(parsed)).toEqual([
+      {
+        v: 1,
+        id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
+        kind: 'expo_push',
+        enabled: true,
+        topics: {
+          ready: true,
+          permissionRequest: false,
+          userActionRequest: true,
+        },
+        readyIncludeMessageText: false,
+      },
+    ]);
 
     // Ensure forward-compat: unknown keys survive roundtrip + parse.
     expect((parsed as any).unknownFutureKey).toEqual({ nested: true });
   }, 240_000);
 });
-

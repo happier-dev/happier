@@ -1,9 +1,25 @@
 param(
-  [ValidateSet("stable", "preview")]
   [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "preview" })
 )
 
 $ErrorActionPreference = "Stop"
+
+function Normalize-Channel {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Raw
+  )
+  $value = $Raw.Trim().ToLowerInvariant()
+  if (-not $value) { return "stable" }
+  switch ($value) {
+    "stable" { return "stable" }
+    "preview" { return "preview" }
+    "dev" { return "publicdev" }
+    "publicdev" { return "publicdev" }
+    default { throw "Invalid HAPPIER_CHANNEL '$Raw'. Expected stable, preview, or dev." }
+  }
+}
+
+$Channel = Normalize-Channel -Raw ([string]$Channel)
 
 $Repo = if ($env:HAPPIER_GITHUB_REPO) { $env:HAPPIER_GITHUB_REPO } else { "happier-dev/happier" }
 $Token = if ($env:HAPPIER_GITHUB_TOKEN) { $env:HAPPIER_GITHUB_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { "" }
@@ -14,7 +30,14 @@ if ($Token) {
   $GitHubHeaders["Authorization"] = "Bearer $Token"
 }
 $InstallDir = if ($env:HAPPIER_INSTALL_DIR) { $env:HAPPIER_INSTALL_DIR } else { Join-Path $env:USERPROFILE ".happier" }
-$BinDir = if ($env:HAPPIER_BIN_DIR) { $env:HAPPIER_BIN_DIR } else { Join-Path $env:USERPROFILE ".local\bin" }
+$LegacyBinDir = Join-Path $env:USERPROFILE ".local\bin"
+$BinDir = Join-Path $InstallDir "bin"
+if ($env:HAPPIER_BIN_DIR) {
+  $requestedBinDir = $env:HAPPIER_BIN_DIR
+  if ($requestedBinDir -ne $BinDir) {
+    Write-Warning "Ignoring HAPPIER_BIN_DIR on Windows; the managed install bin directory is the canonical PATH target."
+  }
+}
 $WithDaemon = if ($env:HAPPIER_WITH_DAEMON) { $env:HAPPIER_WITH_DAEMON } else { "1" }
 $DefaultMinisignPubKey = @"
 untrusted comment: minisign public key 91AE28177BF6E43C
@@ -74,7 +97,7 @@ function Resolve-MinisignPublicKey {
   Invoke-WebRequest -Uri $MinisignPubKeyUrl -OutFile $TargetPath
 }
 
-$tag = if ($Channel -eq "preview") { "cli-preview" } else { "cli-stable" }
+$tag = if ($Channel -eq "preview") { "cli-preview" } elseif ($Channel -eq "publicdev") { "cli-dev" } else { "cli-stable" }
 Write-Host "Fetching $tag release metadata..."
 try {
   $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
@@ -82,6 +105,9 @@ try {
 catch {
   if ($Channel -eq "preview") {
     throw "No stable releases found for Happier CLI."
+  }
+  if ($Channel -eq "publicdev") {
+    throw "No dev releases found for Happier CLI."
   }
   throw "No preview releases found for Happier CLI."
 }
@@ -137,20 +163,59 @@ try {
   $extractDir = Join-Path $tmpDir.FullName "extract"
   New-Item -ItemType Directory -Path $extractDir | Out-Null
   tar -xzf $archivePath -C $extractDir
-  $binary = Get-ChildItem -Path $extractDir -Filter "happier.exe" -Recurse | Select-Object -First 1
-  if (-not $binary) {
+  $version = $assetName -replace '^happier-v', '' -replace '-windows-x64\.tar\.gz$', ''
+  if (-not $version -or $version -eq $assetName) {
+    throw "Failed to infer release version from asset name: $assetName"
+  }
+  $payloadRoot = Join-Path $extractDir "happier-v$version-windows-x64"
+  if (-not (Test-Path $payloadRoot)) {
+    throw "Failed to locate extracted payload root: $payloadRoot"
+  }
+  $binary = Join-Path $payloadRoot "happier.exe"
+  if (-not (Test-Path $binary)) {
     throw "Failed to locate extracted happier.exe"
   }
 
-  New-Item -ItemType Directory -Path (Join-Path $InstallDir "bin") -Force | Out-Null
   New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
   $target = Join-Path $InstallDir "bin\happier.exe"
-  Copy-Item -Path $binary.FullName -Destination $target -Force
-  Copy-Item -Path $target -Destination (Join-Path $BinDir "happier.exe") -Force
+  $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
+  $env:HAPPIER_HOME_DIR = $InstallDir
+  $promotionOutput = & $binary self __install-payload --component happier-cli --payload-root $payloadRoot --version $version --channel $Channel 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) {
+    if ($promotionOutput -match 'Unknown self subcommand:\s+__install-payload') {
+      Write-Warning "Falling back to legacy binary install because the extracted CLI does not support payload promotion."
+      Copy-Item -Path $binary -Destination $target -Force
+    }
+    else {
+      if ($promotionOutput) {
+        Write-Error $promotionOutput.Trim()
+      }
+      throw "Failed to promote extracted Happier payload."
+    }
+  }
+  if ($null -eq $previousHappyHomeDir) {
+    Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
+  }
+  else {
+    $env:HAPPIER_HOME_DIR = $previousHappyHomeDir
+  }
+  if ($LegacyBinDir -ne $BinDir) {
+    Remove-Item -Path (Join-Path $LegacyBinDir "happier.exe") -Force -ErrorAction SilentlyContinue
+  }
 
-  if (($env:Path -split ';') -notcontains $BinDir) {
-    [Environment]::SetEnvironmentVariable("Path", "$BinDir;$env:Path", [EnvironmentVariableTarget]::User)
+  $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+  $pathEntries = @()
+  if ($userPath) {
+    $pathEntries = @(
+      $userPath -split ';' |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -and $_ -ne $LegacyBinDir -and $_ -ne $BinDir }
+    )
+  }
+  $updatedPathEntries = @($BinDir) + $pathEntries
+  [Environment]::SetEnvironmentVariable("Path", ($updatedPathEntries -join ';'), [EnvironmentVariableTarget]::User)
+  if ($pathEntries.Length -eq 0 -or $userPath -notmatch [Regex]::Escape($BinDir)) {
     Write-Host "Added $BinDir to user PATH."
   }
 

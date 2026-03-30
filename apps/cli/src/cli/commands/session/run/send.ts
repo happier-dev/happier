@@ -2,13 +2,11 @@ import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
 import { ExecutionRunSendRequestSchema } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
-import { callSessionRpc } from '@/sessionControl/sessionRpc';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { hasFlag } from '@/cli/commands/shared/argvFlags';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 export async function cmdSessionRunSend(
   argv: string[],
@@ -18,9 +16,10 @@ export async function cmdSessionRunSend(
   const idOrPrefix = String(argv[2] ?? '').trim();
   const runId = String(argv[3] ?? '').trim();
   const message = String(argv[4] ?? '').trim();
+  const resume = hasFlag(argv, '--resume');
 
   if (!idOrPrefix || !runId || !message) {
-    throw new Error('Usage: happier session run send <session-id-or-prefix> <run-id> <message> [--json]');
+    throw new Error('Usage: happier session run send <session-id-or-prefix> <run-id> <message> [--resume] [--json]');
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -33,38 +32,34 @@ export async function cmdSessionRunSend(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const request = ExecutionRunSendRequestSchema.parse({
+    runId,
+    message,
+    delivery: 'steer_if_supported',
+    ...(resume ? { resume: true } : {}),
+  });
+
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'execution.run.send',
+    { sessionId: idOrPrefix, ...request },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_send',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
-  const sessionId = resolved.sessionId;
-
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_send', error: { code: 'session_not_found', sessionId } });
-      return;
-    }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
-  }
-
-  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
-  const request = ExecutionRunSendRequestSchema.parse({ runId, message });
-  const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_SEND}`;
-  await callSessionRpc({ token: credentials.token, sessionId, mode, ctx, method, request });
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_send', data: { sessionId, runId, sent: true } });
+    printJsonEnvelope({ ok: true, kind: 'session_run_send', data: { sessionId: idOrPrefix, runId, sent: true } });
     return;
   }
 

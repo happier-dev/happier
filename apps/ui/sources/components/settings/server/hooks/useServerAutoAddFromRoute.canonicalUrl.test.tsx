@@ -1,12 +1,13 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installServerSettingsHooksCommonModuleMocks } from './serverSettingsHooksTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+installServerSettingsHooksCommonModuleMocks();
 
 vi.mock('@/sync/domains/server/serverConfig', () => ({
     validateServerUrl: () => ({ valid: true, error: null }),
@@ -22,6 +23,7 @@ const upsertServerProfileMock = vi.fn((..._args: unknown[]) => ({
 }));
 const removeServerProfileMock = vi.fn((..._args: unknown[]) => undefined);
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 }),
     upsertServerProfile: (...args: unknown[]) => upsertServerProfileMock(...args),
     removeServerProfile: (...args: unknown[]) => removeServerProfileMock(...args),
 }));
@@ -67,9 +69,7 @@ describe('useServerAutoAddFromRoute (canonical URL adoption)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(getServerFeaturesSnapshotMock).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'p1' }));
         expect(removeServerProfileMock).toHaveBeenCalledWith('p1');
@@ -106,9 +106,7 @@ describe('useServerAutoAddFromRoute (canonical URL adoption)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(removeServerProfileMock).not.toHaveBeenCalled();
         expect(onSwitchServerById).toHaveBeenCalledWith('p1', expect.anything());

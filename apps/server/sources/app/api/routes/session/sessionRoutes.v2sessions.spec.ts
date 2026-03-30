@@ -1,20 +1,14 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { encodeV2SessionListCursorV1 } from "@happier-dev/protocol";
 
 import {
-    createSessionRouteReply,
-    preloadSessionRoutes,
-    registerSessionRoutesAndGetHandler,
+    createSessionRouteTestBuilder,
     resetSessionRouteMocks,
     sessionFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 sessions snapshot", () => {
-    beforeAll(async () => {
-        await preloadSessionRoutes();
-    }, 120_000);
-
     beforeEach(() => {
         resetSessionRouteMocks();
         sessionFindMany.mockReset();
@@ -35,6 +29,9 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 metadataVersion: 1,
                 agentState: null,
                 agentStateVersion: 0,
+                lastViewedSessionSeq: 2,
+                pendingPermissionRequestCount: 1,
+                pendingUserActionRequestCount: 0,
                 dataEncryptionKey: Buffer.from([1, 2, 3]),
                 active: true,
                 lastActiveAt: now,
@@ -52,6 +49,9 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 metadataVersion: 1,
                 agentState: null,
                 agentStateVersion: 0,
+                lastViewedSessionSeq: 1,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 2,
                 dataEncryptionKey: null,
                 active: true,
                 lastActiveAt: now,
@@ -75,6 +75,9 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 metadataVersion: 1,
                 agentState: null,
                 agentStateVersion: 0,
+                lastViewedSessionSeq: 0,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
                 dataEncryptionKey: null,
                 active: true,
                 lastActiveAt: now,
@@ -82,16 +85,10 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v2/sessions");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                query: { limit: 2 },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        const { response: res } = await route.invoke({
+            query: { limit: 2 },
+        });
 
         expect(res).toEqual({
             sessions: [
@@ -99,6 +96,9 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                     id: "s3",
                     encryptionMode: "e2ee",
                     dataEncryptionKey: "AQID",
+                    lastViewedSessionSeq: 2,
+                    pendingPermissionRequestCount: 1,
+                    pendingUserActionRequestCount: 0,
                     share: null,
                     archivedAt: null,
                 }),
@@ -106,6 +106,9 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                     id: "s2",
                     encryptionMode: "e2ee",
                     dataEncryptionKey: "BAU=",
+                    lastViewedSessionSeq: 1,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 2,
                     share: { accessLevel: "edit", canApprovePermissions: true },
                     archivedAt: null,
                 }),

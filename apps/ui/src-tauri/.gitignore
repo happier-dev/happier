@@ -2,3 +2,8 @@
 # will have compiled files and executables
 /target/
 /gen/schemas
+/binaries/
+/systemTasks/
+/ssh/
+/integrations/
+/capabilities/mcp-dev.json

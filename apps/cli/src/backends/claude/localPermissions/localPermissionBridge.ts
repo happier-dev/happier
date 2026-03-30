@@ -15,6 +15,14 @@ import { deepEqual } from '@/utils/deterministicJson';
 import type { PermissionRpcPayload } from '../utils/permissionRpc';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
+import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
+import {
+    CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+    isClaudeLocalPermissionBridgeAgentStateRequest,
+} from '@happier-dev/agents';
+import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 
 type PendingPermissionRequest = {
     id: string;
@@ -48,6 +56,9 @@ export class ClaudeLocalPermissionBridge {
     private readonly pendingRequests = new Map<string, PendingPermissionRequest>();
     private permissionRequestPushNotifier: PermissionRequestPushNotifier | null = null;
     private readonly allowedToolIdentifiers = new Set<string>();
+    private permissionMode: PermissionMode = 'default';
+    private permissionModeUpdatedAt: number = 0;
+    private metadataWatcherAbort: AbortController | null = null;
 
     constructor(session: Session, opts?: { responseTimeoutMs?: number | null }) {
         this.session = session;
@@ -66,9 +77,20 @@ export class ClaudeLocalPermissionBridge {
             tryHandlePermissionRpc: (payload) => this.tryHandlePermissionRpc(payload),
         });
         this.seedAllowlistFromAgentState();
+        this.syncPermissionModeFromMetadataSnapshot();
+        this.startMetadataWatcher();
     }
 
     dispose(): void {
+        if (this.metadataWatcherAbort) {
+            try {
+                this.metadataWatcherAbort.abort('claude-local-permission-bridge:dispose');
+            } catch {
+                // ignore
+            }
+            this.metadataWatcherAbort = null;
+        }
+
         for (const pending of [...this.pendingRequests.values()]) {
             if (pending.timeout) {
                 clearTimeout(pending.timeout);
@@ -89,6 +111,7 @@ export class ClaudeLocalPermissionBridge {
     }
 
     async handlePermissionHook(data: PermissionHookData): Promise<PermissionHookResponse> {
+        this.syncPermissionModeFromMetadataSnapshot();
         const hookRequestId = this.resolveRequestId(data);
         const transcriptRequestId = !hookRequestId ? await this.resolveRequestIdFromTranscript(data) : null;
         const requestId = hookRequestId ?? transcriptRequestId ?? this.generateRequestId();
@@ -122,6 +145,49 @@ export class ClaudeLocalPermissionBridge {
             };
         }
 
+        const policyDecision = this.computePolicyDecision(toolName);
+        if (!this.isInteractiveTool(toolName) && policyDecision === 'allow') {
+            const hookResponse: PermissionHookResponse = {
+                continue: true,
+                suppressOutput: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PermissionRequest',
+                    decision: { behavior: 'allow' },
+                },
+            };
+            this.completeRequest({
+                requestId,
+                toolName,
+                toolInput,
+                createdAt,
+                status: 'approved',
+                mode: this.permissionMode,
+                hookResponse,
+            });
+            return hookResponse;
+        }
+
+        if (!this.isInteractiveTool(toolName) && policyDecision === 'deny') {
+            const hookResponse: PermissionHookResponse = {
+                continue: true,
+                suppressOutput: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PermissionRequest',
+                    decision: { behavior: 'deny' },
+                },
+            };
+            this.completeRequest({
+                requestId,
+                toolName,
+                toolInput,
+                createdAt,
+                status: 'denied',
+                mode: this.permissionMode,
+                hookResponse,
+            });
+            return hookResponse;
+        }
+
         this.publishPendingRequest({ requestId, toolName, toolInput, permissionSuggestions, createdAt });
 
         let resolvePending: (response: PermissionHookResponse) => void = () => {};
@@ -129,7 +195,7 @@ export class ClaudeLocalPermissionBridge {
             resolvePending = resolve;
         });
 
-        const timeout = this.responseTimeoutMs === null
+        const timeout = this.resolveResponseTimeout(toolName) === null
             ? null
             : setTimeout(() => {
                 this.completeRequest({
@@ -141,7 +207,7 @@ export class ClaudeLocalPermissionBridge {
                     reason: PERMISSION_TIMED_OUT_REASON,
                     hookResponse: DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE,
                 });
-            }, this.responseTimeoutMs);
+            }, this.resolveResponseTimeout(toolName)!);
         timeout?.unref?.();
 
         this.pendingRequests.set(requestId, {
@@ -155,6 +221,153 @@ export class ClaudeLocalPermissionBridge {
         });
 
         return promise;
+    }
+
+    private computePolicyDecision(toolName: string): 'prompt' | 'allow' | 'deny' {
+        if (isChangeTitleToolLikeName(toolName)) return 'allow';
+        const mode = this.permissionMode;
+        if (mode === 'yolo') return 'allow';
+        if (mode === 'safe-yolo') {
+            return isDefaultWriteLikeToolName(toolName) ? 'prompt' : 'allow';
+        }
+        if (mode === 'read-only') {
+            return isDefaultWriteLikeToolName(toolName) ? 'deny' : 'allow';
+        }
+        return 'prompt';
+    }
+
+    private resolveResponseTimeout(toolName: string): number | null {
+        if (this.isInteractiveTool(toolName)) {
+            return null;
+        }
+        return this.responseTimeoutMs;
+    }
+
+    private syncPermissionModeFromMetadataSnapshot(): PermissionMode | null {
+        const resolved = resolvePermissionIntentFromMetadataSnapshot({
+            metadata: this.session.client.getMetadataSnapshot?.() ?? null,
+        });
+        if (!resolved) return null;
+        if (resolved.updatedAt <= this.permissionModeUpdatedAt) return null;
+
+        const canonical = normalizePermissionModeToIntent(resolved.intent) ?? 'default';
+        this.permissionModeUpdatedAt = resolved.updatedAt;
+        if (canonical === this.permissionMode) return null;
+
+        this.permissionMode = canonical;
+        this.tryAutoCompletePendingRequestsForPermissionMode();
+        return canonical;
+    }
+
+    private applyPermissionModeFromRpc(mode: PermissionMode, excludeRequestId?: string): void {
+        this.permissionMode = mode;
+        this.permissionModeUpdatedAt = Math.max(this.permissionModeUpdatedAt, Date.now());
+        this.tryAutoCompletePendingRequestsForPermissionMode(excludeRequestId);
+    }
+
+    private startMetadataWatcher(): void {
+        if (this.metadataWatcherAbort) return;
+        if (typeof this.session.client.waitForMetadataUpdate !== 'function') return;
+
+        const controller = new AbortController();
+        this.metadataWatcherAbort = controller;
+        const signal = controller.signal;
+        const waitForAbortOrBackoff = async (): Promise<void> => {
+            const backoffMs = 250;
+            if (signal.aborted) return;
+            await new Promise<void>((resolve) => {
+                let settled = false;
+                const timer = setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup(onAbort);
+                    resolve();
+                }, backoffMs);
+                timer.unref?.();
+
+                const cleanup = (onAbort: () => void) => {
+                    signal.removeEventListener('abort', onAbort);
+                    clearTimeout(timer);
+                };
+
+                const onAbort = () => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup(onAbort);
+                    resolve();
+                };
+                signal.addEventListener('abort', onAbort, { once: true });
+            });
+        };
+
+        void (async () => {
+            while (!signal.aborted) {
+                const updated = await this.session.client.waitForMetadataUpdate(signal).catch(() => false);
+                if (!updated || signal.aborted) {
+                    await waitForAbortOrBackoff();
+                    continue;
+                }
+                this.syncPermissionModeFromMetadataSnapshot();
+            }
+        })();
+    }
+
+    private tryAutoCompletePendingRequestsForPermissionMode(excludeRequestId?: string): void {
+        if (this.pendingRequests.size === 0) return;
+
+        const idsToApprove: string[] = [];
+        const idsToDeny: string[] = [];
+        for (const [id, pending] of this.pendingRequests.entries()) {
+            if (id === excludeRequestId) continue;
+            if (this.isInteractiveTool(pending.toolName)) continue;
+            const decision = this.computePolicyDecision(pending.toolName);
+            if (decision === 'allow') idsToApprove.push(id);
+            if (decision === 'deny') idsToDeny.push(id);
+        }
+
+        for (const id of idsToApprove) {
+            const pending = this.pendingRequests.get(id);
+            if (!pending) continue;
+            const hookResponse: PermissionHookResponse = {
+                continue: true,
+                suppressOutput: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PermissionRequest',
+                    decision: { behavior: 'allow' },
+                },
+            };
+            this.completeRequest({
+                requestId: id,
+                toolName: pending.toolName,
+                toolInput: pending.toolInput,
+                createdAt: pending.createdAt,
+                status: 'approved',
+                mode: this.permissionMode,
+                hookResponse,
+            });
+        }
+
+        for (const id of idsToDeny) {
+            const pending = this.pendingRequests.get(id);
+            if (!pending) continue;
+            const hookResponse: PermissionHookResponse = {
+                continue: true,
+                suppressOutput: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PermissionRequest',
+                    decision: { behavior: 'deny' },
+                },
+            };
+            this.completeRequest({
+                requestId: id,
+                toolName: pending.toolName,
+                toolInput: pending.toolInput,
+                createdAt: pending.createdAt,
+                status: 'denied',
+                mode: this.permissionMode,
+                hookResponse,
+            });
+        }
     }
 
     private generateRequestId(): string {
@@ -240,19 +453,19 @@ export class ClaudeLocalPermissionBridge {
         }
 
         const pending = this.pendingRequests.get(requestId);
-        if (!pending) {
+        const existingRequest = this.getOutstandingAgentStateRequest(requestId);
+        if (!pending && !existingRequest) {
             return false;
         }
 
         const allowedTools = Array.isArray(payload.allowedTools ?? payload.allowTools)
             ? [...(payload.allowedTools ?? payload.allowTools)!]
             : undefined;
+        const resolvedMode = typeof payload.mode === 'string'
+            ? (normalizePermissionModeToIntent(payload.mode) ?? payload.mode)
+            : undefined;
 
         const updatedPermissions = payload.updatedPermissions;
-        if (payload.approved) {
-            applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, updatedPermissions);
-            applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, allowedTools);
-        }
         const hookResponse: PermissionHookResponse = payload.approved
             ? {
                 continue: true,
@@ -282,20 +495,18 @@ export class ClaudeLocalPermissionBridge {
 
         this.completeRequest({
             requestId,
-            toolName: pending.toolName,
-            toolInput: pending.toolInput,
-            createdAt: pending.createdAt,
+            toolName: pending?.toolName ?? existingRequest?.toolName ?? 'unknown_tool',
+            toolInput: pending?.toolInput ?? existingRequest?.toolInput ?? {},
+            createdAt: pending?.createdAt ?? existingRequest?.createdAt ?? Date.now(),
             status: payload.approved ? 'approved' : 'denied',
             reason: payload.reason,
-            mode: payload.mode,
+            mode: resolvedMode,
             allowedTools,
             updatedPermissions,
             hookResponse,
         });
 
-        if (payload.approved) {
-            this.tryAutoCompletePendingRequests();
-        }
+        this.applyPermissionRpcState(payload, { allowedTools, resolvedMode, excludeRequestId: requestId });
         return true;
     }
 
@@ -308,11 +519,12 @@ export class ClaudeLocalPermissionBridge {
         );
     }
 
-    private tryAutoCompletePendingRequests(): void {
+    private tryAutoCompletePendingRequests(excludeRequestId?: string): void {
         if (this.pendingRequests.size === 0) return;
 
         const idsToApprove: string[] = [];
         for (const [id, pending] of this.pendingRequests.entries()) {
+            if (id === excludeRequestId) continue;
             if (this.isInteractiveTool(pending.toolName)) continue;
             if (isToolAllowedForSession(this.allowedToolIdentifiers, pending.toolName, pending.toolInput)) {
                 idsToApprove.push(id);
@@ -338,6 +550,35 @@ export class ClaudeLocalPermissionBridge {
                 },
             });
         }
+    }
+
+    private applyPermissionRpcState(
+        payload: PermissionRpcPayload,
+        params: { allowedTools?: string[]; resolvedMode?: PermissionMode; excludeRequestId?: string }
+    ): void {
+        if (payload.approved) {
+            applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, payload.updatedPermissions);
+            applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, params.allowedTools);
+        }
+
+        if (payload.approved && params.resolvedMode) {
+            this.applyPermissionModeFromRpc(params.resolvedMode, params.excludeRequestId);
+        }
+
+        if (payload.approved) {
+            this.tryAutoCompletePendingRequests(params.excludeRequestId);
+        }
+    }
+
+    private getOutstandingAgentStateRequest(requestId: string): { toolName: string; toolInput: unknown; createdAt: number } | null {
+        const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
+        const requests = snapshot?.requests;
+        const request = requests && typeof requests === 'object' ? (requests as Record<string, unknown>)[requestId] : null;
+        if (!isClaudeLocalPermissionBridgeAgentStateRequest(request)) return null;
+        const toolName = typeof (request as any).tool === 'string' ? (request as any).tool : 'unknown_tool';
+        const toolInput = typeof (request as any).arguments !== 'undefined' ? (request as any).arguments : {};
+        const createdAt = typeof (request as any).createdAt === 'number' ? (request as any).createdAt : Date.now();
+        return { toolName, toolInput, createdAt };
     }
 
     private seedAllowlistFromAgentState(): void {
@@ -414,6 +655,7 @@ export class ClaudeLocalPermissionBridge {
         this.permissionRequestPushNotifier = new PermissionRequestPushNotifier({
             pushSender: this.session.pushSender,
             getSettings: () => this.session.accountSettings ?? null,
+            getSettingsSecretsReadKeys: () => this.session.accountSettingsSecretsReadKeys,
             sessionId: this.session.client.sessionId,
             logPrefix: '[claude-local-permissions]',
             onNotifiedAt: (permissionId, notifiedAtMs) => {
@@ -471,6 +713,7 @@ export class ClaudeLocalPermissionBridge {
                         const entry = Object.create(null) as AgentStateRequestEntry;
                         entry.tool = params.toolName;
                         entry.kind = resolveAgentRequestKind(params.toolName);
+                        (entry as AgentStateRequestEntry & { source?: string }).source = CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE;
                         entry.arguments = params.toolInput;
                         entry.createdAt = params.createdAt;
                         if (Array.isArray(params.permissionSuggestions) && params.permissionSuggestions.length > 0) {

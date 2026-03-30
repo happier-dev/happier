@@ -38,7 +38,22 @@ function stubFetch(
     handler: (url: string, init?: RequestInit) => Promise<FetchResult>,
 ): ReturnType<typeof vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>> {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (input, init) => {
-        const result = await handler(String(input), init);
+        const url = String(input);
+        if (url.endsWith('/health')) {
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true }),
+            } as Response;
+        }
+        if (url.endsWith('/v1/auth/ping')) {
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true }),
+            } as Response;
+        }
+        const result = await handler(url, init);
         return {
             ok: result.ok,
             status: result.status ?? (result.ok ? 200 : 500),
@@ -54,6 +69,14 @@ vi.mock('@/utils/timing/time', async () => {
     return {
         ...actual,
         backoff: async (callback: () => Promise<unknown>) => await callback(),
+    };
+});
+
+vi.mock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>();
+    return {
+        ...actual,
+        waitForServerReachable: async () => {},
     };
 });
 

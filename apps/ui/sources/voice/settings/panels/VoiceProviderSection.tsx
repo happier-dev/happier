@@ -11,7 +11,7 @@ import { t } from '@/text';
 export function VoiceProviderSection(props: {
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
-  happierVoiceSupported: boolean | null;
+  happierVoiceSupported: boolean;
 }) {
   const { theme } = useUnistyles();
   const select = (next: VoiceSettings) => props.setVoice(next);

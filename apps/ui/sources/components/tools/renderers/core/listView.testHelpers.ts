@@ -1,7 +1,7 @@
 import type { ReactTestRenderer } from 'react-test-renderer';
 import { expect } from 'vitest';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, makeToolCall } from '../../shell/views/ToolView.testHelpers';
+import { collectHostText, makeToolCall } from '@/dev/testkit';
 
 export function makeCompletedTool(
     name: string,

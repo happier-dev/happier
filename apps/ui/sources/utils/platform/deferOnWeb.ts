@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+export { blurActiveElementOnWeb, navigateWithBlurOnWeb } from './navigateWithBlurOnWeb';
 
 /**
  * Best-effort helper for web: defer UI state mutations that would immediately
@@ -13,15 +14,23 @@ export function deferOnWeb(action: () => void): void {
         return;
     }
 
+    let didRun = false;
+    const runOnce = (): void => {
+        if (didRun) {
+            return;
+        }
+        didRun = true;
+        action();
+    };
+
     const raf: ((cb: FrameRequestCallback) => number) | null =
         typeof (globalThis as any).requestAnimationFrame === 'function'
             ? (globalThis as any).requestAnimationFrame.bind(globalThis)
             : null;
 
     if (raf) {
-        raf(() => action());
-        return;
+        raf(() => runOnce());
     }
 
-    setTimeout(action, 0);
+    setTimeout(runOnce, 0);
 }

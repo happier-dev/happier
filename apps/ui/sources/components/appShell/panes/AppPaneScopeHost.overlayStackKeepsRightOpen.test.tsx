@@ -1,37 +1,36 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const dispatchSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: { OS: 'web' },
-    useWindowDimensions: () => ({ width: 600, height: 800 }),
-}));
-
-vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
-    MultiPaneHost: () => React.createElement('MultiPaneHostStub'),
+vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
+    MultiPaneHostWithBottom: () => React.createElement('MultiPaneHostStub'),
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
+installAppPaneScopeHostCommonModuleMocks({
+    getDimensions: () => ({ width: 600, height: 800 }),
+    getLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return true;
         if (key === 'editorFocusModeEnabled') return false;
         if (key === 'rightPaneWidthPx') return 360;
         if (key === 'rightPaneWidthBasisPx') return 600;
         if (key === 'detailsPaneWidthPx') return 420;
         if (key === 'detailsPaneWidthBasisPx') return 600;
+        if (key === 'bottomPaneHeightPx') return 320;
+        if (key === 'bottomPaneHeightBasisPx') return 900;
         return null;
     },
-    useLocalSettingMutable: () => [null, vi.fn()],
-}));
+});
 
 vi.mock('./AppPaneProvider', () => ({
     useAppPaneContext: () => ({
@@ -54,16 +53,12 @@ describe('AppPaneScopeHost (overlayStack keeps right open)', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         dispatchSpy.mockClear();
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
+        await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
                     rightPane={<div />}
                     detailsPane={<div />}
-                />
-            );
-        });
+                />);
 
         const closeRightCalls = dispatchSpy.mock.calls.filter((call) => call?.[0]?.type === 'closeRight');
         expect(closeRightCalls).toHaveLength(0);

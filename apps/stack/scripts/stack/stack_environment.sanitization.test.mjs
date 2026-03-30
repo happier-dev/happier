@@ -118,3 +118,28 @@ test('withStackEnv clears leaked unprefixed server/home env vars from caller sco
     }
   });
 });
+
+test('withStackEnv preserves explicit local stack runtime override env vars from caller scope', async () => {
+  await withTempStackEnvFixture(async ({ stackName }) => {
+    const previousCliBuild = process.env.HAPPIER_STACK_CLI_BUILD;
+    const previousSkipRefreshDeps = process.env.HAPPIER_STACK_SKIP_REFRESH_DEPS;
+
+    process.env.HAPPIER_STACK_CLI_BUILD = '0';
+    process.env.HAPPIER_STACK_SKIP_REFRESH_DEPS = '1';
+
+    try {
+      await withStackEnv({
+        stackName,
+        fn: async ({ env }) => {
+          assert.equal(env.HAPPIER_STACK_CLI_BUILD, '0');
+          assert.equal(env.HAPPIER_STACK_SKIP_REFRESH_DEPS, '1');
+        },
+      });
+    } finally {
+      if (typeof previousCliBuild === 'undefined') delete process.env.HAPPIER_STACK_CLI_BUILD;
+      else process.env.HAPPIER_STACK_CLI_BUILD = previousCliBuild;
+      if (typeof previousSkipRefreshDeps === 'undefined') delete process.env.HAPPIER_STACK_SKIP_REFRESH_DEPS;
+      else process.env.HAPPIER_STACK_SKIP_REFRESH_DEPS = previousSkipRefreshDeps;
+    }
+  });
+});

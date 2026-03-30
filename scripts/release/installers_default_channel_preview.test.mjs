@@ -91,6 +91,47 @@ printf '%s' '{"assets":[]}'
   assert.doesNotMatch(stdout, /Fetching cli-stable release metadata/i);
 });
 
+test('install.sh supports --channel dev when HAPPIER_CHANNEL is unset', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-dev-channel-'));
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(installDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s' '{"assets":[]}'
+`,
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NO_PATH_UPDATE: '1',
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_GITHUB_TOKEN: '',
+    GITHUB_TOKEN: '',
+  };
+  delete env.HAPPIER_CHANNEL;
+
+  const res = spawnSync('bash', [installerPath, '--channel', 'dev'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  assert.notEqual(res.status, 0);
+  assert.match(stdout, /Fetching cli-dev release metadata/i);
+  assert.doesNotMatch(stdout, /Fetching cli-stable release metadata/i);
+});
+
 test('install.sh prints a stable-channel missing message when stable tag is absent', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-stable-missing-'));
   const binDir = join(root, 'bin');

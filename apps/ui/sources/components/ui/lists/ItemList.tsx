@@ -8,13 +8,16 @@ import {
     ScrollViewProps
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { PopoverBoundaryProvider } from '@/components/ui/popover/PopoverBoundary';
+import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
+import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
+import { PopoverScrollSourceProvider } from '@/components/ui/popover';
 
 export interface ItemListProps extends ScrollViewProps {
     children: React.ReactNode;
     style?: StyleProp<ViewStyle>;
     containerStyle?: StyleProp<ViewStyle>;
     insetGrouped?: boolean;
+    onWheel?: (event: unknown) => void;
 }
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -47,21 +50,32 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const internalRef = React.useRef<ScrollView>(null);
-    const boundaryRef = isRefObject(ref) ? ref : internalRef;
+    const isInsideModalBoundary = useIsInsideModalBoundary();
 
     const {
         children,
         style,
         containerStyle,
         insetGrouped = true,
+        onWheel,
         ...scrollViewProps
     } = props;
 
     const isIOS = Platform.OS === 'ios';
     const isWeb = Platform.OS === 'web';
+    const rawOnWheel = onWheel;
+    const installWebModalWheelFix = isWeb && isInsideModalBoundary && rawOnWheel == null;
 
     // Override background for non-inset grouped lists on iOS
-    const backgroundColor = (isIOS && !insetGrouped) ? '#FFFFFF' : theme.colors.groupped.background;
+    const backgroundColor = (isIOS && !insetGrouped) ? theme.colors.surface : theme.colors.groupped.background;
+
+    const { onScroll, ...restScrollViewProps } = scrollViewProps;
+
+    const wheelScrollHandlers = useScrollViewWheelScrollTo(internalRef, {
+        enabled: installWebModalWheelFix,
+        onScroll,
+        onWheel: rawOnWheel ?? undefined,
+    });
 
     const setRefs = React.useCallback((node: ScrollView | null) => {
         internalRef.current = node;
@@ -69,7 +83,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
     }, [ref]);
 
     return (
-        <PopoverBoundaryProvider boundaryRef={boundaryRef}>
+        <PopoverScrollSourceProvider scrollSourceRef={internalRef}>
             <ScrollView
                 ref={setRefs}
                 style={[
@@ -85,11 +99,15 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
                     ? scrollViewProps.showsVerticalScrollIndicator
                     : true}
                 contentInsetAdjustmentBehavior={(isIOS && !isWeb) ? 'automatic' : undefined}
-                {...scrollViewProps}
+                onScroll={installWebModalWheelFix ? wheelScrollHandlers.onScroll : onScroll}
+                {...restScrollViewProps}
+                {...(installWebModalWheelFix
+                    ? ({ onWheel: wheelScrollHandlers.onWheel } as any)
+                    : (rawOnWheel ? ({ onWheel: rawOnWheel } as any) : {}))}
             >
                 {children}
             </ScrollView>
-        </PopoverBoundaryProvider>
+        </PopoverScrollSourceProvider>
     );
 }));
 
@@ -111,9 +129,9 @@ export const ItemListStatic = React.memo<Omit<ItemListProps, keyof ScrollViewPro
     } = props;
 
     const isIOS = Platform.OS === 'ios';
-    
+
     // Override background for non-inset grouped lists on iOS
-    const backgroundColor = (isIOS && !insetGrouped) ? '#FFFFFF' : theme.colors.groupped.background;
+    const backgroundColor = (isIOS && !insetGrouped) ? theme.colors.surface : theme.colors.groupped.background;
 
     return (
         <View 

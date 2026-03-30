@@ -7,6 +7,16 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { ensureAscApiKeyFile } from './ensure-asc-api-key-file.mjs';
+import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
+import {
+  allowsBestEffortSubmit,
+  MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES,
+  formatMobileReleaseEnvironment,
+  normalizeMobileReleaseEnvironment,
+  normalizeMobileReleaseProfile,
+  resolveMobileAppEnvironmentConfig,
+  supportsMobileNativeSubmit,
+} from './mobile-release-environments.mjs';
 
 function fail(message) {
   console.error(message);
@@ -79,29 +89,16 @@ function extractZipEntry(zipPath, entry, env) {
 /**
  * Resolves the expected iOS bundle identifier for the requested environment.
  *
- * We intentionally avoid executing `apps/ui/app.config.js` here because it mixes ESM exports with `require(...)`
- * calls that are evaluated by Expo tooling, not by plain Node. Instead, we treat it as a configuration source and
- * extract the stable bundle ids from the file.
- *
- * @param {{ repoRoot: string; environment: 'preview' | 'production'; env: Record<string, string> }} opts
+ * @param {{ environment: import('./mobile-release-environments.mjs').MobileReleaseEnvironment; env: Record<string, string> }} opts
  * @returns {{ bundleIdentifier: string; source: string }}
  */
 function resolveExpectedIosBundleId(opts) {
   const override = String(opts.env.EXPO_APP_BUNDLE_ID ?? opts.env.HAPPY_STACKS_IOS_BUNDLE_ID ?? '').trim();
   if (override) return { bundleIdentifier: override, source: 'env override' };
-
-  const configPath = path.join(opts.repoRoot, 'apps', 'ui', 'app.config.js');
-  if (!fs.existsSync(configPath)) return { bundleIdentifier: '', source: 'missing config' };
-  const raw = fs.readFileSync(configPath, 'utf8');
-
-  const prodMatch = raw.match(/iosBundleId:\s*"([^"]+)"/);
-  const prod = String(prodMatch?.[1] ?? '').trim();
-
-  const previewMatch = raw.match(/bundleIdsByVariant\s*=\s*\{[\s\S]*?\bpreview:\s*"([^"]+)"/m);
-  const preview = String(previewMatch?.[1] ?? '').trim();
-
-  const bundleIdentifier = opts.environment === 'production' ? prod : preview;
-  return { bundleIdentifier, source: 'apps/ui/app.config.js' };
+  return {
+    bundleIdentifier: resolveMobileAppEnvironmentConfig(opts.environment).iosBundleId,
+    source: 'apps/ui/appVariantConfig.cjs',
+  };
 }
 
 /**
@@ -260,16 +257,17 @@ function main() {
       platform: { type: 'string' },
       path: { type: 'string', default: '' },
       profile: { type: 'string', default: '' },
+      interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
   });
 
-  const environment = String(values.environment ?? '').trim();
-  if (!environment) fail('--environment is required');
-  if (environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'preview' or 'production' (got: ${environment})`);
+  const requestedEnvironment = String(values.environment ?? '').trim();
+  const environment = normalizeMobileReleaseEnvironment(requestedEnvironment);
+  if (!environment || !supportsMobileNativeSubmit(environment)) {
+    fail(`--environment must be ${JSON.stringify(MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES)} (got: ${requestedEnvironment || '<empty>'})`);
   }
 
   const platformRaw = String(values.platform ?? '').trim();
@@ -279,7 +277,8 @@ function main() {
   }
 
   const submitPathRaw = String(values.path ?? '').trim();
-  const submitProfile = String(values.profile ?? '').trim() || environment;
+  const requestedProfile = String(values.profile ?? '').trim();
+  const submitProfile = normalizeMobileReleaseProfile(requestedProfile) || requestedProfile || environment;
   if (submitPathRaw && platformRaw === 'all') {
     fail("--platform 'all' cannot be used with --path (submit per-platform with explicit paths).");
   }
@@ -287,23 +286,24 @@ function main() {
   const dryRun = values['dry-run'] === true;
   const opts = { dryRun };
 
-  const isCi = String(process.env.CI ?? '').trim().toLowerCase() === 'true' || String(process.env.GITHUB_ACTIONS ?? '').trim() === 'true';
+  let interactiveOverride = 'auto';
+  try {
+    interactiveOverride = normalizeInteractiveOverride(values.interactive);
+  } catch (error) {
+    fail(/** @type {Error} */ (error).message);
+  }
+
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
+  const { isCi, nonInteractive } = resolveExpoInteractivity({ interactiveOverride });
   if (isCi && !expoToken) {
     fail('EXPO_TOKEN is required for Expo submit.');
   }
-  const pipelineInteractive =
-    String(process.env.PIPELINE_INTERACTIVE ?? '').trim() === '1' ||
-    String(process.env.PIPELINE_INTERACTIVE ?? '').trim().toLowerCase() === 'true';
-  // Default to non-interactive when EXPO_TOKEN is present (matches CI behavior), but allow an explicit
-  // local escape hatch for one-time credential bootstrap (e.g. Google Play service account setup).
-  const nonInteractive = isCi || (Boolean(expoToken) && !pipelineInteractive);
 
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
 
   const platforms = platformRaw === 'all' ? ['ios', 'android'] : [platformRaw];
-  console.log(`[pipeline] expo submit: environment=${environment} platform=${platformRaw}`);
+  console.log(`[pipeline] expo submit: environment=${formatMobileReleaseEnvironment(environment)} platform=${platformRaw}`);
 
   const uiDir = path.join(repoRoot, 'apps', 'ui');
   const submitPathAbs = submitPathRaw ? path.resolve(repoRoot, submitPathRaw) : '';
@@ -325,11 +325,12 @@ function main() {
     if (platforms.includes('ios')) {
       const meta = readIosIpaMetadata({ ipaPath: submitPathAbs, env: process.env });
       if (meta?.bundleIdentifier) {
-        const expected = resolveExpectedIosBundleId({ repoRoot, environment, env: process.env });
+        const expected = resolveExpectedIosBundleId({ environment, env: process.env });
         if (expected.bundleIdentifier && meta.bundleIdentifier !== expected.bundleIdentifier) {
           fail(
             [
               `iOS archive bundle identifier mismatch for environment='${environment}'.`,
+              `Display environment:              ${formatMobileReleaseEnvironment(environment)}`,
               '',
               `Expected (${expected.source}): ${expected.bundleIdentifier}`,
               `Actual (archive):               ${meta.bundleIdentifier}${meta.displayName ? ` (${meta.displayName})` : ''}`,
@@ -357,7 +358,7 @@ function main() {
     const submitArgs = submitPathAbs ? [...baseArgs, '--path', submitPathAbs] : [...baseArgs, '--latest'];
     if (nonInteractive) submitArgs.push('--non-interactive');
 
-    const appEnv = String(process.env.APP_ENV ?? '').trim() || environment;
+    const appEnv = String(process.env.APP_ENV ?? '').trim() || formatMobileReleaseEnvironment(environment);
     const result = run(opts, 'npx', submitArgs, {
       cwd: uiDir,
       env: {
@@ -365,11 +366,11 @@ function main() {
         // as the intended pipeline environment unless the operator overrides it explicitly.
         APP_ENV: appEnv,
       },
-      allowFailure: environment === 'preview',
+      allowFailure: allowsBestEffortSubmit(environment),
     });
     if (!result.ok) {
       hadFailure = true;
-      console.log(`::warning::Expo submit failed for ${platform} in preview; continuing so successful platform submissions are preserved.`);
+      console.log(`::warning::Expo submit failed for ${platform} in ${formatMobileReleaseEnvironment(environment)}; continuing so successful platform submissions are preserved.`);
     }
   }
 

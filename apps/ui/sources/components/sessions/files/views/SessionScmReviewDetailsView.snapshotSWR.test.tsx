@@ -1,37 +1,47 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockSnapshot: any = null;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    View: (props: any) => React.createElement('View', props, props.children),
-    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, null),
-    AppState: {
-        currentState: 'active',
-        addEventListener: () => ({ remove: () => {} }),
-        removeEventListener: () => {},
-    },
-}));
+const mockSession = {
+    id: 'session-1',
+    seq: 0,
+    createdAt: 0,
+    updatedAt: 0,
+    active: false,
+    activeAt: 0,
+    metadata: { path: '/tmp/repo', host: '' },
+    metadataVersion: 0,
+    agentState: null,
+    agentStateVersion: 0,
+    thinking: false,
+    thinkingAt: 0,
+    presence: 0,
+} satisfies Session;
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) => value,
-        absoluteFillObject: {},
-    },
+installSessionFilesViewCommonModuleMocks({
+    storage: async (importOriginal) =>
+        createPartialStorageModuleMock(importOriginal, {
+            useSession: (_id: string) => mockSession,
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionProjectScmSnapshot: () => mockSnapshot,
+            useSessionProjectScmSnapshotError: () => null,
+            useSessionProjectScmTouchedPaths: () => [],
+            useSessionProjectScmOperationLog: () => [],
+            useProjectForSession: () => null,
+            useProjectSessions: () => [],
+            useSetting: () => 25,
+        }),
+});
+
+vi.mock('@expo/vector-icons', () => ({
+    Octicons: 'Octicons',
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -52,21 +62,25 @@ vi.mock('@/hooks/session/files/useChangedFilesData', () => ({
     useChangedFilesData: () => ({
         attributionReliability: 'high',
         allRepositoryChangedFiles: [],
+        turnAttributedFiles: [],
+        turnRepositoryOnlyFiles: [],
         sessionAttributedFiles: [],
         repositoryOnlyFiles: [],
         suppressedInferredCount: 0,
+        showTurnViewToggle: false,
+        showSessionViewToggle: false,
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSession: () => ({ metadata: { path: '/tmp/repo' } }),
-    useSessionProjectScmSnapshot: () => mockSnapshot,
-    useSessionProjectScmSnapshotError: () => null,
-    useSessionProjectScmTouchedPaths: () => [],
-    useSessionProjectScmOperationLog: () => [],
-    useProjectForSession: () => null,
-    useProjectSessions: () => [],
-    useSetting: () => 25,
+vi.mock('@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet', () => ({
+    useDerivedSessionChangeSet: () => ({
+        turnChangeSets: [],
+        latestTurnChangeSet: null,
+        latestTurnScopedChangeSet: null,
+        sessionChangeSet: null,
+        latestTurnDiffByPath: null,
+        providerDiffByPath: null,
+    }),
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({
@@ -134,18 +148,16 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         }
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Wrapper, { tick: 0 }));
-        });
+        tree = (await renderScreen(React.createElement(Wrapper, { tick: 0 }))).tree;
 
-        expect(tree.root.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
+        expect(tree.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
 
         mockSnapshot = null;
         await act(async () => {
             tree.update(React.createElement(Wrapper, { tick: 1 }));
         });
 
-        expect(tree.root.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
-        expect(tree.root.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(tree.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
+        expect(tree.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 });

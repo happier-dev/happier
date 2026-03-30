@@ -134,6 +134,9 @@ class FakeAgent {
     if (modelLog) appendFileSync(modelLog, JSON.stringify({ method: "set_config_option", sessionId: params.sessionId, configId: params.configId, modelId: params.value }) + "\\n", "utf8");
     return {};
   }
+  async setSessionModel() {
+    throw new Error("ACP SDK does not support session/set_model");
+  }
   async prompt(params) {
     if (promptLog) appendFileSync(promptLog, JSON.stringify({ sessionId: params.sessionId, at: Date.now() }) + "\\n", "utf8");
     await this.connection.sessionUpdate({

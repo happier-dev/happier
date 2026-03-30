@@ -1,52 +1,33 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    ScrollView: 'ScrollView',
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default },
-    Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
-    useWindowDimensions: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                success: '#0a0',
-                text: '#111',
-                textSecondary: '#555',
-                surfaceHighest: '#fff',
-                divider: '#ddd',
-                input: { background: '#f7f7f7' },
-                userMessageBackground: '#eef',
-                agentEventText: '#777',
+installMessageViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (values: Record<string, unknown>) => values?.ios ?? values?.default,
             },
-        },
-    }),
-    StyleSheet: {
-        create: (input: any) => {
-            const theme = {
-                colors: {
-                    success: '#0a0',
-                    text: '#111',
-                    textSecondary: '#555',
-                    surfaceHighest: '#fff',
-                    divider: '#ddd',
-                    input: { background: '#f7f7f7' },
-                    userMessageBackground: '#eef',
-                    agentEventText: '#777',
-                },
-            };
-            return typeof input === 'function' ? input(theme, {}) : input;
-        },
+        });
     },
-}));
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: () => null,
+                useSession: () => null,
+            },
+        });
+    },
+});
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: any) => React.createElement('MarkdownView', props),
@@ -73,20 +54,12 @@ vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
     LinkedWorkspaceFilesRow: () => null,
 }));
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
     isCommittedMessageDiscarded: () => false,
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
 }));
 
 vi.mock('expo-clipboard', () => ({
@@ -102,13 +75,12 @@ vi.mock('@/sync/sync', () => ({
     sync: { submitMessage: vi.fn(), sendMessage: vi.fn() },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: () => null,
-    useSession: () => null,
-}));
-
 describe('MessageView (copy button hitSlop)', () => {
-    it('uses hitSlop=15 for the copy button so icon-only actions are easy to tap', async () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    it('shows copy in the native context menu instead of rendering icon-only buttons', async () => {
         const { MessageView } = await import('./MessageView');
 
         const message: any = {
@@ -117,17 +89,26 @@ describe('MessageView (copy button hitSlop)', () => {
             text: 'hello',
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
+        const screen = await renderScreen(
+            <MessageView message={message} metadata={null} sessionId="s1" />,
+        );
+
+        const copyButtons = screen.findAll((node: any) => node.props?.testID === 'transcript-message-copy:local-1');
+        expect(copyButtons).toHaveLength(0);
+
+        const longPressables = screen.findAll(
+            (node: any) => node.type === 'Pressable' && typeof node.props?.onLongPress === 'function',
+        );
+        expect(longPressables.length).toBeGreaterThan(0);
+
         await act(async () => {
-            tree = renderer.create(
-                <MessageView message={message} metadata={null} sessionId="s1" />,
-            );
+            invokeTestInstanceHandler(longPressables[0], 'onLongPress');
         });
 
-        const copyButtons = tree!.root.findAll(
-            (node: any) => node.type === 'Pressable' && node.props.accessibilityLabel === 'common.copy',
-        );
-        expect(copyButtons).toHaveLength(1);
-        expect(copyButtons[0].props.hitSlop).toBe(15);
+        const dropdowns = screen.findAllByType('DropdownMenu');
+        expect(dropdowns).toHaveLength(1);
+        expect(dropdowns[0].props.open).toBe(true);
+        expect(dropdowns[0].props.trigger).toBe(null);
+        expect(dropdowns[0].props.items).toEqual([{ id: 'copy', title: 'common.copy' }]);
     });
 });

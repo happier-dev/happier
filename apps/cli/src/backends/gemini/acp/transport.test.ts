@@ -60,11 +60,11 @@ describe('GeminiTransport determineToolName', () => {
       expected: 'execute',
     },
     {
-      label: 'uses empty-input default for generic other tool',
+      label: 'does not default empty-input generic tools to change_title',
       toolName: 'other',
       toolCallId: 'unknown-123',
       input: {},
-      expected: 'change_title',
+      expected: 'other',
     },
     {
       label: 'does not apply empty-input default to Unknown tool label',
@@ -72,6 +72,34 @@ describe('GeminiTransport determineToolName', () => {
       toolCallId: 'unknown-123',
       input: {},
       expected: 'Unknown tool',
+    },
+    {
+      label: 'still resolves real change_title calls from the toolCallId even when input is empty',
+      toolName: 'other',
+      toolCallId: 'change_title-123',
+      input: {},
+      expected: 'change_title',
+    },
+    {
+      label: 'lets shell-bridge custom MCP input override an incorrect change_title wrapper name',
+      toolName: 'change_title',
+      toolCallId: 'get_marker-123',
+      input: {
+        command:
+          'happier tools call --session-id "sess-1" --directory "/tmp/workspace" --source "qa_marker_stdio_20260306" --tool "get_marker" --args-json "{}" --json',
+      },
+      expected: 'mcp__qa_marker_stdio_20260306__get_marker',
+    },
+    {
+      label: 'does not let synthetic ACP title metadata coerce opaque tool ids into change_title',
+      toolName: 'other',
+      toolCallId: 'get_marker-123',
+      input: {
+        title: 'Change Title',
+        description: 'Change Title',
+        _acp: { title: 'Change Title' },
+      },
+      expected: 'get_marker',
     },
   ])('$label', ({ toolName, toolCallId, input, expected }) => {
     expect(

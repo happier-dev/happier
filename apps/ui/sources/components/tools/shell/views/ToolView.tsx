@@ -17,6 +17,7 @@ import { ToolInlineBody } from './ToolInlineBody';
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
+import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
 import {
     resolveToolViewDetailLevelDefaultForChromeMode,
     resolveToolViewExpandedDetailLevelDefaultForChromeMode,
@@ -25,6 +26,12 @@ import {
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
 import { deriveToolTimelineDensity } from '@/components/tools/normalization/policy/deriveToolTimelineDensity';
 import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
+import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
+import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
+import { Typography } from '@/constants/Typography';
+import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
+import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 
 
 interface ToolViewProps {
@@ -34,10 +41,12 @@ interface ToolViewProps {
     onPress?: () => void;
     sessionId?: string;
     messageId?: string;
+    forcePermissionPromptsInTranscript?: boolean;
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
         permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
+        disableToolNavigation?: boolean;
     };
 }
 
@@ -76,28 +85,25 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         setting: normalizedToolViewExpandedDetailLevelDefaultSetting,
     });
 
+    const toolForSession = React.useMemo(() => {
+        return resolveInactiveSessionToolCallFailure({
+            tool,
+            permissionDisabledReason: props.interaction?.permissionDisabledReason,
+        });
+    }, [props.interaction?.permissionDisabledReason, tool]);
+
     const headerModel = React.useMemo(() => {
         return buildToolHeaderModel({
-            tool,
+            tool: toolForSession,
             metadata: props.metadata,
             iconSize: 18,
             iconColorPrimary: theme.colors.text,
             iconColorSecondary: theme.colors.textSecondary,
         });
-    }, [props.metadata, theme.colors.text, theme.colors.textSecondary, tool]);
+    }, [props.metadata, theme.colors.text, theme.colors.textSecondary, toolForSession]);
 
     const toolForRendering = headerModel.toolForRendering;
     const isWaitingForPermission = headerModel.isWaitingForPermission;
-
-    const handleOpen = React.useCallback(() => {
-        if (onPress) {
-            onPress();
-        } else if (sessionId && messageId) {
-            router.push(`/session/${sessionId}/message/${messageId}`);
-        }
-    }, [onPress, sessionId, messageId, router]);
-
-    const canOpen = !!(onPress || (sessionId && messageId));
 
     const handleToggleExpanded = React.useCallback(() => {
         setIsExpanded((v) => !v);
@@ -105,6 +111,23 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 
     const normalizedToolName = headerModel.normalizedToolName;
     let knownTool = headerModel.knownTool;
+    const routeMessageId = React.useMemo(() => {
+        if (props.interaction?.disableToolNavigation === true) return null;
+        return buildToolCallMessageRouteId({
+            toolId: typeof toolForRendering.id === 'string' ? toolForRendering.id : null,
+            fallbackMessageId: messageId,
+        });
+    }, [messageId, props.interaction?.disableToolNavigation, toolForRendering.id]);
+
+    const handleOpen = React.useCallback(() => {
+        if (onPress) {
+            onPress();
+        } else if (sessionId && routeMessageId) {
+            router.push(`/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
+        }
+    }, [onPress, routeMessageId, router, sessionId]);
+
+    const canOpen = !!(onPress || (sessionId && routeMessageId));
 
     const description: string | null = headerModel.subtitle;
     const status: string | null = headerModel.statusText;
@@ -142,8 +165,21 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
 
     const effectiveDetailLevel = isExpanded ? expandedDetailLevel : collapsedDetailLevel;
+
+    const transcriptSidechainId = React.useMemo(() => {
+        return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
+    }, [normalizedToolName, toolForRendering]);
+
+    useEnsureSidechainsLoaded({
+        enabled:
+            isExpanded &&
+            isSubAgentTranscriptToolName(normalizedToolName),
+        sessionId,
+        sidechainIds: [transcriptSidechainId],
+    });
+
     const inlineDetailLevel =
-        normalizedToolName === 'Task' && effectiveDetailLevel === 'full'
+        isGenericSubAgentToolName(normalizedToolName) && effectiveDetailLevel === 'full'
             ? 'summary'
             : effectiveDetailLevel;
 
@@ -192,19 +228,18 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         hideDefaultError = true;
         minimal = true;
     } else {
-        switch (toolForRendering.state) {
+        switch (statusKind) {
             case 'running':
                 if (!noStatus) {
                     statusIcon = <ActivityIndicator size="small" color={theme.colors.text} style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }} />;
                 }
                 break;
-            case 'completed':
-                // if (!noStatus) {
-                //     statusIcon = <Ionicons name="checkmark-circle" size={20} color="#34C759" />;
-                // }
-                break;
             case 'error':
-                statusIcon = <Ionicons name="alert-circle-outline" size={20} color={theme.colors.warning} />;
+                statusIcon = <Ionicons name="alert-circle" size={20} color={theme.colors.textDestructive} />;
+                break;
+            case 'completed':
+            case 'none':
+            default:
                 break;
         }
     }
@@ -240,17 +275,26 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         toolForRendering.id ??
         `${sessionId ?? 'no-session'}:${normalizedToolName}:${toolForRendering.createdAt}`;
 
-    const resolvedPermissionPromptSurface = resolvePermissionPromptSurface(permissionPromptSurface);
+    const resolvedPermissionPromptSurface = props.forcePermissionPromptsInTranscript
+        ? 'transcript'
+        : resolvePermissionPromptSurface(permissionPromptSurface);
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
 
     const headerDescription = effectiveDetailLevel === 'title' ? null : description;
     const headerStatusText = effectiveDetailLevel === 'title' ? null : status;
     const showSubtitleInline = timelineDensity === 'compact' || effectiveDetailLevel === 'compact';
+    const errorSummary =
+        statusKind === 'error' ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error')) : null;
 
     return (
         <View style={styles.container}>
             <View style={[styles.header, timelineDensity === 'compact' ? styles.headerCompact : null]}>
-                <TouchableOpacity style={styles.headerMain} onPress={primaryOnPress} activeOpacity={0.8}>
+                <TouchableOpacity
+                    testID="tool-view-header-primary"
+                    style={styles.headerMain}
+                    onPress={primaryOnPress}
+                    activeOpacity={0.8}
+                >
                     <View style={[styles.iconContainer, timelineDensity === 'compact' ? styles.iconContainerCompact : null]}>
                         {icon}
                     </View>
@@ -279,6 +323,14 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 </TouchableOpacity>
 
                 <View style={styles.headerRight}>
+                    {errorSummary ? (
+                        <View style={styles.headerError}>
+                            <Ionicons name="alert-circle" size={18} color={theme.colors.textDestructive} />
+                            <Text style={styles.headerErrorText} numberOfLines={1}>
+                                {errorSummary}
+                            </Text>
+                        </View>
+                    ) : null}
                     {headerActions ? (
                         <View style={styles.headerActionsContainer}>
                             {headerActions}
@@ -287,6 +339,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 
                     {secondaryOnPress ? (
                         <TouchableOpacity
+                            testID="tool-view-header-secondary"
                             onPress={secondaryOnPress}
                             activeOpacity={0.8}
                             style={styles.secondaryAction}
@@ -378,11 +431,26 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 8,
     },
+    headerError: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        maxWidth: 240,
+    },
+    headerErrorText: {
+        fontSize: 13,
+        color: theme.colors.textDestructive,
+        ...Typography.default('semiBold'),
+    },
     headerActionsContainer: {
         flexDirection: 'row',
         alignItems: 'center',
     },
     secondaryAction: {
+        width: 34,
+        height: 34,
+        alignItems: 'center',
+        justifyContent: 'center',
         marginLeft: 0,
     },
     iconContainer: {
@@ -407,17 +475,18 @@ const styles = StyleSheet.create((theme) => ({
         fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
     },
     toolName: {
-        fontSize: 14,
-        fontWeight: '500',
+        fontSize: 13,
+        ...Typography.default('semiBold'),
         color: theme.colors.text,
     },
     status: {
         fontWeight: '400',
         opacity: 0.3,
-        fontSize: 15,
+        fontSize: 13,
     },
     toolDescription: {
         fontSize: 13,
+        fontWeight: '400',
         color: theme.colors.textSecondary,
         marginTop: 2,
     },

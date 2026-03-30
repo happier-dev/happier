@@ -1,19 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { createDeferred } from '@/testkit/async/deferred';
 import type { BackendStartupSpec, StartupContext } from './startupSpec';
 import { runStartupCoordinator } from './startupCoordinator';
 import { createStartupTiming } from './startupTiming';
-
-function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolveFn: ((value: T) => void) | null = null;
-  const promise = new Promise<T>((resolve) => {
-    resolveFn = resolve;
-  });
-  return {
-    promise,
-    resolve: (value: T) => resolveFn?.(value),
-  };
-}
 
 describe('runStartupCoordinator', () => {
   it('invokes spawn after preSpawn tasks without waiting for background tasks', async () => {

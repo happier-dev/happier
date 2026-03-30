@@ -1,40 +1,43 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
-import { useSessionFileEditorState } from './useSessionFileEditorState';
+import { installSessionFileDetailsCommonModuleMocks } from './sessionFileDetailsTestHelpers';
+import { renderScreen } from '@/dev/testkit';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const globalObject = globalThis as typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+
+globalObject.IS_REACT_ACT_ENVIRONMENT = true;
 
 type SessionWriteFileFn = typeof import('@/sync/ops').sessionWriteFile;
 
 const sessionWriteFileSpy = vi.hoisted(() =>
-    vi.fn<SessionWriteFileFn>(async () => ({ success: true })),
+    vi.fn<SessionWriteFileFn>(async () => ({ success: true, hash: 'h1' })),
 );
 const showDaemonUnavailableAlertSpy = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-}));
+installSessionFileDetailsCommonModuleMocks({
+    modal: async () =>
+        createModalModuleMock({
+            spies: {
+                alert: (title, message, buttons) => modalAlertSpy(title, message, buttons),
+            },
+        }).module,
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: (...args: Parameters<SessionWriteFileFn>) => sessionWriteFileSpy(...args),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: (...args: any[]) => modalAlertSpy(...args),
-    },
-}));
-
 vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
-    showDaemonUnavailableAlert: (params: any) => showDaemonUnavailableAlertSpy(params),
+    showDaemonUnavailableAlert: (params: DaemonUnavailableAlertParams) => showDaemonUnavailableAlertSpy(params),
     tryShowDaemonUnavailableAlertForRpcError: () => false,
 }));
 
@@ -42,8 +45,16 @@ type SessionFileEditorState = {
     editorSurfaceEnabled: boolean;
     isEditingFile: boolean;
     startEditingFile: () => void;
-    setEditorText: (value: string) => void;
+    onEditorChange: (value: string) => void;
     saveFileEdits: () => void;
+};
+
+type DaemonUnavailableAlertParams = {
+    titleKey: string;
+    bodyKey: string;
+    machine?: unknown;
+    onRetry?: (() => void) | null;
+    shouldContinue?: (() => boolean) | null;
 };
 
 describe('useSessionFileEditorState (daemon unavailable)', () => {
@@ -53,23 +64,25 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
         modalAlertSpy.mockReset();
     });
 
-	    it('treats METHOD_NOT_AVAILABLE as daemon unavailable without disabling editor support', async () => {
-	        sessionWriteFileSpy.mockResolvedValueOnce({
-	            success: false,
-	            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-	            error: 'RPC method not available',
-	        });
+    it('treats METHOD_NOT_AVAILABLE as daemon unavailable without disabling editor support', async () => {
+        const { useSessionFileEditorState } = await import('./useSessionFileEditorState');
 
-	        const mountedRef = { current: true };
-	        const setFileWriteSupported = vi.fn();
-	        let latest: unknown = null;
-	        const getState = () => latest as SessionFileEditorState;
+        sessionWriteFileSpy.mockResolvedValueOnce({
+            success: false,
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            error: 'RPC method not available',
+        });
 
-	        const Harness = () => {
-	            latest = useSessionFileEditorState({
-	                sessionId: 's1',
-	                sessionPath: '/tmp/workspace',
-	                filePath: 'a.txt',
+        const mountedRef = { current: true };
+        const setFileWriteSupported = vi.fn();
+        let latest: unknown = null;
+        const getState = () => latest as SessionFileEditorState;
+
+        const Harness = () => {
+            latest = useSessionFileEditorState({
+                sessionId: 's1',
+                sessionPath: '/tmp/workspace',
+                filePath: 'a.txt',
                 displayMode: 'file',
                 fileText: 'hello',
                 fileWriteSupported: true,
@@ -87,27 +100,25 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
             return null;
         };
 
-	        await act(async () => {
-	            renderer.create(<Harness />);
-	        });
+        await renderScreen(<Harness />);
 
-	        expect(getState().editorSurfaceEnabled).toBe(true);
+        expect(getState().editorSurfaceEnabled).toBe(true);
 
-	        await act(async () => {
-	            getState().startEditingFile();
-	        });
+        await act(async () => {
+            getState().startEditingFile();
+        });
 
-	        await act(async () => {
-	            getState().setEditorText('hello changed');
-	        });
+        await act(async () => {
+            getState().onEditorChange('hello changed');
+        });
 
-	        await act(async () => {
-	            getState().saveFileEdits();
-	        });
+        await act(async () => {
+            getState().saveFileEdits();
+        });
 
         for (let i = 0; i < 10; i++) {
             await act(async () => {
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
             if (showDaemonUnavailableAlertSpy.mock.calls.length > 0) break;
         }
@@ -121,28 +132,31 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
             }),
         );
 
-	        expect(setFileWriteSupported).not.toHaveBeenCalled();
-	        expect(modalAlertSpy).not.toHaveBeenCalled();
-	        expect(getState().editorSurfaceEnabled).toBe(true);
-	        expect(getState().isEditingFile).toBe(true);
-	        expect(sessionWriteFileSpy).toHaveBeenCalledTimes(1);
-	    });
+        expect(setFileWriteSupported).not.toHaveBeenCalled();
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(getState().editorSurfaceEnabled).toBe(true);
+        expect(getState().isEditingFile).toBe(true);
+        expect(sessionWriteFileSpy).toHaveBeenCalledTimes(1);
+        expect(sessionWriteFileSpy.mock.calls[0]?.[2]).toBe('hello changed');
+    });
 
     it('passes a shouldContinue guard that becomes false after unmount', async () => {
+        const { useSessionFileEditorState } = await import('./useSessionFileEditorState');
+
         sessionWriteFileSpy.mockResolvedValueOnce({
             success: false,
             errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
             error: 'RPC method not available',
-	        });
+        });
 
-	        const mountedRef = { current: true };
-	        let latest: unknown = null;
-	        const getState = () => latest as SessionFileEditorState;
+        const mountedRef = { current: true };
+        let latest: unknown = null;
+        const getState = () => latest as SessionFileEditorState;
 
-	        const Harness = () => {
-	            latest = useSessionFileEditorState({
-	                sessionId: 's1',
-	                sessionPath: '/tmp/workspace',
+        const Harness = () => {
+            latest = useSessionFileEditorState({
+                sessionId: 's1',
+                sessionPath: '/tmp/workspace',
                 filePath: 'a.txt',
                 displayMode: 'file',
                 fileText: 'hello',
@@ -161,31 +175,29 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
             return null;
         };
 
-	        await act(async () => {
-	            renderer.create(<Harness />);
-	        });
+        await renderScreen(<Harness />);
 
-	        await act(async () => {
-	            getState().startEditingFile();
-	            getState().setEditorText('hello changed');
-	        });
+        await act(async () => {
+            getState().startEditingFile();
+            getState().onEditorChange('hello changed');
+        });
 
-	        await act(async () => {
-	            getState().saveFileEdits();
-	        });
+        await act(async () => {
+            getState().saveFileEdits();
+        });
 
         for (let i = 0; i < 10; i++) {
             await act(async () => {
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
             if (showDaemonUnavailableAlertSpy.mock.calls.length > 0) break;
         }
 
-        const params = showDaemonUnavailableAlertSpy.mock.calls[0]?.[0];
+        const params = showDaemonUnavailableAlertSpy.mock.calls[0]?.[0] as DaemonUnavailableAlertParams | undefined;
         expect(params?.shouldContinue).toBeTypeOf('function');
-        expect(params.shouldContinue()).toBe(true);
+        expect(params?.shouldContinue?.()).toBe(true);
 
         mountedRef.current = false;
-        expect(params.shouldContinue()).toBe(false);
+        expect(params?.shouldContinue?.()).toBe(false);
     });
 });

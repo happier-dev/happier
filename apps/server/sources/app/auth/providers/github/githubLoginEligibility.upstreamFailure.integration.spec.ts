@@ -25,15 +25,17 @@ describe("GitHub login eligibility upstream failures (integration)", () => {
     });
 
     beforeEach(async () => {
-        harness.restoreEnv();
+        harness.resetEnv();
         vi.unstubAllGlobals();
-        delete process.env.AUTH_GITHUB_ALLOWED_USERS;
-        delete process.env.AUTH_GITHUB_ALLOWED_ORGS;
-        delete process.env.AUTH_GITHUB_ORG_MATCH;
-        delete process.env.AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE;
-        delete process.env.AUTH_OFFBOARDING_ENABLED;
-        delete process.env.AUTH_OFFBOARDING_INTERVAL_SECONDS;
-        delete process.env.AUTH_OFFBOARDING_STRICT;
+        harness.resetEnv({
+            AUTH_GITHUB_ALLOWED_USERS: undefined,
+            AUTH_GITHUB_ALLOWED_ORGS: undefined,
+            AUTH_GITHUB_ORG_MATCH: undefined,
+            AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE: undefined,
+            AUTH_OFFBOARDING_ENABLED: undefined,
+            AUTH_OFFBOARDING_INTERVAL_SECONDS: undefined,
+            AUTH_OFFBOARDING_STRICT: undefined,
+        });
 
         await db.accountIdentity.deleteMany();
         await db.account.deleteMany();
@@ -65,10 +67,12 @@ describe("GitHub login eligibility upstream failures (integration)", () => {
     }
 
     it("fails open in non-strict mode when upstream is down and the user was previously eligible", async () => {
-        process.env.AUTH_GITHUB_ALLOWED_ORGS = "acme";
-        process.env.AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE = "oauth_user_token";
-        process.env.AUTH_OFFBOARDING_ENABLED = "true";
-        process.env.AUTH_OFFBOARDING_INTERVAL_SECONDS = "600";
+        harness.resetEnv({
+            AUTH_GITHUB_ALLOWED_ORGS: "acme",
+            AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE: "oauth_user_token",
+            AUTH_OFFBOARDING_ENABLED: "true",
+            AUTH_OFFBOARDING_INTERVAL_SECONDS: "600",
+        });
 
         vi.stubGlobal("fetch", vi.fn(async () => {
             throw new Error("network down");
@@ -92,11 +96,13 @@ describe("GitHub login eligibility upstream failures (integration)", () => {
     });
 
     it("fails closed in strict mode when upstream is down (even if the user was previously eligible)", async () => {
-        process.env.AUTH_GITHUB_ALLOWED_ORGS = "acme";
-        process.env.AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE = "oauth_user_token";
-        process.env.AUTH_OFFBOARDING_ENABLED = "true";
-        process.env.AUTH_OFFBOARDING_INTERVAL_SECONDS = "600";
-        process.env.AUTH_OFFBOARDING_STRICT = "true";
+        harness.resetEnv({
+            AUTH_GITHUB_ALLOWED_ORGS: "acme",
+            AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE: "oauth_user_token",
+            AUTH_OFFBOARDING_ENABLED: "true",
+            AUTH_OFFBOARDING_INTERVAL_SECONDS: "600",
+            AUTH_OFFBOARDING_STRICT: "true",
+        });
 
         vi.stubGlobal("fetch", vi.fn(async () => {
             throw new Error("network down");
@@ -111,10 +117,12 @@ describe("GitHub login eligibility upstream failures (integration)", () => {
     });
 
     it("does not allow bypassing org restrictions when upstream is down and eligibility is unknown", async () => {
-        process.env.AUTH_GITHUB_ALLOWED_ORGS = "acme";
-        process.env.AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE = "oauth_user_token";
-        process.env.AUTH_OFFBOARDING_ENABLED = "true";
-        process.env.AUTH_OFFBOARDING_INTERVAL_SECONDS = "600";
+        harness.resetEnv({
+            AUTH_GITHUB_ALLOWED_ORGS: "acme",
+            AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE: "oauth_user_token",
+            AUTH_OFFBOARDING_ENABLED: "true",
+            AUTH_OFFBOARDING_INTERVAL_SECONDS: "600",
+        });
 
         vi.stubGlobal("fetch", vi.fn(async () => {
             throw new Error("network down");

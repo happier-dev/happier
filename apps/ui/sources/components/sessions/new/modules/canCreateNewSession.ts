@@ -5,10 +5,11 @@ export function canCreateNewSession(params: Readonly<{
     selectedMachineId: string | null;
     selectedMachine: Machine | null;
     selectedPath: string;
+    allowOfflineMachine?: boolean;
 }>): boolean {
     if (!params.selectedMachineId) return false;
     if (!params.selectedPath.trim()) return false;
     if (!params.selectedMachine) return false;
+    if (params.allowOfflineMachine === true) return true;
     return isMachineOnline(params.selectedMachine);
 }
-

@@ -1,13 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAcpRuntime } from '../createAcpRuntime';
-import {
-  createApprovedPermissionHandler,
-  createBasicSessionClient,
-  createDeferred,
-  createFakeAcpRuntimeBackend,
-} from '../createAcpRuntime.testkit';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createDeferred } from '@/testkit/async/deferred';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClient } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (ensureBackend)', () => {
   it('creates the backend at most once under concurrent calls', async () => {

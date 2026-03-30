@@ -5,11 +5,17 @@ export type CodeEditorProps = Readonly<{
     value: string;
     language: string | null;
     onChange: (value: string) => void;
+    testID?: string;
     readOnly?: boolean;
     wrapLines?: boolean;
     showLineNumbers?: boolean;
     changeDebounceMs?: number;
     bridgeMaxChunkBytes?: number;
+}>;
+
+export type CodeEditorHandle = Readonly<{
+    getValue: () => string;
+    flushPendingChange: () => Promise<void>;
 }>;
 
 export function resolveMonacoLanguageId(language: string | null): string {

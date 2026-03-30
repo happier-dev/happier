@@ -4,6 +4,29 @@ import { delimiter, join, resolve } from 'node:path';
 
 import { createProbeTempDir, writeExecutableScript } from './agentModelsProbe.testkit';
 
+const { createConfiguredAcpProbeBackendMock } = vi.hoisted(() => ({
+  createConfiguredAcpProbeBackendMock: vi.fn(async () => null),
+}));
+
+vi.mock('./createConfiguredAcpProbeBackend', () => ({
+  createConfiguredAcpProbeBackend: createConfiguredAcpProbeBackendMock,
+}));
+
+vi.mock('@/backends/catalog', () => ({
+  AGENTS: {
+    opencode: {
+      getPreflightSessionControlsProbeAdapter: async () => ({
+        failureCacheStrategy: 'cooldown',
+        cliModelsCommandArgs: ['models'],
+      }),
+    },
+  },
+}));
+
+vi.mock('@/runtime/managedTools/providerCliResolution', () => ({
+  resolveProviderCliCommand: () => null,
+}));
+
 describe('probeAgentModelsBestEffort (cache)', () => {
   it('caches dynamic CLI results and avoids re-running the CLI probe', async () => {
     vi.resetModules();
@@ -18,17 +41,9 @@ describe('probeAgentModelsBestEffort (cache)', () => {
     const opencodePath = resolve(join(binDir, 'opencode'));
     await writeExecutableScript(
       opencodePath,
-      `#!/usr/bin/env node
-const fs = require("fs");
-const countFile = process.env.HAPPIER_TEST_PROBE_COUNT_FILE;
-if (countFile) fs.appendFileSync(countFile, "1");
-const args = process.argv.slice(2);
-if (args[0] === "models") {
-  process.stdout.write("openai/gpt-4.1\\nopenai/gpt-4.1-mini\\n");
-  process.exit(0);
-}
-process.exit(1);
-`,
+      process.platform === 'win32'
+        ? `@echo off\r\nif not "%HAPPIER_TEST_PROBE_COUNT_FILE%"=="" echo|set /p=1>> "%HAPPIER_TEST_PROBE_COUNT_FILE%"\r\nif "%1"=="models" (\r\necho openai/gpt-4.1\r\necho openai/gpt-4.1-mini\r\nexit /b 0\r\n)\r\nexit /b 1\r\n`
+        : `#!/bin/sh\nif [ -n \"$HAPPIER_TEST_PROBE_COUNT_FILE\" ]; then printf 1 >> \"$HAPPIER_TEST_PROBE_COUNT_FILE\"; fi\nif [ \"$1\" = \"models\" ]; then\n  printf '%s\\n' 'openai/gpt-4.1' 'openai/gpt-4.1-mini'\n  exit 0\nfi\nexit 1\n`,
     );
 
     const prevPath = process.env.PATH;
@@ -36,7 +51,7 @@ process.exit(1);
     const prevOverride = process.env.HAPPIER_OPENCODE_PATH;
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
     process.env.HAPPIER_TEST_PROBE_COUNT_FILE = countFile;
-    delete process.env.HAPPIER_OPENCODE_PATH;
+    process.env.HAPPIER_OPENCODE_PATH = opencodePath;
     try {
       const { probeAgentModelsBestEffort } = await import('./agentModelsProbe');
 
@@ -64,4 +79,3 @@ process.exit(1);
     }
   }, 20_000);
 });
-

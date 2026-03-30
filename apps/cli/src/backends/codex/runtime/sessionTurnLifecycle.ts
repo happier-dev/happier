@@ -35,6 +35,12 @@ export function extractMcpToolCallResultOutput(result: unknown): unknown {
     if (Object.prototype.hasOwnProperty.call(record, 'Err')) {
       return (record as any).Err;
     }
+    if (Object.prototype.hasOwnProperty.call(record, 'output')) {
+      return (record as any).output;
+    }
+    if (Object.prototype.hasOwnProperty.call(record, 'result')) {
+      return (record as any).result;
+    }
   }
   return result;
 }

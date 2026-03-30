@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { isPidAlive } from './pids.mjs';
 import { killProcessGroupOwnedByStack } from './ownership.mjs';
+import { spawnDetachedTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 
 function spawnOwnedGracefulExit({ env, exitFile, readyFile }) {
   const cleanEnv = {};
@@ -32,13 +33,10 @@ function spawnOwnedGracefulExit({ env, exitFile, readyFile }) {
     setInterval(() => {}, 1000);
   `;
 
-  const child = spawn(process.execPath, ['-e', code, exitFile, readyFile], {
+  return spawnDetachedTestProcess(process.execPath, ['-e', code, exitFile, readyFile], {
     env: cleanEnv,
     stdio: 'ignore',
-    detached: true,
   });
-  child.unref();
-  return child;
 }
 
 async function waitForCondition({ description, timeoutMs, intervalMs = 30, fn }) {
@@ -153,7 +151,7 @@ test('killProcessGroupOwnedByStack honors requested initial signal when provided
   const signalFile = join(tmp, 'signal.txt');
   const readyFile = join(tmp, 'ready.txt');
 
-  const child = spawn(
+  const child = spawnDetachedTestProcess(
     process.execPath,
     [
       '-e',
@@ -183,10 +181,8 @@ test('killProcessGroupOwnedByStack honors requested initial signal when provided
         HAPPIER_STACK_ENV_FILE: envPath,
       },
       stdio: 'ignore',
-      detached: true,
     }
   );
-  child.unref();
 
   try {
     assert.ok(Number(child.pid) > 1, 'expected child pid');

@@ -21,7 +21,8 @@ export function readSessionWorkspaceContext(
     projectPath: string | null;
     projectMachineId: string | null;
 }> {
-    const sessionPath = normalizeNonEmptyString(state.sessions?.[sessionId]?.metadata?.path);
+    const metadata = state.sessions?.[sessionId]?.metadata;
+    const sessionPath = normalizeNonEmptyString(metadata?.path);
     const project = typeof state.getProjectForSession === 'function' ? state.getProjectForSession(sessionId) : null;
     const projectPath = normalizeNonEmptyString(project?.key?.path);
     const projectMachineId = normalizeNonEmptyString(project?.key?.machineId);

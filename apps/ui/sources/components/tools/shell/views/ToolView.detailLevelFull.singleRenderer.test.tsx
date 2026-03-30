@@ -1,30 +1,31 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { makeToolCall } from './ToolView.testHelpers';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import {
+    installToolShellCommonModuleMocks,
+    makeToolCall,
+} from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: vi.fn(),
+    },
 }));
+
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({ theme: { colors: { text: '#000', textSecondary: '#666', warning: '#f90', surfaceHigh: '#fff', surfaceHighest: '#fff' } } }),
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
-
 vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: [],
+    AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
+    DEFAULT_AGENT_ID: 'claude',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
@@ -48,21 +49,39 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'full';
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'full';
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        if (key === 'toolViewTapAction') return 'expand';
-        if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
-        if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-        return null;
+installToolShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ScrollView: 'ScrollView',
+            Platform: {
+                OS: 'ios',
+                select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null,
+            },
+            useWindowDimensions: () => ({ width: 800, height: 600 }),
+        });
     },
-}));
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewDetailLevelDefault') return 'full';
+                    if (key === 'toolViewDetailLevelDefaultLocalControl') return 'full';
+                    if (key === 'toolViewDetailLevelByToolName') return {};
+                    if (key === 'toolViewTapAction') return 'expand';
+                    if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
+                    if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                    return null;
+                },
+            },
+        });
+    },
+});
 
 vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),
@@ -86,6 +105,10 @@ vi.mock('@/hooks/ui/useElapsedTime', () => ({
 }));
 
 describe('ToolView (detail level: full)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('renders via the single tool renderer and passes detailLevel without calling getToolFullViewComponent', async () => {
         renderedToolViewSpy.mockReset();
 
@@ -97,12 +120,9 @@ describe('ToolView (detail level: full)', () => {
             result: { file: { content: 'hello' } },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
-        });
+        const screen = await renderScreen(React.createElement(ToolView, { tool, metadata: null }));
 
-        expect(tree.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(1);
         expect(renderedToolViewSpy).toHaveBeenCalledWith(expect.objectContaining({ detailLevel: 'full' }));
     });
 
@@ -116,12 +136,9 @@ describe('ToolView (detail level: full)', () => {
             result: null,
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool: taskTool, metadata: null }));
-        });
+        const screen = await renderScreen(React.createElement(ToolView, { tool: taskTool, metadata: null }));
 
-        expect(tree.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(1);
         expect(renderedToolViewSpy).toHaveBeenCalledWith(expect.objectContaining({ detailLevel: 'summary' }));
     });
 });

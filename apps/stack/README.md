@@ -18,10 +18,11 @@ If you want to **develop Happier** (worktrees, multiple stacks, upstream PR work
 ### Quickstart
 
 ```bash
-curl -fsSL https://happier.dev/self-host | bash
+curl -fsSL https://happier.dev/install | bash
+happier relay host install
 ```
 
-Direct hstack flow:
+Legacy hstack wrapper (optional):
 
 ```bash
 hstack self-host install

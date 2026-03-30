@@ -5,8 +5,9 @@
 
 import { join } from 'node:path'
 import { closeSync, existsSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs'
-import { execSync } from 'node:child_process'
 import { homedir } from 'node:os'
+import { getProviderCliInstallGuideUrl, getProviderCliManualInstallSummaryLines } from '@happier-dev/agents'
+import { resolveProviderCliCommand } from '@happier-dev/cli-common/providers'
 import { logger } from '@/ui/logger'
 import { isBun } from '@/utils/runtime'
 import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv'
@@ -22,27 +23,18 @@ function resolveHomeDir(): string {
     return trimmed.length > 0 ? trimmed : homedir()
 }
 
-/**
- * Get version of globally installed claude
- * Runs from home directory with clean PATH to avoid picking up local node_modules/.bin
- */
-function getGlobalClaudeVersion(): string | null {
-    try {
-        const cleanEnv = getCleanEnv()
-        const output = execSync('claude --version', {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            cwd: resolveHomeDir(),
-            env: cleanEnv,
-            windowsHide: true,
-        }).trim()
-        // Output format: "2.0.54 (Claude Code)" or similar
-        const match = output.match(/(\d+\.\d+\.\d+)/)
-        logger.debug(`[Claude SDK] Global claude --version output: ${output}`)
-        return match ? match[1] : null
-    } catch {
-        return null
-    }
+function buildClaudeCodeInstallHelpMessage(pathHintLine: string): string {
+    const installLines = getProviderCliManualInstallSummaryLines('claude')
+    const setupGuideUrl = getProviderCliInstallGuideUrl('claude')
+    return [
+        'Claude Code is not installed (or not detectable).',
+        '',
+        'Install Claude Code:',
+        ...installLines,
+        '',
+        pathHintLine,
+        ...(setupGuideUrl ? [`Setup guide: ${setupGuideUrl}`] : []),
+    ].join('\n')
 }
 
 /**
@@ -60,13 +52,24 @@ export function getCleanEnv(): NodeJS.ProcessEnv {
     const actualPathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || pathKey
 
     if (env[actualPathKey]) {
+        const canonicalize = (value: string): string => {
+            try {
+                return realpathSync(value);
+            } catch {
+                return value;
+            }
+        };
+
         // Remove any path that contains the current working directory (local node_modules/.bin)
         const cleanPath = env[actualPathKey]!
             .split(pathSep)
             .filter(p => {
+                const normalizedCwd = canonicalize(cwd).replace(/\\/g, '/').toLowerCase()
                 const normalizedP = p.replace(/\\/g, '/').toLowerCase()
-                const normalizedCwd = cwd.replace(/\\/g, '/').toLowerCase()
-                return !normalizedP.startsWith(normalizedCwd)
+                if (normalizedP.startsWith(normalizedCwd)) return false;
+
+                const canonicalPath = canonicalize(p).replace(/\\/g, '/').toLowerCase()
+                return !canonicalPath.startsWith(normalizedCwd)
             })
             .join(pathSep)
         env[actualPathKey] = cleanPath
@@ -84,53 +87,6 @@ export function getCleanEnv(): NodeJS.ProcessEnv {
     }
 
     return stripNestedSessionDetectionEnv(env)
-}
-
-/**
- * Try to find globally installed Claude CLI
- * Returns 'claude' if the command works globally (preferred method for reliability)
- * Falls back to which/where to get actual path on Unix systems
- * Runs from home directory with clean PATH to avoid picking up local node_modules/.bin
- */
-function findGlobalClaudePath(): string | null {
-    const homeDir = resolveHomeDir()
-    const cleanEnv = getCleanEnv()
-    
-    // PRIMARY: Check if 'claude' command works directly from home dir with clean PATH
-    try {
-        execSync('claude --version', {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            cwd: homeDir,
-            env: cleanEnv,
-            windowsHide: true,
-        })
-        logger.debug('[Claude SDK] Global claude command available (checked with clean PATH)')
-        return 'claude'
-    } catch {
-        // claude command not available globally
-    }
-
-    // FALLBACK for Unix: try which to get actual path
-    if (process.platform !== 'win32') {
-        try {
-            const result = execSync('which claude', {
-                encoding: 'utf8',
-                stdio: ['pipe', 'pipe', 'pipe'],
-                cwd: homeDir,
-                env: cleanEnv,
-                windowsHide: true,
-            }).trim()
-            if (result && existsSync(result)) {
-                logger.debug(`[Claude SDK] Found global claude path via which: ${result}`)
-                return result
-            }
-        } catch {
-            // which didn't find it
-        }
-    }
-    
-    return null
 }
 
 function parseSemverParts(value: string): [number, number, number] | null {
@@ -207,7 +163,6 @@ function findLatestVersionedClaudeEntrypointForAgentSdk(versionsDir: string): st
                 continue;
             }
 
-            // Directory layout: check for executables inside.
             const direct = join(maybePath, 'claude');
             if (existsSync(direct) && isAgentSdkCompatibleClaudeEntrypoint(direct)) return direct;
 
@@ -267,15 +222,6 @@ function findClaudeInNativeInstallerLocations(homeDir: string): string | null {
     return null
 }
 
-function getPathEntriesFromEnv(envPath: string | undefined): string[] {
-    const raw = typeof envPath === 'string' ? envPath : '';
-    const sep = process.platform === 'win32' ? ';' : ':';
-    return raw
-        .split(sep)
-        .map((p) => p.trim())
-        .filter(Boolean);
-}
-
 function isProbablyNativeBinary(filePath: string): boolean {
     try {
         const fd = openSync(filePath, 'r');
@@ -330,24 +276,6 @@ function isAgentSdkCompatibleClaudeEntrypoint(filePath: string): boolean {
     }
 }
 
-function findClaudeInPathForAgentSdk(): string | null {
-    const entries = getPathEntriesFromEnv(process.env.PATH);
-    if (entries.length === 0) return null;
-
-    const candidates = process.platform === 'win32'
-        ? ['claude.exe', 'claude']
-        : ['claude'];
-
-    for (const dir of entries) {
-        for (const name of candidates) {
-            const maybe = join(dir, name);
-            if (existsSync(maybe) && isAgentSdkCompatibleClaudeEntrypoint(maybe)) return maybe;
-        }
-    }
-
-    return null;
-}
-
 /**
  * Agent SDK requires a real on-disk entrypoint (binary or JS) — it does not accept a bare `claude` command name.
  */
@@ -364,37 +292,30 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
         return override;
     }
 
+    const resolved = resolveProviderCliCommand('claude', {
+        processEnv: getCleanEnv(),
+        isBunRuntime: isBun(),
+        currentExecPath: process.execPath,
+    });
+    if (resolved) {
+        return resolved.command;
+    }
+
     const homeDir = resolveHomeDir();
-
-    // Prefer PATH entrypoints first so test harnesses and sandboxed runtimes can inject a known-good
-    // Claude entrypoint without depending on the developer machine's global installs.
-    const inPath = findClaudeInPathForAgentSdk();
-    if (inPath) return inPath;
-
-    // Fall back to versioned installs (these are typically real binaries) and native installer locations.
     if (process.platform !== 'win32') {
         const versionsDir = join(homeDir, '.local', 'share', 'claude', 'versions');
         const versioned = findLatestVersionedClaudeEntrypointForAgentSdk(versionsDir);
         if (versioned && isAgentSdkCompatibleClaudeEntrypoint(versioned)) return versioned;
-
-        const legacyDotClaudeLocal = join(homeDir, '.claude', 'local', 'cli.js');
-        if (existsSync(legacyDotClaudeLocal) && isAgentSdkCompatibleClaudeEntrypoint(legacyDotClaudeLocal)) return legacyDotClaudeLocal;
     }
 
     const nativeInstallPath = findClaudeInNativeInstallerLocations(homeDir);
     if (nativeInstallPath && isAgentSdkCompatibleClaudeEntrypoint(nativeInstallPath)) return nativeInstallPath;
 
-    const message = [
-        'Claude Code is not installed (or not detectable).',
-        '',
-        'Install Claude Code:',
-        '  macOS/Linux: curl -fsSL https://claude.ai/install.sh | bash',
-        '  Windows (PowerShell): irm https://claude.ai/install.ps1 | iex',
-        '',
-        'Then ensure the Claude Code executable is available on your PATH, or set HAPPIER_CLAUDE_PATH to an absolute executable path.',
-        'Setup guide: https://code.claude.com/docs/en/setup',
-    ].join('\n');
-    throw new Error(message);
+    throw new Error(
+        buildClaudeCodeInstallHelpMessage(
+            'Then ensure the Claude Code executable is available on your PATH, or set HAPPIER_CLAUDE_PATH to an absolute executable path.',
+        ),
+    );
 }
 
 /**
@@ -414,42 +335,7 @@ export function getDefaultClaudeCodePath(): string {
         throw new Error(`Claude Code executable not found at HAPPIER_CLAUDE_PATH=${override}`)
     }
 
-    // Find global claude
-    const globalPath = findGlobalClaudePath()
-    
-    const homeDir = resolveHomeDir()
-    if (!globalPath) {
-        const nativeInstallPath = findClaudeInNativeInstallerLocations(homeDir)
-        if (nativeInstallPath) {
-            logger.debug(`[Claude SDK] Found Claude Code via native installer locations: ${nativeInstallPath}`)
-            return nativeInstallPath
-        }
-
-        const message = [
-            'Claude Code is not installed (or not detectable).',
-            '',
-            'Install Claude Code:',
-            '  macOS/Linux: curl -fsSL https://claude.ai/install.sh | bash',
-            '  Windows (PowerShell): irm https://claude.ai/install.ps1 | iex',
-            '',
-            'Then ensure `claude` is available on your PATH, or set HAPPIER_CLAUDE_PATH to the executable path.',
-            'Setup guide: https://code.claude.com/docs/en/setup',
-        ].join('\n')
-        throw new Error(message)
-    }
-
-    // Compare versions and use the newer one
-    const globalVersion = getGlobalClaudeVersion()
-
-    logger.debug(`[Claude SDK] Global version: ${globalVersion || 'unknown'}`)
-    
-    // If we can't determine versions, prefer global (user's choice to install it)
-    if (!globalVersion) {
-        logger.debug(`[Claude SDK] Cannot compare versions, using global: ${globalPath}`)
-        return globalPath
-    }
-    
-    return globalPath
+    return getDefaultClaudeCodePathForAgentSdk()
 }
 
 /**

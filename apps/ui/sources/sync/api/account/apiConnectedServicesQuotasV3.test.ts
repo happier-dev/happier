@@ -33,26 +33,32 @@ function mockServerConfig() {
 describe('apiConnectedServicesQuotasV3', () => {
   it('gets the latest plaintext quota snapshot from the v3 endpoint', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        content: {
-          t: 'plain',
-          v: {
-            v: 1,
-            serviceId: 'openai-codex',
-            profileId: 'work',
-            fetchedAt: 1,
-            staleAfterMs: 2,
-            planLabel: null,
-            accountLabel: null,
-            meters: [],
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          content: {
+            t: 'plain',
+            v: {
+              v: 1,
+              serviceId: 'openai-codex',
+              profileId: 'work',
+              fetchedAt: 1,
+              staleAfterMs: 2,
+              planLabel: null,
+              accountLabel: null,
+              meters: [],
+            },
           },
-        },
-        metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
-      }),
-    }));
+          metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
+        }),
+      };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { getConnectedServiceQuotaSnapshotPlain } = await import('./apiConnectedServicesQuotasV3');
@@ -66,13 +72,16 @@ describe('apiConnectedServicesQuotasV3', () => {
 
   it('returns null when the server has no snapshot', async () => {
     mockServerConfig();
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: false, status: 404, json: async () => ({ error: 'connect_quotas_not_found' }) };
+    });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: 'connect_quotas_not_found' }),
-      })) as unknown as typeof fetch,
+      fetchMock as unknown as typeof fetch,
     );
 
     const { getConnectedServiceQuotaSnapshotPlain } = await import('./apiConnectedServicesQuotasV3');
@@ -82,11 +91,13 @@ describe('apiConnectedServicesQuotasV3', () => {
 
   it('requests a daemon refresh (best-effort) via the refresh endpoint', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true }),
-    }));
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { requestConnectedServiceQuotaSnapshotRefreshV3 } = await import('./apiConnectedServicesQuotasV3');
@@ -100,13 +111,16 @@ describe('apiConnectedServicesQuotasV3', () => {
 
   it('treats missing snapshots as a non-fatal refresh request failure', async () => {
     mockServerConfig();
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: false, status: 404, json: async () => ({ error: 'connect_quotas_not_found' }) };
+    });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: 'connect_quotas_not_found' }),
-      })) as unknown as typeof fetch,
+      fetchMock as unknown as typeof fetch,
     );
 
     const { requestConnectedServiceQuotaSnapshotRefreshV3 } = await import('./apiConnectedServicesQuotasV3');
@@ -114,4 +128,3 @@ describe('apiConnectedServicesQuotasV3', () => {
     expect(ok).toBe(false);
   });
 });
-

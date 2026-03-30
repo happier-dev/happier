@@ -4,14 +4,14 @@ import { Image } from "expo-image";
 import { AvatarSkia } from "./AvatarSkia";
 import { AvatarGradient } from "./AvatarGradient";
 import { AvatarBrutalist } from "./AvatarBrutalist";
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useSetting } from '@/sync/domains/state/storage';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
+import { shadowLevelStyle } from '@/shadowElevation';
 import {
     DEFAULT_AGENT_ID,
     resolveAgentIdFromFlavor,
     getAgentAvatarOverlaySizes,
-    getAgentIconSource,
-    getAgentIconTintColor,
 } from '@/agents/catalog/catalog';
 
 interface AvatarProps {
@@ -37,11 +37,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         borderRadius: 100,
         padding: 2,
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.2,
-        shadowRadius: 2,
-        elevation: 3,
+        ...shadowLevelStyle(theme.colors.shadowLevels[2]),
     },
     unreadBadge: {
         position: 'absolute',
@@ -58,11 +54,10 @@ export const Avatar = React.memo((props: AvatarProps) => {
     const { flavor, size = 48, imageUrl, thumbhash, hasUnreadMessages, ...avatarProps } = props;
     const avatarStyle = useSetting('avatarStyle');
     const showFlavorIcons = useSetting('showFlavorIcons');
-    const { theme } = useUnistyles();
 
     const agentId = resolveAgentIdFromFlavor(flavor);
 
-    const unreadBadgeSize = Math.round(size * 0.22);
+    const unreadBadgeSize = Math.round(size * 0.4);
     const unreadBadgeElement = hasUnreadMessages ? (
         <View style={[styles.unreadBadge, { width: unreadBadgeSize, height: unreadBadgeSize }]} />
     ) : null;
@@ -77,34 +72,27 @@ export const Avatar = React.memo((props: AvatarProps) => {
                 style={{
                     width: size,
                     height: size,
-                    borderRadius: avatarProps.square ? 0 : size / 2
+                    borderRadius: avatarProps.square ? 0 : size / 2,
                 }}
             />
         );
 
-            const showFlavorOverlay = Boolean(showFlavorIcons && agentId);
-            if (showFlavorOverlay || hasUnreadMessages) {
+        const showFlavorOverlay = Boolean(showFlavorIcons && agentId);
+        if (showFlavorOverlay || hasUnreadMessages) {
             const iconAgentId = agentId ?? DEFAULT_AGENT_ID;
-            const flavorIcon = getAgentIconSource(iconAgentId);
-            const tintColor = getAgentIconTintColor(iconAgentId, theme);
             const { circleSize, iconSize } = getAgentAvatarOverlaySizes(iconAgentId, size);
 
             return (
                 <View style={[styles.container, { width: size, height: size }]}>
                     {imageElement}
-                {showFlavorOverlay && (
+                    {showFlavorOverlay && (
                         <View style={[styles.flavorIcon, {
                             width: circleSize,
                             height: circleSize,
                             alignItems: 'center',
-                            justifyContent: 'center'
+                            justifyContent: 'center',
                         }]}>
-                            <Image
-                                source={flavorIcon}
-                                style={{ width: iconSize, height: iconSize }}
-                                contentFit="contain"
-                                tintColor={tintColor}
-                            />
+                            <AgentIcon agentId={iconAgentId} size={iconSize} />
                         </View>
                     )}
                     {unreadBadgeElement}
@@ -127,8 +115,6 @@ export const Avatar = React.memo((props: AvatarProps) => {
     }
 
     const iconAgentId = agentId ?? DEFAULT_AGENT_ID;
-    const flavorIcon = getAgentIconSource(iconAgentId);
-    const tintColor = getAgentIconTintColor(iconAgentId, theme);
     const { circleSize, iconSize } = getAgentAvatarOverlaySizes(iconAgentId, size);
 
     if (showFlavorIcons || hasUnreadMessages) {
@@ -140,14 +126,9 @@ export const Avatar = React.memo((props: AvatarProps) => {
                         width: circleSize,
                         height: circleSize,
                         alignItems: 'center',
-                        justifyContent: 'center'
+                        justifyContent: 'center',
                     }]}>
-                        <Image
-                            source={flavorIcon}
-                            style={{ width: iconSize, height: iconSize }}
-                            contentFit="contain"
-                            tintColor={tintColor}
-                        />
+                        <AgentIcon agentId={iconAgentId} size={iconSize} />
                     </View>
                 )}
                 {unreadBadgeElement}

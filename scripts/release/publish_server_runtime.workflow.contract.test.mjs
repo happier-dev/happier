@@ -32,12 +32,26 @@ test('publish-server-runtime workflow publishes rolling server-preview tag via r
   assert.match(raw, /node scripts\/pipeline\/run\.mjs publish-server-runtime/);
 });
 
+test('publish-server-runtime supports dev and resolves auto source_ref from the selected channel', async () => {
+  const raw = await loadWorkflow('publish-server-runtime.yml');
+
+  assert.match(raw, /options:[\s\S]*?- preview[\s\S]*?- dev[\s\S]*?- stable/);
+  assert.match(raw, /node scripts\/pipeline\/release\/resolve-public-release-channel-meta\.mjs/);
+  assert.match(raw, /id:\s*channel_meta/);
+  assert.match(raw, /ref:\s*\$\{\{\s*steps\.channel_meta\.outputs\.source_ref\s*\}\}/);
+  assert.doesNotMatch(
+    raw,
+    /if \[ "\$src" = "auto" \]; then[\s\S]*?src="dev"[\s\S]*?src="preview"[\s\S]*?src="main"/,
+  );
+});
+
 test('publish-server-runtime embeds build feature policy defaults by channel', async () => {
   const raw = await loadWorkflow('publish-server-runtime.yml');
 
   assert.match(
     raw,
-    /HAPPIER_EMBEDDED_POLICY_ENV:\s*\$\{\{\s*inputs\.channel\s*==\s*'stable'\s*&&\s*'production'\s*\|\|\s*'preview'\s*\}\}/,
+    /HAPPIER_EMBEDDED_POLICY_ENV:\s*\$\{\{\s*steps\.channel_meta\.outputs\.embedded_policy_env\s*\}\}/,
     'server runtime publishing should set HAPPIER_EMBEDDED_POLICY_ENV to production for stable artifacts',
   );
+  assert.doesNotMatch(raw, /inputs\.channel\s*==\s*'publicdev'/);
 });

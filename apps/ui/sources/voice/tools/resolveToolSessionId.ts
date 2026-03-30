@@ -13,9 +13,12 @@ export function resolveToolSessionId(opts: Readonly<{
   const explicit = normalizeSessionId(opts.explicitSessionId);
   if (explicit) return explicit;
 
+  const current = normalizeSessionId(opts.currentSessionId);
+  if (current) return current;
+
   const { scope, primaryActionSessionId, lastFocusedSessionId } = useVoiceTargetStore.getState();
   if (scope === 'global') {
-    return normalizeSessionId(primaryActionSessionId) ?? normalizeSessionId(opts.currentSessionId) ?? normalizeSessionId(lastFocusedSessionId);
+    return normalizeSessionId(primaryActionSessionId) ?? normalizeSessionId(lastFocusedSessionId);
   }
-  return normalizeSessionId(opts.currentSessionId);
+  return current;
 }

@@ -1,6 +1,7 @@
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
+import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permission/appendSystemPromptField';
 import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 
@@ -33,7 +34,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     getMetadataSnapshot?: () => unknown;
     refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
   };
-  queue: SpecialCommandQueue<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>;
+  queue: SpecialCommandQueue<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   inFlightSteer?: InFlightSteerController | null;
@@ -43,13 +44,13 @@ export function registerPermissionModeMessageQueueBinding(opts: {
 
   opts.session.onUserMessage((message) => {
     const previousPermissionMode = opts.getCurrentPermissionMode();
-      const resolvedMode = resolvePermissionModeForQueueingUserMessage({
-        currentPermissionMode: previousPermissionMode,
-        messagePermissionModeRaw: message.meta?.permissionMode,
-        updateMetadata: (updater) =>
-          updateMetadataBestEffort(opts.session, updater, '[permissionMode]', 'permission_mode_from_user_message'),
-        nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
-      });
+    const resolvedMode = resolvePermissionModeForQueueingUserMessage({
+      currentPermissionMode: previousPermissionMode,
+      messagePermissionModeRaw: message.meta?.permissionMode,
+      updateMetadata: (updater) =>
+        updateMetadataBestEffort(opts.session, updater, '[permissionMode]', 'permission_mode_from_user_message'),
+      nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
+    });
 
     opts.setCurrentPermissionMode(resolvedMode.currentPermissionMode);
 
@@ -102,7 +103,10 @@ export function registerPermissionModeMessageQueueBinding(opts: {
               queue: opts.queue,
               message: { text, localId: message.localId ?? null },
               text,
-              mode: { permissionMode: resolvedMode.queuePermissionMode },
+              mode: {
+                permissionMode: resolvedMode.queuePermissionMode,
+                ...resolveAppendSystemPromptModeOverride(message.meta),
+              },
             });
           } catch {
             // Best-effort fallback: queueing should not be able to crash the process if a steer fails.
@@ -116,7 +120,10 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       queue: opts.queue,
       message: { text, localId: message.localId ?? null },
       text,
-      mode: { permissionMode: resolvedMode.queuePermissionMode },
+      mode: {
+        permissionMode: resolvedMode.queuePermissionMode,
+        ...resolveAppendSystemPromptModeOverride(message.meta),
+      },
     });
   });
 }

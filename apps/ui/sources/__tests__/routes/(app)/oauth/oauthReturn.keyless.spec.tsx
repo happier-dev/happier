@@ -35,6 +35,12 @@ describe('oauth/[provider] return (keyless)', () => {
 
         const originalFetch = globalThis.fetch;
         const fetchMock = vi.fn(async (url: any, init?: any) => {
+            if (typeof url === 'string' && url.endsWith('/health')) {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
             if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
                 const body = JSON.parse(String(init?.body ?? '{}'));
                 if (body?.pending !== 'p1' || body?.proof !== 'proof_1') {

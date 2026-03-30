@@ -1,6 +1,9 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,16 +16,18 @@ let mockedSettings: Record<string, any> = {
     rightPaneWidthBasisPx: 835,
     detailsPaneWidthPx: 520,
     detailsPaneWidthBasisPx: 835,
+    bottomPaneHeightPx: 320,
+    bottomPaneHeightBasisPx: 900,
 };
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    View: 'View',
-    useWindowDimensions: () => ({ width: mockedWindowWidthPx, height: 800 }),
-}));
+installAppPaneScopeHostCommonModuleMocks({
+    getDimensions: () => ({ width: mockedWindowWidthPx, height: 800 }),
+    getLocalSetting: (key: string) =>
+        Object.prototype.hasOwnProperty.call(mockedSettings, key) ? mockedSettings[key] : null,
+});
 
-vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
-    MultiPaneHost: (props: any) => {
+vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
+    MultiPaneHostWithBottom: (props: any) => {
         lastProps = props;
         return React.createElement('MultiPaneHostStub');
     },
@@ -30,13 +35,6 @@ vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
 
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
-        return Object.prototype.hasOwnProperty.call(mockedSettings, key) ? mockedSettings[key] : null;
-    },
-    useLocalSettingMutable: () => [null, vi.fn()],
 }));
 
 vi.mock('./AppPaneProvider', () => ({
@@ -67,18 +65,16 @@ describe('AppPaneScopeHost (docked max widths)', () => {
             rightPaneWidthBasisPx: 835,
             detailsPaneWidthPx: 520,
             detailsPaneWidthBasisPx: 835,
+            bottomPaneHeightPx: 320,
+            bottomPaneHeightBasisPx: 900,
         };
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
+        await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
                     rightPane={<div />}
                     detailsPane={null}
-                />
-            );
-        });
+                />);
 
         expect(lastProps).not.toBeNull();
         // When the user-preferred right width cannot fit while keeping the main region usable,
@@ -100,18 +96,16 @@ describe('AppPaneScopeHost (docked max widths)', () => {
             rightPaneWidthBasisPx: 1800,
             detailsPaneWidthPx: 520,
             detailsPaneWidthBasisPx: 1800,
+            bottomPaneHeightPx: 320,
+            bottomPaneHeightBasisPx: 900,
         };
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
+        await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
                     rightPane={<div />}
                     detailsPane={null}
-                />,
-            );
-        });
+                />);
 
         expect(lastProps).not.toBeNull();
         expect(lastProps.layout.right).toBe('docked');

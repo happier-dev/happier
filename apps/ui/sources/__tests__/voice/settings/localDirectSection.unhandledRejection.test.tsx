@@ -1,30 +1,59 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderSettingsView } from '@/dev/testkit';
+import { installVoiceSettingsPanelCommonModuleMocks } from '@/voice/settings/panels/voiceSettingsPanelTestHelpers';
+
+type PlatformSelectOptions<T> = {
+    web?: T;
+    default?: T;
+};
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).expo = { EventEmitter: class {} };
 
-vi.mock('react-native-reanimated', () => ({}));
+const modalPrompt = vi.fn(async (..._args: any[]) => null);
 
-vi.mock('react-native', () => {
-  type PlatformSelectOptions<T> = { web?: T; default?: T };
-  return {
-    Platform: { OS: 'web', select: <T,>(options: PlatformSelectOptions<T>) => options.web ?? options.default },
-    TurboModuleRegistry: { getEnforcing: () => ({}) },
-    Pressable: 'Pressable',
-  };
+installVoiceSettingsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: <T,>(options: PlatformSelectOptions<T>) => options.web ?? options.default,
+            },
+            TurboModuleRegistry: {
+                getEnforcing: () => ({}),
+            },
+            Pressable: 'Pressable',
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: modalPrompt as unknown as (...args: any[]) => Promise<string | null>,
+            },
+        }).module;
+    },
+    icons: async () => {
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        return createExpoVectorIconsMock();
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: { colors: { textSecondary: '#666' } },
+        });
+    },
 });
 
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({ theme: { colors: { textSecondary: '#666' } } }),
-}));
-
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@/components/ui/lists/Item', () => ({
   Item: (props: any) => React.createElement('Item', props),
@@ -39,14 +68,6 @@ vi.mock('@/components/ui/forms/Switch', () => ({ Switch: () => null }));
 vi.mock('@/voice/settings/panels/localStt/LocalVoiceSttGroup', () => ({ LocalVoiceSttGroup: () => null }));
 vi.mock('@/voice/settings/panels/localTts/LocalVoiceTtsGroup', () => ({ LocalVoiceTtsGroup: () => null }));
 
-const modalPrompt = vi.fn(async (..._args: any[]) => null);
-
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: modalPrompt as unknown as (...args: any[]) => Promise<string | null>,
-  },
-}));
-
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 describe('LocalDirectSection', () => {
@@ -56,28 +77,15 @@ describe('LocalDirectSection', () => {
     process.on('unhandledRejection', unhandledSpy);
 
     modalPrompt.mockRejectedValueOnce(new Error('boom'));
-
     const { LocalDirectSection } = await import('@/voice/settings/panels/LocalDirectSection');
 
     try {
       const voice = voiceSettingsParse({ providerId: 'local_direct' });
-      let tree: renderer.ReactTestRenderer;
-      await act(async () => {
-        tree = renderer.create(React.createElement(LocalDirectSection, { voice, setVoice: vi.fn() }));
-        await Promise.resolve();
-      });
+      const screen = await renderSettingsView(React.createElement(LocalDirectSection, { voice, setVoice: vi.fn() }));
 
-      // @ts-expect-error assigned in act() above
-      const networkTimeoutRow = tree.root.find(
-        (node) =>
-          (node.type as any) === 'Item' &&
-          node.props?.title === 'settingsVoice.local.conversation.network.timeoutTitle',
-      );
+      expect(screen.findRowByTitle('settingsVoice.local.conversation.network.timeoutTitle')).toBeTruthy();
 
-      await act(async () => {
-        networkTimeoutRow.props.onPress?.();
-        await Promise.resolve();
-      });
+      screen.pressRowByTitle('settingsVoice.local.conversation.network.timeoutTitle');
 
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {

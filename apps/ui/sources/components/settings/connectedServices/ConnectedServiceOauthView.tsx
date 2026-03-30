@@ -39,7 +39,9 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
   const method = asStringParam((params as any).method).trim().toLowerCase();
 
   const entry = serviceId ? getConnectedServiceRegistryEntry(serviceId) : null;
-  const serviceLabel = serviceId ? resolveConnectedServiceDisplayName(serviceId) : (rawServiceId || t('connectedServices.fallbackName'));
+  const serviceLabel = serviceId
+    ? resolveConnectedServiceDisplayName(serviceId, t)
+    : (rawServiceId || t('connectedServices.fallbackName'));
 
   if (!serviceId || !entry || !profileId) {
     return (

@@ -1,21 +1,14 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { createSessionControlActionExecutor } from '@/sessionControl/createSessionControlActionExecutor';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
-import { readFlagValue } from '@/sessionControl/argvFlags';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-
-function splitCsv(value: string | null): string[] {
-  if (!value) return [];
-  return value
-    .split(',')
-    .map((v) => v.trim())
-    .filter((v) => v.length > 0);
-}
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
+import { readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import { normalizeBackendTargetKeysFromCsv } from '../shared/normalizeBackendTargetKeys';
 
 export async function cmdSessionPlanStart(
   argv: string[],
@@ -28,7 +21,7 @@ export async function cmdSessionPlanStart(
   }
 
   const backendsRaw = readFlagValue(argv, '--backends') ?? readFlagValue(argv, '--backend');
-  const backendIds = splitCsv(backendsRaw);
+  const backendTargetKeys = normalizeBackendTargetKeysFromCsv(backendsRaw);
   const instructions = readFlagValue(argv, '--instructions') ?? '';
 
   const permissionMode = readFlagValue(argv, '--permission-mode') ?? undefined;
@@ -36,12 +29,12 @@ export async function cmdSessionPlanStart(
   const runClass = readFlagValue(argv, '--run-class') ?? undefined;
   const ioMode = readFlagValue(argv, '--io-mode') ?? undefined;
 
-  if (backendIds.length === 0 || !instructions.trim()) {
+  if (backendTargetKeys.length === 0 || !instructions.trim()) {
     throw new Error('Usage: happier session plan start <session-id> --backends <id1,id2> --instructions <text> [--json]');
   }
 
   const input = {
-    backendIds,
+    backendTargetKeys,
     instructions,
     ...(permissionMode ? { permissionMode } : null),
     ...(retentionPolicy ? { retentionPolicy } : null),
@@ -64,7 +57,7 @@ export async function cmdSessionPlanStart(
     if (json) {
       printJsonEnvelope({
         ok: false,
-        kind: 'session_plan_start',
+          kind: 'session_plan_start',
         error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
       });
       return;
@@ -86,8 +79,8 @@ export async function cmdSessionPlanStart(
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
   const mode = resolveSessionStoredContentEncryptionMode(rawSession);
 
-  const executor = createSessionControlActionExecutor({ token: credentials.token, sessionId, mode, ctx });
-  const started = await executor.execute('plan.start', input, { defaultSessionId: sessionId });
+  const executor = createCliActionExecutor({ token: credentials.token, credentials, sessionId, mode, ctx });
+  const started = await executor.execute('subagents.plan.start', input, { defaultSessionId: sessionId });
 
   if (!started.ok) {
     if (json) {

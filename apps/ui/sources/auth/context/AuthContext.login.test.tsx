@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 
 (
     globalThis as typeof globalThis & {
@@ -64,39 +65,23 @@ describe('AuthContext.login', () => {
 
         const { AuthProvider, getCurrentAuth } = await import('./AuthContext');
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AuthProvider, {
-                    initialCredentials: null,
-                    children: React.createElement(React.Fragment, null),
-                }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(AuthProvider, {
+                initialCredentials: null,
+                children: React.createElement(React.Fragment, null),
+            }),
+        );
 
         try {
-            // Flush effects that wire `getCurrentAuth()`.
-            await act(async () => {});
             const auth = getCurrentAuth();
             if (!auth) throw new Error('Expected current auth to be set');
 
-            let resolved = false;
-            let promise: Promise<void> | null = null;
             await act(async () => {
-                promise = auth.login(buildTokenWithSub('server-test'), 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA').then(() => {
-                    resolved = true;
-                });
-                // Allow async crypto/storage work to settle, without advancing long-running sync timers.
-                await vi.advanceTimersByTimeAsync(1);
+                await auth.login(buildTokenWithSub('server-test'), 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
             });
-            expect(resolved).toBe(true);
-            await promise;
+            await vi.advanceTimersByTimeAsync(1);
         } finally {
-            if (tree) {
-                act(() => {
-                    tree!.unmount();
-                });
-            }
+            await screen.unmount();
         }
     });
 });

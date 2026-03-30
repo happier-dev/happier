@@ -1,8 +1,6 @@
 import { EnhancedMode } from "./loop";
 import { query, type QueryOptions, type SDKMessage, type SDKSystemMessage, AbortError, SDKUserMessage } from '@/backends/claude/sdk'
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
-import { join, resolve } from 'node:path';
-import { projectPath } from "@/projectPath";
 import { parseSpecialCommand } from "@/cli/parsers/specialCommands";
 import { logger } from "@/lib";
 import { PushableAsyncIterable } from "@/utils/PushableAsyncIterable";
@@ -13,6 +11,58 @@ import { parseClaudeSdkFlagOverridesFromArgs } from "./remote/sdkFlagOverrides";
 import { resolveClaudeRemoteSessionStartPlan } from "./remote/sessionStartPlan";
 import { resolveClaudeConfigDirOverride } from "./utils/resolveClaudeConfigDirOverride";
 import { resolveClaudeCodeExperimentalEnvOverlay } from "./spawn/resolveClaudeCodeExperimentalEnvOverlay";
+import { ensureClaudeJsRuntimeExecutable } from "./utils/ensureClaudeJsRuntimeExecutable";
+import { resolveClaudeCliPath } from "./utils/resolveClaudeCliPath";
+import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { providers as agentProviders } from '@happier-dev/agents';
+
+type ClaudeEffortLevel = 'low' | 'medium' | 'high' | 'max';
+
+function normalizeClaudeEffortLevel(raw: unknown): ClaudeEffortLevel | null {
+    const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    if (!value) return null;
+    if (value === 'low' || value === 'medium' || value === 'high' || value === 'max') return value;
+    return null;
+}
+
+function modelSupportsClaudeEffort(modelIdRaw: unknown): boolean {
+    const modelId = typeof modelIdRaw === 'string' ? modelIdRaw.trim().toLowerCase() : '';
+    if (!modelId) return false;
+    if (agentProviders.claude.isClaudeEffortSupportedModelId(modelId)) return true;
+    // Common CLI aliases: assume they map to the latest supported Opus/Sonnet.
+    if (modelId === 'opus' || modelId === 'sonnet') return true;
+    // Some callers may pass provider ids without the `claude-` prefix.
+    if (modelId.includes('opus-4-6') || modelId.includes('sonnet-4-6') || modelId.includes('opus-4-5')) return true;
+    return false;
+}
+
+function modelSupportsClaudeEffortMax(modelIdRaw: unknown): boolean {
+    const modelId = typeof modelIdRaw === 'string' ? modelIdRaw.trim().toLowerCase() : '';
+    if (!modelId) return false;
+    if (agentProviders.claude.isClaudeEffortMaxSupportedModelId(modelId)) return true;
+    // Opus alias maps to the latest Opus generation.
+    if (modelId === 'opus') return true;
+    if (modelId.includes('opus-4-6')) return true;
+    return false;
+}
+
+function buildClaudeEffortArgs(params: Readonly<{
+    modelId: unknown;
+    effort: unknown;
+}>): string[] {
+    const effort = normalizeClaudeEffortLevel(params.effort);
+    if (!effort) return [];
+    if (!modelSupportsClaudeEffort(params.modelId)) return [];
+
+    const normalized =
+        effort === 'max' && !modelSupportsClaudeEffortMax(params.modelId)
+            ? 'high'
+            : effort;
+
+    // Treat "high" as the provider default: omit it unless user explicitly chooses a lower or max setting.
+    if (normalized === 'high') return [];
+    return ['--effort', normalized];
+}
 
 function extractMcpConfigPassthroughArgs(args?: string[]): string[] | undefined {
     const input = args ?? [];
@@ -157,7 +207,19 @@ export async function claudeRemote(opts: {
         typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0
             ? ['--mcp-config', opts.happierMcpConfigJson.trim()]
             : null;
-    const extraArgs = [...(settingSourcesArgs ?? []), ...(passthroughMcpArgs ?? []), ...(injectedMcpArgs ?? [])];
+    const effortArgs = buildClaudeEffortArgs({
+        modelId: argOverrides.model ?? initial.mode.model,
+        effort: argOverrides.effort ?? initial.mode.reasoningEffort,
+    });
+    const extraArgs = [...effortArgs, ...(settingSourcesArgs ?? []), ...(passthroughMcpArgs ?? []), ...(injectedMcpArgs ?? [])];
+    const runtimeExecutable = await ensureClaudeJsRuntimeExecutable(opts.jsRuntime);
+    const resolvedClaudeCliPath = resolveClaudeCliPath();
+    const launcherEnv = resolveClaudeCodeExperimentalEnvOverlay({
+        claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
+    });
+    if (!launcherEnv.HAPPIER_CLAUDE_PATH && !launcherEnv.HAPPY_CLAUDE_PATH) {
+        launcherEnv.HAPPIER_CLAUDE_PATH = resolvedClaudeCliPath;
+    }
 
     const sdkOptions: QueryOptions = {
         cwd: opts.path,
@@ -173,14 +235,10 @@ export async function claudeRemote(opts: {
         strictMcpConfig: argOverrides.strictMcpConfig,
         canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) =>
             opts.canCallTool(toolName, input, mode, options),
-        executable: opts.jsRuntime ?? 'node',
+        executable: runtimeExecutable,
         abort: opts.signal,
-        pathToClaudeCodeExecutable: (() => {
-            return resolve(join(projectPath(), 'scripts', 'claude_remote_launcher.cjs'));
-        })(),
-        env: resolveClaudeCodeExperimentalEnvOverlay({
-            claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
-        }),
+        pathToClaudeCodeExecutable: resolveCliRuntimeAssetPath('scripts', 'claude_remote_launcher.cjs'),
+        env: launcherEnv,
         settingsPath: opts.hookSettingsPath,
     }
 

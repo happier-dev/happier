@@ -12,6 +12,13 @@ export const DEFAULT_IDLE_TIMEOUT_MS = 500;
  */
 export const DEFAULT_TOOL_CALL_TIMEOUT_MS = 120_000;
 
+export type ToolCallLifecycleState =
+  | 'waiting_for_permission'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
 /**
  * Extended session update structure with all possible fields.
  */
@@ -58,6 +65,8 @@ export interface HandlerContext {
   activeToolCalls: Set<string>;
   /** Set of tool call IDs that have already emitted a terminal tool-result (prevents duplicate terminalization) */
   finalizedToolCalls: Set<string>;
+  /** Map of tool call ID to the current lifecycle state */
+  toolCallLifecycleStates: Map<string, ToolCallLifecycleState>;
   /** Map of tool call ID to start time */
   toolCallStartTimes: Map<string, number>;
   /** Map of tool call ID to timeout handle */
@@ -68,12 +77,16 @@ export interface HandlerContext {
   toolCallIdToInputMap: Map<string, Record<string, unknown>>;
   /** Current idle timeout handle */
   idleTimeout: NodeJS.Timeout | null;
+  /** Whether the most recent prompt included change-title instructions */
+  recentPromptHadChangeTitle?: boolean;
   /** Tool call counter since last prompt */
   toolCallCountSincePrompt: number;
   /** Emit function to send agent messages */
   emit: (msg: AgentMessage) => void;
   /** Emit idle status helper */
   emitIdleStatus: () => void;
+  /** Schedule idle status after a quiet period (used when terminal tool updates can be followed by text output) */
+  scheduleIdleStatusAfterToolCompletion?: () => void;
   /** Clear idle timeout helper */
   clearIdleTimeout: () => void;
   /** Set idle timeout helper */

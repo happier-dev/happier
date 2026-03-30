@@ -171,6 +171,16 @@ export class TmuxUtilities {
         ...(this.tmuxCommandEnv ?? {}),
         ...(options.env ?? {}),
       };
+      // If we are intentionally targeting a specific tmux server (via TMUX_TMPDIR or -S socket),
+      // do not inherit an ambient tmux client context from the parent process.
+      // Keeping TMUX/TMUX_PANE can cause tmux to connect to the wrong server, ignoring TMUX_TMPDIR.
+      if (typeof mergedEnv.TMUX_TMPDIR === 'string' && mergedEnv.TMUX_TMPDIR.trim().length > 0) {
+        delete (mergedEnv as Record<string, unknown>).TMUX;
+        delete (mergedEnv as Record<string, unknown>).TMUX_PANE;
+      } else if (typeof this.tmuxSocketPath === 'string' && this.tmuxSocketPath.trim().length > 0) {
+        delete (mergedEnv as Record<string, unknown>).TMUX;
+        delete (mergedEnv as Record<string, unknown>).TMUX_PANE;
+      }
 
       const child = spawn(args[0], args.slice(1), {
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -522,14 +532,60 @@ export class TmuxUtilities {
       const maxAttempts = readPositiveIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_MAX_ATTEMPTS', 3);
       const retryDelayMs = readNonNegativeIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS', 25);
 
+      const withExplicitTargetWindowIndex = (args: string[], target: string): string[] => {
+        const copy = [...args];
+        const tIndex = copy.indexOf('-t');
+        if (tIndex >= 0 && copy[tIndex + 1]) {
+          copy[tIndex + 1] = target;
+          return copy;
+        }
+        copy.push('-t', target);
+        return copy;
+      };
+
+      const resolveNextWindowIndex = async (targetSessionName: string): Promise<number | null> => {
+        const listResult = await this.executeTmuxCommand(['list-windows', '-t', targetSessionName, '-F', '#{window_index}']);
+        if (!listResult || listResult.returncode !== 0) return null;
+
+        const indices = listResult.stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => Number.parseInt(line, 10))
+          .filter((n) => Number.isFinite(n) && n >= 0);
+        const maxIndex = indices.length > 0 ? Math.max(...indices) : 0;
+        return maxIndex + 1;
+      };
+
+      const parseWindowIndexConflict = (stderr: string | undefined): number | null => {
+        const match = /index\s+(\d+)\s+in\s+use/i.exec(stderr ?? '');
+        if (!match) return null;
+        const n = Number.parseInt(match[1] ?? '', 10);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+      };
+
       let createResult: TmuxCommandResult | null = null;
+      let createWindowArgsForAttempt = createWindowArgs;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        createResult = await this.executeTmuxCommand(createWindowArgs);
+        createResult = await this.executeTmuxCommand(createWindowArgsForAttempt);
         if (createResult && createResult.returncode === 0) break;
 
         const stderr = createResult?.stderr;
         const shouldRetry = attempt < maxAttempts && isTmuxWindowIndexConflict(stderr);
         if (!shouldRetry) break;
+
+        // In high-concurrency starts, tmux may keep retrying the same conflicting index.
+        // Allocate an explicit next index as a deterministic fallback.
+        const conflictingIndex = parseWindowIndexConflict(stderr);
+        const nextIndexFromList = await resolveNextWindowIndex(sessionName);
+        const conflictPlusOne = conflictingIndex !== null ? conflictingIndex + 1 : null;
+        const nextIndex =
+          nextIndexFromList !== null && conflictPlusOne !== null
+            ? Math.max(nextIndexFromList, conflictPlusOne)
+            : (nextIndexFromList ?? conflictPlusOne);
+        if (nextIndex !== null) {
+          createWindowArgsForAttempt = withExplicitTargetWindowIndex(createWindowArgs, `${sessionName}:${nextIndex}`);
+        }
 
         logger.debug(`[TMUX] new-window failed with window index conflict; retrying (attempt ${attempt}/${maxAttempts})`);
         if (retryDelayMs > 0) {
@@ -538,7 +594,9 @@ export class TmuxUtilities {
       }
 
       if (!createResult || createResult.returncode !== 0) {
-        throw new Error(`Failed to create tmux window: ${createResult?.stderr}`);
+        const tIndex = createWindowArgsForAttempt.indexOf('-t');
+        const target = tIndex >= 0 ? createWindowArgsForAttempt[tIndex + 1] : sessionName;
+        throw new Error(`Failed to create tmux window (target=${target}): ${createResult?.stderr}`);
       }
 
       // Extract the PID from the output

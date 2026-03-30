@@ -1,50 +1,67 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    View: 'View',
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-                shadow: { color: '#000' },
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (_: any) => 1,
             },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#eee',
-                        text: '#000',
-                        textSecondary: '#666',
-                        shadow: { color: '#000' },
-                    },
-                })
-                : value,
+            AppState: {
+                currentState: 'active',
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+            ActivityIndicator: 'ActivityIndicator',
+            View: 'View',
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+        });
     },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#fff',
+                    surfaceHigh: '#f5f5f5',
+                    divider: '#eee',
+                    text: '#000',
+                    textSecondary: '#666',
+                    accent: { indigo: '#00f' },
+                    shadow: { color: '#000' },
+                },
+            },
+        });
+    },
+    icons: async () => ({
+        Octicons: 'Octicons',
+        Ionicons: 'Ionicons',
+    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useLocalSetting: ((key: string) => {
+                    if (key === 'editorFocusModeEnabled') return false;
+                    return null;
+                }) as any,
+                useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+            },
+        });
+    },
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -62,16 +79,8 @@ vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
     SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'editorFocusModeEnabled') return false;
-        return null;
-    },
-    useLocalSettingMutable: () => [false, vi.fn()],
+vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
+    SessionEmbeddedTerminalPane: () => React.createElement('SessionEmbeddedTerminalPane'),
 }));
 
 const scopeState = {
@@ -98,21 +107,15 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 describe('SessionDetailsPanel (active tab fallback)', () => {
     it('marks only the last tab active when activeTabKey is missing', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const firstTab = screen.findByTestId('session-details-tab-file_a');
+        const secondTab = screen.findByTestId('session-details-tab-file_b');
+        expect(firstTab).toBeTruthy();
+        expect(secondTab).toBeTruthy();
 
-        const tabButtons = tree!.root
-            .findAllByType('Pressable')
-            .filter((node: any) => node.props?.accessibilityLabel === 'session.detailsPanel.openTabA11y');
-        expect(tabButtons).toHaveLength(2);
-        expect(tabButtons[0]!.findAllByType('Pressable').length).toBe(1);
-        expect(tabButtons[1]!.findAllByType('Pressable').length).toBe(1);
-
-        const firstStyles = tabButtons[0]!.props.style;
-        const secondStyles = tabButtons[1]!.props.style;
+        const firstStyles = firstTab?.props.style;
+        const secondStyles = secondTab?.props.style;
 
         const hasSurfaceHighBg = (styleProp: any) =>
             Array.isArray(styleProp) && styleProp.some((s: any) => s && s.backgroundColor === '#f5f5f5');

@@ -1,6 +1,9 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { installSourceControlChangesCommonModuleMocks } from './sourceControlChangesTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -14,27 +17,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: any) => void p,
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-  Octicons: 'Octicons',
-}));
-
-vi.mock('react-native', () => ({
-  Pressable: 'Pressable',
-  ActivityIndicator: 'ActivityIndicator',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-  __esModule: true,
-  useUnistyles: () => ({
-    theme: {
-      colors: {
-        textSecondary: '#666',
-        divider: '#ddd',
-        surface: '#fff',
-      },
-    },
-  }),
-}));
+installSourceControlChangesCommonModuleMocks();
 
 describe('ScmChangeDiscardButton', () => {
   it('invokes applyFileDiscardAction when pressed', async () => {
@@ -43,28 +26,18 @@ describe('ScmChangeDiscardButton', () => {
 
     const { ScmChangeDiscardButton } = await import('./ScmChangeDiscardButton');
 
-    let tree!: renderer.ReactTestRenderer;
-	    await act(async () => {
-	      tree = renderer.create(
-	        <ScmChangeDiscardButton
-	          sessionId="s1"
-	          sessionPath="/tmp/repo"
-	          snapshot={{ capabilities: { writeDiscard: true } } as any}
-	          scmWriteEnabled={true}
-	          commitStrategy={'git_staging' as any}
-	          file={{ fullPath: 'src/api.ts', status: 'modified' } as any}
-	          surface="files"
-	          onAfterDiscard={afterSpy}
-	        />
-      );
-    });
+    const screen = await renderScreen(<ScmChangeDiscardButton
+        sessionId="s1"
+        sessionPath="/tmp/repo"
+        snapshot={{ capabilities: { writeDiscard: true } } as any}
+        scmWriteEnabled={true}
+        commitStrategy={'git_staging' as any}
+        file={{ fullPath: 'src/api.ts', status: 'modified' } as any}
+        surface="files"
+        onAfterDiscard={afterSpy}
+    />);
 
-    const button = tree.root.findByType('Pressable' as any);
-    await act(async () => {
-      button.props.onPress({ stopPropagation: vi.fn() });
-    });
-
-    await act(async () => {});
+    await screen.pressByTestIdAsync(`scm-discard-${toTestIdSafeValue('src/api.ts')}`);
 
     expect(applySpy).toHaveBeenCalledWith(
       expect.objectContaining({

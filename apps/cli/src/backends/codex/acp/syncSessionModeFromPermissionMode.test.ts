@@ -9,7 +9,15 @@ import { syncCodexAcpSessionModeFromPermissionMode } from './syncSessionModeFrom
 function makeMetadata(params: {
   currentModeId: string;
   availableModes: Array<{ id: string; name: string; description?: string }>;
+  includeLegacyAlias?: boolean;
 }): Metadata {
+  const sessionModes = {
+    v: 1 as const,
+    provider: 'codex',
+    updatedAt: 1,
+    currentModeId: params.currentModeId,
+    availableModes: params.availableModes,
+  };
   return {
     path: '/tmp',
     host: 'host',
@@ -17,13 +25,8 @@ function makeMetadata(params: {
     happyHomeDir: '/happy',
     happyLibDir: '/lib',
     happyToolsDir: '/tools',
-    acpSessionModesV1: {
-      v: 1 as const,
-      provider: 'codex',
-      updatedAt: 1,
-      currentModeId: params.currentModeId,
-      availableModes: params.availableModes,
-    },
+    sessionModesV1: sessionModes,
+    ...(params.includeLegacyAlias ? { acpSessionModesV1: sessionModes } : {}),
   } as unknown as Metadata;
 }
 
@@ -171,5 +174,31 @@ describe('syncCodexAcpSessionModeFromPermissionMode', () => {
     });
 
     expect(calls).toEqual(['mode_untrusted']);
+  });
+
+  it('falls back to the legacy ACP metadata alias when canonical metadata is absent', async () => {
+    const { runtime, calls } = createRuntimeRecorder();
+
+    await syncCodexAcpSessionModeFromPermissionMode({
+      runtime: runtime as AcpRuntime,
+      permissionMode: 'safe-yolo',
+      metadata: {
+        path: '/tmp',
+        host: 'host',
+        homeDir: '/home',
+        happyHomeDir: '/happy',
+        happyLibDir: '/lib',
+        happyToolsDir: '/tools',
+        acpSessionModesV1: {
+          v: 1,
+          provider: 'codex',
+          updatedAt: 1,
+          currentModeId: 'default',
+          availableModes: [{ id: 'workspace-write', name: 'Workspace write' }],
+        },
+      } as Metadata,
+    });
+
+    expect(calls).toEqual(['workspace-write']);
   });
 });

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -57,7 +58,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 8,
         marginBottom: 8,
         ...Typography.mono(),
-        fontSize: 14,
+        ...SETTINGS_TEXT_INPUT_METRICS,
         color: theme.colors.input.text,
     },
     textInputValidating: {
@@ -172,6 +173,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
     return (
         <ItemGroup title={t('server.addTargetsTitle')}>
             <Item
+                testID="server-settings-add-server-toggle"
                 title={t('server.addServerTitle')}
                 subtitle={t('server.addServerSubtitle')}
                 icon={<Ionicons name="server-outline" size={20} color={theme.colors.textSecondary} />}
@@ -198,8 +200,9 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                         </Text>
                     ) : null}
 
-                    <Text style={styles.labelText}>{t('server.customServerUrlLabel').toUpperCase()}</Text>
+                    <Text style={styles.labelText}>{t('server.customServerUrlLabel')}</Text>
                     <TextInput
+                        testID="server-settings-add-url-input"
                         style={[
                             styles.textInput,
                             props.isValidating && styles.textInputValidating,
@@ -216,8 +219,9 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
 
                     {props.autoMode ? null : (
                         <>
-                            <Text style={styles.labelText}>{t('server.serverNameLabel').toUpperCase()}</Text>
+                            <Text style={styles.labelText}>{t('server.serverNameLabel')}</Text>
                             <TextInput
+                                testID="server-settings-add-name-input"
                                 style={[
                                     styles.textInput,
                                     props.isValidating && styles.textInputValidating,
@@ -234,7 +238,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                     )}
 
                     {props.error && (
-                        <Text style={styles.errorText}>
+                        <Text testID="server-settings-add-error" style={styles.errorText}>
                             {props.error}
                         </Text>
                     )}
@@ -246,6 +250,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                     <View style={styles.buttonRow}>
                         <View style={styles.buttonWrapper}>
                             <RoundButton
+                                testID="server-settings-add-reset"
                                 title={t('server.resetToDefault')}
                                 size="normal"
                                 display="inverted"
@@ -254,6 +259,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                         </View>
                         <View style={styles.buttonWrapper}>
                             <RoundButton
+                                testID="server-settings-add-confirm"
                                 title={props.isValidating
                                     ? t('server.validating')
                                     : props.autoMode
@@ -286,7 +292,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
             />
             {expanded === 'group' ? (
                 <View style={styles.contentContainer}>
-                    <Text style={styles.labelText}>{t('server.serverGroupNameLabel').toUpperCase()}</Text>
+                    <Text style={styles.labelText}>{t('server.serverGroupNameLabel')}</Text>
                     <TextInput
                         style={[
                             styles.textInput,
@@ -301,7 +307,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                         editable={!isSavingGroup}
                     />
 
-                    <Text style={styles.labelText}>{t('server.serverGroupServersLabel').toUpperCase()}</Text>
+                    <Text style={styles.labelText}>{t('server.serverGroupServersLabel')}</Text>
                     {props.servers.map((server) => {
                         const selected = selectedGroupServerIds.includes(server.id);
                         return (

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FeaturesResponse } from '@happier-dev/protocol';
 
-import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
 
 let cachedFeatures: FeaturesResponse | null = null;
 

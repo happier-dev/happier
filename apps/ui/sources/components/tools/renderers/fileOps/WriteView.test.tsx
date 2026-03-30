@@ -1,29 +1,29 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it } from 'vitest';
+import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
+import { collectHostText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import {
+    fileOpsRendererModuleState,
+    installFileOpsRendererCommonModuleMocks,
+} from './fileOpsRendererTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
+installFileOpsRendererCommonModuleMocks({
+    storage: async (importOriginal) =>
+        await createPartialStorageModuleMock(importOriginal, {
+            useSetting: (key: string) => {
+                if (key === 'showLineNumbersInToolViews') return false;
+                return undefined;
+            },
+        }),
+});
 
-const diffSpy = vi.fn();
-vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
-    ToolDiffView: (props: any) => {
-        diffSpy(props);
-        return React.createElement('ToolDiffView', props);
-    },
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'showLineNumbersInToolViews') return false;
-        return undefined;
-    },
-}));
+beforeEach(() => {
+    fileOpsRendererModuleState.toolDiffSpy.mockClear();
+});
 
 describe('WriteView', () => {
     function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
@@ -39,23 +39,18 @@ describe('WriteView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { WriteView } = await import('./WriteView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     WriteView,
                     makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
+                ))).tree;
         return tree;
     }
 
     it('truncates long writes by default', async () => {
-        diffSpy.mockClear();
         await renderView(makeTool());
 
-        expect(diffSpy).toHaveBeenCalledTimes(1);
-        const last = diffSpy.mock.calls.at(-1)?.[0];
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledTimes(1);
+        const last = fileOpsRendererModuleState.toolDiffSpy.mock.calls.at(-1)?.[0];
         expect(last.filePath).toBe('/tmp/a.txt');
         expect(last.newText).toContain('line-0');
         expect(last.newText).toContain('line-19');
@@ -65,11 +60,10 @@ describe('WriteView', () => {
     });
 
     it('shows substantially more content when detailLevel=full', async () => {
-        diffSpy.mockClear();
         await renderView(makeTool(), 'full');
 
-        expect(diffSpy).toHaveBeenCalledTimes(1);
-        const last = diffSpy.mock.calls.at(-1)?.[0];
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledTimes(1);
+        const last = fileOpsRendererModuleState.toolDiffSpy.mock.calls.at(-1)?.[0];
         expect(last.newText).toContain('line-0');
         expect(last.newText).toContain('line-99');
         expect(last.showLineNumbers).toBe(true);
@@ -77,22 +71,20 @@ describe('WriteView', () => {
     });
 
     it('renders a one-line preview when detailLevel=title', async () => {
-        diffSpy.mockClear();
         const tree = await renderView(
             makeTool({ input: { file_path: '/tmp/a.txt', content: Array.from({ length: 10 }, (_, i) => `line-${i}`).join('\n') } }),
             'title',
         );
 
-        expect(diffSpy).toHaveBeenCalledTimes(0);
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledTimes(0);
         expect(collectHostText(tree).join(' ')).toContain('line-0');
     });
 
     it('falls back to placeholder content when input schema is malformed', async () => {
-        diffSpy.mockClear();
         await renderView(makeTool({ input: { file_path: '/tmp/a.txt', content: 123 } }));
 
-        expect(diffSpy).toHaveBeenCalledTimes(1);
-        const last = diffSpy.mock.calls.at(-1)?.[0];
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledTimes(1);
+        const last = fileOpsRendererModuleState.toolDiffSpy.mock.calls.at(-1)?.[0];
         expect(last.newText).toContain('<no contents>');
     });
 });

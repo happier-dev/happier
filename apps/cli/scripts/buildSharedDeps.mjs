@@ -1,9 +1,17 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { syncBundledWorkspacePackages } from '../../../scripts/workspaces/syncBundledWorkspacePackages.mjs';
+import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+export async function withBuildSharedDepsLock(fn, options = {}) {
+  const lockPath = options.lockPath ?? DEFAULT_BUILD_LOCK_PATH;
+  return await withWorkspaceBundleLock(fn, { ...options, lockPath });
+}
 
 function findRepoRoot(startDir) {
   let dir = startDir;
@@ -20,6 +28,96 @@ function findRepoRoot(startDir) {
 }
 
 const repoRoot = findRepoRoot(__dirname);
+const DEFAULT_BUILD_LOCK_PATH = resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
+
+function execYarn(args, options) {
+  const { command, args: invocationArgs } = resolveYarnInvocation();
+  return execFileSync(command, [...invocationArgs, ...args], options);
+}
+
+export function resolveYarnInvocation(npmExecPath = process.env.npm_execpath) {
+  const normalizedNpmExecPath = String(npmExecPath ?? '').trim();
+  const yarnCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
+
+  if (!normalizedNpmExecPath) {
+    return { command: yarnCommand, args: [] };
+  }
+
+  const isNpmCliPath = /(^|[\\/])npm-cli\.js$/i.test(normalizedNpmExecPath);
+  if (isNpmCliPath) {
+    return { command: yarnCommand, args: [] };
+  }
+
+  return { command: process.execPath, args: [normalizedNpmExecPath] };
+}
+
+async function loadCliCommonWorkspacesModule() {
+  const modulePath = resolve(repoRoot, 'packages', 'cli-common', 'dist', 'workspaces', 'index.js');
+
+  if (!existsSync(modulePath)) {
+    // `build:shared` is invoked by tests/e2e harnesses that may not have pre-built workspace packages.
+    // Ensure `@happier-dev/cli-common` is compiled before importing its build helpers.
+    execYarn(['-s', 'workspace', '@happier-dev/cli-common', 'build'], { cwd: repoRoot, stdio: 'inherit' });
+  }
+
+  if (!existsSync(modulePath)) {
+    throw new Error(`Missing cli-common workspaces build helpers: ${modulePath}`);
+  }
+
+  return await import(pathToFileURL(modulePath).href);
+}
+
+const {
+  bundleInstalledPackageWithRuntimeDependencies,
+  resolveWorkspaceBundlesFromPackageJson,
+  vendorBundledPackageRuntimeDependencies,
+} = await loadCliCommonWorkspacesModule();
+const CLI_BUNDLED_HOST_APPS = ['cli'];
+const CLI_SHARED_WORKSPACE_BUILD_ORDER = [
+  'agents',
+  'cli-common',
+  'connection-supervisor',
+  'protocol',
+  'transfers',
+  'release-runtime',
+];
+
+function resolveBundledWorkspacePackageNameFromSrcDir(srcDir) {
+  const normalized = String(srcDir ?? '');
+  const marker = `${resolve(repoRoot, 'packages')}/`;
+  if (!normalized.startsWith(marker)) return null;
+  const rest = normalized.slice(marker.length);
+  const name = rest.split('/')[0] ?? '';
+  return name.trim() || null;
+}
+
+function resolveCliBundledWorkspacePackageNames({ exists = existsSync } = {}) {
+  const bundles = resolveWorkspaceBundlesFromPackageJson({
+    repoRoot,
+    hostPackageDir: resolve(repoRoot, 'apps', 'cli'),
+  });
+
+  const names = [];
+  for (const bundle of bundles) {
+    const name = resolveBundledWorkspacePackageNameFromSrcDir(bundle.srcDir);
+    if (name) names.push(name);
+  }
+
+  // Keep a stable, intention-revealing build order while still deriving the set from the actual bundles.
+  const derived = Array.from(new Set(names));
+  const indexByName = new Map(CLI_SHARED_WORKSPACE_BUILD_ORDER.map((name, index) => [name, index]));
+  derived.sort((left, right) => {
+    const li = indexByName.get(left);
+    const ri = indexByName.get(right);
+    if (li == null && ri == null) return left.localeCompare(right);
+    if (li == null) return 1;
+    if (ri == null) return -1;
+    return li - ri;
+  });
+
+  // Only build packages that look like real repo workspaces.
+  return derived.filter((name) => exists(resolve(repoRoot, 'packages', name, 'tsconfig.json')));
+}
 
 export function resolveTscBin({ exists } = {}) {
   const existsImpl = exists ?? existsSync;
@@ -74,78 +172,72 @@ export function runTsc(tsconfigPath, opts) {
 export function syncBundledWorkspaceDist(opts = {}) {
   const repoRootArg = opts.repoRoot;
   const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
-  const exists = opts.existsSync ?? existsSync;
-  const cp = opts.cpSync ?? cpSync;
-  const readFile = opts.readFileSync ?? readFileSync;
-  const writeFile = opts.writeFileSync ?? writeFileSync;
-  const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : ['agents', 'cli-common', 'protocol'];
-
-  for (const pkg of packages) {
-    const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');
-    const destDist = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', pkg, 'dist');
-    if (!exists(destDist)) continue;
-    try {
-      cp(srcDist, destDist, { recursive: true, force: true });
-    } catch {
-      // Best-effort: bundled deps may be missing or readonly.
-    }
-
-    const destPackageJsonPath = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', pkg, 'package.json');
-    if (!exists(destPackageJsonPath)) continue;
-    try {
-      const raw = JSON.parse(readFile(resolve(repoRoot, 'packages', pkg, 'package.json'), 'utf8'));
-      const sanitized = sanitizeBundledWorkspacePackageJson(raw);
-      writeFile(destPackageJsonPath, `${JSON.stringify(sanitized, null, 2)}\n`, 'utf8');
-    } catch {
-      // Best-effort: keep local bundled deps usable even if package.json sync fails.
-    }
-  }
+  syncBundledWorkspacePackages({
+    repoRoot,
+    hostApps: Array.isArray(opts.bundledHostApps) && opts.bundledHostApps.length > 0 ? opts.bundledHostApps : CLI_BUNDLED_HOST_APPS,
+    existsSync: opts.existsSync,
+    cpSync: opts.cpSync,
+    mkdirSync: opts.mkdirSync,
+    rmSync: opts.rmSync,
+    readFileSync: opts.readFileSync,
+    writeFileSync: opts.writeFileSync,
+  });
 }
 
-function sanitizeBundledWorkspacePackageJson(raw) {
-  const {
-    name,
-    version,
-    type,
-    main,
-    module,
-    types,
-    exports,
-    dependencies,
-    peerDependencies,
-    optionalDependencies,
-    engines,
-  } = raw ?? {};
+export function syncCliRuntimeDependencies(opts = {}) {
+  const repoRootArg = opts.repoRoot;
+  const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
+  const cliPackageJsonPath = resolve(repoRoot, 'apps', 'cli', 'package.json');
+  const cliNodeModulesDir = resolve(repoRoot, 'apps', 'cli', 'node_modules');
+  const cliRequire = createRequire(pathToFileURL(cliPackageJsonPath).href);
+  const resolvedTweetnaclEntry = cliRequire.resolve('tweetnacl');
+  const resolvedTweetnaclDir = dirname(resolvedTweetnaclEntry);
 
-  return {
-    name,
-    version,
-    private: true,
-    type,
-    main,
-    module,
-    types,
-    exports,
-    dependencies,
-    peerDependencies,
-    optionalDependencies,
-    engines,
-  };
+  if (resolvedTweetnaclDir === resolve(cliNodeModulesDir, 'tweetnacl')) {
+    return;
+  }
+
+  bundleInstalledPackageWithRuntimeDependencies({
+    packageName: 'tweetnacl',
+    resolveFromPackageJsonPath: cliPackageJsonPath,
+    destNodeModulesDir: cliNodeModulesDir,
+  });
+}
+
+export function syncBundledWorkspaceRuntimeDependencies(opts = {}) {
+  const repoRootArg = opts.repoRoot;
+  const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
+  const bundles = resolveWorkspaceBundlesFromPackageJson({
+    repoRoot,
+    hostPackageDir: resolve(repoRoot, 'apps', 'cli'),
+  });
+
+  for (const bundle of bundles) {
+    vendorBundledPackageRuntimeDependencies({
+      srcPackageJsonPath: resolve(bundle.srcDir, 'package.json'),
+      destPackageDir: bundle.destDir,
+    });
+  }
 }
 
 export function main() {
-  runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'cli-common', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
+  return withBuildSharedDepsLock(async () => {
+    const bundledWorkspaceNames = resolveCliBundledWorkspacePackageNames();
+    for (const name of bundledWorkspaceNames) {
+      runTsc(resolve(repoRoot, 'packages', name, 'tsconfig.json'));
+    }
 
-  const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
-  if (!existsSync(protocolDist)) {
-    throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
-  }
+    const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
+    if (!existsSync(protocolDist)) {
+      throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
+    }
 
-  // If the CLI currently has bundled workspace deps under apps/cli/node_modules,
-  // keep their dist outputs in sync so local builds/tests do not consume stale artifacts.
-  syncBundledWorkspaceDist({ repoRoot });
+    // If the CLI currently has bundled workspace deps under apps/cli/node_modules,
+    // keep their dist outputs in sync so local builds/tests do not consume stale artifacts.
+    syncBundledWorkspaceDist({ repoRoot });
+    syncBundledWorkspaceRuntimeDependencies({ repoRoot });
+    syncCliRuntimeDependencies({ repoRoot });
+  });
 }
 
 const invokedAsMain = (() => {
@@ -155,10 +247,8 @@ const invokedAsMain = (() => {
 })();
 
 if (invokedAsMain) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
-  }
+  });
 }

@@ -1,57 +1,183 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
+import type { ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
+import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { createExpoVectorIconsMock } from '@/dev/testkit/mocks/icons';
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import { installSessionSettingsEntryModuleMocks } from '../sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+let mockProviderId: string | null = 'codex';
+let shouldThrowOnAppPaneScope = false;
+const routerPushSpy = vi.fn();
+const mockProviderSettingsPlugin = vi.hoisted(
+    () => vi.fn<(providerId: string) => ProviderSettingsPlugin | null>(() => null),
+);
 
 const machineCapabilitiesInvokeMock = vi.fn(async () => ({
     supported: true,
     response: { ok: true, result: { plan: null } },
 }));
+const applySettingsMock = vi.fn();
+const tauriDesktopState = vi.hoisted(() => ({ value: true }));
+const cliDetectionState = {
+    available: { codex: false },
+    login: { codex: null } as Record<string, boolean | null>,
+    authStatus: { codex: null } as Record<string, CliAuthStatusData | null>,
+    resolvedPath: { codex: null } as Record<string, string | null>,
+    resolutionSource: { codex: null } as Record<string, 'override' | 'system' | 'managed' | null>,
+    tmux: null,
+    isDetecting: false,
+    timestamp: 1,
+    refresh: vi.fn(),
+};
+const paneApi = {
+    scopeId: 'settings:provider:codex',
+    scopeState: null as any,
+    openRight: vi.fn(),
+    closeRight: vi.fn(),
+    setRightTab: vi.fn(),
+    setRightTabState: vi.fn(),
+    openBottom: vi.fn(),
+    closeBottom: vi.fn(),
+    setBottomTab: vi.fn(),
+    setBottomTabState: vi.fn(),
+    openDetailsTab: vi.fn(),
+    setDetailsTabState: vi.fn(),
+    pinDetailsTab: vi.fn(),
+    unpinDetailsTab: vi.fn(),
+    closeDetails: vi.fn(),
+    closeDetailsTab: vi.fn(),
+    setActiveDetailsTab: vi.fn(),
+};
+const useCLIDetectionMock = vi.fn();
+const useCapabilityInstallabilityMock = vi.fn();
+let machinesState = [
+    { id: 'm1', metadata: { displayName: 'Machine One', host: 'm1', homeDir: '/Users/m1' } },
+    { id: 'm2', metadata: { displayName: 'Machine Two', host: 'm2', homeDir: '/Users/m2' } },
+    { id: 'm3', metadata: { displayName: 'Machine Three', host: 'm3', homeDir: '/Users/m3' } },
+];
+let machineListByServerIdState = {
+    server1: [
+        { id: 'm1', revokedAt: null },
+        { id: 'm2', revokedAt: null },
+    ],
+    server2: [
+        { id: 'm3', revokedAt: null },
+    ],
+};
+let machineListStatusByServerIdState = {
+    server1: { status: 'ready' },
+    server2: { status: 'ready' },
+};
+let activeServerSnapshot: ActiveServerSnapshot = {
+    serverId: 'server1',
+    serverUrl: 'http://localhost:3000',
+    generation: 1,
+};
+let activeServerSubscriber: ((snapshot: ActiveServerSnapshot) => void) | null = null;
+const passThrough = (componentName: string) => createPassThroughModule([componentName]);
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    Platform: {
-        OS: 'ios',
-        select: (v: any) => (v && typeof v === 'object' ? (v.ios ?? v.default) : v),
-    },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                textSecondary: '#999',
-                textDestructive: '#f00',
-                input: { placeholder: '#999' },
+installSessionSettingsEntryModuleMocks({
+    reactNative: () =>
+        createReactNativeWebMock({
+            View: 'View',
+            TextInput: 'TextInput',
+            Easing: {
+                bezier: () => 'bezier',
+                linear: 'linear',
             },
-        },
-    }),
-    StyleSheet: {
-        create: (v: any) => v,
+            Platform: {
+                OS: 'ios',
+                select: (value: any) => (value && typeof value === 'object' ? (value.ios ?? value.default) : value),
+            },
+        }),
+    unistyles: () => createUnistylesMock(),
+    routerModule: () => {
+        const routerMock = createExpoRouterMock({
+            router: {
+                push: (value) => routerPushSpy(value),
+                back: () => undefined,
+                replace: () => undefined,
+                setParams: vi.fn(),
+            },
+        });
+        return {
+            ...routerMock.module,
+            useLocalSearchParams: () => ({ providerId: mockProviderId }),
+            Redirect: (props: any) => React.createElement('Redirect', props),
+        };
     },
-}));
+    textModule: () => createTextModuleMock({ translate: (key) => key }),
+    storageModule: (importOriginal) =>
+        createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                // Test boundary fixture: this route reads a small subset of the storage contract.
+                useSettings: (() => settingsState) as any,
+                useAllMachines: (() => machinesState) as any,
+                useMachineListByServerId: (() => machineListByServerIdState) as any,
+                useMachineListStatusByServerId: (() => machineListStatusByServerIdState) as any,
+                useLocalSetting: ((key: string) => {
+                    if (key === 'bottomPaneHeightPx') return 320;
+                    if (key === 'bottomPaneHeightBasisPx') return 900;
+                    return undefined;
+                }) as any,
+                useLocalSettingMutable: ((key: string) => {
+                    if (key === 'bottomPaneHeightPx') return [320, vi.fn()] as const;
+                    if (key === 'bottomPaneHeightBasisPx') return [900, vi.fn()] as const;
+                    if (key === 'contextSelectionsV1') {
+                        return [
+                            settingsState.contextSelectionsV1,
+                            (next: any) => {
+                                settingsState.contextSelectionsV1 = next;
+                            },
+                        ] as const;
+                    }
+                    return [undefined, vi.fn()] as const;
+                }) as any,
+                useSettingMutable: ((key: string) => {
+                    if (key === 'contextSelectionsV1') {
+                        return [
+                            settingsState.contextSelectionsV1,
+                            (next: any) => {
+                                settingsState.contextSelectionsV1 = next;
+                            },
+                        ] as const;
+                    }
+                    return [undefined, vi.fn()] as const;
+                }) as any,
+                useSetting: (key: string) => {
+                    if (key === 'serverSelectionGroups') return {};
+                    if (key === 'serverSelectionActiveTargetKind') return 'server';
+                    if (key === 'serverSelectionActiveTargetId') return 'server1';
+                    return undefined;
+                },
+                useMachine: () => null,
+            },
+        }),
+});
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ providerId: 'codex' }),
-}));
+vi.mock('@/components/ui/lists/ItemList', () => passThrough('ItemList'));
 
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
+vi.mock('@/components/ui/lists/ItemGroup', () => passThrough('ItemGroup'));
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
+vi.mock('@/components/ui/lists/Item', () => passThrough('Item'));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: 'Switch',
@@ -86,25 +212,47 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => tauriDesktopState.value,
+}));
+
 vi.mock('@/sync/sync', () => ({
     sync: {
-        applySettings: vi.fn(),
+        applySettings: applySettingsMock,
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettings: () => ({ backendEnabledById: {}, sessionDefaultPermissionModeByAgent: {} }),
-    useAllMachines: () => ([{ id: 'm1', metadata: { name: 'My Machine', host: 'm1' } }]),
+vi.mock('@/sync/store/settingsWriters', () => ({
+    useApplySettings: () => applySettingsMock,
+}));
+
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getActiveServerSnapshot: () => activeServerSnapshot,
+    listServerProfiles: () => [{ id: 'server1', serverUrl: 'http://localhost:3000', webappUrl: 'http://localhost:8081', name: 'server1' }],
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => activeServerSnapshot,
+    subscribeActiveServer: (listener: (snapshot: ActiveServerSnapshot) => void) => {
+        activeServerSubscriber = listener;
+        return () => {
+            if (activeServerSubscriber === listener) {
+                activeServerSubscriber = null;
+            }
+        };
+    },
+}));
+
+vi.mock('@/sync/domains/server/selection/serverSelectionResolution', () => ({
+    getEffectiveServerSelectionFromRawSettings: () => ({ serverIds: ['server1'] }),
 }));
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
-    useCLIDetection: () => ({
-        available: { codex: false },
-        login: { codex: null },
-        tmux: null,
-        isDetecting: false,
-        timestamp: 1,
-    }),
+    useCLIDetection: (...args: any[]) => useCLIDetectionMock(...args),
+}));
+
+vi.mock('@/hooks/machine/useCapabilityInstallability', () => ({
+    useCapabilityInstallability: (...args: any[]) => useCapabilityInstallabilityMock(...args),
 }));
 
 vi.mock('@/sync/ops', async (importOriginal) => {
@@ -114,14 +262,46 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     const actual: any = await importOriginal();
-    return {
-        ...actual,
-        isAgentId: (v: any) => v === 'codex',
-        getAgentCore: () => ({
-            displayNameKey: 'Codex',
+    const createMockAgentCore = (agentId: string) => {
+        if (agentId === 'claude') {
+            return {
+                id: agentId,
+                displayNameKey: 'Claude',
+                subtitleKey: 'subtitle',
+                availability: { experimental: false },
+                resume: { supportsVendorResume: false, experimental: false },
+                sessionModes: { kind: 'none' },
+                model: {
+                    supportsSelection: true,
+                    supportsFreeform: true,
+                    defaultMode: 'claude-sonnet-4-6',
+                    allowedModes: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+                    dynamicProbe: 'static-only',
+                    nonAcpApplyScope: 'spawn_only',
+                    acpApplyBehavior: 'set_model',
+                    acpModelConfigOptionId: null,
+                },
+                cli: {
+                    detectKey: agentId,
+                    installBanner: { installKind: 'installer', installCommand: null, guideUrl: null },
+                },
+                connectedService: { name: 'cloud' },
+                localControl: { supported: false },
+                ui: { agentPickerIconName: 'code-slash' },
+            };
+        }
+
+        return {
+            id: agentId,
+            displayNameKey:
+                agentId === 'customAcp'
+                    ? 'agentInput.agent.customAcp'
+                    : agentId === 'opencode'
+                        ? 'agentInput.agent.opencode'
+                        : 'Codex',
             subtitleKey: 'subtitle',
             availability: { experimental: false },
-            resume: { supportsVendorResume: false, experimental: false, runtimeGate: null },
+            resume: { supportsVendorResume: false, experimental: false },
             sessionModes: { kind: 'none' },
             model: {
                 supportsSelection: true,
@@ -134,22 +314,33 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
                 acpModelConfigOptionId: null,
             },
             cli: {
-                detectKey: 'codex',
+                detectKey: agentId,
                 installBanner: { installKind: 'installer', installCommand: null, guideUrl: null },
             },
-            connectedService: { name: 'cloud' },
+            connectedService: { name: agentId === 'customAcp' ? 'Custom ACP' : 'cloud' },
             localControl: { supported: false },
-            ui: { agentPickerIconName: 'code-slash' },
-        }),
+            ui: { agentPickerIconName: agentId === 'customAcp' ? 'git-network-outline' : 'code-slash' },
+        };
+    };
+    return {
+        ...actual,
+        isAgentId: (v: any) => v === 'codex' || v === 'customAcp' || v === 'opencode' || v === 'claude',
+        getAgentCore: (agentId: string) => createMockAgentCore(agentId),
     };
 });
 
-vi.mock('@/agents/providers/_registry/providerSettingsRegistry', () => ({
-    getProviderSettingsPlugin: () => null,
+vi.mock('@/agents/providers/registry/providerSettingsRegistry', () => ({
+    PROVIDER_SETTINGS_PLUGINS: [],
+    getProviderSettingsPlugin: (providerId: string) => mockProviderSettingsPlugin(providerId),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
+    getProviderLocalAuthPlugin: () => ({
+        providerId: 'codex',
+        support: 'login_terminal',
+        docsUrl: 'https://example.com/codex',
+        buildLoginLaunch: () => ({ initialCommand: 'codex login' }),
+    }),
 }));
 
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
@@ -162,45 +353,575 @@ vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
 
 vi.mock('@happier-dev/agents', async (importOriginal) => {
     const actual: any = await importOriginal();
-    return { ...actual, getAgentAdvancedModeCapabilities: () => ({ supportsRuntimeModeSwitch: false }) };
+    return {
+        ...actual,
+        getAgentAdvancedModeCapabilities: () => ({ supportsRuntimeModeSwitch: false }),
+        getProviderCliRuntimeSpec: () => ({
+            id: 'codex',
+            binaryName: 'codex',
+            sourcePreferenceDefault: 'system-first',
+            managedInstall: {
+                kind: 'github_release_binary',
+                githubRepo: 'openai/codex',
+                binaryName: 'codex',
+            },
+            manualInstallKind: 'command',
+            docsUrl: 'https://github.com/openai/codex',
+        }),
+    };
 });
 
-vi.mock('@/components/settings/providers/ProviderCliInstallItem', () => ({
-    ProviderCliInstallItem: (props: any) => React.createElement('ProviderCliInstallItem', props),
+vi.mock('@/components/settings/providers/ProviderCliInstallItem', () => passThrough('ProviderCliInstallItem'));
+
+vi.mock('@/components/contextBar/ContextBar', () => passThrough('ContextBar'));
+
+vi.mock('@/components/ui/layout/BadgeGrid', () => passThrough('BadgeGrid'));
+
+vi.mock(
+    '@/components/settings/providers/authentication/ProviderAuthenticationTerminalPane',
+    () => passThrough('ProviderAuthenticationTerminalPane'),
+);
+
+vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
+    AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main),
 }));
 
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+    useAppPaneScope: () => {
+        if (shouldThrowOnAppPaneScope) {
+            throw new Error('useAppPaneScope called unexpectedly');
+        }
+        return paneApi;
+    },
+}));
+
+vi.mock('@/components/settings/providers/authentication/useProviderAuthenticationState', () => ({
+    useProviderAuthenticationState: (params: any) => {
+        const providerId = params.providerId;
+        const authStatus = cliDetectionState.authStatus?.[providerId] ?? null;
+        return {
+            canLaunchLogin: true,
+            machineId: null,
+            machineHomeDir: null,
+            loginLaunch: null,
+            authStatus,
+            canCheckNow: true,
+            loginActionKind: authStatus?.state === 'logged_in' ? 'reauthenticate' : 'login',
+            docsUrl: null,
+        };
+    },
+}));
+
+async function renderProviderSettingsScreen() {
+    const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
+    return renderScreen(React.createElement(Screen));
+}
+
 describe('ProviderSettingsScreen', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    beforeEach(() => {
+        mockProviderId = 'codex';
+        shouldThrowOnAppPaneScope = false;
+        tauriDesktopState.value = true;
+        applySettingsMock.mockReset();
+        cliDetectionState.available = { codex: false };
+        cliDetectionState.login = { codex: null };
+        cliDetectionState.authStatus = { codex: null };
+        cliDetectionState.resolvedPath = { codex: null };
+        cliDetectionState.resolutionSource = { codex: null };
+        cliDetectionState.tmux = null;
+        cliDetectionState.isDetecting = false;
+        cliDetectionState.timestamp = 1;
+        cliDetectionState.refresh = vi.fn();
+        paneApi.scopeState = null;
+        paneApi.openRight.mockReset();
+        paneApi.closeRight.mockReset();
+        paneApi.setRightTab.mockReset();
+        paneApi.setRightTabState.mockReset();
+        paneApi.openBottom.mockReset();
+        paneApi.closeBottom.mockReset();
+        paneApi.setBottomTab.mockReset();
+        paneApi.setBottomTabState.mockReset();
+        paneApi.openDetailsTab.mockReset();
+        paneApi.setDetailsTabState.mockReset();
+        paneApi.pinDetailsTab.mockReset();
+        paneApi.unpinDetailsTab.mockReset();
+        paneApi.closeDetails.mockReset();
+        paneApi.closeDetailsTab.mockReset();
+        paneApi.setActiveDetailsTab.mockReset();
+        settingsState.backendEnabledByTargetKey = {};
+        settingsState.sessionDefaultPermissionModeByTargetKey = {};
+        settingsState.backendCliSourcePreferenceById = {};
+        settingsState.contextSelectionsV1 = undefined;
+        settingsState.opencodeServerBaseUrl = '';
+        settingsState.opencodeServerBaseUrlByServerIdV1 = {};
+        machinesState = [
+            { id: 'm1', metadata: { displayName: 'Machine One', host: 'm1', homeDir: '/Users/m1' } },
+            { id: 'm2', metadata: { displayName: 'Machine Two', host: 'm2', homeDir: '/Users/m2' } },
+            { id: 'm3', metadata: { displayName: 'Machine Three', host: 'm3', homeDir: '/Users/m3' } },
+        ];
+        machineListByServerIdState = {
+            server1: [
+                { id: 'm1', revokedAt: null },
+                { id: 'm2', revokedAt: null },
+            ],
+            server2: [
+                { id: 'm3', revokedAt: null },
+            ],
+        };
+        machineListStatusByServerIdState = {
+            server1: { status: 'ready' },
+            server2: { status: 'ready' },
+        };
+        activeServerSnapshot = {
+            serverId: 'server1',
+            serverUrl: 'http://localhost:3000',
+            generation: 1,
+        };
+        activeServerSubscriber = null;
+        useCLIDetectionMock.mockReset();
+        useCLIDetectionMock.mockImplementation(() => cliDetectionState);
+        useCapabilityInstallabilityMock.mockReset();
+        useCapabilityInstallabilityMock.mockReturnValue({ kind: 'installable' });
+        routerPushSpy.mockReset();
+        mockProviderSettingsPlugin.mockReset();
+        mockProviderSettingsPlugin.mockReturnValue(null);
+    });
+
     it('surfaces provider CLI install via capability installer item', async () => {
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const installer = tree!.root.findByType('ProviderCliInstallItem' as any);
+        const screen = await renderProviderSettingsScreen();
+        const installer = screen.findByType('ProviderCliInstallItem' as any);
         expect(installer.props.machineId).toBe('m1');
+        expect(installer.props.serverId).toBe('server1');
         expect(installer.props.capabilityId).toBe('cli.codex');
         expect(installer.props.installed).toBe(false);
+        expect(installer.props.managedInstalled).toBe(false);
         expect(installer.props.installability).toMatchObject({ kind: 'installable' });
     });
 
+    it('hides the desktop-only provider install and auth actions on web while keeping status rows', async () => {
+        tauriDesktopState.value = false;
+
+        const screen = await renderProviderSettingsScreen();
+
+        expect(screen.findAllByType('ProviderCliInstallItem' as any)).toHaveLength(0);
+        expect(screen.findAllByType('ProviderAuthenticationTerminalPane' as any)).toHaveLength(0);
+        expect(screen.findByTestId('settings-provider-auth-status')).toBeTruthy();
+        expect(screen.findByTestId('settings-provider-auth-check-now')).toBeNull();
+        expect(screen.findByTestId('settings-provider-auth-login')).toBeNull();
+    });
+
+    it('renders a machine-only context bar scoped to the active server machines', async () => {
+        const screen = await renderProviderSettingsScreen();
+        const contextBar = screen.findByType('ContextBar' as any);
+        expect(contextBar.props.mode).toBe('machine_only');
+        expect(contextBar.props.machine.selectedId).toBe('m1');
+        expect(contextBar.props.machine.items.map((item: any) => item.id)).toEqual(['m1', 'm2']);
+    });
+
+    it('falls back to active server machines when the server-scoped machine cache is not populated yet', async () => {
+        machinesState = [
+            { id: 'm1', metadata: { displayName: 'Machine One', host: 'm1', homeDir: '/Users/m1' } },
+            { id: 'm2', metadata: { displayName: 'Machine Two', host: 'm2', homeDir: '/Users/m2' } },
+            { id: 'm3', metadata: { displayName: 'Machine Three', host: 'm3', homeDir: '/Users/m3' } },
+        ];
+        machineListByServerIdState = {
+            server1: [],
+            server2: [
+                { id: 'm3', revokedAt: null },
+            ],
+        };
+
+        const screen = await renderProviderSettingsScreen();
+        const contextBar = screen.findByType('ContextBar' as any);
+        expect(contextBar.props.machine.selectedId).toBe('m1');
+        expect(contextBar.props.machine.items.map((item: any) => item.id)).toEqual(['m1', 'm2']);
+
+        expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m1', expect.objectContaining({
+            serverId: 'server1',
+        }));
+        expect(useCapabilityInstallabilityMock).toHaveBeenLastCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            serverId: 'server1',
+        }));
+    });
+
+    it('uses the context bar machine selection for CLI detection and installability', async () => {
+        const screen = await renderProviderSettingsScreen();
+        const contextBar = screen.findByType('ContextBar' as any);
+        await act(async () => {
+            contextBar.props.machine.onSelect('m2');
+        });
+        await flushHookEffects();
+
+        expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m2', expect.objectContaining({
+            serverId: 'server1',
+            agentIds: ['codex'],
+        }));
+        expect(useCapabilityInstallabilityMock).toHaveBeenLastCalledWith(expect.objectContaining({
+            machineId: 'm2',
+            serverId: 'server1',
+        }));
+    });
+
+    it('marks the installer row as managed-installed when the detected CLI resolves inside Happier tools', async () => {
+        cliDetectionState.available = { codex: true };
+        cliDetectionState.resolutionSource = { codex: 'managed' };
+
+        const screen = await renderProviderSettingsScreen();
+        const installer = screen.findByType('ProviderCliInstallItem' as any);
+        expect(installer.props.installed).toBe(true);
+        expect(installer.props.managedInstalled).toBe(true);
+    });
+
+    it('updates the selected machine when the active server changes', async () => {
+        const screen = await renderProviderSettingsScreen();
+
+        expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m1', expect.objectContaining({
+            autoDetect: true,
+            includeLoginStatus: true,
+            serverId: 'server1',
+        }));
+        expect(useCapabilityInstallabilityMock).toHaveBeenLastCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            capabilityId: 'cli.codex',
+            serverId: 'server1',
+        }));
+
+        await act(async () => {
+            activeServerSnapshot = {
+                serverId: 'server2',
+                serverUrl: 'http://localhost:4000',
+                generation: 2,
+            };
+            activeServerSubscriber?.(activeServerSnapshot);
+        });
+        await flushHookEffects();
+
+        const contextBar = screen.findByType('ContextBar' as any);
+        expect(contextBar.props.machine.selectedId).toBe('m3');
+        expect(contextBar.props.machine.items.map((item: any) => item.id)).toEqual(['m3']);
+
+        expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m3', expect.objectContaining({
+            autoDetect: true,
+            includeLoginStatus: true,
+            serverId: 'server2',
+        }));
+        expect(useCapabilityInstallabilityMock).toHaveBeenLastCalledWith(expect.objectContaining({
+            machineId: 'm3',
+            capabilityId: 'cli.codex',
+            serverId: 'server2',
+        }));
+
+    });
+
     it('includes a permissions section to set the default permission mode for this backend', async () => {
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
+        const screen = await renderProviderSettingsScreen();
+        const items = screen.findAllByType('Item' as any);
         const permissionItem = items.find((item: any) => item?.props?.title === 'settingsSession.permissions.defaultPermissionModeTitle');
         expect(permissionItem).toBeTruthy();
     });
+
+    it('shows the provider default model as a friendly model name instead of a raw model id', async () => {
+        mockProviderId = 'claude';
+
+        const screen = await renderProviderSettingsScreen();
+        const items = screen.findAllByType('Item' as any);
+        const defaultModelItem = items.find((item: any) => item?.props?.title === 'settingsProviders.defaultModelTitle');
+
+        expect(defaultModelItem?.props?.subtitle).toBe('Sonnet 4.6');
+    });
+
+    it('renders an authentication section when local CLI auth details are available', async () => {
+        cliDetectionState.available = { codex: true };
+        cliDetectionState.login = { codex: true };
+        cliDetectionState.authStatus = {
+            codex: {
+                state: 'logged_in',
+                accountLabel: 'alice@example.com',
+                method: 'oauth_cli',
+                source: 'command',
+                checkedAt: 123,
+            },
+        };
+        cliDetectionState.timestamp = 123;
+
+        const screen = await renderProviderSettingsScreen();
+        expect(screen.findByTestId('settings-provider-auth-status')).toBeTruthy();
+        expect(screen.findByTestId('settings-provider-auth-account')).toBeTruthy();
+    });
+
+    it('renders a login action when local auth is supported but logged out', async () => {
+        cliDetectionState.available = { codex: true };
+        cliDetectionState.login = { codex: false };
+        cliDetectionState.authStatus = {
+            codex: {
+                state: 'logged_out',
+                reason: 'missing_credentials',
+                checkedAt: 123,
+            },
+        };
+        cliDetectionState.timestamp = 123;
+
+        const screen = await renderProviderSettingsScreen();
+        expect(screen.findByTestId('settings-provider-auth-login')).toBeTruthy();
+    });
+
+    it('uses the shared pane scope host for the provider auth terminal', async () => {
+        cliDetectionState.available = { codex: true };
+        cliDetectionState.login = { codex: false };
+        cliDetectionState.authStatus = {
+            codex: {
+                state: 'logged_out',
+                reason: 'missing_credentials',
+                checkedAt: 123,
+            },
+        };
+        cliDetectionState.timestamp = 123;
+
+        const screen = await renderProviderSettingsScreen();
+        const hostBefore = screen.findByType('AppPaneScopeHost' as any);
+        expect(hostBefore.props.bottomPane).toBeNull();
+        expect(hostBefore.props.scopeId).toBe('settings:provider:codex');
+
+        await screen.pressByTestIdAsync('settings-provider-auth-login');
+        await flushHookEffects();
+
+        expect(paneApi.openBottom).toHaveBeenCalledWith({ tabId: 'provider-auth-terminal' });
+
+        await act(async () => {
+            paneApi.scopeState = {
+                bottom: {
+                    isOpen: true,
+                    activeTabId: 'provider-auth-terminal',
+                },
+            };
+        });
+        const rerenderedScreen = await renderProviderSettingsScreen();
+
+        const hostAfter = rerenderedScreen.findByType('AppPaneScopeHost' as any);
+        expect(hostAfter.props.bottomPane).toBeTruthy();
+        expect(hostAfter.props.bottomPane.props.providerId).toBe('codex');
+    });
+
+    it('refreshes provider auth detection when the auth terminal pane closes', async () => {
+        cliDetectionState.available = { codex: true };
+        cliDetectionState.login = { codex: false };
+        cliDetectionState.authStatus = {
+            codex: {
+                state: 'logged_out',
+                reason: 'missing_credentials',
+                checkedAt: 123,
+            },
+        };
+        cliDetectionState.timestamp = 123;
+        paneApi.scopeState = {
+            bottom: {
+                isOpen: true,
+                activeTabId: 'provider-auth-terminal',
+            },
+        };
+
+        const screen = await renderProviderSettingsScreen();
+        const host = screen.findByType('AppPaneScopeHost' as any);
+        expect(host.props.bottomPane).toBeTruthy();
+
+        await act(async () => {
+            host.props.bottomPane.props.onRequestClose();
+        });
+        await flushHookEffects();
+
+        expect(paneApi.closeBottom).toHaveBeenCalledTimes(1);
+        expect(cliDetectionState.refresh).toHaveBeenCalledWith({
+            bypassCache: true,
+            includeLoginStatusForAgentIds: ['codex'],
+        });
+    });
+
+    it('closes the auth terminal and refreshes provider auth detection when the auth terminal exits', async () => {
+        cliDetectionState.available = { codex: true };
+        cliDetectionState.login = { codex: false };
+        cliDetectionState.authStatus = {
+            codex: {
+                state: 'logged_out',
+                reason: 'missing_credentials',
+                checkedAt: 123,
+            },
+        };
+        cliDetectionState.timestamp = 123;
+        paneApi.scopeState = {
+            bottom: {
+                isOpen: true,
+                activeTabId: 'provider-auth-terminal',
+            },
+        };
+
+        const screen = await renderProviderSettingsScreen();
+        const host = screen.findByType('AppPaneScopeHost' as any);
+        expect(host.props.bottomPane).toBeTruthy();
+
+        await act(async () => {
+            host.props.bottomPane.props.onTerminalExit();
+        });
+        await flushHookEffects();
+
+        expect(paneApi.closeBottom).toHaveBeenCalledTimes(1);
+        expect(cliDetectionState.refresh).toHaveBeenCalledWith({
+            bypassCache: true,
+            includeLoginStatusForAgentIds: ['codex'],
+        });
+    });
+
+    it('renders and updates the backend CLI source preference when a managed install exists', async () => {
+        const screen = await renderProviderSettingsScreen();
+        const sourceMenu = screen
+            .findAllByType('DropdownMenu' as any)
+            .find((node: any) => node.props?.itemTrigger?.title === 'settingsProviders.cliSourcePreference.title');
+        expect(sourceMenu).toBeTruthy();
+        expect(sourceMenu!.props.selectedId).toBe('system-first');
+
+        await act(async () => {
+            sourceMenu!.props.onSelect('managed-first');
+        });
+        await flushHookEffects();
+
+        expect(applySettingsMock).toHaveBeenCalledWith({
+            backendCliSourcePreferenceById: {
+                codex: 'managed-first',
+            },
+        });
+    });
+
+    it('reflects configured runtime-kind capability overrides in the badges', async () => {
+        mockProviderId = 'codex';
+        (settingsState as any).codexBackendMode = 'mcp';
+        const screen = await renderProviderSettingsScreen();
+        const badgeGrid = screen.findByType('BadgeGrid' as any);
+        const localControlItem = badgeGrid.props.items.find((item: any) => item.id === 'localControl');
+        expect(localControlItem).toMatchObject({
+            status: 'negative',
+            detail: 'settingsProviders.notSupported',
+        });
+
+        delete (settingsState as any).codexBackendMode;
+    });
+
+    it('redirects the custom ACP provider route back to the providers index', async () => {
+        mockProviderId = 'customAcp';
+        const screen = await renderProviderSettingsScreen();
+        const redirect = screen.findByType('Redirect' as any);
+        expect(redirect.props.href).toBe('/(app)/settings/providers');
+    });
+
+    it('reads and writes the OpenCode server url per active server', async () => {
+        mockProviderId = 'opencode';
+        settingsState.opencodeServerBaseUrl = 'http://127.0.0.1:4999/';
+        settingsState.opencodeServerBaseUrlByServerIdV1 = {
+            server1: 'http://127.0.0.1:4096/',
+            server2: 'http://127.0.0.1:4097/',
+        };
+        mockProviderSettingsPlugin.mockReturnValue({
+            providerId: 'opencode',
+            title: 'OpenCode',
+            icon: { ionName: 'code-slash-outline', color: '#5AC8FA' },
+            settings: {},
+            uiSections: [
+                {
+                    id: 'opencodeServer',
+                    title: 'Server connection',
+                    fields: [{
+                        key: 'opencodeServerBaseUrl',
+                        kind: 'text',
+                        title: 'Existing OpenCode server URL',
+                        binding: {
+                            kind: 'perActiveServer',
+                            fallbackSettingKey: 'opencodeServerBaseUrl',
+                            byServerIdSettingKey: 'opencodeServerBaseUrlByServerIdV1',
+                        },
+                    }],
+                },
+            ],
+            buildOutgoingMessageMetaExtras: () => ({}),
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        let textInputs = screen.findAllByType('TextInput' as any);
+        expect(textInputs).toHaveLength(1);
+        expect(textInputs[0]?.props.value).toBe('http://127.0.0.1:4096/');
+
+        await act(async () => {
+            textInputs[0]?.props.onChangeText('http://127.0.0.1:5000/');
+        });
+        await flushHookEffects();
+
+        expect(applySettingsMock).toHaveBeenCalledWith({
+            opencodeServerBaseUrlByServerIdV1: {
+                server1: 'http://127.0.0.1:5000/',
+                server2: 'http://127.0.0.1:4097/',
+            },
+        });
+
+        await act(async () => {
+            activeServerSnapshot = {
+                serverId: 'server2',
+                serverUrl: 'http://localhost:4000',
+                generation: 2,
+            };
+            activeServerSubscriber?.(activeServerSnapshot);
+        });
+        await flushHookEffects();
+
+        textInputs = screen.findAllByType('TextInput' as any);
+        expect(textInputs[0]?.props.value).toBe('http://127.0.0.1:4097/');
+    });
+
+    it('renders translated number placeholders for provider settings fields', async () => {
+        mockProviderId = 'opencode';
+        mockProviderSettingsPlugin.mockReturnValue({
+            providerId: 'opencode',
+            title: { key: 'settingsProviders.plugins.opencode.title' },
+            icon: { ionName: 'code-slash-outline', color: '#5AC8FA' },
+            settings: {},
+            uiSections: [
+                {
+                    id: 'limits',
+                    title: { key: 'settingsProviders.cliConnection' },
+                    fields: [{
+                        key: 'thinkingBudget',
+                        kind: 'number',
+                        title: { key: 'settingsProviders.targetMachineTitle' },
+                        numberSpec: {
+                            placeholder: { key: 'common.default' },
+                        },
+                    }],
+                },
+            ],
+            buildOutgoingMessageMetaExtras: () => ({}),
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        const textInputs = screen.findAllByType('TextInput' as any);
+        expect(textInputs).toHaveLength(1);
+        expect(textInputs[0]?.props.placeholder).toBe('common.default');
+    });
+
+    it('renders the not found screen without requiring pane context', async () => {
+        mockProviderId = 'unknown';
+        shouldThrowOnAppPaneScope = true;
+        const screen = await renderProviderSettingsScreen();
+        const groups = screen.findAllByType('ItemGroup' as any);
+        expect(groups.length).toBeGreaterThan(0);
+    });
 });
+const settingsState = {
+    backendEnabledByTargetKey: {},
+    sessionDefaultPermissionModeByTargetKey: {},
+    backendCliSourcePreferenceById: {},
+    contextSelectionsV1: undefined as any,
+    acpCatalogSettingsV1: { v: 2, backends: [] },
+    opencodeServerBaseUrl: '',
+    opencodeServerBaseUrlByServerIdV1: {} as Record<string, string>,
+};

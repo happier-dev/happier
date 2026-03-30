@@ -18,6 +18,16 @@ test('ensureTauriSigningKeyFile materializes inline key contents to a temp file'
   assert.equal(contents, 'untrusted comment: tauri signing key\nRWabc123\n');
 });
 
+test('ensureTauriSigningKeyFile strips wrapped whitespace from inline base64 keys', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'happier-tauri-key-b64-'));
+  const tmpRoot = path.join(dir, 'tmp');
+  const key = 'RWabc123\\nDEF456\\n';
+
+  const outPath = await ensureTauriSigningKeyFile({ tmpRoot, keyValue: key, dryRun: false });
+  const contents = await readFile(outPath, 'utf8');
+  assert.equal(contents, 'RWabc123DEF456');
+});
+
 test('ensureTauriSigningKeyFile returns the path unchanged when keyValue is an existing file path', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'happier-tauri-key-path-'));
   const keyPath = path.join(dir, 'key.txt');
@@ -33,4 +43,3 @@ test('ensureTauriSigningKeyFile supports dry-run without writing', async () => {
   const outPath = await ensureTauriSigningKeyFile({ tmpRoot, keyValue: 'RWabc123', dryRun: true });
   assert.ok(outPath.includes('tauri.signing.key'), 'expected a stable signing key filename');
 });
-

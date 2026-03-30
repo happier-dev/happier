@@ -2,7 +2,7 @@ export function isTauriDesktop(): boolean {
   const internals =
     (globalThis as any).__TAURI_INTERNALS__ ??
     (typeof window !== 'undefined' ? (window as any).__TAURI_INTERNALS__ : undefined);
-  return internals !== undefined;
+  return Boolean(internals && typeof (internals as any).invoke === 'function');
 }
 
 export async function invokeTauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -18,3 +18,12 @@ export async function invokeTauri<T>(command: string, args?: Record<string, unkn
   return mod.invoke<T>(command, args);
 }
 
+export async function listenTauriEvent<T>(
+  event: string,
+  handler: (payload: T) => void,
+): Promise<() => void> {
+  const mod = await import('@tauri-apps/api/event');
+  return mod.listen<T>(event, (tauriEvent) => {
+    handler(tauriEvent.payload);
+  });
+}

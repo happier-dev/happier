@@ -7,24 +7,38 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { loadCliCommonDistModule } from '../../../../scripts/ensureCliCommonDistModule.mjs';
+import { listPublicReleaseRingCatalogEntries, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
-export const RELEASE_CHANNELS = new Set(['stable', 'preview']);
+const {
+  CLI_BINARY_TARGETS,
+  SERVER_BINARY_TARGETS,
+  buildCliBinaryArtifactPayload,
+  buildServerBinaryArtifactPayload,
+  commandExists,
+  compileBunBinary,
+  ensureFileExists,
+  execOrThrow,
+  resolveYarnCommand,
+} = await loadCliCommonDistModule({
+  repoRoot: fileURLToPath(new URL('../../../../', import.meta.url)),
+  subpath: 'componentArtifacts',
+});
 
-export const CLI_STACK_TARGETS = [
-  { bunTarget: 'bun-linux-x64-baseline', os: 'linux', arch: 'x64', exeExt: '' },
-  { bunTarget: 'bun-linux-arm64', os: 'linux', arch: 'arm64', exeExt: '' },
-  { bunTarget: 'bun-darwin-x64', os: 'darwin', arch: 'x64', exeExt: '' },
-  { bunTarget: 'bun-darwin-arm64', os: 'darwin', arch: 'arm64', exeExt: '' },
-  { bunTarget: 'bun-windows-x64', os: 'windows', arch: 'x64', exeExt: '.exe' },
-];
+export {
+  buildCliBinaryArtifactPayload,
+  buildServerBinaryArtifactPayload,
+  commandExists,
+  compileBunBinary,
+  ensureFileExists,
+  execOrThrow,
+  resolveYarnCommand,
+};
 
-export const SERVER_TARGETS = [
-  { bunTarget: 'bun-linux-x64-baseline', os: 'linux', arch: 'x64', exeExt: '' },
-  { bunTarget: 'bun-linux-arm64', os: 'linux', arch: 'arm64', exeExt: '' },
-  { bunTarget: 'bun-darwin-x64', os: 'darwin', arch: 'x64', exeExt: '' },
-  { bunTarget: 'bun-darwin-arm64', os: 'darwin', arch: 'arm64', exeExt: '' },
-  { bunTarget: 'bun-windows-x64', os: 'windows', arch: 'x64', exeExt: '.exe' },
-];
+export const RELEASE_CHANNELS = new Set(listPublicReleaseRingCatalogEntries().map((entry) => entry.id));
+
+export const CLI_STACK_TARGETS = CLI_BINARY_TARGETS;
+export const SERVER_TARGETS = SERVER_BINARY_TARGETS;
 
 let _isGnuTar = null;
 
@@ -54,40 +68,6 @@ export function parseArgs(argv) {
   return { kv, flags, positionals };
 }
 
-export function execOrThrow(cmd, args, { cwd = process.cwd(), env = process.env, stdio = 'inherit', input } = {}) {
-  const result = spawnSync(cmd, args, {
-    cwd,
-    env,
-    stdio,
-    encoding: 'utf-8',
-    input,
-  });
-  if (result.error) {
-    throw new Error(`[release] failed to run ${cmd}: ${String(result.error.message || result.error)}`);
-  }
-  if (typeof result.status === 'number' && result.status !== 0) {
-    const stderr = String(result.stderr || '').trim();
-    throw new Error(`[release] ${cmd} exited with status ${result.status}${stderr ? `: ${stderr}` : ''}`);
-  }
-  return result;
-}
-
-export function commandExists(cmd) {
-  const result = spawnSync('bash', ['-lc', `command -v ${cmd} >/dev/null 2>&1`], { stdio: 'ignore' });
-  return (result.status ?? 1) === 0;
-}
-
-export function resolveYarnCommand({ commandProbe } = {}) {
-  const probe = typeof commandProbe === 'function' ? commandProbe : commandExists;
-  if (probe('yarn')) {
-    return { cmd: 'yarn', args: [] };
-  }
-  if (probe('corepack')) {
-    return { cmd: 'corepack', args: ['yarn'] };
-  }
-  throw new Error('[release] building CLI binaries requires yarn or corepack (corepack yarn)');
-}
-
 export async function ensureCleanDir(path) {
   await rm(path, { recursive: true, force: true });
   await mkdir(path, { recursive: true });
@@ -96,13 +76,6 @@ export async function ensureCleanDir(path) {
 export async function fileSha256(path) {
   const bytes = await readFile(path);
   return createHash('sha256').update(bytes).digest('hex');
-}
-
-export async function ensureFileExists(path) {
-  const s = await stat(path).catch(() => null);
-  if (!s?.isFile()) {
-    throw new Error(`[release] expected file to exist: ${path}`);
-  }
 }
 
 export async function createDeterministicArchive({ artifactPath, sourcePath, sourceName }) {
@@ -214,27 +187,6 @@ export function readVersionFromPackageJson(path) {
   return version;
 }
 
-export async function compileBunBinary({ entrypoint, bunTarget, outfile, cwd = process.cwd(), externals = [] }) {
-  const args = ['build', '--compile', `--target=${bunTarget}`, entrypoint, '--outfile', outfile];
-  for (const ext of externals) {
-    const e = String(ext ?? '').trim();
-    if (!e) continue;
-    args.push('--external', e);
-  }
-  execOrThrow('bun', args, { cwd });
-
-  // In some environments bun can report success before the compiled output becomes visible on disk.
-  // Fail closed with a short wait to avoid flaky release-asset packaging.
-  const startedAt = Date.now();
-  const timeoutMs = 5_000;
-  while (Date.now() - startedAt < timeoutMs) {
-    const info = await stat(outfile).catch(() => null);
-    if (info?.isFile()) return;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error(`[release] bun build succeeded but compiled output is missing: ${outfile}`);
-}
-
 export async function packageTargetBinary({
   product,
   version,
@@ -262,6 +214,24 @@ export async function packageTargetBinary({
   await createDeterministicArchive({
     artifactPath: archivePath,
     sourcePath: buildTempDir,
+    sourceName: artifactStem,
+  });
+  return { name: archiveName, path: archivePath, os: target.os, arch: target.arch };
+}
+
+export async function packagePreparedTargetBinary({
+  product,
+  version,
+  target,
+  stageDir,
+  outDir,
+}) {
+  const artifactStem = `${product}-v${version}-${target.os}-${target.arch}`;
+  const archiveName = `${artifactStem}.tar.gz`;
+  const archivePath = join(outDir, archiveName);
+  await createDeterministicArchive({
+    artifactPath: archivePath,
+    sourcePath: dirname(stageDir),
     sourceName: artifactStem,
   });
   return { name: archiveName, path: archivePath, os: target.os, arch: target.arch };
@@ -297,10 +267,11 @@ export function resolveTargets({ availableTargets, requested }) {
 export function normalizeChannel(raw) {
   const value = String(raw ?? '').trim();
   if (!value) return 'stable';
-  if (!RELEASE_CHANNELS.has(value)) {
-    throw new Error(`[release] invalid channel: ${value} (expected stable|preview)`);
+  const normalized = normalizePublicReleaseRingId(value);
+  if (!normalized || !RELEASE_CHANNELS.has(normalized)) {
+    throw new Error(`[release] invalid channel: ${value} (expected stable|preview|dev)`);
   }
-  return value;
+  return normalized;
 }
 
 export function resolveRepoRoot() {

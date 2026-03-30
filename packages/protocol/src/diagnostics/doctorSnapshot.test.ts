@@ -28,6 +28,32 @@ describe('DoctorSnapshotSchema', () => {
         ],
         knownAccountIds: ['acct_123'],
       },
+      daemonStatus: {
+        server: {
+          activeServerId: 'cloud',
+          serverUrl: 'https://admin:secret@api.happier.dev/path?token=abc#frag',
+          localServerUrl: 'http://127.0.0.1:3005/?token=abc',
+          publicServerUrl: 'https://api.happier.dev/path?token=abc',
+          webappUrl: 'https://app.happier.dev/?token=abc',
+          comparableKey: 'https://api.happier.dev',
+        },
+        daemon: {
+          running: true,
+          pid: 4321,
+          httpPort: null,
+        },
+        service: {
+          installed: true,
+          running: true,
+        },
+        auth: {
+          authenticated: true,
+          machineRegistered: false,
+          machineId: null,
+          needsAuth: true,
+          accountId: 'acct_123',
+        },
+      },
     });
 
     const parsed = parseDoctorSnapshotSafe(raw);
@@ -39,6 +65,7 @@ describe('DoctorSnapshotSchema', () => {
     expect(serialized).not.toContain('admin:secret');
     expect(serialized).not.toContain('?token=');
     expect(serialized).not.toContain('#frag');
+    expect(parsed.snapshot.daemonStatus?.server.localServerUrl).toBe('http://127.0.0.1:3005');
   });
 
   it('returns a stable error for invalid JSON', () => {

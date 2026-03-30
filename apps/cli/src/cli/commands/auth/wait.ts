@@ -6,9 +6,9 @@ import tweetnacl from 'tweetnacl';
 
 import { decodeBase64 } from '@/api/encryption';
 import { configuration } from '@/configuration';
-import { readCredentials, writeCredentialsDataKey, writeCredentialsLegacy } from '@/persistence';
+import { readCredentials, writeCredentialsDataKey, writeCredentialsLegacy, type Credentials } from '@/persistence';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
-import { decryptWithEphemeralKey } from '@/ui/auth';
+import { decryptWithEphemeralKey, ensureMachineIdForCredentials } from '@/ui/auth';
 
 type PendingAuthState = Readonly<{
   publicKey: string;
@@ -80,7 +80,13 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
   // If already authenticated, keep things idempotent (useful for scripts).
   const existing = await readCredentials();
   if (existing) {
-    console.log(JSON.stringify({ success: true, token: existing.token, encryptionType: existing.encryption.type }));
+    const { machineId } = await ensureMachineIdForCredentials(existing);
+    console.log(JSON.stringify({
+      success: true,
+      token: existing.token,
+      encryptionType: existing.encryption.type,
+      machineId,
+    }));
     return;
   }
 
@@ -122,8 +128,16 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
 
       if (decrypted.length === 32) {
         await writeCredentialsLegacy({ secret: decrypted, token });
+        const credentials: Credentials = {
+          token,
+          encryption: {
+            type: 'legacy',
+            secret: decrypted,
+          },
+        };
+        const { machineId } = await ensureMachineIdForCredentials(credentials);
         await unlink(statePath).catch(() => {});
-        console.log(JSON.stringify({ success: true, token, encryptionType: 'legacy' as const }));
+        console.log(JSON.stringify({ success: true, token, encryptionType: 'legacy' as const, machineId }));
         return;
       }
 
@@ -131,8 +145,17 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
         const machineKey = decrypted.slice(1, 33);
         const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
         await writeCredentialsDataKey({ publicKey, machineKey, token });
+        const credentials: Credentials = {
+          token,
+          encryption: {
+            type: 'dataKey',
+            publicKey,
+            machineKey,
+          },
+        };
+        const { machineId } = await ensureMachineIdForCredentials(credentials);
         await unlink(statePath).catch(() => {});
-        console.log(JSON.stringify({ success: true, token, encryptionType: 'dataKey' as const }));
+        console.log(JSON.stringify({ success: true, token, encryptionType: 'dataKey' as const, machineId }));
         return;
       }
 

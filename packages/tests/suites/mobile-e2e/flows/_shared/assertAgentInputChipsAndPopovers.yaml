@@ -1,0 +1,41 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+# Agent chip picker popover should open and be dismissible.
+- assertVisible:
+    id: agent-input-agent-chip
+- tapOn:
+    id: agent-input-agent-chip
+- assertVisible:
+    id: agent-input-chip-picker-popover
+- assertVisible:
+    id: agent-input-chip-picker.top-selector-trigger
+- assertVisible:
+    id: model-picker-overlay
+- assertVisible:
+    id: 'model-picker-overlay-option:default'
+- tapOn:
+    point: 50%,20%
+
+# Permission mode chip should open the shared content popover and allow selection.
+- assertVisible:
+    id: agent-input-permission-chip
+- tapOn:
+    id: agent-input-permission-chip
+- assertVisible:
+    id: agent-input-content-popover
+- tapOn:
+    id: permission-mode-yolo
+- assertVisible:
+    id: agent-input-content-popover
+- tapOn:
+    point: 50%,20%
+- assertNotVisible:
+    id: agent-input-content-popover
+
+# Session mode chip should cycle directly in the default Claude new-session flow.
+- assertVisible:
+    id: agent-input-session-mode-chip
+- tapOn:
+    id: agent-input-session-mode-chip
+- assertVisible:
+    id: 'agent-input-session-mode-chip-label:plan'

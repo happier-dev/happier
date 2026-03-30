@@ -51,6 +51,60 @@ describe('typesRaw.normalizeRawMessage', () => {
     expect((normalized as any).sidechainId).toBe('tool_task_1');
   });
 
+  it.each([
+    {
+      label: 'Codex message',
+      data: {
+        type: 'message',
+        message: 'child says hi',
+        sidechainId: 'tool_subagent_1',
+      },
+    },
+    {
+      label: 'Codex reasoning',
+      data: {
+        type: 'reasoning',
+        message: 'thinking child',
+        sidechainId: 'tool_subagent_1',
+      },
+    },
+    {
+      label: 'Codex tool-call',
+      data: {
+        type: 'tool-call',
+        callId: 'call_child_1',
+        id: 'tool-msg-1',
+        name: 'Bash',
+        input: { command: 'pwd' },
+        sidechainId: 'tool_subagent_1',
+      },
+    },
+    {
+      label: 'Codex tool-call-result',
+      data: {
+        type: 'tool-call-result',
+        callId: 'call_child_1',
+        id: 'tool-result-1',
+        output: 'ok',
+        sidechainId: 'tool_subagent_1',
+      },
+    },
+  ])('preserves sidechainId for $label payloads and marks them as sidechains', ({ data }) => {
+    const raw: any = {
+      role: 'agent',
+      content: {
+        type: 'codex',
+        data,
+      },
+      meta: { source: 'cli' },
+    };
+
+    const normalized = normalizeRawMessage('msg_codex_sc_1', null, 1001, raw);
+    expect(normalized).not.toBeNull();
+    expect((normalized as any).isSidechain).toBe(true);
+    expect((normalized as any).sidechainId).toBe('tool_subagent_1');
+  });
+
   it('preserves sidechainId on user tool_result payloads and marks them as sidechains', () => {
     const raw: any = {
       role: 'agent',

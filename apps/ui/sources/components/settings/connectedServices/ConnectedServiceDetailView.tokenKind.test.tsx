@@ -1,29 +1,42 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import {
+    connectedServicesModuleState,
+    installConnectedServicesCommonModuleMocks,
+} from './connectedServicesTestHelpers';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const backSpy = vi.fn();
 const promptSpy = vi.fn<() => Promise<string | null>>(async () => null);
 const alertSpy = vi.fn(async () => {});
 const storeCredentialSpy = vi.fn(async () => {});
-
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: backSpy, push: vi.fn() }),
-  useLocalSearchParams: () => ({ serviceId: 'claude-subscription' }),
-}));
+const applySettingsSpy = vi.fn(async () => {});
+installConnectedServicesCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: promptSpy,
+                alert: alertSpy,
+                confirm: vi.fn(async () => false),
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key) =>
+                key === 'connectedServices.detail.connectSetupTokenTitle' ? 'Connect setup-token' : key,
+        });
+    },
+    searchParams: { serviceId: 'claude-subscription' },
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
-}));
-
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: promptSpy,
-    alert: alertSpy,
-    confirm: vi.fn(async () => false),
-  },
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -55,6 +68,10 @@ vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: vi.fn(async () => {}), applySettings: vi.fn(async () => {}) },
 }));
 
+vi.mock('@/sync/store/settingsWriters', () => ({
+  useApplySettings: () => applySettingsSpy,
+}));
+
 vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
   storeConnectedServiceCredentialForAccount: storeCredentialSpy,
   deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
@@ -71,7 +88,8 @@ describe('ConnectedServiceDetailView token kind copy', () => {
   it('keeps user on detail page after setup-token is saved', async () => {
     promptSpy.mockReset();
     alertSpy.mockReset();
-    backSpy.mockReset();
+    connectedServicesModuleState.routerBackSpy.mockReset();
+    connectedServicesModuleState.routerPushSpy.mockReset();
     storeCredentialSpy.mockReset();
     promptSpy.mockResolvedValueOnce('work');
     promptSpy.mockResolvedValueOnce('setup-token-1');
@@ -79,29 +97,25 @@ describe('ConnectedServiceDetailView token kind copy', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    const tokenItem = tree.root.find((n) => n.props?.testID === 'connected-services-action:connect-token');
+    const tokenItem = tree.find((n) => n.props?.testID === 'connected-services-action:connect-token');
     await act(async () => {
-      await tokenItem.props.onPress?.();
+      await pressTestInstanceAsync(tokenItem);
     });
 
     expect(storeCredentialSpy).toHaveBeenCalledTimes(1);
     expect(alertSpy).toHaveBeenCalled();
-    expect(backSpy).not.toHaveBeenCalled();
+    expect(connectedServicesModuleState.routerBackSpy).not.toHaveBeenCalled();
   });
 
   it('uses setup-token copy for claude-subscription', async () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    const tokenItem = tree.root.find((n) => n.props?.testID === 'connected-services-action:connect-token');
+    const tokenItem = tree.find((n) => n.props?.testID === 'connected-services-action:connect-token');
     expect(tokenItem.props.title).toBe('Connect setup-token');
   });
 });

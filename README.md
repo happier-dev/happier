@@ -121,16 +121,43 @@ Happier is designed with privacy as a foundation, not an afterthought.
 
 ### Step 1: Download App
 
-<a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>
+<a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/apps/testing/dev.happier.app"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
 
-#### Android
+#### Android APK
 
-[Download the APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk) from the releases page.
+Public APK releases are published on the `preview` and `dev` lanes:
+
+- `preview`: [Download the preview APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview-android.apk)
+- `dev`: [Download the dev APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-dev/happier-dev-android.apk)
 
 ### Step 2: Install the CLI on your computer
 
+Release channels:
+
+- `stable`: install the default lane and use `happier`
+- `preview`: install the preview lane and use `hprev`
+- `dev`: install the rolling dev lane and use `hdev`
+
+Public docs and commands always use `stable`, `preview`, and `dev`.
+Internal release-ring ids are implementation details and are not part of the user-facing contract.
+
+See the full release/update matrix: [docs.happier.dev/docs/advanced/updates](https://docs.happier.dev/docs/advanced/updates)
+
 ```bash
-npm install -g @happier-dev/cli@next
+curl -fsSL https://happier.dev/install | bash
+```
+
+Preview / dev installers:
+
+```bash
+curl -fsSL https://happier.dev/install-preview | bash
+curl -fsSL https://happier.dev/install-dev | bash
+```
+
+If you specifically want the npm package instead of the installer-managed lanes:
+
+```bash
+npm install -g @happier-dev/cli@latest
 ```
 
 ### Step 3: Authenticate (recommended: mobile-first)
@@ -204,9 +231,11 @@ Think of the relay server as the long-running process which allows your mobile d
 It is lightweight, and can run as a simple service on your computer. You can then access it from your mobile devices using Tailscale Serve (as long as your computer is running).
 
 Simply run the [self-host guided setup](https://docs.happier.dev/deployment/self-host-runtime) on your computer:
+```bash
+happier relay host install --mode system
 ```
-curl -fsSL https://happier.dev/self-host-preview | bash
-```
+
+The self-host runtime follows the public release-ring model (`stable`, `preview`, `dev`) via `--channel stable|preview|dev`.
 
 By default is uses an SQLite database.
 

@@ -1,0 +1,23 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: false
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: _shared/gotoNewSessionComposer.yaml
+
+- tapOn:
+    id: new-session-composer-input
+- inputText: "MOBILE_E2E_KEYBOARD_SMOKE"
+- assertVisible:
+    id: new-session-composer-send
+
+- openLink: happier:///settings
+- assertVisible:
+    id: settings-connect-terminal-scan
+- openLink: happier:///
+- assertVisible:
+    id: main-header-start-new-session

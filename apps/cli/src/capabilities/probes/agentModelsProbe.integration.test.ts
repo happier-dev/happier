@@ -5,12 +5,15 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AgentBackend } from '@/agent/core';
 import { probeAgentModelsBestEffort, probeModelsFromAcpBackend } from './agentModelsProbe';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import {
   createProbeTempDir,
   resolveAcpSdkEntryFromCwd,
   writeExecutableScript,
   writeFakeAcpAgentScript,
 } from './agentModelsProbe.testkit';
+
+const CLI_MODELS_PROBE_TEST_TIMEOUT_MS = 5_000;
 
 async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -22,12 +25,6 @@ async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> 
   } finally {
     Object.defineProperty(process, 'platform', descriptor);
   }
-}
-
-function createApprovedPermissionHandler(): AcpPermissionHandler {
-  return {
-    handleToolCall: async () => ({ decision: 'approved' }),
-  };
 }
 
 function createProbeBackendOptions(params: {
@@ -220,32 +217,68 @@ describe('probeAgentModelsBestEffort', () => {
     const binDir = resolve(join(fixture.dir, 'bin'));
     await mkdir(binDir, { recursive: true });
 
-    const opencodePath = resolve(join(binDir, 'opencode'));
-    await writeExecutableScript(
-      opencodePath,
-      `#!/usr/bin/env node
-const args = process.argv.slice(2);
-if (args[0] === "models") {
-  process.stdout.write("openai/gpt-4.1\\nopenai/gpt-4.1-mini\\n");
-  process.exit(0);
-}
-process.exit(1);
-`,
-    );
+	    const opencodePath = resolve(join(binDir, 'opencode'));
+	    await writeExecutableScript(
+	      opencodePath,
+	      `#!/usr/bin/env node
+	const args = process.argv.slice(2);
+	if (args[0] === "models" && args.includes("--verbose")) {
+	  process.stdout.write(
+	    "openai/gpt-4.1\\n"
+	    + "{\\n"
+	    + "  \\"id\\": \\"gpt-4.1\\",\\n"
+	    + "  \\"providerID\\": \\"openai\\",\\n"
+	    + "  \\"name\\": \\"GPT-4.1\\",\\n"
+	    + "  \\"family\\": \\"gpt-4.1\\",\\n"
+	    + "  \\"status\\": \\"active\\",\\n"
+	    + "  \\"capabilities\\": { \\"toolcall\\": true, \\"reasoning\\": true, \\"input\\": { \\"text\\": true } },\\n"
+	    + "  \\"variants\\": {\\n"
+	    + "    \\"low\\": { \\"reasoningEffort\\": \\"low\\" },\\n"
+	    + "    \\"medium\\": { \\"reasoningEffort\\": \\"medium\\" },\\n"
+	    + "    \\"high\\": { \\"reasoningEffort\\": \\"high\\" }\\n"
+	    + "  }\\n"
+	    + "}\\n"
+	    + "openai/gpt-4.1-mini\\n"
+	    + "{\\n"
+	    + "  \\"id\\": \\"gpt-4.1-mini\\",\\n"
+	    + "  \\"providerID\\": \\"openai\\",\\n"
+	    + "  \\"name\\": \\"GPT-4.1 Mini\\",\\n"
+	    + "  \\"family\\": \\"gpt-4.1\\",\\n"
+	    + "  \\"status\\": \\"active\\",\\n"
+	    + "  \\"capabilities\\": { \\"toolcall\\": true, \\"reasoning\\": false, \\"input\\": { \\"text\\": true } }\\n"
+	    + "}\\n"
+	  );
+	  process.exit(0);
+	}
+	if (args[0] === "models") {
+	  process.stdout.write("openai/gpt-4.1\\nopenai/gpt-4.1-mini\\n");
+	  process.exit(0);
+	}
+	process.exit(1);
+	`,
+	    );
 
     const prevPath = process.env.PATH;
     const prevOverride = process.env.HAPPIER_OPENCODE_PATH;
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
     delete process.env.HAPPIER_OPENCODE_PATH;
     try {
-      const res = await probeAgentModelsBestEffort({ agentId: 'opencode', cwd: fixture.dir, timeoutMs: 750 });
-      expect(res.source).toBe('dynamic');
-      expect(res.availableModels[0]).toEqual({ id: 'default', name: 'Default' });
-      expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1')).toBe(true);
-      expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1-mini')).toBe(true);
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevOverride === 'string') {
+      const res = await probeAgentModelsBestEffort({
+        agentId: 'opencode',
+        cwd: fixture.dir,
+        timeoutMs: CLI_MODELS_PROBE_TEST_TIMEOUT_MS,
+      });
+	      expect(res.source).toBe('dynamic');
+	      expect(res.availableModels[0]).toEqual({ id: 'default', name: 'Default' });
+	      expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1')).toBe(true);
+	      expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1-mini')).toBe(true);
+	      expect(res.availableModels).toContainEqual(expect.objectContaining({
+	        id: 'openai/gpt-4.1',
+	        modelOptions: [expect.objectContaining({ id: 'reasoning_effort' })],
+	      }));
+	    } finally {
+	      process.env.PATH = prevPath;
+	      if (typeof prevOverride === 'string') {
         process.env.HAPPIER_OPENCODE_PATH = prevOverride;
       } else {
         delete process.env.HAPPIER_OPENCODE_PATH;
@@ -352,7 +385,11 @@ child.on('error', (error) => {
     delete process.env.HAPPIER_OPENCODE_PATH;
     try {
       await withPlatform('win32', async () => {
-        const res = await probeAgentModelsBestEffort({ agentId: 'opencode', cwd: fixture.dir, timeoutMs: 2_000 });
+        const res = await probeAgentModelsBestEffort({
+          agentId: 'opencode',
+          cwd: fixture.dir,
+          timeoutMs: CLI_MODELS_PROBE_TEST_TIMEOUT_MS,
+        });
         expect(res.source).toBe('dynamic');
         expect(res.availableModels[0]).toEqual({ id: 'default', name: 'Default' });
         expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1')).toBe(true);
@@ -400,7 +437,11 @@ process.exit(1);
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
     delete process.env.HAPPIER_AUGGIE_PATH;
     try {
-      const res = await probeAgentModelsBestEffort({ agentId: 'auggie', cwd: fixture.dir, timeoutMs: 750 });
+      const res = await probeAgentModelsBestEffort({
+        agentId: 'auggie',
+        cwd: fixture.dir,
+        timeoutMs: CLI_MODELS_PROBE_TEST_TIMEOUT_MS,
+      });
       expect(res.source).toBe('dynamic');
       expect(res.availableModels[0]).toEqual({ id: 'default', name: 'Default' });
       expect(res.availableModels.some((m) => m.id === 'gpt5' && m.name === 'GPT-5')).toBe(true);
@@ -415,4 +456,27 @@ process.exit(1);
       await fixture.cleanup();
     }
   }, 20_000);
+
+  it('falls back to static codex models when codex ACP spawn is unavailable', async () => {
+    const prevPath = process.env.PATH;
+    const prevOverride = process.env.HAPPIER_CODEX_ACP_BIN;
+    process.env.PATH = '';
+    delete process.env.HAPPIER_CODEX_ACP_BIN;
+    try {
+      const res = await probeAgentModelsBestEffort({
+        agentId: 'codex',
+        cwd: process.cwd(),
+        timeoutMs: 500,
+      });
+      expect(res.source).toBe('static');
+      expect(res.availableModels[0]).toEqual({ id: 'default', name: 'Default' });
+    } finally {
+      process.env.PATH = prevPath;
+      if (typeof prevOverride === 'string') {
+        process.env.HAPPIER_CODEX_ACP_BIN = prevOverride;
+      } else {
+        delete process.env.HAPPIER_CODEX_ACP_BIN;
+      }
+    }
+  });
 });

@@ -70,6 +70,12 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                     enabled: overrides.connectedServicesQuotasEnabled ?? false,
                 },
             },
+            channelBridges: {
+                enabled: false,
+                telegram: {
+                    enabled: false,
+                },
+            },
             updates: {
                 ota: {
                     enabled: overrides.updatesOtaEnabled ?? true,
@@ -80,6 +86,27 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 public: { enabled: true },
                 contentKeys: { enabled: true },
                 pendingQueueV2: { enabled: false },
+            },
+            sessions: {
+                enabled: false,
+                handoff: {
+                    enabled: false,
+                },
+            },
+            machines: {
+                enabled: false,
+                transfer: {
+                    enabled: false,
+                    directPeer: {
+                        enabled: false,
+                    },
+                    serverRouted: {
+                        enabled: false,
+                    },
+                },
+            },
+            terminal: {
+                embeddedPty: { enabled: false },
             },
             voice: {
                 enabled: voiceEnabled,
@@ -115,25 +142,32 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 uploadTimeoutMs: 20_000,
                 contextWindowMs: 30 * 60 * 1_000,
             },
-              voice: {
-                  configured: voiceConfigured,
-                  provider: voiceConfigured ? 'elevenlabs' : null,
-                  requested: voiceEnabled,
-                  disabledByBuildPolicy: false,
-              },
-              encryption: {
-                  storagePolicy: 'required_e2ee',
-                  allowAccountOptOut: false,
-                  defaultAccountMode: 'e2ee',
-                  plainAccountSettingsAtRest: 'server_sealed',
-                  plainAccountCredentialsAtRest: 'server_sealed',
-              },
-              server: {},
-              social: {
-                  friends: {
-                      allowUsername: overrides.friendsAllowUsername ?? false,
-                      requiredIdentityProviderId: overrides.friendsRequiredIdentityProviderId ?? null,
-                  },
+            voice: {
+                configured: voiceConfigured,
+                provider: voiceConfigured ? 'elevenlabs' : null,
+                requested: voiceEnabled,
+                disabledByBuildPolicy: false,
+            },
+            encryption: {
+                storagePolicy: 'required_e2ee',
+                allowAccountOptOut: false,
+                defaultAccountMode: 'e2ee',
+                plainAccountSettingsAtRest: 'server_sealed',
+                plainAccountCredentialsAtRest: 'server_sealed',
+            },
+            machines: {
+                transfer: {
+                    serverRouted: {
+                        maxBytes: null,
+                    },
+                },
+            },
+            server: {},
+            social: {
+                friends: {
+                    allowUsername: overrides.friendsAllowUsername ?? false,
+                    requiredIdentityProviderId: overrides.friendsRequiredIdentityProviderId ?? null,
+                },
             },
             oauth: {
                 providers: oauthProviders,
@@ -179,7 +213,14 @@ export function stubServerFeaturesFetch(overrides: FixtureOverrides = {}): void 
 export function stubServerFeaturesFetchFailure(): void {
     vi.stubGlobal(
         'fetch',
-        vi.fn(async () => {
+        vi.fn(async (input: RequestInfo | URL) => {
+            const url = typeof input === 'string' ? input : String((input as any)?.url ?? input);
+            if (url.endsWith('/health')) {
+                return { ok: true, status: 200 } as any;
+            }
+            if (url.endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200 } as any;
+            }
             throw new Error('network down');
         }) as any,
     );

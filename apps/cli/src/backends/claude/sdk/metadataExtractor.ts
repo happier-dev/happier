@@ -5,6 +5,7 @@
 
 import { query } from './query'
 import type { SDKSystemMessage } from './types'
+import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable'
 import { logger } from '@/ui/logger'
 
 export interface SDKMetadata {
@@ -21,12 +22,14 @@ export async function extractSDKMetadata(): Promise<SDKMetadata> {
     
     try {
         logger.debug('[metadataExtractor] Starting SDK metadata extraction')
+        const runtimeExecutable = await ensureClaudeJsRuntimeExecutable()
         
         // Run SDK with minimal tools allowed
 	        const sdkQuery = query({
 	            prompt: 'hello',
 	            options: {
 	                maxTurns: 1,
+                    executable: runtimeExecutable,
 	                abort: abortController.signal
 	            }
 	        })

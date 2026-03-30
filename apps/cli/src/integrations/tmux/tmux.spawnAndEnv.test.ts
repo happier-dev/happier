@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTmuxSession, TmuxUtilities, type TmuxCommandResult } from './index';
 
 describe('TmuxUtilities.detectTmuxEnvironment', () => {
@@ -114,6 +114,21 @@ describe('createTmuxSession', () => {
 });
 
 describe('TmuxUtilities.spawnInTmux', () => {
+    const originalRetryDelay = process.env.HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS;
+
+    beforeEach(() => {
+        process.env.HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS = '0';
+    });
+
+    afterEach(() => {
+        if (originalRetryDelay === undefined) {
+            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+            delete process.env.HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS;
+        } else {
+            process.env.HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS = originalRetryDelay;
+        }
+    });
+
     class FakeTmuxUtilities extends TmuxUtilities {
         public calls: Array<{ cmd: string[]; session?: string }> = [];
 
@@ -224,6 +239,142 @@ describe('TmuxUtilities.spawnInTmux', () => {
         expect(result.success).toBe(true);
         const newWindowCalls = tmux.calls.filter((call) => call.cmd[0] === 'new-window');
         expect(newWindowCalls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('falls back to allocating an explicit window index when conflicts persist', async () => {
+        class ConflictUntilIndexedTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'list-windows') {
+                    // Simulate an existing session with windows 1 and 2 already allocated.
+                    return { returncode: 0, stdout: '1\n2\n', stderr: '', command: cmd };
+                }
+
+                if (cmd[0] === 'new-window') {
+                    this.calls.push({ cmd, session });
+                    const tIndex = cmd.indexOf('-t');
+                    const target = tIndex >= 0 ? cmd[tIndex + 1] : undefined;
+                    if (target === 'my-session:3') {
+                        return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
+                    }
+                    return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
+                }
+
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+
+        const tmux = new ConflictUntilIndexedTmuxUtilities();
+        const result = await tmux.spawnInTmux(['echo', 'hello'], { sessionName: 'my-session', windowName: 'my-window' }, {});
+
+        expect(result.success).toBe(true);
+        const newWindowTargets = tmux.calls
+            .filter((call) => call.cmd[0] === 'new-window')
+            .map((call) => {
+                const tIndex = call.cmd.indexOf('-t');
+                return tIndex >= 0 ? call.cmd[tIndex + 1] : null;
+            });
+        expect(newWindowTargets).toContain('my-session:3');
+    });
+
+    it('avoids reusing the conflicting index when list-windows returns a stale next index', async () => {
+        class ConflictWithStaleListWindowsTmuxUtilities extends FakeTmuxUtilities {
+            private attempts = 0;
+
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'list-windows') {
+                    // Simulate the case where another process already allocated index 1,
+                    // but list-windows still only shows 0 (race/stale view).
+                    return { returncode: 0, stdout: '0\n', stderr: '', command: cmd };
+                }
+
+                if (cmd[0] === 'new-window') {
+                    this.calls.push({ cmd, session });
+                    this.attempts += 1;
+                    const tIndex = cmd.indexOf('-t');
+                    const target = tIndex >= 0 ? cmd[tIndex + 1] : undefined;
+                    if (target === 'my-session:2') {
+                        return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
+                    }
+                    return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
+                }
+
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+
+        const tmux = new ConflictWithStaleListWindowsTmuxUtilities();
+        const result = await tmux.spawnInTmux(['echo', 'hello'], { sessionName: 'my-session', windowName: 'my-window' }, {});
+
+        expect(result.success).toBe(true);
+        const newWindowTargets = tmux.calls
+            .filter((call) => call.cmd[0] === 'new-window')
+            .map((call) => {
+                const tIndex = call.cmd.indexOf('-t');
+                return tIndex >= 0 ? call.cmd[tIndex + 1] : null;
+            });
+        expect(newWindowTargets).toContain('my-session:2');
+    });
+
+    it('uses the conflicting index + 1 when list-windows fails', async () => {
+        class ConflictWithListWindowsFailureTmuxUtilities extends FakeTmuxUtilities {
+            private attempts = 0;
+
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'list-windows') {
+                    return { returncode: 1, stdout: '', stderr: 'nope', command: cmd };
+                }
+
+                if (cmd[0] === 'new-window') {
+                    this.calls.push({ cmd, session });
+                    this.attempts += 1;
+                    const tIndex = cmd.indexOf('-t');
+                    const target = tIndex >= 0 ? cmd[tIndex + 1] : undefined;
+                    if (target === 'my-session:2') {
+                        return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
+                    }
+                    if (this.attempts === 1) {
+                        return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
+                    }
+                    return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
+                }
+
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+
+        const tmux = new ConflictWithListWindowsFailureTmuxUtilities();
+        const result = await tmux.spawnInTmux(['echo', 'hello'], { sessionName: 'my-session', windowName: 'my-window' }, {});
+
+        expect(result.success).toBe(true);
+        const newWindowTargets = tmux.calls
+            .filter((call) => call.cmd[0] === 'new-window')
+            .map((call) => {
+                const tIndex = call.cmd.indexOf('-t');
+                return tIndex >= 0 ? call.cmd[tIndex + 1] : null;
+            });
+        expect(newWindowTargets).toContain('my-session:2');
+    });
+
+    it('includes the resolved target in the tmux window creation error', async () => {
+        class AlwaysConflictingTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'list-windows') {
+                    return { returncode: 1, stdout: '', stderr: 'nope', command: cmd };
+                }
+                if (cmd[0] === 'new-window') {
+                    this.calls.push({ cmd, session });
+                    return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
+                }
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+
+        const tmux = new AlwaysConflictingTmuxUtilities();
+        const result = await tmux.spawnInTmux(['echo', 'hello'], { sessionName: 'my-session', windowName: 'my-window' }, {});
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('target=');
+        expect(result.error).toContain('my-session');
     });
 
     it('returns an error when tmux new-window output is not a numeric pane PID', async () => {

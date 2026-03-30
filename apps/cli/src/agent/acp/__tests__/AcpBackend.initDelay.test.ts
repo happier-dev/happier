@@ -1,14 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
-import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
+import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writePoisonOnEarlyInputAcpAgentScript(params: { dir: string; readyAfterMs: number }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent-swallow.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -68,8 +64,11 @@ function writePoisonOnEarlyInputAcpAgentScript(params: { dir: string; readyAfter
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent-swallow.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend.initialize (init delay)', () => {
@@ -77,69 +76,64 @@ describe('AcpBackend.initialize (init delay)', () => {
     // Defensive: other test files may enable fake timers and forget to restore them.
     vi.useRealTimers();
 
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-init-nodelay-'));
-    // Keep timings small so the test stays deterministic while still simulating "stdin too early" poisoning.
-    const scriptPath = writePoisonOnEarlyInputAcpAgentScript({ dir, readyAfterMs: 200 });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-init-nodelay-', async (dir) => {
+      // Keep timings small so the test stays deterministic while still simulating "stdin too early" poisoning.
+      const scriptPath = writePoisonOnEarlyInputAcpAgentScript({ dir, readyAfterMs: 200 });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          // Keep this low-ish so the test is fast, but not so low that it flakes under load.
-          getInitTimeout: () => 400,
-          getToolPatterns: () => [] as ToolPattern[],
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            // Keep this low-ish so the test is fast, but not so low that it flakes under load.
+            initTimeoutMs: 400,
+          }),
+        });
+        backendForCleanup = backend;
 
-      await expect(backend.startSession()).rejects.toThrow(/Initialize timeout/i);
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await expect(backend.startSession()).rejects.toThrow(/Initialize timeout/i);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 15_000);
 
   it('waits for transport-provided init delay before sending initialize (prevents swallowed stdin)', async () => {
     // Defensive: other test files may enable fake timers and forget to restore them.
     vi.useRealTimers();
 
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-init-delay-'));
-    // The "ready" window is relative to when the child script actually starts executing.
-    // Under load, process start + module evaluation can be slower than we'd like, so keep
-    // headroom to make this test deterministic across CI runners.
-    const scriptPath = writePoisonOnEarlyInputAcpAgentScript({ dir, readyAfterMs: 500 });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-init-delay-', async (dir) => {
+      // The "ready" window is relative to when the child script actually starts executing.
+      // Under load, process start + module evaluation can be slower than we'd like, so keep
+      // headroom to make this test deterministic across CI runners.
+      const scriptPath = writePoisonOnEarlyInputAcpAgentScript({ dir, readyAfterMs: 500 });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          // The point of this test is that initDelay prevents "early stdin" poisoning; use
-          // a realistic timeout to avoid flakes under load.
-          getInitTimeout: () => 5_000,
-          // This is the behavior we need for Gemini CLI ACP: don't send initialize immediately.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          // The delay needs headroom under load so it isn't "consumed" before the agent has
-          // actually started reading ACP stdin.
-          getInitDelayMs: () => 2_500,
-          getToolPatterns: () => [] as ToolPattern[],
-        } as unknown as TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            // The point of this test is that initDelay prevents "early stdin" poisoning; use
+            // a realistic timeout to avoid flakes under load.
+            initTimeoutMs: 5_000,
+            // This is the behavior we need for Gemini CLI ACP: don't send initialize immediately.
+            // The delay needs headroom under load so it isn't "consumed" before the agent has
+            // actually started reading ACP stdin.
+            initDelayMs: 2_500,
+          }),
+        });
+        backendForCleanup = backend;
 
-      await expect(backend.startSession()).resolves.toMatchObject({ sessionId: 'test-session' });
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await expect(backend.startSession()).resolves.toMatchObject({ sessionId: 'test-session' });
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 15_000);
 });

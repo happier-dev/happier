@@ -1,14 +1,20 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
-import { openTerminalProvisioningV2Payload } from '@happier-dev/protocol';
+import { deriveAccountMachineKeyFromRecoverySecret, openTerminalProvisioningV2Payload } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerReplaceSpy = vi.fn();
 const setPendingTerminalConnectSpy = vi.fn((_pending: { publicKeyB64Url: string; serverUrl: string }) => {});
 const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
+const modalAlertAsyncSpy = vi.fn(async (...args: unknown[]) => {
+    modalAlertSpy(...args);
+});
 const modalConfirmSpy = vi.fn(async () => true);
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string }) => true);
 const authApproveSpy = vi.fn();
@@ -18,17 +24,41 @@ let contentPrivateKey = new Uint8Array([7, 7, 7]);
 let contentPublicKey = new Uint8Array([9, 9, 9]);
 let activeServerUrl = 'https://api.happier.dev';
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
-    Dimensions: {
-        get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+installSessionHooksCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+            Dimensions: {
+                get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+        });
     },
-    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-}));
-
-vi.mock('expo-router', () => ({
-    router: { replace: routerReplaceSpy },
-}));
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { replace: routerReplaceSpy },
+        });
+        return expoRouterMock.module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+                alertAsync: modalAlertAsyncSpy,
+                confirm: modalConfirmSpy,
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
+});
 
 vi.mock('expo-camera', () => ({
     CameraView: {
@@ -47,19 +77,7 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getCredentials: vi.fn(async () => authCredentials),
     },
-    isLegacyAuthCredentials: (creds: { encryption?: { type?: string } } | null) => creds?.encryption?.type === 'legacy',
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlertSpy,
-        alertAsync: modalAlertSpy,
-        confirm: modalConfirmSpy,
-    },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+    isLegacyAuthCredentials: (creds: { secret?: string } | null) => typeof creds?.secret === 'string' && creds.secret.length > 0,
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -105,6 +123,23 @@ function buildTerminalConnectUrl(params: Readonly<{ terminalPublicKey: Uint8Arra
     return `happier://terminal?key=${publicKeyB64Url}&server=${server}`;
 }
 
+function createDataKeyCredentials(params: Readonly<{ token: string; machineKeyByte: number; publicKeyByte?: number }>) {
+    return {
+        token: params.token,
+        encryption: {
+            publicKey: Buffer.from(new Uint8Array(32).fill(params.publicKeyByte ?? params.machineKeyByte + 1)).toString('base64'),
+            machineKey: Buffer.from(new Uint8Array(32).fill(params.machineKeyByte)).toString('base64'),
+        },
+    } as const;
+}
+
+function createLegacyCredentials(params: Readonly<{ token: string; secretByte: number }>) {
+    return {
+        token: params.token,
+        secret: Buffer.from(new Uint8Array(32).fill(params.secretByte)).toString('base64url'),
+    } as const;
+}
+
 describe('useConnectTerminal unauthenticated flow', () => {
     it('stores pending connect intent and routes to sign-in', async () => {
         routerReplaceSpy.mockClear();
@@ -119,9 +154,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = true;
         await act(async () => {
@@ -155,9 +188,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = true;
         await act(async () => {
@@ -194,9 +225,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = true;
         await act(async () => {
@@ -217,10 +246,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         authApproveSpy.mockResolvedValue('approved');
         modalAlertSpy.mockClear();
 
-        authCredentials = {
-            token: 'token-1',
-            encryption: { type: 'dataKey' },
-        };
+        authCredentials = createDataKeyCredentials({ token: 'token-1', machineKeyByte: 7 });
         contentPrivateKey = new Uint8Array(32).fill(7);
         contentPublicKey = new Uint8Array([9, 9, 9]);
         const terminalSecretKey = new Uint8Array(32).fill(5);
@@ -234,9 +260,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = false;
         await act(async () => {
@@ -253,16 +277,59 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(Array.from(opened!)).toEqual(Array.from(contentPrivateKey));
     });
 
+    it('uses refreshed credentials after a server switch instead of the stale sync encryption key', async () => {
+        authApproveSpy.mockClear();
+        authApproveSpy.mockResolvedValue('approved');
+        modalAlertSpy.mockClear();
+        upsertActivateAndSwitchServerSpy.mockClear();
+        activeServerUrl = 'https://api.happier.dev';
+
+        const staleCredentials = createDataKeyCredentials({ token: 'token-old', machineKeyByte: 7 });
+        const refreshedCredentials = createDataKeyCredentials({ token: 'token-new', machineKeyByte: 11 });
+        authCredentials = staleCredentials;
+        contentPrivateKey = new Uint8Array(32).fill(7);
+
+        upsertActivateAndSwitchServerSpy.mockImplementationOnce(async () => {
+            authCredentials = refreshedCredentials;
+            return true;
+        });
+
+        const terminalSecretKey = new Uint8Array(32).fill(8);
+        const terminalPublicKey = tweetnacl.box.keyPair.fromSecretKey(terminalSecretKey).publicKey;
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        let result = false;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl(
+                buildTerminalConnectUrl({ terminalPublicKey, serverUrl: 'https://stack.example.test' }),
+            );
+        });
+
+        expect(result).toBe(true);
+        expect(upsertActivateAndSwitchServerSpy).toHaveBeenCalledTimes(1);
+        const approveArgs = authApproveSpy.mock.calls[0] as unknown[] | undefined;
+        const responseV2 = approveArgs?.[3] as Uint8Array | undefined;
+        expect(responseV2).toBeDefined();
+        const opened = openTerminalProvisioningV2Payload({ payload: responseV2!, recipientSecretKeyOrSeed: terminalSecretKey });
+        expect(opened).not.toBeNull();
+        expect(Array.from(opened!)).toEqual(Array.from(new Uint8Array(32).fill(11)));
+    });
+
     it('uses the content private key in the v2 response bundle for legacy credentials by default', async () => {
         authApproveSpy.mockClear();
         authApproveSpy.mockResolvedValue('approved');
         modalAlertSpy.mockClear();
 
-        authCredentials = {
-            token: 'token-legacy',
-            secret: 'secret-legacy',
-            encryption: { type: 'legacy' },
-        };
+        authCredentials = createLegacyCredentials({ token: 'token-legacy', secretByte: 6 });
         contentPrivateKey = new Uint8Array(32).fill(7);
         contentPublicKey = new Uint8Array([9, 9, 9]);
         const terminalSecretKey = new Uint8Array(32).fill(6);
@@ -276,9 +343,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = false;
         await act(async () => {
@@ -292,7 +357,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(responseV2).toBeDefined();
         const opened = openTerminalProvisioningV2Payload({ payload: responseV2!, recipientSecretKeyOrSeed: terminalSecretKey });
         expect(opened).not.toBeNull();
-        expect(Array.from(opened!)).toEqual(Array.from(contentPrivateKey));
+        expect(Array.from(opened!)).toEqual(Array.from(deriveAccountMachineKeyFromRecoverySecret(new Uint8Array(32).fill(6))));
     });
 });
 
@@ -307,10 +372,7 @@ describe('useConnectTerminal approval outcome messaging', () => {
         authApproveSpy.mockClear();
         modalAlertSpy.mockClear();
 
-        authCredentials = {
-            token: 'token-approve',
-            encryption: { type: 'dataKey' },
-        };
+        authCredentials = createDataKeyCredentials({ token: 'token-approve', machineKeyByte: 7 });
         contentPrivateKey = new Uint8Array(32).fill(7);
         contentPublicKey = new Uint8Array([9, 9, 9]);
         authApproveSpy.mockResolvedValue('approved');
@@ -325,9 +387,7 @@ describe('useConnectTerminal approval outcome messaging', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         const { terminalPublicKey } = createTerminalKeyPair();
         let result = false;
@@ -349,10 +409,7 @@ describe('useConnectTerminal approval outcome messaging', () => {
         authApproveSpy.mockClear();
         modalAlertSpy.mockClear();
 
-        authCredentials = {
-            token: 'token-already',
-            encryption: { type: 'dataKey' },
-        };
+        authCredentials = createDataKeyCredentials({ token: 'token-already', machineKeyByte: 7 });
         contentPrivateKey = new Uint8Array(32).fill(7);
         contentPublicKey = new Uint8Array([9, 9, 9]);
         authApproveSpy.mockResolvedValue('already_authorized');
@@ -367,9 +424,7 @@ describe('useConnectTerminal approval outcome messaging', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         const { terminalPublicKey } = createTerminalKeyPair();
         let result = true;
@@ -388,10 +443,7 @@ describe('useConnectTerminal approval outcome messaging', () => {
         authApproveSpy.mockClear();
         modalAlertSpy.mockClear();
 
-        authCredentials = {
-            token: 'token-expired',
-            encryption: { type: 'dataKey' },
-        };
+        authCredentials = createDataKeyCredentials({ token: 'token-expired', machineKeyByte: 7 });
         contentPrivateKey = new Uint8Array(32).fill(7);
         contentPublicKey = new Uint8Array([9, 9, 9]);
         authApproveSpy.mockResolvedValue('not_found');
@@ -406,9 +458,7 @@ describe('useConnectTerminal approval outcome messaging', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         const { terminalPublicKey } = createTerminalKeyPair();
         let result = true;

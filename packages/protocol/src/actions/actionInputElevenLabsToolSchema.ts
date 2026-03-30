@@ -1,4 +1,5 @@
 import type { ActionInputFieldHint, ActionSpec } from './actionSpecs.js';
+import { describeActionInputFieldForVoice, type VoiceGuidanceAvailability } from './actionInputVoiceGuidance.js';
 import { zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
 
 type JsonSchema = Record<string, unknown>;
@@ -26,13 +27,14 @@ function startCase(input: string): string {
     .replace(/^./, (c) => c.toUpperCase());
 }
 
-function buildHintDescriptionByPath(hints: ActionSpec['inputHints'] | undefined): Map<string, string> {
+function buildHintDescriptionByPath(spec: Pick<ActionSpec, 'id' | 'inputHints'>, availability?: VoiceGuidanceAvailability): Map<string, string> {
   const map = new Map<string, string>();
-  const fields = Array.isArray(hints?.fields) ? (hints?.fields as ActionInputFieldHint[]) : [];
+  const fields = Array.isArray(spec.inputHints?.fields) ? (spec.inputHints?.fields as ActionInputFieldHint[]) : [];
   for (const field of fields) {
     const path = typeof (field as any)?.path === 'string' ? String((field as any).path).trim() : '';
     if (!path) continue;
     const desc =
+      normalizeDescription(describeActionInputFieldForVoice(spec as ActionSpec, field, availability)) ??
       normalizeDescription((field as any).description) ??
       normalizeDescription((field as any).title) ??
       startCase(path.split('.').slice(-1)[0] ?? 'parameter');
@@ -201,7 +203,7 @@ function sanitizeForElevenLabs(
   // Primitive types: keep enum when present.
   if (type === 'string' || type === 'number' || type === 'boolean' || type === 'null') {
     const out: JsonSchema = { type, description };
-    if (Array.isArray(schema.enum)) out.enum = schema.enum;
+    if (type === 'string' && Array.isArray(schema.enum)) out.enum = schema.enum;
     return out;
   }
 
@@ -222,9 +224,12 @@ function sanitizeForElevenLabs(
  * This helper converts the Zod input schema and then sanitizes it into an
  * ElevenLabs-compatible subset, using `inputHints` for per-field descriptions.
  */
-export function actionSpecToElevenLabsClientToolParameters(spec: Pick<ActionSpec, 'title' | 'description' | 'inputSchema' | 'inputHints'>): JsonSchemaObject {
+export function actionSpecToElevenLabsClientToolParameters(
+  spec: Pick<ActionSpec, 'id' | 'title' | 'description' | 'inputSchema' | 'inputHints'>,
+  availability?: VoiceGuidanceAvailability,
+): JsonSchemaObject {
   const base = zodSchemaToJsonSchemaObject(spec.inputSchema as any) as unknown;
-  const hints = buildHintDescriptionByPath(spec.inputHints);
+  const hints = buildHintDescriptionByPath(spec, availability);
 
   const rootFallback = normalizeDescription(spec.description) ?? normalizeDescription((spec as any).title) ?? 'Parameters';
   const sanitized = sanitizeForElevenLabs(base, [], hints, rootFallback);
@@ -239,4 +244,3 @@ export function actionSpecToElevenLabsClientToolParameters(spec: Pick<ActionSpec
     ...(required.length > 0 ? { required } : {}),
   } as JsonSchemaObject;
 }
-

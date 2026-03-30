@@ -1,0 +1,120 @@
+# Expo Dev Client bootstrap helper.
+#
+# Maestro flows generally rely on our app `testID`s only. This file is the
+# exception: the Expo Dev Client boot screen is not our UI, so we must use
+# visible copy to connect to Metro.
+#
+# Preconditions:
+# - `${HAPPIER_E2E_DEV_CLIENT_METRO_URL}` is set (passed via Maestro `-e`).
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+
+# After a fresh launch, the Dev Client can briefly sit on a splash/loading
+# screen before showing either the connect UI or the app UI. Wait until at
+# least one known bootstrap surface is visible.
+- extendedWaitUntil:
+    visible: "(Open in .*|DEVELOPMENT SERVERS|Development servers|New development server|Connect|Error loading app|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    timeout: 60000
+
+# The Expo Dev Client can show a blocking onboarding sheet/overlay at any time.
+# Dismiss it early so we can safely interact with the connect UI.
+- runFlow:
+    file: dismissDeveloperMenuMaybe.yaml
+
+- runFlow:
+    file: dismissExpoDevMenuOverlayMaybe.yaml
+
+- runFlow:
+    file: acceptIosOpenInPromptMaybe.yaml
+- waitForAnimationToEnd:
+    timeout: 5000
+
+- extendedWaitUntil:
+    visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Connect|Error loading app|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    timeout: 60000
+
+# The Dev Client can show a non-blocking "Error loading app" toast from a
+# previous attempt. Dismiss it before interacting with the connect UI.
+- runFlow:
+    when:
+      visible: "Error loading app"
+    commands:
+      # The toast close affordance is a small icon; tapping by point is more
+      # stable than relying on inconsistent accessibility labels.
+      - tapOn:
+          point: 95%,40%
+
+# Prefer the launcher deep link, then fall back to the manual form only if the
+# Dev Client stays on its bootstrap surface.
+- runFlow:
+    when:
+      visible: "(DEVELOPMENT SERVERS|Development servers|Connect|New development server)"
+    commands:
+      - runFlow:
+          file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+      - runFlow:
+          file: connectUsingLaunchUrl.yaml
+
+# Wait for the app surface to appear. Avoid waiting on `testID` surfaces here:
+# the Expo Dev Client can show blocking overlays that hide those nodes from
+# Maestro. The follow-up flows dismiss overlays again and then wait on `id`
+# selectors inside the real Happier UI.
+- extendedWaitUntil:
+    visible: "(Error loading app|This is the developer menu.*|Continue|Go home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    timeout: 480000
+
+# Dismiss dev-only overlays (not our UI).
+- runFlow:
+    file: dismissDeveloperMenuMaybe.yaml
+
+- runFlow:
+    file: dismissExpoDevMenuOverlayMaybe.yaml
+
+- runFlow:
+    when:
+      visible: "(DEVELOPMENT SERVERS|Development servers|Connect|New development server)"
+    commands:
+      - runFlow:
+          file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+      - runFlow:
+          file: connectUsingManualEntry.yaml
+      - extendedWaitUntil:
+          visible: "(Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+          timeout: 240000
+      - runFlow:
+          file: dismissDeveloperMenuMaybe.yaml
+      - runFlow:
+          file: dismissExpoDevMenuOverlayMaybe.yaml
+
+- runFlow:
+    when:
+      visible: "Error loading app"
+    commands:
+      # The Dev Client occasionally times out loading the app. Dismiss the
+      # toast and retry once.
+      - tapOn:
+          point: 95%,40%
+      # Retry the connect UX (best-effort) if the app surface is still missing.
+      - runFlow:
+          when:
+            notVisible: "(Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+          commands:
+            - runFlow:
+                when:
+                  visible: "(DEVELOPMENT SERVERS|Development servers|Connect|New development server)"
+                commands:
+                  - runFlow:
+                      file: connectUsingLaunchUrl.yaml
+            - extendedWaitUntil:
+                visible: "(Error loading app|This is the developer menu.*|Continue|Go home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+                timeout: 240000
+            - runFlow:
+                file: dismissDeveloperMenuMaybe.yaml
+            - runFlow:
+                file: dismissExpoDevMenuOverlayMaybe.yaml
+            - extendedWaitUntil:
+                visible: "(Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+                timeout: 240000

@@ -1,16 +1,14 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import {
+    connectedServicesModuleState,
+    installConnectedServicesCommonModuleMocks,
+} from './connectedServicesTestHelpers';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const backSpy = vi.fn();
-const pushSpy = vi.fn();
-
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: backSpy, push: pushSpy }),
-  useLocalSearchParams: () => ({ serviceId: 'openai-codex' }),
-}));
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
@@ -18,12 +16,23 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 const promptSpy = vi.fn(async () => 'work/bad');
 const alertSpy = vi.fn(async () => {});
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: promptSpy,
-    alert: alertSpy,
-    confirm: vi.fn(async () => false),
-  },
+const applySettingsSpy = vi.fn(async () => {});
+installConnectedServicesCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: promptSpy,
+                alert: alertSpy,
+                confirm: vi.fn(async () => false),
+            },
+        }).module;
+    },
+    searchParams: { serviceId: 'openai-codex' },
+});
+
+vi.mock('@/sync/store/settingsWriters', () => ({
+  useApplySettings: () => applySettingsSpy,
 }));
 
 let connectedServicesEnabled = true;
@@ -75,6 +84,11 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => {
 
 describe('ConnectedServiceDetailView profile id validation', () => {
   beforeEach(() => {
+    connectedServicesModuleState.routerBackSpy.mockClear();
+    connectedServicesModuleState.routerPushSpy.mockClear();
+    promptSpy.mockClear();
+    alertSpy.mockClear();
+    applySettingsSpy.mockClear();
     connectedServicesEnabled = true;
     quotasEnabled = false;
   });
@@ -83,38 +97,34 @@ describe('ConnectedServiceDetailView profile id validation', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    const add = tree.root.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
+    const add = tree.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
     await act(async () => {
-      await add.props.onPress?.();
+      await pressTestInstanceAsync(add);
     });
 
     expect(alertSpy).toHaveBeenCalled();
-    expect(pushSpy).not.toHaveBeenCalled();
+    expect(connectedServicesModuleState.routerPushSpy).not.toHaveBeenCalled();
   });
 
   it('shows a fallback alert when routing to oauth connect fails', async () => {
     promptSpy.mockResolvedValueOnce('work');
-    pushSpy.mockImplementationOnce(() => {
+    connectedServicesModuleState.routerPushSpy.mockImplementationOnce(() => {
       throw new Error('route failed');
     });
 
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
+
+    const add = tree.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
     await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
+      await pressTestInstanceAsync(add);
     });
 
-    const add = tree.root.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
-    await act(async () => {
-      await add.props.onPress?.();
-    });
-
-    expect(pushSpy).toHaveBeenCalledWith(
+    expect(connectedServicesModuleState.routerPushSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         pathname: '/(app)/settings/connected-services/oauth',
         params: expect.objectContaining({
@@ -134,9 +144,7 @@ describe('ConnectedServiceDetailView profile id validation', () => {
     const Inner = (ConnectedServiceDetailView as unknown as { type: React.ComponentType<Record<string, never>> }).type;
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<Inner />);
-    });
+    tree = (await renderScreen(<Inner />)).tree;
 
     connectedServicesEnabled = true;
     await act(async () => {

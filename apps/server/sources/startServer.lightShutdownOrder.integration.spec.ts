@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-    applyEnvValues,
+    createStartServerDbMocks,
+    installStartServerDbModuleMock,
     installStartServerCommonWiringMocks,
-    restoreEnvValues,
-    snapshotStartServerEnv,
 } from "@/testkit/startServerMocks";
+import { createStartServerHarness } from "@/testkit/startServerHarness";
 
 const callOrder: string[] = [];
 
@@ -15,19 +15,13 @@ const dbDisconnect = vi.fn(async () => {
 const shutdownDbPglite = vi.fn(async () => {
     callOrder.push("shutdownDbPglite");
 });
+const startServerDbMocks = createStartServerDbMocks({
+    getDbProviderFromEnv: () => "pglite",
+});
+startServerDbMocks.dbDisconnect.mockImplementation(dbDisconnect);
+startServerDbMocks.shutdownDbPglite.mockImplementation(shutdownDbPglite);
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        $connect: vi.fn(async () => {}),
-        $disconnect: dbDisconnect as any,
-    },
-    getDbProviderFromEnv: vi.fn(() => "pglite"),
-    initDbPostgres: vi.fn(),
-    initDbPglite: vi.fn(async () => {}),
-    initDbMysql: vi.fn(async () => {}),
-    initDbSqlite: vi.fn(async () => {}),
-    shutdownDbPglite: shutdownDbPglite as any,
-}));
+installStartServerDbModuleMock(startServerDbMocks);
 
 installStartServerCommonWiringMocks();
 
@@ -38,20 +32,22 @@ vi.mock("@/utils/process/shutdown", async () => {
 });
 
 describe("startServer light shutdown ordering", () => {
-    const envBackup = snapshotStartServerEnv();
+    const startServerHarness = createStartServerHarness();
 
     beforeEach(() => {
-        vi.clearAllMocks();
-        restoreEnvValues(envBackup);
+        startServerDbMocks.reset();
+        startServerDbMocks.dbDisconnect.mockImplementation(dbDisconnect);
+        startServerDbMocks.shutdownDbPglite.mockImplementation(shutdownDbPglite);
+        startServerHarness.reset();
     });
 
     afterEach(() => {
-        restoreEnvValues(envBackup);
+        startServerHarness.restore();
     });
 
     it("disconnects Prisma before stopping pglite", async () => {
         callOrder.length = 0;
-        applyEnvValues({
+        startServerHarness.prepareImport({
             SERVER_ROLE: "all",
             REDIS_URL: undefined,
         });

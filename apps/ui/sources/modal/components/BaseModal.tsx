@@ -9,6 +9,7 @@ import {
 import { StyleSheet } from 'react-native-unistyles';
 import { requireRadixDialog, requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { t } from '@/text';
 
 // On web, stop events from propagating to expo-router's modal overlay
@@ -17,6 +18,105 @@ const stopPropagation = (e: { stopPropagation: () => void }) => e.stopPropagatio
 const webEventHandlers = Platform.OS === 'web'
     ? { onClick: stopPropagation, onPointerDown: stopPropagation, onTouchStart: stopPropagation }
     : {};
+const WEB_MODAL_CARD_BOUNDARY_SELECTOR = '[data-happy-modal-card-boundary]';
+const WEB_MODAL_BODY_POINTER_EVENTS_STATE_KEY = '__happyWebModalBodyPointerEventsState';
+
+type WebModalBodyPointerEventsState = {
+    activeCount: number;
+    observer: MutationObserver | null;
+    previousInlinePointerEvents: string;
+};
+
+function getWebModalBodyPointerEventsState(): WebModalBodyPointerEventsState {
+    const globalObject = globalThis as typeof globalThis & {
+        [WEB_MODAL_BODY_POINTER_EVENTS_STATE_KEY]?: WebModalBodyPointerEventsState;
+    };
+
+    const existing = globalObject[WEB_MODAL_BODY_POINTER_EVENTS_STATE_KEY];
+    if (existing) return existing;
+
+    const nextState: WebModalBodyPointerEventsState = {
+        activeCount: 0,
+        observer: null,
+        previousInlinePointerEvents: '',
+    };
+    globalObject[WEB_MODAL_BODY_POINTER_EVENTS_STATE_KEY] = nextState;
+    return nextState;
+}
+
+function setWebModalBodyPointerEventsAuto(doc: Document): void {
+    if (doc.body?.style == null) return;
+    if (doc.body.style.pointerEvents !== 'auto') {
+        doc.body.style.pointerEvents = 'auto';
+    }
+}
+
+function installWebModalBodyPointerEventsBypass(): () => void {
+    if (typeof document === 'undefined' || document.body?.style == null) {
+        return () => {};
+    }
+
+    const doc = document;
+    const state = getWebModalBodyPointerEventsState();
+
+    if (state.activeCount === 0) {
+        state.previousInlinePointerEvents = doc.body.style.pointerEvents ?? '';
+        setWebModalBodyPointerEventsAuto(doc);
+
+        if (typeof MutationObserver !== 'undefined') {
+            state.observer = new MutationObserver(() => {
+                if (state.activeCount <= 0) return;
+                setWebModalBodyPointerEventsAuto(doc);
+            });
+            state.observer.observe(doc.body, {
+                attributes: true,
+                attributeFilter: ['style'],
+            });
+        }
+    }
+
+    state.activeCount += 1;
+
+    return () => {
+        const currentState = getWebModalBodyPointerEventsState();
+        currentState.activeCount = Math.max(0, currentState.activeCount - 1);
+
+        if (currentState.activeCount > 0) {
+            setWebModalBodyPointerEventsAuto(doc);
+            return;
+        }
+
+        currentState.observer?.disconnect();
+        currentState.observer = null;
+        doc.body.style.pointerEvents = currentState.previousInlinePointerEvents;
+        currentState.previousInlinePointerEvents = '';
+    };
+}
+
+type ClosestCapableEventTarget = EventTarget & {
+    closest: (selector: string) => Element | null;
+};
+
+function isClosestCapableEventTarget(target: EventTarget | null): target is ClosestCapableEventTarget {
+    return typeof target === 'object'
+        && target !== null
+        && 'closest' in target
+        && typeof (target as { closest?: unknown }).closest === 'function';
+}
+
+function isInsideWebModalCardBoundary(target: EventTarget | null): boolean {
+    if (target == null) return false;
+
+    if (isClosestCapableEventTarget(target)) {
+        return target.closest(WEB_MODAL_CARD_BOUNDARY_SELECTOR) != null;
+    }
+
+    if (typeof Node !== 'undefined' && target instanceof Node) {
+        return target.parentElement?.closest(WEB_MODAL_CARD_BOUNDARY_SELECTOR) != null;
+    }
+
+    return false;
+}
 
 interface BaseModalProps {
     visible: boolean;
@@ -38,6 +138,9 @@ export function BaseModal({
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const baseZ = zIndexBase ?? 100000;
     const [modalPortalTarget, setModalPortalTarget] = React.useState<HTMLElement | null>(null);
+    const setModalPortalHostRef = React.useCallback((node: HTMLElement | null) => {
+        setModalPortalTarget((prev) => (prev === node ? prev : node));
+    }, []);
 
     useEffect(() => {
         const useNativeDriver = Platform.OS !== 'web';
@@ -55,6 +158,13 @@ export function BaseModal({
             }).start();
         }
     }, [visible, fadeAnim]);
+
+    useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        if (!visible) return;
+
+        return installWebModalBodyPointerEventsBypass();
+    }, [visible]);
 
     const handleBackdropPress = () => {
         if (closeOnBackdrop && onClose) {
@@ -110,6 +220,10 @@ export function BaseModal({
             overflow: 'visible',
         };
 
+        const webModalCardBoundaryStyle: React.CSSProperties = {
+            display: 'contents',
+        };
+
         return (
             <Dialog.Root
                 open={visible}
@@ -135,15 +249,14 @@ export function BaseModal({
                               onClick={(e) => {
                                   e.stopPropagation();
                                   if (!closeOnBackdrop || !onClose) return;
-                                  // Close only when clicking the backdrop area (not inside the modal content).
-                                  // Since `Dialog.Content` covers the viewport, "backdrop" clicks are those where
-                                  // the event target is the container itself.
-                                if (e.target === e.currentTarget) {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    onClose();
-                                }
-                            }}
+                                  // Close when the click lands outside the modal card boundary.
+                                  // The centering shell spans the viewport, so clicks on that shell are treated as backdrop clicks.
+                                  if (isInsideWebModalCardBoundary(e.target)) return;
+
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  onClose();
+                              }}
                             onPointerDownOutside={
                                 closeOnBackdrop ? undefined : (e) => e.preventDefault()
                             }
@@ -152,37 +265,40 @@ export function BaseModal({
                             {/* Host for web portals (e.g. popovers) that must live inside the dialog subtree. */}
                             <div
                                 data-happy-modal-portal-host=""
-                                ref={(node) => {
-                                    setModalPortalTarget((prev) => (prev === node ? prev : node));
-                                }}
+                                ref={setModalPortalHostRef}
                                 style={portalHostStyle}
                             />
                             <ModalPortalTargetProvider target={modalPortalTarget}>
-                                <KeyboardAvoidingView
-                                    pointerEvents="box-none"
-                                    style={styles.container}
-                                    behavior={undefined}
-                                >
-                                    <Animated.View
-                                        pointerEvents="box-none"
-                                        style={[
-                                            styles.content,
-                                            {
-                                                opacity: fadeAnim,
-                                                transform: [{
-                                                    scale: fadeAnim.interpolate({
-                                                        inputRange: [0, 1],
-                                                        outputRange: [0.9, 1]
-                                                    })
-                                                }]
-                                            }
-                                        ]}
+                                <ModalBoundaryProvider>
+                                    <KeyboardAvoidingView
+                                        pointerEvents="auto"
+                                        style={styles.container}
+                                        behavior={undefined}
                                     >
-                                        <View pointerEvents="box-none" style={{ width: '100%', alignItems: 'center' }}>
-                                            {children}
-                                        </View>
-                                    </Animated.View>
-                                </KeyboardAvoidingView>
+                                        <Animated.View
+                                            pointerEvents="auto"
+                                            style={[
+                                                styles.content,
+                                                {
+                                                    opacity: fadeAnim,
+                                                    transform: [{
+                                                        scale: fadeAnim.interpolate({
+                                                            inputRange: [0, 1],
+                                                            outputRange: [0.9, 1]
+                                                        })
+                                                    }]
+                                                }
+                                            ]}
+                                        >
+                                            <div
+                                                data-happy-modal-card-boundary=""
+                                                style={webModalCardBoundaryStyle}
+                                            >
+                                                {children}
+                                            </div>
+                                        </Animated.View>
+                                    </KeyboardAvoidingView>
+                                </ModalBoundaryProvider>
                             </ModalPortalTargetProvider>
                         </Dialog.Content>
                     </DismissableLayerBranch>
@@ -235,9 +351,11 @@ export function BaseModal({
                         }
                     ]}
                 >
-                    <View pointerEvents="auto" style={{ width: '100%', alignItems: 'center' }}>
-                        {children}
-                    </View>
+                    <ModalBoundaryProvider>
+                        <View pointerEvents="auto" style={{ width: '100%', alignItems: 'center' }}>
+                            {children}
+                        </View>
+                    </ModalBoundaryProvider>
                 </Animated.View>
             </KeyboardAvoidingView>
         </View>

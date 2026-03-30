@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { installRealtimeCommonModuleMocks } from './realtimeTestHelpers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 const trackPermissionResponse = vi.fn();
@@ -8,21 +10,25 @@ const executeAction = vi.fn();
 const state: any = {
   sessions: {
     s1: {
+      active: true,
       agentState: {
         requests: {
-          req_a: { id: 'req_a' },
-          req_b: { id: 'req_b' },
+          req_a: { id: 'req_a', tool: 'Bash', kind: 'permission' },
+          req_b: { id: 'req_b', tool: 'Read', kind: 'permission' },
         },
       },
     },
   },
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
-    getState: () => state,
-  },
-}));
+installRealtimeCommonModuleMocks({
+  storage: () =>
+    createStorageModuleStub({
+      storage: {
+        getState: () => state,
+      },
+    }),
+});
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: () => ({
@@ -53,9 +59,10 @@ describe('realtimeClientTools permission handling', () => {
     executeAction.mockReset();
     executeAction.mockResolvedValue({ ok: true, result: { ok: true } });
     state.sessions.s1.agentState.requests = {
-      req_a: { id: 'req_a' },
-      req_b: { id: 'req_b' },
+      req_a: { id: 'req_a', tool: 'Bash', kind: 'permission' },
+      req_b: { id: 'req_b', tool: 'Read', kind: 'permission' },
     };
+    state.sessions.s1.active = true;
 
     useVoiceTargetStore.getState().setScope('global');
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
@@ -82,5 +89,29 @@ describe('realtimeClientTools permission handling', () => {
       expect.anything(),
     );
     expect(trackPermissionResponse).toHaveBeenCalledWith(true);
+  });
+
+  it('routes structured user-action answers through the shared voice handlers', async () => {
+    state.sessions.s1.agentState.requests = {
+      req_question: { id: 'req_question', tool: 'AskUserQuestion', kind: 'user_action' },
+      req_permission: { id: 'req_permission', tool: 'Bash', kind: 'permission' },
+    };
+    state.sessions.s1.active = true;
+
+    const { realtimeClientTools } = await import('./realtimeClientTools');
+
+    const result = await (realtimeClientTools as any).answerUserActionRequest({
+      answers: [{ question: 'Continue?', answer: 'Yes' }],
+    });
+
+    expect(JSON.parse(result)).toMatchObject({ ok: true });
+    expect(executeAction).toHaveBeenCalledWith(
+      'session.user_action.answer',
+      expect.objectContaining({
+        sessionId: 's1',
+        answers: [{ question: 'Continue?', answer: 'Yes' }],
+      }),
+      expect.anything(),
+    );
   });
 });

@@ -7,63 +7,39 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI can run publish-cli-binaries dry-run using env-file mode', async () => {
-  const out = execFileSync(
-    process.execPath,
-    [
-      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
-      'publish-cli-binaries',
-      '--channel',
-      'preview',
-      '--dry-run',
-      '--secrets-source',
-      'env',
-    ],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        MINISIGN_SECRET_KEY: 'untrusted comment: minisign encrypted secret key\nRWQpH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1',
-        MINISIGN_PASSPHRASE: 'x',
-      },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
-    },
-  );
+for (const { subcommand, scriptName } of [
+  { subcommand: 'publish-cli-binaries', scriptName: 'publish-cli-binaries.mjs' },
+  { subcommand: 'publish-hstack-binaries', scriptName: 'publish-hstack-binaries.mjs' },
+]) {
+  for (const channel of ['preview', 'dev']) {
+    test(`pipeline CLI can run ${subcommand} dry-run for ${channel} using env-file mode`, async () => {
+      const out = execFileSync(
+        process.execPath,
+        [
+          resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+          subcommand,
+          '--channel',
+          channel,
+          '--dry-run',
+          '--secrets-source',
+          'env',
+        ],
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            MINISIGN_SECRET_KEY: 'untrusted comment: minisign encrypted secret key\nRWQpH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1',
+            MINISIGN_PASSPHRASE: 'x',
+          },
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 30_000,
+        },
+      );
 
-  assert.match(out, /\[pipeline\] exec: node .*publish-cli-binaries\.mjs/);
-  assert.match(out, /"--channel"/);
-  assert.match(out, /"preview"/);
-});
-
-test('pipeline CLI can run publish-hstack-binaries dry-run using env-file mode', async () => {
-  const out = execFileSync(
-    process.execPath,
-    [
-      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
-      'publish-hstack-binaries',
-      '--channel',
-      'preview',
-      '--dry-run',
-      '--secrets-source',
-      'env',
-    ],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        MINISIGN_SECRET_KEY: 'untrusted comment: minisign encrypted secret key\nRWQpH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1',
-        MINISIGN_PASSPHRASE: 'x',
-      },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
-    },
-  );
-
-  assert.match(out, /\[pipeline\] exec: node .*publish-hstack-binaries\.mjs/);
-  assert.match(out, /"--channel"/);
-  assert.match(out, /"preview"/);
-});
-
+      assert.match(out, new RegExp(`\\[pipeline\\] exec: node .*${scriptName.replace('.', '\\.')}`));
+      assert.match(out, /"--channel"/);
+      assert.match(out, new RegExp(`"${channel}"`));
+    });
+  }
+}

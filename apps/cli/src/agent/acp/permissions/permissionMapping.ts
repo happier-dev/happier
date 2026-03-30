@@ -31,19 +31,19 @@ export type PermissionOutcomeSelected = { outcome: 'selected'; optionId: string 
 export type PermissionOutcomeCancelled = { outcome: 'cancelled' };
 export type PermissionOutcome = PermissionOutcomeSelected | PermissionOutcomeCancelled;
 
-function findByKind(options: PermissionOptionLike[], kinds: string[]): PermissionOptionLike | undefined {
+function findByKind(options: ReadonlyArray<PermissionOptionLike>, kinds: string[]): PermissionOptionLike | undefined {
   return options.find(
     (opt) => kinds.includes(normalizePermissionOptionKind(opt.kind)) && typeof opt.optionId === 'string' && opt.optionId.length > 0,
   );
 }
 
-function findByOptionIdIncludes(options: PermissionOptionLike[], needle: string): PermissionOptionLike | undefined {
+function findByOptionIdIncludes(options: ReadonlyArray<PermissionOptionLike>, needle: string): PermissionOptionLike | undefined {
   return options.find(
     (opt) => typeof opt.optionId === 'string' && opt.optionId.toLowerCase().includes(needle),
   );
 }
 
-export function pickPermissionOptionId(options: PermissionOptionLike[], decision: PermissionDecision | string): string | null {
+export function pickPermissionOptionId(options: ReadonlyArray<PermissionOptionLike>, decision: PermissionDecision | string): string | null {
   const decisionLower = normalizePermissionDecision(String(decision));
 
   const allowAlways =
@@ -96,7 +96,7 @@ export function pickPermissionOptionId(options: PermissionOptionLike[], decision
   );
 }
 
-export function pickPermissionOutcome(options: PermissionOptionLike[], decision: PermissionDecision | string): PermissionOutcome {
+export function pickPermissionOutcome(options: ReadonlyArray<PermissionOptionLike>, decision: PermissionDecision | string): PermissionOutcome {
   const decisionLower = normalizePermissionDecision(String(decision));
 
   // Spec: clients can return cancelled outcome for aborted permission prompts.
@@ -112,4 +112,3 @@ export function pickPermissionOutcome(options: PermissionOptionLike[], decision:
 
   return { outcome: 'selected', optionId };
 }
-

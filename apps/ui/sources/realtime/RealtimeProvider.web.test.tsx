@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,13 +18,10 @@ describe('RealtimeProvider.web', () => {
   it('mounts VoiceSessionRuntime so voice adapters are registered on web', async () => {
     const { RealtimeProvider } = await import('./RealtimeProvider.web');
 
-    let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(React.createElement(RealtimeProvider, null, React.createElement('Child', null)));
-    });
+    const screen = await renderScreen(React.createElement(RealtimeProvider, null, React.createElement('Child', null)));
 
     await act(async () => {});
 
-    expect(tree.root.findAllByType('VoiceSessionRuntimeMock' as any).length).toBe(1);
+    expect(screen.findAllByType('VoiceSessionRuntimeMock' as any)).toHaveLength(1);
   });
 });

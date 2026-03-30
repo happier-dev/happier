@@ -78,7 +78,7 @@ describe('resolveServerScopedSessionContext', () => {
     });
   });
 
-  it('returns active scope when serverId differs but resolves to the same active serverUrl', async () => {
+  it('builds a scoped context for a same-URL alternate profile when that exact profile has credentials', async () => {
     getActiveServerSnapshotSpy.mockReturnValue({
       serverId: 'server-a',
       serverUrl: 'https://server-a.example.test/',
@@ -87,13 +87,69 @@ describe('resolveServerScopedSessionContext', () => {
     listServerProfilesSpy.mockReturnValue([
       { id: 'server-b', serverUrl: 'https://server-a.example.test', name: 'Server A (alt id)' },
     ]);
+    getCredentialsSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+
+    const fakeEncryption = {
+      decryptEncryptionKey: vi.fn(async () => null),
+      initializeSessions: vi.fn(async () => {}),
+      getSessionEncryption: vi.fn(),
+    };
+    createEncryptionSpy.mockResolvedValue(fakeEncryption);
 
     const { resolveServerScopedSessionContext } = await import('./resolveServerScopedSessionContext');
-    const context = await resolveServerScopedSessionContext({ serverId: 'server-b' });
+    await expect(resolveServerScopedSessionContext({ serverId: 'server-b', timeoutMs: 5000 })).resolves.toEqual({
+      scope: 'scoped',
+      timeoutMs: 5000,
+      targetServerId: 'server-b',
+      targetServerUrl: 'https://server-a.example.test',
+      token: 'token-b',
+      encryption: fakeEncryption,
+    });
+    expect(getCredentialsSpy).toHaveBeenCalledWith('https://server-a.example.test', { serverId: 'server-b' });
+  });
+
+  it('fails closed when same-URL alternate profile credentials are unavailable', async () => {
+    getActiveServerSnapshotSpy.mockReturnValue({
+      serverId: 'server-a',
+      serverUrl: 'https://server-a.example.test/',
+      generation: 1,
+    });
+    listServerProfilesSpy.mockReturnValue([
+      { id: 'server-b', serverUrl: 'https://server-a.example.test', name: 'Server A (alt id)' },
+    ]);
+    getCredentialsSpy.mockResolvedValue(null);
+
+    const { resolveServerScopedSessionContext } = await import('./resolveServerScopedSessionContext');
+    await expect(resolveServerScopedSessionContext({ serverId: 'server-b' })).rejects.toThrow(
+      'No authentication credentials for target server "server-b"',
+    );
+  });
+
+  it('can force a scoped context for the active server', async () => {
+    getActiveServerSnapshotSpy.mockReturnValue({
+      serverId: 'server-a',
+      serverUrl: 'https://server-a.example.test/',
+      generation: 1,
+    });
+    getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+
+    const fakeEncryption = {
+      decryptEncryptionKey: vi.fn(async () => null),
+      initializeSessions: vi.fn(async () => {}),
+      getSessionEncryption: vi.fn(),
+    };
+    createEncryptionSpy.mockResolvedValue(fakeEncryption);
+
+    const { resolveServerScopedSessionContext } = await import('./resolveServerScopedSessionContext');
+    const context = await resolveServerScopedSessionContext({ preferScoped: true, timeoutMs: 7000 });
 
     expect(context).toEqual({
-      scope: 'active',
-      timeoutMs: 30000,
+      scope: 'scoped',
+      timeoutMs: 7000,
+      targetServerId: 'server-a',
+      targetServerUrl: 'https://server-a.example.test/',
+      token: 'token-a',
+      encryption: fakeEncryption,
     });
   });
 });

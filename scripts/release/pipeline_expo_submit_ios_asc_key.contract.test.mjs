@@ -11,7 +11,7 @@ function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'happier-expo-submit-asc-'));
 }
 
-test('expo-submit ensures the iOS App Store Connect API key file exists (dry-run)', () => {
+test('expo-submit ensures the iOS App Store Connect API key file exists for dev (dry-run)', () => {
   const dir = makeTempDir();
   const uiDir = path.join(dir, 'apps', 'ui');
   fs.mkdirSync(uiDir, { recursive: true });
@@ -22,7 +22,7 @@ test('expo-submit ensures the iOS App Store Connect API key file exists (dry-run
     JSON.stringify(
       {
         submit: {
-          preview: {
+          publicdev: {
             ios: {
               appleId: 'test@example.com',
               ascAppId: '123',
@@ -50,7 +50,7 @@ test('expo-submit ensures the iOS App Store Connect API key file exists (dry-run
     [
       path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'submit.mjs'),
       '--environment',
-      'preview',
+      'dev',
       '--platform',
       'ios',
       '--dry-run',
@@ -64,7 +64,7 @@ test('expo-submit ensures the iOS App Store Connect API key file exists (dry-run
     },
   );
 
-  assert.match(stdout, /expo submit: environment=preview platform=ios/);
+  assert.match(stdout, /expo submit: environment=dev platform=ios/);
   assert.match(stdout, new RegExp(`\\[dry-run\\] ensure ASC API key file at: .*AuthKey_${keyId}\\.p8`));
   assert.equal(fs.existsSync(path.join(uiDir, '.eas', 'keys', `AuthKey_${keyId}.p8`)), false);
 });

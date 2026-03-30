@@ -25,11 +25,16 @@ describe('serverFetch auth invalidation', () => {
             },
         }));
 
-        const fetchMock = vi.fn(async () => ({
-            ok: false,
-            status: 401,
-            headers: new Headers(),
-        }));
+        const fetchMock = vi.fn(async (input: unknown) => {
+            const url = String(input);
+            if (url.endsWith('/health')) {
+                return { ok: true, status: 200, headers: new Headers() };
+            }
+            if (url.endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200, headers: new Headers() };
+            }
+            return { ok: false, status: 401, headers: new Headers() };
+        });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         const { serverFetch } = await import('./client');
@@ -58,11 +63,16 @@ describe('serverFetch auth invalidation', () => {
             },
         }));
 
-        const fetchMock = vi.fn(async () => ({
-            ok: false,
-            status: 401,
-            headers: new Headers(),
-        }));
+        const fetchMock = vi.fn(async (input: unknown) => {
+            const url = String(input);
+            if (url.endsWith('/health')) {
+                return { ok: true, status: 200, headers: new Headers() };
+            }
+            if (url.endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200, headers: new Headers() };
+            }
+            return { ok: false, status: 401, headers: new Headers() };
+        });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         const { serverFetch } = await import('./client');
@@ -96,17 +106,24 @@ describe('serverFetch auth invalidation', () => {
             },
         }));
 
-        const fetchMock = vi.fn()
-            .mockResolvedValueOnce({
-                ok: false,
-                status: 401,
-                headers: new Headers(),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                status: 200,
-                headers: new Headers(),
-            });
+        let profileCalls = 0;
+        const fetchMock = vi.fn(async (input: unknown) => {
+            const url = String(input);
+            if (url.endsWith('/health')) {
+                return { ok: true, status: 200, headers: new Headers() };
+            }
+            if (url.endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200, headers: new Headers() };
+            }
+            if (url.endsWith('/v1/account/profile')) {
+                const response = profileCalls === 0
+                    ? { ok: false, status: 401, headers: new Headers() }
+                    : { ok: true, status: 200, headers: new Headers() };
+                profileCalls += 1;
+                return response;
+            }
+            return { ok: true, status: 200, headers: new Headers() };
+        });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         const { serverFetch } = await import('./client');
@@ -120,6 +137,6 @@ describe('serverFetch auth invalidation', () => {
         expect(resp.status).toBe(200);
         expect(invalidateCredentialsTokenForServerUrl).toHaveBeenCalledTimes(1);
         expect(getCredentials).toHaveBeenCalledTimes(1);
-        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/v1/account/profile'))).toHaveLength(2);
     });
 });

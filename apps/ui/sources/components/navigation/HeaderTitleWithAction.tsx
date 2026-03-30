@@ -53,8 +53,7 @@ const stylesheet = StyleSheet.create(() => ({
         maxWidth: '100%',
     },
     title: {
-        fontSize: 17,
-        fontWeight: '600',
+        fontSize: 16,
         ...Typography.default('semiBold'),
     },
     actionButton: {

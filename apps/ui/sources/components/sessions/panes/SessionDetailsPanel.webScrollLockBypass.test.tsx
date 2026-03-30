@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,46 +51,24 @@ const fakeDomNode = {
     },
 };
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    View: React.forwardRef((props: any, ref: any) => {
-        if (ref && typeof ref === 'object') {
-            ref.current = fakeDomNode;
-        }
-        return React.createElement('View', props, props.children);
-    }),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#eee',
-                        text: '#000',
-                        textSecondary: '#666',
-                    },
-                })
-                : value,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                                    Platform: {
+                                                                    OS: 'web',
+                                                                },
+                                                                    View: React.forwardRef((props: any, ref: any) => {
+                                                                            if (ref && typeof ref === 'object') {
+                                                                                ref.current = fakeDomNode;
+                                                                            }
+                                                                            return React.createElement('View', props, props.children);
+                                                                        }),
+                                                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                                                    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+                                                                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -115,17 +95,21 @@ vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => (
     SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => {
         if (key === 'editorFocusModeEnabled') return false;
         return null;
     },
     useLocalSettingMutable: () => [false, vi.fn()],
-}));
+});
+});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -149,10 +133,7 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         setFakeDocument(true);
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
         // Flush effects that may schedule post-commit work in React 18.
         await act(async () => {});
@@ -165,7 +146,7 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         expect(stopPropagation).toHaveBeenCalled();
 
         await act(async () => {
-            tree!.unmount();
+            screen.tree.unmount();
         });
         expect(removeEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function));
         expect(removeEventListenerSpy).toHaveBeenCalledWith('touchmove', expect.any(Function));
@@ -175,12 +156,12 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         setFakeDocument(true);
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        const root = (tree! as any).root.findByProps({ testID: 'session-details-panel-root' });
+        const root = screen.findByTestId('session-details-panel-root');
+        if (!root) {
+            throw new Error('expected session-details-panel-root to render');
+        }
         expect(typeof root.props.onWheel).toBe('function');
         expect(typeof root.props.onTouchMove).toBe('function');
 
@@ -190,7 +171,7 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         expect(stopPropagation).toHaveBeenCalled();
 
         await act(async () => {
-            tree!.unmount();
+            screen.tree.unmount();
         });
     });
 
@@ -203,17 +184,14 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         setFakeDocument(false);
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
         await act(async () => {});
 
         expect(addEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function));
         expect(addEventListenerSpy).toHaveBeenCalledWith('touchmove', expect.any(Function));
 
         await act(async () => {
-            tree!.unmount();
+            screen.tree.unmount();
         });
     });
 });

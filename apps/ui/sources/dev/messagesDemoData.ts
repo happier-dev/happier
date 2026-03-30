@@ -52,6 +52,31 @@ export const debugMessages: Message[] = [
         text: 'I\'ll help you debug and improve your application. Let me start by examining the codebase and running various analysis tools.'
     },
 
+    // Wide markdown table + code fence repros (useful when visually checking horizontal scrolling).
+    {
+        id: 'agent-wide-markdown-table',
+        localId: null,
+        createdAt: Date.now() - 189500,
+        kind: 'agent-text',
+        text: `Wide markdown table repro:
+
+| col_0 | col_1 | col_2 | col_3 | col_4 | col_5 | col_6 | col_7 | col_8 | col_9 | col_10 | col_11 | col_12 | col_13 | col_14 | col_15 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| a | b | c | d | e | f | g | h | i | j | k | l | m | n | o | TABLE_SENTINEL_RIGHT |`,
+    },
+
+    {
+        id: 'agent-wide-markdown-code',
+        localId: null,
+        createdAt: Date.now() - 189000,
+        kind: 'agent-text',
+        text: `Wide markdown code block repro:
+
+\`\`\`text
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 CODE_SENTINEL_RIGHT
+\`\`\``,
+    },
+
     // Agent message with markdown table (simple repro for mobile rendering issue)
     {
         id: 'agent-table-demo',

@@ -6,11 +6,25 @@ export const AttachmentFilePicker = React.forwardRef<AttachmentFilePickerHandle,
     function AttachmentFilePicker(props, ref) {
         const inputRef = React.useRef<HTMLInputElement | null>(null);
 
+        const openFiles = React.useCallback(() => {
+            if (inputRef.current) {
+                inputRef.current.accept = '';
+                inputRef.current.click();
+            }
+        }, []);
+
+        const openImages = React.useCallback(() => {
+            if (inputRef.current) {
+                inputRef.current.accept = 'image/*';
+                inputRef.current.click();
+            }
+        }, []);
+
         React.useImperativeHandle(ref, () => ({
-            open: () => {
-                inputRef.current?.click();
-            },
-        }), []);
+            open: openFiles,
+            openFiles,
+            openImages,
+        }), [openFiles, openImages]);
 
         return (
             <input

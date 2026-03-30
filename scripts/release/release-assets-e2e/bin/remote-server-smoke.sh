@@ -37,7 +37,9 @@ fi
 
 if [[ -n "$HAPPIER_TGZ" && -f "$HAPPIER_TGZ" ]]; then
   echo "[remote-server] installing happier-cli from tarball: $HAPPIER_TGZ"
-  npm install -g "$HAPPIER_TGZ" >/dev/null
+  # `@happier-dev/stack` also exposes a `happier` shim, so installing the CLI
+  # into the same global prefix can fail with EEXIST on the bin link.
+  npm install -g --force "$HAPPIER_TGZ" >/dev/null
   HAPPIER_PREFIX=(happier)
 elif [[ "$HAPPIER_CLI_INSTALL_MODE" == "npx" ]]; then
   echo "[remote-server] running happier-cli via npx: $HAPPIER_NPM_SPEC"

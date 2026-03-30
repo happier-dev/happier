@@ -243,11 +243,10 @@ trap cleanup EXIT
 echo "[npm-e2e-smoke] docker sanity check..."
 docker version >/dev/null
 
-env_file="$repo_root/output/npm-e2e-smoke.env"
-rm -f "$env_file" || true
+mkdir -p "$repo_root/output"
+env_file="$(mktemp "${repo_root}/output/npm-e2e-smoke.env.XXXXXX")"
 
-packs_dir="$repo_root/output/npm-e2e-smoke"
-mkdir -p "$packs_dir"
+packs_dir="$(mktemp -d "${repo_root}/output/npm-e2e-smoke.packs.XXXXXX")"
 
 ssh_dir="$repo_root/output/npm-e2e-smoke-ssh"
 mkdir -p "$ssh_dir"
@@ -290,7 +289,16 @@ if [[ "$mode" == "npm" ]] && [[ "$remote_installer" == "shim" ]] && ([[ "$with_r
     "$packs_dir"/happier-dev-cli-*.tgz \
     >/dev/null 2>&1 || true
 
-  npm_config_loglevel=silent npm pack "$stack_spec" --pack-destination "$packs_dir" >/dev/null
+  pack_log="$(mktemp "${repo_root}/output/npm-e2e-smoke.npm-pack.stack-spec.log.XXXXXX")"
+  if npm_config_loglevel=silent npm pack "$stack_spec" --pack-destination "$packs_dir" >"$pack_log" 2>&1; then
+    rm -f "$pack_log" >/dev/null 2>&1 || true
+  else
+    status=$?
+    echo "[npm-e2e-smoke] npm pack failed for stack spec: $stack_spec (exit $status)" >&2
+    echo "[npm-e2e-smoke] npm pack log: $pack_log" >&2
+    cat "$pack_log" >&2 || true
+    exit $status
+  fi
   stack_packed="$(ls -t "$packs_dir"/happier-dev-stack-*.tgz 2>/dev/null | head -n 1 || true)"
   if [[ -z "$stack_packed" || ! -f "$stack_packed" ]]; then
     echo "[npm-e2e-smoke] failed to produce stack tarball under $packs_dir (remote-installer=shim)" >&2
@@ -298,7 +306,16 @@ if [[ "$mode" == "npm" ]] && [[ "$remote_installer" == "shim" ]] && ([[ "$with_r
   fi
   mv "$stack_packed" "$packs_dir/stack.tgz"
 
-  npm_config_loglevel=silent npm pack "$cli_spec" --pack-destination "$packs_dir" >/dev/null
+  pack_log="$(mktemp "${repo_root}/output/npm-e2e-smoke.npm-pack.cli-spec.log.XXXXXX")"
+  if npm_config_loglevel=silent npm pack "$cli_spec" --pack-destination "$packs_dir" >"$pack_log" 2>&1; then
+    rm -f "$pack_log" >/dev/null 2>&1 || true
+  else
+    status=$?
+    echo "[npm-e2e-smoke] npm pack failed for cli spec: $cli_spec (exit $status)" >&2
+    echo "[npm-e2e-smoke] npm pack log: $pack_log" >&2
+    cat "$pack_log" >&2 || true
+    exit $status
+  fi
   cli_packed="$(ls -t "$packs_dir"/happier-dev-cli-*.tgz 2>/dev/null | head -n 1 || true)"
   if [[ -z "$cli_packed" || ! -f "$cli_packed" ]]; then
     echo "[npm-e2e-smoke] failed to produce cli tarball under $packs_dir (remote-installer=shim)" >&2
@@ -316,7 +333,16 @@ if [[ "$mode" == "local" ]]; then
     "$packs_dir"/happier-dev-cli-*.tgz \
     >/dev/null 2>&1 || true
 
-  (cd "$repo_root/apps/stack" && npm_config_loglevel=silent npm pack --pack-destination "$packs_dir" >/dev/null)
+  pack_log="$(mktemp "${repo_root}/output/npm-e2e-smoke.npm-pack.local-stack.log.XXXXXX")"
+  if (cd "$repo_root/apps/stack" && npm_config_loglevel=silent npm pack --pack-destination "$packs_dir" >"$pack_log" 2>&1); then
+    rm -f "$pack_log" >/dev/null 2>&1 || true
+  else
+    status=$?
+    echo "[npm-e2e-smoke] npm pack failed for local stack tarball (exit $status)" >&2
+    echo "[npm-e2e-smoke] npm pack log: $pack_log" >&2
+    cat "$pack_log" >&2 || true
+    exit $status
+  fi
   stack_packed="$(ls -t "$packs_dir"/happier-dev-stack-*.tgz 2>/dev/null | head -n 1 || true)"
   if [[ -z "$stack_packed" || ! -f "$stack_packed" ]]; then
     echo "[npm-e2e-smoke] failed to produce stack tarball under $packs_dir" >&2
@@ -324,7 +350,16 @@ if [[ "$mode" == "local" ]]; then
   fi
   mv "$stack_packed" "$packs_dir/stack.tgz"
 
-  (cd "$repo_root/apps/cli" && npm_config_loglevel=silent npm pack --pack-destination "$packs_dir" >/dev/null)
+  pack_log="$(mktemp "${repo_root}/output/npm-e2e-smoke.npm-pack.local-cli.log.XXXXXX")"
+  if (cd "$repo_root/apps/cli" && npm_config_loglevel=silent npm pack --pack-destination "$packs_dir" >"$pack_log" 2>&1); then
+    rm -f "$pack_log" >/dev/null 2>&1 || true
+  else
+    status=$?
+    echo "[npm-e2e-smoke] npm pack failed for local cli tarball (exit $status)" >&2
+    echo "[npm-e2e-smoke] npm pack log: $pack_log" >&2
+    cat "$pack_log" >&2 || true
+    exit $status
+  fi
   cli_packed="$(ls -t "$packs_dir"/happier-dev-cli-*.tgz 2>/dev/null | head -n 1 || true)"
   if [[ -z "$cli_packed" || ! -f "$cli_packed" ]]; then
     echo "[npm-e2e-smoke] failed to produce cli tarball under $packs_dir" >&2
@@ -760,9 +795,9 @@ if [[ "$with_any_remote" == "1" ]]; then
   if [[ "$with_remote_server" == "1" ]]; then
     build_targets+=(remote-server1 remote-server-smoke)
   fi
-  "${compose_remote[@]}" --env-file "$env_file" build "${build_targets[@]}" >/dev/null
+  "${compose_remote[@]}" --env-file "$env_file" build "${build_targets[@]}"
 else
-  "${compose[@]}" --env-file "$env_file" build stack cli cli2 >/dev/null
+  "${compose[@]}" --env-file "$env_file" build stack cli cli2
 fi
 
 echo "[npm-e2e-smoke] starting stack..."

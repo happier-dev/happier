@@ -3,6 +3,7 @@ import type { PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
 import { registerPermissionModeMessageQueueBinding, type InFlightSteerController } from '@/agent/runtime/permission/bindPermissionModeQueue';
+import { resolveAppendSystemPromptQueueKeyValue } from '@/agent/runtime/permission/appendSystemPromptField';
 import { readPermissionModeUpdatedAtFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeStateSync';
 import {
   combinePermissionModeQueuedPrompts,
@@ -21,17 +22,18 @@ export function createPermissionModeQueueState(opts: {
    */
   resolvePermissionModeQueueKey?: (permissionMode: PermissionMode) => string;
 }): {
-  messageQueue: MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>;
+  messageQueue: MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   getCurrentPermissionModeUpdatedAt: () => number;
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
 } {
   const resolveQueueKey = opts.resolvePermissionModeQueueKey;
-  const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>(
+  const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>(
     (mode) =>
       hashObject({
         permissionMode: resolveQueueKey ? resolveQueueKey(mode.permissionMode) : mode.permissionMode,
+        appendSystemPrompt: resolveAppendSystemPromptQueueKeyValue(mode),
       }),
     {
       batcher: (messages) => combinePermissionModeQueuedPrompts(messages),

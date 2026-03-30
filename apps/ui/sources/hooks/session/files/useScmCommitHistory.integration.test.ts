@@ -1,9 +1,10 @@
-import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { renderHook } from '@/dev/testkit';
 
 const { mockSessionRPC } = vi.hoisted(() => ({
     mockSessionRPC: vi.fn(),
@@ -32,32 +33,6 @@ import { useScmCommitHistory } from './useScmCommitHistory';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 type HookProps = Parameters<typeof useScmCommitHistory>[0];
-
-function mountHook(props: HookProps) {
-    let current: ReturnType<typeof useScmCommitHistory> | null = null;
-
-    function Probe() {
-        current = useScmCommitHistory(props);
-        return React.createElement('View');
-    }
-
-    let tree: renderer.ReactTestRenderer;
-    act(() => {
-        tree = renderer.create(React.createElement(Probe));
-    });
-
-    return {
-        getCurrent() {
-            if (!current) {
-                throw new Error('Hook state is unavailable');
-            }
-            return current;
-        },
-        unmount() {
-            tree.unmount();
-        },
-    };
-}
 
 function createRepoWithCommits(totalCommits: number): string {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-history-hook-'));
@@ -91,11 +66,16 @@ describe('useScmCommitHistory integration', () => {
         const workspace = createRepoWithCommits(25);
         mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
 
-        const hook = mountHook({
-            sessionId: 'session-history-1',
-            readLogEnabled: true,
-            sessionPath: workspace,
-        });
+        const hook = await renderHook(
+            (props: HookProps) => useScmCommitHistory(props),
+            {
+                initialProps: {
+                    sessionId: 'session-history-1',
+                    readLogEnabled: true,
+                    sessionPath: workspace,
+                },
+            },
+        );
 
         await act(async () => {
             await hook.getCurrent().loadCommitHistory({ reset: true });
@@ -124,9 +104,7 @@ describe('useScmCommitHistory integration', () => {
         expect(resetPage.historyEntries).toHaveLength(20);
         expect(resetPage.historyHasMore).toBe(true);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('falls back to limit expansion when backend ignores skip (legacy daemon)', async () => {
@@ -141,11 +119,16 @@ describe('useScmCommitHistory integration', () => {
             return harness(sessionId, method, request);
         });
 
-        const hook = mountHook({
-            sessionId: 'session-history-legacy-skip',
-            readLogEnabled: true,
-            sessionPath: workspace,
-        });
+        const hook = await renderHook(
+            (props: HookProps) => useScmCommitHistory(props),
+            {
+                initialProps: {
+                    sessionId: 'session-history-legacy-skip',
+                    readLogEnabled: true,
+                    sessionPath: workspace,
+                },
+            },
+        );
 
         await act(async () => {
             await hook.getCurrent().loadCommitHistory({ reset: true });
@@ -164,20 +147,23 @@ describe('useScmCommitHistory integration', () => {
         expect(secondPage.historyEntries).toHaveLength(25);
         expect(secondPage.historyHasMore).toBe(false);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('clears history when log reading is disabled by backend capabilities', async () => {
         const workspace = createRepoWithCommits(3);
         mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
 
-        const hook = mountHook({
-            sessionId: 'session-history-2',
-            readLogEnabled: false,
-            sessionPath: workspace,
-        });
+        const hook = await renderHook(
+            (props: HookProps) => useScmCommitHistory(props),
+            {
+                initialProps: {
+                    sessionId: 'session-history-2',
+                    readLogEnabled: false,
+                    sessionPath: workspace,
+                },
+            },
+        );
 
         await act(async () => {
             await hook.getCurrent().loadCommitHistory({ reset: true });
@@ -187,20 +173,23 @@ describe('useScmCommitHistory integration', () => {
         expect(current.historyEntries).toEqual([]);
         expect(current.historyHasMore).toBe(false);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('loads sapling history entries through session scm log RPC', async () => {
         const workspace = createSaplingRepoWithCommits(3);
         mockSessionRPC.mockImplementation(createSaplingSessionRpcHarness(workspace));
 
-        const hook = mountHook({
-            sessionId: 'session-history-sapling-1',
-            readLogEnabled: true,
-            sessionPath: workspace,
-        });
+        const hook = await renderHook(
+            (props: HookProps) => useScmCommitHistory(props),
+            {
+                initialProps: {
+                    sessionId: 'session-history-sapling-1',
+                    readLogEnabled: true,
+                    sessionPath: workspace,
+                },
+            },
+        );
 
         await act(async () => {
             await hook.getCurrent().loadCommitHistory({ reset: true });
@@ -211,9 +200,7 @@ describe('useScmCommitHistory integration', () => {
         expect(current.historyEntries[0]?.subject).toBe('commit-3');
         expect(current.historyHasMore).toBe(false);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('keeps last-known history entries visible when a reset reload fails', async () => {
@@ -228,11 +215,16 @@ describe('useScmCommitHistory integration', () => {
             return harness(sessionId, method, request);
         });
 
-        const hook = mountHook({
-            sessionId: 'session-history-swr-reset',
-            readLogEnabled: true,
-            sessionPath: workspace,
-        });
+        const hook = await renderHook(
+            (props: HookProps) => useScmCommitHistory(props),
+            {
+                initialProps: {
+                    sessionId: 'session-history-swr-reset',
+                    readLogEnabled: true,
+                    sessionPath: workspace,
+                },
+            },
+        );
 
         await act(async () => {
             await hook.getCurrent().loadCommitHistory({ reset: true });
@@ -250,8 +242,6 @@ describe('useScmCommitHistory integration', () => {
         expect(afterFailedReset.historyEntries).toHaveLength(20);
         expect(afterFailedReset.historyHasMore).toBe(false);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 });

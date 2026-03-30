@@ -1,30 +1,17 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastProps: any = null;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    View: 'View',
-    useWindowDimensions: () => ({ width: 2000, height: 900 }),
-}));
-
-vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
-    MultiPaneHost: (props: any) => {
-        lastProps = props;
-        return React.createElement('MultiPaneHostStub');
-    },
-}));
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
+installAppPaneScopeHostCommonModuleMocks({
+    getDimensions: () => ({ width: 2000, height: 900 }),
+    getLocalSetting: (key) => {
         if (key === 'uiMultiPanePanelsEnabled') return true;
         if (key === 'editorFocusModeEnabled') return false;
         if (key === 'rightPaneWidthPx') return 360;
@@ -32,9 +19,21 @@ vi.mock('@/sync/domains/state/storage', () => ({
         // A user-resized overlay preference above the global docked max.
         if (key === 'detailsPaneWidthPx') return 1400;
         if (key === 'detailsPaneWidthBasisPx') return 2000;
+        if (key === 'bottomPaneHeightPx') return 320;
+        if (key === 'bottomPaneHeightBasisPx') return 900;
         return null;
     },
-    useLocalSettingMutable: () => [null, vi.fn()],
+});
+
+vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
+    MultiPaneHostWithBottom: (props: any) => {
+        lastProps = props;
+        return React.createElement('MultiPaneHostStub');
+    },
+}));
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => 'tablet',
 }));
 
 vi.mock('./AppPaneProvider', () => ({
@@ -58,16 +57,12 @@ describe('AppPaneScopeHost (overlay widths)', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         lastProps = null;
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
+        await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
                     rightPane={<div />}
                     detailsPane={<div />}
-                />
-            );
-        });
+                />);
 
         expect(lastProps).not.toBeNull();
         expect(lastProps.layout.right).toBe('docked');

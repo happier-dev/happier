@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
     emitSpeechRecEvent,
@@ -11,6 +11,26 @@ import {
     speechRecStop,
     speechRecRequestPermissionsAsync,
 } from './localVoiceEngine.testHarness';
+
+type CallCountSpy = {
+    mock: {
+        calls: unknown[][];
+    };
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitForCallCount = async (spy: CallCountSpy, expectedCount: number, timeoutMs = 500, pollMs = 5) => {
+    const deadline = Date.now() + timeoutMs;
+
+    while (spy.mock.calls.length < expectedCount) {
+        if (Date.now() >= deadline) {
+            throw new Error(`Timed out waiting for ${expectedCount} calls; saw ${spy.mock.calls.length}`);
+        }
+
+        await sleep(pollMs);
+    }
+};
 
 describe('local voice engine device STT (experimental)', () => {
     registerLocalVoiceEngineHarnessHooks();
@@ -207,16 +227,12 @@ describe('local voice engine device STT (experimental)', () => {
         expect(speechRecStart).toHaveBeenCalledTimes(1);
 
         emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'hands free message', confidence: 0.9, segments: [] }] });
-        for (let i = 0; i < 20; i += 1) {
-            await Promise.resolve();
-        }
+        await waitForCallCount(speechRecStop, 1);
         expect(speechRecStop).toHaveBeenCalledTimes(1);
         emitSpeechRecEvent('end', {});
 
-        for (let i = 0; i < 200; i += 1) {
-            await Promise.resolve();
-        }
-
+        await waitForCallCount(sendMessage, 1);
+        await waitForCallCount(speechRecStart, 2);
         expect(sendMessage).toHaveBeenCalledWith('s1', 'hands free message');
         expect(speechRecStart).toHaveBeenCalledTimes(2);
         expect(getLocalVoiceState().status).toBe('recording');
@@ -269,57 +285,50 @@ describe('local voice engine device STT (experimental)', () => {
     });
 
     it('waits for configured silence window before auto-stopping a hands-free turn', async () => {
-        vi.useFakeTimers();
-        try {
-            const storage = await getStorage();
-            storage.__setState({
-                settings: {
-                    ...storage.getState().settings,
-                    voice: {
-                        ...storage.getState().settings.voice,
-                        providerId: 'local_direct',
-                        adapters: {
-                            ...storage.getState().settings.voice.adapters,
-                            local_direct: {
-                                ...storage.getState().settings.voice.adapters.local_direct,
-                                stt: {
-                                    ...storage.getState().settings.voice.adapters.local_direct.stt,
-                                    useDeviceStt: true,
-                                    baseUrl: null,
-                                },
-                                tts: {
-                                    ...storage.getState().settings.voice.adapters.local_direct.tts,
-                                    autoSpeakReplies: false,
-                                },
-                                handsFree: {
-                                    ...storage.getState().settings.voice.adapters.local_direct.handsFree,
-                                    enabled: true,
-                                    endpointing: { silenceMs: 50, minSpeechMs: 0 },
-                                },
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                useDeviceStt: true,
+                                baseUrl: null,
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: false,
+                            },
+                            handsFree: {
+                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                                enabled: true,
+                                endpointing: { silenceMs: 10, minSpeechMs: 0 },
                             },
                         },
                     },
                 },
-            });
+            },
+        });
 
-            const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
-            await toggleLocalVoiceTurn('s1');
-            emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'timed hands free', confidence: 0.9, segments: [] }] });
-            expect(speechRecStop).not.toHaveBeenCalled();
+        const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn('s1');
+        emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'timed hands free', confidence: 0.9, segments: [] }] });
+        expect(speechRecStop).not.toHaveBeenCalled();
 
-            await vi.advanceTimersByTimeAsync(49);
-            expect(speechRecStop).not.toHaveBeenCalled();
+        await sleep(5);
+        expect(speechRecStop).not.toHaveBeenCalled();
 
-            await vi.advanceTimersByTimeAsync(1);
-            expect(speechRecStop).toHaveBeenCalledTimes(1);
-            emitSpeechRecEvent('end', {});
-            await vi.runOnlyPendingTimersAsync();
-            for (let i = 0; i < 50; i += 1) {
-                await Promise.resolve();
-            }
-            expect(sendMessage).toHaveBeenCalledWith('s1', 'timed hands free');
-        } finally {
-            vi.useRealTimers();
-        }
+        await waitForCallCount(speechRecStop, 1);
+        expect(speechRecStop).toHaveBeenCalledTimes(1);
+        emitSpeechRecEvent('end', {});
+
+        await waitForCallCount(sendMessage, 1);
+        expect(sendMessage).toHaveBeenCalledWith('s1', 'timed hands free');
     });
 });

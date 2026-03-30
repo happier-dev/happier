@@ -1,11 +1,14 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
+
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+installUiListsCommonModuleMocks();
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -16,8 +19,7 @@ describe('ItemGroupTitleWithAction', () => {
         const { ItemGroupTitleWithAction } = await import('./ItemGroupTitleWithAction');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(ItemGroupTitleWithAction, {
+        tree = (await renderScreen(React.createElement(ItemGroupTitleWithAction, {
                 title: 'Detected CLIs',
                 titleStyle: { color: '#000' },
                 action: {
@@ -26,15 +28,14 @@ describe('ItemGroupTitleWithAction', () => {
                     iconColor: '#666',
                     onPress: vi.fn(),
                 },
-            }));
-        });
+            }))).tree;
 
-        const rootView = tree!.root.findByType('View' as any);
+        const rootView = tree!.findByType('View' as any);
         const children = React.Children.toArray(rootView.props.children) as any[];
         expect(children).toHaveLength(2);
         expect(children[1]?.type).toBe('Pressable');
 
-        const titleNodes = tree!.root.findAllByType('Text' as any).filter((node) => {
+        const titleNodes = tree!.findAllByType('Text' as any).filter((node) => {
             const value = node.props.children;
             return Array.isArray(value) ? value.join('') === 'Detected CLIs' : value === 'Detected CLIs';
         });
@@ -44,24 +45,20 @@ describe('ItemGroupTitleWithAction', () => {
     it('renders title only when no action is provided', async () => {
         const { ItemGroupTitleWithAction } = await import('./ItemGroupTitleWithAction');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(ItemGroupTitleWithAction, {
+        const screen = await renderScreen(React.createElement(ItemGroupTitleWithAction, {
                 title: 'Detected CLIs',
                 titleStyle: { color: '#000' },
             }));
-        });
 
-        expect(tree!.root.findAllByType('Pressable' as any).length).toBe(0);
-        expect(tree!.root.findAllByType('Text' as any).length).toBe(1);
+        expect(screen.findAllByProps({ accessibilityRole: 'button' }).length).toBe(0);
+        expect(screen.findAllByType('Text' as any).length).toBe(1);
     });
 
     it('renders loading indicator instead of icon when action is loading', async () => {
         const { ItemGroupTitleWithAction } = await import('./ItemGroupTitleWithAction');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(ItemGroupTitleWithAction, {
+        tree = (await renderScreen(React.createElement(ItemGroupTitleWithAction, {
                 title: 'Detected CLIs',
                 action: {
                     accessibilityLabel: 'Refresh',
@@ -70,10 +67,9 @@ describe('ItemGroupTitleWithAction', () => {
                     loading: true,
                     onPress: vi.fn(),
                 },
-            }));
-        });
+            }))).tree;
 
-        expect(tree!.root.findAllByType('ActivityIndicator' as any).length).toBe(1);
-        expect(tree!.root.findAllByType('Ionicons' as any).length).toBe(0);
+        expect(tree!.findAllByType('ActivityIndicator' as any).length).toBe(1);
+        expect(tree!.findAllByType('Ionicons' as any).length).toBe(0);
     });
 });

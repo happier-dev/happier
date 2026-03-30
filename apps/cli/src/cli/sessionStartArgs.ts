@@ -152,6 +152,18 @@ export function readOptionalFlagValue(args: string[], flag: string): string | un
   return value;
 }
 
+export function readOptionalFlagValueFromAliases(args: string[], flags: readonly string[]): string | undefined {
+  let resolved: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!flags.includes(arg)) continue;
+    const value = args[i + 1];
+    if (!value || value.startsWith('-')) continue;
+    resolved = value;
+  }
+  return resolved;
+}
+
 export function applyDeprecatedSessionStartAliasesForAgent(params: {
   agentId: AgentId;
   startedBy: 'daemon' | 'terminal' | undefined;

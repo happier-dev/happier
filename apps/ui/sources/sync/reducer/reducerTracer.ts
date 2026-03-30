@@ -61,6 +61,7 @@
 
 import { NormalizedMessage } from '../typesRaw';
 import { isDebugFlagEnabled } from './helpers/debugFlags';
+import { readStreamSegmentMetaV1 } from './helpers/streamSegmentMeta';
 
 type OrphanBucket = {
     updatedAt: number;
@@ -225,6 +226,16 @@ function getProcessedKey(message: NormalizedMessage): string {
         return `id:${message.id}`;
     }
 
+    const hashStringFNV1a32 = (value: string): string => {
+        // Non-cryptographic, deterministic hash to fingerprint streaming deltas without embedding full text in keys.
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < value.length; i += 1) {
+            hash ^= value.charCodeAt(i);
+            hash = Math.imul(hash, 0x01000193);
+        }
+        return (hash >>> 0).toString(16);
+    };
+
     const first = message.content[0] as any;
     const type = typeof first?.type === 'string' ? String(first.type) : 'unknown';
     const uuid =
@@ -232,9 +243,23 @@ function getProcessedKey(message: NormalizedMessage): string {
             ? first.uuid.trim()
             : null;
 
+    const streamSegmentUpdatedAtMs = readStreamSegmentMetaV1((message as any)?.meta)?.updatedAtMs ?? null;
+    const streamFingerprint = (() => {
+        if (streamSegmentUpdatedAtMs !== null) return `seg:${streamSegmentUpdatedAtMs}`;
+        if (type === 'text') {
+            const text = typeof first?.text === 'string' ? first.text : '';
+            return `txt:${hashStringFNV1a32(text)}:${text.length}`;
+        }
+        if (type === 'thinking') {
+            const thinking = typeof first?.thinking === 'string' ? first.thinking : '';
+            return `thinking:${hashStringFNV1a32(thinking)}:${thinking.length}`;
+        }
+        return 'v0';
+    })();
+
     return uuid
-        ? `agent:${message.id}:${type}:${uuid}`
-        : `agent:${message.id}:${type}`;
+        ? `agent:${message.id}:${type}:${uuid}:${streamFingerprint}`
+        : `agent:${message.id}:${type}:${streamFingerprint}`;
 }
 
 // Extract parent UUID from the first content item of an agent message
@@ -309,7 +334,7 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
         // Extract Task tools and index them by message ID for later sidechain matching
         if (message.role === 'agent') {
             for (const content of message.content) {
-                if (content.type === 'tool-call' && content.name === 'Task') {
+                if (content.type === 'tool-call' && isGenericSubAgentToolName(content.name)) {
                     if (content.input && typeof content.input === 'object' && 'prompt' in content.input) {
                         const toolCallId =
                             typeof content.id === 'string' && content.id ? content.id : message.id;
@@ -461,3 +486,4 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
     
     return results;
 }
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';

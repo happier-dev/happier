@@ -9,11 +9,13 @@ import type { PermissionMode } from '@/api/types';
 
 export function createKimiAcpRuntime(params: {
   directory: string;
+  machineId: string;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  memoryRecallGuidanceEnabled?: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
   const lastPublishedKimiSessionId = { value: null as string | null };
@@ -27,6 +29,10 @@ export function createKimiAcpRuntime(params: {
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    memoryRecallGuidance: {
+      enabled: params.memoryRecallGuidanceEnabled === true,
+      machineId: params.machineId,
+    },
     getPermissionMode: params.getPermissionMode,
     resolvePermissionMode: ({ getPermissionMode, session }) =>
       getPermissionMode?.() ?? session.getMetadataSnapshot?.()?.permissionMode,

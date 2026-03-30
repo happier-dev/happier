@@ -1,26 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
+import { createHappierCliMonorepoFixture } from './testkit/happier_cli_monorepo_testkit.mjs';
 
-async function createMonorepoFixture({ prefix }) {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
-  const cliDistDir = join(dir, 'apps', 'cli', 'dist');
-  await mkdir(cliDistDir, { recursive: true });
-  await mkdir(join(dir, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(dir, 'apps', 'server'), { recursive: true });
-
-  await writeFile(join(dir, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(dir, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(dir, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-
-  await writeFile(
-    join(cliDistDir, 'index.mjs'),
-    [
+async function createMonorepoFixture(t, { prefix }) {
+  return createHappierCliMonorepoFixture(t, {
+    prefix,
+    distIndexScript: [
       "const args = process.argv.slice(2);",
       "if (args.includes('--help') || args.includes('-h')) {",
       "  console.log('FAKE CLI HELP');",
@@ -29,15 +19,7 @@ async function createMonorepoFixture({ prefix }) {
       "console.log('FAKE CLI RUN');",
       '',
     ].join('\n'),
-    'utf-8',
-  );
-
-  return {
-    dir,
-    async cleanup() {
-      await rm(dir, { recursive: true, force: true });
-    },
-  };
+  });
 }
 
 function stackRootDirFromMeta(metaUrl) {
@@ -45,9 +27,9 @@ function stackRootDirFromMeta(metaUrl) {
   return dirname(scriptsDir);
 }
 
-test('hstack happier --help passes through to the CLI (not wrapper help)', async () => {
+test('hstack happier --help passes through to the CLI (not wrapper help)', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createMonorepoFixture({ prefix: 'hstack-happier-help-' });
+  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-help-' });
 
   const env = {
     ...process.env,
@@ -58,12 +40,8 @@ test('hstack happier --help passes through to the CLI (not wrapper help)', async
     HAPPIER_HOME_DIR: join(fixture.dir, '.happy-home'),
   };
 
-  try {
-    const res = await runNodeCapture([hstackBinPath(rootDir), 'happier', '--help'], { cwd: rootDir, env });
-    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    assert.match(res.stdout, /FAKE CLI HELP/, `expected CLI help output\nstdout:\n${res.stdout}`);
-    assert.doesNotMatch(res.stdout, /\[happier\] usage:/, `expected wrapper help to be suppressed\nstdout:\n${res.stdout}`);
-  } finally {
-    await fixture.cleanup();
-  }
+  const res = await runNodeCapture([hstackBinPath(rootDir), 'happier', '--help'], { cwd: rootDir, env });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  assert.match(res.stdout, /FAKE CLI HELP/, `expected CLI help output\nstdout:\n${res.stdout}`);
+  assert.doesNotMatch(res.stdout, /\[happier\] usage:/, `expected wrapper help to be suppressed\nstdout:\n${res.stdout}`);
 });

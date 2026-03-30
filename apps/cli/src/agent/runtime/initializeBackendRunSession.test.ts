@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession'
 import type { ApiSessionClient } from '@/api/session/sessionClient'
@@ -58,7 +58,7 @@ describe('initializeBackendRunSession', () => {
       },
       {
         createBaseSessionForAttachFn: async () => createSessionResponse('session-123', metadata, state),
-        applyStartupMetadataUpdateToSessionFn: (opts) => {
+        applyStartupMetadataUpdateToSessionFn: async (opts) => {
           startupUpdates.push({ mode: opts.mode })
         },
         primeAgentStateForUiFn: (_session, logPrefix) => {
@@ -124,7 +124,7 @@ describe('initializeBackendRunSession', () => {
       },
       {
         createBaseSessionForAttachFn: async () => createSessionResponse('session-456', metadata, state),
-        applyStartupMetadataUpdateToSessionFn: () => {
+        applyStartupMetadataUpdateToSessionFn: async () => {
           applyStartupCalls += 1
         },
         primeAgentStateForUiFn: () => {},
@@ -138,6 +138,259 @@ describe('initializeBackendRunSession', () => {
     expect(applyStartupCalls).toBe(0)
     expect(attachSnapshotErrors).toHaveLength(1)
     expect(attachSnapshotMissing).toHaveLength(1)
+  })
+
+  it('reports merged authoritative attach metadata to the daemon for existing-session attaches', async () => {
+    const metadata = {
+      path: '/tmp/local-workspace',
+      workspaceId: 'ws_local',
+      workspaceLocationId: 'loc_local',
+      workspaceCheckoutId: 'checkout_local',
+      hostPid: 321,
+      acpSessionModesV1: { v: 1, provider: 'codex' },
+    } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const session = createSessionStub({
+      ensureMetadataSnapshot: async () => ({
+        path: '/srv/canonical-workspace',
+        workspaceId: 'ws_authoritative',
+        workspaceLocationId: 'loc_authoritative',
+        workspaceCheckoutId: 'checkout_authoritative',
+        permissionMode: 'ask',
+        permissionModeUpdatedAt: 7,
+      } as unknown as Metadata),
+    })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => session,
+    }
+
+    let reportedMetadata: Metadata | null = null
+
+    await initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-attach-report-merged-metadata',
+        metadata,
+        state,
+        existingSessionId: 'session-report-merged-metadata',
+        uiLogPrefix: '[Codex]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        metadataKeysToUnsetOnAttach: ['acpSessionModesV1'],
+      },
+      {
+        createBaseSessionForAttachFn: async () =>
+          createSessionResponse('session-report-merged-metadata', metadata, state),
+        applyStartupMetadataUpdateToSessionFn: async () => {},
+        primeAgentStateForUiFn: () => {},
+        reportSessionToDaemonIfRunningFn: async (opts) => {
+          reportedMetadata = opts.metadata
+        },
+        persistTerminalAttachmentInfoIfNeededFn: async () => {},
+        sendTerminalFallbackMessageIfNeededFn: () => {},
+      },
+    )
+
+    expect(reportedMetadata).toMatchObject({
+      path: '/srv/canonical-workspace',
+      hostPid: 321,
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 100,
+      lifecycleState: 'running',
+    })
+    expect((reportedMetadata as Record<string, unknown> | null)?.workspaceId).toBeUndefined()
+    expect((reportedMetadata as Record<string, unknown> | null)?.workspaceLocationId).toBeUndefined()
+    expect((reportedMetadata as Record<string, unknown> | null)?.workspaceCheckoutId).toBeUndefined()
+    expect((reportedMetadata as any)?.acpSessionModesV1).toBeUndefined()
+  })
+
+  it('reports runtime machine identity to the daemon for handoff attaches', async () => {
+    const metadata = {
+      path: '/srv/target-workspace',
+      host: 'target-host',
+      homeDir: '/Users/target',
+      happyHomeDir: '/Users/target/.happier',
+      machineId: 'machine_target',
+      hostPid: 654,
+    } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const session = createSessionStub({
+      ensureMetadataSnapshot: async () => ({
+        path: '/srv/source-workspace',
+        host: 'source-host',
+        homeDir: '/Users/source',
+        happyHomeDir: '/Users/source/.happier',
+        machineId: 'machine_source',
+      } as unknown as Metadata),
+    })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => session,
+    }
+
+    let reportedMetadata: Metadata | null = null
+
+    await initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-attach-report-runtime-identity',
+        metadata,
+        state,
+        existingSessionId: 'session-report-runtime-identity',
+        uiLogPrefix: '[Claude]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+      },
+      {
+        createBaseSessionForAttachFn: async () =>
+          createSessionResponse('session-report-runtime-identity', metadata, state),
+        applyStartupMetadataUpdateToSessionFn: async () => {},
+        primeAgentStateForUiFn: () => {},
+        reportSessionToDaemonIfRunningFn: async (opts) => {
+          reportedMetadata = opts.metadata
+        },
+        persistTerminalAttachmentInfoIfNeededFn: async () => {},
+        sendTerminalFallbackMessageIfNeededFn: () => {},
+      },
+    )
+
+    expect(reportedMetadata).toMatchObject({
+      path: '/srv/target-workspace',
+      host: 'target-host',
+      homeDir: '/Users/target',
+      happyHomeDir: '/Users/target/.happier',
+      machineId: 'machine_target',
+      hostPid: 654,
+      lifecycleState: 'running',
+    })
+  })
+
+  it('awaits async attach metadata callbacks before running startup side effects', async () => {
+    const metadata = { terminal: { mode: 'tmux' } } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const events: string[] = []
+    const session = createSessionStub({
+      ensureMetadataSnapshot: async () => ({ path: '/tmp/project' } as unknown as Metadata),
+    })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => session,
+    }
+
+    await initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-attach-await',
+        metadata,
+        state,
+        existingSessionId: 'session-await',
+        uiLogPrefix: '[Codex]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        onAttachMetadataSnapshotReady: async () => {
+          events.push('attach-callback-start')
+          await Promise.resolve()
+          events.push('attach-callback-end')
+        },
+      },
+      {
+        createBaseSessionForAttachFn: async () => createSessionResponse('session-await', metadata, state),
+        applyStartupMetadataUpdateToSessionFn: async () => {
+          events.push('startup-update')
+        },
+        primeAgentStateForUiFn: () => {
+          events.push('prime-agent-state')
+        },
+        reportSessionToDaemonIfRunningFn: async () => {
+          events.push('report-session')
+        },
+        persistTerminalAttachmentInfoIfNeededFn: async () => {
+          events.push('persist-terminal')
+        },
+        sendTerminalFallbackMessageIfNeededFn: () => {
+          events.push('send-fallback')
+        },
+      },
+    )
+
+    expect(events).toEqual([
+      'startup-update',
+      'attach-callback-start',
+      'attach-callback-end',
+      'prime-agent-state',
+      'report-session',
+      'persist-terminal',
+      'send-fallback',
+    ])
+  })
+
+  it('awaits async attach startup metadata updates before attach callbacks and side effects', async () => {
+    const metadata = { terminal: { mode: 'tmux' } } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const events: string[] = []
+    const session = createSessionStub({
+      ensureMetadataSnapshot: async () => ({ path: '/tmp/project' } as unknown as Metadata),
+    })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => session,
+    }
+
+    await initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-attach-startup-await',
+        metadata,
+        state,
+        existingSessionId: 'session-startup-await',
+        uiLogPrefix: '[Codex]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        onAttachMetadataSnapshotReady: () => {
+          events.push('attach-callback')
+        },
+      },
+      {
+        createBaseSessionForAttachFn: async () => createSessionResponse('session-startup-await', metadata, state),
+        applyStartupMetadataUpdateToSessionFn: async () => {
+          events.push('startup-update-start')
+          await Promise.resolve()
+          events.push('startup-update-end')
+        },
+        primeAgentStateForUiFn: () => {
+          events.push('prime-agent-state')
+        },
+        reportSessionToDaemonIfRunningFn: async () => {
+          events.push('report-session')
+        },
+        persistTerminalAttachmentInfoIfNeededFn: async () => {
+          events.push('persist-terminal')
+        },
+        sendTerminalFallbackMessageIfNeededFn: () => {
+          events.push('send-fallback')
+        },
+      },
+    )
+
+    expect(events).toEqual([
+      'startup-update-start',
+      'startup-update-end',
+      'attach-callback',
+      'prime-agent-state',
+      'report-session',
+      'persist-terminal',
+      'send-fallback',
+    ])
   })
 
   it('creates a new session and reports daemon startup side effects', async () => {
@@ -290,7 +543,7 @@ describe('initializeBackendRunSession', () => {
       },
       {
         createBaseSessionForAttachFn: async () => createSessionResponse('session-order', metadata, state),
-        applyStartupMetadataUpdateToSessionFn: () => {},
+        applyStartupMetadataUpdateToSessionFn: async () => {},
         primeAgentStateForUiFn: () => {},
         persistTerminalAttachmentInfoIfNeededFn: async () => {
           events.push('persist')
@@ -305,6 +558,79 @@ describe('initializeBackendRunSession', () => {
     )
 
     expect(events).toEqual(['persist', 'fallback', 'report'])
+  })
+
+  it('does not block existing-session attach completion on daemon report retries', async () => {
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'terminal' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const session = createSessionStub({
+      ensureMetadataSnapshot: async () => ({ path: '/tmp/project' } as unknown as Metadata),
+    })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => session,
+    }
+
+    const events: string[] = []
+    let releaseDaemonReport!: () => void
+    const daemonReportBlocked = new Promise<void>((resolve) => {
+      releaseDaemonReport = resolve
+    })
+    let daemonReportFinishedResolve!: () => void
+    const daemonReportFinished = new Promise<void>((resolve) => {
+      daemonReportFinishedResolve = resolve
+    })
+
+    let settled = false
+
+    const initializePromise = initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-attach-daemon-report',
+        metadata,
+        state,
+        existingSessionId: 'session-attach-daemon-report',
+        uiLogPrefix: '[Codex]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        startupSideEffectsOrder: 'persist-first',
+      },
+      {
+        createBaseSessionForAttachFn: async () =>
+          createSessionResponse('session-attach-daemon-report', metadata, state),
+        applyStartupMetadataUpdateToSessionFn: async () => {},
+        primeAgentStateForUiFn: () => {},
+        persistTerminalAttachmentInfoIfNeededFn: async () => {
+          events.push('persist')
+        },
+        sendTerminalFallbackMessageIfNeededFn: () => {
+          events.push('fallback')
+        },
+        reportSessionToDaemonIfRunningFn: async () => {
+          events.push('report-start')
+          await daemonReportBlocked
+          events.push('report-end')
+          daemonReportFinishedResolve()
+        },
+      },
+    ).then((result) => {
+      settled = true
+      events.push('initialized')
+      return result
+    })
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    expect(settled).toBe(true)
+    expect(events).toEqual(['persist', 'fallback', 'report-start', 'initialized'])
+
+    releaseDaemonReport()
+    await daemonReportFinished
+    await initializePromise
+
+    expect(events).toEqual(['persist', 'fallback', 'report-start', 'initialized', 'report-end'])
   })
 
   it('runs startup side effects after offline reconnection swaps in a real session', async () => {
@@ -336,8 +662,9 @@ describe('initializeBackendRunSession', () => {
           permissionModeOverride: { mode: 'default', updatedAt: 100 },
         },
         allowOfflineStub: true,
-        onSessionSwap: () => {
+        onSessionSwap: async () => {
           userOnSwapCount += 1
+          throw new Error('user onSessionSwap failed')
         },
       },
       {
@@ -375,9 +702,17 @@ describe('initializeBackendRunSession', () => {
     if (typeof capturedSwap !== 'function') {
       throw new Error('Expected setupOfflineReconnection to provide an onSessionSwap callback')
     }
-    capturedSwap(realSession)
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    const onUnhandled = vi.fn()
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      capturedSwap(realSession)
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      expect(onUnhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
 
     expect(userOnSwapCount).toBe(1)
     expect(primed).toEqual(['offline-tag', 'real-session'])

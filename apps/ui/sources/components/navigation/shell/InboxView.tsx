@@ -1,13 +1,19 @@
 import * as React from 'react';
-import { View, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { View, ScrollView, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useAcceptedFriends, useFriendRequests, useRequestedFriends, useFeedItems, useFeedLoaded, useFriendsLoaded, useAllSessions } from '@/sync/domains/state/storage';
+import {
+    useAllSessions,
+    useArtifacts,
+    useFeedItems,
+    useFeedLoaded,
+    useFriendRequests,
+    useFriendsLoaded,
+    useRequestedFriends,
+} from '@/sync/domains/state/storage';
 import { storage as syncStorage } from '@/sync/domains/state/storageStore';
-import { UserCard } from '@/components/ui/cards/UserCard';
 import { t } from '@/text';
-import { trackFriendsSearch, trackFriendsProfileView } from '@/track';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { Typography } from '@/constants/Typography';
@@ -15,13 +21,16 @@ import { useRouter } from 'expo-router';
 import { layout } from '@/components/ui/layout/layout';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { Header } from '@/components/navigation/Header';
-import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { FeedItemCard } from '@/components/inbox/cards/FeedItemCard';
-import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
+import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { Text } from '@/components/ui/text/Text';
-
+import { UserCard } from '@/components/ui/cards/UserCard';
+import { trackFriendsProfileView } from '@/track';
+import { ApprovalInboxCard } from '@/components/inbox/cards/ApprovalInboxCard';
+import { InboxSessionAttentionGroupCard } from '@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard';
+import { listPendingPermissionRequests, listPendingUserActionRequests } from '@/utils/sessions/sessionUtils';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -51,19 +60,9 @@ const styles = StyleSheet.create((theme) => ({
         textAlign: 'center',
         lineHeight: 22,
     },
-    sectionHeader: {
-        fontSize: 14,
-        ...Typography.default('semiBold'),
-        color: theme.colors.textSecondary,
-        paddingHorizontal: 16,
-        paddingTop: 24,
-        paddingBottom: 8,
-        textTransform: 'uppercase',
-    },
 }));
 
-interface InboxViewProps {
-}
+interface InboxViewProps {}
 
 // Header components for tablet mode only (phone mode header is in MainView)
 function HeaderTitleTablet() {
@@ -80,83 +79,53 @@ function HeaderTitleTablet() {
     );
 }
 
-function HeaderRightTablet() {
-    const router = useRouter();
-    const { theme } = useUnistyles();
-    const friendsIdentityReadiness = useFriendsIdentityReadiness();
-    const friendsIdentityReady = friendsIdentityReadiness.isReady;
-
-    if (!friendsIdentityReady) {
-        return <View style={{ width: 32, height: 32 }} />;
-    }
-
-    return (
-        <Pressable
-            onPress={() => {
-                trackFriendsSearch();
-                router.push('/friends/search');
-            }}
-            hitSlop={15}
-            style={{
-                width: 32,
-                height: 32,
-                alignItems: 'center',
-                justifyContent: 'center',
-            }}
-        >
-            <Ionicons name="person-add-outline" size={24} color={theme.colors.header.tint} />
-        </Pressable>
-    );
-}
-
 export const InboxView = React.memo(({}: InboxViewProps) => {
     const router = useRouter();
-    const friends = useAcceptedFriends();
     const friendRequests = useFriendRequests();
     const requestedFriends = useRequestedFriends();
     const feedItems = useFeedItems();
+    const artifacts = useArtifacts();
     const feedLoaded = useFeedLoaded();
     const friendsLoaded = useFriendsLoaded();
     const { theme } = useUnistyles();
     const isTablet = useIsTablet();
+    const friendsEnabled = useFriendsEnabled();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const myId = syncStorage((state) => state.profile.id);
     const sessions = useAllSessions();
+
+    const openApprovals = React.useMemo(() => {
+        return artifacts.filter((a) => a.header?.kind === 'approval_request.v1' && a.header?.approvalStatus === 'open');
+    }, [artifacts]);
+
+    const sessionsNeedingAttention = React.useMemo(() => {
+        return sessions.flatMap((s) => {
+            if (s.presence !== 'online') return [];
+            const pendingPermissions = listPendingPermissionRequests(s);
+            const pendingUserActions = listPendingUserActionRequests(s);
+            if (pendingPermissions.length === 0 && pendingUserActions.length === 0) return [];
+            return [{ session: s, pendingPermissions, pendingUserActions }];
+        });
+    }, [sessions]);
 
     const sharedSessions = React.useMemo(() => {
         if (!myId) return [];
         return sessions.filter((s) => s.owner && s.owner !== myId);
     }, [sessions, myId]);
 
-    const isLoading = !feedLoaded || !friendsLoaded;
-    const isEmpty = !isLoading &&
-        friendRequests.length === 0 &&
-        requestedFriends.length === 0 &&
-        friends.length === 0 &&
-        sharedSessions.length === 0 &&
-        feedItems.length === 0;
+    const showFriendsActivity = friendsEnabled && friendsIdentityReady;
 
-    if (!friendsIdentityReady) {
-        return (
-            <View style={styles.container}>
-                {isTablet && (
-                    <View style={{ backgroundColor: theme.colors.groupped.background }}>
-                        <Header
-                            title={<HeaderTitleTablet />}
-                            headerRight={() => <HeaderRightTablet />}
-                            headerLeft={() => null}
-                            headerShadowVisible={false}
-                            headerTransparent={true}
-                        />
-                    </View>
-                )}
-                <RequireFriendsIdentityForFriends>
-                    <View />
-                </RequireFriendsIdentityForFriends>
-            </View>
-        );
-    }
+    const isLoading = friendsEnabled ? (!feedLoaded || !friendsLoaded) : false;
+    const isEmpty = !isLoading &&
+        openApprovals.length === 0 &&
+        sessionsNeedingAttention.length === 0 &&
+        sharedSessions.length === 0 &&
+        (!showFriendsActivity || (
+            friendRequests.length === 0 &&
+            requestedFriends.length === 0 &&
+            feedItems.length === 0
+        ));
 
     if (isLoading) {
         return (
@@ -165,7 +134,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                     <View style={{ backgroundColor: theme.colors.groupped.background }}>
                         <Header
                             title={<HeaderTitleTablet />}
-                            headerRight={() => <HeaderRightTablet />}
+                            headerRight={() => null}
                             headerLeft={() => null}
                             headerShadowVisible={false}
                             headerTransparent={true}
@@ -188,7 +157,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                     <View style={{ backgroundColor: theme.colors.groupped.background }}>
                         <Header
                             title={<HeaderTitleTablet />}
-                            headerRight={() => <HeaderRightTablet />}
+                            headerRight={() => null}
                             headerLeft={() => null}
                             headerShadowVisible={false}
                             headerTransparent={true}
@@ -217,7 +186,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                 <View style={{ backgroundColor: theme.colors.groupped.background }}>
                     <Header
                         title={<HeaderTitleTablet />}
-                        headerRight={() => <HeaderRightTablet />}
+                        headerRight={() => null}
                         headerLeft={() => null}
                         headerShadowVisible={false}
                         headerTransparent={true}
@@ -232,87 +201,86 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                 <RecoveryKeyReminderBanner />
                 <UpdateBanner />
 
-                {friendRequests.length > 0 && (
-                    <>
-                        <ItemGroup title={t('friends.pendingRequests')}>
-                            {friendRequests.map((friend) => (
-                                <UserCard
-                                    key={friend.id}
-                                    user={friend}
-                                    onPress={() => {
-                                        trackFriendsProfileView();
-                                        router.push(`/user/${friend.id}`);
-                                    }}
-                                />
-                            ))}
-                        </ItemGroup>
-                    </>
+                {openApprovals.length > 0 && (
+                    <ItemGroup title={t('inbox.approvals')}>
+                        {openApprovals.map((artifact) => (
+                            <ApprovalInboxCard
+                                key={artifact.id}
+                                artifact={artifact}
+                                onPress={() => router.push(`/inbox/approvals/${artifact.id}`)}
+                            />
+                        ))}
+                    </ItemGroup>
                 )}
 
-                {requestedFriends.length > 0 && (
-                    <>
-                        <ItemGroup title={t('friends.requestPending')}>
-                            {requestedFriends.map((friend) => (
-                                <UserCard
-                                    key={friend.id}
-                                    user={friend}
-                                    onPress={() => {
-                                        trackFriendsProfileView();
-                                        router.push(`/user/${friend.id}`);
-                                    }}
+                {sessionsNeedingAttention.length > 0 && (
+                    <ItemGroup title={t('inbox.permissions')}>
+                        {sessionsNeedingAttention.map((entry) => {
+                            return (
+                                <InboxSessionAttentionGroupCard
+                                    key={entry.session.id}
+                                    session={entry.session}
+                                    permissionRequests={entry.pendingPermissions}
+                                    userActionRequests={entry.pendingUserActions}
                                 />
-                            ))}
-                        </ItemGroup>
-                    </>
+                            );
+                        })}
+                    </ItemGroup>
+                )}
+
+                {showFriendsActivity && friendRequests.length > 0 && (
+                    <ItemGroup title={t('friends.pendingRequests')}>
+                        {friendRequests.map((friend) => (
+                            <UserCard
+                                key={friend.id}
+                                user={friend}
+                                onPress={() => {
+                                    trackFriendsProfileView();
+                                    router.push(`/user/${friend.id}`);
+                                }}
+                            />
+                        ))}
+                    </ItemGroup>
+                )}
+
+                {showFriendsActivity && requestedFriends.length > 0 && (
+                    <ItemGroup title={t('friends.requestPending')}>
+                        {requestedFriends.map((friend) => (
+                            <UserCard
+                                key={friend.id}
+                                user={friend}
+                                onPress={() => {
+                                    trackFriendsProfileView();
+                                    router.push(`/user/${friend.id}`);
+                                }}
+                            />
+                        ))}
+                    </ItemGroup>
                 )}
 
                 {sharedSessions.length > 0 && (
-                    <>
-                        <ItemGroup title={t('friends.sharedSessions')}>
-                            {sharedSessions.map((session) => {
-                                const title = session.metadata?.name || session.metadata?.path || session.id;
-                                const subtitle = session.ownerProfile?.username ? `@${session.ownerProfile.username}` : undefined;
-                                return (
-                                    <Item
-                                        key={session.id}
-                                        title={title}
-                                        subtitle={subtitle}
-                                        onPress={() => router.push(`/session/${session.id}`)}
-                                    />
-                                );
-                            })}
-                        </ItemGroup>
-                    </>
+                    <ItemGroup title={t('friends.sharedSessions')}>
+                        {sharedSessions.map((session) => {
+                            const title = session.metadata?.name || session.metadata?.path || session.id;
+                            const subtitle = session.ownerProfile?.username ? `@${session.ownerProfile.username}` : undefined;
+                            return (
+                                <Item
+                                    key={session.id}
+                                    title={title}
+                                    subtitle={subtitle}
+                                    onPress={() => router.push(`/session/${session.id}`)}
+                                />
+                            );
+                        })}
+                    </ItemGroup>
                 )}
 
-                {feedItems.length > 0 && (
-                    <>
-                        <ItemGroup title={t('inbox.updates')}>
-                            {feedItems.map((item) => (
-                                <FeedItemCard
-                                    key={item.id}
-                                    item={item}
-                                />
-                            ))}
-                        </ItemGroup>
-                    </>
-                )}
-
-                {friends.length > 0 && (
-                    <>
-                        <ItemGroup title={t('friends.myFriends')}>
-                            {friends.map((friend) => (
-                                <UserCard
-                                    key={friend.id}
-                                    user={friend}
-                                    onPress={() => {
-                                        trackFriendsProfileView();
-                                        router.push(`/user/${friend.id}`);
-                                    }}
-                                />
-                            ))}
-                        </ItemGroup>
-                    </>
+                {showFriendsActivity && feedItems.length > 0 && (
+                    <ItemGroup title={t('inbox.updates')}>
+                        {feedItems.map((item) => (
+                            <FeedItemCard key={item.id} item={item} />
+                        ))}
+                    </ItemGroup>
                 )}
             </ScrollView>
         </View>

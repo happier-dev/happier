@@ -6,6 +6,12 @@ import packageJson from '../../../package.json';
 import { configuration } from '@/configuration';
 import type { CommandContext } from '@/cli/commandRegistry';
 import {
+  FIRST_PARTY_COMPONENT_IDS,
+  installVersionedPayload,
+  resolveFirstPartyComponentPublicReleaseVariant,
+} from '@happier-dev/cli-common/firstPartyRuntime';
+import type { FirstPartyComponentId } from '@happier-dev/cli-common/firstPartyRuntime';
+import {
   compareVersions,
   readNpmDistTagVersion,
   readUpdateCache,
@@ -13,22 +19,28 @@ import {
   writeUpdateCache,
 } from '@happier-dev/cli-common/update';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
-import { resolveCliBinaryAssetBundleFromReleaseAssets, updateCliBinaryFromGitHubTag } from '@/cli/runtime/update/binarySelfUpdate';
+import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
+import {
+  resolveCliBinaryAssetBundleFromReleaseAssets,
+  updateInstalledCliPayloadFromReleaseAssets,
+} from '@/cli/runtime/update/binarySelfUpdate';
 
-type SelfChannel = 'stable' | 'preview';
+type SelfChannel = PublicReleaseRingId;
 
 function usage(): string {
   return [
     `${chalk.bold('happier self')} - Self update + update checks`,
     '',
     `${chalk.bold('Usage:')}`,
-    `  happier self check [--preview|--channel=preview] [--quiet]`,
-    `  happier self update [--preview|--channel=preview] [--to <versionOrTag>]`,
-    `  happier self-update [--check] [--preview|--channel=preview] [--to <versionOrTag>]`,
+    `  happier self check [--preview|--dev|--channel=<preview|dev>] [--quiet]`,
+    `  happier self update [--preview|--dev|--channel=<preview|dev>] [--to <versionOrTag>]`,
+    `  happier self-update [--check] [--preview|--dev|--channel=<preview|dev>] [--to <versionOrTag>]`,
     '',
     `${chalk.bold('Channels:')}`,
     `  stable  → npm dist-tag ${chalk.cyan('latest')}`,
     `  preview → npm dist-tag ${chalk.cyan('next')}`,
+    `  dev     → npm dist-tag ${chalk.cyan('next')} (${chalk.gray('dev rolling binaries')})`,
     '',
     `${chalk.bold('Environment:')}`,
     `  HAPPIER_CLI_UPDATE_CHECK=0                 Disable update notice + background check`,
@@ -80,12 +92,12 @@ function readPackageJsonVersion(path: string): string | null {
   }
 }
 
-export function parseSelfChannel(args: string[]): SelfChannel {
-  if (args.includes('--preview')) return 'preview';
-  const ch = args.find((a) => a === '--channel' || a.startsWith('--channel='));
-  if (!ch) return 'stable';
-  const value = ch === '--channel' ? (args[args.indexOf(ch) + 1] ?? '') : ch.slice('--channel='.length);
-  return String(value).trim() === 'preview' ? 'preview' : 'stable';
+function resolveSelfNpmDistTag(channel: SelfChannel): 'latest' | 'next' {
+  return channel === 'stable' ? 'latest' : 'next';
+}
+
+export function parseSelfChannel(args: string[], invokedPath = process.argv[1] ?? ''): SelfChannel {
+  return resolvePublicReleaseRingIdFromCliArgs({ args, invokedPath });
 }
 
 export function computeSelfUpdateSpec(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
@@ -97,7 +109,7 @@ export function computeSelfUpdateSpec(params: Readonly<{ packageName: string; ch
     }
     return `${pkg}@${to}`;
   }
-  return `${pkg}@${params.channel === 'preview' ? 'next' : 'latest'}`;
+  return `${pkg}@${resolveSelfNpmDistTag(params.channel)}`;
 }
 
 export function detectInstallSource(path: string): 'npm' | 'binary' {
@@ -130,22 +142,34 @@ function resolveBinaryUpdatePlatform(env: NodeJS.ProcessEnv): Readonly<{ os: str
 }
 
 function resolveBinaryUpdateTag(channel: SelfChannel): string {
-  return channel === 'preview' ? 'cli-preview' : 'cli-stable';
+  return resolveFirstPartyComponentPublicReleaseVariant({
+    componentId: 'happier-cli',
+    channel,
+  }).releaseTag;
 }
 
 function npmUpgradeCommand(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
   const pkg = String(params.packageName ?? '').trim();
   const to = String(params.to ?? '').trim();
   if (to) return `npm install -g ${pkg}@${to}`;
-  return `npm install -g ${pkg}@${params.channel === 'preview' ? 'next' : 'latest'}`;
+  return `npm install -g ${pkg}@${resolveSelfNpmDistTag(params.channel)}`;
 }
 
-function cachePath(): string {
-  return join(configuration.happyHomeDir, 'cache', 'update.json');
+function resolvePublicReleaseRingSuffix(ring: SelfChannel): 'stable' | 'preview' | 'dev' {
+  return ring === 'publicdev' ? 'dev' : ring;
 }
 
-function runtimeDir(): string {
-  return join(configuration.happyHomeDir, 'runtime');
+function updateCachePath(channel: SelfChannel): string {
+  const suffix = resolvePublicReleaseRingSuffix(channel);
+  const fileName = suffix === 'stable' ? 'update.json' : `update.${suffix}.json`;
+  return join(configuration.happyHomeDir, 'cache', fileName);
+}
+
+function runtimeDir(channel: SelfChannel): string {
+  const suffix = resolvePublicReleaseRingSuffix(channel);
+  return suffix === 'stable'
+    ? join(configuration.happyHomeDir, 'runtime')
+    : join(configuration.happyHomeDir, `runtime.${suffix}`);
 }
 
 function resolveUpdatePackageName(): string {
@@ -175,9 +199,9 @@ async function cmdCheck(argv: string[]): Promise<void> {
     const current = invokerVersion || null;
     const updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
 
-    const existing = readUpdateCache(cachePath());
+    const existing = readUpdateCache(updateCachePath(channel));
     const checkedAt = Date.now();
-    writeUpdateCache(cachePath(), {
+    writeUpdateCache(updateCachePath(channel), {
       checkedAt,
       latest,
       current,
@@ -197,10 +221,10 @@ async function cmdCheck(argv: string[]): Promise<void> {
     console.log(chalk.green('Up to date.'));
     return;
   }
-  const distTag = channel === 'preview' ? 'next' : 'latest';
+  const distTag = resolveSelfNpmDistTag(channel);
   const pkgName = resolveUpdatePackageName();
 
-  const runtimePkgJson = packageJsonPathForNodeModules({ rootDir: runtimeDir(), packageName: pkgName });
+  const runtimePkgJson = packageJsonPathForNodeModules({ rootDir: runtimeDir(channel), packageName: pkgName });
   const runtimeVersion = runtimePkgJson ? readPackageJsonVersion(runtimePkgJson) : null;
   const invokerVersion = configuration.currentCliVersion;
   const current = runtimeVersion || invokerVersion || null;
@@ -208,9 +232,9 @@ async function cmdCheck(argv: string[]): Promise<void> {
   const latest = readNpmDistTagVersion({ packageName: pkgName, distTag, cwd: process.cwd(), env: process.env });
   const updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
 
-  const existing = readUpdateCache(cachePath());
+  const existing = readUpdateCache(updateCachePath(channel));
   const checkedAt = Date.now();
-  writeUpdateCache(cachePath(), {
+  writeUpdateCache(updateCachePath(channel), {
     checkedAt,
     latest,
     current,
@@ -265,21 +289,79 @@ async function cmdUpdate(argv: string[]): Promise<void> {
   const githubToken = resolveBinaryUpdateToken(process.env);
   const tag = resolveBinaryUpdateTag(effective.channel);
   const minisignPubkeyFile = String(process.env.HAPPIER_MINISIGN_PUBKEY ?? '').trim() || undefined;
-
-  const result = await updateCliBinaryFromGitHubTag({
+  const release = await fetchGitHubReleaseByTag({
     githubRepo,
     tag,
     githubToken,
+    userAgent: 'happier-cli',
+  });
+  const assets = typeof release === 'object' && release != null && 'assets' in release ? (release as any).assets : null;
+  resolveCliBinaryAssetBundleFromReleaseAssets({
+    assets,
     os,
     arch,
-    execPath: process.execPath,
+    preferVersion: effective.preferVersion,
+  });
+
+  const result = await updateInstalledCliPayloadFromReleaseAssets({
+    assets,
+    os,
+    arch,
+    happyHomeDir: configuration.happyHomeDir,
     preferVersion: effective.preferVersion,
     minisignPubkeyFile,
+    channel: effective.channel,
   });
 
   // Refresh cache best-effort.
-  await cmdCheck(['check', '--quiet', ...(effective.channel === 'preview' ? ['--preview'] : [])]);
-  console.log(chalk.green(`✓ Updated binary to ${result.updatedTo}`));
+  await cmdCheck([
+    'check',
+    '--quiet',
+    ...(effective.channel === 'preview'
+      ? ['--preview']
+      : effective.channel === 'publicdev'
+        ? ['--dev']
+        : []),
+  ]);
+  console.log(chalk.green(`✓ Updated happier to ${result.updatedTo}`));
+}
+
+function resolveInternalInstallPayloadArgValue(argv: string[], flagName: string): string {
+  const positionalIndex = argv.indexOf(flagName);
+  if (positionalIndex >= 0) {
+    return String(argv[positionalIndex + 1] ?? '').trim();
+  }
+  const equalsArg = argv.find((arg) => arg.startsWith(`${flagName}=`));
+  return String(equalsArg?.slice(flagName.length + 1) ?? '').trim();
+}
+
+function parseFirstPartyComponentId(value: string): FirstPartyComponentId {
+  if ((FIRST_PARTY_COMPONENT_IDS as readonly string[]).includes(value)) {
+    return value as FirstPartyComponentId;
+  }
+  throw new Error(`Unknown first-party component: ${value}`);
+}
+
+async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
+  const componentId = parseFirstPartyComponentId(resolveInternalInstallPayloadArgValue(argv, '--component'));
+  const payloadRoot = resolveInternalInstallPayloadArgValue(argv, '--payload-root');
+  const versionId = resolveInternalInstallPayloadArgValue(argv, '--version');
+  const channel = normalizePublicReleaseRingId(resolveInternalInstallPayloadArgValue(argv, '--channel')) || parseSelfChannel(argv);
+
+  if (!payloadRoot) {
+    throw new Error('--payload-root is required');
+  }
+  if (!versionId) {
+    throw new Error('--version is required');
+  }
+
+  await installVersionedPayload({
+    componentId,
+    channel,
+    payloadRoot,
+    processEnv: process.env,
+    versionId,
+  });
 }
 
 export async function handleSelfCliCommand(context: CommandContext): Promise<void> {
@@ -296,6 +378,10 @@ export async function handleSelfCliCommand(context: CommandContext): Promise<voi
     }
     if (sub === 'update') {
       await cmdUpdate(argv.slice(1));
+      return;
+    }
+    if (sub === '__install-payload') {
+      await cmdInternalInstallPayload(argv.slice(1));
       return;
     }
     console.error(chalk.red('Error:'), `Unknown self subcommand: ${sub}`);

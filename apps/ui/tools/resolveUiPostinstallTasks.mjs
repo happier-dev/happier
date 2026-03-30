@@ -20,6 +20,7 @@ export function resolveUiPostinstallTasks({ env }) {
             'vendor-kokoro-web',
             'vendor-pierre-diffs-worker',
             'vendor-codemirror-webview-bundle',
+            'vendor-xterm-webview-bundle',
         )
     }
 

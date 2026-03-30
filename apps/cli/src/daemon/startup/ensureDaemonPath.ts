@@ -1,5 +1,5 @@
 import { buildLaunchdPath } from '@/daemon/service/darwin';
-import { buildServicePath } from '@/daemon/service/servicePath';
+import { buildServicePath } from '@happier-dev/cli-common/service';
 
 export function ensureDaemonPath(params: Readonly<{
   env: NodeJS.ProcessEnv;

@@ -1,11 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildToolHeaderModel } from './buildToolHeaderModel';
+import { installToolShellPresentationCommonModuleMocks } from './toolShellPresentationTestHelpers';
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+installToolShellPresentationCommonModuleMocks();
 
 vi.mock('@/components/tools/normalization/core/normalizeToolCallForRendering', () => ({
     normalizeToolCallForRendering: (t: any) => t,

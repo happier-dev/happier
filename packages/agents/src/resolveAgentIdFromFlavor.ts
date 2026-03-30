@@ -8,8 +8,12 @@ export function resolveAgentIdFromFlavor(flavor: unknown): AgentId | null {
   const normalized = flavor.trim().toLowerCase();
   if (!normalized) return null;
 
-  if ((AGENT_IDS as readonly string[]).includes(normalized)) {
-    return normalized as AgentId;
+  if (normalized.startsWith('acp:')) {
+    return 'customAcp';
+  }
+
+  for (const id of AGENT_IDS) {
+    if (id.toLowerCase() === normalized) return id;
   }
 
   for (const id of AGENT_IDS) {
@@ -21,4 +25,3 @@ export function resolveAgentIdFromFlavor(flavor: unknown): AgentId | null {
 
   return null;
 }
-

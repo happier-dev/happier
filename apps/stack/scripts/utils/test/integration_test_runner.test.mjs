@@ -23,11 +23,20 @@ test('splitRealIntegrationTests splits real integration suffixes', () => {
   const files = [
     '/tmp/a.integration.test.mjs',
     '/tmp/b.real.integration.test.mjs',
+    '/tmp/not-a-test.mjs',
     '/tmp/c.integration.test.mjs',
     '/tmp/d.real.integration.test.mjs',
+    '/tmp/unit.test.mjs',
   ];
   const { regular, real } = splitRealIntegrationTests(files);
   assert.deepEqual(regular, ['/tmp/a.integration.test.mjs', '/tmp/c.integration.test.mjs']);
   assert.deepEqual(real, ['/tmp/b.real.integration.test.mjs', '/tmp/d.real.integration.test.mjs']);
 });
 
+test('shouldRunRealIntegrationTests trims and lowercases env values', () => {
+  assert.equal(shouldRunRealIntegrationTests({ HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS: '  TrUe  ' }), true);
+});
+
+test('shouldRunRealIntegrationTests falls back on unknown values', () => {
+  assert.equal(shouldRunRealIntegrationTests({ HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS: 'maybe' }), false);
+});

@@ -1,36 +1,65 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const modalAlertSpy = vi.fn();
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: modalAlertSpy,
-    alertAsync: modalAlertSpy,
-  },
+const screenState = vi.hoisted(() => ({
+    platformOS: 'ios' as 'ios' | 'web',
+    windowDimensions: { width: 390, height: 844 },
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
-
-let platformOS: 'ios' | 'web' = 'ios';
-let windowDimensions: { width: number; height: number } = { width: 390, height: 844 };
-
-vi.mock('react-native', () => ({
-  Platform: {
-    get OS() {
-      return platformOS;
+installSessionHooksCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+                alertAsync: modalAlertSpy,
+            },
+        }).module;
     },
-    select: (options: any) => options?.[platformOS] ?? options?.default ?? options?.ios ?? options?.android,
-  },
-  Dimensions: {
-    get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-  },
-  useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-}));
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                get OS() {
+                    return screenState.platformOS;
+                },
+                select: (options: any) => options?.[screenState.platformOS] ?? options?.default ?? options?.ios ?? options?.android,
+            },
+            Dimensions: {
+                get: () => ({
+                    width: screenState.windowDimensions.width,
+                    height: screenState.windowDimensions.height,
+                    scale: 2,
+                    fontScale: 1,
+                }),
+            },
+            useWindowDimensions: () => ({
+                width: screenState.windowDimensions.width,
+                height: screenState.windowDimensions.height,
+                scale: 2,
+                fontScale: 1,
+            }),
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { replace: vi.fn(), push: routerPushSpy },
+        });
+        return expoRouterMock.module;
+    },
+});
 
 vi.mock('expo-camera', () => ({
   CameraView: {},
@@ -42,9 +71,6 @@ vi.mock('@/utils/platform/platform', () => ({
 }));
 
 const routerPushSpy = vi.fn();
-vi.mock('expo-router', () => ({
-  router: { replace: vi.fn(), push: routerPushSpy },
-}));
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', encryption: { type: 'dataKey' } }, refreshFromActiveServer: vi.fn(async () => {}) }),
@@ -96,14 +122,18 @@ vi.mock('@/sync/domains/state/storageStore', () => {
 describe('useConnectTerminal (scanner lifecycle)', () => {
   beforeEach(() => {
     vi.resetModules();
-    platformOS = 'ios';
-    windowDimensions = { width: 390, height: 844 };
+    screenState.platformOS = 'ios';
+    screenState.windowDimensions = { width: 390, height: 844 };
     routerPushSpy.mockClear();
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    afterAll(() => {
+        vi.unmock('@/utils/path/terminalConnectUrl');
+    });
 
   it('navigates to the in-app QR scanner when starting terminal connect', async () => {
     const { useConnectTerminal } = await import('./useConnectTerminal');
@@ -114,9 +144,7 @@ describe('useConnectTerminal (scanner lifecycle)', () => {
       return null;
     }
 
-    await act(async () => {
-      renderer.create(<Probe />);
-    });
+    await renderScreen(<Probe />);
 
     await act(async () => {
       await hookApi!.connectTerminal();
@@ -126,8 +154,8 @@ describe('useConnectTerminal (scanner lifecycle)', () => {
   });
 
   it('navigates to the in-app QR scanner on phone-sized web', async () => {
-    platformOS = 'web';
-    windowDimensions = { width: 360, height: 800 };
+    screenState.platformOS = 'web';
+    screenState.windowDimensions = { width: 360, height: 800 };
     vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
 
     const { useConnectTerminal } = await import('./useConnectTerminal');
@@ -138,9 +166,7 @@ describe('useConnectTerminal (scanner lifecycle)', () => {
       return null;
     }
 
-    await act(async () => {
-      renderer.create(<Probe />);
-    });
+    await renderScreen(<Probe />);
 
     await act(async () => {
       await hookApi!.connectTerminal();
@@ -150,8 +176,8 @@ describe('useConnectTerminal (scanner lifecycle)', () => {
   });
 
   it('does not open the scanner on desktop web even when the viewport is narrow', async () => {
-    platformOS = 'web';
-    windowDimensions = { width: 480, height: 700 };
+    screenState.platformOS = 'web';
+    screenState.windowDimensions = { width: 480, height: 700 };
     vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
     vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) } as any);
 
@@ -163,9 +189,7 @@ describe('useConnectTerminal (scanner lifecycle)', () => {
       return null;
     }
 
-    await act(async () => {
-      renderer.create(<Probe />);
-    });
+    await renderScreen(<Probe />);
 
     modalAlertSpy.mockClear();
 

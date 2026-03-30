@@ -4,8 +4,15 @@ import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
 
 describe('claudeRemoteAgentSdk stream events', () => {
-    it('coalesces Agent SDK stream_event text deltas into synthetic assistant partial messages', async () => {
+    it('streams Agent SDK stream_event text deltas through StreamedTranscriptWriter (no synthetic partial messages)', async () => {
         const onMessage = vi.fn();
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(),
+            appendThinkingDelta: vi.fn(),
+            overrideAssistantText: vi.fn(),
+            overrideThinkingText: vi.fn(),
+            flushAll: vi.fn(async () => {}),
+        };
 
         const createQuery = vi.fn((_params: any) => {
             return {
@@ -56,7 +63,223 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        expect(createQuery).toHaveBeenCalledWith(expect.objectContaining({
+            options: expect.objectContaining({
+                includePartialMessages: true,
+            }),
+        }));
+        expect(onMessage.mock.calls.some(([msg]) => msg?.type === 'stream_event')).toBe(false);
+        expect(streamedTranscriptWriter.appendAssistantDelta).toHaveBeenCalledWith('Hel', { sidechainId: null });
+        expect(streamedTranscriptWriter.appendAssistantDelta).toHaveBeenCalledWith('lo', { sidechainId: null });
+        expect(streamedTranscriptWriter.overrideAssistantText).toHaveBeenCalledWith('Hello', { sidechainId: null });
+        expect(streamedTranscriptWriter.flushAll).toHaveBeenCalledWith({ reason: 'turn-end' });
+    });
+
+    it('streams Agent SDK thinking deltas and overrides the final thinking text when assembled assistant arrives', async () => {
+        const onMessage = vi.fn();
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(),
+            appendThinkingDelta: vi.fn(),
+            overrideAssistantText: vi.fn(() => true),
+            overrideThinkingText: vi.fn(() => true),
+            flushAll: vi.fn(async () => {}),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_t1',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'thinking_delta', thinking: 'I should ' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_t2',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'thinking_delta', thinking: 'respond.' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'assistant',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        message: {
+                            role: 'assistant',
+                            content: [
+                                { type: 'thinking', thinking: 'I should respond.' },
+                                { type: 'text', text: 'Done.' },
+                            ],
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        expect(streamedTranscriptWriter.appendThinkingDelta).toHaveBeenCalledWith('I should ', { sidechainId: null });
+        expect(streamedTranscriptWriter.appendThinkingDelta).toHaveBeenCalledWith('respond.', { sidechainId: null });
+        expect(streamedTranscriptWriter.overrideThinkingText).toHaveBeenCalledWith('I should respond.', { sidechainId: null });
+        expect(streamedTranscriptWriter.overrideAssistantText).toHaveBeenCalledWith('Done.', { sidechainId: null });
+        expect(streamedTranscriptWriter.flushAll).toHaveBeenCalledWith({ reason: 'turn-end' });
+    });
+
+    it('keeps assembled assistant text/thinking when no live streamed segment exists to replace them', async () => {
+        const onMessage = vi.fn();
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(),
+            appendThinkingDelta: vi.fn(),
+            overrideAssistantText: vi.fn(() => false),
+            overrideThinkingText: vi.fn(() => false),
+            flushAll: vi.fn(async () => {}),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'assistant',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        message: {
+                            role: 'assistant',
+                            content: [
+                                { type: 'thinking', thinking: 'Reasoning' },
+                                { type: 'text', text: 'Answer' },
+                            ],
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        expect(streamedTranscriptWriter.overrideThinkingText).toHaveBeenCalledWith('Reasoning', { sidechainId: null });
+        expect(streamedTranscriptWriter.overrideAssistantText).toHaveBeenCalledWith('Answer', { sidechainId: null });
+
+        expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'assistant',
+            message: expect.objectContaining({
+                content: [
+                    expect.objectContaining({ type: 'thinking', thinking: 'Reasoning' }),
+                    expect.objectContaining({ type: 'text', text: 'Answer' }),
+                ],
+            }),
+        }));
+    });
+
+    it('synthesizes an assistant message from stream_event text when no assembled assistant arrives and no content_block_stop is emitted', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'text', text: 'He' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_1',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'llo' },
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -64,21 +287,396 @@ describe('claudeRemoteAgentSdk stream events', () => {
             createQuery,
         } as any);
 
-        expect(onMessage.mock.calls.some(([msg]) => msg?.type === 'stream_event')).toBe(false);
         expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'assistant',
-            happierPartial: true,
             message: expect.objectContaining({
-                content: [expect.objectContaining({ type: 'text', text: 'Hel' })],
+                content: [expect.objectContaining({ type: 'text', text: 'Hello' })],
             }),
         }));
+    });
+
+    it('does not emit a duplicate synthetic assistant when a later assembled assistant covers the buffered stream text', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'text', text: 'He' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_1',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'llo' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'assistant',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        message: {
+                            role: 'assistant',
+                            content: [{ type: 'text', text: 'Hello' }],
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            createQuery,
+        } as any);
+
+        const assistantMessages = onMessage.mock.calls
+            .map(([msg]) => msg)
+            .filter((msg) => msg?.type === 'assistant');
+
+        expect(assistantMessages).toHaveLength(1);
+        expect(assistantMessages[0]).toEqual(expect.objectContaining({
+            message: expect.objectContaining({
+                content: [expect.objectContaining({ type: 'text', text: 'Hello' })],
+            }),
+        }));
+    });
+
+    it('flushes a streamed assistant reply when the Agent SDK ends the message without a content_block_stop event', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_1',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'Hel' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_2',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'lo' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_message_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'message_stop',
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            createQuery,
+        } as any);
+
         expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'assistant',
-            happierPartial: true,
             message: expect.objectContaining({
-                content: [expect.objectContaining({ type: 'text', text: 'lo' })],
+                content: [expect.objectContaining({ type: 'text', text: 'Hello' })],
             }),
         }));
+    });
+
+    it('falls back to the result text when Claude never emits an assembled assistant message or text stream deltas', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_t1',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'thinking_delta', thinking: 'Let me think.' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_message_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'message_stop',
+                        },
+                    } as any;
+                    yield {
+                        type: 'result',
+                        subtype: 'success',
+                        result: 'Final fallback answer',
+                    } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            createQuery,
+        } as any);
+
+        expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'assistant',
+            message: expect.objectContaining({
+                content: [expect.objectContaining({ type: 'text', text: 'Final fallback answer' })],
+            }),
+        }));
+    });
+
+    it('flushes any buffered stream text before shutdown when the iterator ends without a terminal boundary', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'text', text: 'Hel' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_delta',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'lo' },
+                        },
+                    } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            createQuery,
+        } as any);
+
+        expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'assistant',
+            message: expect.objectContaining({
+                content: [expect.objectContaining({ type: 'text', text: 'Hello' })],
+            }),
+        }));
+    });
+
+    it('keeps buffered stream-event assistant messages isolated per sidechain when stream events interleave', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_main_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'text', text: 'Main ' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_sidechain_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: 'tool_1',
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'text', text: 'Sidechain ' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_main_delta',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'reply' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_sidechain_delta',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: 'tool_1',
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'reply' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_main_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'message_stop',
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_sidechain_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: 'tool_1',
+                        event: {
+                            type: 'message_stop',
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            createQuery,
+        } as any);
+
+        const assistantMessages = onMessage.mock.calls
+            .map(([msg]) => msg)
+            .filter((msg) => msg?.type === 'assistant');
+
+        expect(assistantMessages).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                parent_tool_use_id: null,
+                message: expect.objectContaining({
+                    content: [expect.objectContaining({ type: 'text', text: 'Main reply' })],
+                }),
+            }),
+            expect.objectContaining({
+                parent_tool_use_id: 'tool_1',
+                message: expect.objectContaining({
+                    content: [expect.objectContaining({ type: 'text', text: 'Sidechain reply' })],
+                }),
+            }),
+        ]));
     });
 
     it('reconstructs tool_use blocks from stream_event tool deltas so tool trace is not lost', async () => {
@@ -136,7 +734,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -147,10 +745,133 @@ describe('claudeRemoteAgentSdk stream events', () => {
         expect(onMessage.mock.calls.some(([msg]) => msg?.type === 'stream_event')).toBe(false);
         expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'assistant',
+            uuid: 'toolu_1',
             message: expect.objectContaining({
+                model: 'claude-3',
                 content: [expect.objectContaining({ type: 'tool_use', id: 'toolu_1', name: 'Bash' })],
             }),
         }));
+    });
+
+    it('keeps streamed tool_use reconstruction isolated per sidechain when tool stream events interleave', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_main_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'tool_use', id: 'toolu_main', name: 'Bash', input: {} },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_main_delta',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'input_json_delta', partial_json: '{\"command\":\"pwd\"}' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_side_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: 'tool_parent_1',
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'tool_use', id: 'toolu_side', name: 'Bash', input: {} },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_side_delta',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: 'tool_parent_1',
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'input_json_delta', partial_json: '{\"command\":\"ls\"}' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_main_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: { type: 'content_block_stop' },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_side_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: 'tool_parent_1',
+                        event: { type: 'content_block_stop' },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            createQuery,
+        } as any);
+
+        const toolUseMessages = onMessage.mock.calls
+            .map(([msg]) => msg)
+            .filter((msg) => msg?.type === 'assistant' && Array.isArray(msg?.message?.content))
+            .filter((msg) => msg.message.content.some((c: any) => c?.type === 'tool_use'));
+
+        expect(toolUseMessages).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                parent_tool_use_id: null,
+                uuid: 'toolu_main',
+                message: expect.objectContaining({
+                    content: [expect.objectContaining({
+                        type: 'tool_use',
+                        id: 'toolu_main',
+                        name: 'Bash',
+                        input: { command: 'pwd' },
+                    })],
+                }),
+            }),
+            expect.objectContaining({
+                parent_tool_use_id: 'tool_parent_1',
+                uuid: 'toolu_side',
+                message: expect.objectContaining({
+                    content: [expect.objectContaining({
+                        type: 'tool_use',
+                        id: 'toolu_side',
+                        name: 'Bash',
+                        input: { command: 'ls' },
+                    })],
+                }),
+            }),
+        ]));
     });
 
     it('normalizes Claude Agent Teams tool_use names while reconstructing tool_use blocks from stream_event', async () => {
@@ -279,7 +1000,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -367,7 +1088,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -449,7 +1170,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -546,7 +1267,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -625,7 +1346,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, claudeRemoteIncludePartialMessages: true }),
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -702,5 +1423,284 @@ describe('claudeRemoteAgentSdk stream events', () => {
         const block = (toolResult as any).message.content.find((c: any) => c?.type === 'tool_result' && c?.tool_use_id === 'toolu_1');
         expect(block?.content).toContain('Spawned successfully');
         expect(block?.content).toContain('agent_id:');
+    });
+
+    it('keeps streamed tool_result reconstruction isolated per sidechain when tool result stream events interleave', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_main_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'tool_result', tool_use_id: 'toolu_main' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_main_delta',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'PWD' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_side_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: 'tool_parent_1',
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'tool_result', tool_use_id: 'toolu_side' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_side_delta',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: 'tool_parent_1',
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'LS' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_main_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: { type: 'content_block_stop' },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_side_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: 'tool_parent_1',
+                        event: { type: 'content_block_stop' },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            createQuery,
+        } as any);
+
+        const toolResultMessages = onMessage.mock.calls
+            .map(([msg]) => msg)
+            .filter((msg) => msg?.type === 'user' && Array.isArray(msg?.message?.content))
+            .filter((msg) => msg.message.content.some((c: any) => c?.type === 'tool_result'));
+
+        expect(toolResultMessages).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                parent_tool_use_id: null,
+                uuid: 'toolu_main',
+                message: expect.objectContaining({
+                    content: [expect.objectContaining({
+                        type: 'tool_result',
+                        tool_use_id: 'toolu_main',
+                        content: 'PWD',
+                    })],
+                }),
+            }),
+            expect.objectContaining({
+                parent_tool_use_id: 'tool_parent_1',
+                uuid: 'toolu_side',
+                message: expect.objectContaining({
+                    content: [expect.objectContaining({
+                        type: 'tool_result',
+                        tool_use_id: 'toolu_side',
+                        content: 'LS',
+                    })],
+                }),
+            }),
+        ]));
+    });
+
+    it('treats compact-session init as a turn boundary so queued prompts keep flowing without waiting for stop', async () => {
+        const onReady = vi.fn();
+        const onSessionFound = vi.fn();
+
+        let releaseStream!: () => void;
+        const streamClosed = new Promise<void>((resolve) => {
+            releaseStream = resolve;
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'system',
+                        subtype: 'init',
+                        session_id: 'sess_compacted_2',
+                    } as any;
+                    await streamClosed;
+                },
+                close: vi.fn(() => {
+                    releaseStream();
+                }),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (!didSendFirst) {
+                didSendFirst = true;
+                return {
+                    message: '/compact',
+                    mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
+                };
+            }
+
+            return {
+                message: 'follow-up after compaction',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
+            };
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady,
+            onSessionFound,
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        try {
+            await vi.waitFor(() => {
+                expect(onReady).toHaveBeenCalledTimes(1);
+            });
+            await vi.waitFor(() => {
+                expect(nextMessage).toHaveBeenCalledTimes(2);
+            });
+            expect(onSessionFound).toHaveBeenCalledWith('sess_compacted_2', expect.anything());
+        } finally {
+            releaseStream();
+            await runnerPromise.catch(() => {});
+        }
+    });
+
+    it('does not let stream_event-only next-turn output keep the result-finalize guard stuck after compaction (queued prompts keep flowing)', async () => {
+        const onReady = vi.fn();
+
+        let releaseStream!: () => void;
+        const streamClosed = new Promise<void>((resolve) => {
+            releaseStream = resolve;
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    // Compaction forks the session; we treat this init as a turn boundary so we can
+                    // immediately send the next queued prompt.
+                    yield {
+                        type: 'system',
+                        subtype: 'init',
+                        session_id: 'sess_compacted_2',
+                    } as any;
+
+                    // Next turn starts emitting assistant output as stream events only (no assembled
+                    // assistant message), then ends with a result message.
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_text_1',
+                        session_id: 'sess_compacted_2',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'ok' },
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+
+                    await streamClosed;
+                },
+                close: vi.fn(() => {
+                    releaseStream();
+                }),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let call = 0;
+        const nextMessage = vi.fn(async () => {
+            call++;
+            if (call === 1) {
+                return { message: '/compact', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+            }
+            if (call === 2) {
+                return { message: 'follow-up after compaction', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+            }
+            if (call === 3) {
+                return { message: 'third queued prompt', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+            }
+            return null;
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady,
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        try {
+            await vi.waitFor(() => {
+                expect(nextMessage).toHaveBeenCalledTimes(3);
+            });
+            expect(onReady).toHaveBeenCalled();
+        } finally {
+            releaseStream();
+            await runnerPromise.catch(() => {});
+        }
     });
 });

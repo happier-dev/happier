@@ -24,13 +24,15 @@ function buildToolCallMessage(params: {
     localId: string | null;
     createdAt: number;
     state?: 'running' | 'completed' | 'error';
+    name?: string;
+    input?: Record<string, unknown>;
     requestKind?: 'permission' | 'user_action';
 }): Message {
     const state = params.state ?? 'completed';
     const tool: ToolCall = {
-        name: 'read',
+        name: params.name ?? 'read',
         state,
-        input: {},
+        input: params.input ?? {},
         createdAt: params.createdAt,
         startedAt: params.createdAt,
         completedAt: state === 'running' ? null : params.createdAt + 1,
@@ -251,6 +253,54 @@ describe('buildChatListItemsCached', () => {
         expect(r1.items[1]?.kind === 'tool-calls-group' && r1.items[1].toolMessageIds).toEqual(['t1']);
         expect(r1.items[2]?.kind === 'message' && r1.items[2].messageId).toBe('ask');
         expect(r1.items[3]?.kind === 'tool-calls-group' && r1.items[3].toolMessageIds).toEqual(['t2']);
+    });
+
+    it('keeps canonical turn-diff recap tools outside consecutive tool-call groups', () => {
+        const messages: Message[] = [
+            buildToolCallMessage({ id: 't1', localId: null, createdAt: 1 }),
+            buildToolCallMessage({
+                id: 'diff-1',
+                localId: null,
+                createdAt: 2,
+                name: 'Diff',
+                input: {
+                    unified_diff: [
+                        'diff --git a/apps/ui/a.ts b/apps/ui/a.ts',
+                        '--- a/apps/ui/a.ts',
+                        '+++ b/apps/ui/a.ts',
+                        '@@ -1,1 +1,1 @@',
+                        '-old',
+                        '+new',
+                    ].join('\n'),
+                    _happier: {
+                        sessionChangeScope: 'turn',
+                        turnId: 'turn-1',
+                        sessionId: 'session-1',
+                        provider: 'codex',
+                        source: 'canonical_diff_tool',
+                        confidence: 'exact',
+                        turnStatus: 'completed',
+                        seqRange: {
+                            startSeqInclusive: 1,
+                            endSeqInclusive: 2,
+                        },
+                    },
+                },
+            }),
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const r1 = buildChatListItemsCached({
+            cache: null,
+            messageIdsOldestFirst: ['t1', 'diff-1'],
+            messagesById,
+            pendingMessages: [],
+            groupConsecutiveToolCalls: true,
+        });
+
+        expect(r1.items.map((item) => item.kind)).toEqual(['tool-calls-group', 'message']);
+        expect(r1.items[0]?.kind === 'tool-calls-group' && r1.items[0].toolMessageIds).toEqual(['t1']);
+        expect(r1.items[1]?.kind === 'message' && r1.items[1].messageId).toBe('diff-1');
     });
 
     it('still drops pending messages that are materialized in committed messages after append', () => {

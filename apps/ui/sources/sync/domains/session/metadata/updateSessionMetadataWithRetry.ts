@@ -44,9 +44,13 @@ export async function updateSessionMetadataWithRetry<M>(params: {
     } = params;
 
     for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex++) {
-        const current = getSession();
+        let current = getSession();
         if (!current) {
-            throw new Error('Session metadata not available');
+            await refreshSessions();
+            current = getSession();
+            if (!current) {
+                throw new Error('Session metadata not available');
+            }
         }
 
         const expectedVersion = current.metadataVersion;
@@ -94,4 +98,3 @@ export async function updateSessionMetadataWithRetry<M>(params: {
 
     throw new Error(`Failed to update session metadata after ${maxAttempts} attempts`);
 }
-

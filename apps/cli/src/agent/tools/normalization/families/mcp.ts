@@ -117,6 +117,9 @@ export function normalizeMcpResult(toolName: string, rawOutput: unknown): Unknow
     // Common MCP-style output: { content: [{type:'text',text:'...'}], isError: boolean }
     const text = coerceTextFromContentBlocks((record as any).content);
     if (text && typeof out.text !== 'string') out.text = text;
+    if (typeof out.text !== 'string' && typeof (record as any).stdout === 'string' && (record as any).stdout.trim()) {
+        out.text = (record as any).stdout;
+    }
 
     return {
         ...out,
@@ -126,4 +129,3 @@ export function normalizeMcpResult(toolName: string, rawOutput: unknown): Unknow
         },
     };
 }
-

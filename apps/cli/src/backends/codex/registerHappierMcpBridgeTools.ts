@@ -1,4 +1,4 @@
-import { HAPPIER_MCP_TOOLS } from '@/mcp/happierMcpToolCatalog';
+import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 
 type ToolRegistrar = Readonly<{
   registerTool: (name: string, definition: any, handler: (args: any) => Promise<any>) => void;
@@ -23,15 +23,13 @@ export function registerHappierMcpBridgeTools(
     }
   };
 
-  for (const tool of HAPPIER_MCP_TOOLS) {
-    server.registerTool(
-      tool.name,
-      {
-        description: tool.description,
-        title: tool.title,
-        inputSchema: tool.inputSchema,
-      },
-      forward(tool.name),
-    );
+  for (const tool of listBuiltInHappierTools({ surface: 'session_agent' })) {
+    const meta = {
+      description: tool.description,
+      title: tool.title,
+      inputSchema: tool.inputSchema,
+    };
+
+    server.registerTool(tool.name, meta, forward(tool.name));
   }
 }

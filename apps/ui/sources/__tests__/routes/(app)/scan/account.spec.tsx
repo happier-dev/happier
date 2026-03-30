@@ -1,34 +1,16 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import {
+    installScanRouteCommonModuleMocks,
+} from './scanRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-const promptSpy = vi.fn(async (..._args: unknown[]) => null as string | null);
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: (...args: unknown[]) => promptSpy(...args),
-    },
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: 'RoundButton',
-}));
-
-const routerBackSpy = vi.fn();
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: routerBackSpy }),
-}));
-
 const processAuthUrlSpy = vi.fn(async (_url: string) => true);
+const promptSpy = vi.fn(async (..._args: unknown[]) => null as string | null);
+
 vi.mock('@/hooks/auth/useConnectAccount', () => ({
     useConnectAccount: (_opts?: any) => ({ processAuthUrl: processAuthUrlSpy, isLoading: false }),
 }));
@@ -41,18 +23,28 @@ vi.mock('@/components/qr/QrCodeScannerView', () => ({
     },
 }));
 
-describe('/scan/account', () => {
-    it('processes scanned account link URLs', async () => {
-        routerBackSpy.mockClear();
-        processAuthUrlSpy.mockClear();
-        promptSpy.mockClear();
-        lastScannerProps = null;
+installScanRouteCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: (...args: unknown[]) => promptSpy(...args),
+            },
+        }).module;
+    },
+});
 
+describe('/scan/account', () => {
+    beforeEach(() => {
+        promptSpy.mockClear();
+        processAuthUrlSpy.mockClear();
+        lastScannerProps = null;
+    });
+
+    it('processes scanned account link URLs', async () => {
         const { default: Screen } = await import('@/app/(app)/scan/account');
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
+        await renderScreen(<Screen />);
 
         expect(typeof lastScannerProps?.onScan).toBe('function');
 
@@ -65,36 +57,32 @@ describe('/scan/account', () => {
     });
 
     it('supports manually entering an account link URL when the scanner is unavailable', async () => {
-        routerBackSpy.mockClear();
-        processAuthUrlSpy.mockClear();
-        promptSpy.mockClear();
-        lastScannerProps = null;
-
         promptSpy.mockResolvedValueOnce(' happier:///account?manual ');
 
         const { default: Screen } = await import('@/app/(app)/scan/account');
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
+        await renderScreen(<Screen />);
 
         const footerElement = lastScannerProps?.footer;
         expect(footerElement).toBeTruthy();
+        const footerView = footerElement as React.ReactElement<{ children?: React.ReactNode }>;
+        const footerChildren = React.Children.toArray(footerView.props.children);
+        const roundButton = footerChildren.find(
+            (
+                child,
+            ): child is React.ReactElement<{ action?: () => Promise<void>; testID?: string }> => {
+                if (!React.isValidElement(child)) {
+                    return false;
+                }
+                const button = child as React.ReactElement<{ action?: () => Promise<void>; testID?: string }>;
+                return button.props.testID === 'scan-account-enter-url';
+            },
+        );
+        expect(roundButton).toBeTruthy();
+        if (!roundButton) throw new Error('Expected RoundButton in footer');
 
-        let footerTree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
-            footerTree = renderer.create(footerElement);
-        });
-        if (!footerTree) throw new Error('Expected footer renderer');
-
-        const button = footerTree.root.findByType('RoundButton');
-
-        await act(async () => {
-            await button.props.action();
-        });
-
-        act(() => {
-            footerTree?.unmount();
+            await roundButton.props.action?.();
         });
 
         expect(promptSpy).toHaveBeenCalledTimes(1);

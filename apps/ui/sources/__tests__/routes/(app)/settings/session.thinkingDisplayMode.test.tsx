@@ -1,118 +1,70 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    renderSettingsView,
+    standardCleanup,
+} from '@/dev/testkit';
+import {
+    installSessionSettingsEntryModuleMocks,
+    resetSessionSettingsEntryState,
+} from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
+const shared = vi.hoisted(() => ({
+    setThinkingDisplayMode: vi.fn(),
+    setThinkingInlinePresentation: vi.fn(),
+}));
+
+installSessionSettingsEntryModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            TextInput: 'TextInput',
+        });
     },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: 'Switch',
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) =>
-        React.createElement(
-            'DropdownMenu',
-            props,
-            props.itemTrigger
-                ? React.createElement('Item', {
-                    title: props.itemTrigger.title,
-                    onPress: () => props.onOpenChange?.(!props.open),
-                    disabled: props.itemTrigger?.itemProps?.disabled,
-                })
-                : (typeof props.trigger === 'function'
-                    ? props.trigger({ open: props.open, toggle: () => props.onOpenChange?.(!props.open), openMenu: () => props.onOpenChange?.(true), closeMenu: () => props.onOpenChange?.(false), selectedItem: null })
-                    : null),
-        ),
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: (key: string) => {
+                    if (key === 'sessionThinkingDisplayMode') return ['inline', shared.setThinkingDisplayMode];
+                    if (key === 'sessionThinkingInlinePresentation') return ['summary', shared.setThinkingInlinePresentation];
+                    return [null, vi.fn()];
+                },
+            },
+        });
     },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-const setThinkingDisplayMode = vi.fn();
-const setThinkingInlinePresentation = vi.fn();
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (key: string) => {
-        if (key === 'sessionThinkingDisplayMode') return ['inline', setThinkingDisplayMode];
-        if (key === 'sessionThinkingInlinePresentation') return ['summary', setThinkingInlinePresentation];
-        return [null, vi.fn()];
-    },
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => false,
-}));
+});
 
 afterEach(() => {
-    setThinkingDisplayMode.mockClear();
-    setThinkingInlinePresentation.mockClear();
+    standardCleanup();
+    resetSessionSettingsEntryState();
+    shared.setThinkingDisplayMode.mockClear();
+    shared.setThinkingInlinePresentation.mockClear();
 });
 
 describe('Transcript settings (thinking display mode)', () => {
     it('renders a dropdown and updates session thinking mode + inline presentation', async () => {
         const mod = await import('@/app/(app)/settings/session/transcript');
-        const TranscriptSettingsScreen = mod.default;
+        const screen = await renderSettingsView(React.createElement(mod.default));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(TranscriptSettingsScreen));
-        });
+        expect(screen.findRowByTitle('settingsSession.thinking.displayModeTitle')).toBeTruthy();
 
-        const items = tree.root.findAllByType('Item' as any);
-        const triggerItem = items.find((item: any) => item?.props?.title === 'settingsSession.thinking.displayModeTitle');
-        expect(triggerItem).toBeTruthy();
-
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
         expect(dropdowns.length).toBeGreaterThan(0);
 
-        const thinkingDropdown = dropdowns.find((d: any) => d?.props?.selectedId === 'inline_summary');
+        const thinkingDropdown = dropdowns.find((dropdown: any) => dropdown?.props?.selectedId === 'inline_summary');
         expect(thinkingDropdown).toBeTruthy();
 
         await act(async () => {
             thinkingDropdown!.props.onSelect('inline_full');
         });
 
-        expect(setThinkingDisplayMode).toHaveBeenCalledWith('inline');
-        expect(setThinkingInlinePresentation).toHaveBeenCalledWith('full');
+        expect(shared.setThinkingDisplayMode).toHaveBeenCalledWith('inline');
+        expect(shared.setThinkingInlinePresentation).toHaveBeenCalledWith('full');
     });
 });

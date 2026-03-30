@@ -7,7 +7,7 @@ import { useHeaderHeight } from '@react-navigation/elements';
 import Constants from 'expo-constants';
 import { t } from '@/text';
 import { ProfileEditForm } from '@/components/profiles/edit';
-import { AIBackendProfile } from '@/sync/domains/settings/settings';
+import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { layout } from '@/components/ui/layout/layout';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { DEFAULT_PROFILES, getBuiltInProfile, getBuiltInProfileNameKey, resolveProfileById } from '@/sync/domains/profiles/profileUtils';
@@ -15,8 +15,11 @@ import { convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfi
 import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { Ionicons } from '@expo/vector-icons';
-import { PopoverPortalTargetProvider } from '@/components/ui/popover';
+import { PopoverScope } from '@/components/ui/popover';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
@@ -114,30 +117,18 @@ export default React.memo(function ProfileEditScreen() {
         );
     }, [profile.isBuiltIn]);
 
-    React.useEffect(() => {
-        const addListener = (navigation as any)?.addListener;
-        if (typeof addListener !== 'function') {
-            return;
-        }
-
-        const subscription = addListener.call(navigation, 'beforeRemove', (e: any) => {
-            if (!isDirtyRef.current) return;
-
-            e.preventDefault();
-
-            fireAndForget((async () => {
-                const decision = await confirmDiscard();
-                if (decision === 'discard') {
-                    isDirtyRef.current = false;
-                    (navigation as any).dispatch(e.data.action);
-                } else if (decision === 'save') {
-                    saveRef.current?.();
-                }
-            })(), { tag: 'ProfileEditScreen.beforeRemove' });
-        });
-
-        return () => subscription?.remove?.();
-    }, [confirmDiscard, navigation]);
+    useUnsavedChangesBeforeRemoveGuard({
+        navigation,
+        isDirtyRef,
+        requestDecision: confirmDiscard,
+        onSave: () => saveRef.current?.() ?? false,
+        continueOnSave: false,
+        onContinue: (action) => {
+            if (!action) return;
+            (navigation as any)?.dispatch?.(action);
+        },
+        tag: 'ProfileEditScreen.beforeRemove',
+    });
 
     const handleSave = (savedProfile: AIBackendProfile): boolean => {
         if (!savedProfile.name || savedProfile.name.trim() === '') {
@@ -191,58 +182,47 @@ export default React.memo(function ProfileEditScreen() {
             // selection to /new and close itself. This avoids stacking /new on top of /new (wizard case).
             isDirtyRef.current = false;
             setIsDirty(false);
-            const state = (navigation as any).getState?.();
-            const previousRoute = state?.routes?.[state.index - 1];
-            if (state && state.index > 0 && previousRoute) {
-                (navigation as any).dispatch({
-                    type: 'SET_PARAMS',
-                    payload: { params: { profileId: profileToSave.id } },
-                    source: previousRoute.key,
-                } as never);
-                router.back();
-                return true;
+            const returnMode = setNewSessionPickerReturnParams({
+                navigation: navigation as any,
+                router,
+                routeParams: { profileId: profileToSave.id },
+            });
+            if (returnMode === 'dispatch') {
+                safeRouterBack({ router, navigation, fallbackHref: '/new' });
             }
-
-            // Fallback: if we can't find a previous route to set params on, go to /new directly.
-            router.replace({
-                pathname: '/new',
-                params: { profileId: profileToSave.id },
-            } as any);
             return true;
         }
 
         // Pass selection back to the /new screen via navigation params (unmount-safe).
-        const state = (navigation as any).getState?.();
-        const previousRoute = state?.routes?.[state.index - 1];
-        if (state && state.index > 0 && previousRoute) {
-            (navigation as any).dispatch({
-                type: 'SET_PARAMS',
-                payload: { params: { profileId: profileToSave.id } },
-                source: previousRoute.key,
-            } as never);
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation: navigation as any,
+            router,
+            routeParams: { profileId: profileToSave.id },
+        });
+        if (returnMode === 'dispatch') {
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
         // Prevent the unsaved-changes guard from triggering on successful save.
         isDirtyRef.current = false;
         setIsDirty(false);
-        router.back();
         return true;
     };
 
     const handleCancel = React.useCallback(() => {
         fireAndForget((async () => {
             if (!isDirtyRef.current) {
-                router.back();
+                safeRouterBack({ router, navigation, fallbackHref: '/new' });
                 return;
             }
             const decision = await confirmDiscard();
             if (decision === 'discard') {
                 isDirtyRef.current = false;
-                router.back();
+                safeRouterBack({ router, navigation, fallbackHref: '/new' });
             } else if (decision === 'save') {
                 saveRef.current?.();
             }
         })(), { tag: 'ProfileEditScreen.cancel' });
-    }, [confirmDiscard, router]);
+    }, [confirmDiscard, navigation, router]);
 
     const headerTitle = profile.name ? t('profiles.editProfile') : t('profiles.addProfile');
     const headerBackTitle = t('common.back');
@@ -296,7 +276,7 @@ export default React.memo(function ProfileEditScreen() {
     }, [headerBackTitle, headerLeft, headerRight, headerTitle]);
 
     return (
-        <PopoverPortalTargetProvider>
+        <PopoverScope>
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 keyboardVerticalOffset={Platform.OS === 'ios' ? Constants.statusBarHeight + headerHeight : 0}
@@ -322,7 +302,7 @@ export default React.memo(function ProfileEditScreen() {
                     </View>
                 </View>
             </KeyboardAvoidingView>
-        </PopoverPortalTargetProvider>
+        </PopoverScope>
     );
 });
 

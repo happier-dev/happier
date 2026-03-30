@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Animated, Pressable, View } from 'react-native';
+import { Animated, Platform, Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ResolvedPaneLayout } from './paneBreakpoints';
 import { ResizableDockedPane } from './ResizableDockedPane';
+import { ESCAPE_KEY_BLOCKER_PRIORITIES, getMaxEscapeKeyBlockerPriority, isEscapeEventHandled } from './escapeKeyHandling';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
@@ -42,6 +43,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     const { theme } = useUnistyles();
     const reduceMotion = useReducedMotionPreference();
     const overlayDurationMs = reduceMotion ? motionTokens.durationMs.instant : motionTokens.durationMs.base;
+    const overlayUseNativeDriver = Platform.OS !== 'web';
     const overlayZIndexBase = 50;
 
     const [rightOverlayClosing, setRightOverlayClosing] = React.useState(false);
@@ -79,7 +81,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     toValue: 1,
                     duration: overlayDurationMs,
                     easing: motionTokens.easing.standard,
-                    useNativeDriver: true,
+                    useNativeDriver: overlayUseNativeDriver,
                 }).start();
                 return;
             }
@@ -89,13 +91,13 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                 toValue: 0,
                 duration: overlayDurationMs,
                 easing: motionTokens.easing.standard,
-                useNativeDriver: true,
+                useNativeDriver: overlayUseNativeDriver,
             }).start();
             timeoutRef.current = setTimeout(() => {
                 timeoutRef.current = null;
                 setPresent(false);
             }, overlayDurationMs);
-        }, [node, overlayDurationMs, present, progress, targetOpen]);
+        }, [node, overlayDurationMs, overlayUseNativeDriver, present, progress, targetOpen]);
 
         React.useEffect(() => {
             return () => {
@@ -142,14 +144,14 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
             toValue: 0,
             duration: overlayDurationMs,
             easing: motionTokens.easing.standard,
-            useNativeDriver: true,
+            useNativeDriver: overlayUseNativeDriver,
         }).start();
         detailsOverlayCloseTimeoutRef.current = setTimeout(() => {
             detailsOverlayCloseTimeoutRef.current = null;
             onCloseDetails();
             setDetailsOverlayClosing(false);
         }, overlayDurationMs);
-    }, [detailsPresence.present, detailsPresence.progress, layout.details, onCloseDetails, overlayDurationMs, reduceMotion]);
+    }, [detailsPresence.present, detailsPresence.progress, layout.details, onCloseDetails, overlayDurationMs, overlayUseNativeDriver, reduceMotion]);
 
     const requestCloseOverlayRight = React.useCallback(() => {
         if (rightOverlayCloseTimeoutRef.current) {
@@ -169,14 +171,14 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
             toValue: 0,
             duration: overlayDurationMs,
             easing: motionTokens.easing.standard,
-            useNativeDriver: true,
+            useNativeDriver: overlayUseNativeDriver,
         }).start();
         rightOverlayCloseTimeoutRef.current = setTimeout(() => {
             rightOverlayCloseTimeoutRef.current = null;
             onCloseRight();
             setRightOverlayClosing(false);
         }, overlayDurationMs);
-    }, [layout.right, onCloseRight, overlayDurationMs, reduceMotion, rightPresence.present, rightPresence.progress]);
+    }, [layout.right, onCloseRight, overlayDurationMs, overlayUseNativeDriver, reduceMotion, rightPresence.present, rightPresence.progress]);
 
     React.useEffect(() => {
         const maybeWindow: any = (globalThis as any).window;
@@ -189,12 +191,14 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
 
         const onKeyDown = (event: any) => {
             if (event?.key !== 'Escape') return;
+            if (isEscapeEventHandled(event)) return;
             if (event?.defaultPrevented) return;
             const target = event?.target;
             const tagNameRaw = typeof target?.tagName === 'string' ? target.tagName : '';
             const tagName = String(tagNameRaw).toLowerCase();
             if (tagName === 'input' || tagName === 'textarea') return;
             if (target?.isContentEditable) return;
+            if (getMaxEscapeKeyBlockerPriority() > ESCAPE_KEY_BLOCKER_PRIORITIES.panes) return;
 
             if (layout.details === 'overlay' && detailsPresence.present) {
                 requestCloseOverlayDetails();

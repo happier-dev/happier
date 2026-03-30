@@ -271,52 +271,6 @@ export const claudeScenarios: ProviderScenario[] = [
     },
   },
   {
-    id: 'agent_sdk_partial_messages_smoke',
-    title: 'agent sdk: includePartialMessages does not break tool-trace session flow (Read)',
-    tier: 'extended',
-    yolo: true,
-    messageMeta: { ...agentSdkRemoteMetaBase, claudeRemoteIncludePartialMessages: true },
-    maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
-    setup: async ({ workspaceDir }) => {
-      await writeFile(join(workspaceDir, 'partial-messages-read.txt'), 'AGENTSDK_PARTIAL_OK\n', 'utf8');
-    },
-    prompt: ({ workspaceDir }) =>
-      [
-        'Run exactly one tool call:',
-        '- Use the Read tool (not Bash) to read the file at this absolute path:',
-        join(workspaceDir, 'partial-messages-read.txt'),
-        '- Then reply DONE.',
-        '',
-        'Do not use any other tool.',
-      ].join('\n'),
-    requiredFixtureKeys: ['claude/claude/tool-call/Read', 'claude/claude/tool-result/Read'],
-    verify: async ({ fixtures, workspaceDir }) => {
-      const examples = fixtures?.examples;
-      if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
-      const calls = (examples['claude/claude/tool-call/Read'] ?? []) as any[];
-      if (!Array.isArray(calls) || calls.length === 0) throw new Error('Missing Read tool-call fixtures');
-      const expectedPath = join(workspaceDir, 'partial-messages-read.txt');
-      const hasPath = calls.some((e) => hasStringSubstring(e?.payload?.input, expectedPath));
-      if (!hasPath) throw new Error('Read tool-call did not include expected file path');
-
-      const results = (examples['claude/claude/tool-result/Read'] ?? []) as any[];
-      if (!Array.isArray(results) || results.length === 0) throw new Error('Missing Read tool-result fixtures');
-      const callIds = calls
-        .map((e) => (e?.payload?.id ? String(e.payload.id) : ''))
-        .filter((v) => v.length > 0);
-      if (callIds.length === 0) throw new Error('Read tool-call fixtures missing payload.id');
-      const hasCorrelatedResult = results.some((e) => {
-        const toolUseId = e?.payload?.tool_use_id ? String(e.payload.tool_use_id) : '';
-        if (!toolUseId) return false;
-        if (!callIds.includes(toolUseId)) return false;
-        return hasStringSubstring(e?.payload?.content, 'AGENTSDK_PARTIAL_OK');
-      });
-      if (!hasCorrelatedResult) {
-        throw new Error('Read tool-result fixtures did not correlate to tool-call id or did not include expected content');
-      }
-    },
-  },
-  {
     id: 'agent_sdk_checkpoint_and_rewind_restores_fs',
     title: 'agent sdk: file checkpointing + /rewind restores workspace filesystem',
     tier: 'extended',

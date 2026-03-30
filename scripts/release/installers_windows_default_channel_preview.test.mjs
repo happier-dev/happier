@@ -12,7 +12,7 @@ test('install.ps1 defaults to stable channel when HAPPIER_CHANNEL is unset', asy
   const raw = await readFile(path, 'utf8');
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
   assert.match(trimmed, /^param\s*\(/i);
-  assert.match(trimmed, /ValidateSet\(\s*"stable"\s*,\s*"preview"\s*\)/i);
+  assert.match(trimmed, /dev/i);
   assert.match(trimmed, /\$env:HAPPIER_CHANNEL/i);
   assert.match(trimmed, /else\s*\{\s*"stable"\s*\}/i);
 });

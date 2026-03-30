@@ -12,8 +12,11 @@
  */
 
 const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
 const readline = require('node:readline');
 const { randomUUID } = require('node:crypto');
+const { resolveClaudeProjectId } = require('../testkit/claudeProjectId.cjs');
 const {
   findArgValue,
   mergeMcpServers,
@@ -32,6 +35,7 @@ const sessionId =
   process.env.HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID ||
   process.env.HAPPY_E2E_FAKE_CLAUDE_SESSION_ID ||
   `fake-claude-session-${randomUUID()}`;
+const processNonce = randomUUID();
 const logPath = process.env.HAPPIER_E2E_FAKE_CLAUDE_LOG || process.env.HAPPY_E2E_FAKE_CLAUDE_LOG || '';
 
 const mcpConfigs = parseMcpConfigs(argv);
@@ -44,6 +48,29 @@ const isSdkStreamJson = isStreamJson && inputFormat === 'stream-json';
 const hasPrint = argv.includes('--print');
 const mode = isSdkStreamJson ? 'sdk' : 'local';
 const scenario = process.env.HAPPIER_E2E_FAKE_CLAUDE_SCENARIO || process.env.HAPPY_E2E_FAKE_CLAUDE_SCENARIO || '';
+
+function resolveClaudeConfigDir() {
+  const explicit = String(process.env.CLAUDE_CONFIG_DIR || '').trim();
+  if (explicit) return explicit;
+  const happierOverride = String(process.env.HAPPIER_CLAUDE_CONFIG_DIR || '').trim();
+  if (happierOverride) return happierOverride;
+  return path.join(os.homedir(), '.claude');
+}
+
+function resolveClaudeProjectDirForCwd(cwd) {
+  return path.join(resolveClaudeConfigDir(), 'projects', resolveClaudeProjectId(cwd));
+}
+
+const transcriptPath = path.join(resolveClaudeProjectDirForCwd(process.cwd()), `${sessionId}.jsonl`);
+
+function safeAppendTranscriptJsonl(obj) {
+  try {
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    fs.appendFileSync(transcriptPath, `${JSON.stringify(obj)}\n`, 'utf8');
+  } catch {
+    // Best-effort: a missing transcript will surface as a provider bundle export failure in tests/QA.
+  }
+}
 
 function extractUserTextFromSdkMessage(msg) {
   if (!msg || typeof msg !== 'object') return null;
@@ -91,13 +118,24 @@ safeAppendJsonl(logPath, {
   mergedMcpServers,
 });
 
+// Ensure the transcript path exists even if this process is terminated before any SDK output is emitted.
+safeAppendTranscriptJsonl({
+  type: 'system',
+  subtype: 'init',
+  session_id: sessionId,
+  cwd: process.cwd(),
+  uuid: randomUUID(),
+  timestamp: new Date().toISOString(),
+});
+
 const settingsPath = findArgValue(argv, '--settings');
 const hook = parseHookForwarderCommand(settingsPath);
 void runHookForwarder({
   hook,
   payload: {
     session_id: sessionId,
-    transcript_path: path.join(process.cwd(), `${sessionId}.jsonl`),
+    // Match the real Claude transcript location expected by the CLI handoff export path.
+    transcript_path: transcriptPath,
   },
   logPath,
   invocationId,
@@ -110,6 +148,7 @@ async function runSdkStreamUntilEof() {
 
   function emitSdk(obj) {
     process.stdout.write(`${JSON.stringify(obj)}\n`);
+    safeAppendTranscriptJsonl(obj);
     safeAppendJsonl(logPath, {
       type: 'sdk_stdout',
       invocationId,
@@ -185,7 +224,10 @@ async function runSdkStreamUntilEof() {
       uuid: randomUUID(),
       session_id: sessionId,
       message: {
-        id: `fake-assistant-${turn}`,
+        // Message ids must be unique across *vendor sessions* (separate processes) because the Happier UI
+        // can render fork chains that include messages from multiple sessions in a single transcript list.
+        // Keep ids stable within a turn so multi-chunk scenarios still update the same logical message.
+        id: `fake-assistant-${processNonce}-${turn}`,
         type: 'message',
         role: 'assistant',
         model: 'fake-claude',
@@ -434,7 +476,7 @@ async function runSdkStreamUntilEof() {
         'subagents,',
         "there's",
         'a',
-        '`mcp__happier__delegate_start`',
+        '`mcp__happier__subagents_delegate_start`',
         'tool',
         '-',
         'we',
@@ -702,6 +744,34 @@ async function runSdkStreamUntilEof() {
 
       emitSdk(assistant);
       emitSdk(toolResult);
+      emitSdk(createResultSuccess());
+      continue;
+    }
+
+    if (scenario === 'voice-actions-send-session-message') {
+      const assistant = createAssistantMessage([
+        {
+          type: 'text',
+          text: [
+            'I can send that.',
+            '',
+            '<voice_actions>',
+            JSON.stringify({
+              actions: [
+                {
+                  t: 'sendSessionMessage',
+                  args: {
+                    message: 'hello from fake voice action',
+                  },
+                },
+              ],
+            }),
+            '</voice_actions>',
+          ].join('\n'),
+        },
+      ]);
+
+      emitSdk(assistant);
       emitSdk(createResultSuccess());
       continue;
     }

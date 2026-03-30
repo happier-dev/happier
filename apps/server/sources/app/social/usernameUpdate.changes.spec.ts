@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+
+import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
 import { createInTxHarness } from "../api/testkit/txHarness";
 
 const emitUpdate = vi.fn();
@@ -19,14 +21,10 @@ vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
 const markAccountChanged = vi.fn(async () => 777);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
-const dbAccountFindFirst = vi.fn();
-vi.mock("@/storage/db", () => ({
-    db: {
-        account: {
-            findFirst: (...args: any[]) => dbAccountFindFirst(...args),
-        },
-    },
-}));
+const dbMocks = createDbMocks({
+    account: ["findFirst"],
+} as const);
+installDbModuleMock({ db: dbMocks.db });
 
 let txAccountUpdate: any;
 
@@ -42,7 +40,7 @@ vi.mock("@/storage/inTx", () => {
 
 describe("usernameUpdate (AccountChange integration)", () => {
     it("marks account change and emits update using returned cursor", async () => {
-        dbAccountFindFirst.mockResolvedValue(null);
+        dbMocks.db.account.findFirst.mockResolvedValue(null);
         txAccountUpdate = vi.fn(async () => ({}));
 
         const { usernameUpdate } = await import("./usernameUpdate");

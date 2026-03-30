@@ -1,9 +1,7 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
-    createSessionRouteReply,
-    preloadSessionRoutes,
-    registerSessionRoutesAndGetHandler,
+    createSessionRouteTestBuilder,
     resetSessionRouteMocks,
     checkSessionAccess,
     getSessionParticipantUserIds,
@@ -13,10 +11,6 @@ import {
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 archive", () => {
-    beforeAll(async () => {
-        await preloadSessionRoutes();
-    }, 120_000);
-
     beforeEach(() => {
         resetSessionRouteMocks();
     });
@@ -28,16 +22,8 @@ describe("sessionRoutes v2 archive", () => {
         txSessionFindUnique.mockResolvedValue({ id: "s1", active: false, archivedAt: null });
         txSessionUpdate.mockResolvedValue({ id: "s1", archivedAt: now });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v2/sessions/:sessionId/archive");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/archive");
+        const { reply, response: res } = await route.invoke({ params: { sessionId: "s1" } });
 
         expect(reply.code).not.toHaveBeenCalledWith(403);
         expect(res).toEqual({ success: true, archivedAt: now.getTime() });
@@ -48,16 +34,8 @@ describe("sessionRoutes v2 archive", () => {
         checkSessionAccess.mockResolvedValue({ level: "admin" });
         txSessionFindUnique.mockResolvedValue({ id: "s1", active: true, archivedAt: null });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v2/sessions/:sessionId/archive");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/archive");
+        const { reply, response: res } = await route.invoke({ params: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(409);
         expect(res).toEqual({ error: "session-active" });
@@ -67,16 +45,8 @@ describe("sessionRoutes v2 archive", () => {
     it("returns 403 when actor is not admin", async () => {
         checkSessionAccess.mockResolvedValue({ level: "edit" });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v2/sessions/:sessionId/archive");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/archive");
+        const { reply, response: res } = await route.invoke({ params: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(403);
         expect(res).toEqual({ error: "Forbidden" });
@@ -88,16 +58,8 @@ describe("sessionRoutes v2 archive", () => {
         txSessionFindUnique.mockResolvedValue({ id: "s1", active: false, archivedAt: new Date(1) });
         txSessionUpdate.mockResolvedValue({ id: "s1", archivedAt: null });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v2/sessions/:sessionId/unarchive");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/unarchive");
+        const { response: res } = await route.invoke({ params: { sessionId: "s1" } });
 
         expect(res).toEqual({ success: true, archivedAt: null });
         expect(markAccountChanged).toHaveBeenCalledTimes(1);

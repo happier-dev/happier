@@ -32,6 +32,13 @@ export function decideMessageCatchUpPolicy(input: Readonly<{
     const sessionSeqHint = Math.max(0, Math.trunc(input.sessionSeqHint));
     const gapSeq = sessionSeqHint - materializedMaxSeq;
 
+    // If we recently reconnected, the session seq hint can be stale (e.g. when the changes feed
+    // does not include message entries for the gap). Force a single incremental page so we
+    // still attempt `afterSeq` catch-up once per resume.
+    if (gapSeq <= 0 && input.offlineForMs > 0 && materializedMaxSeq > 0) {
+        return { kind: 'incremental_batched', maxPages: 1 };
+    }
+
     if (gapSeq <= 0) {
         return { kind: 'do_nothing' };
     }

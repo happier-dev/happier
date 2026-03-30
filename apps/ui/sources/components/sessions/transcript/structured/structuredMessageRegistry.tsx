@@ -8,21 +8,32 @@ import {
     PlanOutputV1Schema,
     ParticipantMessageV1Schema,
     ReviewFindingsV1Schema,
+    ReviewFindingsV2Schema,
+    ReviewFollowUpV1Schema,
     SessionSummaryShardV1Schema,
     SessionSynopsisV1Schema,
+    SubagentCommandV1Schema,
+    SubagentLaunchV1Schema,
     VoiceAgentTurnV1Schema,
 } from '@happier-dev/protocol';
 import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
+import { ReviewFollowUpMessageCard } from '@/components/sessions/reviews/messages/ReviewFollowUpMessageCard';
 import { PlanOutputMessageCard } from '@/components/sessions/plans/messages/PlanOutputMessageCard';
 import { DelegateOutputMessageCard } from '@/components/sessions/delegations/messages/DelegateOutputMessageCard';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { ParticipantMessageCard } from '@/components/sessions/participants/messages/ParticipantMessageCard';
+import { SubagentLaunchMessageCard } from '@/components/sessions/subagents/messages/SubagentLaunchMessageCard';
+import { SubagentCommandMessageCard } from '@/components/sessions/subagents/messages/SubagentCommandMessageCard';
 
 export type StructuredMessageKind =
     | 'participant_message.v1'
+    | 'subagent_launch.v1'
+    | 'subagent_command.v1'
     | 'review_comments.v1'
     | 'review_findings.v1'
+    | 'review_findings.v2'
+    | 'review_follow_up.v1'
     | 'plan_output.v1'
     | 'delegate_output.v1'
     | 'voice_agent_turn.v1'
@@ -41,11 +52,21 @@ export type StructuredMessageRegistryEntry<T> = Readonly<{
     render: (payload: T, params: StructuredMessageRendererParams) => React.ReactElement | null;
 }>;
 
-export const STRUCTURED_MESSAGE_REGISTRY: readonly StructuredMessageRegistryEntry<any>[] = Object.freeze([
+const structuredMessageRegistryEntries: readonly StructuredMessageRegistryEntry<any>[] = [
     {
         kind: 'participant_message.v1',
         schema: ParticipantMessageV1Schema,
         render: (payload, params) => <ParticipantMessageCard payload={payload} message={params.message} />,
+    },
+    {
+        kind: 'subagent_launch.v1',
+        schema: SubagentLaunchV1Schema,
+        render: (payload, params) => <SubagentLaunchMessageCard payload={payload} message={params.message} />,
+    },
+    {
+        kind: 'subagent_command.v1',
+        schema: SubagentCommandV1Schema,
+        render: (payload, params) => <SubagentCommandMessageCard payload={payload} message={params.message} />,
     },
     {
         kind: 'review_comments.v1',
@@ -60,6 +81,18 @@ export const STRUCTURED_MESSAGE_REGISTRY: readonly StructuredMessageRegistryEntr
         render: (payload, params) => (
             <ReviewFindingsMessageCard payload={payload} sessionId={params.sessionId} />
         ),
+    },
+    {
+        kind: 'review_findings.v2',
+        schema: ReviewFindingsV2Schema,
+        render: (payload, params) => (
+            <ReviewFindingsMessageCard payload={payload} sessionId={params.sessionId} />
+        ),
+    },
+    {
+        kind: 'review_follow_up.v1',
+        schema: ReviewFollowUpV1Schema,
+        render: (payload) => <ReviewFollowUpMessageCard payload={payload} />,
     },
     {
         kind: 'plan_output.v1',
@@ -91,7 +124,11 @@ export const STRUCTURED_MESSAGE_REGISTRY: readonly StructuredMessageRegistryEntr
         schema: SessionSummaryShardV1Schema,
         render: () => null,
     },
-]);
+];
+
+// Avoid freezing an inline literal: it forces TS to infer a huge union of anonymous object types.
+export const STRUCTURED_MESSAGE_REGISTRY: readonly StructuredMessageRegistryEntry<any>[] =
+    Object.freeze(structuredMessageRegistryEntries);
 
 export function findStructuredMessageRenderer(kind: string): StructuredMessageRegistryEntry<any> | null {
     for (const entry of STRUCTURED_MESSAGE_REGISTRY) {

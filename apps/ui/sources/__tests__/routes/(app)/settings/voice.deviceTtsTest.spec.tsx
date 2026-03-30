@@ -1,53 +1,36 @@
 import React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderSettingsView,
+    standardCleanup,
+} from '@/dev/testkit';
+import {
+    getVoiceSettingsRouteModalMockRef,
+    installVoiceSettingsRouteModuleMocks,
+} from './voiceSettingsRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const speakDeviceTextSpy = vi.fn();
-const modalAlertSpy = vi.fn();
+const setVoiceSpy = vi.fn();
+const modalMockRef = getVoiceSettingsRouteModalMockRef();
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: vi.fn(),
-        confirm: vi.fn(),
-        alert: (...args: any[]) => modalAlertSpy(...args),
+installVoiceSettingsRouteModuleMocks({
+    storageModule: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'voice') return voiceSetting;
+                if (key === 'backendEnabledById') return {};
+                if (key === 'backendEnabledByTargetKey') return {};
+                if (key === 'recentMachinePaths') return [];
+                throw new Error(`unexpected useSetting(${key})`);
+            },
+            useSettings: () => ({}),
+        });
     },
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: React.forwardRef((props: any, ref: any) => React.createElement('ItemList', { ...props, ref }, props.children)),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement(
-        'DropdownMenu',
-        props,
-        (typeof props.trigger === 'function'
-            ? props.trigger({ open: false, toggle: () => {}, openMenu: () => {}, closeMenu: () => {} })
-            : props.trigger) ?? null,
-    ),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
-}));
+});
 
 vi.mock('@/voice/local/speakDeviceText', () => ({
     speakDeviceText: (...args: any[]) => speakDeviceTextSpy(...args),
@@ -59,13 +42,38 @@ vi.mock('@/voice/local/formatVoiceTestFailureMessage', () => ({
 
 let voiceSetting: any = null;
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'voice') return voiceSetting;
-        if (key === 'backendEnabledById') return {};
-        if (key === 'recentMachinePaths') return [];
-        throw new Error(`unexpected useSetting(${key})`);
-    },
+vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
+    useVoiceSettingsMutable: () => [voiceSetting, (next: any) => setVoiceSpy(next)],
+}));
+
+vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
+    useEnabledAgentIds: () => ['claude', 'codex', 'opencode'],
+}));
+
+vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState', () => ({
+    useNewSessionPreflightModelsState: () => ({
+        modelOptions: [],
+        probe: {
+            phase: 'idle',
+            refresh: vi.fn(),
+        },
+    }),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useAllMachines: () => [],
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 'test-server' }),
+}));
+
+vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
+    resolvePreferredMachineId: () => null,
+}));
+
+vi.mock('@/agents/runtime/resumeCapabilities', () => ({
+    canAgentResume: () => true,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -92,7 +100,14 @@ describe('VoiceSettingsScreen (device TTS)', () => {
     beforeEach(() => {
         speakDeviceTextSpy.mockClear();
         speakDeviceTextSpy.mockResolvedValue(undefined);
-        modalAlertSpy.mockClear();
+        setVoiceSpy.mockClear();
+        modalMockRef.current?.spies.alert.mockClear();
+        modalMockRef.current?.spies.confirm.mockClear();
+        modalMockRef.current?.spies.prompt.mockClear();
+    });
+
+    afterEach(() => {
+        standardCleanup();
     });
 
     it('uses device TTS for Test TTS when enabled (does not require TTS Base URL)', async () => {
@@ -112,27 +127,16 @@ describe('VoiceSettingsScreen (device TTS)', () => {
             },
         };
 
+        await import('@/modal');
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        expect(tree).toBeTruthy();
-
-        const testItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.testTts')
-            .find((n) => typeof n.props?.onPress === 'function');
-        expect(testItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.testTts')).toBeTruthy();
 
         await act(async () => {
-            testItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.testTts');
         });
-        await act(async () => {});
 
-        expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'settingsVoice.local.testTtsMissingBaseUrl');
+        expect(modalMockRef.current.spies.alert).not.toHaveBeenCalledWith('common.error', 'settingsVoice.local.testTtsMissingBaseUrl');
         expect(speakDeviceTextSpy).toHaveBeenCalledWith('settingsVoice.local.testTtsSample');
     });
 
@@ -154,25 +158,16 @@ describe('VoiceSettingsScreen (device TTS)', () => {
             },
         };
 
+        await import('@/modal');
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const testItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.testTts')
-            .find((n) => typeof n.props?.onPress === 'function');
-        expect(testItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.testTts')).toBeTruthy();
 
         await act(async () => {
-            testItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.testTts');
         });
-        await act(async () => {});
 
-        expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'settingsVoice.local.testTtsMissingBaseUrl');
+        expect(modalMockRef.current.spies.alert).not.toHaveBeenCalledWith('common.error', 'settingsVoice.local.testTtsMissingBaseUrl');
         expect(speakDeviceTextSpy).toHaveBeenCalledWith('settingsVoice.local.testTtsSample');
     });
 
@@ -193,25 +188,15 @@ describe('VoiceSettingsScreen (device TTS)', () => {
                 },
             },
         };
+        await import('@/modal');
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        expect(tree).toBeTruthy();
-        const testItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.testTts')
-            .find((n) => typeof n.props?.onPress === 'function');
-        expect(testItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.testTts')).toBeTruthy();
 
         await act(async () => {
-            await testItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.testTts');
         });
-        await act(async () => {});
 
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'formatted error');
+        expect(modalMockRef.current.spies.alert).toHaveBeenCalledWith('common.error', 'formatted error');
     });
 });

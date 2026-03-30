@@ -1,3 +1,4 @@
+import { buildBackendTargetKey } from "@happier-dev/protocol";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
@@ -35,7 +36,7 @@ describe("automationCrudService (integration)", () => {
     });
 
     afterEach(async () => {
-        harness.restoreEnv();
+        harness.resetEnv();
         eventRouter.clearIo();
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),
@@ -270,7 +271,7 @@ describe("automationCrudService (integration)", () => {
         }
     });
 
-    it("rejects existing_session automation when target session does not exist or is inactive", async () => {
+    it("rejects existing_session automation when target session does not exist or is not resumable", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-automation-crud-existing-session-validation" },
             select: { id: true },
@@ -298,12 +299,12 @@ describe("automationCrudService (integration)", () => {
             }),
         ).rejects.toThrow(/existing session/i);
 
-        const inactiveSession = await db.session.create({
+        const unsupportedSession = await db.session.create({
             data: {
-                tag: "inactive-session",
+                tag: "unsupported-session",
                 accountId: account.id,
-                metadata: "{}",
-                active: false,
+                metadata: JSON.stringify({ flavor: "pi", piSessionId: "pi-session-1" }),
+                active: true,
             },
             select: { id: true },
         });
@@ -312,19 +313,19 @@ describe("automationCrudService (integration)", () => {
             createAutomation({
                 accountId: account.id,
                 input: {
-                    name: "Existing session inactive",
+                    name: "Existing session unsupported",
                     description: null,
                     enabled: true,
                     schedule: { kind: "interval", everyMs: 60_000, timezone: null },
                     targetType: "existing_session",
-                    templateCiphertext: buildTemplateEnvelope(inactiveSession.id),
+                    templateCiphertext: buildTemplateEnvelope(unsupportedSession.id),
                     assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
                 },
             }),
-        ).rejects.toThrow(/inactive/i);
+        ).rejects.toThrow(/resume|resum/i);
     });
 
-    it("allows existing_session automation for an active target and rejects invalid target updates", async () => {
+    it("allows existing_session automation for a resumable target even when inactive and rejects invalid target updates", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-automation-crud-existing-session-update-validation" },
             select: { id: true },
@@ -341,7 +342,8 @@ describe("automationCrudService (integration)", () => {
             data: {
                 tag: "active-session",
                 accountId: account.id,
-                metadata: "{}",
+                metadata: JSON.stringify({ flavor: "claude", claudeSessionId: "claude-session-1" }),
+                active: false,
             },
             select: { id: true },
         });
@@ -370,6 +372,95 @@ describe("automationCrudService (integration)", () => {
                 },
             }),
         ).rejects.toThrow(/existing session/i);
+    });
+
+    it("does not reject an existing_session automation when the target session metadata is opaque e2ee ciphertext", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-automation-crud-existing-session-e2ee-validation" },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: "{}",
+            },
+        });
+
+        const encryptedSession = await db.session.create({
+            data: {
+                tag: "encrypted-session",
+                accountId: account.id,
+                encryptionMode: "e2ee",
+                metadata: "opaque-ciphertext-metadata",
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                name: "Existing session e2ee",
+                description: null,
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000, timezone: null },
+                targetType: "existing_session",
+                templateCiphertext: buildTemplateEnvelope(encryptedSession.id),
+                assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+            },
+        });
+
+        expect(created.targetType).toBe("existing_session");
+    });
+
+    it("rejects existing_session automation when account settings disable the target backend", async () => {
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-automation-crud-existing-session-account-settings-validation",
+                settings: JSON.stringify({
+                    t: "plain",
+                    v: {
+                        backendEnabledByTargetKey: {
+                            [buildBackendTargetKey({ kind: "builtInAgent", agentId: "claude" })]: false,
+                        },
+                    },
+                }),
+            },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: "{}",
+            },
+        });
+
+        const disabledSession = await db.session.create({
+            data: {
+                tag: "disabled-session",
+                accountId: account.id,
+                metadata: JSON.stringify({ flavor: "claude", claudeSessionId: "claude-session-disabled" }),
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        await expect(() =>
+            createAutomation({
+                accountId: account.id,
+                input: {
+                    name: "Existing session disabled",
+                    description: null,
+                    enabled: true,
+                    schedule: { kind: "interval", everyMs: 60_000, timezone: null },
+                    targetType: "existing_session",
+                    templateCiphertext: buildTemplateEnvelope(disabledSession.id),
+                    assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+                },
+            }),
+        ).rejects.toThrow(/resum|backend/i);
     });
 
     it("rejects assignments that target machines outside of the account with AutomationValidationError", async () => {

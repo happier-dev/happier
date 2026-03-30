@@ -7,6 +7,13 @@ import type {
 } from '../../domains/state/storageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
+import {
+    buildSessionListRenderableFromSession,
+    didSessionListRenderableProjectGroupingFieldsChange,
+    didSessionListRenderableStructuralFieldsChange,
+    preserveSessionListRenderableTransientState,
+    type SessionListRenderableSession,
+} from '../../domains/session/listing/sessionListRenderable';
 import { nowServerMs } from '../../runtime/time';
 import {
     loadSessionDrafts,
@@ -26,13 +33,23 @@ import {
     saveSessionActionDrafts,
     saveSessionReviewCommentsDrafts,
 } from '../../domains/state/persistence';
+import {
+    resolveWarmCacheAccountScope,
+    type SessionListCacheEntryV1,
+    saveSessionListWarmCacheEntries,
+} from '../../domains/state/warmCachePersistence';
+import { buildSessionListCacheEntriesFromRenderables } from '../../domains/state/warmCacheAdapters';
 import { projectManager } from '../../runtime/orchestration/projectManager';
 import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
-import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
-import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
+import {
+    applyReachableTargetsToSessionListRenderables,
+    buildSessionListViewDataWithServerScope,
+} from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
+import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import type { SessionActionDraftStatus } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
@@ -41,6 +58,7 @@ import type { StoreGet, StoreSet } from './_shared';
 import { applyAgentStateUpdateToSessionMessages } from './messages';
 import type { SessionMessages } from './messages';
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
+import { resolveMergedSessionPermissionMode } from './resolveMergedSessionPermissionMode';
 
 type SessionModelMode = NonNullable<Session['modelMode']>;
 type ScmOperationLogEntry = import('../../runtime/orchestration/projectManager').ScmProjectOperationLogEntry;
@@ -48,8 +66,25 @@ type ScmInFlightOperation = import('../../runtime/orchestration/projectManager')
 type BeginScmOperationResult = import('../../runtime/orchestration/projectManager').BeginScmProjectOperationResult;
 type ProjectScmSnapshotError = import('../../runtime/orchestration/projectManager').ProjectScmSnapshotError;
 
+function applyReachableSessionListRenderablesForState(input: Readonly<{
+    sessions: Record<string, SessionListRenderableSession>;
+    sessionRecords: Record<string, Session>;
+    machineDisplays: SessionsDomainDependencies['machineDisplayById'];
+    machineRecords: SessionsDomainDependencies['machines'];
+    getProjectForSession?: SessionsDomain['getProjectForSession'];
+}>): Record<string, SessionListRenderableSession> {
+    return applyReachableTargetsToSessionListRenderables({
+        sessions: input.sessions,
+        sessionRecords: input.sessionRecords,
+        machines: input.machineDisplays,
+        machineRecords: input.machineRecords,
+        getProjectForSession: input.getProjectForSession,
+    });
+}
+
 export type SessionsDomain = {
     sessions: Record<string, Session>;
+    sessionListRenderables: Record<string, SessionListRenderableSession>;
     sessionsData: (string | Session)[] | null;
     sessionListViewData: SessionListViewItem[] | null;
     sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
@@ -62,6 +97,13 @@ export type SessionsDomain = {
 
     getActiveSessions: () => Session[];
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
+    replaceSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
+    applySessionListRenderablePatches: (
+        patches: ReadonlyArray<Readonly<{
+            sessionId: string;
+            patch: Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>>;
+        }>>,
+    ) => void;
     applyLoaded: () => void;
     applyReady: () => void;
 
@@ -72,6 +114,7 @@ export type SessionsDomain = {
     updateSessionDraft: (sessionId: string, draft: string | null) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
+    clearSessionThinkingGrace: (sessionId: string) => void;
     markSessionViewed: (sessionId: string) => void;
     updateSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void;
     updateSessionModelMode: (sessionId: string, mode: SessionModelMode) => void;
@@ -131,7 +174,9 @@ export type SessionsDomain = {
 
 type SessionsDomainDependencies = {
     machines: Record<string, Machine>;
+    machineDisplayById: Record<string, import('../../domains/machines/machineDisplayRenderable').MachineDisplayRenderable>;
     sessionMessages: Record<string, SessionMessages>;
+    profile: { id: string };
     // Keep resilient: older settings payloads (or partial boot states) may not yet include this key.
     settings: {
         groupInactiveSessionsByProject?: boolean;
@@ -144,6 +189,12 @@ type SessionsDomainDependencies = {
 // Cleared via timers so components don't need to poll time.
 const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = 15_000;
 const optimisticThinkingTimeoutBySessionId = new Map<string, ReturnType<typeof setTimeout>>();
+
+// UI-only "thinking debounce" marker.
+// Kept for a short grace period after the session stops streaming, so the UI doesn't flicker
+// between "working" and "online" between output chunks.
+const SESSION_THINKING_GRACE_TIMEOUT_MS = 3_000;
+const thinkingGraceTimeoutBySessionId = new Map<string, ReturnType<typeof setTimeout>>();
 
 let actionDraftIdCounter = 0;
 function createActionDraftId(nowMs: number): string {
@@ -168,56 +219,31 @@ function isSessionActive(session: { active: boolean; activeAt: number }): boolea
     return session.active;
 }
 
-function didSessionListStructuralFieldsChange(previous: Session | undefined, next: Session): boolean {
-    if (!previous) return true;
-    if (previous.active !== next.active) return true;
-    if (previous.createdAt !== next.createdAt) return true;
-    if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return true;
-
-    const prevMeta: any = previous.metadata ?? null;
-    const nextMeta: any = next.metadata ?? null;
-
-    const prevMachineId = String(prevMeta?.machineId ?? '');
-    const nextMachineId = String(nextMeta?.machineId ?? '');
-    if (prevMachineId !== nextMachineId) return true;
-
-    const prevPath = String(prevMeta?.path ?? '');
-    const nextPath = String(nextMeta?.path ?? '');
-    if (prevPath !== nextPath) return true;
-
-    const prevHomeDir = String(prevMeta?.homeDir ?? '');
-    const nextHomeDir = String(nextMeta?.homeDir ?? '');
-    if (prevHomeDir !== nextHomeDir) return true;
-
-    const prevHidden = prevMeta?.systemSessionV1?.hidden === true;
-    const nextHidden = nextMeta?.systemSessionV1?.hidden === true;
-    if (prevHidden !== nextHidden) return true;
-
-    return false;
+function saveWarmSessionCacheForState(
+    state: SessionsDomain & SessionsDomainDependencies,
+    previousEntries?: Record<string, SessionListCacheEntryV1>,
+): void {
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    const accountId = resolveWarmCacheAccountScope(state.profile?.id);
+    if (!activeServerId || !accountId) return;
+    saveSessionListWarmCacheEntries(
+        activeServerId,
+        accountId,
+        buildSessionListCacheEntriesFromRenderables(state.sessionListRenderables ?? {}, previousEntries),
+    );
 }
 
-function resolveProjectMachineScopeIdFromSessionMetadata(metadata: any): string {
-    const machineId = typeof metadata?.machineId === 'string' ? metadata.machineId.trim() : '';
-    if (machineId) return machineId;
-    const host = typeof metadata?.host === 'string' ? metadata.host.trim() : '';
-    if (host) return `host:${host}`;
-    return 'unknown';
-}
-
-function didSessionProjectGroupingFieldsChange(previous: Session | undefined, next: Session): boolean {
-    if (!previous) return true;
-    const prevMeta: any = previous.metadata ?? null;
-    const nextMeta: any = next.metadata ?? null;
-
-    const prevPath = String(prevMeta?.path ?? '');
-    const nextPath = String(nextMeta?.path ?? '');
-    if (prevPath !== nextPath) return true;
-
-    const prevScopeId = resolveProjectMachineScopeIdFromSessionMetadata(prevMeta);
-    const nextScopeId = resolveProjectMachineScopeIdFromSessionMetadata(nextMeta);
-    if (prevScopeId !== nextScopeId) return true;
-
-    return false;
+function buildSessionListViewDataForState(state: SessionsDomain & SessionsDomainDependencies): SessionListViewItem[] {
+    return buildSessionListViewDataWithServerScope({
+        sessions: state.sessionListRenderables ?? {},
+        sessionRecords: state.sessions ?? {},
+        machines: state.machineDisplayById ?? {},
+        machineRecords: state.machines ?? {},
+        groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+        activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+        inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+        getProjectForSession: state.getProjectForSession,
+    });
 }
 
 export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDependencies>({
@@ -239,6 +265,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
     return {
         sessions: {},
+        sessionListRenderables: {},
         sessionsData: null,  // Legacy - to be removed
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
@@ -270,16 +297,23 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             sessionRepositoryTreeExpandedPathsBySessionId = rest;
             return { ...state, sessionRepositoryTreeExpandedPathsBySessionId: rest };
         }),
-	        applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[]) => set((state) => {
-            // Load drafts and permission modes if sessions are empty (initial load)
-            const savedDrafts = Object.keys(state.sessions).length === 0 ? sessionDrafts : {};
-            const savedPermissionModes = Object.keys(state.sessions).length === 0 ? sessionPermissionModes : {};
-            const savedModelModes = Object.keys(state.sessions).length === 0 ? sessionModelModes : {};
-            const savedPermissionModeUpdatedAts = Object.keys(state.sessions).length === 0 ? sessionPermissionModeUpdatedAts : {};
-            const savedModelModeUpdatedAts = Object.keys(state.sessions).length === 0 ? sessionModelModeUpdatedAts : {};
+        applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[]) => set((state) => {
+            const localNowMs = Date.now();
+
+            // Drafts are persisted out-of-band from the session payload, so we must always consult the
+            // persisted draft map when hydrating a session. This ensures drafts written for a session
+            // before it is loaded (e.g. fork "branch and edit" draft restore) are applied when the
+            // session first appears in the store.
+            // Persisted maps must be consulted for any session that appears after bootstrap (deep links, pagination,
+            // socket-delivered sessions, etc.), not only when the sessions store is initially empty.
+            const savedPermissionModes = sessionPermissionModes;
+            const savedModelModes = sessionModelModes;
+            const savedPermissionModeUpdatedAts = sessionPermissionModeUpdatedAts;
+            const savedModelModeUpdatedAts = sessionModelModeUpdatedAts;
 
             // Merge new sessions with existing ones
             const mergedSessions: Record<string, Session> = { ...state.sessions };
+            const mergedRenderables: Record<string, SessionListRenderableSession> = { ...state.sessionListRenderables };
             let needsSessionListViewDataRebuild = state.sessionListViewData === null;
             let needsProjectManagerUpdate = Object.keys(state.sessions).length === 0;
 
@@ -289,8 +323,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const presence = resolveSessionOnlineState(session);
 
                 // Preserve existing draft and permission mode if they exist, or load from saved data
+                const hasLoadedSession = state.sessions[session.id] !== undefined;
                 const existingDraft = state.sessions[session.id]?.draft;
-                const savedDraft = savedDrafts[session.id];
+                const savedDraft = sessionDrafts[session.id];
                 const existingPermissionMode = state.sessions[session.id]?.permissionMode;
                 const savedPermissionMode = savedPermissionModes[session.id];
                 const existingModelMode = state.sessions[session.id]?.modelMode;
@@ -300,6 +335,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const existingModelModeUpdatedAt = state.sessions[session.id]?.modelModeUpdatedAt;
                 const savedModelModeUpdatedAt = savedModelModeUpdatedAts[session.id];
                 const existingOptimisticThinkingAt = state.sessions[session.id]?.optimisticThinkingAt ?? null;
+                const existingThinkingGraceUntil = state.sessions[session.id]?.thinkingGraceUntil ?? null;
 
                 // CLI may publish a session permission mode in encrypted metadata for local-only starts.
                 // This is a fallback signal for when there are no app-sent user messages carrying meta.permissionMode yet.
@@ -307,24 +343,26 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const metadataCanonicalPermissionMode = metadataPermission?.intent ?? null;
                 const metadataPermissionModeUpdatedAt = metadataPermission?.updatedAt ?? null;
 
-                let mergedPermissionMode =
-                    existingPermissionMode ||
-                    savedPermissionMode ||
-                    session.permissionMode ||
+                const basePermissionMode: PermissionMode =
+                    (session.permissionMode as any) ||
                     'default';
+                const basePermissionModeUpdatedAt =
+                    typeof (session as any).permissionModeUpdatedAt === 'number'
+                        ? (session as any).permissionModeUpdatedAt
+                        : null;
 
-                let mergedPermissionModeUpdatedAt =
-                    existingPermissionModeUpdatedAt ??
-                    savedPermissionModeUpdatedAt ??
-                    null;
+                const mergedPermission = resolveMergedSessionPermissionMode({
+                    baseMode: basePermissionMode,
+                    baseUpdatedAt: basePermissionModeUpdatedAt,
+                    candidates: [
+                        { mode: savedPermissionMode, updatedAt: savedPermissionModeUpdatedAt },
+                        { mode: existingPermissionMode, updatedAt: existingPermissionModeUpdatedAt },
+                        { mode: metadataCanonicalPermissionMode, updatedAt: metadataPermissionModeUpdatedAt },
+                    ],
+                });
 
-                if (metadataCanonicalPermissionMode && typeof metadataPermissionModeUpdatedAt === 'number') {
-                    const localUpdatedAt = mergedPermissionModeUpdatedAt ?? 0;
-                    if (metadataPermissionModeUpdatedAt > localUpdatedAt) {
-                        mergedPermissionMode = metadataCanonicalPermissionMode;
-                        mergedPermissionModeUpdatedAt = metadataPermissionModeUpdatedAt;
-                    }
-                }
+                const mergedPermissionMode = mergedPermission.mode;
+                const mergedPermissionModeUpdatedAt = mergedPermission.updatedAt;
 
                 const modelOverride = resolveMetadataStringOverrideV1(session.metadata, 'modelOverrideV1', 'modelId');
                 const metadataModelId = modelOverride?.value ?? null;
@@ -365,11 +403,62 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     }
                 }
 
+                let mergedThinkingGraceUntil = existingThinkingGraceUntil;
+                if (presence !== 'online') {
+                    mergedThinkingGraceUntil = null;
+                    const graceTimeout = thinkingGraceTimeoutBySessionId.get(session.id);
+                    if (graceTimeout) {
+                        clearTimeout(graceTimeout);
+                        thinkingGraceTimeoutBySessionId.delete(session.id);
+                    }
+                } else if (session.thinking === true) {
+                    mergedThinkingGraceUntil = localNowMs + SESSION_THINKING_GRACE_TIMEOUT_MS;
+
+                    const existingTimeout = thinkingGraceTimeoutBySessionId.get(session.id);
+                    if (existingTimeout) {
+                        clearTimeout(existingTimeout);
+                    }
+
+                    const sessionId = session.id;
+                    const expectedThinkingGraceUntil = mergedThinkingGraceUntil;
+                    const timeout = setTimeout(() => {
+                        thinkingGraceTimeoutBySessionId.delete(sessionId);
+                        set((s) => {
+                            const current = s.sessions[sessionId];
+                            if (!current) return s;
+                            if ((current.thinkingGraceUntil ?? null) !== expectedThinkingGraceUntil) return s;
+
+                            const next = {
+                                ...s.sessions,
+                                [sessionId]: {
+                                    ...current,
+                                    thinkingGraceUntil: null,
+                                },
+                            };
+                            return {
+                                ...s,
+                                sessions: next,
+                            };
+                        });
+                    }, SESSION_THINKING_GRACE_TIMEOUT_MS);
+                    thinkingGraceTimeoutBySessionId.set(session.id, timeout);
+                } else if (typeof mergedThinkingGraceUntil === 'number' && mergedThinkingGraceUntil <= localNowMs) {
+                    mergedThinkingGraceUntil = null;
+                    const graceTimeout = thinkingGraceTimeoutBySessionId.get(session.id);
+                    if (graceTimeout) {
+                        clearTimeout(graceTimeout);
+                        thinkingGraceTimeoutBySessionId.delete(session.id);
+                    }
+                }
+
                 mergedSessions[session.id] = {
                     ...session,
                     presence,
-                    draft: existingDraft || savedDraft || session.draft || null,
+                    draft: hasLoadedSession
+                        ? (existingDraft ?? null)
+                        : (savedDraft ?? session.draft ?? null),
                     optimisticThinkingAt: session.thinking === true ? null : existingOptimisticThinkingAt,
+                    thinkingGraceUntil: mergedThinkingGraceUntil,
                     permissionMode: mergedPermissionMode,
                     // Preserve local coordination timestamp (not synced to server)
                     permissionModeUpdatedAt: mergedPermissionModeUpdatedAt,
@@ -377,22 +466,70 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     modelModeUpdatedAt: mergedModelModeUpdatedAt,
                 };
 
+                const nextRenderableBase = buildSessionListRenderableFromSession(mergedSessions[session.id]!);
+                const previousRenderable = state.sessionListRenderables?.[session.id];
+                mergedRenderables[session.id] = previousRenderable
+                    ? preserveSessionListRenderableTransientState(previousRenderable, nextRenderableBase)
+                    : nextRenderableBase;
+
                 if (!needsSessionListViewDataRebuild) {
-                    const previous = state.sessions[session.id];
-                    const nextSession = mergedSessions[session.id]!;
-                    if (didSessionListStructuralFieldsChange(previous, nextSession)) {
+                    const nextRenderable = mergedRenderables[session.id]!;
+                    if (!previousRenderable || didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)) {
                         needsSessionListViewDataRebuild = true;
                     }
                 }
 
                 if (!needsProjectManagerUpdate) {
-                    const previous = state.sessions[session.id];
-                    const nextSession = mergedSessions[session.id]!;
-                    if (didSessionProjectGroupingFieldsChange(previous, nextSession)) {
+                    const nextRenderable = mergedRenderables[session.id]!;
+                    if (!previousRenderable || didSessionListRenderableProjectGroupingFieldsChange(previousRenderable, nextRenderable)) {
                         needsProjectManagerUpdate = true;
                     }
                 }
             });
+
+            if (!needsSessionListViewDataRebuild || !needsProjectManagerUpdate) {
+                const previousReachableRenderables = applyReachableSessionListRenderablesForState({
+                    sessions: state.sessionListRenderables ?? {},
+                    sessionRecords: state.sessions ?? {},
+                    machineDisplays: state.machineDisplayById ?? {},
+                    machineRecords: state.machines ?? {},
+                    getProjectForSession: state.getProjectForSession ?? undefined,
+                });
+                const nextReachableRenderables = applyReachableSessionListRenderablesForState({
+                    sessions: mergedRenderables,
+                    sessionRecords: mergedSessions,
+                    machineDisplays: state.machineDisplayById ?? {},
+                    machineRecords: state.machines ?? {},
+                    getProjectForSession: state.getProjectForSession ?? undefined,
+                });
+
+                for (const sessionId of new Set([
+                    ...Object.keys(previousReachableRenderables),
+                    ...Object.keys(nextReachableRenderables),
+                ])) {
+                    const previousRenderable = previousReachableRenderables[sessionId];
+                    const nextRenderable = nextReachableRenderables[sessionId];
+                    if (!nextRenderable) continue;
+
+                    if (
+                        !needsSessionListViewDataRebuild
+                        && didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)
+                    ) {
+                        needsSessionListViewDataRebuild = true;
+                    }
+
+                    if (
+                        !needsProjectManagerUpdate
+                        && didSessionListRenderableProjectGroupingFieldsChange(previousRenderable, nextRenderable)
+                    ) {
+                        needsProjectManagerUpdate = true;
+                    }
+
+                    if (needsSessionListViewDataRebuild && needsProjectManagerUpdate) {
+                        break;
+                    }
+                }
+            }
 
             // Build active set from all sessions (including existing ones)
             const activeSet = new Set<string>();
@@ -469,14 +606,15 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
             });
 
+            const nextStateBase = {
+                ...state,
+                sessions: mergedSessions,
+                sessionListRenderables: mergedRenderables,
+                sessionMessages: updatedSessionMessages,
+            };
+
             const sessionListViewData = needsSessionListViewDataRebuild
-                ? buildSessionListViewDataWithServerScope({
-                    sessions: mergedSessions,
-                    machines: state.machines,
-                    groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
-                    activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                    inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-                })
+                ? buildSessionListViewDataForState(nextStateBase)
                 : state.sessionListViewData;
 
             if (needsProjectManagerUpdate) {
@@ -489,9 +627,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 projectManager.updateSessions(Object.values(mergedSessions), machineMetadataMap);
             }
 
-            return {
-                ...state,
-                sessions: mergedSessions,
+            const nextState = {
+                ...nextStateBase,
                 sessionsData: listData,  // Legacy - to be removed
                 sessionListViewData,
                 sessionListViewDataByServerId: needsSessionListViewDataRebuild && sessionListViewData
@@ -500,8 +637,96 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         sessionListViewData,
                     )
                     : state.sessionListViewDataByServerId,
-                sessionMessages: updatedSessionMessages
             };
+            saveWarmSessionCacheForState(nextState as SessionsDomain & SessionsDomainDependencies);
+            return nextState;
+        }),
+        replaceSessionListRenderables: (sessions) => set((state) => {
+            const nextRenderables = Object.fromEntries(sessions.map((session) => [
+                session.id,
+                preserveSessionListRenderableTransientState(state.sessionListRenderables[session.id], session),
+            ]));
+            const previousEntries = buildSessionListCacheEntriesFromRenderables(state.sessionListRenderables ?? {});
+            const nextState = {
+                ...state,
+                sessionListRenderables: nextRenderables,
+                sessionListViewData: buildSessionListViewDataForState({
+                    ...state,
+                    sessionListRenderables: nextRenderables,
+                } as SessionsDomain & SessionsDomainDependencies),
+            };
+
+            const next = {
+                ...nextState,
+                sessionListViewDataByServerId: nextState.sessionListViewData
+                    ? setActiveServerSessionListCache(
+                        state.sessionListViewDataByServerId,
+                        nextState.sessionListViewData,
+                    )
+                    : state.sessionListViewDataByServerId,
+            };
+            saveWarmSessionCacheForState(next as SessionsDomain & SessionsDomainDependencies, previousEntries);
+            return next;
+        }),
+        applySessionListRenderablePatches: (patches) => set((state) => {
+            if (patches.length === 0) {
+                return state;
+            }
+
+            const previousEntries = buildSessionListCacheEntriesFromRenderables(state.sessionListRenderables ?? {});
+            let nextRenderables = state.sessionListRenderables;
+            let needsSessionListViewDataRebuild = state.sessionListViewData === null;
+
+            for (const { sessionId, patch } of patches) {
+                const previousRenderable = nextRenderables[sessionId];
+                if (!previousRenderable) {
+                    continue;
+                }
+
+                const nextRenderable: SessionListRenderableSession = {
+                    ...previousRenderable,
+                    ...(patch as Partial<SessionListRenderableSession>),
+                    id: previousRenderable.id,
+                };
+
+                if (!needsSessionListViewDataRebuild) {
+                    if (didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)) {
+                        needsSessionListViewDataRebuild = true;
+                    }
+                }
+
+                if (nextRenderables === state.sessionListRenderables) {
+                    nextRenderables = { ...state.sessionListRenderables };
+                }
+                nextRenderables[sessionId] = nextRenderable;
+            }
+
+            if (nextRenderables === state.sessionListRenderables) {
+                return state;
+            }
+
+            const nextStateBase = {
+                ...state,
+                sessionListRenderables: nextRenderables,
+            };
+
+            const sessionListViewData = needsSessionListViewDataRebuild
+                ? buildSessionListViewDataForState(nextStateBase as SessionsDomain & SessionsDomainDependencies)
+                : state.sessionListViewData;
+
+            const nextState = {
+                ...nextStateBase,
+                sessionListViewData,
+                sessionListViewDataByServerId: needsSessionListViewDataRebuild && sessionListViewData
+                    ? setActiveServerSessionListCache(
+                        state.sessionListViewDataByServerId,
+                        sessionListViewData,
+                    )
+                    : state.sessionListViewDataByServerId,
+            };
+
+            saveWarmSessionCacheForState(nextState as SessionsDomain & SessionsDomainDependencies, previousEntries);
+            return nextState;
         }),
         applyLoaded: () => set((state) => {
             const result = {
@@ -546,6 +771,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
             // Persist drafts
             saveSessionDrafts(allDrafts);
+            sessionDrafts = allDrafts;
 
             if (!session) return state;
 
@@ -725,6 +951,30 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 [sessionId]: {
                     ...session,
                     optimisticThinkingAt: null,
+                },
+            };
+
+            return {
+                ...state,
+                sessions: nextSessions,
+            };
+        }),
+        clearSessionThinkingGrace: (sessionId: string) => set((state) => {
+            const session = state.sessions[sessionId];
+            if (!session) return state;
+            if ((session.thinkingGraceUntil ?? null) === null) return state;
+
+            const existingTimeout = thinkingGraceTimeoutBySessionId.get(sessionId);
+            if (existingTimeout) {
+                clearTimeout(existingTimeout);
+                thinkingGraceTimeoutBySessionId.delete(sessionId);
+            }
+
+            const nextSessions = {
+                ...state.sessions,
+                [sessionId]: {
+                    ...session,
+                    thinkingGraceUntil: null,
                 },
             };
 
@@ -927,8 +1177,15 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 	                optimisticThinkingTimeoutBySessionId.delete(sessionId);
 	            }
 
+                const graceTimeout = thinkingGraceTimeoutBySessionId.get(sessionId);
+                if (graceTimeout) {
+                    clearTimeout(graceTimeout);
+                    thinkingGraceTimeoutBySessionId.delete(sessionId);
+                }
+
 	            // Remove session from sessions
 	            const { [sessionId]: deletedSession, ...remainingSessions } = state.sessions;
+            const { [sessionId]: _deletedRenderable, ...remainingRenderables } = state.sessionListRenderables;
             
             // Remove session messages if they exist
             const { [sessionId]: deletedMessages, ...remainingSessionMessages } = state.sessionMessages;
@@ -946,6 +1203,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const drafts = loadSessionDrafts();
             delete drafts[sessionId];
             saveSessionDrafts(drafts);
+            sessionDrafts = drafts;
 
             const reviewDrafts = loadSessionReviewCommentsDrafts();
             delete reviewDrafts[sessionId];
@@ -979,29 +1237,31 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             saveSessionLastViewed(sessionLastViewed);
             
             // Rebuild sessionListViewData without the deleted session
-            const sessionListViewData = buildSessionListViewDataWithServerScope({
-                sessions: remainingSessions,
-                machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
-                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-            });
-            
-            return {
+            const nextState = {
                 ...state,
                 sessions: remainingSessions,
+                sessionListRenderables: remainingRenderables,
                 sessionMessages: remainingSessionMessages,
                 sessionScmStatus: remainingScmStatus,
                 sessionRepositoryTreeExpandedPathsBySessionId: remainingTreeState,
                 reviewCommentsDraftsBySessionId: remainingReviewDrafts,
                 actionDraftsBySessionId: remainingActionDrafts,
                 sessionLastViewed: { ...sessionLastViewed },
-                sessionListViewData,
+                sessionListViewData: buildSessionListViewDataForState({
+                    ...state,
+                    sessions: remainingSessions,
+                    sessionListRenderables: remainingRenderables,
+                } as SessionsDomain & SessionsDomainDependencies),
+            };
+            const next = {
+                ...nextState,
                 sessionListViewDataByServerId: setActiveServerSessionListCache(
                     state.sessionListViewDataByServerId,
-                    sessionListViewData,
+                    nextState.sessionListViewData,
                 ),
             };
+            saveWarmSessionCacheForState(next as SessionsDomain & SessionsDomainDependencies);
+            return next;
         }),
     };
 }

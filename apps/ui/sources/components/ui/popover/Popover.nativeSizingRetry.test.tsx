@@ -1,20 +1,11 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit';
+import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-function flushMicrotasks(times: number) {
-    return new Promise<void>((resolve) => {
-        let remaining = times;
-        const step = () => {
-            remaining -= 1;
-            if (remaining <= 0) return resolve();
-            queueMicrotask(step);
-        };
-        queueMicrotask(step);
-    });
-}
 
 vi.mock('@/utils/web/radixCjs', () => {
     const React = require('react');
@@ -25,27 +16,32 @@ vi.mock('@/utils/web/radixCjs', () => {
     };
 });
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'android' },
-        useWindowDimensions: () => ({ width: 1000, height: 800 }),
-        StyleSheet: {
-            absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-        },
-        View: (props: any) => React.createElement('View', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    };
+installPopoverCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'android',
+            },
+            useWindowDimensions: () => ({ width: 1000, height: 800 }),
+            StyleSheet: {
+                absoluteFill: {
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        });
+    },
 });
 
 describe('Popover (native sizing retries)', () => {
     it('retries measurement when an initial layout would yield maxHeight=0 (avoids 0-height popovers on native)', async () => {
         const { Popover } = await import('./Popover');
-
-        vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
-            cb();
-            return 0 as any;
-        });
 
         let boundaryMeasureCalls = 0;
         const anchorRef = {
@@ -67,9 +63,8 @@ describe('Popover (native sizing retries)', () => {
 
         const renders: Array<{ maxHeight: number }> = [];
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
+        await withPopoverWebGlobals(async () => {
+            const screen = await renderScreen(
                 React.createElement(Popover, {
                     open: true,
                     anchorRef,
@@ -85,13 +80,11 @@ describe('Popover (native sizing retries)', () => {
                 }),
             );
 
-            // Let the initial + retry measurements settle.
-            await flushMicrotasks(8);
-        });
+            await flushHookEffects({ cycles: 1, turns: 8 });
 
-        expect(tree).toBeTruthy();
-        expect(boundaryMeasureCalls).toBeGreaterThanOrEqual(2);
-        expect(renders.at(-1)?.maxHeight).toBeGreaterThan(0);
+            expect(screen).toBeTruthy();
+            expect(boundaryMeasureCalls).toBeGreaterThanOrEqual(2);
+            expect(renders.at(-1)?.maxHeight).toBeGreaterThan(0);
+        });
     });
 });
-

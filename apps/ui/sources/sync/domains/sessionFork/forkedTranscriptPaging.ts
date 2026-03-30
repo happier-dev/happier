@@ -24,6 +24,13 @@ export function resolveNextForkedTranscriptLoadOlderRequest(params: Readonly<{
     if (hasMoreOlder === false) continue;
 
     if (seg.isReadOnlyContext !== true) {
+      const cursor = normalizeSeq(params.getBeforeSeqCursor(seg.sessionId));
+      // If the child segment hasn't initialized its pagination cursor yet (common for brand new fork
+      // sessions with 0 committed messages), `loadOlderMessages(child)` will return `not_ready` and
+      // paging can get stuck on the child segment forever. Skip upward so ancestor paging can proceed.
+      if (cursor === null || cursor <= 0) {
+        continue;
+      }
       return { kind: 'loadOlder', sessionId: seg.sessionId };
     }
 
@@ -50,4 +57,3 @@ export function computeForkedTranscriptHasMoreOlder(params: Readonly<{
   }
   return false;
 }
-

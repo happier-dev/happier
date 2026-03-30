@@ -1,11 +1,12 @@
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
 import { clearDaemonState, writeDaemonState } from '@/persistence';
 import { stopDaemonHttp } from '@/daemon/controlClient';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 function listen(server: http.Server): Promise<{ port: number }> {
   return new Promise((resolve, reject) => {
@@ -39,14 +40,16 @@ function requireObserved(value: { token: string; body: string } | null): { token
 }
 
 describe('daemon control client: stopDaemonHttp', () => {
+  let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
   let tmpHomeDir: string | null = null;
 
   afterEach(async () => {
     await clearDaemonState();
-    delete process.env.HAPPIER_HOME_DIR;
+    envScope.restore();
+    envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
     reloadConfiguration();
     if (tmpHomeDir) {
-      await rm(tmpHomeDir, { recursive: true, force: true });
+      await removeTempDir(tmpHomeDir);
       tmpHomeDir = null;
     }
   });
@@ -71,8 +74,8 @@ describe('daemon control client: stopDaemonHttp', () => {
     try {
       const { port } = await listen(server);
 
-      tmpHomeDir = await mkdtemp(`${process.env.TMPDIR ?? '/tmp'}/happier-daemon-client-stop-test-`);
-      process.env.HAPPIER_HOME_DIR = tmpHomeDir;
+      tmpHomeDir = await createTempDir('happier-daemon-client-stop-test-');
+      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
       reloadConfiguration();
       writeDaemonState({
         pid: process.pid,

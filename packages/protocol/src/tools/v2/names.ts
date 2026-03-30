@@ -17,6 +17,7 @@ export const KNOWN_CANONICAL_TOOL_NAMES_V2 = [
   'WebSearch',
   'TodoWrite',
   'TodoRead',
+  'SubAgent',
   'Task',
   'Reasoning',
   // Structured tool-ish events.

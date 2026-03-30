@@ -1,42 +1,61 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { findAllByType, findFirstByType, renderScreen } from '@/dev/testkit';
+import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Platform: { OS: 'ios' },
-    FlatList: (props: any) => {
-        const items = Array.isArray(props.data)
-            ? props.data.map((item: any, index: number) =>
-                React.createElement(
-                    React.Fragment,
-                    { key: props.keyExtractor ? props.keyExtractor(item) : String(index) },
-                    props.renderItem ? props.renderItem({ item, index }) : null,
-                )
-            )
-            : null;
-        return React.createElement('FlatList', props, items);
+installCodeViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+            Platform: {
+                OS: 'ios',
+            },
+            FlatList: (props: any) => {
+                const items = Array.isArray(props.data)
+                    ? props.data.map((item: any, index: number) =>
+                        React.createElement(
+                            React.Fragment,
+                            { key: props.keyExtractor ? props.keyExtractor(item) : String(index) },
+                            props.renderItem ? props.renderItem({ item, index }) : null,
+                        )
+                    )
+                    : null;
+                return React.createElement('FlatList', props, items);
+            },
+        });
     },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { dark: false, colors: {} } }),
-}));
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: { dark: false, colors: {} },
+        });
+    },
+});
 
 vi.mock('./CodeLineRow', () => ({
     CodeLineRow: (props: any) => React.createElement('CodeLineRow', props),
 }));
+
+async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
+    return await run();
+}
+
+async function waitForCodeLinesViewScrollFallback(): Promise<void> {
+    await renderer.act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 75));
+    });
+}
 
 describe('CodeLinesView', () => {
     it('does not render FlatList when virtualized=false', async () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeLinesView
+        tree = (await renderScreen(<CodeLinesView
                     virtualized={false}
                     lines={[
                         {
@@ -51,13 +70,11 @@ describe('CodeLinesView', () => {
                             selectable: false,
                         },
                     ]}
-                />,
-            );
-        });
+                />)).tree;
 
-        expect(() => (tree as renderer.ReactTestRenderer).root.findByType('FlatList' as any)).toThrow();
+        expect(findAllByType(tree, 'FlatList')).toHaveLength(0);
 
-        const rows = (tree as renderer.ReactTestRenderer).root.findAllByType('CodeLineRow' as any);
+        const rows = findAllByType(tree, 'CodeLineRow');
         expect(rows).toHaveLength(1);
     });
 
@@ -65,9 +82,7 @@ describe('CodeLinesView', () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeLinesView
+        tree = (await renderScreen(<CodeLinesView
                     lines={[
                         {
                             id: '1',
@@ -82,11 +97,12 @@ describe('CodeLinesView', () => {
                         },
                     ]}
                     renderAfterLine={() => React.createElement('After')}
-                />,
-            );
-        });
+                />)).tree;
 
-        const list = (tree as renderer.ReactTestRenderer).root.findByType('FlatList' as any);
+        const list = findFirstByType(tree, 'FlatList');
+        if (!list) {
+            throw new Error('expected FlatList');
+        }
         expect(list.props.extraData).toBeTruthy();
     });
 
@@ -94,9 +110,7 @@ describe('CodeLinesView', () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeLinesView
+        tree = (await renderScreen(<CodeLinesView
                     virtualized={false}
                     lines={[
                         {
@@ -112,11 +126,9 @@ describe('CodeLinesView', () => {
                         },
                     ]}
                     isCommentActive={(line) => line.id === '1'}
-                />,
-            );
-        });
+                />)).tree;
 
-        const rows = (tree as renderer.ReactTestRenderer).root.findAllByType('CodeLineRow' as any);
+        const rows = findAllByType(tree, 'CodeLineRow');
         expect(rows).toHaveLength(1);
         expect(rows[0]!.props.commentActive).toBe(true);
     });
@@ -125,9 +137,7 @@ describe('CodeLinesView', () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeLinesView
+        tree = (await renderScreen(<CodeLinesView
                     virtualized={false}
                     highlightLineId="2"
                     lines={[
@@ -154,11 +164,9 @@ describe('CodeLinesView', () => {
                             selectable: false,
                         },
                     ]}
-                />,
-            );
-        });
+                />)).tree;
 
-        const rows = (tree as renderer.ReactTestRenderer).root.findAllByType('CodeLineRow' as any);
+        const rows = findAllByType(tree, 'CodeLineRow');
         const highlighted = rows.filter((r) => r.props.highlighted === true);
         expect(highlighted).toHaveLength(1);
         expect(highlighted[0]!.props.line.id).toBe('2');
@@ -168,9 +176,7 @@ describe('CodeLinesView', () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeLinesView
+        tree = (await renderScreen(<CodeLinesView
                     lines={[
                         {
                             id: '1',
@@ -191,11 +197,9 @@ describe('CodeLinesView', () => {
                         maxLines: 10_000,
                         maxLineLength: 10_000,
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
-        const rows = (tree as renderer.ReactTestRenderer).root.findAllByType('CodeLineRow' as any);
+        const rows = findAllByType(tree, 'CodeLineRow');
         expect(rows).toHaveLength(1);
         expect(rows[0]!.props.syntaxHighlighting.mode).toBe('advanced');
     });
@@ -204,9 +208,7 @@ describe('CodeLinesView', () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeLinesView
+        tree = (await renderScreen(<CodeLinesView
                     scrollToLineId="b"
                     lines={[
                         {
@@ -232,27 +234,26 @@ describe('CodeLinesView', () => {
                             selectable: false,
                         },
                     ]}
-                />,
-            );
-        });
+                />)).tree;
 
-        const list = (tree as renderer.ReactTestRenderer).root.findByType('FlatList' as any);
+        const list = findFirstByType(tree, 'FlatList');
+        if (!list) {
+            throw new Error('expected FlatList');
+        }
         expect(list.props.initialScrollIndex).toBe(1);
     });
 
     it('attempts a DOM scrollIntoView fallback when scrollToLineId is provided', async () => {
-        vi.useFakeTimers();
-        const getElementById = vi.fn();
-        const scrollIntoView = vi.fn();
-        getElementById.mockReturnValue({ scrollIntoView });
-        const previousDocument = (globalThis as any).document;
-        (globalThis as any).document = { getElementById };
+        await withFakeTimers(async () => {
+            const getElementById = vi.fn();
+            const scrollIntoView = vi.fn();
+            getElementById.mockReturnValue({ scrollIntoView });
+            const previousDocument = (globalThis as any).document;
+            (globalThis as any).document = { getElementById };
 
-        try {
-            const { CodeLinesView } = await import('./CodeLinesView');
-
-            renderer.act(() => {
-                renderer.create(
+            try {
+                const { CodeLinesView } = await import('./CodeLinesView');
+                const screen = await renderScreen(
                     <CodeLinesView
                         scrollToLineId="b"
                         lines={[
@@ -279,24 +280,21 @@ describe('CodeLinesView', () => {
                                 selectable: false,
                             },
                         ]}
-                    />,
+                    />
                 );
-            });
+                await waitForCodeLinesViewScrollFallback();
 
-            // Effect uses a 0ms timeout.
-            vi.runAllTimers();
-
-            expect(getElementById).toHaveBeenCalledWith('b');
-            expect(scrollIntoView).toHaveBeenCalled();
-        } finally {
-            (globalThis as any).document = previousDocument;
-            vi.useRealTimers();
-        }
+                expect(getElementById).toHaveBeenCalledWith('b');
+                expect(scrollIntoView).toHaveBeenCalled();
+                await screen.unmount();
+            } finally {
+                (globalThis as any).document = previousDocument;
+            }
+        });
     });
 
     it('falls back to setting scrollTop on the nearest scroll container when the target element is not mounted', async () => {
-        vi.useFakeTimers();
-
+        await withFakeTimers(async () => {
             const scrollContainer: any = {
                 scrollTop: 0,
                 clientHeight: 100,
@@ -307,25 +305,23 @@ describe('CodeLinesView', () => {
                 }),
             };
 
-        const anchorElement: any = {
-            id: 'a',
-            parentElement: scrollContainer,
-        };
+            const anchorElement: any = {
+                id: 'a',
+                parentElement: scrollContainer,
+            };
 
-        const getElementById = vi.fn((id: string) => {
-            if (id === 'b') return null; // target line not mounted yet
-            if (id === 'a') return anchorElement; // first rendered row
-            return null;
-        });
+            const getElementById = vi.fn((id: string) => {
+                if (id === 'b') return null; // target line not mounted yet
+                if (id === 'a') return anchorElement; // first rendered row
+                return null;
+            });
 
-        const previousDocument = (globalThis as any).document;
-        (globalThis as any).document = { getElementById };
+            const previousDocument = (globalThis as any).document;
+            (globalThis as any).document = { getElementById };
 
-        try {
-            const { CodeLinesView } = await import('./CodeLinesView');
-
-            renderer.act(() => {
-                renderer.create(
+            try {
+                const { CodeLinesView } = await import('./CodeLinesView');
+                const screen = await renderScreen(
                     <CodeLinesView
                         scrollToLineId="b"
                         lines={[
@@ -352,17 +348,16 @@ describe('CodeLinesView', () => {
                                 selectable: false,
                             },
                         ]}
-                    />,
+                    />
                 );
-            });
+                await waitForCodeLinesViewScrollFallback();
 
-            vi.runAllTimers();
-
-            // Estimated row height is 22px; index 1 should land at ~22px.
-            expect(scrollContainer.scrollTop).toBe(22);
-        } finally {
-            (globalThis as any).document = previousDocument;
-            vi.useRealTimers();
-        }
+                // Estimated row height is 22px; index 1 should land at ~22px.
+                expect(scrollContainer.scrollTop).toBe(22);
+                await screen.unmount();
+            } finally {
+                (globalThis as any).document = previousDocument;
+            }
+        });
     });
 });

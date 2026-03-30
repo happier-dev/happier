@@ -77,13 +77,13 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
       },
     }));
 
-    voiceHooks.onPermissionRequested('s1', 'r1', 'rm', { path: '/tmp' });
+    (voiceHooks as any).onAgentRequest('s1', 'r1', 'permission', 'rm', { path: '/tmp' });
     expect(getVoiceContextSinkForSession).not.toHaveBeenCalled();
     expect(fakeSink.sendTextMessage).not.toHaveBeenCalled();
   });
 
   it('redacts tool args in permission requests by default', () => {
-    voiceHooks.onPermissionRequested('s1', 'r1', 'execute', { secret: 'do_not_leak' });
+    (voiceHooks as any).onAgentRequest('s1', 'r1', 'permission', 'execute', { secret: 'do_not_leak' });
 
     expect(getVoiceContextSinkForSession).toHaveBeenCalledWith('s1');
     expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(
@@ -94,7 +94,7 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(fakeSink.sendTextMessage).not.toHaveBeenCalledWith('s1', expect.stringContaining('do_not_leak'));
   });
 
-  it('includes tool args in permission requests when shareToolArgs is true', () => {
+  it('still redacts tool args when a raw voice privacy blob tries to enable shareToolArgs', () => {
     storage.setState((s: any) => ({
       ...s,
       settings: {
@@ -109,10 +109,52 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
       },
     }));
 
-    voiceHooks.onPermissionRequested('s1', 'r1', 'execute', { secret: 'do_not_leak' });
+    (voiceHooks as any).onAgentRequest('s1', 'r1', 'permission', 'execute', { secret: 'do_not_leak' });
 
     expect(getVoiceContextSinkForSession).toHaveBeenCalledWith('s1');
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith('s1', expect.stringContaining('do_not_leak'));
+    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith('s1', expect.stringContaining('<tool_args_redacted>true</tool_args_redacted>'));
+    expect(fakeSink.sendTextMessage).not.toHaveBeenCalledWith('s1', expect.stringContaining('do_not_leak'));
+  });
+
+  it('forwards user-action requests with question details and answer guidance', () => {
+    (voiceHooks as any).onAgentRequest(
+      's1',
+      'req_question',
+      'user_action',
+      'AskUserQuestion',
+      {
+        questions: [
+          {
+            header: 'Confirm',
+            question: 'Continue with the deployment?',
+            multiSelect: false,
+            options: [{ label: 'Yes' }, { label: 'No' }],
+          },
+        ],
+      },
+    );
+
+    expect(getVoiceContextSinkForSession).toHaveBeenCalledWith('s1');
+    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith('s1', expect.stringContaining('<request_kind>user_action</request_kind>'));
+    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith('s1', expect.stringContaining('Continue with the deployment?'));
+    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith('s1', expect.stringContaining('answerUserActionRequest'));
+    expect(fakeSink.sendTextMessage).not.toHaveBeenCalledWith('s1', expect.stringContaining('processPermissionRequest'));
+  });
+
+  it('keeps non-AskUserQuestion user-action requests actionable when tool args are redacted', () => {
+    (voiceHooks as any).onAgentRequest(
+      's1',
+      'req_exit_plan',
+      'user_action',
+      'ExitPlanMode',
+      { plan: 'Review changes under /Users/alice/SecretRepo before exiting plan mode.' },
+    );
+
+    expect(getVoiceContextSinkForSession).toHaveBeenCalledWith('s1');
+    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith('s1', expect.stringContaining('<request_kind>user_action</request_kind>'));
+    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith('s1', expect.stringContaining('approve, reject, or request changes'));
+    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith('s1', expect.stringContaining('<request_payload_redacted>true</request_payload_redacted>'));
+    expect(fakeSink.sendTextMessage).not.toHaveBeenCalledWith('s1', expect.stringContaining('/Users/alice/SecretRepo'));
   });
 
   it('still forwards activity-only message updates when shareRecentMessages is false (no transcript content)', () => {
@@ -154,11 +196,11 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
 
     voiceHooks.onReady('s1');
     // activity-only sessions should not emit a full session context block.
-    expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalledWith('s1', expect.stringContaining('# Session ID: s1'));
+    expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalledWith('s1', expect.stringContaining('# Session: Summary'));
 
     // Now track the session and ensure full context can be emitted.
     useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
     voiceHooks.onReady('s1');
-    expect(fakeSink.sendContextualUpdate).toHaveBeenCalledWith('s1', expect.stringContaining('# Session ID: s1'));
+    expect(fakeSink.sendContextualUpdate).toHaveBeenCalledWith('s1', expect.stringContaining('# Session: Summary'));
   });
 });

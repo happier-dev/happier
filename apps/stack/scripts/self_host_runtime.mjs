@@ -33,13 +33,25 @@ import {
   renderWindowsScheduledTaskWrapperPs1,
   resolveServiceBackend,
 } from '@happier-dev/cli-common/service';
+import {
+  parseEnvText as parseEnvTextShared,
+  renderSelfHostServerEnvText as renderSelfHostServerEnvTextShared,
+} from '@happier-dev/cli-common/firstPartyRuntime';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
+import {
+  PUBLIC_RELEASE_RING_IDS,
+  getReleaseRingCatalogEntry,
+  normalizePublicReleaseRingId,
+} from '@happier-dev/release-runtime/releaseRings';
 import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
 import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
 import { planArchiveExtraction } from '@happier-dev/release-runtime/extractPlan';
 import { fetchFirstGitHubReleaseByTags, fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
+import { findExtractedExecutableByName } from './self_host/findExtractedExecutableByName.mjs';
+import { maybeInstallCompanionCli } from './self_host/install_companion_cli.mjs';
+import { listVersionedDirectoryIdsNewestFirst, pruneVersionedDirectories } from './self_host/version_retention.mjs';
 
-const SUPPORTED_CHANNELS = new Set(['stable', 'preview']);
+const SUPPORTED_CHANNELS = new Set(PUBLIC_RELEASE_RING_IDS);
 const DEFAULTS = Object.freeze({
   githubRepo: 'happier-dev/happier',
   installRoot: '/opt/happier',
@@ -57,29 +69,45 @@ const DEFAULTS = Object.freeze({
   uiWebArch: 'any',
 });
 
-export function resolveSelfHostDefaults({ platform = process.platform, mode = 'user', homeDir = homedir() } = {}) {
+function resolveSelfHostReleaseSuffix(channel) {
+  const entry = getReleaseRingCatalogEntry(channel);
+  if (!entry.rollingReleaseSuffix) {
+    throw new Error(`[self-host] public release ring ${channel} is missing a rolling suffix`);
+  }
+  return entry.rollingReleaseSuffix;
+}
+
+function appendSelfHostReleaseSuffix(baseValue, channel) {
+  return channel === 'stable' ? baseValue : `${baseValue}-${resolveSelfHostReleaseSuffix(channel)}`;
+}
+
+export function resolveSelfHostDefaults({ platform = process.platform, mode = 'user', channel = 'stable', homeDir = homedir() } = {}) {
   const p = String(platform ?? '').trim() || process.platform;
   const m = String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
+  const normalizedChannel = normalizeChannel(channel);
   const home = String(homeDir ?? '').trim() || homedir();
 
   if (m === 'system') {
     return {
-      installRoot: DEFAULTS.installRoot,
+      installRoot: appendSelfHostReleaseSuffix(DEFAULTS.installRoot, normalizedChannel),
       binDir: DEFAULTS.binDir,
-      configDir: DEFAULTS.configDir,
-      dataDir: DEFAULTS.dataDir,
-      logDir: DEFAULTS.logDir,
+      configDir: appendSelfHostReleaseSuffix(DEFAULTS.configDir, normalizedChannel),
+      dataDir: appendSelfHostReleaseSuffix(DEFAULTS.dataDir, normalizedChannel),
+      logDir: appendSelfHostReleaseSuffix(DEFAULTS.logDir, normalizedChannel),
+      serviceName: appendSelfHostReleaseSuffix(DEFAULTS.serviceName, normalizedChannel),
     };
   }
 
   const happierHome = p === 'win32' ? `${home}\\.happier` : join(home, '.happier');
-  const installRoot = p === 'win32' ? `${happierHome}\\self-host` : join(happierHome, 'self-host');
+  const installRootBase = p === 'win32' ? `${happierHome}\\self-host` : join(happierHome, 'self-host');
+  const installRoot = appendSelfHostReleaseSuffix(installRootBase, normalizedChannel);
   return {
     installRoot,
     binDir: p === 'win32' ? `${happierHome}\\bin` : join(happierHome, 'bin'),
     configDir: p === 'win32' ? `${installRoot}\\config` : join(installRoot, 'config'),
     dataDir: p === 'win32' ? `${installRoot}\\data` : join(installRoot, 'data'),
     logDir: p === 'win32' ? `${installRoot}\\logs` : join(installRoot, 'logs'),
+    serviceName: appendSelfHostReleaseSuffix(DEFAULTS.serviceName, normalizedChannel),
   };
 }
 
@@ -180,12 +208,6 @@ export function decideSelfHostAutoUpdateReconcile(state, { fallbackIntervalMinut
   };
 }
 
-function assertLinux() {
-  if (process.platform !== 'linux') {
-    throw new Error('[self-host] Happier Self-Host currently supports Linux only.');
-  }
-}
-
 function assertRoot() {
   if (typeof process.getuid !== 'function') return;
   if (process.getuid() !== 0) {
@@ -239,11 +261,41 @@ function normalizeOs(platform = process.platform) {
 }
 
 function normalizeChannel(raw) {
-  const channel = String(raw ?? '').trim() || 'stable';
+  const requested = String(raw ?? '').trim() || 'stable';
+  const channel = normalizePublicReleaseRingId(requested);
   if (!SUPPORTED_CHANNELS.has(channel)) {
-    throw new Error(`[self-host] invalid channel: ${channel} (expected stable|preview)`);
+    throw new Error(`[self-host] invalid channel: ${requested} (expected stable|preview|dev)`);
   }
   return channel;
+}
+
+function displayChannel(channel) {
+  return getReleaseRingCatalogEntry(normalizeChannel(channel)).publicLabel;
+}
+
+export function resolveSelfHostReleaseTargets(channel) {
+  const normalizedChannel = normalizeChannel(channel);
+  const suffix = resolveSelfHostReleaseSuffix(normalizedChannel);
+  const stableServerTag = `server-${resolveSelfHostReleaseSuffix('stable')}`;
+  const previewServerTag = `server-${resolveSelfHostReleaseSuffix('preview')}`;
+  const channelServerTag = `server-${suffix}`;
+  const serverTags = Array.from(new Set(
+    normalizedChannel === 'stable'
+      ? [stableServerTag]
+      : normalizedChannel === 'preview'
+        ? [previewServerTag, stableServerTag]
+        : [channelServerTag, previewServerTag, stableServerTag],
+  ));
+  return {
+    channel: normalizedChannel,
+    serverTag: serverTags[0],
+    serverTags,
+    uiWebTags: normalizedChannel === 'stable'
+      ? ['ui-web-stable']
+      : normalizedChannel === 'preview'
+        ? ['ui-web-preview', 'ui-web-stable']
+        : ['ui-web-dev', 'ui-web-preview', 'ui-web-stable'],
+  };
 }
 
 function normalizeMode(raw) {
@@ -417,26 +469,8 @@ async function applySelfHostSqliteMigrationsAtInstallTime({ env }) {
   return { applied: appliedNow, skipped: false, reason: 'ok' };
 }
 
-async function findExecutableByName(rootDir, binaryName) {
-  const entries = await readdir(rootDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(rootDir, entry.name);
-    if (entry.isDirectory()) {
-      const nested = await findExecutableByName(fullPath, binaryName);
-      if (nested) return nested;
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    if (entry.name !== binaryName) continue;
-    const info = await stat(fullPath);
-    if (process.platform === 'win32') return fullPath;
-    if ((info.mode & 0o111) !== 0) return fullPath;
-  }
-  return '';
-}
-
 function resolveConfig({ channel, mode = 'user', platform = process.platform } = {}) {
-  const defaults = resolveSelfHostDefaults({ platform, mode, homeDir: homedir() });
+  const defaults = resolveSelfHostDefaults({ platform, mode, channel, homeDir: homedir() });
   const installRoot = String(process.env.HAPPIER_SELF_HOST_INSTALL_ROOT ?? defaults.installRoot).trim();
   const binDir = String(process.env.HAPPIER_SELF_HOST_BIN_DIR ?? defaults.binDir).trim();
   const configDir = String(process.env.HAPPIER_SELF_HOST_CONFIG_DIR ?? defaults.configDir).trim();
@@ -499,88 +533,21 @@ export function renderServerEnvFile({
   arch = process.arch,
   platform = process.platform,
 }) {
-  const normalizedDataDir = String(dataDir ?? '').replace(/\/+$/, '') || String(dataDir ?? '');
-  const p = String(platform ?? '').trim() || process.platform;
-  const a = String(arch ?? '').trim() || process.arch;
-  const hasBunRuntime = typeof globalThis.Bun !== 'undefined';
-  // NOTE: Bun's native sqlite module (`bun:sqlite`) can hang when used inside launchd-managed binaries on macOS.
-  // We pre-apply migrations at install time in the self-host installer on that path instead.
-  const autoMigrateSqlite = p === 'darwin' && hasBunRuntime ? '0' : '1';
-  const migrationsDir =
-    p === 'win32'
-      ? win32Path.join(String(dataDir ?? ''), 'migrations', 'sqlite')
-      : `${normalizedDataDir}/migrations/sqlite`;
-  const dbPath =
-    p === 'win32'
-      ? win32Path.join(String(dataDir ?? ''), 'happier-server-light.sqlite')
-      : `${normalizedDataDir}/happier-server-light.sqlite`;
-  const databaseUrl =
-    p === 'win32'
-      ? (() => {
-          const normalized = String(dbPath).replaceAll('\\', '/');
-          if (/^[a-zA-Z]:\//.test(normalized)) return `file:///${normalized}`;
-          if (normalized.startsWith('//')) return `file:${normalized}`;
-          return `file:///${normalized}`;
-        })()
-      : `file:${dbPath}`;
-  const uiDirRaw = typeof uiDir === 'string' && uiDir.trim() ? uiDir.trim() : '';
-  const serverBinDirRaw = typeof serverBinDir === 'string' && serverBinDir.trim() ? serverBinDir.trim() : '';
-  const prismaEngineCandidates = [];
-  if (serverBinDirRaw && p === 'darwin' && a === 'arm64') {
-    prismaEngineCandidates.push(
-      join(serverBinDirRaw, 'node_modules', '.prisma', 'client', 'libquery_engine-darwin-arm64.dylib.node'),
-      join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-darwin-arm64.dylib.node'),
-    );
-  } else if (serverBinDirRaw && p === 'linux' && a === 'arm64') {
-    prismaEngineCandidates.push(
-      join(serverBinDirRaw, 'node_modules', '.prisma', 'client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'),
-      join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'),
-    );
-  } else if (serverBinDirRaw && p === 'linux' && a === 'x64') {
-    prismaEngineCandidates.push(
-      join(serverBinDirRaw, 'node_modules', '.prisma', 'client', 'libquery_engine-debian-openssl-3.0.x.so.node'),
-      join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-debian-openssl-3.0.x.so.node'),
-    );
-  }
-  const prismaEnginePath = prismaEngineCandidates.find((candidate) => existsSync(candidate)) || '';
-  return [
-    `PORT=${port}`,
-    `HAPPIER_SERVER_HOST=${host}`,
-    ...(uiDirRaw ? [`HAPPIER_SERVER_UI_DIR=${uiDirRaw}`] : []),
-    'METRICS_ENABLED=false',
-    // Bun-compiled server binaries currently exhibit unstable pglite path resolution in systemd environments.
-    'HAPPIER_DB_PROVIDER=sqlite',
-    `DATABASE_URL=${databaseUrl}`,
-    'HAPPIER_FILES_BACKEND=local',
-    ...(prismaEnginePath
-      ? [
-          'PRISMA_CLIENT_ENGINE_TYPE=library',
-          `PRISMA_QUERY_ENGINE_LIBRARY=${prismaEnginePath}`,
-        ]
-      : []),
-    `HAPPIER_SQLITE_AUTO_MIGRATE=${autoMigrateSqlite}`,
-    `HAPPIER_SQLITE_MIGRATIONS_DIR=${migrationsDir}`,
-    `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`,
-    `HAPPIER_SERVER_LIGHT_FILES_DIR=${filesDir}`,
-    `HAPPIER_SERVER_LIGHT_DB_DIR=${dbDir}`,
-    '',
-  ].join('\n');
+  return renderSelfHostServerEnvTextShared({
+    port,
+    host,
+    dataDir,
+    filesDir,
+    dbDir,
+    uiDir,
+    serverBinDir,
+    arch,
+    platform,
+  });
 }
 
 function parseEnvText(raw) {
-  const env = {};
-  for (const line of String(raw ?? '').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (trimmed.startsWith('#')) continue;
-    const idx = trimmed.indexOf('=');
-    if (idx <= 0) continue;
-    const k = trimmed.slice(0, idx).trim();
-    const v = trimmed.slice(idx + 1);
-    if (!k) continue;
-    env[k] = v;
-  }
-  return env;
+  return parseEnvTextShared(raw);
 }
 
 function listEnvKeysInOrder(raw) {
@@ -763,7 +730,7 @@ export function renderSelfHostStatusText(report, { colors = true } = {}) {
         dim: identity,
       };
 
-  const channel = String(report?.channel ?? '').trim();
+  const channel = report?.channel ? displayChannel(report.channel) : '';
   const mode = String(report?.mode ?? '').trim();
   const serviceName = String(report?.serviceName ?? '').trim();
   const serverUrl = String(report?.serverUrl ?? '').trim();
@@ -882,7 +849,7 @@ export function renderUpdaterSystemdUnit({
   const label = String(updaterLabel ?? '').trim() || 'happier-self-host-updater';
   const hstack = String(hstackPath ?? '').trim();
   if (!hstack) throw new Error('[self-host] missing hstackPath for updater unit');
-  const ch = String(channel ?? '').trim() || 'stable';
+  const ch = displayChannel(channel);
   const m = String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
   const wd = String(workingDirectory ?? '').trim();
   const out = String(stdoutPath ?? '').trim();
@@ -953,7 +920,7 @@ export function renderUpdaterLaunchdPlistXml({
   const label = String(updaterLabel ?? '').trim() || 'happier-self-host-updater';
   const hstack = String(hstackPath ?? '').trim();
   if (!hstack) throw new Error('[self-host] missing hstackPath for updater launchd plist');
-  const ch = String(channel ?? '').trim() || 'stable';
+  const ch = displayChannel(channel);
   const m = String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
   const wd = String(workingDirectory ?? '').trim();
   const out = String(stdoutPath ?? '').trim();
@@ -973,7 +940,7 @@ export function renderUpdaterLaunchdPlistXml({
       '--non-interactive',
     ],
     env: {
-      PATH: buildLaunchdPath({ execPath: process.execPath, basePath: process.env.PATH }),
+      PATH: buildLaunchdPath({ execPath: hstack, basePath: process.env.PATH }),
     },
     stdoutPath: out,
     stderrPath: err,
@@ -997,7 +964,7 @@ export function renderUpdaterScheduledTaskWrapperPs1({
   const label = String(updaterLabel ?? '').trim() || 'happier-self-host-updater';
   const hstack = String(hstackPath ?? '').trim();
   if (!hstack) throw new Error('[self-host] missing hstackPath for updater scheduled task wrapper');
-  const ch = String(channel ?? '').trim() || 'stable';
+  const ch = displayChannel(channel);
   const m = String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
   const wd = String(workingDirectory ?? '').trim();
   const out = String(stdoutPath ?? '').trim();
@@ -1366,12 +1333,247 @@ async function syncSelfHostGeneratedClients({ artifactRootDir, targetDir }) {
   return { copied: true, reason: 'ok' };
 }
 
+async function syncSelfHostNodeModules({ artifactRootDir, targetDir }) {
+  const root = String(artifactRootDir ?? '').trim();
+  const dest = String(targetDir ?? '').trim();
+  if (!root || !dest) return { copied: false, reason: 'missing-paths', copiedEntries: [], missingEntries: [] };
+
+  const sourceRoot = join(root, 'node_modules');
+  if (!existsSync(sourceRoot)) return { copied: false, reason: 'missing-source-root', copiedEntries: [], missingEntries: [] };
+
+  const sidecars = [
+    { sourcePath: join(sourceRoot, '.prisma'), targetPath: join(dest, '.prisma') },
+    { sourcePath: join(sourceRoot, '@prisma'), targetPath: join(dest, '@prisma') },
+  ];
+  const missingEntries = sidecars
+    .filter((sidecar) => !existsSync(sidecar.sourcePath))
+    .map((sidecar) => sidecar.sourcePath);
+  if (missingEntries.length > 0) {
+    return { copied: false, reason: 'incomplete-sidecars', copiedEntries: [], missingEntries };
+  }
+
+  const copiedEntries = [];
+
+  await rm(dest, { recursive: true, force: true });
+  await mkdir(dest, { recursive: true });
+  for (const sidecar of sidecars) {
+    await mkdir(dirname(sidecar.targetPath), { recursive: true });
+    await cp(sidecar.sourcePath, sidecar.targetPath, { recursive: true });
+    copiedEntries.push(sidecar.targetPath);
+  }
+
+  return copiedEntries.length > 0
+    ? { copied: true, reason: 'ok', copiedEntries, missingEntries: [] }
+    : { copied: false, reason: 'missing-sidecars', copiedEntries, missingEntries: [] };
+}
+
+function assertSelfHostNodeModulesSync(result) {
+  if (result?.copied) return;
+  const reason = String(result?.reason ?? 'unknown');
+  throw new Error(`[self-host] server runtime is missing packaged node_modules sidecars (${reason})`);
+}
+
+async function stageSelfHostRuntimePayload({ artifactRootDir, stageRootDir }) {
+  const stageRoot = String(stageRootDir ?? '').trim();
+  if (!stageRoot) {
+    throw new Error('[self-host] missing runtime staging directory');
+  }
+
+  const sqliteMigrationsDir = join(stageRoot, 'migrations', 'sqlite');
+  await syncSelfHostSqliteMigrations({
+    artifactRootDir,
+    targetDir: sqliteMigrationsDir,
+  }).catch(() => {});
+
+  const generatedDir = join(stageRoot, 'generated');
+  const generated = await syncSelfHostGeneratedClients({
+    artifactRootDir,
+    targetDir: generatedDir,
+  });
+  if (!generated.copied) {
+    throw new Error('[self-host] server runtime is missing packaged generated clients');
+  }
+
+  const nodeModulesDir = join(stageRoot, 'node_modules');
+  const nodeModules = await syncSelfHostNodeModules({
+    artifactRootDir,
+    targetDir: nodeModulesDir,
+  });
+  assertSelfHostNodeModulesSync(nodeModules);
+
+  return {
+    generatedDir,
+    nodeModulesDir,
+    sqliteMigrationsDir: existsSync(sqliteMigrationsDir) ? sqliteMigrationsDir : '',
+  };
+}
+
+async function promoteStagedDirectory({ stagedDir, targetDir }) {
+  const staged = String(stagedDir ?? '').trim();
+  const target = String(targetDir ?? '').trim();
+  if (!staged || !target || !existsSync(staged)) return;
+
+  await mkdir(dirname(target), { recursive: true });
+  const backupDir = `${target}.backup-${randomUUID()}`;
+  const hadTarget = existsSync(target);
+  if (hadTarget) {
+    await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    await rename(target, backupDir);
+  }
+
+  try {
+    await rename(staged, target).catch(async (e) => {
+      if (String(e?.code ?? '') !== 'EXDEV') throw e;
+      await cp(staged, target, { recursive: true });
+      await rm(staged, { recursive: true, force: true });
+    });
+    if (hadTarget) {
+      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    }
+  } catch (error) {
+    await rm(target, { recursive: true, force: true }).catch(() => {});
+    if (hadTarget && existsSync(backupDir)) {
+      await rename(backupDir, target).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+async function rollbackPromotedDirectory({ targetDir, backupDir, hadTarget }) {
+  const target = String(targetDir ?? '').trim();
+  const backup = String(backupDir ?? '').trim();
+  if (target) {
+    await rm(target, { recursive: true, force: true }).catch(() => {});
+  }
+  if (hadTarget && backup && existsSync(backup)) {
+    await rename(backup, target).catch(() => {});
+  }
+}
+
+async function prepareFailClosedBinaryPromotionWindow({ targetBinaryPath, previousBinaryPath }) {
+  const target = String(targetBinaryPath ?? '').trim();
+  const previous = String(previousBinaryPath ?? '').trim();
+  if (!target) {
+    return { targetBinaryPath: '', recoveryBinaryPath: '', hadActiveBinary: false };
+  }
+
+  await mkdir(dirname(target), { recursive: true });
+  const hadActiveBinary = existsSync(target);
+  if (!hadActiveBinary) {
+    return { targetBinaryPath: target, recoveryBinaryPath: '', hadActiveBinary };
+  }
+
+  if (previous) {
+    await mkdir(dirname(previous), { recursive: true });
+    await copyFile(target, previous);
+    await chmod(previous, 0o755).catch(() => {});
+  }
+
+  const recoveryBinaryPath = `${target}.rollback-${randomUUID()}`;
+  await rm(recoveryBinaryPath, { force: true }).catch(() => {});
+  await rename(target, recoveryBinaryPath);
+
+  return { targetBinaryPath: target, recoveryBinaryPath, hadActiveBinary };
+}
+
+async function finalizeFailClosedBinaryPromotionWindow(window) {
+  const recovery = String(window?.recoveryBinaryPath ?? '').trim();
+  if (recovery) {
+    await rm(recovery, { force: true }).catch(() => {});
+  }
+}
+
+async function rollbackFailClosedBinaryPromotionWindow(window) {
+  const target = String(window?.targetBinaryPath ?? '').trim();
+  const recovery = String(window?.recoveryBinaryPath ?? '').trim();
+  const hadActiveBinary = Boolean(window?.hadActiveBinary);
+
+  if (target) {
+    await rm(target, { force: true }).catch(() => {});
+  }
+  if (hadActiveBinary && recovery && existsSync(recovery)) {
+    await rename(recovery, target).catch(() => {});
+  }
+}
+
+async function promoteStagedSelfHostRuntimePayload({ stagedRuntime, config, beforeOnPromoted, onPromoted }) {
+  const promotions = [
+    {
+      stagedDir: stagedRuntime.sqliteMigrationsDir,
+      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
+    },
+    {
+      stagedDir: stagedRuntime.generatedDir,
+      targetDir: join(dirname(config.serverBinaryPath), 'generated'),
+    },
+    {
+      stagedDir: stagedRuntime.nodeModulesDir,
+      targetDir: join(dirname(config.serverBinaryPath), 'node_modules'),
+    },
+  ].filter(({ stagedDir }) => {
+    const staged = String(stagedDir ?? '').trim();
+    return staged && existsSync(staged);
+  });
+
+  const binaryPromotionWindow = await prepareFailClosedBinaryPromotionWindow({
+    targetBinaryPath: config.serverBinaryPath,
+    previousBinaryPath: config.serverPreviousBinaryPath,
+  });
+
+  const promoted = [];
+  try {
+    for (const promotion of promotions) {
+      const target = String(promotion.targetDir ?? '').trim();
+      await mkdir(dirname(target), { recursive: true });
+      promotion.backupDir = `${target}.backup-${randomUUID()}`;
+      promotion.hadTarget = existsSync(target);
+      if (promotion.hadTarget) {
+        await rm(promotion.backupDir, { recursive: true, force: true }).catch(() => {});
+        await rename(target, promotion.backupDir);
+      }
+
+      try {
+        await promoteStagedDirectory({
+          stagedDir: promotion.stagedDir,
+          targetDir: promotion.targetDir,
+        });
+      } catch (error) {
+        await rollbackPromotedDirectory(promotion);
+        throw error;
+      }
+
+      promoted.push(promotion);
+    }
+
+    if (typeof beforeOnPromoted === 'function') {
+      await beforeOnPromoted();
+    }
+    if (typeof onPromoted === 'function') {
+      await onPromoted();
+    }
+    await finalizeFailClosedBinaryPromotionWindow(binaryPromotionWindow);
+
+    for (const promotion of promoted) {
+      if (promotion.hadTarget) {
+        await rm(promotion.backupDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  } catch (error) {
+    await rollbackFailClosedBinaryPromotionWindow(binaryPromotionWindow);
+    for (const promotion of promoted.reverse()) {
+      await rollbackPromotedDirectory(promotion);
+    }
+    throw error;
+  }
+}
+
 export async function installSelfHostBinaryFromBundle({
   bundle,
   binaryName,
   config,
   pubkeyFile = resolveMinisignPublicKeyText(process.env),
   userAgent = 'happier-self-host-installer',
+  beforeBinaryInstall,
 } = {}) {
   const resolvedBundle = bundle;
   const name = String(binaryName ?? '').trim();
@@ -1386,6 +1588,11 @@ export async function installSelfHostBinaryFromBundle({
   }
   const platform = String(config?.platform ?? process.platform).trim() || process.platform;
   const os = normalizeOs(platform);
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.versionsDir,
+    entryPrefix: `${name}-`,
+  });
+  const previousVersionId = existingVersionIds.find((candidate) => candidate !== String(bundle?.version ?? '').trim()) ?? null;
 
   const tempDir = await mkdtemp(join(tmpdir(), 'happier-self-host-release-'));
   try {
@@ -1408,70 +1615,118 @@ export async function installSelfHostBinaryFromBundle({
       throw new Error(`[self-host] ${plan.requiredCommand} is required to extract release artifacts`);
     }
     runCommand(plan.command.cmd, plan.command.args, { stdio: 'ignore' });
-    const extractedBinary = await findExecutableByName(extractDir, name);
+    const extractedBinary = await findExtractedExecutableByName(extractDir, name);
     if (!extractedBinary) {
       throw new Error('[self-host] failed to locate extracted server binary');
     }
 
     const version = downloaded.version || String(resolvedBundle?.version ?? '').trim() || `${Date.now()}`;
-	    await installBinaryAtomically({
-	      sourceBinaryPath: extractedBinary,
-	      targetBinaryPath: config.serverBinaryPath,
-	      previousBinaryPath: config.serverPreviousBinaryPath,
-	      versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
-	    });
-	    const artifactRootDir = dirname(extractedBinary);
-	    await syncSelfHostSqliteMigrations({
-	      artifactRootDir,
-	      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
-	    }).catch(() => {});
-    const generated = await syncSelfHostGeneratedClients({
+    const artifactRootDir = dirname(extractedBinary);
+    const stagedRuntime = await stageSelfHostRuntimePayload({
       artifactRootDir,
-      targetDir: join(dirname(config.serverBinaryPath), 'generated'),
+      stageRootDir: join(tempDir, 'runtime-stage'),
     });
-    if (!generated.copied) {
-      throw new Error('[self-host] server runtime is missing packaged generated clients');
-    }
+    await promoteStagedSelfHostRuntimePayload({
+      stagedRuntime,
+      config,
+      beforeOnPromoted: beforeBinaryInstall,
+      onPromoted: async () => installBinaryAtomically({
+        sourceBinaryPath: extractedBinary,
+        targetBinaryPath: config.serverBinaryPath,
+        previousBinaryPath: config.serverPreviousBinaryPath,
+        versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
+      }),
+    });
+    await pruneVersionedDirectories({
+      versionsDir: config.versionsDir,
+      entryPrefix: `${name}-`,
+      currentVersionId: version,
+      previousVersionId,
+    });
     return { version, source: resolvedBundle.archive.url };
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
 }
 
-async function installFromRelease({ product, binaryName, config, explicitBinaryPath = '' }) {
-  if (explicitBinaryPath) {
-    const srcPath = explicitBinaryPath;
-    if (!existsSync(srcPath)) {
-      throw new Error(`[self-host] missing --server-binary path: ${srcPath}`);
-    }
-    const version = `local-${Date.now()}`;
-    await installBinaryAtomically({
-      sourceBinaryPath: srcPath,
-      targetBinaryPath: config.serverBinaryPath,
-      previousBinaryPath: config.serverPreviousBinaryPath,
-      versionedTargetPath: join(config.versionsDir, `${binaryName}-${version}`),
-    });
-    await syncSelfHostSqliteMigrations({
-      artifactRootDir: dirname(srcPath),
-      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
-    }).catch(() => {});
-    const generated = await syncSelfHostGeneratedClients({
-      artifactRootDir: dirname(srcPath),
-      targetDir: join(dirname(config.serverBinaryPath), 'generated'),
-    });
-    if (!generated.copied) {
-      throw new Error('[self-host] server runtime is missing packaged generated clients');
-    }
-    return { version, source: 'local' };
+export async function installSelfHostBinaryFromLocalPath({
+  sourceBinaryPath,
+  binaryName,
+  config,
+} = {}) {
+  const srcPath = String(sourceBinaryPath ?? '').trim();
+  const name = String(binaryName ?? '').trim();
+  if (!srcPath) {
+    throw new Error('[self-host] missing local source binary path');
+  }
+  if (!existsSync(srcPath)) {
+    throw new Error(`[self-host] missing --server-binary path: ${srcPath}`);
+  }
+  if (!name) {
+    throw new Error('[self-host] missing binary name');
   }
 
-  const channelTag = config.channel === 'preview' ? 'server-preview' : 'server-stable';
-  const release = await fetchGitHubReleaseByTag({
+  const version = `local-${Date.now()}`;
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.versionsDir,
+    entryPrefix: `${name}-`,
+  });
+  const previousVersionId = existingVersionIds.find((candidate) => candidate !== version) ?? null;
+  const artifactRootDir = dirname(srcPath);
+  const runtimeStageDir = await mkdtemp(join(tmpdir(), 'happier-self-host-local-runtime-stage-'));
+  try {
+    const stagedRuntime = await stageSelfHostRuntimePayload({
+      artifactRootDir,
+      stageRootDir: runtimeStageDir,
+    });
+    await promoteStagedSelfHostRuntimePayload({
+      stagedRuntime,
+      config,
+      onPromoted: async () => installBinaryAtomically({
+        sourceBinaryPath: srcPath,
+        targetBinaryPath: config.serverBinaryPath,
+        previousBinaryPath: config.serverPreviousBinaryPath,
+        versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
+      }),
+    });
+    await pruneVersionedDirectories({
+      versionsDir: config.versionsDir,
+      entryPrefix: `${name}-`,
+      currentVersionId: version,
+      previousVersionId,
+    });
+    return { version, source: 'local' };
+  } finally {
+    await rm(runtimeStageDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function installFromRelease({ product, binaryName, config, explicitBinaryPath = '' }) {
+  if (explicitBinaryPath) {
+    return installSelfHostBinaryFromLocalPath({
+      sourceBinaryPath: explicitBinaryPath,
+      binaryName,
+      config,
+    });
+  }
+
+  const { serverTags: tags } = resolveSelfHostReleaseTargets(config.channel);
+  const resolvedRelease = await fetchFirstGitHubReleaseByTags({
     githubRepo: config.githubRepo,
-    tag: channelTag,
+    tags,
     userAgent: 'happier-self-host-installer',
     githubToken: String(process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? ''),
+  }).catch((e) => {
+    const status = Number(e?.status);
+    if (status === 404) return null;
+    throw e;
   });
+
+  if (!resolvedRelease) {
+    throw new Error(`[self-host] server release tag not found (${tags.join(', ')})`);
+  }
+
+  const { release, tag: channelTag } = resolvedRelease;
   const os = normalizeOs(config.platform);
   const resolved = resolveReleaseAssetBundle({
     assets: release?.assets,
@@ -1530,9 +1785,7 @@ export async function resolveExtractedUiWebBundleRootDir({ extractDir } = {}) {
 }
 
 async function installUiWebFromRelease({ config }) {
-  const tags = config.channel === 'preview'
-    ? ['ui-web-preview', 'ui-web-stable']
-    : ['ui-web-stable'];
+  const { uiWebTags: tags } = resolveSelfHostReleaseTargets(config.channel);
 
   const resolvedRelease = await fetchFirstGitHubReleaseByTags({
     githubRepo: config.githubRepo,
@@ -1554,6 +1807,10 @@ async function installUiWebFromRelease({ config }) {
     };
   }
   const { release, tag: channelTag } = resolvedRelease;
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.uiWebVersionsDir,
+    entryPrefix: `${config.uiWebProduct}-`,
+  });
 
   const resolved = resolveReleaseAssetBundle({
     assets: release?.assets,
@@ -1593,6 +1850,7 @@ async function installUiWebFromRelease({ config }) {
 
 	    const version = resolved.version || String(release?.tag_name ?? '').replace(/^ui-web-v/, '') || `${Date.now()}`;
 	    const versionedTargetDir = join(config.uiWebVersionsDir, `${config.uiWebProduct}-${version}`);
+    const previousVersionId = existingVersionIds.find((candidate) => candidate !== version) ?? null;
     await rm(versionedTargetDir, { recursive: true, force: true });
     await mkdir(dirname(versionedTargetDir), { recursive: true });
     await cp(artifactRootDir, versionedTargetDir, { recursive: true });
@@ -1600,6 +1858,12 @@ async function installUiWebFromRelease({ config }) {
     await rm(config.uiWebCurrentDir, { recursive: true, force: true }).catch(() => {});
     await symlink(versionedTargetDir, config.uiWebCurrentDir, config.platform === 'win32' ? 'junction' : 'dir').catch(async () => {
       await cp(versionedTargetDir, config.uiWebCurrentDir, { recursive: true });
+    });
+    await pruneVersionedDirectories({
+      versionsDir: config.uiWebVersionsDir,
+      entryPrefix: `${config.uiWebProduct}-`,
+      currentVersionId: version,
+      previousVersionId,
     });
 
     return { installed: true, version, source: downloaded.source.archiveUrl, tag: channelTag };
@@ -1619,33 +1883,6 @@ async function writeSelfHostState(config, statePatch) {
   };
   await mkdir(dirname(config.statePath), { recursive: true });
   await writeFile(config.statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
-}
-
-async function maybeInstallCompanionCli({ channel, nonInteractive, withCli }) {
-  if (!withCli) return { installed: false, reason: 'disabled' };
-  if (commandExists('happier')) {
-    return { installed: false, reason: 'already-installed' };
-  }
-  if (!commandExists('curl') || !commandExists('bash')) {
-    return { installed: false, reason: 'missing-curl-or-bash' };
-  }
-  const result = runCommand(
-    'bash',
-    ['-lc', 'curl -fsSL https://happier.dev/install | bash'],
-    {
-      allowFail: true,
-      env: {
-        ...process.env,
-        HAPPIER_CHANNEL: channel,
-        HAPPIER_NONINTERACTIVE: nonInteractive ? '1' : '0',
-      },
-      stdio: 'inherit',
-    }
-  );
-  return {
-    installed: (result.status ?? 1) === 0,
-    reason: (result.status ?? 1) === 0 ? 'installed' : 'installer-failed',
-  };
 }
 
 function buildSelfHostServerServiceSpec({ config, envText }) {
@@ -1776,8 +2013,9 @@ async function cmdInstall({ channel, mode, argv, json }) {
 
   const cliResult = await maybeInstallCompanionCli({
     channel,
-    nonInteractive,
+    githubRepo: config.githubRepo,
     withCli: !withoutCli,
+    processEnv: process.env,
   });
   await writeSelfHostState(config, {
     channel,
@@ -2384,13 +2622,13 @@ export function usageText() {
     banner('self-host', { subtitle: 'Happier Self-Host guided installation flow.' }),
     '',
     sectionTitle('usage:'),
-    `  ${cyan('hstack self-host')} install [--mode=user|system] [--without-cli] [--without-ui] [--channel=stable|preview] [--auto-update|--no-auto-update] [--auto-update-interval=<minutes>] [--auto-update-at=<HH:MM>] [--env KEY=VALUE]... [--non-interactive] [--json]`,
-    `  ${cyan('hstack self-host')} status [--mode=user|system] [--channel=stable|preview] [--json]`,
-    `  ${cyan('hstack self-host')} update [--mode=user|system] [--channel=stable|preview] [--json]`,
-    `  ${cyan('hstack self-host')} rollback [--mode=user|system] [--to=<version>] [--channel=stable|preview] [--json]`,
+    `  ${cyan('hstack self-host')} install [--mode=user|system] [--without-cli] [--without-ui] [--channel=stable|preview|dev] [--auto-update|--no-auto-update] [--auto-update-interval=<minutes>] [--auto-update-at=<HH:MM>] [--env KEY=VALUE]... [--non-interactive] [--json]`,
+    `  ${cyan('hstack self-host')} status [--mode=user|system] [--channel=stable|preview|dev] [--json]`,
+    `  ${cyan('hstack self-host')} update [--mode=user|system] [--channel=stable|preview|dev] [--json]`,
+    `  ${cyan('hstack self-host')} rollback [--mode=user|system] [--to=<version>] [--channel=stable|preview|dev] [--json]`,
     `  ${cyan('hstack self-host')} uninstall [--mode=user|system] [--purge-data] [--yes] [--json]`,
     `  ${cyan('hstack self-host')} doctor [--json]`,
-    `  ${cyan('hstack self-host')} config view|set [--mode=user|system] [--channel=stable|preview] [--json]`,
+    `  ${cyan('hstack self-host')} config view|set [--mode=user|system] [--channel=stable|preview|dev] [--json]`,
     '',
     sectionTitle('notes:'),
     '- works without a repository checkout (binary-safe flow).',
@@ -2398,7 +2636,50 @@ export function usageText() {
   ].join('\n');
 }
 
+let cachedRelayHostForwardSupport = null;
+
+function shouldAttemptRelayHostForward(env = process.env) {
+  const raw = String(env?.HAPPIER_STACK_SELF_HOST_FORWARD ?? '1').trim().toLowerCase();
+  if (!raw) return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  return true;
+}
+
+function resolveRelayHostForwardSupport(env = process.env) {
+  if (cachedRelayHostForwardSupport != null) {
+    return cachedRelayHostForwardSupport;
+  }
+
+  try {
+    const probe = spawnSync('happier', ['relay', 'host', '--help'], {
+      env,
+      stdio: 'ignore',
+      encoding: 'utf-8',
+    });
+    cachedRelayHostForwardSupport = (probe.status ?? 1) === 0;
+  } catch {
+    cachedRelayHostForwardSupport = false;
+  }
+
+  return cachedRelayHostForwardSupport;
+}
+
 export async function runSelfHostCli(argv = process.argv.slice(2)) {
+  if (shouldAttemptRelayHostForward(process.env) && resolveRelayHostForwardSupport(process.env)) {
+    const forwarded = spawnSync('happier', ['relay', 'host', ...argv], {
+      env: process.env,
+      stdio: 'inherit',
+      encoding: 'utf-8',
+    });
+    if (forwarded.error) {
+      throw forwarded.error;
+    }
+    if ((forwarded.status ?? 1) !== 0) {
+      throw new Error(`[self-host] forwarded command failed (happier relay host), exit code: ${forwarded.status ?? 1}`);
+    }
+    return;
+  }
+
   const parsed = parseSelfHostInvocation(argv);
   const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });

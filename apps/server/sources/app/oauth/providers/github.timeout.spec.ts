@@ -1,18 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
 import { githubOAuthProvider } from "./github";
 
 describe("githubOAuthProvider timeouts", () => {
-    const envBackup = { ...process.env };
+    const envBackup = snapshotEnv();
 
     afterEach(() => {
-        for (const k of Object.keys(process.env)) {
-            if (!(k in envBackup)) delete process.env[k];
-        }
-        for (const [k, v] of Object.entries(envBackup)) {
-            if (typeof v === "undefined") delete process.env[k];
-            else process.env[k] = v;
-        }
+        restoreEnv(envBackup);
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
     });
@@ -62,7 +57,7 @@ describe("githubOAuthProvider timeouts", () => {
     });
 
     it("uses GITHUB_HTTP_TIMEOUT_SECONDS for the profile fetch request", async () => {
-        process.env.GITHUB_HTTP_TIMEOUT_SECONDS = "5";
+        applyEnvValues({ GITHUB_HTTP_TIMEOUT_SECONDS: "5" });
         const env: NodeJS.ProcessEnv = { GITHUB_HTTP_TIMEOUT_SECONDS: "7" };
 
         const setTimeoutSpy = vi

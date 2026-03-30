@@ -216,6 +216,9 @@ export const TaskResultV2Schema = BaseEnvelopeSchema.extend({
   errorMessage: z.string().optional(),
 }).passthrough();
 
+export const SubAgentInputV2Schema = TaskInputV2Schema;
+export const SubAgentResultV2Schema = TaskResultV2Schema;
+
 export const ReasoningInputV2Schema = BaseEnvelopeSchema.extend({
   text: z.string().optional(),
 }).passthrough();
@@ -292,6 +295,69 @@ export const SubAgentRunResultV2Schema = BaseEnvelopeSchema.extend({
   }).passthrough().optional(),
 }).passthrough();
 
+const AgentTeamToolUseResultV2Schema = z.object({
+  status: z.string().optional(),
+  team_name: z.string().optional(),
+  teamName: z.string().optional(),
+  lead_agent_id: z.string().optional(),
+  leadAgentId: z.string().optional(),
+  agent_id: z.string().optional(),
+  teammate_id: z.string().optional(),
+  name: z.string().optional(),
+  type: z.string().optional(),
+  content: z.string().optional(),
+}).passthrough();
+
+export const AgentTeamCreateInputV2Schema = BaseEnvelopeSchema.extend({
+  team_name: z.string().optional(),
+  teamName: z.string().optional(),
+  description: z.string().optional(),
+  lead_agent_id: z.string().optional(),
+  leadAgentId: z.string().optional(),
+}).passthrough();
+
+export const AgentTeamCreateResultV2Schema = BaseEnvelopeSchema.extend({
+  status: z.string().optional(),
+  team_name: z.string().optional(),
+  teamName: z.string().optional(),
+  description: z.string().optional(),
+  lead_agent_id: z.string().optional(),
+  leadAgentId: z.string().optional(),
+  tool_use_result: AgentTeamToolUseResultV2Schema.optional(),
+}).passthrough();
+
+export const AgentTeamDeleteInputV2Schema = BaseEnvelopeSchema.extend({
+  team_name: z.string().optional(),
+  teamName: z.string().optional(),
+}).passthrough();
+
+export const AgentTeamDeleteResultV2Schema = BaseEnvelopeSchema.extend({
+  status: z.string().optional(),
+  team_name: z.string().optional(),
+  teamName: z.string().optional(),
+  tool_use_result: AgentTeamToolUseResultV2Schema.optional(),
+}).passthrough();
+
+export const AgentTeamSendMessageInputV2Schema = BaseEnvelopeSchema.extend({
+  team_name: z.string().optional(),
+  teamName: z.string().optional(),
+  type: z.string().optional(),
+  content: z.string().optional(),
+  message: z.string().optional(),
+  agent_id: z.string().optional(),
+  teammate_id: z.string().optional(),
+  name: z.string().optional(),
+}).passthrough();
+
+export const AgentTeamSendMessageResultV2Schema = BaseEnvelopeSchema.extend({
+  status: z.string().optional(),
+  team_name: z.string().optional(),
+  teamName: z.string().optional(),
+  type: z.string().optional(),
+  content: z.string().optional(),
+  tool_use_result: AgentTeamToolUseResultV2Schema.optional(),
+}).passthrough();
+
 export const AcpHistoryImportInputV2Schema = BaseEnvelopeSchema.extend({
   provider: z.string().optional(),
   remoteSessionId: z.string().optional(),
@@ -339,6 +405,7 @@ const TOOL_INPUT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   WebSearch: WebSearchInputV2Schema,
   TodoWrite: TodoWriteInputV2Schema,
   TodoRead: TodoReadInputV2Schema,
+  SubAgent: SubAgentInputV2Schema,
   Task: TaskInputV2Schema,
   Reasoning: ReasoningInputV2Schema,
   EnterPlanMode: EnterPlanModeInputV2Schema,
@@ -348,9 +415,9 @@ const TOOL_INPUT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   WorkspaceIndexingPermission: WorkspaceIndexingPermissionInputV2Schema,
   change_title: ChangeTitleInputV2Schema,
   SubAgentRun: SubAgentRunInputV2Schema,
-  AgentTeamCreate: BaseEnvelopeSchema.passthrough(),
-  AgentTeamDelete: BaseEnvelopeSchema.passthrough(),
-  AgentTeamSendMessage: BaseEnvelopeSchema.passthrough(),
+  AgentTeamCreate: AgentTeamCreateInputV2Schema,
+  AgentTeamDelete: AgentTeamDeleteInputV2Schema,
+  AgentTeamSendMessage: AgentTeamSendMessageInputV2Schema,
 };
 
 const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
@@ -370,6 +437,7 @@ const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   WebSearch: WebResultV2Schema,
   TodoWrite: TodoResultV2Schema,
   TodoRead: TodoResultV2Schema,
+  SubAgent: SubAgentResultV2Schema,
   Task: TaskResultV2Schema,
   Reasoning: ReasoningResultV2Schema,
   EnterPlanMode: BaseEnvelopeSchema.passthrough(),
@@ -379,9 +447,9 @@ const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   WorkspaceIndexingPermission: BaseEnvelopeSchema.passthrough(),
   change_title: ChangeTitleResultV2Schema,
   SubAgentRun: SubAgentRunResultV2Schema,
-  AgentTeamCreate: BaseEnvelopeSchema.passthrough(),
-  AgentTeamDelete: BaseEnvelopeSchema.passthrough(),
-  AgentTeamSendMessage: BaseEnvelopeSchema.passthrough(),
+  AgentTeamCreate: AgentTeamCreateResultV2Schema,
+  AgentTeamDelete: AgentTeamDeleteResultV2Schema,
+  AgentTeamSendMessage: AgentTeamSendMessageResultV2Schema,
 };
 
 export function getToolInputSchemaV2(toolName: KnownCanonicalToolNameV2): z.ZodTypeAny {

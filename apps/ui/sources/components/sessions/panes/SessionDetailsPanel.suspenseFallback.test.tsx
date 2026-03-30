@@ -1,53 +1,40 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f6f6f6',
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-                modal: { border: '#ddd' },
-                shadow: { color: '#000', opacity: 0.2 },
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
             },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f6f6f6',
-                        divider: '#ddd',
-                        text: '#000',
-                        textSecondary: '#666',
-                        modal: { border: '#ddd' },
-                        shadow: { color: '#000', opacity: 0.2 },
-                    },
-                })
-                : value,
-        absoluteFillObject: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+        });
     },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+    icons: async () => ({
+        Ionicons: 'Ionicons',
+        Octicons: 'Octicons',
+    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: () => false,
+            useLocalSettingMutable: () => [false, vi.fn()],
+        });
+    },
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -55,15 +42,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: () => false,
-    useLocalSettingMutable: () => [false, vi.fn()],
 }));
 
 vi.mock('@/components/ui/scroll/useWebScrollLockBypass', () => ({
@@ -122,12 +100,10 @@ describe('SessionDetailsPanel (suspense fallback)', () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
 
         // When the active tab suspends, we should still render a visible loading indicator.
-        const textNodes = tree!.root.findAllByType('Text' as any);
+        const textNodes = tree!.findAllByType('Text' as any);
         const hasLoading = textNodes.some((n) => String(n.props.children).includes('common.loading'));
         expect(hasLoading).toBe(true);
     });

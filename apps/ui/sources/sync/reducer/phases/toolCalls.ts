@@ -36,7 +36,7 @@ export function runToolCallsPhase(params: Readonly<{
                     // Direct lookup by tool ID (since permission ID = tool ID now)
                     const existingMessageId = state.toolIdToMessageId.get(c.id);
 
-                    if (existingMessageId) {
+                    if (existingMessageId != null) {
                         if (enableLogging) {
                             console.log(`[REDUCER] Found existing message for tool ${c.id}`);
                         }
@@ -44,6 +44,7 @@ export function runToolCallsPhase(params: Readonly<{
                         const message = state.messages.get(existingMessageId);
                         if (message?.tool) {
                             message.realID = msg.id;
+                            state.messageIds.set(msg.id, existingMessageId);
                             if (!message.tool.id) {
                                 message.tool.id = c.id;
                             }
@@ -176,17 +177,19 @@ export function runToolCallsPhase(params: Readonly<{
                         }
 
                         let mid = allocateId();
-	                        state.messages.set(mid, {
-	                            id: mid,
-	                            realID: msg.id,
-	                            seq: typeof msg.seq === 'number' ? msg.seq : null,
-	                            role: 'agent',
-	                            createdAt: msg.createdAt,
-	                            text: null,
-	                            tool: toolCall,
+		                        state.messages.set(mid, {
+		                            id: mid,
+		                            realID: msg.id,
+		                            seq: typeof msg.seq === 'number' ? msg.seq : null,
+		                            localId: msg.localId ?? null,
+		                            role: 'agent',
+		                            createdAt: msg.createdAt,
+		                            text: null,
+		                            tool: toolCall,
 	                            event: null,
 	                            meta: msg.meta,
 	                        });
+                        state.messageIds.set(msg.id, mid);
 	                        setThinkingMergeCursor(state, null, 'tool-call-phase');
 
                         state.toolIdToMessageId.set(c.id, mid);

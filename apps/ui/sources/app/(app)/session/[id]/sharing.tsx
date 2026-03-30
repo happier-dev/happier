@@ -1,6 +1,6 @@
 import React, { memo, useState, useCallback, useEffect, useRef } from 'react';
-import { View } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { ActivityIndicator, View } from 'react-native';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -9,7 +9,10 @@ import { useSession, useIsDataReady } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { FriendSelector, PublicLinkDialog, SessionShareDialog } from '@/components/sessions/sharing';
+import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { openFriendSelectorModal } from '@/components/sessions/sharing/openFriendSelectorModal';
+import { openPublicLinkDialog } from '@/components/sessions/sharing/openPublicLinkDialog';
+import { openSessionShareDialog } from '@/components/sessions/sharing/openSessionShareDialog';
 import { SessionShare, PublicSessionShare, ShareAccessLevel } from '@/sync/domains/social/sharingTypes';
 import {
     getSessionShares,
@@ -30,11 +33,12 @@ import { getRandomBytes } from 'expo-crypto';
 import { encryptDataKeyForRecipientV0, verifyRecipientContentPublicKeyBinding } from '@/sync/encryption/directShareEncryption';
 import { buildCreateSessionShareRequest } from '@/sync/domains/social/sharingRequests/buildCreateSessionShareRequest';
 import { Text } from '@/components/ui/text/Text';
+import { mergePublicShareWithCachedToken } from '@/sync/domains/social/mergePublicShareWithCachedToken';
+import { createPublicShareWithClientToken } from '@/sync/domains/social/createPublicShareWithClientToken';
 
 
 function SharingManagementContent({ sessionId }: { sessionId: string }) {
     const { theme } = useUnistyles();
-    const router = useRouter();
     const session = useSession(sessionId);
     const canManage = !session?.accessLevel || session.accessLevel === 'admin';
 
@@ -43,45 +47,43 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
     const publicShareTokenRef = useRef<string | null>(null);
     const [friends, setFriends] = useState<UserProfile[]>([]);
 
-    const [showShareDialog, setShowShareDialog] = useState(false);
-    const [showFriendSelector, setShowFriendSelector] = useState(false);
-    const [showPublicLinkDialog, setShowPublicLinkDialog] = useState(false);
-
     // Load sharing data
     const loadSharingData = useCallback(async () => {
         // Non-admin collaborators can view the session, but must not see or manage sharing settings.
         // Avoiding these calls prevents noisy 403 spam and misleading "Not shared" UI states.
         if (!canManage) return;
-        try {
-            const credentials = sync.getCredentials();
+        const credentials = sync.getCredentials();
 
-            // Load shares
+        // Load shares
+        try {
             const sharesData = await getSessionShares(credentials, sessionId);
             setShares(sharesData);
+        } catch (error) {
+            console.error('Failed to load session shares:', error);
+        }
 
-            // Load public share
-            try {
-                const publicShareData = await getPublicShare(credentials, sessionId);
-                setPublicShare((prev) => {
-                    if (!publicShareData) return null;
-                    const token = publicShareData.token ?? prev?.token ?? publicShareTokenRef.current ?? null;
-                    if (token) {
-                        publicShareTokenRef.current = token;
-                        return { ...publicShareData, token };
-                    }
-                    return publicShareData;
+        // Load public share
+        try {
+            const publicShareData = await getPublicShare(credentials, sessionId);
+            setPublicShare((prev) => {
+                const merged = mergePublicShareWithCachedToken({
+                    previousPublicShare: prev,
+                    cachedToken: publicShareTokenRef.current,
+                    outcome: { ok: true, publicShare: publicShareData },
                 });
-            } catch (e) {
-                // No public share exists
-                publicShareTokenRef.current = null;
-                setPublicShare(null);
-            }
+                publicShareTokenRef.current = merged.cachedToken;
+                return merged.publicShare;
+            });
+        } catch (error) {
+            console.error('Failed to load public share:', error);
+        }
 
-            // Load friends list
+        // Load friends list
+        try {
             const friendsData = await getFriendsList(credentials);
             setFriends(friendsData);
         } catch (error) {
-            console.error('Failed to load sharing data:', error);
+            console.error('Failed to load friends list:', error);
         }
     }, [canManage, sessionId]);
 
@@ -137,7 +139,6 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
             );
 
             await loadSharingData();
-            setShowFriendSelector(false);
         } catch (error) {
             throw new HappyError(t('errors.operationFailed'), false);
         }
@@ -176,43 +177,39 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
 
             const sessionEncryptionMode = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
-            // Generate random token (12 bytes = 24 hex chars)
-            const tokenBytes = getRandomBytes(12);
-            const token = Array.from(tokenBytes)
-                .map(b => b.toString(16).padStart(2, '0'))
-                .join('');
-
-            let encryptedDataKey: string | undefined;
-            if (sessionEncryptionMode === 'e2ee') {
-                // Get plaintext session DEK from the sync layer (owner/admin only)
-                const dataKey = sync.getSessionDataKey(sessionId);
-                if (!dataKey) {
-                    throw new HappyError(t('errors.sessionNotFound'), false);
-                }
-                encryptedDataKey = await encryptDataKeyForPublicShare(dataKey, token);
-            }
-
-            const expiresAt = options.expiresInDays
-                ? Date.now() + options.expiresInDays * 24 * 60 * 60 * 1000
-                : undefined;
-
-            const created = await createPublicShare(credentials, sessionId, {
-                token,
-                ...(encryptedDataKey ? { encryptedDataKey } : {}),
-                expiresAt,
+            const created = await createPublicShareWithClientToken({
+                credentials,
+                sessionId,
+                sessionEncryptionMode,
+                expiresInDays: options.expiresInDays,
                 maxUses: options.maxUses,
                 isConsentRequired: options.isConsentRequired,
+                tokenCache: {
+                    get: () => publicShareTokenRef.current,
+                    set: (token) => {
+                        publicShareTokenRef.current = token;
+                    },
+                },
+                generateTokenHex: () => {
+                    // Generate random token (12 bytes = 24 hex chars)
+                    const tokenBytes = getRandomBytes(12);
+                    return Array.from(tokenBytes)
+                        .map((b) => b.toString(16).padStart(2, '0'))
+                        .join('');
+                },
+                getSessionDataKey: (sid) => sync.getSessionDataKey(sid),
+                encryptDataKeyForPublicShare,
+                api: { createPublicShare, getPublicShare },
             });
 
-            publicShareTokenRef.current = token;
-            setPublicShare({ ...created, token });
+            setPublicShare(created);
             await loadSharingData();
         } catch (error) {
             console.error('Failed to create public share:', error);
             if (error instanceof HappyError) throw error;
             throw new HappyError(t('errors.operationFailed'), false);
         }
-    }, [sessionId, loadSharingData]);
+    }, [sessionId, loadSharingData, session?.encryptionMode]);
 
     // Handle deleting public share
     const handleDeletePublicShare = useCallback(async () => {
@@ -221,7 +218,6 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
             await deletePublicShare(credentials, sessionId);
             publicShareTokenRef.current = null;
             await loadSharingData();
-            setShowPublicLinkDialog(false);
         } catch (error) {
             throw new HappyError(t('errors.operationFailed'), false);
         }
@@ -245,6 +241,45 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
 
     const excludedUserIds = shares.map(share => share.sharedWithUser.id);
     const canManagePermissionDelegation = !session.accessLevel || (session.accessLevel === 'admin' && session.canApprovePermissions === true);
+
+    const openFriendSelector = useCallback(() => {
+        void openFriendSelectorModal({
+            friends,
+            excludedUserIds,
+            onSelect: handleAddShare,
+            canManagePermissionDelegation,
+        });
+    }, [canManagePermissionDelegation, excludedUserIds, friends, handleAddShare]);
+
+    const openPublicLink = useCallback(() => {
+        void openPublicLinkDialog({
+            publicShare,
+            onCreate: handleCreatePublicShare,
+            onDelete: handleDeletePublicShare,
+        });
+    }, [handleCreatePublicShare, handleDeletePublicShare, publicShare]);
+
+    const openShareDialog = useCallback(() => {
+        void openSessionShareDialog({
+            sessionId,
+            shares,
+            canManage,
+            canManagePermissionDelegation,
+            onAddShare: openFriendSelector,
+            onUpdateShare: handleUpdateShare,
+            onRemoveShare: handleRemoveShare,
+            onManagePublicLink: openPublicLink,
+        });
+    }, [
+        canManage,
+        canManagePermissionDelegation,
+        handleRemoveShare,
+        handleUpdateShare,
+        openFriendSelector,
+        openPublicLink,
+        sessionId,
+        shares,
+    ]);
 
     if (!canManage) {
         return (
@@ -284,7 +319,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                                 title={share.sharedWithUser.username || [share.sharedWithUser.firstName, share.sharedWithUser.lastName].filter(Boolean).join(' ')}
                                 subtitle={`@${share.sharedWithUser.username} • ${t(`session.sharing.${share.accessLevel === 'view' ? 'viewOnly' : share.accessLevel === 'edit' ? 'canEdit' : 'canManage'}`)}`}
                                 icon={<Ionicons name="person-outline" size={29} color={theme.colors.accent.blue} />}
-                                onPress={() => setShowShareDialog(true)}
+                                onPress={openShareDialog}
                             />
                         ))
                     ) : (
@@ -298,7 +333,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                         <Item
                             title={t('session.sharing.addShare')}
                             icon={<Ionicons name="person-add-outline" size={29} color={theme.colors.success} />}
-                            onPress={() => setShowFriendSelector(true)}
+                            onPress={openFriendSelector}
                         />
                     )}
                 </ItemGroup>
@@ -313,58 +348,18 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                                 : t('session.sharing.never')
                             }
                             icon={<Ionicons name="link-outline" size={29} color={theme.colors.success} />}
-                            onPress={() => setShowPublicLinkDialog(true)}
+                            onPress={openPublicLink}
                         />
                     ) : (
                         <Item
                             title={t('session.sharing.createPublicLink')}
                             subtitle={t('session.sharing.publicLinkDescription')}
                             icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={() => setShowPublicLinkDialog(true)}
+                            onPress={openPublicLink}
                         />
                     )}
                 </ItemGroup>
             </ItemList>
-
-            {/* Dialogs */}
-            {showShareDialog && (
-                <SessionShareDialog
-                    sessionId={sessionId}
-                    shares={shares}
-                    canManage={canManage}
-                    canManagePermissionDelegation={canManagePermissionDelegation}
-                    onAddShare={() => {
-                        setShowShareDialog(false);
-                        setShowFriendSelector(true);
-                    }}
-                    onUpdateShare={handleUpdateShare}
-                    onRemoveShare={handleRemoveShare}
-                    onManagePublicLink={() => {
-                        setShowShareDialog(false);
-                        setShowPublicLinkDialog(true);
-                    }}
-                    onClose={() => setShowShareDialog(false)}
-                />
-            )}
-
-            {showFriendSelector && (
-                <FriendSelector
-                    friends={friends}
-                    excludedUserIds={excludedUserIds}
-                    onSelect={handleAddShare}
-                    onCancel={() => setShowFriendSelector(false)}
-                    canManagePermissionDelegation={canManagePermissionDelegation}
-                />
-            )}
-
-            {showPublicLinkDialog && (
-                <PublicLinkDialog
-                    publicShare={publicShare}
-                    onCreate={handleCreatePublicShare}
-                    onDelete={handleDeletePublicShare}
-                    onCancel={() => setShowPublicLinkDialog(false)}
-                />
-            )}
         </>
     );
 }
@@ -373,13 +368,14 @@ export default memo(() => {
     const { theme } = useUnistyles();
     const { id } = useLocalSearchParams<{ id: string }>();
     const isDataReady = useIsDataReady();
+    const sessionHydrated = useHydrateSessionForRoute(String(id ?? '').trim(), 'SessionSharingRoute.ensureSessionVisible');
     const headerTitle = t('session.sharing.title');
     const screenOptions = React.useMemo(() => ({ headerTitle }), [headerTitle]);
 
-    if (!isDataReady) {
+    if (!isDataReady || !sessionHydrated) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="hourglass-outline" size={48} color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                 <Text style={{
                     color: theme.colors.textSecondary,
                     fontSize: 17,

@@ -50,8 +50,10 @@
 
 import axios from 'axios';
 import chalk from 'chalk';
+import { writeConsoleLogBestEffort } from '@/utils/writeConsoleBestEffort';
 import { exponentialBackoffDelay } from '@/utils/time';
 import { logger } from '@/ui/logger';
+import { readHttpStatus } from '@/api/client/httpStatusError';
 
 /**
  * Configuration for offline reconnection behavior.
@@ -201,7 +203,8 @@ export function startOfflineReconnection<TSession>(
         } catch (e: unknown) {
             // Check for permanent errors that shouldn't be retried
             // 401 = auth token invalid, user needs to re-authenticate
-            if (axios.isAxiosError(e) && e.response?.status === 401) {
+            const status = axios.isAxiosError(e) ? e.response?.status : readHttpStatus(e);
+            if (status === 401 || status === 403) {
                 logger.debug('[OfflineReconnection] Authentication error, stopping retries');
                 config.onNotify('❌ Authentication failed. Please re-authenticate with `happier auth`.');
                 return; // Don't schedule retry - this is a permanent failure
@@ -244,7 +247,7 @@ export function startOfflineReconnection<TSession>(
 
 /** All network error codes that trigger offline mode */
 export const NETWORK_ERROR_CODES = [
-    'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT',
+    'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNABORTED',
     'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH'
 ] as const;
 
@@ -259,6 +262,7 @@ export const ERROR_DESCRIPTIONS: Record<string, string> = {
     ECONNREFUSED: 'server not accepting connections',
     ENOTFOUND: 'server hostname not found',
     ETIMEDOUT: 'connection timed out',
+    ECONNABORTED: 'request timed out before the server responded',
     ECONNRESET: 'connection reset by server',
     EHOSTUNREACH: 'server host unreachable',
     ENETUNREACH: 'network unreachable',
@@ -331,12 +335,12 @@ class OfflineState {
                 return `${f.operation} failed: ${desc}${url}`;
             })
             .join('; ');
-        console.log(`⚠️  Happier server unreachable, offline mode with auto-reconnect enabled - error details: ${summary}`);
+        writeConsoleLogBestEffort(`⚠️  Happier server unreachable, offline mode with auto-reconnect enabled - error details: ${summary}`);
 
         // Print detail lines if present - consistent 3-space indent with arrow
         const allDetails = [...this.failures.values()]
             .flatMap(f => f.details || []);
-        allDetails.forEach(line => console.log(chalk.yellow(`   → ${line}`)));
+        allDetails.forEach(line => writeConsoleLogBestEffort(chalk.yellow(`   → ${line}`)));
     }
 }
 

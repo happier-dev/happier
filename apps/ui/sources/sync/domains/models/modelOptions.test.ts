@@ -26,7 +26,8 @@ describe('modelOptions', () => {
     });
 
     it('returns options for agents with configurable model selection', () => {
-        expect(getModelOptionsForAgentType('gemini').map((o) => o.value)).toEqual([
+        const options = getModelOptionsForAgentType('gemini');
+        expect(options.map((o) => o.value)).toEqual([
             'default',
             'gemini-2.5-pro',
             'gemini-2.5-flash',
@@ -35,6 +36,11 @@ describe('modelOptions', () => {
             'gemini-3-pro-preview',
             'gemini-3.1-pro-preview',
         ]);
+        expect(options.find((option) => option.value === 'gemini-3.1-pro-preview')).toMatchObject({
+            value: 'gemini-3.1-pro-preview',
+            label: 'Gemini 3.1 Pro Preview',
+            description: expect.any(String),
+        });
     });
 
     it('returns a default-only option for selection-capable agents without static lists', () => {
@@ -44,20 +50,30 @@ describe('modelOptions', () => {
 
     it('returns basic options for codex (preflight can extend the list)', () => {
         const out = getModelOptionsForAgentType('codex');
-        expect(out.map((o) => o.value)).toEqual(['default']);
+        expect(out[0]?.value).toBe('default');
+        expect(out.length).toBeGreaterThan(1);
     });
 
     it('includes a curated static list for Claude while still allowing freeform models', () => {
-        const values = getModelOptionsForAgentType('claude').map((o) => o.value);
+        const options = getModelOptionsForAgentType('claude');
+        const values = options.map((o) => o.value);
         expect(values[0]).toBe('default');
         expect(values.length).toBeGreaterThan(1);
+        expect(options.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
+            value: 'claude-opus-4-6',
+            label: 'Opus 4.6',
+            description: expect.any(String),
+            modelOptions: expect.arrayContaining([
+                expect.objectContaining({ id: 'reasoning_effort' }),
+            ]),
+        });
     });
 
     it('prefers ACP session models when present', () => {
         const out = getModelOptionsForSession(
             'opencode',
             withMetadata({
-                acpSessionModelsV1: {
+                sessionModelsV1: {
                     v: 1,
                     provider: 'opencode',
                     updatedAt: 1,
@@ -75,9 +91,60 @@ describe('modelOptions', () => {
         expect(out[2]?.description).toBe('Accurate');
     });
 
+    it('preserves dynamic session model ids, labels, and descriptions from metadata', () => {
+        const out = getModelOptionsForSession(
+            'codex',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'codex',
+                    updatedAt: 1,
+                    currentModelId: 'gpt-5.4',
+                    availableModels: [
+                        {
+                            id: 'gpt-5.4',
+                            name: 'GPT-5.4',
+                            description: 'Latest frontier coding model.',
+                        },
+                    ],
+                },
+            }),
+        );
+
+        expect(out[1]).toEqual({
+            value: 'gpt-5.4',
+            label: 'GPT-5.4',
+            description: 'Latest frontier coding model.',
+        });
+    });
+
+    it('preserves catalog model options when session metadata lists the model but omits per-model options', () => {
+        const out = getModelOptionsForSession(
+            'claude',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'claude',
+                    updatedAt: 1,
+                    currentModelId: 'claude-opus-4-6',
+                    availableModels: [
+                        { id: 'claude-opus-4-6', name: 'Opus 4.6 (From Session)' },
+                        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                    ],
+                },
+            }),
+        );
+
+        expect(out.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
+            modelOptions: expect.arrayContaining([
+                expect.objectContaining({ id: 'reasoning_effort' }),
+            ]),
+        });
+    });
+
     it('treats ACP session models as selectable', () => {
         const metadata = withMetadata({
-            acpSessionModelsV1: {
+            sessionModelsV1: {
                 v: 1,
                 provider: 'opencode',
                 updatedAt: 1,
@@ -131,7 +198,7 @@ describe('modelOptions', () => {
         const out = getModelOptionsForSession(
             'opencode',
             withMetadata({
-                acpSessionModelsV1: {
+                sessionModelsV1: {
                     v: 1,
                     provider: 'claude',
                     updatedAt: 1,
@@ -149,7 +216,7 @@ describe('modelOptions', () => {
             hasDynamicModelListForSession(
                 'opencode',
                 withMetadata({
-                    acpSessionModelsV1: {
+                    sessionModelsV1: {
                         v: 1,
                         provider: 'opencode',
                         updatedAt: 1,
@@ -164,7 +231,7 @@ describe('modelOptions', () => {
             hasDynamicModelListForSession(
                 'opencode',
                 withMetadata({
-                    acpSessionModelsV1: {
+                    sessionModelsV1: {
                         v: 1,
                         provider: 'gemini',
                         updatedAt: 1,
@@ -174,5 +241,22 @@ describe('modelOptions', () => {
                 }),
             ),
         ).toBe(false);
+    });
+
+    it('falls back to legacy ACP session models when canonical key is absent', () => {
+        const out = getModelOptionsForSession(
+            'opencode',
+            withMetadata({
+                acpSessionModelsV1: {
+                    v: 1,
+                    provider: 'opencode',
+                    updatedAt: 1,
+                    currentModelId: 'model-a',
+                    availableModels: [{ id: 'model-a', name: 'Model A' }],
+                },
+            }),
+        );
+
+        expect(out.map((o) => o.value)).toEqual(['default', 'model-a']);
     });
 });

@@ -10,12 +10,18 @@ import { handleDaemonCliCommand } from './commands/daemon';
 import { handleDoctorCliCommand } from './commands/doctor';
 import { handleInstallCliCommand } from './commands/install';
 import { handleLogoutCliCommand } from './commands/logout';
+import { handleMachineCliCommand } from './commands/machine';
+import { handleMcpCliCommand } from './commands/mcp';
 import { handleNotifyCliCommand } from './commands/notify';
+import { handleProfilesCliCommand } from './commands/profiles';
+import { handleRelayCliCommand } from './commands/relay';
 import { handleResumeCliCommand } from './commands/resume';
 import { handleSessionCliCommand } from './commands/session/index';
 import { handleServerCliCommand } from './commands/server';
 import { handleSelfCliCommand } from './commands/self';
 import { handleSelfUpdateCliCommand } from './commands/selfUpdate';
+import { handleToolsCliCommand } from './commands/tools';
+import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleConfiguredAcpCatalogCliCommand';
 
 export type CommandContext = Readonly<{
   args: string[];
@@ -41,18 +47,28 @@ function buildAgentCommandRegistry(): Readonly<Record<string, CommandHandler>> {
 
 export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   attach: handleAttachCliCommand,
+  'acp-catalog': handleConfiguredAcpCatalogCliCommand,
   auth: handleAuthCliCommand,
   'bug-report': handleBugReportCliCommand,
+  // Backwards-compatible alias for the MCP command namespace.
+  // Prefer `happier mcp ...` in docs and help output.
+  bridge: handleMcpCliCommand,
   connect: handleConnectCliCommand,
   daemon: handleDaemonCliCommand,
   doctor: handleDoctorCliCommand,
   install: handleInstallCliCommand,
   logout: handleLogoutCliCommand,
+  machine: handleMachineCliCommand,
+  mcp: handleMcpCliCommand,
   notify: handleNotifyCliCommand,
+  profile: handleProfilesCliCommand,
+  profiles: handleProfilesCliCommand,
+  relay: handleRelayCliCommand,
   resume: handleResumeCliCommand,
   session: handleSessionCliCommand,
   server: handleServerCliCommand,
   self: handleSelfCliCommand,
   'self-update': handleSelfUpdateCliCommand,
+  tools: handleToolsCliCommand,
   ...buildAgentCommandRegistry(),
 };

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 import { router } from 'expo-router';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage, type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
@@ -8,7 +9,6 @@ import { authApprove } from '@/auth/flows/approve';
 import { buildTerminalResponseV1, buildTerminalResponseV2 } from '@/auth/terminal/terminalProvisioning';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { sync } from '@/sync/sync';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
@@ -21,6 +21,22 @@ import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristi
 interface UseConnectTerminalOptions {
     onSuccess?: () => void;
     onError?: (error: any) => void;
+}
+
+function resolveTerminalProvisioningContentPrivateKey(credentials: AuthCredentials): Uint8Array {
+    if (!isLegacyAuthCredentials(credentials)) {
+        const machineKey = decodeBase64(credentials.encryption.machineKey, 'base64');
+        if (machineKey.length !== 32) {
+            throw new Error('Invalid dataKey credential key lengths');
+        }
+        return machineKey;
+    }
+
+    const secretKey = decodeBase64(credentials.secret, 'base64url');
+    if (secretKey.length !== 32) {
+        throw new Error(`Invalid secret key length: ${secretKey.length}, expected 32`);
+    }
+    return deriveAccountMachineKeyFromRecoverySecret(secretKey);
 }
 
 export function useConnectTerminal(options?: UseConnectTerminalOptions) {
@@ -79,7 +95,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 storage.getState().settings?.terminalConnectLegacySecretExportEnabled,
             );
 
-            const contentPrivateKey = sync.encryption.getContentPrivateKey();
+            const contentPrivateKey = resolveTerminalProvisioningContentPrivateKey(activeCredentials);
             const responseV2 = buildTerminalResponseV2({
                 contentPrivateKey,
                 terminalEphemeralPublicKey: publicKey,

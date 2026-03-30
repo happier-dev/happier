@@ -10,11 +10,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 import type { PermissionMode } from '@/api/types';
 import { kimiTransport } from '@/backends/kimi/acp/transport';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
 function buildReadOnlyAgentFilePath(): string {
   return join(tmpdir(), `happier-kimi-${process.pid}-readonly-agent.yaml`);
@@ -43,6 +43,8 @@ export interface KimiBackendOptions extends AgentFactoryOptions {
 
 export function createKimiBackend(options: KimiBackendOptions): AgentBackend {
   const intent = normalizePermissionModeToIntent(options.permissionMode ?? 'default') ?? 'default';
+  const processEnv = { ...process.env, ...options.env };
+  const launch = requireProviderCliLaunchSpec('kimi', { processEnv });
 
   const args: string[] = ['--work-dir', options.cwd];
 
@@ -59,8 +61,8 @@ export function createKimiBackend(options: KimiBackendOptions): AgentBackend {
   const backendOptions: AcpBackendOptions = {
     agentName: 'kimi',
     cwd: options.cwd,
-    command: resolveCliPathOverride({ agentId: 'kimi' }) ?? 'kimi',
-    args,
+    command: launch.command,
+    args: [...launch.args, ...args],
     env: {
       ...options.env,
       // Keep output clean; ACP must own stdout.

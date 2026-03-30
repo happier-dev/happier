@@ -11,12 +11,33 @@ describe('ExecutionBudgetRegistry', () => {
     expect(registry.tryAcquireExecutionRun('run2')).toBe(true);
   });
 
+  it('allows unlimited execution runs when maxConcurrentExecutionRuns is unset', () => {
+    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null as number | null, maxConcurrentEphemeralTasks: 1 });
+    expect(registry.tryAcquireExecutionRun('run1')).toBe(true);
+    expect(registry.tryAcquireExecutionRun('run2')).toBe(true);
+    expect(registry.getInFlightSnapshot().executionRuns).toBe(2);
+  });
+
   it('enforces maxConcurrentEphemeralTasks', () => {
     const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentEphemeralTasks: 1 });
     expect(registry.tryAcquireEphemeralTask('task1')).toBe(true);
     expect(registry.tryAcquireEphemeralTask('task2')).toBe(false);
     registry.releaseEphemeralTask('task1');
     expect(registry.tryAcquireEphemeralTask('task2')).toBe(true);
+  });
+
+  it('allows unlimited ephemeral tasks when maxConcurrentEphemeralTasks is unset', () => {
+    const registry = new ExecutionBudgetRegistry({
+      maxConcurrentExecutionRuns: 1,
+      maxConcurrentEphemeralTasks: null as number | null,
+    });
+
+    expect(registry.tryAcquireEphemeralTask('task1')).toBe(true);
+    expect(registry.tryAcquireEphemeralTask('task2')).toBe(true);
+    expect(registry.getInFlightSnapshot().ephemeralTasks).toBe(2);
+
+    expect(registry.tryAcquireEphemeralTask('automation-1', 'automation')).toBe(true);
+    expect(registry.getInFlightSnapshot().ephemeralTasks).toBe(3);
   });
 
   it('treats automation and ephemeral tasks as one shared budget', () => {

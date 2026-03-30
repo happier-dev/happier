@@ -20,18 +20,18 @@ describe('OpenCodeTransport determineToolName', () => {
       expected: 'change_title',
     },
     {
-      label: 'maps change_title task alias to Task when ACP metadata indicates a task tool',
+      label: 'maps change_title task alias to SubAgent when ACP metadata indicates a task tool',
       toolName: 'change_title',
       toolCallId: 'tool-2',
       input: { _acp: { title: 'task' }, prompt: 'Respond with EXACTLY: SUBTASK_OK' },
-      expected: 'Task',
+      expected: 'SubAgent',
     },
     {
-      label: 'maps change_title task alias to Task when input is task-shaped without ACP metadata',
+      label: 'maps change_title task alias to SubAgent when input is task-shaped without ACP metadata',
       toolName: 'change_title',
       toolCallId: 'tool-3',
       input: { prompt: 'Respond with EXACTLY: SUBTASK_OK', subagent_type: 'assistant' },
-      expected: 'Task',
+      expected: 'SubAgent',
     },
     {
       label: 'uses toolCallId pattern mapping (case-insensitive)',
@@ -97,6 +97,13 @@ describe('OpenCodeTransport determineToolName', () => {
       toolCallId: 'unknown-5',
       input: { toolName: 'read_file' },
       expected: 'read',
+    },
+    {
+      label: 'canonicalizes direct OpenCode MCP client aliases using the explicit tool hint',
+      toolName: 'qa_marker_stdio_20260306_get_marker',
+      toolCallId: 'tool-6',
+      input: { tool_name: 'get_marker' },
+      expected: 'mcp__qa_marker_stdio_20260306__get_marker',
     },
   ])('$label', ({ toolName, toolCallId, input, expected }) => {
     const transport = new OpenCodeTransport();
@@ -220,6 +227,13 @@ ProviderModelNotFoundError: ProviderModelNotFoundError
 });
 
 describe('OpenCodeTransport timeouts', () => {
+  it('exposes the expected ACP timeout policy', () => {
+    const transport = new OpenCodeTransport();
+    expect(transport.getIdleTimeout()).toBe(1_500);
+    expect(transport.getPostToolCallIdleTimeoutMs?.()).toBe(1_500);
+    expect(transport.getIdleWithoutAssistantMessageTimeoutMs()).toBe(10_000);
+  });
+
   it('treats task-like tool calls as investigation tools', () => {
     const transport = new OpenCodeTransport();
     expect(transport.isInvestigationTool('task-123', undefined)).toBe(true);

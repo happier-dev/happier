@@ -1,4 +1,4 @@
-import { AIBackendProfile } from '@/sync/domains/settings/settings';
+import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { DEFAULT_PROFILES, getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import type { AgentId } from '@/agents/catalog/catalog';
 import { getProfileCompatibleAgentIds } from '@/sync/domains/profiles/profileUtils';

@@ -50,5 +50,17 @@ describe('getInactiveSessionUiState', () => {
             noticeKind: 'none',
         });
     });
-});
 
+    it('shows input for inactive voice conversation sessions even when normal resume is unavailable', () => {
+        expect(getInactiveSessionUiState({
+            isSessionActive: false,
+            isResumable: false,
+            isMachineOnline: false,
+            allowInputWhileInactive: true,
+        })).toEqual({
+            shouldShowInput: true,
+            inactiveStatusTextKey: null,
+            noticeKind: 'none',
+        });
+    });
+});

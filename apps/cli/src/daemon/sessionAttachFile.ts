@@ -3,7 +3,7 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 export type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
@@ -49,8 +49,10 @@ export async function createSessionAttachFile(params: {
   happySessionId: string;
   payload: SessionAttachFilePayload;
 }): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
-  const baseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir);
-  await mkdir(baseDir, { recursive: true });
+  const baseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir, configuration.publicReleaseRing);
+  await mkdir(baseDir, { recursive: true, mode: 0o700 });
+  // Best-effort: mkdir does not update permissions for existing dirs.
+  await chmod(baseDir, 0o700).catch(() => {});
   await pruneStaleSessionAttachFiles(baseDir);
 
   const safeSessionId = sanitizeHappySessionIdForFilename(params.happySessionId);

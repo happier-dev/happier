@@ -6,18 +6,21 @@ const mockMachineRPC = vi.fn();
 const mockSessionRPC = vi.fn();
 const getStateSpy = vi.fn();
 
-vi.mock('../api/session/apiSocket', () => ({
+vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
         machineRPC: mockMachineRPC,
         sessionRPC: mockSessionRPC,
     },
 }));
 
-vi.mock('../domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => getStateSpy(),
     },
-}));
+});
+});
 
 describe('sessionScm (rpc timeouts)', () => {
     it('uses an extended machine RPC timeout for commit diffs', async () => {

@@ -22,7 +22,7 @@ describe("oidcIdentityProvider.connect (integration)", () => {
     });
 
     beforeEach(async () => {
-        harness.restoreEnv();
+        harness.resetEnv();
         await harness.resetDbTables([
             () => db.accountIdentity.deleteMany(),
             () => db.account.deleteMany(),

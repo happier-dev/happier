@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AutomationValidationError } from "@/app/automations/automationValidation";
 
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createEnvReset } from "../../testkit/env";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
-const findAccountById = vi.fn(async () => ({ publicKey: "pk-test", encryptionMode: null }));
+const dbMocks = createDbMocks({
+    account: ["findUnique"],
+} as const);
+const findAccountById = dbMocks.db.account.findUnique;
 
 const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
     kind: "happier_automation_template_encrypted_v1",
@@ -62,67 +67,99 @@ vi.mock("@/app/automations/automationCrudService", () => ({
 vi.mock("@/app/automations/automationClaimService", () => ({
     claimAutomationRun,
 }));
-vi.mock("@/storage/db", () => ({
-    db: {
-        account: {
-            findUnique: findAccountById,
-        },
-    },
+installDbModuleMock(() => ({
+    db: dbMocks.db,
 }));
 
 describe("automationRoutes", () => {
+    const resetAutomationsEnv = createEnvReset();
+
     beforeEach(() => {
         vi.clearAllMocks();
-        delete process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED;
+        dbMocks.reset();
+        resetAutomationsEnv({
+            HAPPIER_FEATURE_AUTOMATIONS__ENABLED: undefined,
+        });
+        findAccountById.mockResolvedValue({ publicKey: "pk-test", encryptionMode: null });
     });
 
     it("registers CRUD and daemon claim endpoints", async () => {
         const { automationRoutes } = await import("./automationRoutes");
-        const app = createFakeRouteApp();
-        automationRoutes(app as any);
+        const listRoute = createRouteTestBuilder({
+            method: "GET",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const createRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const claimRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations/runs/claim",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
 
-        expect(() => getRouteHandler(app, "GET", "/v2/automations")).not.toThrow();
-        expect(() => getRouteHandler(app, "POST", "/v2/automations")).not.toThrow();
-        expect(() => getRouteHandler(app, "POST", "/v2/automations/runs/claim")).not.toThrow();
+        expect(listRoute.handler).toBeTypeOf("function");
+        expect(createRoute.handler).toBeTypeOf("function");
+        expect(claimRoute.handler).toBeTypeOf("function");
     });
 
     it("does not register routes when HAPPIER_FEATURE_AUTOMATIONS__ENABLED=0", async () => {
-        process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED = "0";
+        resetAutomationsEnv({
+            HAPPIER_FEATURE_AUTOMATIONS__ENABLED: "0",
+        });
         const { automationRoutes } = await import("./automationRoutes");
-        const app = createFakeRouteApp();
-        automationRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const claimRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations/runs/claim",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
 
-        expect(() => getRouteHandler(app, "GET", "/v2/automations")).not.toThrow();
-        expect(() => getRouteHandler(app, "POST", "/v2/automations/runs/claim")).not.toThrow();
+        expect(route.handler).toBeTypeOf("function");
+        expect(claimRoute.handler).toBeTypeOf("function");
 
-        const listHandler = getRouteHandler(app, "GET", "/v2/automations");
-        const reply = createReplyStub();
-        await listHandler({ userId: "u1" }, reply);
+        const { reply } = await route.invoke({ userId: "u1" });
         expect(reply.code).toHaveBeenCalledWith(404);
     });
 
     it("creates an automation from POST /v2/automations", async () => {
         const { automationRoutes } = await import("./automationRoutes");
-        const app = createFakeRouteApp();
-        automationRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v2/automations");
-        const reply = createReplyStub();
-
-        const response = await handler(
-            {
-                userId: "u1",
-                body: {
-                    name: "Daily sweep",
-                    enabled: true,
-                    schedule: { kind: "interval", everyMs: 60_000 },
-                    targetType: "new_session",
-                    templateCiphertext: TEST_TEMPLATE_ENVELOPE,
-                    assignments: [{ machineId: "m1" }],
-                },
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
             },
-            reply,
-        );
+        });
+
+        const { response } = await route.invoke({
+            userId: "u1",
+            body: {
+                name: "Daily sweep",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "new_session",
+                templateCiphertext: TEST_TEMPLATE_ENVELOPE,
+                assignments: [{ machineId: "m1" }],
+            },
+        });
 
         expect(createAutomation).toHaveBeenCalledWith(expect.objectContaining({ accountId: "u1" }));
         expect(response).toEqual(expect.objectContaining({ id: "a1", name: "Daily sweep" }));
@@ -130,22 +167,21 @@ describe("automationRoutes", () => {
 
     it("returns 400 for invalid automation payloads", async () => {
         const { automationRoutes } = await import("./automationRoutes");
-        const app = createFakeRouteApp();
-        automationRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v2/automations");
-        const reply = createReplyStub();
-
-        const response = await handler(
-            {
-                userId: "u1",
-                body: {
-                    name: "",
-                    enabled: true,
-                },
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
             },
-            reply,
-        );
+        });
+
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            body: {
+                name: "",
+                enabled: true,
+            },
+        });
 
         expect(createAutomation).not.toHaveBeenCalled();
         expect(reply.code).toHaveBeenCalledWith(400);
@@ -155,26 +191,25 @@ describe("automationRoutes", () => {
     it("returns 500 when automation creation fails for non-validation errors", async () => {
         createAutomation.mockRejectedValueOnce(new Error("database unavailable"));
         const { automationRoutes } = await import("./automationRoutes");
-        const app = createFakeRouteApp();
-        automationRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v2/automations");
-        const reply = createReplyStub();
-
-        const response = await handler(
-            {
-                userId: "u1",
-                body: {
-                    name: "Daily sweep",
-                    enabled: true,
-                    schedule: { kind: "interval", everyMs: 60_000 },
-                    targetType: "new_session",
-                    templateCiphertext: TEST_TEMPLATE_ENVELOPE,
-                    assignments: [{ machineId: "m1" }],
-                },
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
             },
-            reply,
-        );
+        });
+
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            body: {
+                name: "Daily sweep",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "new_session",
+                templateCiphertext: TEST_TEMPLATE_ENVELOPE,
+                assignments: [{ machineId: "m1" }],
+            },
+        });
 
         expect(createAutomation).toHaveBeenCalledWith(expect.objectContaining({ accountId: "u1" }));
         expect(reply.code).toHaveBeenCalledWith(500);
@@ -183,19 +218,18 @@ describe("automationRoutes", () => {
 
     it("claims due runs for daemon callers", async () => {
         const { automationRoutes } = await import("./automationRoutes");
-        const app = createFakeRouteApp();
-        automationRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v2/automations/runs/claim");
-        const reply = createReplyStub();
-
-        const response = await handler(
-            {
-                userId: "u1",
-                body: { machineId: "m1", leaseDurationMs: 30_000 },
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations/runs/claim",
+            registerRoutes(app) {
+                automationRoutes(app as any);
             },
-            reply,
-        );
+        });
+
+        const { response } = await route.invoke({
+            userId: "u1",
+            body: { machineId: "m1", leaseDurationMs: 30_000 },
+        });
 
         expect(claimAutomationRun).toHaveBeenCalledWith(
             expect.objectContaining({ accountId: "u1", machineId: "m1", leaseDurationMs: 30_000 }),
@@ -206,22 +240,21 @@ describe("automationRoutes", () => {
     it("returns 400 for assignment payloads that fail validation in the service layer", async () => {
         updateAutomation.mockRejectedValueOnce(new AutomationValidationError("Unknown machine assignments: m-missing"));
         const { automationRoutes } = await import("./automationRoutes");
-        const app = createFakeRouteApp();
-        automationRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v2/automations/:id/assignments");
-        const reply = createReplyStub();
-
-        const response = await handler(
-            {
-                userId: "u1",
-                params: { id: "a1" },
-                body: {
-                    assignments: [{ machineId: "m-missing", enabled: true, priority: 0 }],
-                },
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations/:id/assignments",
+            registerRoutes(app) {
+                automationRoutes(app as any);
             },
-            reply,
-        );
+        });
+
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            params: { id: "a1" },
+            body: {
+                assignments: [{ machineId: "m-missing", enabled: true, priority: 0 }],
+            },
+        });
 
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(response).toEqual({ error: "Unknown machine assignments: m-missing" });

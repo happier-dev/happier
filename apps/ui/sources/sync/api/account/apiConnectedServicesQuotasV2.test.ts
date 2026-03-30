@@ -33,14 +33,20 @@ function mockServerConfig() {
 describe('apiConnectedServicesQuotasV2', () => {
   it('gets the latest sealed quota snapshot from the v2 endpoint', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        sealed: { format: 'account_scoped_v1', ciphertext: 'cipher' },
-        metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
-      }),
-    }));
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          sealed: { format: 'account_scoped_v1', ciphertext: 'cipher' },
+          metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
+        }),
+      };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { getConnectedServiceQuotaSnapshotSealed } = await import('./apiConnectedServicesQuotasV2');
@@ -54,13 +60,16 @@ describe('apiConnectedServicesQuotasV2', () => {
 
   it('returns null when the server has no snapshot', async () => {
     mockServerConfig();
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: false, status: 404, json: async () => ({ error: 'connect_quotas_not_found' }) };
+    });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: 'connect_quotas_not_found' }),
-      })) as unknown as typeof fetch,
+      fetchMock as unknown as typeof fetch,
     );
 
     const { getConnectedServiceQuotaSnapshotSealed } = await import('./apiConnectedServicesQuotasV2');
@@ -70,11 +79,13 @@ describe('apiConnectedServicesQuotasV2', () => {
 
   it('requests a daemon refresh (best-effort) via the refresh endpoint', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true }),
-    }));
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { requestConnectedServiceQuotaSnapshotRefresh } = await import('./apiConnectedServicesQuotasV2');
@@ -88,13 +99,16 @@ describe('apiConnectedServicesQuotasV2', () => {
 
   it('treats missing snapshots as a non-fatal refresh request failure', async () => {
     mockServerConfig();
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: false, status: 404, json: async () => ({ error: 'connect_quotas_not_found' }) };
+    });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: 'connect_quotas_not_found' }),
-      })) as unknown as typeof fetch,
+      fetchMock as unknown as typeof fetch,
     );
 
     const { requestConnectedServiceQuotaSnapshotRefresh } = await import('./apiConnectedServicesQuotasV2');

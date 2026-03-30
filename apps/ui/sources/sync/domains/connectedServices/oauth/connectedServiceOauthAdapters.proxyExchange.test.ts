@@ -48,6 +48,12 @@ describe('ConnectedServiceOauthAdapters (proxy exchange)', () => {
     const fetchMock = vi.fn(async (input: any, init?: any) => {
       const url = String(input);
       const method = String(init?.method ?? 'GET').toUpperCase();
+      if (url.endsWith('/health') && method === 'GET') {
+        return new Response('', { status: 200 });
+      }
+      if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+        return new Response('', { status: 200 });
+      }
       if (url.endsWith('/v2/connect/openai-codex/oauth/exchange') && method === 'POST') {
         const body = init?.body ? JSON.parse(String(init.body)) : {};
         const bundle = buildBundle({
@@ -103,6 +109,12 @@ describe('ConnectedServiceOauthAdapters (proxy exchange)', () => {
     const fetchMock = vi.fn(async (input: any, init?: any) => {
       const url = String(input);
       const method = String(init?.method ?? 'GET').toUpperCase();
+      if (url.endsWith('/health') && method === 'GET') {
+        return new Response('', { status: 200 });
+      }
+      if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+        return new Response('', { status: 200 });
+      }
       if (url.endsWith('/v2/connect/gemini/oauth/exchange') && method === 'POST') {
         const body = init?.body ? JSON.parse(String(init.body)) : {};
         const bundle = buildBundle({

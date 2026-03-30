@@ -1,37 +1,19 @@
 import React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installLocalTtsCommonModuleMocks } from './localTtsTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+installLocalTtsCommonModuleMocks();
 
 const providerTestSpy = vi.fn();
 const primeWebAudioPlaybackSpy = vi.fn();
 
-vi.mock('react-native-unistyles', () => {
-  const theme = { colors: { textSecondary: '#999' } };
-  return {
-    useUnistyles: () => ({ theme }),
-    StyleSheet: {
-      create: (factory: any) => (typeof factory === 'function' ? {} : factory),
-      absoluteFillObject: {},
-    },
-  };
-});
-
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
-
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(),
-    confirm: vi.fn(),
-    alert: vi.fn(),
-  },
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -88,9 +70,7 @@ describe('LocalVoiceTtsGroup', () => {
     const { LocalVoiceTtsGroup } = await import('./LocalVoiceTtsGroup');
 
     let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(LocalVoiceTtsGroup, {
+    tree = (await renderScreen(React.createElement(LocalVoiceTtsGroup, {
           cfgTts: {
             provider: 'local_neural',
             autoSpeakReplies: false,
@@ -102,9 +82,7 @@ describe('LocalVoiceTtsGroup', () => {
           setTts: vi.fn(),
           networkTimeoutMs: 15000,
           popoverBoundaryRef: null,
-        }),
-      );
-    });
+        }))).tree;
 
     const getTestItem = () =>
       tree.root
@@ -114,7 +92,7 @@ describe('LocalVoiceTtsGroup', () => {
     expect(getTestItem().props.detail).toBe('common.none');
 
     await act(async () => {
-      getTestItem().props.onPress?.();
+      await pressTestInstanceAsync(getTestItem());
     });
     await act(async () => {});
 

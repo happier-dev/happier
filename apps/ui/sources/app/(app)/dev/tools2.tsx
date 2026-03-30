@@ -305,6 +305,49 @@ export function formatTime(date: Date): string {
                 reason: 'This action requires permission'
             }
         },
+        askUserQuestion: {
+            name: 'AskUserQuestion',
+            state: 'running' as const,
+            input: {
+                questions: [
+                    {
+                        header: 'E2E',
+                        question: 'Pick one option to continue.',
+                        multiSelect: false,
+                        options: [
+                            { label: 'Option A', description: 'First option' },
+                            { label: 'Option B', description: 'Second option' },
+                        ],
+                    },
+                ],
+            },
+            createdAt: Date.now() - 1500,
+            startedAt: Date.now() - 1400,
+            completedAt: null,
+            description: 'Ask the user a structured question',
+            permission: {
+                id: 'perm-ask-1',
+                status: 'pending' as const,
+            },
+            children: [],
+        },
+        toolPendingInactive: {
+            name: 'Bash',
+            state: 'running' as const,
+            input: {
+                command: 'rm -rf /important/directory',
+                description: 'Delete important directory'
+            },
+            createdAt: Date.now(),
+            startedAt: Date.now(),
+            completedAt: null,
+            description: 'Delete important directory',
+            permission: {
+                id: 'perm-1',
+                status: 'pending' as const,
+                reason: 'This action requires permission'
+            }
+        },
         toolApproved: {
             name: 'Bash',
             state: 'completed' as const,
@@ -360,22 +403,23 @@ export function formatTime(date: Date): string {
         }
     };
 
-    const renderExample = (key: string, example: any) => {
-        if (selectedExample !== 'all' && selectedExample !== key) {
-            return null;
-        }
-
+    const renderExample = (key: string, example: any, interaction?: React.ComponentProps<typeof ToolView>['interaction']) => {
         return (
-            <View key={key} style={styles.exampleContainer}>
+            <View key={key} testID={`dev-tools2-example:${key}`} style={styles.exampleContainer}>
                 <Text style={styles.exampleTitle}>{key}</Text>
                 <ToolView 
                     tool={example} 
                     metadata={null}
+                    interaction={interaction}
                     onPress={() => console.log(`Pressed tool: ${key}`)}
                 />
             </View>
         );
     };
+
+    const shouldShowPermissionExample = React.useCallback((key: string) => {
+        return selectedExample === 'all' || selectedExample === 'permissions' || selectedExample === key;
+    }, [selectedExample]);
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -398,6 +442,7 @@ export function formatTime(date: Date): string {
 
                     <ItemGroup title="Filter Examples">
                         <Item
+                            testID="dev-tools2-filter:all"
                             title="All Examples"
                             selected={selectedExample === 'all'}
                             onPress={() => setSelectedExample('all')}
@@ -423,9 +468,28 @@ export function formatTime(date: Date): string {
                             onPress={() => setSelectedExample('other')}
                         />
                         <Item
+                            testID="dev-tools2-filter:permissions"
                             title="Permission States"
                             selected={selectedExample === 'permissions'}
                             onPress={() => setSelectedExample('permissions')}
+                        />
+                        <Item
+                            testID="dev-tools2-filter:permissions.pending"
+                            title="Permission: pending"
+                            selected={selectedExample === 'toolPending'}
+                            onPress={() => setSelectedExample('toolPending')}
+                        />
+                        <Item
+                            testID="dev-tools2-filter:permissions.pending-inactive"
+                            title="Permission: inactive"
+                            selected={selectedExample === 'toolPendingInactive'}
+                            onPress={() => setSelectedExample('toolPendingInactive')}
+                        />
+                        <Item
+                            testID="dev-tools2-filter:ask-user-question"
+                            title="AskUserQuestion"
+                            selected={selectedExample === 'askUserQuestion'}
+                            onPress={() => setSelectedExample('askUserQuestion')}
                         />
                         <Item
                             title="Status Icons"
@@ -468,13 +532,31 @@ export function formatTime(date: Date): string {
                             </>
                         ) : null}
 
-                        {selectedExample === 'all' || selectedExample === 'permissions' ? (
+                        {selectedExample === 'all' || selectedExample === 'permissions' || shouldShowPermissionExample('toolPending') || shouldShowPermissionExample('toolPendingInactive') || shouldShowPermissionExample('toolApproved') || shouldShowPermissionExample('toolDenied') || shouldShowPermissionExample('toolCanceled') ? (
                             <>
                                 <Text style={styles.subsectionTitle}>Permission States</Text>
-                                {renderExample('toolPending', examples.toolPending)}
-                                {renderExample('toolApproved', examples.toolApproved)}
-                                {renderExample('toolDenied', examples.toolDenied)}
-                                {renderExample('toolCanceled', examples.toolCanceled)}
+                                {shouldShowPermissionExample('toolPending') ? renderExample('toolPending', examples.toolPending, {
+                                    canSendMessages: true,
+                                    canApprovePermissions: true,
+                                }) : null}
+                                {shouldShowPermissionExample('toolPendingInactive') ? renderExample('toolPendingInactive', examples.toolPendingInactive, {
+                                    canSendMessages: true,
+                                    canApprovePermissions: false,
+                                    permissionDisabledReason: 'inactive',
+                                }) : null}
+                                {shouldShowPermissionExample('toolApproved') ? renderExample('toolApproved', examples.toolApproved) : null}
+                                {shouldShowPermissionExample('toolDenied') ? renderExample('toolDenied', examples.toolDenied) : null}
+                                {shouldShowPermissionExample('toolCanceled') ? renderExample('toolCanceled', examples.toolCanceled) : null}
+                            </>
+                        ) : null}
+
+                        {selectedExample === 'all' || selectedExample === 'askUserQuestion' ? (
+                            <>
+                                <Text style={styles.subsectionTitle}>AskUserQuestion</Text>
+                                {renderExample('askUserQuestion', examples.askUserQuestion, {
+                                    canSendMessages: true,
+                                    canApprovePermissions: true,
+                                })}
                             </>
                         ) : null}
 

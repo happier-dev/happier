@@ -1,31 +1,28 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { installRouteRootCommonModuleMocks } from '../routeRootTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const replaceSpy = vi.fn();
-const useLocalSearchParamsMock = vi.fn(() => ({ error: 'restore_required' }));
+const replaceSpy = vi.hoisted(() => vi.fn());
+const useLocalSearchParamsMock = vi.hoisted(() => vi.fn(() => ({ error: 'restore_required' })));
 
-vi.mock('expo-router', () => ({
+const expoRouterMock = createExpoRouterMock({
     router: { replace: replaceSpy },
-    useLocalSearchParams: () => useLocalSearchParamsMock(),
-}));
+    params: () => useLocalSearchParamsMock(),
+});
+
+installRouteRootCommonModuleMocks({
+    router: () => expoRouterMock.module,
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
         loginWithCredentials: vi.fn(async () => {}),
     }),
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(async () => {}),
-    },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
 }));
 
 describe('/mtls (restore required)', () => {
@@ -34,14 +31,9 @@ describe('/mtls (restore required)', () => {
         useLocalSearchParamsMock.mockReturnValue({ error: 'restore_required' });
 
         const { default: MtlsCallbackScreen } = await import('@/app/(app)/mtls');
-        await act(async () => {
-            renderer.create(<MtlsCallbackScreen />);
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
+        await renderScreen(<MtlsCallbackScreen />);
+        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(replaceSpy).toHaveBeenCalledWith('/restore');
     });
 });
-

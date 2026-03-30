@@ -1,5 +1,6 @@
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '@happier-dev/protocol';
 
+import type { OperationalMemoryEmbeddingsSettings } from './resolveOperationalMemoryEmbeddingsSettings';
 import { openSummaryShardIndexDb } from './summaryShardIndexDb';
 import { openDeepIndexDb } from './deepIndex/deepIndexDb';
 import { rerankHitsWithEmbeddings } from './deepIndex/embeddings/rerankHitsWithEmbeddings';
@@ -62,13 +63,7 @@ export async function searchTier2Memory(params: Readonly<{
   query: MemorySearchQueryV1;
   previewChars: number;
   candidateLimit?: number;
-  embeddings?: Readonly<{
-    enabled: boolean;
-    provider: string;
-    modelId: string;
-    wFts: number;
-    wEmb: number;
-  }>;
+  embeddings?: OperationalMemoryEmbeddingsSettings | null;
   embedQuery?: (queryText: string) => Promise<Float32Array>;
 }>): Promise<MemorySearchResultV1> {
   const maxResults = params.query.maxResults ?? 20;
@@ -99,7 +94,7 @@ export async function searchTier2Memory(params: Readonly<{
     }));
 
     if (embeddings?.enabled === true && typeof params.embedQuery === 'function' && ranked.length > 0) {
-      const provider = String(embeddings.provider ?? '').trim();
+      const provider = String(embeddings.providerKind ?? '').trim();
       const modelId = String(embeddings.modelId ?? '').trim();
       if (provider && modelId) {
         try {
@@ -121,7 +116,10 @@ export async function searchTier2Memory(params: Readonly<{
               embedding: embeddingMap.get(hit.key) ?? null,
             })),
             queryEmbedding,
-            weights: { wFts: embeddings.wFts, wEmb: embeddings.wEmb },
+            weights: {
+              wFts: embeddings.blend.ftsWeight,
+              wEmb: embeddings.blend.embeddingWeight,
+            },
           });
 
           const scoreByKey = new Map<string, number>();

@@ -1,27 +1,50 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    installRestoreRouteCommonModuleMocks,
+    resetRestoreRouteTestState,
+} from './restoreRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
+const modalAlertSpy = vi.fn(async () => {});
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Pressable: 'Pressable',
-    Dimensions: {
-        get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+installRestoreRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            ScrollView: 'ScrollView',
+            ActivityIndicator: 'ActivityIndicator',
+            Pressable: 'Pressable',
+            Dimensions: {
+                get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            Platform: {
+                OS: 'ios',
+                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
     },
-    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-    Platform: { OS: 'ios', select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
+});
 
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
@@ -44,10 +67,14 @@ vi.mock('expo-camera', () => ({
     useCameraPermissions: () => [{ granted: true }, vi.fn(async () => ({ granted: true }))],
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }),
-    useLocalSearchParams: () => ({}),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+        params: {},
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({ state: 'enabled' }),
@@ -59,40 +86,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: 'RoundButton',
-}));
-
-const modalAlertSpy = vi.fn(async () => {});
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlertSpy,
-        prompt: vi.fn(async () => null),
-    },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                overlay: {
-                    scrim: 'rgba(0,0,0,0.3)',
-                    scrimStrong: 'rgba(0,0,0,0.55)',
-                    text: '#fff',
-                    textSecondary: 'rgba(255,255,255,0.85)',
-                },
-                divider: '#ddd',
-                input: { background: '#fff', placeholder: '#999', text: '#000' },
-            },
-        },
-    }),
-    StyleSheet: { create: (styles: any) => styles },
 }));
 
 vi.mock('@/auth/flows/qrStart', () => ({
@@ -127,24 +120,20 @@ vi.mock('@/auth/pairing/pairingUrl', () => ({
     parsePairingDeepLink: () => null,
 }));
 
+afterEach(() => {
+    resetRestoreRouteTestState();
+    vi.restoreAllMocks();
+    standardCleanup();
+});
+
 describe('/restore (mobile)', () => {
     it('renders a scanner-first restore UI', async () => {
         vi.resetModules();
         modalAlertSpy.mockClear();
         const { default: Screen } = await import('@/app/(app)/restore/index');
 
-        let tree: ReactTestRenderer | null = null;
-        try {
-            await act(async () => {
-                tree = create(<Screen />);
-            });
-            const buttons = tree!.root.findAllByProps({ testID: 'restore-show-qr-instead' });
-            expect(buttons.length).toBeGreaterThan(0);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-            await Promise.resolve();
-        }
+        const screen = await renderScreen(<Screen />);
+        const button = screen.findByTestId('restore-show-qr-instead');
+        expect(button).not.toBeNull();
     });
 });

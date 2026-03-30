@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import type { BugReportUserAction } from '@/utils/system/bugReportActionTrail';
 
@@ -63,7 +64,6 @@ function parseSnapshot(raw: string): PreRestartBugReportSnapshotV1 | null {
 
 async function readNativeFileSafe(): Promise<string | null> {
   try {
-    const FileSystem: any = await import('expo-file-system');
     const base: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
     if (!base) return null;
     const path = `${base}${SNAPSHOT_FILENAME}`;
@@ -76,7 +76,6 @@ async function readNativeFileSafe(): Promise<string | null> {
 }
 
 async function writeNativeFileSafe(payload: string): Promise<void> {
-  const FileSystem: any = await import('expo-file-system');
   const base: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
   if (!base) return;
   const path = `${base}${SNAPSHOT_FILENAME}`;
@@ -85,7 +84,6 @@ async function writeNativeFileSafe(payload: string): Promise<void> {
 
 async function deleteNativeFileSafe(): Promise<void> {
   try {
-    const FileSystem: any = await import('expo-file-system');
     const base: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
     if (!base) return;
     const path = `${base}${SNAPSHOT_FILENAME}`;

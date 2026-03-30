@@ -4,9 +4,12 @@ const storageMock = vi.hoisted(() => ({
     getState: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: storageMock,
-}));
+});
+});
 
 describe('apiSocket.sessionRPC plaintext sessions', () => {
     beforeEach(() => {
@@ -79,5 +82,37 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
             }),
         );
         expect(response).toEqual({ ok: true, value: 456 });
+    });
+
+    it('uses socket ack timeouts when session RPC options provide timeoutMs', async () => {
+        storageMock.getState.mockReturnValue({
+            sessions: {
+                s1: { id: 's1', encryptionMode: 'plain' },
+            },
+        });
+
+        const emitWithAck = vi.fn(async () => ({ ok: true, result: { ok: true, value: 789 } }));
+        const timeout = vi.fn(() => ({ emitWithAck }));
+
+        const { apiSocket } = await import('./apiSocket');
+        (apiSocket as any).socket = { timeout, emitWithAck: vi.fn() };
+        (apiSocket as any).encryption = { getSessionEncryption: () => null };
+
+        const response = await apiSocket.sessionRPC<{ ok: true; value: number }, { hello: string }>(
+            's1',
+            'ping',
+            { hello: 'world' },
+            { timeoutMs: 7500 },
+        );
+
+        expect(timeout).toHaveBeenCalledWith(7500);
+        expect(emitWithAck).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({
+                method: 's1:ping',
+                params: { hello: 'world' },
+            }),
+        );
+        expect(response).toEqual({ ok: true, value: 789 });
     });
 });

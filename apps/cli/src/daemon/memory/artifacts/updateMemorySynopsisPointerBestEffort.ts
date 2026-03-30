@@ -1,6 +1,6 @@
 import type { Credentials } from '@/persistence';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { applyMemorySynopsisPointerV1ToSessionMetadata } from '@/session/memoryArtifacts/memorySynopsisPointerV1';
 
 export type UpdateMemorySynopsisPointerBestEffortDeps = Readonly<{

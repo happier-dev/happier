@@ -7,9 +7,7 @@ import {
     useServerFeaturesRuntimeSnapshot,
     useServerFeaturesSnapshotForServerId,
 } from '@/sync/domains/features/featureDecisionRuntime';
-import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
-import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
-import { featureRequiresServerSnapshot } from '@happier-dev/protocol';
+import { resolveFeatureDecisionSnapshotStrategy } from '@/sync/domains/features/featureDecisionProbeStrategy';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import type { FeatureScopeParams } from './featureScope';
 
@@ -27,13 +25,15 @@ export function useFeatureDetails<T>(params: FeatureDetailsParams<T>): T {
     const settings = useSettings();
     const selection = useEffectiveServerSelection();
     const scopeKind = params.scope?.scopeKind ?? 'main_selection';
-    const buildPolicy = getFeatureBuildPolicyDecision(params.featureId);
-    const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(params.featureId, settings);
-    const probesEnabled =
-        featureRequiresServerSnapshot(params.featureId) && buildPolicy !== 'deny' && localPolicyEnabled;
+    const snapshotStrategy = resolveFeatureDecisionSnapshotStrategy({
+        featureId: params.featureId,
+        settings,
+        scopeKind,
+        hasMainSelectionServerIds: selection.serverIds.length > 0,
+    });
 
     const runtimeSnapshot = useServerFeaturesRuntimeSnapshot({
-        enabled: probesEnabled && (scopeKind === 'runtime' || (scopeKind === 'main_selection' && selection.serverIds.length === 0)),
+        enabled: snapshotStrategy.runtimeEnabled,
     });
 
     const spawnServerId = params.scope && params.scope.scopeKind === 'spawn'
@@ -41,12 +41,12 @@ export function useFeatureDetails<T>(params: FeatureDetailsParams<T>): T {
         : null;
     const spawnSnapshot = useServerFeaturesSnapshotForServerId(
         spawnServerId,
-        { enabled: probesEnabled && scopeKind === 'spawn' },
+        { enabled: snapshotStrategy.spawnEnabled },
     );
 
     const mainSelectionSnapshot = useServerFeaturesMainSelectionSnapshot(
         selection.serverIds,
-        { enabled: probesEnabled && scopeKind === 'main_selection' && selection.serverIds.length > 0 },
+        { enabled: snapshotStrategy.mainSelectionEnabled },
     );
 
     return React.useMemo(() => {

@@ -10,6 +10,8 @@ type ClaudeRemoteDispatchDependencies = Readonly<{
     claudeRemoteAgentSdk: typeof claudeRemoteAgentSdk;
 }>;
 
+export type ClaudeRemoteRunnerKind = 'legacy' | 'agentSdk';
+
 function isClaudeAgentSdkAuthenticationError(error: unknown): boolean {
     if (!error || typeof error !== 'object') return false;
     const message = (error as { message?: unknown }).message;
@@ -28,13 +30,24 @@ function isClaudeAgentSdkAuthenticationError(error: unknown): boolean {
 }
 
 export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage }>(
-    opts: T,
+    opts: T & { onRunnerSelected?: ((runner: ClaudeRemoteRunnerKind) => void) | null },
     deps?: Partial<ClaudeRemoteDispatchDependencies>,
 ): Promise<void> {
     const first = await opts.nextMessage();
     if (!first) return;
 
     let consumedBeyondFirst = false;
+    let didStartSession = false;
+
+    const originalOnSessionFound = (opts as any).onSessionFound as unknown;
+    const onSessionFound = (...args: any[]) => {
+        didStartSession = true;
+        if (typeof originalOnSessionFound === 'function') {
+            originalOnSessionFound(...args);
+        }
+    };
+
+    const baseOpts = { ...opts, onSessionFound };
     const createNextMessage = (): NextMessage => {
         let usedFirst = false;
         return async () => {
@@ -52,16 +65,19 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
 
     if (first.mode.claudeRemoteAgentSdkEnabled === true) {
         try {
-            await resolvedAgentSdk({ ...opts, nextMessage: createNextMessage() } as any);
+            baseOpts.onRunnerSelected?.('agentSdk');
+            await resolvedAgentSdk({ ...baseOpts, nextMessage: createNextMessage() } as any);
             return;
         } catch (error) {
-            if (!consumedBeyondFirst && isClaudeAgentSdkAuthenticationError(error)) {
-                await resolvedLegacy({ ...opts, nextMessage: createNextMessage() } as any);
+            if (!consumedBeyondFirst && !didStartSession && isClaudeAgentSdkAuthenticationError(error)) {
+                baseOpts.onRunnerSelected?.('legacy');
+                await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
                 return;
             }
             throw error;
         }
     }
 
-    await resolvedLegacy({ ...opts, nextMessage: createNextMessage() } as any);
+    baseOpts.onRunnerSelected?.('legacy');
+    await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
 }

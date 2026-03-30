@@ -1,0 +1,104 @@
+type SessionHandoffRuntimeConfigEnv = Readonly<Record<string, string | undefined>>;
+
+export type SessionHandoffRuntimeConfig = Readonly<{
+    machineRpcTimeoutMs: number;
+    machineRpcPollTimeoutMs: number;
+    targetPreparePollTimeoutMs: number;
+    postCommitBindingStabilizationTimeoutMs: number;
+    postCommitBindingStabilizationIntervalMs: number;
+    postCommitBindingStablePolls: number;
+    sourceReachabilityProbeTimeoutMs: number;
+}>;
+
+const DEFAULT_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS = 90_000;
+const DEFAULT_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = 10_000;
+const DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS = 300_000;
+const DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS = 5_000;
+const DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS = 250;
+const DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS = 2;
+const DEFAULT_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS = 2_500;
+
+const MIN_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS = 5_000;
+const MAX_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS = 300_000;
+const MIN_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = 1_000;
+const MAX_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = 60_000;
+const MIN_TARGET_PREPARE_POLL_TIMEOUT_MS = 5_000;
+const MAX_TARGET_PREPARE_POLL_TIMEOUT_MS = 600_000;
+const MIN_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS = 500;
+const MAX_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS = 30_000;
+const MIN_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS = 50;
+const MAX_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS = 5_000;
+const MIN_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS = 1;
+const MAX_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS = 10;
+const MIN_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS = 250;
+const MAX_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS = 30_000;
+
+function readClampedPositiveIntEnv(
+    env: SessionHandoffRuntimeConfigEnv,
+    name: string,
+    fallback: number,
+    min: number,
+    max: number,
+): number {
+    const raw = String(env[name] ?? '').trim();
+    if (!raw) return fallback;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+export function resolveSessionHandoffRuntimeConfig(
+    env: SessionHandoffRuntimeConfigEnv = process.env,
+): SessionHandoffRuntimeConfig {
+    return {
+        machineRpcTimeoutMs: readClampedPositiveIntEnv(
+            env,
+            'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS',
+            DEFAULT_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS,
+            MIN_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS,
+            MAX_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS,
+        ),
+        machineRpcPollTimeoutMs: readClampedPositiveIntEnv(
+            env,
+            'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS',
+            DEFAULT_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS,
+            MIN_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS,
+            MAX_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS,
+        ),
+        targetPreparePollTimeoutMs: readClampedPositiveIntEnv(
+            env,
+            'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_TARGET_PREPARE_POLL_TIMEOUT_MS',
+            DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS,
+            MIN_TARGET_PREPARE_POLL_TIMEOUT_MS,
+            MAX_TARGET_PREPARE_POLL_TIMEOUT_MS,
+        ),
+        postCommitBindingStabilizationTimeoutMs: readClampedPositiveIntEnv(
+            env,
+            'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS',
+            DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS,
+            MIN_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS,
+            MAX_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS,
+        ),
+        postCommitBindingStabilizationIntervalMs: readClampedPositiveIntEnv(
+            env,
+            'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS',
+            DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS,
+            MIN_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS,
+            MAX_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS,
+        ),
+        postCommitBindingStablePolls: readClampedPositiveIntEnv(
+            env,
+            'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS',
+            DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS,
+            MIN_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS,
+            MAX_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS,
+        ),
+        sourceReachabilityProbeTimeoutMs: readClampedPositiveIntEnv(
+            env,
+            'EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS',
+            DEFAULT_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS,
+            MIN_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS,
+            MAX_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS,
+        ),
+    };
+}

@@ -4,9 +4,11 @@ import { getStacksStorageRoot } from './utils/paths/paths.mjs';
 import { runCaptureIfCommandExists } from './utils/proc/commands.mjs';
 import { readLastLines } from './utils/fs/tail.mjs';
 import { ensureCliBuilt } from './utils/proc/pm.mjs';
+import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers/managedJavaScriptRuntime';
 import {
   findAnyCredentialPathInCliHome,
   findExistingStackCredentialPath,
+  resolvePreferredStackServerIdFromCliSettings,
   resolvePreferredStackDaemonStatePaths,
   resolveStackDaemonStatePaths,
   resolveStackCredentialPaths,
@@ -21,7 +23,14 @@ import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
+import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { getCliHomeDirFromEnvOrDefault } from './utils/stack/dirs.mjs';
+import {
+  isCliDirectExecutableCommand,
+  readCliDistIntegrity,
+  resolveCliDistEntrypointFromBin,
+} from './utils/cli/cliDistIntegrity.mjs';
+import { recordStackRuntimeDaemonPid, syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
 
 /**
  * Daemon lifecycle helpers for hstack.
@@ -32,6 +41,14 @@ import { getCliHomeDirFromEnvOrDefault } from './utils/stack/dirs.mjs';
  * - starting daemon and handling first-time auth
  * - printing actionable diagnostics
  */
+
+const STACK_DAEMON_MACHINE_TRANSFER_ENV_KEYS = [
+  'HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES',
+  'HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED',
+  'HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED',
+  'HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT',
+  'HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS',
+];
 
 function resolveServerUrlFromOptions(options) {
   if (typeof options === 'string') {
@@ -45,6 +62,42 @@ function resolveEnvFromOptions(options) {
     return options.env;
   }
   return process.env;
+}
+
+function hasExplicitServerContext({ serverUrl = '', env = process.env }) {
+  return String(serverUrl ?? '').trim() !== '' || String(env?.HAPPIER_ACTIVE_SERVER_ID ?? '').trim() !== '';
+}
+
+async function persistStackDaemonMachineTransferEnv({ stackName, env = process.env } = {}) {
+  const name = String(stackName ?? '').trim();
+  if (!name) return { ok: false, changed: false, reason: 'missing_stack_name' };
+
+  const { envPath } = resolveStackEnvPath(name, env);
+  let existing = {};
+  try {
+    if (existsSync(envPath)) {
+      existing = parseEnvToObject(readFileSync(envPath, 'utf-8'));
+    }
+  } catch {
+    existing = {};
+  }
+
+  const updates = [];
+  for (const key of STACK_DAEMON_MACHINE_TRANSFER_ENV_KEYS) {
+    const rawValue = env?.[key];
+    if (rawValue == null) continue;
+    const value = String(rawValue).trim();
+    if (!value) continue;
+    if (String(existing?.[key] ?? '').trim() === value) continue;
+    updates.push({ key, value });
+  }
+
+  if (!updates.length) {
+    return { ok: true, changed: false, envPath, updatedKeys: [] };
+  }
+
+  await ensureEnvFileUpdated({ envPath, updates });
+  return { ok: true, changed: true, envPath, updatedKeys: updates.map(({ key }) => key) };
 }
 
 export async function cleanupStaleDaemonState(homeDir, options = {}) {
@@ -65,6 +118,19 @@ export async function cleanupStaleDaemonState(homeDir, options = {}) {
     }
   };
 
+  const canProveLsofOwnership = async (pid, pathNeedle) => {
+    try {
+      const out = await runCaptureIfCommandExists('lsof', ['-nP', '-p', String(pid)], { env });
+      // runCaptureIfCommandExists returns '' when lsof is not found
+      if (out === '') {
+        return { available: false, owns: false };
+      }
+      return { available: true, owns: out.includes(pathNeedle) };
+    } catch {
+      return { available: false, owns: false };
+    }
+  };
+
   // If lock PID exists and is running, keep lock/state ONLY if it still owns the lock file path.
   try {
     const raw = readFileSync(lockPath, 'utf-8').trim();
@@ -74,7 +140,13 @@ export async function cleanupStaleDaemonState(homeDir, options = {}) {
         process.kill(pid, 0);
         // If PID was recycled, refuse to trust it unless we can prove it's associated with this home dir.
         // This prevents cross-stack daemon kills due to stale lock files.
-        if (await lsofHasPath(pid, lockPath)) {
+        const ownership = await canProveLsofOwnership(pid, lockPath);
+        if (ownership.owns) {
+          return;
+        }
+        // CRITICAL: If lsof is unavailable and the PID is running, fail-safe by keeping the files.
+        // This prevents a second daemon from starting while the first is still running.
+        if (!ownership.available) {
           return;
         }
       } catch {
@@ -94,7 +166,13 @@ export async function cleanupStaleDaemonState(homeDir, options = {}) {
         try {
           process.kill(pid, 0);
           // Only keep if we can prove it still uses this home dir (via state path).
-          if (await lsofHasPath(pid, statePath)) {
+          const ownership = await canProveLsofOwnership(pid, statePath);
+          if (ownership.owns) {
+            return;
+          }
+          // CRITICAL: If lsof is unavailable and the PID is running, fail-safe by keeping the files.
+          // This prevents a second daemon from starting while the first is still running.
+          if (!ownership.available) {
             return;
           }
         } catch {
@@ -114,6 +192,7 @@ export function checkDaemonState(cliHomeDir, options = {}) {
   const serverUrl = resolveServerUrlFromOptions(options);
   const env = resolveEnvFromOptions(options);
   const { statePath, lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
+  const allowAnyRunningFallback = !hasExplicitServerContext({ serverUrl, env });
 
   const alive = isPidAlive;
 
@@ -122,7 +201,11 @@ export function checkDaemonState(cliHomeDir, options = {}) {
       const state = JSON.parse(readFileSync(statePath, 'utf-8'));
       const pid = Number(state?.pid);
       if (Number.isFinite(pid) && pid > 0) {
-        return alive(pid) ? { status: 'running', pid } : { status: 'stale_state', pid };
+        if (alive(pid)) {
+          return { status: 'running', pid };
+        }
+        const fallback = resolveFallbackRunningDaemon(cliHomeDir, allowAnyRunningFallback, alive);
+        return fallback ?? { status: 'stale_state', pid };
       }
       return { status: 'bad_state', pid: null };
     } catch {
@@ -134,7 +217,11 @@ export function checkDaemonState(cliHomeDir, options = {}) {
     try {
       const pid = Number(readFileSync(lockPath, 'utf-8').trim());
       if (Number.isFinite(pid) && pid > 0) {
-        return alive(pid) ? { status: 'starting', pid } : { status: 'stale_lock', pid };
+        if (alive(pid)) {
+          return { status: 'starting', pid };
+        }
+        const fallback = resolveFallbackRunningDaemon(cliHomeDir, allowAnyRunningFallback, alive);
+        return fallback ?? { status: 'stale_lock', pid };
       }
       return { status: 'bad_lock', pid: null };
     } catch {
@@ -142,12 +229,19 @@ export function checkDaemonState(cliHomeDir, options = {}) {
     }
   }
 
-  const fallback = findRunningDaemonStateInHome(cliHomeDir, alive);
+  const fallback = resolveFallbackRunningDaemon(cliHomeDir, allowAnyRunningFallback, alive);
   if (fallback) {
     return fallback;
   }
 
   return { status: 'stopped', pid: null };
+}
+
+function resolveFallbackRunningDaemon(cliHomeDir, allowAnyRunningFallback, alive) {
+  if (!allowAnyRunningFallback) {
+    return null;
+  }
+  return findRunningDaemonStateInHome(cliHomeDir, alive);
 }
 
 function isPidAlive(pid) {
@@ -241,93 +335,158 @@ function getLatestDaemonLogPath(homeDir) {
   }
 }
 
-function resolveHappierCliDistEntrypoint(cliBin) {
-  const bin = String(cliBin ?? '').trim();
-  if (!bin) return null;
-  // In component checkouts/worktrees we launch via <cliDir>/bin/happier.mjs, which expects dist output.
-  // Use this to protect restarts from bricking the running daemon if dist disappears mid-build.
-  try {
-    const binDir = dirname(bin);
-    return join(binDir, '..', 'dist', 'index.mjs');
-  } catch {
-    return null;
-  }
+function resolveJavaScriptRuntimeForStackDaemon({ env = process.env } = {}) {
+  const runtimeName = String(process.release?.name ?? '').trim().toLowerCase();
+  return resolveJavaScriptRuntimeCommand({
+    isBunRuntime: runtimeName === 'bun',
+    processEnv: env,
+    currentExecPath: process.execPath,
+  });
 }
 
-function resolveDaemonNodeArgsPrefix({ cliBin }) {
-  const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
-  if (distEntrypoint && existsSync(distEntrypoint)) {
+function isJavaScriptEntrypoint(command) {
+  return /\.(?:cjs|js|mjs)$/i.test(String(command ?? '').trim());
+}
+
+function hasExplicitRuntimeLaunchSpec({ cliEntrypoint = '', cliNodeEntrypoint = '', cliCommand = '' }) {
+  if (String(cliEntrypoint ?? '').trim()) return true;
+  if (String(cliNodeEntrypoint ?? '').trim()) return true;
+  return isJavaScriptEntrypoint(cliCommand);
+}
+
+function looksLikeFilesystemCommandPath(command) {
+  const value = String(command ?? '').trim();
+  if (!value) return false;
+  return value.includes('/') || value.includes('\\') || value.startsWith('.');
+}
+
+function resolveExplicitRuntimeLaunchValidation({ cliEntrypoint = '', cliNodeEntrypoint = '', cliCommand = '' }) {
+  const explicitNodeEntrypoint = String(cliNodeEntrypoint ?? '').trim();
+  if (explicitNodeEntrypoint && existsSync(explicitNodeEntrypoint)) {
+    return { ok: true, source: 'node-entrypoint', path: explicitNodeEntrypoint };
+  }
+
+  const explicitCommand = String(cliCommand ?? '').trim();
+  if (explicitCommand) {
+    if (!looksLikeFilesystemCommandPath(explicitCommand) || existsSync(explicitCommand)) {
+      return { ok: true, source: 'command', path: explicitCommand };
+    }
+  }
+
+  const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
+  if (explicitEntrypoint && existsSync(explicitEntrypoint)) {
+    return { ok: true, source: 'entrypoint', path: explicitEntrypoint };
+  }
+
+  const missingPath =
+    explicitNodeEntrypoint
+    || (looksLikeFilesystemCommandPath(explicitCommand) ? explicitCommand : '')
+    || explicitEntrypoint
+    || '';
+
+  if (!missingPath) {
+    return { ok: true, source: null, path: '' };
+  }
+
+  return {
+    ok: false,
+    source:
+      explicitNodeEntrypoint
+        ? 'node-entrypoint'
+        : looksLikeFilesystemCommandPath(explicitCommand)
+          ? 'command'
+          : 'entrypoint',
+    path: missingPath,
+    reason: `missing_runtime_launch_path:${missingPath}`,
+  };
+}
+
+function resolveDaemonCommandSpec({
+  cliBin,
+  cliEntrypoint = '',
+  cliNodeEntrypoint = '',
+  cliCommand = '',
+  cliCommandArgs = [],
+  env = process.env,
+}) {
+  const javaScriptRuntime = resolveJavaScriptRuntimeForStackDaemon({ env });
+  const explicitNodeEntrypoint = String(cliNodeEntrypoint ?? '').trim();
+  if (explicitNodeEntrypoint && javaScriptRuntime && existsSync(explicitNodeEntrypoint)) {
+    return {
+      command: javaScriptRuntime,
+      argsPrefix: ['--no-warnings', '--no-deprecation', explicitNodeEntrypoint],
+      mode: 'node',
+    };
+  }
+  const explicitCommand = String(cliCommand ?? '').trim();
+  if (explicitCommand) {
+    if (isJavaScriptEntrypoint(explicitCommand) && javaScriptRuntime) {
+      return {
+        command: javaScriptRuntime,
+        argsPrefix: ['--no-warnings', '--no-deprecation', explicitCommand, ...Array.isArray(cliCommandArgs) ? cliCommandArgs.map((value) => String(value)) : []],
+        mode: 'node',
+      };
+    }
+    return {
+      command: explicitCommand,
+      argsPrefix: Array.isArray(cliCommandArgs) ? cliCommandArgs.map((value) => String(value)) : [],
+      mode: 'binary',
+    };
+  }
+  const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
+  if (explicitEntrypoint && javaScriptRuntime) {
+    return {
+      command: javaScriptRuntime,
+      argsPrefix: ['--no-warnings', '--no-deprecation', explicitEntrypoint],
+      mode: 'node',
+    };
+  }
+  if (isCliDirectExecutableCommand(cliBin)) {
+    return {
+      command: cliBin,
+      argsPrefix: [],
+      mode: 'binary',
+    };
+  }
+  const distEntrypoint = resolveCliDistEntrypointFromBin(cliBin);
+  if (distEntrypoint && existsSync(distEntrypoint) && javaScriptRuntime) {
     // Prefer launching the daemon via dist entrypoint directly.
     // This avoids coupling stack daemon lifecycle to the dev-only bin wrapper (which may perform
     // extra preflight checks or rely on package.json subpath resolution).
-    return ['--no-warnings', '--no-deprecation', distEntrypoint];
+    return {
+      command: javaScriptRuntime,
+      argsPrefix: ['--no-warnings', '--no-deprecation', distEntrypoint],
+      mode: 'node',
+    };
   }
-  return [cliBin];
+  return {
+    command: process.execPath,
+    argsPrefix: [cliBin],
+    mode: 'node',
+  };
 }
 
-function extractRelativeMjsImportSpecifiers(source) {
-  const specs = new Set();
-  const patterns = [
-    /(?:^|[^\w$])import\s+(?:[^'"]*?\s+from\s*)?['"]([^'"]+)['"]/gm,
-    /(?:^|[^\w$])export\s+[^'"]*?\s+from\s*['"]([^'"]+)['"]/gm,
-    /import\s*\(\s*['"]([^'"]+)['"]\s*\)/gm,
-  ];
-  for (const re of patterns) {
-    for (const match of source.matchAll(re)) {
-      const spec = String(match?.[1] ?? '').trim();
-      if (!spec || !spec.startsWith('.')) continue;
-      if (!spec.endsWith('.mjs')) continue;
-      specs.add(spec);
-    }
+async function ensureHappierCliDistExists({ cliBin, cliEntrypoint = '', cliNodeEntrypoint = '', cliCommand = '' }) {
+  const explicitRuntimeLaunch = resolveExplicitRuntimeLaunchValidation({ cliEntrypoint, cliNodeEntrypoint, cliCommand });
+  if (!explicitRuntimeLaunch.ok) {
+    return { ok: false, distEntrypoint: explicitRuntimeLaunch.path, built: false, reason: explicitRuntimeLaunch.reason };
   }
-  return [...specs];
-}
-
-function findMissingDistModules(entrypoint, maxFiles = 400) {
-  const missing = [];
-  const seen = new Set();
-  const queue = [entrypoint];
-  while (queue.length > 0 && seen.size < maxFiles) {
-    const filePath = queue.shift();
-    if (!filePath || seen.has(filePath)) continue;
-    seen.add(filePath);
-
-    let source = '';
-    try {
-      source = readFileSync(filePath, 'utf-8');
-    } catch {
-      missing.push(filePath);
-      continue;
-    }
-
-    const imports = extractRelativeMjsImportSpecifiers(source);
-    for (const spec of imports) {
-      const target = join(dirname(filePath), spec);
-      if (!existsSync(target)) {
-        missing.push(target);
-        continue;
-      }
-      if (!seen.has(target)) {
-        queue.push(target);
-      }
-    }
+  if (String(cliCommand ?? '').trim()) {
+    return { ok: true, distEntrypoint: cliCommand, built: false, reason: 'runtime-command' };
   }
-  return missing;
-}
-
-async function ensureHappierCliDistExists({ cliBin }) {
-  const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
+  if (String(cliEntrypoint ?? '').trim()) {
+    return { ok: true, distEntrypoint: cliEntrypoint, built: false, reason: 'runtime-entrypoint' };
+  }
+  if (isCliDirectExecutableCommand(cliBin)) {
+    return { ok: true, distEntrypoint: cliBin, built: false, reason: 'direct-cli-command' };
+  }
+  const distEntrypoint = resolveCliDistEntrypointFromBin(cliBin);
   if (!distEntrypoint) return { ok: false, distEntrypoint: null, built: false, reason: 'unknown_cli_bin' };
   const cliDir = join(dirname(cliBin), '..');
   const buildCli =
     (process.env.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
 
-  const readIntegrity = () => {
-    if (!existsSync(distEntrypoint)) return { ok: false, reason: 'missing_entrypoint' };
-    const missing = findMissingDistModules(distEntrypoint);
-    if (missing.length === 0) return { ok: true, reason: 'exists' };
-    return { ok: false, reason: `incomplete:${missing[0]}` };
-  };
+  const readIntegrity = () => readCliDistIntegrity(distEntrypoint);
 
   // Fast path: if dist exists and import graph is complete, never trigger rebuild here.
   // Rebuilding inside daemon restart can race with live restarts and transiently remove dist/.
@@ -407,6 +566,49 @@ function authCopyFromSeedHint({ stackName, cliIdentity, env = process.env }) {
   if (id && id !== 'default') return null;
   const seed = resolveAuthSeedFromEnv(env);
   return `hstack stack auth ${stackName} copy-from ${seed}`;
+}
+
+function logInvalidDaemonCredentialsGuidance({
+  stackName,
+  cliIdentity,
+  env = process.env,
+  skippedReason = null,
+  staleSeed = null,
+}) {
+  const copyHint = authCopyFromSeedHint({ stackName, cliIdentity, env });
+  if (staleSeed) {
+    console.error(
+      `[local] auth re-seed source "${staleSeed}" appears stale (still 401).\n` +
+        `[local] Auto fallback to another auth source is disabled.\n` +
+        `[local] Fix:\n` +
+        (copyHint ? `- ${copyHint} --force\n` : '') +
+        `- ${authLoginHint({ stackName, cliIdentity })}`
+    );
+    return;
+  }
+
+  if (!skippedReason) {
+    console.error(
+      `[local] daemon credentials were rejected by the server (401).\n` +
+        `[local] Fix:\n` +
+        (copyHint ? `- ${copyHint}\n` : '') +
+        `- ${authLoginHint({ stackName, cliIdentity })}`
+    );
+    return;
+  }
+
+  const guardedSkip =
+    skippedReason === 'different-account' || skippedReason === 'different-token';
+  console.error(
+    `[local] daemon credentials were rejected by the server (401).\n` +
+      (guardedSkip
+        ? `[local] Auto re-seed was skipped to avoid overwriting credentials that do not match the configured seed (${skippedReason}).\n`
+        : `[local] Auto re-seed was skipped (${skippedReason}).\n`) +
+      `[local] Fix:\n` +
+      (guardedSkip ? '' : copyHint ? `- ${copyHint} --force\n` : '') +
+      (guardedSkip && copyHint ? `- ${copyHint} --force  # only if you explicitly want to replace this stack auth\n` : '') +
+      `- ${authLoginHint({ stackName, cliIdentity })}`
+  );
 }
 
 async function maybeAutoReseedInvalidAuth({
@@ -597,6 +799,10 @@ async function seedCredentialsIfMissing({ cliHomeDir }) {
     if (existsSync(target)) {
       return { copied: false, source: null, target };
     }
+    const existingCredentialInHome = findAnyCredentialPathInCliHome({ cliHomeDir });
+    if (existingCredentialInHome) {
+      return { copied: false, source: null, target };
+    }
     const source = sources
       .map((sourceCli) => findAnyCredentialPathInCliHome({ cliHomeDir: sourceCli }))
       .find(Boolean);
@@ -641,9 +847,116 @@ async function ensureServerScopedCredentialsFromLegacy({ cliHomeDir, internalSer
   }
 }
 
-async function killDaemonFromLockFile({ cliHomeDir, serverUrl = '', env = process.env }) {
+async function daemonPidOwnsStackHome({ pid, cliHomeDir, serverUrl = '', env = process.env, preferredPath = '' }) {
+  const envMatch = await daemonEnvMatches({
+    pid,
+    cliHomeDir,
+    internalServerUrl: serverUrl,
+    publicServerUrl: '',
+  });
+  if (envMatch === true) return true;
+  if (envMatch === false) return false;
+
   const { statePath, lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
   const daemonStatePaths = resolveStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
+  try {
+    const out = await runCaptureIfCommandExists('lsof', ['-nP', '-p', String(pid)]);
+    return (
+      (preferredPath && out.includes(preferredPath)) ||
+      out.includes(lockPath) ||
+      out.includes(statePath) ||
+      out.includes(daemonStatePaths.legacyStatePath) ||
+      out.includes(daemonStatePaths.serverScopedStatePath) ||
+      out.includes(join(cliHomeDir, 'logs'))
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function killDaemonPidSafely({
+  pid,
+  cliHomeDir,
+  serverUrl = '',
+  env = process.env,
+  sourcePath = '',
+  sourceLabel = 'state file',
+}) {
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+
+  let cmd = '';
+  try {
+    cmd = await runCapture('ps', ['-p', String(pid), '-o', 'command=']);
+  } catch {
+    cmd = '';
+  }
+  const looksLikeDaemon = cmd.includes(' daemon ') || cmd.includes('daemon start') || cmd.includes('daemon start-sync');
+  if (!looksLikeDaemon) {
+    console.warn(`[local] refusing to kill pid ${pid} from ${sourceLabel} (doesn't look like daemon): ${cmd.trim()}`);
+    return false;
+  }
+
+  const ownsStackHome = await daemonPidOwnsStackHome({ pid, cliHomeDir, serverUrl, env, preferredPath: sourcePath });
+  if (!ownsStackHome) {
+    console.warn(
+      `[local] refusing to kill pid ${pid} from ${sourceLabel} (could be unrelated; ownership could not be proven for ${cliHomeDir})`
+    );
+    return false;
+  }
+
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return false;
+  }
+  await delay(500);
+  try {
+    process.kill(pid, 0);
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // exited
+  }
+  console.log(`[local] killed stuck daemon pid ${pid} (from ${sourcePath || sourceLabel})`);
+  return true;
+}
+
+async function killDaemonFromStateFile({ cliHomeDir, serverUrl = '', env = process.env }) {
+  const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
+  if (!existsSync(statePath)) {
+    return false;
+  }
+
+  let pid = null;
+  try {
+    const state = JSON.parse(readFileSync(statePath, 'utf-8'));
+    const n = Number(state?.pid);
+    if (Number.isFinite(n) && n > 0) {
+      pid = n;
+    }
+  } catch {
+    pid = null;
+  }
+
+  return await killDaemonPidSafely({
+    pid,
+    cliHomeDir,
+    serverUrl,
+    env,
+    sourcePath: statePath,
+    sourceLabel: 'daemon.state.json',
+  });
+}
+
+async function killDaemonFromLockFile({ cliHomeDir, serverUrl = '', env = process.env }) {
+  const { lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
   if (!existsSync(lockPath)) {
     return false;
   }
@@ -662,61 +975,14 @@ async function killDaemonFromLockFile({ cliHomeDir, serverUrl = '', env = proces
     return false;
   }
 
-  // If pid is alive, confirm it looks like a happier daemon and terminate it.
-  try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-
-  let cmd = '';
-  try {
-    cmd = await runCapture('ps', ['-p', String(pid), '-o', 'command=']);
-  } catch {
-    cmd = '';
-  }
-  const looksLikeDaemon = cmd.includes(' daemon ') || cmd.includes('daemon start') || cmd.includes('daemon start-sync');
-  if (!looksLikeDaemon) {
-    console.warn(`[local] refusing to kill pid ${pid} from lock file (doesn't look like daemon): ${cmd.trim()}`);
-    return false;
-  }
-
-  // Hard safety: only kill if we can prove the PID is associated with this stack home dir.
-  // We do this by checking that `lsof -p <pid>` includes the lock path (or state file path).
-  let ownsLock = false;
-  try {
-    const out = await runCaptureIfCommandExists('lsof', ['-nP', '-p', String(pid)]);
-    ownsLock =
-      out.includes(lockPath) ||
-      out.includes(statePath) ||
-      out.includes(daemonStatePaths.legacyStatePath) ||
-      out.includes(daemonStatePaths.serverScopedStatePath) ||
-      out.includes(join(cliHomeDir, 'logs'));
-  } catch {
-    ownsLock = false;
-  }
-  if (!ownsLock) {
-    console.warn(
-      `[local] refusing to kill pid ${pid} from lock file (could be unrelated; lsof did not show ownership of ${cliHomeDir})`
-    );
-    return false;
-  }
-
-  try {
-    process.kill(pid, 'SIGTERM');
-  } catch {
-    return false;
-  }
-  await delay(500);
-  try {
-    process.kill(pid, 0);
-    // Still alive: hard kill.
-    process.kill(pid, 'SIGKILL');
-  } catch {
-    // exited
-  }
-  console.log(`[local] killed stuck daemon pid ${pid} (from ${lockPath})`);
-  return true;
+  return await killDaemonPidSafely({
+    pid,
+    cliHomeDir,
+    serverUrl,
+    env,
+    sourcePath: lockPath,
+    sourceLabel: 'lock file',
+  });
 }
 
 async function waitForCredentialsFiles({ paths, timeoutMs, isShuttingDown }) {
@@ -753,6 +1019,16 @@ export function getDaemonEnv({
     stackName,
     cliIdentity,
   });
+  // Prefer the canonical server id from the CLI settings when it matches this stack's server URL.
+  // This keeps daemon state/locks aligned with the active stack server profile (and avoids leaking
+  // the stable-scope id into the daemon's persisted server-scoped directories).
+  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({
+    cliHomeDir,
+    serverUrl: internalServerUrl,
+  });
+  if (settingsServerId) {
+    scopedEnv.HAPPIER_ACTIVE_SERVER_ID = settingsServerId;
+  }
   return {
     ...scopedEnv,
     HAPPIER_SERVER_URL: internalServerUrl,
@@ -763,9 +1039,14 @@ export function getDaemonEnv({
 
 export async function stopLocalDaemon({
   cliBin,
+  cliEntrypoint = '',
+  cliNodeEntrypoint = '',
+  cliCommand = '',
+  cliCommandArgs = [],
   internalServerUrl,
   cliHomeDir,
   publicServerUrl = '',
+  runtimeStatePath = null,
   env = process.env,
   stackName = null,
   cliIdentity = null,
@@ -795,28 +1076,52 @@ export async function stopLocalDaemon({
     }
   }
 
-  const nodeArgsPrefix = resolveDaemonNodeArgsPrefix({ cliBin });
-  try {
-    await new Promise((resolve) => {
-      const proc = spawnProc('daemon', process.execPath, [...nodeArgsPrefix, 'daemon', 'stop'], daemonEnv, {
-        stdio: ['ignore', 'pipe', 'pipe'],
+  const explicitCommand = String(cliCommand ?? '').trim();
+  const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
+  const distEntrypoint = explicitCommand ? '' : explicitEntrypoint || resolveCliDistEntrypointFromBin(cliBin);
+  const explicitRuntimeLaunch = resolveExplicitRuntimeLaunchValidation({ cliEntrypoint, cliNodeEntrypoint, cliCommand });
+  const distIntegrity = explicitCommand
+    ? explicitRuntimeLaunch.ok
+      ? { ok: true, reason: 'runtime-command' }
+      : { ok: false, reason: explicitRuntimeLaunch.reason }
+    : explicitEntrypoint
+      ? explicitRuntimeLaunch.ok
+        ? { ok: true, reason: 'runtime-entrypoint' }
+        : { ok: false, reason: explicitRuntimeLaunch.reason }
+      : distEntrypoint
+        ? readCliDistIntegrity(distEntrypoint)
+        : { ok: false, reason: 'unknown_cli_bin' };
+  if (distIntegrity.ok) {
+    const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand, cliCommandArgs, env: daemonEnv });
+    try {
+      await new Promise((resolve) => {
+        const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'stop'], daemonEnv, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        proc.on('exit', () => resolve());
       });
-      proc.on('exit', () => resolve());
-    });
-  } catch {
-    // ignore
+    } catch {
+      // ignore
+    }
   }
 
+  await killDaemonFromStateFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
   // If the daemon never wrote daemon.state.json (e.g. it got stuck in auth in a non-interactive context),
   // stopLocalDaemon() can't find it. Fall back to the lock file PID.
   await killDaemonFromLockFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
+  await recordStackRuntimeDaemonPid(runtimeStatePath, null).catch(() => {});
 }
 
 export async function startLocalDaemonWithAuth({
   cliBin,
+  cliEntrypoint = '',
+  cliNodeEntrypoint = '',
+  cliCommand = '',
+  cliCommandArgs = [],
   cliHomeDir,
   internalServerUrl,
   publicServerUrl,
+  runtimeStatePath = null,
   isShuttingDown,
   forceRestart = false,
   env = process.env,
@@ -832,6 +1137,10 @@ export async function startLocalDaemonWithAuth({
     (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() ||
     'default';
   const baseEnv = { ...env };
+  await persistStackDaemonMachineTransferEnv({
+    stackName: resolvedStackName,
+    env: baseEnv,
+  }).catch(() => {});
   const daemonEnv = getDaemonEnv({
     baseEnv,
     cliHomeDir,
@@ -844,15 +1153,49 @@ export async function startLocalDaemonWithAuth({
     const n = Number(value);
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
   };
-  const startVerifyTimeoutMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS, 5_000);
+  const isTui = (baseEnv.HAPPIER_STACK_TUI ?? '').toString().trim() === '1';
+  const syncRuntimeDaemonState = async ({ runtimeDaemonPid = null } = {}) => {
+    await syncStackRuntimeDaemonPidFromDaemonState(
+      {
+        runtimeStatePath,
+        cliHomeDir,
+        internalServerUrl,
+        runtimeDaemonPid,
+        env: daemonEnv,
+      },
+      { checkDaemonStateImpl: checkDaemonState },
+    ).catch(() => {});
+  };
+  const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand, cliCommandArgs, env: daemonEnv });
+  // Binary/runtime-started daemons can take materially longer than direct node-entrypoint starts
+  // because the packaged CLI may need to warm bundled workspace/runtime state before the daemon
+  // reaches a stable running state.
+  const defaultStartVerifyTimeoutMs =
+    daemonCommand.mode === 'binary'
+      || hasExplicitRuntimeLaunchSpec({ cliEntrypoint, cliNodeEntrypoint, cliCommand })
+      ? 30_000
+      : 5_000;
+  const startVerifyTimeoutMs = parseNonNegativeInt(
+    baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS,
+    defaultStartVerifyTimeoutMs,
+  );
   const startVerifyPollMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS, 125);
   const startVerifyStableMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS, 750);
-  const isTui = (baseEnv.HAPPIER_STACK_TUI ?? '').toString().trim() === '1';
 
-  const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
-  const distCheck = await ensureHappierCliDistExists({ cliBin });
+  const explicitCommand = String(cliCommand ?? '').trim();
+  const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
+  const distEntrypoint = explicitCommand ? '' : explicitEntrypoint || resolveCliDistEntrypointFromBin(cliBin);
+  const distCheck = await ensureHappierCliDistExists({ cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand });
   if (!distCheck.ok) {
     const reason = String(distCheck.reason ?? '').trim();
+    if (reason.startsWith('missing_runtime_launch_path:')) {
+      const missingPath = reason.slice('missing_runtime_launch_path:'.length);
+      throw new Error(
+        `[local] runtime launch path is missing (${missingPath}).\n` +
+          `[local] Refusing to start/restart daemon because the active runtime snapshot is incomplete.\n` +
+          `[local] Fix: rebuild or reactivate the stack runtime snapshot before starting the daemon.\n`,
+      );
+    }
     const missingModule = reason.startsWith('incomplete:') ? reason.slice('incomplete:'.length) : '';
     const detail = missingModule
       ? `[local] Missing module referenced by dist entrypoint: ${missingModule}\n`
@@ -865,7 +1208,6 @@ export async function startLocalDaemonWithAuth({
         (distCheck.reason ? `[local] Detail: ${distCheck.reason}\n` : '')
       );
   }
-  const nodeArgsPrefix = resolveDaemonNodeArgsPrefix({ cliBin });
 
   // If this is a migrated/new stack home dir, seed credentials from the user's existing login (best-effort)
   // to avoid requiring an interactive auth flow under launchd.
@@ -873,8 +1215,8 @@ export async function startLocalDaemonWithAuth({
   if (migrateCreds) {
     await seedCredentialsIfMissing({ cliHomeDir });
   }
-  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env: baseEnv });
-  const mirrored = await ensureServerScopedCredentialsFromLegacy({ cliHomeDir, internalServerUrl, env: baseEnv });
+  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
+  const mirrored = await ensureServerScopedCredentialsFromLegacy({ cliHomeDir, internalServerUrl, env: daemonEnv });
   if (mirrored.copied) {
     console.log(`[local] migrated daemon credentials to server profile: ${mirrored.source} -> ${mirrored.target}`);
   }
@@ -888,14 +1230,68 @@ export async function startLocalDaemonWithAuth({
     // best-effort only
   }
   let credentialRepair = null;
+  const credentialValidateTimeoutMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS, 2_500);
   try {
-    const timeoutMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS, 2_500);
-    credentialRepair = await ensureActiveAccessKeyValid({ cliHomeDir, serverUrl: internalServerUrl, env: baseEnv, timeoutMs });
+    credentialRepair = await ensureActiveAccessKeyValid({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+      env: daemonEnv,
+      timeoutMs: credentialValidateTimeoutMs,
+    });
     if (credentialRepair.kind === 'repaired') {
       console.log(`[local] repaired daemon credentials: ${credentialRepair.sourcePath} -> ${credentialRepair.activePath}`);
     }
   } catch {
     // best-effort only; daemon start can still proceed and surface auth errors if any remain.
+  }
+  if (credentialRepair?.kind === 'unresolved' && credentialRepair.status === 401) {
+    let reseedResult = null;
+    try {
+      reseedResult = await maybeAutoReseedInvalidAuth({
+        stackName: resolvedStackName,
+        cliHomeDir,
+        internalServerUrl,
+        env: daemonEnv,
+        quiet: true,
+      });
+    } catch (error) {
+      logInvalidDaemonCredentialsGuidance({
+        stackName: resolvedStackName,
+        cliIdentity: resolvedCliIdentity,
+        env: daemonEnv,
+      });
+      throw error;
+    }
+
+    if (!reseedResult?.ok || reseedResult?.skipped) {
+      logInvalidDaemonCredentialsGuidance({
+        stackName: resolvedStackName,
+        cliIdentity: resolvedCliIdentity,
+        env: daemonEnv,
+        skippedReason: reseedResult?.reason ?? 'unknown',
+      });
+      throw new Error(`Failed to auto re-seed daemon credentials (${reseedResult?.reason ?? 'unknown'})`);
+    }
+
+    console.log(`[local] auth re-seeded from ${reseedResult.seed} before daemon start...`);
+    credentialRepair = await ensureActiveAccessKeyValid({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+      env: daemonEnv,
+      timeoutMs: credentialValidateTimeoutMs,
+    });
+    if (credentialRepair.kind === 'repaired') {
+      console.log(`[local] repaired daemon credentials: ${credentialRepair.sourcePath} -> ${credentialRepair.activePath}`);
+    }
+    if (credentialRepair.kind === 'unresolved' && credentialRepair.status === 401) {
+      logInvalidDaemonCredentialsGuidance({
+        stackName: resolvedStackName,
+        cliIdentity: resolvedCliIdentity,
+        env: daemonEnv,
+        staleSeed: reseedResult.seed,
+      });
+      throw new Error('Failed to start daemon (after auth re-seed)');
+    }
   }
   try {
     const token = readAuthTokenFromCredentialFile(credentialPaths.serverScopedPath);
@@ -906,7 +1302,7 @@ export async function startLocalDaemonWithAuth({
         : null;
     console.log(
       formatDaemonAuthScopeDiagnostic({
-        activeServerId: baseEnv.HAPPIER_ACTIVE_SERVER_ID,
+        activeServerId: daemonEnv.HAPPIER_ACTIVE_SERVER_ID,
         activeCredentialPath: credentialPaths.serverScopedPath,
         tokenSub: tokenSub ? String(tokenSub) : null,
         tokenSubBeforeRepair: tokenSubBeforeRepair ? String(tokenSubBeforeRepair) : null,
@@ -944,17 +1340,18 @@ export async function startLocalDaemonWithAuth({
   if (!forceRestart && existing.status === 'running') {
     const pid = existing.pid;
     const matches = await daemonEnvMatches({ pid, cliHomeDir, internalServerUrl, publicServerUrl });
-    if (matches === true) {
+      if (matches === true) {
       // eslint-disable-next-line no-console
       console.log(`[local] daemon already running for stack home (pid=${pid})`);
-      if (isTui) {
+        if (isTui) {
         // Emit a daemon-labeled line so `hstack tui` can route it to the daemon pane.
         // (The daemon itself logs to cliHomeDir/logs/*-daemon.log.)
         // eslint-disable-next-line no-console
-        console.log(`[daemon] already running (pid=${pid})`);
+          console.log(`[daemon] already running (pid=${pid})`);
+        }
+        await syncRuntimeDaemonState({ runtimeDaemonPid: pid });
+        return;
       }
-      return;
-    }
     if (matches === false) {
       // eslint-disable-next-line no-console
       console.warn(
@@ -965,6 +1362,7 @@ export async function startLocalDaemonWithAuth({
       // unknown: best-effort keep running to avoid killing an unrelated process
       // eslint-disable-next-line no-console
       console.warn(`[local] daemon status is running but could not verify env; not restarting (pid=${pid})`);
+      await syncRuntimeDaemonState({ runtimeDaemonPid: pid });
       return;
     }
   }
@@ -978,7 +1376,7 @@ export async function startLocalDaemonWithAuth({
   // Stop any existing daemon for THIS stack home dir.
   try {
     await new Promise((resolve) => {
-      const proc = spawnProc('daemon', process.execPath, [...nodeArgsPrefix, 'daemon', 'stop'], daemonEnv, {
+      const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'stop'], daemonEnv, {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       proc.on('exit', () => resolve());
@@ -988,10 +1386,12 @@ export async function startLocalDaemonWithAuth({
   }
 
   // If state is missing and stop couldn't find it, force-stop the lock PID (otherwise repeated restarts accumulate daemons).
+  await killDaemonFromStateFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
   await killDaemonFromLockFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
 
   // Clean up stale lock/state files that can block daemon start.
   await cleanupStaleDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
+  await recordStackRuntimeDaemonPid(runtimeStatePath, null).catch(() => {});
 
   const startOnce = async () => {
     const waitForRunningStable = async () => {
@@ -1010,7 +1410,7 @@ export async function startLocalDaemonWithAuth({
     };
 
     const exitCode = await new Promise((resolve) => {
-      const proc = spawnProc('daemon', process.execPath, [...nodeArgsPrefix, 'daemon', 'start'], daemonEnv, {
+      const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'start'], daemonEnv, {
         stdio: ['ignore', 'pipe', 'pipe'],
         // In TUI mode, stream the daemon-start output so it routes to the daemon pane.
         // (The background daemon itself still logs to files.)
@@ -1030,12 +1430,10 @@ export async function startLocalDaemonWithAuth({
     }
 
     // Some daemon versions (or transient races) can return non-zero even if the daemon
-    // is already running / starting for this stack home dir (e.g. "lock already held").
-    // In those cases, fail-open and keep the stack running; callers can still surface
-    // daemon status separately.
-    await delay(500);
-    const stateAfter = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl });
-    if (stateAfter.status === 'running') {
+    // still finishes starting for this stack home dir shortly afterwards.
+    // Wait for the same verification window before treating the start as failed.
+    const runningStable = await waitForRunningStable();
+    if (runningStable) {
       return { ok: true, exitCode, excerpt: null, logPath: null };
     }
 
@@ -1085,6 +1483,7 @@ export async function startLocalDaemonWithAuth({
       await delay(500);
       const stateAfterCreds = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl });
       if (stateAfterCreds.status === 'running' || stateAfterCreds.status === 'starting') {
+        await syncRuntimeDaemonState({ runtimeDaemonPid: stateAfterCreds.pid });
         return;
       }
 
@@ -1108,30 +1507,21 @@ export async function startLocalDaemonWithAuth({
           env: baseEnv,
         });
       } catch (e) {
-        const copyHint = authCopyFromSeedHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity, env: baseEnv });
-        console.error(
-          `[local] daemon credentials were rejected by the server (401).\n` +
-            `[local] Fix:\n` +
-            (copyHint ? `- ${copyHint}\n` : '') +
-            `- ${authLoginHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity })}`
-        );
+        logInvalidDaemonCredentialsGuidance({
+          stackName: resolvedStackName,
+          cliIdentity: resolvedCliIdentity,
+          env: baseEnv,
+        });
         throw e;
       }
       if (!reseedResult?.ok || reseedResult?.skipped) {
-        const copyHint = authCopyFromSeedHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity, env: baseEnv });
         const skippedReason = reseedResult?.reason ?? 'unknown';
-        const guardedSkip =
-          skippedReason === 'different-account' || skippedReason === 'different-token';
-        console.error(
-          `[local] daemon credentials were rejected by the server (401).\n` +
-            (guardedSkip
-              ? `[local] Auto re-seed was skipped to avoid overwriting credentials that do not match the configured seed (${skippedReason}).\n`
-              : `[local] Auto re-seed was skipped (${skippedReason}).\n`) +
-            `[local] Fix:\n` +
-            (guardedSkip ? '' : copyHint ? `- ${copyHint} --force\n` : '') +
-            (guardedSkip && copyHint ? `- ${copyHint} --force  # only if you explicitly want to replace this stack auth\n` : '') +
-            `- ${authLoginHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity })}`
-        );
+        logInvalidDaemonCredentialsGuidance({
+          stackName: resolvedStackName,
+          cliIdentity: resolvedCliIdentity,
+          env: baseEnv,
+          skippedReason,
+        });
         throw new Error(`Failed to auto re-seed daemon credentials (${skippedReason})`);
       }
 
@@ -1139,14 +1529,12 @@ export async function startLocalDaemonWithAuth({
       const second = await startOnce();
       if (!second.ok) {
         if (excerptIndicatesInvalidAuth(second.excerpt)) {
-          const copyHint = authCopyFromSeedHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity, env: baseEnv });
-          console.error(
-            `[local] auth re-seed source "${reseedResult.seed}" appears stale (still 401).\n` +
-              `[local] Auto fallback to another auth source is disabled.\n` +
-              `[local] Fix:\n` +
-              (copyHint ? `- ${copyHint} --force\n` : '') +
-              `- ${authLoginHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity })}`
-          );
+          logInvalidDaemonCredentialsGuidance({
+            stackName: resolvedStackName,
+            cliIdentity: resolvedCliIdentity,
+            env: baseEnv,
+            staleSeed: reseedResult.seed,
+          });
         }
 
         if (second.excerpt) {
@@ -1169,7 +1557,8 @@ export async function startLocalDaemonWithAuth({
 
   // Confirm daemon status (best-effort)
   try {
-    await run(process.execPath, [...nodeArgsPrefix, 'daemon', 'status'], { env: daemonEnv, stdio: 'ignore' });
+    await syncRuntimeDaemonState();
+    await run(daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'status'], { env: daemonEnv, stdio: 'ignore' });
   } catch {
     // ignore
   }
@@ -1177,6 +1566,10 @@ export async function startLocalDaemonWithAuth({
 
 export async function daemonStatusSummary({
   cliBin,
+  cliEntrypoint = '',
+  cliNodeEntrypoint = '',
+  cliCommand = '',
+  cliCommandArgs = [],
   cliHomeDir,
   internalServerUrl,
   publicServerUrl,
@@ -1192,10 +1585,19 @@ export async function daemonStatusSummary({
     stackName,
     cliIdentity,
   });
-  const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
-  const nodeArgsPrefix = resolveDaemonNodeArgsPrefix({ cliBin });
+  const distEntrypoint = String(cliCommand ?? '').trim() || String(cliEntrypoint ?? '').trim() || resolveCliDistEntrypointFromBin(cliBin);
+  const explicitRuntimeLaunch = resolveExplicitRuntimeLaunchValidation({ cliEntrypoint, cliNodeEntrypoint, cliCommand });
+  if (!explicitRuntimeLaunch.ok) {
+    return buildRuntimeMissingStatusFallback({
+      cliHomeDir,
+      internalServerUrl,
+      env: daemonEnv,
+      missingPath: explicitRuntimeLaunch.path,
+    });
+  }
+  const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand, cliCommandArgs, env: daemonEnv });
   try {
-    return await runCapture(process.execPath, [...nodeArgsPrefix, 'daemon', 'status'], { env: daemonEnv });
+    return await runCapture(daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'status'], { env: daemonEnv });
   } catch (error) {
     if (isMissingDistStatusError({ error, distEntrypoint })) {
       return buildDistMissingStatusFallback({
@@ -1286,4 +1688,14 @@ function buildDistMissingStatusFallback({ cliHomeDir, internalServerUrl, env, di
   lines.push('');
   lines.push('✅ Doctor diagnosis complete!');
   return lines.join('\n');
+}
+
+function buildRuntimeMissingStatusFallback({ cliHomeDir, internalServerUrl, env, missingPath }) {
+  const fallback = buildDistMissingStatusFallback({
+    cliHomeDir,
+    internalServerUrl,
+    env,
+    distEntrypoint: missingPath,
+  });
+  return `${fallback}\n[runtime] active runtime launch path is missing: ${missingPath}`;
 }

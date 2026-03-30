@@ -97,45 +97,49 @@ function RenderHeaderBlock(props: { level: 1 | 2 | 3 | 4 | 5 | 6, spans: Markdow
     );
 }
 
-function RenderListBlock(props: { items: MarkdownSpan[][], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
-    const listStyle = [style.text, style.list, props.textStyle];
+function RenderListBlock(props: { items: { depth: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
+    const listStyle = [style.text, style.listText, props.textStyle];
     return (
-        <View style={{ flexDirection: 'column', marginBottom: 14, gap: 2 }}>
+        <View style={[style.listContainer, props.first && style.first, props.last && style.last]}>
             {props.items.map((item, index) => (
-                <Text selectable={props.selectable} style={listStyle} key={index}>
-                    -{' '}
-                    <MarkdownSpansView
-                        spans={item}
-                        baseStyle={listStyle}
-                        linkStyle={style.link}
-                        resolveSpanStyle={(sn) => {
-                            if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
-                            return (style as any)[sn];
-                        }}
-                    />
-                </Text>
+                <View testID="markdown-list-item-row" style={[style.listRow, { paddingLeft: item.depth * 20 }]} key={index}>
+                    <Text selectable={props.selectable} testID="markdown-list-item-marker" style={style.listMarker}>•</Text>
+                    <Text selectable={props.selectable} style={listStyle}>
+                        <MarkdownSpansView
+                            spans={item.spans}
+                            baseStyle={listStyle}
+                            linkStyle={style.link}
+                            resolveSpanStyle={(sn) => {
+                                if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
+                                return (style as any)[sn];
+                            }}
+                        />
+                    </Text>
+                </View>
             ))}
         </View>
     );
 }
 
-function RenderNumberedListBlock(props: { items: { number: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
-    const listStyle = [style.text, style.list, props.textStyle];
+function RenderNumberedListBlock(props: { items: { depth: number, number: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
+    const listStyle = [style.text, style.listText, props.textStyle];
     return (
-        <View style={{ flexDirection: 'column', marginBottom: 14, gap: 2 }}>
+        <View style={[style.listContainer, props.first && style.first, props.last && style.last]}>
             {props.items.map((item, index) => (
-                <Text selectable={props.selectable} style={listStyle} key={index}>
-                    {item.number.toString()}.{' '}
-                    <MarkdownSpansView
-                        spans={item.spans}
-                        baseStyle={listStyle}
-                        linkStyle={style.link}
-                        resolveSpanStyle={(sn) => {
-                            if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
-                            return (style as any)[sn];
-                        }}
-                    />
-                </Text>
+                <View testID="markdown-list-item-row" style={[style.listRow, { paddingLeft: item.depth * 20 }]} key={index}>
+                    <Text selectable={props.selectable} testID="markdown-list-item-marker" style={style.numberedListMarker}>{item.number.toString()}.</Text>
+                    <Text selectable={props.selectable} style={listStyle}>
+                        <MarkdownSpansView
+                            spans={item.spans}
+                            baseStyle={listStyle}
+                            linkStyle={style.link}
+                            resolveSpanStyle={(sn) => {
+                                if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
+                                return (style as any)[sn];
+                            }}
+                        />
+                    </Text>
+                </View>
             ))}
         </View>
     );
@@ -256,8 +260,9 @@ function RenderTableBlock(props: {
            */}
           {Platform.OS === 'web' ? (
               <ScrollView
+                  testID="markdown-table-scroll"
                   horizontal
-                  showsHorizontalScrollIndicator={false}
+                  showsHorizontalScrollIndicator={Platform.OS === 'web'}
                   nestedScrollEnabled={true}
                   style={style.tableScrollView}
               >
@@ -265,6 +270,7 @@ function RenderTableBlock(props: {
               </ScrollView>
           ) : (
               <GestureHandlerScrollView
+                  testID="markdown-table-scroll"
                   horizontal
                   showsHorizontalScrollIndicator={true}
                   nestedScrollEnabled={true}
@@ -365,9 +371,40 @@ const style = StyleSheet.create((theme) => ({
     // List
     //
 
-    list: {
+    listContainer: {
+        flexDirection: 'column',
+        marginBottom: 14,
+        gap: 2,
+    },
+    listRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        width: '100%',
+    },
+    listText: {
         ...Typography.default(),
         color: theme.colors.text,
+        marginTop: 0,
+        marginBottom: 0,
+        flex: 1,
+        minWidth: 0,
+    },
+    listMarker: {
+        ...Typography.default(),
+        color: theme.colors.text,
+        width: 20,
+        flexShrink: 0,
+        textAlign: 'center',
+        marginTop: 0,
+        marginBottom: 0,
+    },
+    numberedListMarker: {
+        ...Typography.default(),
+        color: theme.colors.text,
+        minWidth: 28,
+        paddingRight: 4,
+        flexShrink: 0,
+        textAlign: 'right',
         marginTop: 0,
         marginBottom: 0,
     },
@@ -510,7 +547,7 @@ const style = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: theme.colors.divider,
         borderRadius: 8,
-        overflow: 'hidden',
+        overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
     },
     tableScrollView: {
         flexGrow: 0,

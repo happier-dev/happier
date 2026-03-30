@@ -1,11 +1,10 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { createSessionScopedSocket } from '@/api/session/sockets';
-import { resolveSessionControlSocketAckTimeoutMs, resolveSessionControlSocketConnectTimeoutMs } from '@/sessionControl/sessionControlTimeouts';
-import { waitForSocketConnect } from '@/sessionControl/waitForSocketConnect';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 export async function cmdSessionStop(
   argv: string[],
@@ -27,47 +26,38 @@ export async function cmdSessionStop(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.stop',
+    { sessionId: idOrPrefix },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_stop',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: normalized.errorCode, ...(normalized.candidates ? { candidates: normalized.candidates } : {}), ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
-  }
-  const sessionId = resolved.sessionId;
-
-  const socket = createSessionScopedSocket({ token: credentials.token, sessionId });
-
-  const connectTimeoutMs = resolveSessionControlSocketConnectTimeoutMs();
-  const connectPromise = waitForSocketConnect(socket as unknown as import('socket.io-client').Socket, connectTimeoutMs);
-  socket.connect();
-  await connectPromise;
-
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => resolve(), resolveSessionControlSocketAckTimeoutMs());
-    // socket.io supports ACK callbacks; our typed socket surface doesn't model it here.
-    (socket as any).emit('session-end', { sid: sessionId, time: Date.now() }, () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-
-  try {
-    socket.disconnect();
-    socket.close();
-  } catch {
-    // ignore
+    throw new Error(normalized.errorCode);
   }
 
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_stop', json, result })) {
+    return;
+  }
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_stop', data: { sessionId, stopped: true } });
+    printJsonEnvelope({ ok: true, kind: 'session_stop', data: { sessionId: result.sessionId, stopped: result.stopped } });
     return;
   }
 
-  console.log(chalk.green('✓'), 'stop requested');
+  if (result.stopped) {
+    console.log(chalk.green('✓'), 'session stopped');
+    return;
+  }
+
+  console.log(chalk.yellow('!'), 'stop requested but session is still active');
 }

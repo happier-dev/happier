@@ -1,8 +1,12 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { decodeBase64, encodeBase64, sealBoxBundle } from '@happier-dev/protocol';
+import { changeTextTestInstance, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,12 +45,17 @@ vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: legacySecretB64Url } }),
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: alertSpy,
-    alertAsync: vi.fn(async () => {}),
-  },
-}));
+installConnectedServicesCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: alertSpy,
+                alertAsync: vi.fn(async () => {}),
+            },
+        }).module;
+    },
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: refreshProfileSpy },
@@ -75,10 +84,10 @@ describe('ConnectedServiceOauthPasteView', () => {
     // `ConnectedServiceOauthPasteView` initializes PKCE/state in a fire-and-forget effect.
     // Flush a couple microtasks so the `handlePaste` handler is armed with pkce/state.
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
   }
 
@@ -97,19 +106,17 @@ describe('ConnectedServiceOauthPasteView', () => {
     const onDone = vi.fn();
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={onDone} />);
-    });
+    tree = (await renderScreen(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={onDone} />)).tree;
     await flushAsyncEffects();
 
-    const redirectInput = tree.root.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
+    const redirectInput = tree.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
     await act(async () => {
-      redirectInput.props.onChangeText?.('http://localhost:1455/auth/callback?code=code-1&state=state-1');
+      changeTextTestInstance(redirectInput, 'http://localhost:1455/auth/callback?code=code-1&state=state-1');
     });
 
-    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
+    const pasteItem = tree.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
     await act(async () => {
-      await pasteItem.props.onPress?.();
+      await pressTestInstanceAsync(pasteItem);
     });
 
     expect(exchangeSpy).toHaveBeenCalledWith(
@@ -171,19 +178,17 @@ describe('ConnectedServiceOauthPasteView', () => {
     const onDone = vi.fn();
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={onDone} />);
-    });
+    tree = (await renderScreen(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={onDone} />)).tree;
     await flushAsyncEffects();
 
-    const redirectInput = tree.root.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
+    const redirectInput = tree.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
     await act(async () => {
-      redirectInput.props.onChangeText?.('http://localhost:1455/auth/callback?code=code-1&state=state-1');
+      changeTextTestInstance(redirectInput, 'http://localhost:1455/auth/callback?code=code-1&state=state-1');
     });
 
-    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
+    const pasteItem = tree.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
     await act(async () => {
-      await pasteItem.props.onPress?.();
+      await pressTestInstanceAsync(pasteItem);
     });
 
     expect(storeCredentialSpy).not.toHaveBeenCalled();

@@ -1,2 +1,1 @@
-export { isExperimentalCodexAcpEnabled, isExperimentalCodexVendorResumeEnabled } from './codexExperiments';
-
+export { isExperimentalCodexAcpEnabled } from './codexExperiments';

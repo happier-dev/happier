@@ -1,0 +1,31 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: _shared/configureServerIfNeeded.yaml
+
+- runFlow:
+    file: _shared/loginCreateAccount.yaml
+
+- tapOn:
+    id: main-header-start-new-session
+
+- extendedWaitUntil:
+    visible:
+      id: session-getting-started-step-install_cli
+    timeout: 60000
+
+- assertVisible:
+    id: session-getting-started-step-install_cli
+- assertVisible:
+    id: session-getting-started-step-auth_login
+- assertVisible:
+    id: session-getting-started-step-daemon_install
+- assertVisible:
+    id: session-getting-started-step-create_session

@@ -65,7 +65,7 @@ test('tailscale enable output includes stack context + upstream', async () => {
       cwd: repoRoot,
       env: {
         ...process.env,
-        HAPPIER_STACK_TAILSCALE_BIN: tailscaleBin,
+        HAPPIER_TAILSCALE_BIN: tailscaleBin,
         HAPPIER_STACK_SERVER_PORT: String(internalPort),
         HAPPIER_STACK_STACK: 'repo-test-1234',
         HAPPIER_STACK_ENV_FILE: envPath,
@@ -86,3 +86,51 @@ test('tailscale enable output includes stack context + upstream', async () => {
   }
 });
 
+test('tailscale url returns the relay-comparable ts.net URL when multiple serve entries exist', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+
+  const tmp = mkdtempSync(join(tmpdir(), 'happier-tailscale-url-test-'));
+  try {
+    const binDir = join(tmp, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const tailscaleBin = join(binDir, 'tailscale');
+    const relayPort = 35555;
+    const otherUrl = 'https://other-service.ts.net';
+    const relayUrl = 'https://relay-service.ts.net';
+
+    writeFileSync(
+      tailscaleBin,
+      [
+        '#!/usr/bin/env node',
+        'const args = process.argv.slice(2);',
+        "if (args[0] === 'serve' && args[1] === 'status') {",
+        `  process.stdout.write('${otherUrl}\\n');`,
+        '  process.stdout.write("|-- / proxy http://127.0.0.1:8080\\n");',
+        `  process.stdout.write('${relayUrl}\\n');`,
+        `  process.stdout.write('|-- / proxy http://127.0.0.1:${relayPort}\\n');`,
+        '  process.exit(0);',
+        '}',
+        'process.exit(0);',
+        '',
+      ].join('\n')
+    );
+    chmodSync(tailscaleBin, 0o755);
+
+    const res = await runNode([join(packageRoot, 'scripts', 'tailscale.mjs'), 'url'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HAPPIER_TAILSCALE_BIN: tailscaleBin,
+        HAPPIER_STACK_SERVER_PORT: String(relayPort),
+        HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: '1',
+      },
+    });
+
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.equal(stripAnsi(res.stdout).trim(), relayUrl);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});

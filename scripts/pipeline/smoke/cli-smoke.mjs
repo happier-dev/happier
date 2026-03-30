@@ -5,11 +5,149 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
+import { resolveInstalledBinPath } from './resolveInstalledBinPath.mjs';
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+function asNonEmptyString(value) {
+  const trimmed = String(value ?? '').trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readEnvPath(env) {
+  return String(env.PATH ?? env.Path ?? '');
+}
+
+function readEnvPathext(env) {
+  return String(env.PATHEXT ?? env.Pathext ?? '');
+}
+
+function normalizePathext(pathext) {
+  const raw = asNonEmptyString(pathext) ?? '.EXE;.CMD;.BAT;.COM';
+  return raw
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => (part.startsWith('.') ? part : `.${part}`));
+}
+
+function expandPathextCaseVariants(exts) {
+  const seen = new Set();
+  const variants = [];
+  for (const ext of exts) {
+    for (const candidate of [ext, ext.toLowerCase(), ext.toUpperCase()]) {
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      variants.push(candidate);
+    }
+  }
+  return variants;
+}
+
+function isCommandOnly(command) {
+  const trimmed = String(command ?? '').trim();
+  if (!trimmed) return false;
+  if (trimmed.includes('/') || trimmed.includes('\\')) return false;
+  if (trimmed.includes(':')) return false;
+  return true;
+}
+
+function isWindowsShellShimPath(pathLike) {
+  return /\.(cmd|bat)$/i.test(String(pathLike ?? '').trim());
+}
+
+const cmdMetaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
+const nodeModulesCmdShimRegExp = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
+
+function escapeCmdCommand(arg) {
+  return arg.replace(cmdMetaCharsRegExp, '^$1');
+}
+
+function escapeCmdArgument(arg, doubleEscapeMetaChars) {
+  let value = `${arg}`;
+
+  value = value.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"');
+  value = value.replace(/(?=(\\+?)?)\1$/, '$1$1');
+  value = `"${value}"`;
+  value = value.replace(cmdMetaCharsRegExp, '^$1');
+  if (doubleEscapeMetaChars) {
+    value = value.replace(cmdMetaCharsRegExp, '^$1');
+  }
+
+  return value;
+}
+
+function buildCmdExeInvocation(params) {
+  const resolvedCommand = path.normalize(params.resolvedCommand);
+  const comspec =
+    asNonEmptyString(params.comspec) ??
+    asNonEmptyString(params.env.comspec) ??
+    asNonEmptyString(params.env.ComSpec) ??
+    asNonEmptyString(params.env.COMSPEC) ??
+    'cmd.exe';
+
+  const needsDoubleEscape = nodeModulesCmdShimRegExp.test(resolvedCommand);
+  const shellCommand = [escapeCmdCommand(resolvedCommand), ...params.args.map((arg) => escapeCmdArgument(arg, needsDoubleEscape))].join(' ');
+
+  return {
+    command: comspec,
+    args: ['/d', '/s', '/c', `"${shellCommand}"`],
+    windowsVerbatimArguments: true,
+  };
+}
+
+function resolveWindowsCommandOnPath(command, env = process.env) {
+  const cmd = asNonEmptyString(command);
+  if (!cmd) return null;
+
+  const pathEnv = asNonEmptyString(readEnvPath(env));
+  if (!pathEnv) return null;
+
+  const exts = expandPathextCaseVariants(normalizePathext(readEnvPathext(env)));
+  const lowered = cmd.toLowerCase();
+  const hasKnownExt = exts.some((ext) => lowered.endsWith(ext.toLowerCase()));
+  const candidates = hasKnownExt ? [cmd] : [cmd, ...exts.map((ext) => `${cmd}${ext}`)];
+
+  for (const dir of pathEnv.split(path.delimiter)) {
+    const trimmedDir = dir.trim();
+    if (!trimmedDir) continue;
+    for (const name of candidates) {
+      const full = path.join(trimmedDir, name);
+      try {
+        if (fs.existsSync(full)) return full;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return null;
+}
+
+function resolveWindowsCommandInvocation(params) {
+  const command = String(params.command ?? '').trim();
+  const args = Array.isArray(params.args) ? params.args.map((arg) => String(arg)) : [];
+
+  if (process.platform !== 'win32') {
+    return { command, args };
+  }
+
+  const env = params.env ?? process.env;
+  const shouldResolveOnPath = params.resolveCommandOnPath !== false;
+  const resolvedCommand =
+    shouldResolveOnPath && isCommandOnly(command)
+      ? (resolveWindowsCommandOnPath(command, env) ?? command)
+      : command;
+
+  if (!isWindowsShellShimPath(resolvedCommand)) {
+    return { command: resolvedCommand, args };
+  }
+
+  return buildCmdExeInvocation({ resolvedCommand, args, env, comspec: params.comspec });
 }
 
 /**
@@ -40,15 +178,20 @@ function run(opts, cmd, args, extra) {
   }
 
   const stdio = extra?.stdio ?? 'inherit';
-  const needsShell =
-    process.platform === 'win32' && (String(cmd).toLowerCase().endsWith('.cmd') || String(cmd).toLowerCase().endsWith('.bat'));
-  return execFileSync(cmd, args, {
+  const env = { ...process.env, ...(extra?.env ?? {}) };
+  const invocation = resolveWindowsCommandInvocation({
+    command: cmd,
+    args,
+    env,
+    resolveCommandOnPath: true,
+  });
+  return execFileSync(invocation.command, invocation.args, {
     cwd,
-    env: { ...process.env, ...(extra?.env ?? {}) },
+    env,
     encoding: stdio === 'inherit' ? 'utf8' : 'utf8',
     stdio,
-    shell: needsShell,
     timeout,
+    ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
 }
 
@@ -76,12 +219,33 @@ function mkTmpDir(prefix) {
  */
 function npmPack(pkgDir, destDir, opts) {
   if (opts.dryRun) {
-    const printable = `npm pack --silent --pack-destination ${destDir}`;
+    const printable = path.basename(pkgDir) === 'cli'
+      ? `${process.execPath} apps/cli/scripts/packTarball.mjs --dest-dir ${destDir}`
+      : `npm pack --silent --pack-destination ${destDir}`;
     console.log(`[dry-run] (cwd: ${pkgDir}) ${printable}`);
     return path.join(destDir, 'DRY_RUN.tgz');
   }
 
   fs.mkdirSync(destDir, { recursive: true });
+  if (path.basename(pkgDir) === 'cli') {
+    const scriptPath = path.resolve(pkgDir, 'scripts', 'packTarball.mjs');
+    const raw = execFileSync(process.execPath, [scriptPath, '--dest-dir', destDir], {
+      cwd: pkgDir,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+      timeout: 10 * 60_000,
+    }).trim();
+    const { tgzPath } = resolvePackedTarball(raw, {
+      cwd: pkgDir,
+      sourceLabel: 'CLI pack helper',
+    });
+    if (!tgzPath.endsWith('.tgz') || !fs.existsSync(tgzPath) || !fs.statSync(tgzPath).isFile()) {
+      throw new Error(`CLI pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
+    }
+    return tgzPath;
+  }
+
   const env = { ...process.env };
   const invocation = resolveWindowsCommandInvocation({
     command: 'npm',
@@ -115,44 +279,10 @@ function npmPack(pkgDir, destDir, opts) {
  * @returns {string}
  */
 function resolveInstalledBin(prefixDir) {
-  const exe = process.platform === 'win32' ? 'happier.cmd' : 'happier';
+  const binPath = resolveInstalledBinPath(prefixDir);
+  if (binPath) return binPath;
 
-  const env = { ...process.env, npm_config_prefix: prefixDir };
-  let binDir = '';
-  try {
-    const invocation = resolveWindowsCommandInvocation({
-      command: 'npm',
-      args: ['bin', '-g'],
-      env,
-      resolveCommandOnPath: true,
-    });
-    binDir = execFileSync(invocation.command, invocation.args, {
-      env,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-    })
-      .trim()
-      .split(/\r?\n/)[0]
-      .trim();
-  } catch {
-    binDir = '';
-  }
-
-  const candidates = [
-    ...(binDir ? [path.join(binDir, exe)] : []),
-    path.join(prefixDir, 'bin', exe),
-    path.join(prefixDir, exe),
-    path.join(prefixDir, 'node_modules', '.bin', exe),
-  ];
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      return candidate;
-    }
-  }
-
-  fail(`Unable to locate installed CLI binary under prefix ${prefixDir} (looked for: ${exe})`);
+  fail(`Unable to locate installed CLI binary under prefix ${prefixDir} (looked for: happier)`);
 }
 
 function main() {
@@ -181,14 +311,38 @@ function main() {
   const prefixDir = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_PREFIX') : mkTmpDir('happier-cli-smoke-prefix-');
   const homeDir = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_HOME') : mkTmpDir('happier-cli-smoke-home-');
   const packDir = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_PACK') : mkTmpDir('happier-cli-smoke-pack-');
+  const npmCacheDir = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_NPM_CACHE') : path.join(homeDir, '.npm-cache');
+  const npmUserConfigPath = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_NPMRC') : path.join(homeDir, '.npmrc');
+  const npmEnv = {
+    HOME: homeDir,
+    npm_config_userconfig: npmUserConfigPath,
+    npm_config_cache: npmCacheDir,
+    npm_config_update_notifier: 'false',
+    npm_config_audit: 'false',
+    npm_config_fund: 'false',
+  };
 
   if (!skipBuild) {
     run(opts, 'yarn', ['workspace', workspaceName, 'build'], { cwd: repoRoot });
   }
 
+  if (!dryRun) {
+    fs.mkdirSync(npmCacheDir, { recursive: true });
+    fs.writeFileSync(npmUserConfigPath, '', 'utf8');
+  }
   const tgzPath = npmPack(absPkgDir, packDir, opts);
 
-  run(opts, 'npm', ['install', '-g', '--prefix', prefixDir, tgzPath], { cwd: repoRoot });
+  run(opts, 'npm', [
+    'install',
+    '-g',
+    '--prefix',
+    prefixDir,
+    '--cache',
+    npmCacheDir,
+    '--userconfig',
+    npmUserConfigPath,
+    tgzPath,
+  ], { cwd: repoRoot, env: npmEnv });
 
   const binPath = opts.dryRun ? path.join(prefixDir, process.platform === 'win32' ? 'happier.cmd' : 'bin/happier') : resolveInstalledBin(prefixDir);
 

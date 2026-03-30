@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
 import { eventRouter } from "./eventRouter";
 
 describe("eventRouter (rooms)", () => {
@@ -8,7 +9,10 @@ describe("eventRouter (rooms)", () => {
     });
 
     it("throws when HAPPY_SOCKET_ROOMS_ONLY=1 and io is not initialized", () => {
-        process.env.HAPPY_SOCKET_ROOMS_ONLY = "1";
+        const envSnapshot = snapshotEnv();
+        applyEnvValues({
+            HAPPY_SOCKET_ROOMS_ONLY: "1",
+        });
         try {
             expect(() =>
                 eventRouter.emitUpdate({
@@ -18,7 +22,7 @@ describe("eventRouter (rooms)", () => {
                 }),
             ).toThrow(/HAPPY_SOCKET_ROOMS_ONLY=1/);
         } finally {
-            delete process.env.HAPPY_SOCKET_ROOMS_ONLY;
+            restoreEnv(envSnapshot);
         }
     });
 

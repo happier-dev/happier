@@ -1,15 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
 import { restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
+import { applyLightAuthTestEnv } from "@/testkit/applyLightAuthTestEnv";
 import { auth } from "./auth";
 
 describe("auth (oauth state tokens)", () => {
     const envBackup = snapshotEnv();
 
     beforeAll(async () => {
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
+        await applyLightAuthTestEnv();
         await auth.init();
     });
 

@@ -32,6 +32,31 @@ test('tauri build-updater-artifacts script supports preview dry-run', async () =
   assert.match(out, /tauri\.version\.override\.json/);
 });
 
+test('tauri build-updater-artifacts script supports dev dry-run', async () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'tauri', 'build-updater-artifacts.mjs'),
+      '--environment',
+      'dev',
+      '--build-version',
+      '1.2.3-dev.123',
+      '--dry-run',
+    ],
+    {
+      cwd: repoRoot,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /\byarn tauri build\b/);
+  assert.match(out, /tauri\.publicdev\.conf\.json/);
+  assert.match(out, /tauri\.version\.override\.json/);
+});
+
 test('tauri build-updater-artifacts script supports production dry-run', async () => {
   const out = execFileSync(
     process.execPath,
@@ -53,4 +78,3 @@ test('tauri build-updater-artifacts script supports production dry-run', async (
   assert.match(out, /\byarn tauri build\b/);
   assert.doesNotMatch(out, /tauri\.preview\.conf\.json/);
 });
-

@@ -15,16 +15,21 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useSettingMutable, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { Switch } from '@/components/ui/forms/Switch';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import { FeatureDiagnosticsPanel } from '@/components/settings/features/FeatureDiagnosticsPanel';
 import {
     buildUiFeatureToggleDefaults,
     listUiFeatureToggleDefinitions,
     resolveUiFeatureToggleEnabled,
+    type UiFeatureToggleDefinition,
 } from '@/sync/domains/features/featureRegistry';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
-import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
+import {
+    useServerFeaturesMainSelectionSnapshot,
+    useServerFeaturesRuntimeSnapshot,
+} from '@/sync/domains/features/featureDecisionRuntime';
 
 export default React.memo(function FeaturesSettingsScreen() {
     const { theme } = useUnistyles();
@@ -32,6 +37,7 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [featureToggles, setFeatureToggles] = useSettingMutable('featureToggles');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
+    const [embeddedTerminalDockLocation, setEmbeddedTerminalDockLocation] = useLocalSettingMutable('embeddedTerminalDockLocation');
     const [showEnvironmentBadge, setShowEnvironmentBadge] = useSettingMutable('showEnvironmentBadge');
     const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
     const [useMachinePickerSearch, setUseMachinePickerSearch] = useSettingMutable('useMachinePickerSearch');
@@ -81,12 +87,20 @@ export default React.memo(function FeaturesSettingsScreen() {
     const shouldProbeServerForToggleVisibility = React.useMemo(() => {
         for (const def of toggleDefinitions) {
             if (getFeatureBuildPolicyDecision(def.featureId) === 'deny') continue;
-            if (featureRequiresServerSnapshot(def.featureId)) return true;
+            if (def.serverVisibilityScope === 'main_selection' && featureRequiresServerSnapshot(def.featureId)) return true;
+        }
+        return false;
+    }, [toggleDefinitions]);
+    const shouldProbeRuntimeServerForToggleVisibility = React.useMemo(() => {
+        for (const def of toggleDefinitions) {
+            if (getFeatureBuildPolicyDecision(def.featureId) === 'deny') continue;
+            if (def.serverVisibilityScope === 'runtime' && featureRequiresServerSnapshot(def.featureId)) return true;
         }
         return false;
     }, [toggleDefinitions]);
 
     const serverSnapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, { enabled: shouldProbeServerForToggleVisibility });
+    const runtimeServerSnapshot = useServerFeaturesRuntimeSnapshot({ enabled: shouldProbeRuntimeServerForToggleVisibility });
 
     const serverProbeFeatureIdsByFeatureId = React.useMemo(() => {
         const memo = new Map<FeatureId, FeatureId[]>();
@@ -125,9 +139,39 @@ export default React.memo(function FeaturesSettingsScreen() {
         return memo;
     }, [toggleDefinitions]);
 
-    const isToggleHardDisabledByServer = React.useCallback(
+    const isKnownFeatureId = React.useCallback((featureId: unknown): featureId is FeatureId => {
+        return typeof featureId === 'string' && (FEATURE_IDS as readonly string[]).includes(featureId);
+    }, []);
+
+    const isRuntimeFeatureHardDisabledByServer = React.useCallback(
         (featureId: FeatureId): boolean => {
+            if (!isKnownFeatureId(featureId)) return false;
             if (!featureRequiresServerSnapshot(featureId)) return false;
+            if (runtimeServerSnapshot.status === 'loading') return false;
+            if (runtimeServerSnapshot.status === 'error') return false;
+            if (runtimeServerSnapshot.status === 'unsupported') return true;
+
+            const serverFeatureIdsToProbe = serverProbeFeatureIdsByFeatureId.get(featureId) ?? [];
+            if (serverFeatureIdsToProbe.length === 0) return false;
+
+            for (const serverFeatureId of serverFeatureIdsToProbe) {
+                const enabled = readServerEnabledBit(runtimeServerSnapshot.features, serverFeatureId) === true;
+                if (!enabled) return true;
+            }
+
+            return false;
+        },
+        [isKnownFeatureId, runtimeServerSnapshot, serverProbeFeatureIdsByFeatureId],
+    );
+
+    const isFeatureHardDisabledByServer = React.useCallback(
+        (definition: UiFeatureToggleDefinition): boolean => {
+            const featureId = definition.featureId;
+            if (!isKnownFeatureId(featureId)) return false;
+            if (!featureRequiresServerSnapshot(featureId)) return false;
+            if (definition.serverVisibilityScope === 'runtime') {
+                return isRuntimeFeatureHardDisabledByServer(featureId);
+            }
             if (serverSnapshot.status !== 'ready') return false;
             if (serverSnapshot.serverIds.length === 0) return false;
 
@@ -156,19 +200,20 @@ export default React.memo(function FeaturesSettingsScreen() {
 
             return false;
         },
-        [serverProbeFeatureIdsByFeatureId, serverSnapshot],
+        [isKnownFeatureId, isRuntimeFeatureHardDisabledByServer, serverProbeFeatureIdsByFeatureId, serverSnapshot],
     );
 
     const visibleToggleDefinitions = React.useMemo(() => {
         return toggleDefinitions.filter((d) => {
             if (getFeatureBuildPolicyDecision(d.featureId) === 'deny') return false;
-            if (isToggleHardDisabledByServer(d.featureId)) return false;
+            if (isFeatureHardDisabledByServer(d)) return false;
             return true;
         });
-    }, [isToggleHardDisabledByServer, toggleDefinitions]);
+    }, [isFeatureHardDisabledByServer, toggleDefinitions]);
 
     const standardToggleDefinitions = visibleToggleDefinitions.filter((d) => !d.isExperimental);
     const experimentalToggleDefinitions = visibleToggleDefinitions.filter((d) => d.isExperimental);
+    const [embeddedTerminalDockMenuOpen, setEmbeddedTerminalDockMenuOpen] = React.useState(false);
 
     const seedExperimentalFeatureToggleDefaults = React.useCallback(() => {
         const defaults = buildUiFeatureToggleDefaults({ experimentalOnly: true });
@@ -206,6 +251,27 @@ export default React.memo(function FeaturesSettingsScreen() {
         }
         return false;
     }, [toggleSettings, toggleableFeatureIdSet]);
+
+    const embeddedTerminalDockSettingVisible = React.useMemo(() => {
+        if (!experiments) return false;
+        const embeddedTerminalDockToggle =
+            toggleDefinitions.find((definition) => definition.featureId === 'terminal.embeddedPty') ?? null;
+        if (embeddedTerminalDockToggle && isFeatureHardDisabledByServer(embeddedTerminalDockToggle)) return false;
+        if (isLocallyBlockedByDependencies('terminal.embeddedPty')) return false;
+        return resolveUiFeatureToggleEnabled(toggleSettings, 'terminal.embeddedPty');
+    }, [experiments, isFeatureHardDisabledByServer, isLocallyBlockedByDependencies, toggleDefinitions, toggleSettings]);
+
+    const embeddedTerminalDockLocationLabel = React.useMemo(() => {
+        switch (embeddedTerminalDockLocation) {
+            case 'details':
+                return t('terminalEmbedded.location.details');
+            case 'bottom':
+                return t('terminalEmbedded.location.bottom');
+            case 'sidebar':
+            default:
+                return t('terminalEmbedded.location.sidebar');
+        }
+    }, [embeddedTerminalDockLocation]);
 
     const applyLocalToggleChange = React.useCallback((featureId: FeatureId, next: boolean) => {
         const nextToggles: Record<string, boolean> = {
@@ -247,7 +313,13 @@ export default React.memo(function FeaturesSettingsScreen() {
                         ? t('settingsFeatures.enhancedSessionWizardEnabled')
                         : t('settingsFeatures.enhancedSessionWizardDisabled')}
                     icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.purple} />}
-                    rightElement={<Switch value={useEnhancedSessionWizard} onValueChange={setUseEnhancedSessionWizard} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-feature-toggle-useEnhancedSessionWizard"
+                            value={useEnhancedSessionWizard}
+                            onValueChange={setUseEnhancedSessionWizard}
+                        />
+                    }
                     showChevron={false}
                 />
                 <Item
@@ -352,6 +424,37 @@ export default React.memo(function FeaturesSettingsScreen() {
                     title={t('settingsFeatures.experimentalOptions')}
                     footer={t('settingsFeatures.experimentalOptionsDescription')}
                 >
+                    {embeddedTerminalDockSettingVisible ? (
+                        <DropdownMenu
+                            open={embeddedTerminalDockMenuOpen}
+                            onOpenChange={setEmbeddedTerminalDockMenuOpen}
+                            variant="selectable"
+                            search={false}
+                            selectedId={embeddedTerminalDockLocation}
+                            showCategoryTitles={false}
+                            matchTriggerWidth={true}
+                            connectToTrigger={true}
+                            rowKind="item"
+                            itemTrigger={{
+                                title: t('terminalEmbedded.settings.locationTitle'),
+                                subtitle: embeddedTerminalDockLocationLabel,
+                                icon: <Ionicons name="terminal-outline" size={29} color={theme.colors.accent.blue} />,
+                                itemProps: { testID: 'settings-embedded-terminal-dock-location' },
+                            }}
+                            items={[
+                                { id: 'sidebar', title: t('terminalEmbedded.location.sidebar'), icon: <Ionicons name="albums-outline" size={18} color={theme.colors.textSecondary} /> },
+                                { id: 'details', title: t('terminalEmbedded.location.details'), icon: <Ionicons name="information-circle-outline" size={18} color={theme.colors.textSecondary} /> },
+                                { id: 'bottom', title: t('terminalEmbedded.location.bottom'), icon: <Ionicons name="reorder-four-outline" size={18} color={theme.colors.textSecondary} /> },
+                            ]}
+                            onSelect={(id) => {
+                                if (id === 'sidebar' || id === 'details' || id === 'bottom') {
+                                    setEmbeddedTerminalDockLocation(id);
+                                }
+                                setEmbeddedTerminalDockMenuOpen(false);
+                            }}
+                        />
+                    ) : null}
+
                     {experimentalToggleDefinitions.map((d) => {
                         const blockedByDependencies = isLocallyBlockedByDependencies(d.featureId);
                         const enabled = blockedByDependencies ? false : resolveUiFeatureToggleEnabled(toggleSettings, d.featureId);

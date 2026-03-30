@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env.testkit';
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 describe('acquireDaemonLock', () => {
   const envBackup = snapshotEnvValues(['HAPPIER_HOME_DIR']);
   let homeDir: string;
 
   beforeEach(async () => {
-    homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-daemon-lock-'));
+    homeDir = await createTempDir('happier-cli-daemon-lock-');
     applyEnvValues({ HAPPIER_HOME_DIR: homeDir });
     vi.resetModules();
   });
@@ -19,7 +19,7 @@ describe('acquireDaemonLock', () => {
     restoreEnvValues(envBackup);
     vi.resetModules();
     vi.unmock('@/daemon/doctor');
-    await rm(homeDir, { recursive: true, force: true });
+    await removeTempDir(homeDir);
   });
 
   it('does not clear the lock file when daemon doctor import fails', async () => {

@@ -20,6 +20,8 @@ export type AutomationWorkerHandle = Readonly<{
   stop: () => void;
   refreshAssignments: () => Promise<void>;
   handleServerUpdate: (update: Update) => void;
+  pause: () => void;
+  resume: () => void;
 }>;
 
 function toClaimableRunPayload(claimResult: AutomationClaimRunResponse): ClaimableRunPayload | null {
@@ -86,6 +88,8 @@ export function startAutomationWorker(params: {
       },
       refreshAssignments: async () => {},
       handleServerUpdate: () => {},
+      pause: () => {},
+      resume: () => {},
     };
   }
 
@@ -95,9 +99,11 @@ export function startAutomationWorker(params: {
   const budgetTokenId = `automation_worker:${params.machineId}`;
 
   let stopped = false;
+  let paused = false;
   let consecutiveFailures = 0;
   let retryAfter = 0;
   let noWorkCooldownUntil = 0;
+  let pendingQueuedWake = false;
 
   let assignmentsLoop: SingleFlightIntervalLoopHandle | null = null;
   let claimTimer: NodeJS.Timeout | null = null;
@@ -120,6 +126,7 @@ export function startAutomationWorker(params: {
 
   function scheduleClaimAt(whenMs: number, reason: string) {
     if (stopped) return;
+    if (paused) return;
     const at = Math.max(Date.now(), Math.floor(whenMs));
     if (claimTimer && claimTimerAt > 0 && claimTimerAt <= at) {
       return;
@@ -139,6 +146,7 @@ export function startAutomationWorker(params: {
 
   function scheduleAssignmentsRefreshSoon(reason: string) {
     if (stopped) return;
+    if (paused) return;
     if (refreshSoonTimer) return;
     refreshSoonTimer = setTimeout(() => {
       refreshSoonTimer = null;
@@ -212,6 +220,7 @@ export function startAutomationWorker(params: {
 
   const refreshAssignments = async () => {
     if (stopped) return;
+    if (paused) return;
     try {
       const response = await claimClient.fetchAssignments(params.machineId);
       assignments.replace(response.assignments);
@@ -219,6 +228,10 @@ export function startAutomationWorker(params: {
         machineId: params.machineId,
         count: response.assignments.length,
       });
+      if (pendingQueuedWake && response.assignments.length > 0) {
+        scheduleClaimSoon('queued-wake-after-assignments-refresh');
+        return;
+      }
       rescheduleClaim('assignments-refreshed');
     } catch (error) {
       if (isMissingAutomationEndpointError(error, '/v2/automations/daemon/assignments')) {
@@ -235,6 +248,7 @@ export function startAutomationWorker(params: {
 
   const runTick = async (_reason: string) => {
     if (stopped) return;
+    if (paused) return;
     if (claimInFlight) return;
     const assignmentCount = assignments.getAll().length;
     if (assignmentCount === 0) {
@@ -261,6 +275,7 @@ export function startAutomationWorker(params: {
     }
     try {
       claimInFlight = true;
+      pendingQueuedWake = false;
       const claimResult = await claimClient.claimRun({
         machineId: params.machineId,
         leaseDurationMs: scheduler.leaseDurationMs,
@@ -333,6 +348,10 @@ export function startAutomationWorker(params: {
         budgetRegistry.releaseEphemeralTask(budgetTokenId);
       }
 
+      if (pendingQueuedWake && assignments.getAll().length > 0) {
+        scheduleClaimSoon('queued-wake-pending');
+        return;
+      }
       rescheduleClaim('tick-complete');
     }
   };
@@ -356,6 +375,21 @@ export function startAutomationWorker(params: {
     refreshAssignments: async () => {
       await refreshAssignments();
     },
+    pause: () => {
+      if (stopped || paused) return;
+      paused = true;
+      clearClaimTimer();
+      if (refreshSoonTimer) {
+        clearTimeout(refreshSoonTimer);
+        refreshSoonTimer = null;
+      }
+      assignmentsLoop?.pause();
+    },
+    resume: () => {
+      if (stopped || !paused) return;
+      paused = false;
+      assignmentsLoop?.resume();
+    },
     handleServerUpdate: (update: Update) => {
       if (stopped) return;
       const body: any = update?.body as any;
@@ -367,6 +401,7 @@ export function startAutomationWorker(params: {
       }
 
       if (body.t === 'automation-run-updated' && body.state === 'queued') {
+        pendingQueuedWake = true;
         scheduleClaimSoon('socket-run-queued');
       }
     },

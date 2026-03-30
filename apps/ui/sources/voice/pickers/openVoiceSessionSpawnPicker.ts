@@ -9,8 +9,8 @@ export async function openVoiceSessionSpawnPicker(): Promise<VoiceSessionSpawnPi
       component: VoiceSessionSpawnPickerModal,
       props: {
         onResolve: (value: VoiceSessionSpawnPickerResult | null) => resolve(value),
-        onRequestClose: () => resolve(null),
       },
+      onRequestClose: () => resolve(null),
       closeOnBackdrop: true,
     });
   });

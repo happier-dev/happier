@@ -1,6 +1,9 @@
 import React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { installLocalTtsCommonModuleMocks } from './localTtsTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,13 +11,16 @@ const modalAlertSpy = vi.fn();
 const prepareKokoroTtsSpy = vi.fn();
 const getModelPackInstallSummarySpy = vi.fn();
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(),
-    confirm: vi.fn(),
-    alert: (...args: any[]) => modalAlertSpy(...args),
-  },
-}));
+installLocalTtsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+            },
+        }).module;
+    },
+});
 
 vi.mock('@/voice/kokoro/runtime/synthesizeKokoroWav', () => ({
   prepareKokoroTts: (...args: any[]) => prepareKokoroTtsSpy(...args),
@@ -55,14 +61,12 @@ describe('useLocalNeuralModelPackState (native)', () => {
     const Harness = createHarness(useLocalNeuralModelPackState);
 
     let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(React.createElement(Harness, { packId: 'dummy-pack', manifestUrl: null, networkTimeoutMs: 1000 }));
-    });
+    tree = (await renderScreen(React.createElement(Harness, { packId: 'dummy-pack', manifestUrl: null, networkTimeoutMs: 1000 }))).tree;
     await act(async () => {});
 
-    const node = tree.root.findByType('Harness');
+    const node = tree.findByType('Harness');
     await act(async () => {
-      await node.props.onPrepare();
+      invokeTestInstanceHandler(await node, 'onPrepare', );
     });
 
     expect(modalAlertSpy).toHaveBeenCalled();

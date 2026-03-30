@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import {
   deriveBoxPublicKeyFromSeed,
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 const { mockIo } = vi.hoisted(() => ({
   mockIo: vi.fn(),
@@ -18,15 +19,14 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('happier session status (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
   let idleAgentStateCiphertext = '';
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-status-'));
+    happyHomeDir = await createTempDir('happier-cli-session-status-');
 
     const sessionId = 'sess_integration_status_123';
     const dek = new Uint8Array(32).fill(3);
@@ -119,43 +119,23 @@ describe('happier session status (integration)', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
-    mockIo.mockReset();
-    mockIo.mockImplementation(() => {
-      const handlers = new Map<string, Array<(...args: any[]) => void>>();
-      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        list.push(cb);
-        handlers.set(event, list);
-      });
-      const off = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        handlers.set(event, list.filter((v) => v !== cb));
-      });
-      const connect = vi.fn(() => {
+    const socket = createApiSessionSocketStub({
+      onConnect(currentSocket) {
         setTimeout(() => {
-          const list = handlers.get('update') ?? [];
-          for (const cb of list) {
-            cb({
-              id: 'u1',
-              seq: 2,
-              createdAt: Date.now(),
-              body: {
-                t: 'update-session',
-                id: 'sess_integration_status_123',
-                agentState: { value: idleAgentStateCiphertext, version: 1 },
-              },
-            });
-          }
+          currentSocket.trigger('update', {
+            id: 'u1',
+            seq: 2,
+            createdAt: Date.now(),
+            body: {
+              t: 'update-session',
+              id: 'sess_integration_status_123',
+              agentState: { value: idleAgentStateCiphertext, version: 1 },
+            },
+          });
         }, 10);
-      });
-      return {
-        on,
-        off,
-        connect,
-        disconnect: vi.fn(),
-        close: vi.fn(),
-      };
+      },
     });
+    bindApiSessionSocketMock(mockIo, socket);
   });
 
   afterEach(async () => {
@@ -166,15 +146,12 @@ describe('happier session status (integration)', () => {
     }
     server = null;
     if (happyHomeDir) {
-      await rm(happyHomeDir, { recursive: true, force: true });
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
     }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -183,10 +160,7 @@ describe('happier session status (integration)', () => {
   it('returns a session_status JSON envelope with agentState summary', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['status', 'sess_integration_status_123', '--json'], {
@@ -200,7 +174,7 @@ describe('happier session status (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_status');
@@ -208,17 +182,14 @@ describe('happier session status (integration)', () => {
       expect(parsed.data?.agentState?.pendingRequestsCount).toBe(1);
       expect(parsed.data?.agentState?.controlledByUser).toBe(false);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('supports --live and prefers the latest agentState from socket updates', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['status', 'sess_integration_status_123', '--live', '--json'], {
@@ -232,12 +203,12 @@ describe('happier session status (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_status');
       expect(parsed.data?.agentState?.pendingRequestsCount).toBe(0);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });

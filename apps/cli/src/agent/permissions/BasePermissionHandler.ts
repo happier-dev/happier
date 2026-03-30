@@ -15,19 +15,17 @@ import { isToolAllowedForSession, makeToolIdentifier } from './permissionToolIde
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from './applyPermissionAllowlistUpdates';
 import { recordToolTraceEvent, type ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import type { AccountSettings } from '@happier-dev/protocol';
-import { PermissionRequestPushNotifier } from '@/settings/notifications/permissionRequestPushNotifier';
 import type {
     PermissionRequestPushSender as PermissionRequestPushSenderFromSettings,
 } from '@/settings/notifications/permissionRequestPush';
-import { applyAgentStateRequestPushNotifiedAt, cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
+import { cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
 import { resolveAgentRequestKind } from './requestKind';
+import { AgentStateRequestStore } from './agentStateRequestStore';
 
 export type PermissionRequestPushSender = PermissionRequestPushSenderFromSettings;
 
 type AgentStateRequestsRecord = NonNullable<AgentState['requests']>;
-type AgentStateRequestEntry = AgentStateRequestsRecord[string];
 type AgentStateCompletedRequestsRecord = NonNullable<AgentState['completedRequests']>;
-type AgentStateCompletedRequestEntry = AgentStateCompletedRequestsRecord[string];
 
 /**
  * Permission response from the mobile app.
@@ -84,9 +82,7 @@ export abstract class BasePermissionHandler {
     protected session: ApiSessionClient;
     private isResetting = false;
     private allowedToolIdentifiers = new Set<string>();
-    private readonly pushSender: PermissionRequestPushSender | null;
-    private readonly getAccountSettings: () => AccountSettings | null;
-    private permissionRequestPushNotifier: PermissionRequestPushNotifier | null = null;
+    private readonly requestStore: AgentStateRequestStore;
     private readonly onAbortRequested: (() => void | Promise<void>) | null;
     private readonly toolTrace: { protocol: ToolTraceProtocol; provider: string } | null;
     private readonly triggerAbortCallbackOnAbortDecision: boolean;
@@ -105,14 +101,23 @@ export abstract class BasePermissionHandler {
         opts?: {
             pushSender?: PermissionRequestPushSender | null;
             getAccountSettings?: (() => AccountSettings | null) | null;
+            getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
             onAbortRequested?: (() => void | Promise<void>) | null;
             toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
             triggerAbortCallbackOnAbortDecision?: boolean;
         }
     ) {
         this.session = session;
-        this.pushSender = opts?.pushSender ?? null;
-        this.getAccountSettings = typeof opts?.getAccountSettings === 'function' ? opts.getAccountSettings : (() => null);
+        this.requestStore = new AgentStateRequestStore({
+            session,
+            logPrefix: this.getLogPrefix(),
+            pushSender: opts?.pushSender ?? null,
+            getAccountSettings: typeof opts?.getAccountSettings === 'function' ? opts.getAccountSettings : (() => null),
+            getAccountSettingsSecretsReadKeys:
+                typeof opts?.getAccountSettingsSecretsReadKeys === 'function'
+                    ? opts.getAccountSettingsSecretsReadKeys
+                    : (() => []),
+        });
         this.onAbortRequested = typeof opts?.onAbortRequested === 'function' ? opts.onAbortRequested : null;
         this.triggerAbortCallbackOnAbortDecision = opts?.triggerAbortCallbackOnAbortDecision ?? true;
         this.toolTrace =
@@ -138,62 +143,17 @@ export abstract class BasePermissionHandler {
         // Prevent per-session allowlists from leaking across session references.
         // The new session snapshot will re-seed any persisted per-session approvals.
         this.allowedToolIdentifiers.clear();
-        this.permissionRequestPushNotifier?.dispose();
-        this.permissionRequestPushNotifier = null;
+        this.requestStore.updateSession(newSession);
         this.seedAllowedToolsFromAgentState();
 
         // If we were mid-permission when the session reference swapped (offline reconnect),
         // ensure we re-attempt permission-request push notifications for still-pending items.
         for (const [id, pending] of this.pendingRequests.entries()) {
-            this.notifyPermissionRequestPushBestEffort(id, pending.toolName, pending.input);
-        }
-    }
-
-    private notifyPermissionRequestPushBestEffort(permissionId: string, toolName: string, toolInput?: unknown): void {
-        const notifier = this.getOrCreatePermissionRequestPushNotifier();
-        if (!notifier) return;
-        let resolvedToolInput: unknown = toolInput;
-        try {
-            const snapshot = this.session.getAgentStateSnapshot?.() ?? null;
-            const existing = (snapshot as any)?.requests?.[permissionId];
-            const notifiedAt = typeof existing?.pushNotifiedAt === 'number' ? existing.pushNotifiedAt : null;
-            if (resolvedToolInput === undefined) {
-                resolvedToolInput = (existing as any)?.arguments;
-            }
-            if (typeof notifiedAt === 'number' && Number.isFinite(notifiedAt) && notifiedAt > 0) {
-                notifier.markAlreadyNotified(permissionId);
-                return;
-            }
-        } catch {
-            // ignore
-        }
-        notifier.notify({ permissionId, toolName, toolInput: resolvedToolInput, requestKind: resolveAgentRequestKind(toolName) });
-    }
-
-    private getOrCreatePermissionRequestPushNotifier(): PermissionRequestPushNotifier | null {
-        if (!this.pushSender) return null;
-        if (this.permissionRequestPushNotifier) return this.permissionRequestPushNotifier;
-        this.permissionRequestPushNotifier = new PermissionRequestPushNotifier({
-            pushSender: this.pushSender,
-            getSettings: () => this.getAccountSettings(),
-            sessionId: this.session.sessionId,
-            logPrefix: this.getLogPrefix(),
-            onNotifiedAt: (permissionId, notifiedAtMs) => {
-                this.updateAgentStateBestEffort(
-                    (currentState) =>
-                        applyAgentStateRequestPushNotifiedAt({ state: currentState, permissionId, notifiedAtMs }),
-                    'permission request push notifiedAt',
-                );
-            },
-        });
-        return this.permissionRequestPushNotifier;
-    }
-
-    private markPermissionRequestCompletedBestEffort(permissionId: string): void {
-        try {
-            this.permissionRequestPushNotifier?.markCompleted(permissionId);
-        } catch {
-            // ignore
+            this.requestStore.notifyPermissionRequestPushBestEffort({
+                permissionId: id,
+                toolName: pending.toolName,
+                toolInput: pending.input,
+            });
         }
     }
 
@@ -208,6 +168,136 @@ export abstract class BasePermissionHandler {
         }
     }
 
+    private buildPermissionResult(response: PermissionResponse): PermissionResult {
+        if (response.approved) {
+            const wantsExecpolicyAmendment =
+                response.decision === 'approved_execpolicy_amendment' && Boolean(response.execPolicyAmendment?.command?.length);
+
+            if (wantsExecpolicyAmendment) {
+                return {
+                    decision: 'approved_execpolicy_amendment',
+                    execPolicyAmendment: response.execPolicyAmendment,
+                };
+            }
+
+            if (response.decision === 'approved_for_session') {
+                return { decision: 'approved_for_session' };
+            }
+
+            return { decision: 'approved' };
+        }
+
+        return { decision: response.decision === 'denied' ? 'denied' : 'abort' };
+    }
+
+    private applyPermissionResponseAnswers(response: PermissionResponse, result: PermissionResult): void {
+        if (!response.approved) return;
+
+        const answersRaw = response.answers;
+        if (!answersRaw || typeof answersRaw !== 'object' || Array.isArray(answersRaw)) return;
+
+        const normalized = Object.create(null) as Record<string, string>;
+        for (const [key, value] of Object.entries(answersRaw)) {
+            if (!key) continue;
+            if (typeof value === 'string') normalized[key] = value;
+        }
+
+        if (Object.keys(normalized).length > 0) {
+            result.answers = normalized;
+        }
+    }
+
+    private finalizePermissionResponse(params: Readonly<{
+        response: PermissionResponse;
+        result: PermissionResult;
+        responseAllowedTools: readonly string[] | undefined;
+        updatedPermissions: unknown;
+        requestSource: Readonly<{ toolName: string; input: unknown }> | null;
+        updateAgentStateReason: string;
+        debugMessage: string;
+    }>): void {
+        const { response, result, responseAllowedTools, updatedPermissions, requestSource } = params;
+
+        if (response.approved) {
+            applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, updatedPermissions);
+            applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, responseAllowedTools);
+            if (!Array.isArray(responseAllowedTools) && result.decision === 'approved_for_session') {
+                if (requestSource) {
+                    this.allowedToolIdentifiers.add(makeToolIdentifier(requestSource.toolName, requestSource.input));
+                } else {
+                    try {
+                        const snapshot = this.session.getAgentStateSnapshot?.() ?? null;
+                        const request = snapshot?.requests?.[response.id] ?? null;
+                        if (request?.tool) {
+                            this.allowedToolIdentifiers.add(makeToolIdentifier(request.tool, request.arguments));
+                        }
+                    } catch (error) {
+                        logger.debug(`${this.getLogPrefix()} Failed to derive per-session allowlist (non-fatal)`, error);
+                    }
+                }
+            }
+        }
+
+        if (this.toolTrace) {
+            recordToolTraceEvent({
+                direction: 'inbound',
+                sessionId: this.session.sessionId,
+                protocol: this.toolTrace.protocol,
+                provider: this.toolTrace.provider,
+                kind: 'permission-response',
+                payload: {
+                    type: 'permission-response',
+                    permissionId: response.id,
+                    approved: response.approved,
+                    decision: result.decision,
+                },
+            });
+        }
+
+        const snapshot = this.session.getAgentStateSnapshot?.() ?? null;
+        const requestFromState = snapshot?.requests?.[response.id] ?? null;
+        const wantsDerivedAllowTools =
+            response.approved
+            && !Array.isArray(responseAllowedTools)
+            && result.decision === 'approved_for_session';
+        const derivedAllowTools =
+            Array.isArray(responseAllowedTools)
+                ? responseAllowedTools
+                : (wantsDerivedAllowTools
+                    ? (requestSource
+                        ? [makeToolIdentifier(requestSource.toolName, requestSource.input)]
+                        : (requestFromState
+                            ? [makeToolIdentifier(requestFromState.tool, requestFromState.arguments)]
+                            : undefined))
+                    : undefined);
+
+        this.requestStore.completeRequest({
+            requestId: response.id,
+            status: response.approved ? 'approved' : 'denied',
+            decision: result.decision,
+            allowedTools: derivedAllowTools,
+            updatedPermissions,
+        });
+        if (response.approved) {
+            this.autoApproveNowAllowedPendingRequests(response.id);
+        }
+
+        if (result.decision === 'abort' && this.triggerAbortCallbackOnAbortDecision) {
+            try {
+                const cb = this.onAbortRequested;
+                if (cb) {
+                    Promise.resolve(cb()).catch((error) => {
+                        logger.debug(`${this.getLogPrefix()} onAbortRequested failed (non-fatal)`, error);
+                    });
+                }
+            } catch (error) {
+                logger.debug(`${this.getLogPrefix()} onAbortRequested threw (non-fatal)`, error);
+            }
+        }
+
+        logger.debug(`${this.getLogPrefix()} ${params.debugMessage}`);
+    }
+
     /**
      * Setup RPC handler for permission responses.
      */
@@ -216,232 +306,57 @@ export abstract class BasePermissionHandler {
             'permission',
             async (response) => {
                 const responseAllowedTools = response.allowedTools ?? response.allowTools;
-                const updatedPermissions = (response as any).updatedPermissions;
+                const updatedPermissions = response.updatedPermissions;
                 const pending = this.pendingRequests.get(response.id);
+                const result = this.buildPermissionResult(response);
+                this.applyPermissionResponseAnswers(response, result);
+
+                const finalizeParamsBase = {
+                    response,
+                    result,
+                    responseAllowedTools,
+                    updatedPermissions,
+                } as const;
+
                 if (!pending) {
-                    // Lifecycle mismatch / race: UI responded, but the in-memory pending promise is gone
-                    // (reconnect/reset/race). Still finalize agent state best-effort so the UI doesn't
-                    // leave a stuck permission prompt forever.
-                    let result: PermissionResult;
-                    if (response.approved) {
-                        const wantsExecpolicyAmendment = response.decision === 'approved_execpolicy_amendment'
-                            && Boolean(response.execPolicyAmendment?.command?.length);
-
-                        if (wantsExecpolicyAmendment) {
-                            result = {
-                                decision: 'approved_execpolicy_amendment',
-                                execPolicyAmendment: response.execPolicyAmendment,
-                            };
-                        } else if (response.decision === 'approved_for_session') {
-                            result = { decision: 'approved_for_session' };
-                        } else {
-                            result = { decision: 'approved' };
-                        }
-                    } else {
-                        result = { decision: response.decision === 'denied' ? 'denied' : 'abort' };
-                    }
-
-                    if (response.approved) {
-                        applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, updatedPermissions);
-                        applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, responseAllowedTools);
-                        if (!Array.isArray(responseAllowedTools) && result.decision === 'approved_for_session') {
-                            try {
-                                const snapshot = this.session.getAgentStateSnapshot?.() ?? null;
-                                const request = snapshot?.requests?.[response.id] ?? null;
-                                if (request?.tool) {
-                                    this.allowedToolIdentifiers.add(makeToolIdentifier(request.tool, request.arguments));
-                                }
-                            } catch (error) {
-                                logger.debug(`${this.getLogPrefix()} Failed to derive per-session allowlist (non-fatal)`, error);
-                            }
-                        }
-                    }
-
-                    if (response.approved) {
-                        this.autoApproveNowAllowedPendingRequests(response.id);
-                    }
-
-                    if (this.toolTrace) {
-                        recordToolTraceEvent({
-                            direction: 'inbound',
-                            sessionId: this.session.sessionId,
-                            protocol: this.toolTrace.protocol,
-                            provider: this.toolTrace.provider,
-                            kind: 'permission-response',
-                            payload: {
-                                type: 'permission-response',
-                                permissionId: response.id,
-                                approved: response.approved,
-                                decision: result.decision,
-                            },
-                        });
-                    }
-
-                        this.updateAgentStateBestEffort((currentState) => {
-                            const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
-                            const request = requests[response.id];
-                            if (!request) return currentState;
-
-                            delete requests[response.id];
-                            const wantsDerivedAllowTools =
-                                response.approved
-                                    && !Array.isArray(responseAllowedTools)
-                                    && result.decision === 'approved_for_session';
-                            const derivedAllowTools =
-                                Array.isArray(responseAllowedTools)
-                                    ? responseAllowedTools
-                                    : (wantsDerivedAllowTools ? [makeToolIdentifier(request.tool, request.arguments)] : undefined);
-
-                            const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedRequestEntry>(currentState.completedRequests);
-                        const completedEntry = Object.create(null) as AgentStateCompletedRequestEntry;
-                        completedEntry.tool = request.tool;
-                        completedEntry.kind = request.kind ?? resolveAgentRequestKind(request.tool);
-                        completedEntry.arguments = request.arguments;
-                        completedEntry.createdAt = request.createdAt;
-                        completedEntry.completedAt = Date.now();
-                        completedEntry.status = response.approved ? 'approved' : 'denied';
-                        completedEntry.decision = result.decision;
-                        if (derivedAllowTools) completedEntry.allowedTools = derivedAllowTools;
-                        if (typeof updatedPermissions !== 'undefined') completedEntry.updatedPermissions = updatedPermissions;
-                        completedRequests[response.id] = completedEntry;
-
-                            return { ...currentState, requests, completedRequests } satisfies AgentState;
-                        }, 'permission response completion (stale)');
-                    this.markPermissionRequestCompletedBestEffort(response.id);
-
-                    if (result.decision === 'abort' && this.triggerAbortCallbackOnAbortDecision) {
+                    // Lifecycle mismatch / race: UI responded, but the in-memory pending promise is gone.
+                    // Only finalize if we can still prove the request exists in agentState; otherwise
+                    // fail closed (don't mutate allowlists based on an uncorrelated response).
+                    const requestFromState = (() => {
                         try {
-                            const cb = this.onAbortRequested;
-                            if (cb) {
-                                Promise.resolve(cb()).catch((error) => {
-                                    logger.debug(`${this.getLogPrefix()} onAbortRequested failed (non-fatal)`, error);
-                                });
-                            }
-                        } catch (error) {
-                            logger.debug(`${this.getLogPrefix()} onAbortRequested threw (non-fatal)`, error);
+                            const snapshot = this.session.getAgentStateSnapshot?.() ?? null;
+                            return snapshot?.requests?.[response.id] ?? null;
+                        } catch {
+                            return null;
                         }
+                    })();
+                    if (!requestFromState) {
+                        logger.debug(
+                            `${this.getLogPrefix()} Permission response received without pending request and without agentState request; ignored`,
+                        );
+                        return;
                     }
 
-                    logger.debug(`${this.getLogPrefix()} Permission response received without pending request; finalized agentState best-effort`);
+                    // Best-effort finalize so the UI doesn't leave a stuck permission prompt forever.
+                    this.finalizePermissionResponse({
+                        ...finalizeParamsBase,
+                        requestSource: { toolName: requestFromState.tool, input: requestFromState.arguments },
+                        updateAgentStateReason: 'permission response completion (stale)',
+                        debugMessage: 'Permission response received without pending request; finalized agentState best-effort',
+                    });
                     return;
                 }
 
                 // Remove from pending
                 this.pendingRequests.delete(response.id);
-                this.markPermissionRequestCompletedBestEffort(response.id);
-
-                // Resolve the permission request
-                let result: PermissionResult;
-
-                if (response.approved) {
-                    const wantsExecpolicyAmendment = response.decision === 'approved_execpolicy_amendment'
-                        && Boolean(response.execPolicyAmendment?.command?.length);
-
-                    if (wantsExecpolicyAmendment) {
-                        result = {
-                            decision: 'approved_execpolicy_amendment',
-                            execPolicyAmendment: response.execPolicyAmendment,
-                        };
-                    } else if (response.decision === 'approved_for_session') {
-                        result = { decision: 'approved_for_session' };
-                    } else {
-                        result = { decision: 'approved' };
-                    }
-                } else {
-                    result = { decision: response.decision === 'denied' ? 'denied' : 'abort' };
-                }
-
-                if (response.approved) {
-                    const answersRaw = (response as any).answers;
-                    if (answersRaw && typeof answersRaw === 'object' && !Array.isArray(answersRaw)) {
-                        const normalized = Object.create(null) as Record<string, string>;
-                        for (const [k, v] of Object.entries(answersRaw as Record<string, unknown>)) {
-                            if (typeof k !== 'string' || !k) continue;
-                            if (typeof v === 'string') normalized[k] = v;
-                        }
-                        if (Object.keys(normalized).length > 0) {
-                            result.answers = normalized;
-                        }
-                    }
-                }
-
-                // Per-session allowlist: if user chooses "approved_for_session", remember this tool (and for
-                // shell/exec tools, remember the exact command) so future prompts can auto-approve.
-                if (response.approved) {
-                    applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, updatedPermissions);
-                    applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, responseAllowedTools);
-                    if (!Array.isArray(responseAllowedTools) && result.decision === 'approved_for_session') {
-                        this.allowedToolIdentifiers.add(makeToolIdentifier(pending.toolName, pending.input));
-                    }
-                }
-
                 pending.resolve(result);
 
-                if (response.approved) {
-                    this.autoApproveNowAllowedPendingRequests(response.id);
-                }
-
-                if (this.toolTrace) {
-                    recordToolTraceEvent({
-                        direction: 'inbound',
-                        sessionId: this.session.sessionId,
-                        protocol: this.toolTrace.protocol,
-                        provider: this.toolTrace.provider,
-                        kind: 'permission-response',
-                        payload: {
-                            type: 'permission-response',
-                            permissionId: response.id,
-                            approved: response.approved,
-                            decision: result.decision,
-                        },
-                    });
-                }
-
-                if (result.decision === 'abort' && this.triggerAbortCallbackOnAbortDecision) {
-                    try {
-                        const cb = this.onAbortRequested;
-                        if (cb) {
-                            Promise.resolve(cb()).catch((error) => {
-                                logger.debug(`${this.getLogPrefix()} onAbortRequested failed (non-fatal)`, error);
-                            });
-                        }
-                    } catch (error) {
-                        logger.debug(`${this.getLogPrefix()} onAbortRequested threw (non-fatal)`, error);
-                    }
-                }
-
-                const derivedAllowTools =
-                    Array.isArray(responseAllowedTools)
-                        ? responseAllowedTools
-                        : (result.decision === 'approved_for_session'
-                            ? [makeToolIdentifier(pending.toolName, pending.input)]
-                            : undefined);
-
-                    // Move request to completed in agent state
-                    this.updateAgentStateBestEffort((currentState) => {
-                        const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
-                        const request = requests[response.id];
-                        if (!request) return currentState;
-
-                        delete requests[response.id];
-
-                        const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedRequestEntry>(currentState.completedRequests);
-                    const completedEntry = Object.create(null) as AgentStateCompletedRequestEntry;
-                    completedEntry.tool = request.tool;
-                    completedEntry.kind = request.kind ?? resolveAgentRequestKind(request.tool);
-                    completedEntry.arguments = request.arguments;
-                    completedEntry.createdAt = request.createdAt;
-                    completedEntry.completedAt = Date.now();
-                    completedEntry.status = response.approved ? 'approved' : 'denied';
-                    completedEntry.decision = result.decision;
-                    if (derivedAllowTools) completedEntry.allowedTools = derivedAllowTools;
-                    if (typeof updatedPermissions !== 'undefined') completedEntry.updatedPermissions = updatedPermissions;
-                    completedRequests[response.id] = completedEntry;
-
-                    return { ...currentState, requests, completedRequests } satisfies AgentState;
-                }, 'permission response completion');
-
-                logger.debug(`${this.getLogPrefix()} Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`);
+                this.finalizePermissionResponse({
+                    ...finalizeParamsBase,
+                    requestSource: { toolName: pending.toolName, input: pending.input },
+                    updateAgentStateReason: 'permission response completion',
+                    debugMessage: `Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`,
+                });
             }
         );
     }
@@ -453,30 +368,12 @@ export abstract class BasePermissionHandler {
             if (!this.isAllowedForSession(pending.toolName, pending.input)) continue;
 
             this.pendingRequests.delete(permissionId);
-            this.markPermissionRequestCompletedBestEffort(permissionId);
-
             pending.resolve({ decision: 'approved' });
-
-            this.updateAgentStateBestEffort((currentState) => {
-                const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
-                const request = requests[permissionId];
-                if (!request) return currentState;
-
-                delete requests[permissionId];
-
-                const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedRequestEntry>(currentState.completedRequests);
-                const completedEntry = Object.create(null) as AgentStateCompletedRequestEntry;
-                completedEntry.tool = request.tool;
-                completedEntry.kind = request.kind ?? resolveAgentRequestKind(request.tool);
-                completedEntry.arguments = request.arguments;
-                completedEntry.createdAt = request.createdAt;
-                completedEntry.completedAt = Date.now();
-                completedEntry.status = 'approved';
-                completedEntry.decision = 'approved';
-                completedRequests[permissionId] = completedEntry;
-
-                return { ...currentState, requests, completedRequests } satisfies AgentState;
-            }, 'permission auto-approval (allowlist)');
+            this.requestStore.completeRequest({
+                requestId: permissionId,
+                status: 'approved',
+                decision: 'approved',
+            });
         }
     }
 
@@ -493,21 +390,14 @@ export abstract class BasePermissionHandler {
         const allowedTools = decision === 'approved_for_session'
             ? [makeToolIdentifier(toolName, input)]
             : undefined;
-                this.updateAgentStateBestEffort((currentState) => {
-                    const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedRequestEntry>(currentState.completedRequests);
-                const entry = Object.create(null) as AgentStateCompletedRequestEntry;
-                entry.tool = toolName;
-                entry.kind = resolveAgentRequestKind(toolName);
-                entry.arguments = input;
-                entry.createdAt = Date.now();
-                entry.completedAt = Date.now();
-                entry.status = decision === 'denied' || decision === 'abort' ? 'denied' : 'approved';
-                entry.decision = decision;
-                if (allowedTools) entry.allowedTools = allowedTools;
-                completedRequests[toolCallId] = entry;
-                return { ...currentState, completedRequests } satisfies AgentState;
-            }, 'auto decision');
-        this.markPermissionRequestCompletedBestEffort(toolCallId);
+        this.requestStore.recordCompletedRequest({
+            requestId: toolCallId,
+            toolName,
+            toolInput: input,
+            status: decision === 'denied' || decision === 'abort' ? 'denied' : 'approved',
+            decision,
+            allowedTools,
+        });
     }
 
     /**
@@ -531,21 +421,12 @@ export abstract class BasePermissionHandler {
             });
         }
 
-                this.updateAgentStateBestEffort((currentState) => ({
-                    ...currentState,
-                    requests: (() => {
-                        const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
-                    const entry = Object.create(null) as AgentStateRequestEntry;
-                    entry.tool = toolName;
-                    entry.kind = resolveAgentRequestKind(toolName);
-                    entry.arguments = input;
-                    entry.createdAt = Date.now();
-                    requests[toolCallId] = entry;
-                    return requests;
-                })(),
-        }), 'permission request add');
-
-        this.notifyPermissionRequestPushBestEffort(toolCallId, toolName, input);
+        this.requestStore.publishRequest({
+            requestId: toolCallId,
+            toolName,
+            toolInput: input,
+            createdAt: Date.now(),
+        });
     }
 
     /**
@@ -574,36 +455,10 @@ export abstract class BasePermissionHandler {
                 }
             }
 
-                // Clear requests in agent state
-                this.updateAgentStateBestEffort((currentState) => {
-                    const pendingRequests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
-                    const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedRequestEntry>(currentState.completedRequests);
-
-                    // Move all pending to completed as canceled
-                    for (const id of Object.keys(pendingRequests)) {
-                        const request = pendingRequests[id];
-                        if (!request) continue;
-                        const entry = Object.create(null) as AgentStateCompletedRequestEntry;
-                        entry.tool = request.tool;
-                        entry.kind = request.kind ?? resolveAgentRequestKind(request.tool);
-                        entry.arguments = request.arguments;
-                        entry.createdAt = request.createdAt;
-                        entry.completedAt = Date.now();
-                        entry.status = 'canceled';
-                        entry.reason = 'Session reset';
-                    completedRequests[id] = entry;
-                }
-
-                    return {
-                        ...currentState,
-                        requests: Object.create(null) as AgentStateRequestsRecord,
-                        completedRequests,
-                    };
-                }, 'reset');
+            this.requestStore.cancelAllRequests({ reason: 'Session reset' });
 
             this.allowedToolIdentifiers.clear();
-            this.permissionRequestPushNotifier?.dispose();
-            this.permissionRequestPushNotifier = null;
+            this.requestStore.dispose();
             logger.debug(`${this.getLogPrefix()} Permission handler reset`);
         } finally {
             this.isResetting = false;

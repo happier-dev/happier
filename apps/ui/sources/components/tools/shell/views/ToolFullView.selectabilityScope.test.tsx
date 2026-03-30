@@ -1,18 +1,24 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { makeToolCall } from './ToolView.testHelpers';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
+import {
+  renderScreen,
+  standardCleanup,
+} from '@/dev/testkit';
 import { Text } from '@/components/ui/text/Text';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
+installToolShellCommonModuleMocks({
+});
+
+vi.mock('@/sync/sync', () => ({
+  sync: {
+    ensureSidechainMessagesLoaded: vi.fn(),
+  },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSetting: () => false,
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/components/ui/media/CodeView', () => ({
   CodeView: () => null,
@@ -47,6 +53,10 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
 }));
 
 describe('ToolFullView (text selection scope)', () => {
+  afterEach(() => {
+    standardCleanup();
+  });
+
   it('defaults tool renderer content to selectable in the full view', async () => {
     const { ToolFullView } = await import('./ToolFullView');
 
@@ -57,12 +67,9 @@ describe('ToolFullView (text selection scope)', () => {
       description: 'Run echo hello',
     });
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
-    });
+    const screen = await renderScreen(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
 
-    const hostTextNodes = tree.root.findAllByType('Text' as any);
+    const hostTextNodes = screen.findAllByType('Text' as any);
     const target = hostTextNodes.find((n) => Array.isArray(n.props.children) ? n.props.children.includes('select me') : n.props.children === 'select me');
     expect(target).toBeTruthy();
     expect(target!.props.selectable).toBe(true);

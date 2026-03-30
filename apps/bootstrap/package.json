@@ -1,0 +1,26 @@
+{
+  "name": "@happier-dev/bootstrap",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "hsetup": "./bin/hsetup.mjs"
+  },
+  "scripts": {
+    "build:shared": "yarn -s workspace @happier-dev/protocol build && yarn -s workspace @happier-dev/cli-common build",
+    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist', { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });\" && node ../../node_modules/typescript/bin/tsc -p tsconfig.json && node scripts/writeDistBinWrappers.mjs",
+    "build:binary": "yarn -s build:shared && yarn -s build && node scripts/buildBinary.mjs",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
+    "test": "yarn -s build:shared && node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@happier-dev/cli-common": "0.0.0",
+    "@happier-dev/protocol": "0.0.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "yarn@1.22.22"
+}

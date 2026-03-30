@@ -1,9 +1,7 @@
-import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderHook } from '@/dev/testkit';
 
 import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
-import { flushHookEffects } from './serverFeatureHookHarness.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -30,25 +28,18 @@ describe('useHappierVoiceSupport', () => {
         const { useHappierVoiceSupport } = await import('./useHappierVoiceSupport');
         const { useFeatureDecision } = await import('./useFeatureDecision');
 
-        const seen: Array<{ value: boolean | null; decision: any }> = [];
-        function Test() {
-            const value = useHappierVoiceSupport();
-            const decision = useFeatureDecision('voice.happierVoice');
-            React.useEffect(() => {
-                seen.push({ value, decision });
-            }, [decision, value]);
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-            await flushHookEffects(6);
+        const hook = await renderHook(() => ({
+            value: useHappierVoiceSupport(),
+            decision: useFeatureDecision('voice.happierVoice'),
+        }), {
+            flushOptions: { cycles: 6, turns: 2 },
         });
 
-        expect(seen.at(-1)?.decision?.blockedBy).toBe(null);
-        expect(seen.at(-1)?.decision?.blockerCode).toBe('none');
-        expect(seen.at(-1)?.decision?.state).toBe('enabled');
-        expect(seen.at(-1)?.value).toBe(true);
+        expect(hook.getCurrent().decision?.blockedBy).toBe(null);
+        expect(hook.getCurrent().decision?.blockerCode).toBe('none');
+        expect(hook.getCurrent().decision?.state).toBe('enabled');
+        expect(hook.getCurrent().value).toBe(true);
+        await hook.unmount();
     });
 
     it('returns false when voice is enabled but Happier Voice is disabled', async () => {
@@ -59,22 +50,12 @@ describe('useHappierVoiceSupport', () => {
         resetServerFeaturesClientForTests();
 
         const { useHappierVoiceSupport } = await import('./useHappierVoiceSupport');
-
-        const seen: Array<boolean | null> = [];
-        function Test() {
-            const value = useHappierVoiceSupport();
-            React.useEffect(() => {
-                seen.push(value);
-            }, [value]);
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-            await flushHookEffects(6);
+        const hook = await renderHook(() => useHappierVoiceSupport(), {
+            flushOptions: { cycles: 6, turns: 2 },
         });
 
-        expect(seen.at(-1)).toBe(false);
+        expect(hook.getCurrent()).toBe(false);
+        await hook.unmount();
     });
 
     it('returns false when voice is disabled', async () => {
@@ -85,22 +66,12 @@ describe('useHappierVoiceSupport', () => {
         resetServerFeaturesClientForTests();
 
         const { useHappierVoiceSupport } = await import('./useHappierVoiceSupport');
-
-        const seen: Array<boolean | null> = [];
-        function Test() {
-            const value = useHappierVoiceSupport();
-            React.useEffect(() => {
-                seen.push(value);
-            }, [value]);
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-            await flushHookEffects(6);
+        const hook = await renderHook(() => useHappierVoiceSupport(), {
+            flushOptions: { cycles: 6, turns: 2 },
         });
 
-        expect(seen.at(-1)).toBe(false);
+        expect(hook.getCurrent()).toBe(false);
+        await hook.unmount();
     });
 
     it('fails closed when the request fails', async () => {
@@ -111,21 +82,11 @@ describe('useHappierVoiceSupport', () => {
         resetServerFeaturesClientForTests();
 
         const { useHappierVoiceSupport } = await import('./useHappierVoiceSupport');
-
-        const seen: Array<boolean | null> = [];
-        function Test() {
-            const value = useHappierVoiceSupport();
-            React.useEffect(() => {
-                seen.push(value);
-            }, [value]);
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-            await flushHookEffects(6);
+        const hook = await renderHook(() => useHappierVoiceSupport(), {
+            flushOptions: { cycles: 6, turns: 2 },
         });
 
-        expect(seen.at(-1)).toBe(false);
+        expect(hook.getCurrent()).toBe(false);
+        await hook.unmount();
     });
 });

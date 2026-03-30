@@ -19,7 +19,10 @@ web-build/
 public/monaco/
 
 # Vendored by postinstall for optional web-only runtimes (do not commit).
-public/vendor/
+public/vendor/*
+!public/vendor/kokoro/
+public/vendor/kokoro/*
+!public/vendor/kokoro/kokoroTtsWorker.js
 
 # Vendored by postinstall for Pierre diffs worker (do not commit).
 public/pierre-diff-worker*.js

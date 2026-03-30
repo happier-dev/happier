@@ -1,245 +1,203 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-import { randomUUID } from 'node:crypto';
-
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import { logger } from '@/ui/logger';
 
-import { HAPPIER_MCP_TOOLS } from '@/mcp/happierMcpToolCatalog';
-import { createActionSpecMcpTools } from '@/mcp/tools/actionSpecTools';
+import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
+import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
+import { createStartExecutionRunToolHandler } from '@/agent/tools/happierTools/createStartExecutionRunToolHandler';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
-import { createActionExecutor, listActionSpecs, type ActionExecutorDeps } from '@happier-dev/protocol';
-import { ExecutionRunIntentSchema } from '@happier-dev/protocol';
+import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRuns';
+import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import type { Credentials } from '@/persistence';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import {
+  PromptRegistryInstallRequestV1Schema,
+  PromptRegistryInstallResponseV1Schema,
+  type ActionId,
+  getActionSpec,
+  isActionSpecSurfacedOn,
+} from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1 } from '@happier-dev/protocol';
-import { z } from 'zod';
 
-export { HAPPIER_MCP_TOOL_NAMES } from '@/mcp/happierMcpToolCatalog';
-
-export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: McpServer; toolNames: string[] } {
-  const handler = async (title: string) => {
-    logger.debug('[happierMCP] Changing title to:', title);
-    try {
-      client.sendClaudeSessionMessage({
-        type: 'summary',
-        summary: title,
-        leafUuid: randomUUID(),
-      });
-
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: String(error) };
-    }
-  };
+export function createHappierMcpServer(
+  client: HappyMcpSessionClient,
+  opts?: Readonly<{ credentials?: Credentials | null }>,
+): { mcp: McpServer; toolNames: string[] } {
+  // This server is the per-session MCP bridge that a running session agent uses.
+  // It must use the `session_agent` surface so action enablement + approvals can be
+  // configured separately from the external MCP surface (`mcp`).
+  const toolSurface = 'session_agent' as const;
+  const credentials = opts?.credentials ?? null;
+  const ctx = credentials
+    ? resolveSessionEncryptionContextFromCredentials(credentials)
+    : { encryptionKey: new Uint8Array(0), encryptionVariant: 'legacy' as const };
 
   const mcp = new McpServer({
     name: 'Happier MCP',
     version: '1.0.0',
   });
 
-  const actionSpecTools = createActionSpecMcpTools({
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'mcp' }),
-  });
-
   const sessionScopedRpc = async (method: string, params: unknown) =>
     await client.rpcHandlerManager.invokeLocal(method, params);
-
-  const deps: ActionExecutorDeps = {
-    executionRunStart: async (_sessionId, request) => await sessionScopedRpc('execution.run.start', request),
-    executionRunList: async (_sessionId, _request) => await sessionScopedRpc('execution.run.list', {}),
-    executionRunGet: async (_sessionId, request) => await sessionScopedRpc('execution.run.get', request),
-    executionRunSend: async (_sessionId, request) => await sessionScopedRpc('execution.run.send', request),
-    executionRunStop: async (_sessionId, request) => await sessionScopedRpc('execution.run.stop', request),
-    executionRunAction: async (_sessionId, request) => await sessionScopedRpc('execution.run.action', request),
-
-    daemonMemorySearch: async ({ query }): Promise<MemorySearchResultV1> => {
-      const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, query);
-      return MemorySearchResultV1Schema.parse(res);
-    },
-    daemonMemoryGetWindow: async ({ sessionId, seqFrom, seqTo }): Promise<MemoryWindowV1> => {
-      const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, { v: 1, sessionId, seqFrom, seqTo });
-      return MemoryWindowV1Schema.parse(res);
-    },
-    daemonMemoryEnsureUpToDate: async ({ sessionId }) =>
-      await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, sessionId ? { sessionId } : {}),
-
-    // Not exposed as MCP tools today; satisfy executor deps to keep a single shared implementation.
-    sessionOpen: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' }),
-    sessionFork: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.fork' }),
-    sessionSpawnNew: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_new' }),
-    sessionSpawnPicker: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_picker' }),
-    workspacesListRecent: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspaces.list_recent' }),
-    pathsListRecent: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:paths.list_recent' }),
-    machinesList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:machines.list' }),
-    serversList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:servers.list' }),
-    agentsBackendsList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.backends.list' }),
-    agentsModelsList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.models.list' }),
-    sessionSendMessage: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.message.send' }),
-    sessionPermissionRespond: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.permission.respond' }),
-    sessionTargetPrimarySet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.target.primary.set' }),
-    sessionTargetTrackedSet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.target.tracked.set' }),
-    sessionList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.list' }),
-    sessionActivityGet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.activity.get' }),
-    sessionRecentMessagesGet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.messages.recent.get' }),
-    resetGlobalVoiceAgent: async () => {},
-
-    isActionEnabled: (id, ctx) => isActionEnabledByEnv(id, { surface: ctx.surface ?? 'mcp', placement: ctx.placement ?? null }),
+  const sessionMetadataSnapshot = client.getMetadataSnapshot?.() ?? null;
+  const rawSession = sessionMetadataSnapshot ? { metadata: sessionMetadataSnapshot } : null;
+  const executionRuns = {
+    start: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(
+        await (client.executionRuns?.start?.(request) ?? sessionScopedRpc('execution.run.start', request)),
+      ),
+    list: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(
+        await (client.executionRuns?.list?.(request) ?? sessionScopedRpc('execution.run.list', request)),
+      ),
+    get: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(
+        await (client.executionRuns?.get?.(request) ?? sessionScopedRpc('execution.run.get', request)),
+      ),
+    send: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(
+        await (client.executionRuns?.send?.(request) ?? sessionScopedRpc('execution.run.send', request)),
+      ),
+    stop: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(
+        await (client.executionRuns?.stop?.(request) ?? sessionScopedRpc('execution.run.stop', request)),
+      ),
+    action: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(
+        await (client.executionRuns?.action?.(request) ?? sessionScopedRpc('execution.run.action', request)),
+      ),
+    wait: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(
+        await (client.executionRuns?.wait?.(request) ?? sessionScopedRpc('execution.run.wait', request)),
+      ),
   };
 
-  const executor = createActionExecutor(deps);
+  const harness = createCliActionExecutorHarness(
+    {
+      token: credentials?.token ?? '',
+      ...(credentials ? { credentials } : {}),
+      sessionId: client.sessionId,
+      ctx,
+      rawSession,
+    },
+    {
+      sessionTitleSet: async ({ sessionId, title }) => {
+        const normalizedSessionId = String(sessionId ?? '').trim();
+        if (!normalizedSessionId) {
+          return { ok: false as const, errorCode: 'invalid_parameters' as const, error: 'invalid_parameters' as const };
+        }
+        const normalizedTitle = String(title ?? '').trim();
+        if (!normalizedTitle) {
+          return { ok: false as const, errorCode: 'invalid_parameters' as const, error: 'invalid_parameters' as const };
+        }
+        if (normalizedSessionId !== client.sessionId) {
+          return { ok: false as const, errorCode: 'not_authenticated' as const, error: 'not_authenticated' as const };
+        }
 
-  const actionToolNameToId = new Map<string, string>();
-  const allActionToolNames = new Set<string>();
-  for (const spec of listActionSpecs()) {
-    if (spec.surfaces.mcp !== true) continue;
-    if (!isActionEnabledByEnv(spec.id as any, { surface: 'mcp' })) continue;
-    const toolName = typeof spec.bindings?.mcpToolName === 'string' ? spec.bindings.mcpToolName.trim() : '';
-    if (!toolName) continue;
-    actionToolNameToId.set(toolName, spec.id);
-  }
-  for (const spec of listActionSpecs()) {
-    if (spec.surfaces.mcp !== true) continue;
-    const toolName = typeof spec.bindings?.mcpToolName === 'string' ? spec.bindings.mcpToolName.trim() : '';
-    if (toolName) allActionToolNames.add(toolName);
-  }
-
-  const handlersByName: Record<string, (args: any) => Promise<any>> = {
-    change_title: async (args: any) => {
-      const title = typeof args?.title === 'string' ? args.title : '';
-      const response = await handler(title);
-      logger.debug('[happierMCP] Response:', response);
-
-      if (response.success) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Successfully changed chat title to: "${title}"`,
+        try {
+          await Promise.resolve(client.updateMetadata((current) => ({
+            ...current,
+            summary: {
+              text: normalizedTitle,
+              updatedAt: Date.now(),
             },
-          ],
-          isError: false as const,
-        };
-      }
+          })));
+        } catch (error) {
+          logger.debug('[mcp] Failed to update title metadata via session-scoped bridge', {
+            sessionId: normalizedSessionId,
+            error,
+          });
+          return { ok: false as const, errorCode: 'metadata_update_failed' as const, error: 'metadata_update_failed' as const };
+        }
 
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `Failed to change chat title: ${response.error || 'Unknown error'}`,
-          },
-        ],
-        isError: true as const,
-      };
+        return { ok: true as const, sessionId: normalizedSessionId, title: normalizedTitle };
+      },
+      executionRunStart: async (_sessionId, request) => await executionRuns.start(request),
+      executionRunList: async (_sessionId, request) => await executionRuns.list(request),
+      executionRunGet: async (_sessionId, request) => await executionRuns.get(request),
+      executionRunSend: async (_sessionId, request) => await executionRuns.send(request),
+      executionRunStop: async (_sessionId, request) => await executionRuns.stop(request),
+      executionRunAction: async (_sessionId, request) => await executionRuns.action(request),
+      executionRunWait: async (_sessionId, request) => await executionRuns.wait(request),
+
+      daemonMemorySearch: async ({ query }): Promise<MemorySearchResultV1> => {
+        const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, query);
+        return MemorySearchResultV1Schema.parse(res);
+      },
+      daemonMemoryGetWindow: async ({ sessionId, seqFrom, seqTo }): Promise<MemoryWindowV1> => {
+        const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, { v: 1, sessionId, seqFrom, seqTo });
+        return MemoryWindowV1Schema.parse(res);
+      },
+      daemonMemoryEnsureUpToDate: async ({ sessionId }) =>
+        await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, sessionId ? { sessionId } : {}),
+
+      promptRegistryInstall: async (args) => {
+        if (!args.installTarget) {
+          return { ok: false as const, errorCode: 'invalid_request' as const, error: 'installTarget is required' };
+        }
+
+        const request = PromptRegistryInstallRequestV1Schema.parse({
+          sourceId: args.sourceId,
+          itemId: args.itemId,
+          configuredSources: args.configuredSources ?? [],
+          installTarget: args.installTarget,
+        });
+        const res = await sessionScopedRpc(RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL, request);
+        return PromptRegistryInstallResponseV1Schema.parse(res);
+      },
+
+      resetGlobalVoiceAgent: async () => {},
     },
+  );
 
-    action_spec_list: async (args: any) => actionSpecTools.action_spec_list.handler(args),
-    action_spec_get: async (args: any) => actionSpecTools.action_spec_get.handler(args),
+  const executor = harness.executor;
 
-    execution_run_start: async (args: any) => {
-      const schema = z.object({
-        sessionId: z.string().min(1).optional(),
-        intent: ExecutionRunIntentSchema,
-        backendId: z.string().min(1),
-        instructions: z.string().optional(),
-        permissionMode: z.string().min(1).optional(),
-        retentionPolicy: z.enum(['ephemeral', 'resumable']).optional(),
-        runClass: z.enum(['bounded', 'long_lived']).optional(),
-        ioMode: z.enum(['request_response', 'streaming']).optional(),
-      }).passthrough();
-
-      const parsed = schema.safeParse(args ?? {});
-      if (!parsed.success) {
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ errorCode: 'execution_run_invalid_action_input', error: 'Invalid params' }) }],
-          isError: true as const,
-        };
-      }
-
-      // MCP server is session-scoped; reject any mismatched sessionId if caller provides one.
-      if (typeof parsed.data.sessionId === 'string' && parsed.data.sessionId.trim() !== client.sessionId) {
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ errorCode: 'execution_run_not_allowed', error: 'This MCP server is scoped to a different session' }) }],
-          isError: true as const,
-        };
-      }
-
-      const res = await sessionScopedRpc('execution.run.start', {
-        intent: parsed.data.intent,
-        backendId: parsed.data.backendId,
-        instructions: parsed.data.instructions,
-        permissionMode: parsed.data.permissionMode ?? 'read_only',
-        retentionPolicy: parsed.data.retentionPolicy ?? 'ephemeral',
-        runClass: parsed.data.runClass ?? 'bounded',
-        ioMode: parsed.data.ioMode ?? 'request_response',
-      });
-
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(res) }],
-        isError: false as const,
-      };
-    },
-  };
-
-  const enabledTools = HAPPIER_MCP_TOOLS.filter((tool) => {
-    if (tool.name === 'change_title') return true;
-    if (tool.name === 'action_spec_list' || tool.name === 'action_spec_get') return true;
-    // Hide disabled action-backed tools so clients don't discover handlers they cannot call.
-    if (allActionToolNames.has(tool.name)) return actionToolNameToId.has(tool.name);
-    return true;
+  registerHappierMcpResources(mcp as any, {
+    surface: toolSurface,
+    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: toolSurface }),
   });
 
-  for (const tool of enabledTools) {
-    const handlerFn = handlersByName[tool.name];
-    const actionId = actionToolNameToId.get(tool.name);
+  const actionToolBridge = createActionToolExecutorBridge({
+    executor,
+    isActionEnabled: (id) => {
+      const spec = getActionSpec(id as any);
+      return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabledByEnv(id as any, { surface: toolSurface });
+    },
+    surface: toolSurface,
+  });
 
-    const handler = handlerFn ?? (async (args: any) => {
-          if (!actionId) {
-            throw new Error(`Missing handler for MCP tool: ${tool.name}`);
-          }
-
-          // MCP server is session-scoped; reject any mismatched sessionId if caller provides one.
-          const provided = args && typeof args === 'object' && !Array.isArray(args) ? (args as any).sessionId : undefined;
-          if (provided !== undefined) {
-            if (typeof provided !== 'string' || provided.trim().length === 0) {
-              return {
-                content: [{ type: 'text' as const, text: JSON.stringify({ errorCode: 'execution_run_invalid_action_input', error: 'Invalid sessionId' }) }],
-                isError: true as const,
-              };
-            }
-            if (provided.trim() !== client.sessionId) {
-              return {
-                content: [{ type: 'text' as const, text: JSON.stringify({ errorCode: 'execution_run_not_allowed', error: 'This MCP server is scoped to a different session' }) }],
-                isError: true as const,
-              };
-            }
-          }
-
-          const res = await executor.execute(actionId as any, args, { defaultSessionId: client.sessionId, surface: 'mcp' });
-          if (!res.ok) {
-            return {
-              content: [{ type: 'text' as const, text: JSON.stringify({ errorCode: res.errorCode, error: res.error }) }],
-              isError: true as const,
-            };
-          }
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(res.result) }],
-            isError: false as const,
-          };
-        });
-
-    mcp.registerTool(
-      tool.name,
-      {
-        description: tool.description,
-        title: tool.title,
-        inputSchema: tool.inputSchema,
-      } as any,
-      handler,
-    );
-  }
+  const { toolNames } = registerHappierMcpBuiltInTools(mcp as any, {
+    sessionId: client.sessionId,
+    surface: toolSurface,
+    deps: {
+      changeTitle: createChangeTitleToolHandler({
+        executor,
+        surface: toolSurface,
+        afterCommit: async ({ title }) => {
+          // Keep the in-memory session metadata snapshot in sync so the UI / session agent
+          // can reflect the new title immediately (without requiring a full server refresh).
+          await Promise.resolve(client.updateMetadata((current) => ({
+            ...current,
+            summary: {
+              text: title,
+              updatedAt: Date.now(),
+            },
+          })));
+        },
+      }),
+      startExecutionRun: createStartExecutionRunToolHandler({ executor, surface: toolSurface }),
+      executeActionByToolName: actionToolBridge.executeActionByToolName,
+      resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, client.sessionId),
+      isActionEnabled: actionToolBridge.isActionEnabled,
+    },
+  });
 
   return {
     mcp,
-    toolNames: enabledTools.map((t) => t.name),
+    toolNames,
   };
 }

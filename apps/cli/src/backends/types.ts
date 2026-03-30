@@ -4,22 +4,81 @@ import type { Capability } from '@/capabilities/service';
 import type { CommandHandler } from '@/cli/commandRegistry';
 import type { CloudConnectTarget } from '@/cloud/connectTypes';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
+import type { DirectSessionsProviderId } from '@happier-dev/protocol';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { DirectSessionProviderOps } from './directSessions/providerOps';
+import type { AcpForkContinuationHandler } from './forking/acpForkContinuationHandler';
+import type { ProviderNativeForkHandler } from './forking/providerNativeForkHandler';
 
 export { AGENT_IDS as CATALOG_AGENT_IDS, DEFAULT_AGENT_ID as DEFAULT_CATALOG_AGENT_ID } from '@happier-dev/agents';
 import type { AgentId as CatalogAgentId, VendorResumeSupportLevel } from '@happier-dev/agents';
 export type { CatalogAgentId, VendorResumeSupportLevel };
+import type { CodexBackendMode } from '@happier-dev/agents';
+import type { InstallableKey } from '@happier-dev/protocol';
+import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
+import type {
+  CliAuthMethod,
+  CliAuthReason,
+  CliAuthSource,
+  CliAuthSpec,
+  CliAuthState,
+  CliAuthStatus,
+  CliAuthStatusDraft,
+} from '@/capabilities/cliAuth/types';
+export type {
+  CliAuthMethod,
+  CliAuthReason,
+  CliAuthSource,
+  CliAuthSpec,
+  CliAuthState,
+  CliAuthStatus,
+  CliAuthStatusDraft,
+};
 
 export type CatalogAcpBackendCreateResult = Readonly<{ backend: AgentBackend }>;
 export type CatalogAcpBackendFactory = (opts: unknown) => CatalogAcpBackendCreateResult;
 
 export type VendorResumeSupportParams = Readonly<{
-  experimentalCodexResume?: boolean;
   experimentalCodexAcp?: boolean;
+  codexBackendMode?: CodexBackendMode;
 }>;
 
 export type VendorResumeSupportFn = (params: VendorResumeSupportParams) => boolean;
 
 export type HeadlessTmuxArgvTransform = (argv: string[]) => string[];
+
+export type ProviderAttachScope = 'local' | 'remote';
+
+export type ProviderAttachEligibility =
+  | Readonly<{
+      eligible: true;
+      scope: ProviderAttachScope;
+      metadata: Record<string, unknown>;
+    }>
+  | Readonly<{
+      eligible: false;
+      reason: string;
+    }>;
+
+export type ProviderAttachReachability =
+  | Readonly<{ reachable: true }>
+  | Readonly<{ reachable: false; reason: string }>;
+
+export type ProviderAttachOps = Readonly<{
+  evaluateEligibility: (params: Readonly<{
+    metadata: Record<string, unknown>;
+    currentMachineId: string | null;
+    sessionMachineId: string | null;
+    hasLocalAttachmentInfo: boolean;
+  }>) => ProviderAttachEligibility | Promise<ProviderAttachEligibility>;
+  probeReachability?: (params: Readonly<{
+    metadata: Record<string, unknown>;
+  }>) => Promise<ProviderAttachReachability>;
+  runAttach: (params: Readonly<{
+    sessionId: string;
+    metadata: Record<string, unknown>;
+  }>) => Promise<number | false>;
+}>;
 
 export type AgentChecklistContributions = Partial<
   Record<ChecklistId, ReadonlyArray<Readonly<{ id: string; params?: Record<string, unknown> }>>>
@@ -54,6 +113,7 @@ export type AgentCatalogEntry = Readonly<{
    */
   getCapabilities?: () => Promise<ReadonlyArray<Capability>>;
   getCliDetect?: () => Promise<CliDetectSpec>;
+  getCliAuthSpec?: () => Promise<CliAuthSpec>;
 	  /**
 	   * Optional cloud connect target for this agent.
 	   *
@@ -66,6 +126,20 @@ export type AgentCatalogEntry = Readonly<{
    * These are evaluated by the daemon before spawning a child process.
    */
   getDaemonSpawnHooks?: () => Promise<DaemonSpawnHooks>;
+  /**
+   * Optional direct-session provider operations for browse/tail/takeover flows.
+   *
+   * Keep provider-specific implementations inside `src/backends/<provider>/...`
+   * and expose them through this catalog hook instead of side registries.
+   */
+  getDirectSessionProviderOps?: () => Promise<DirectSessionProviderOps>;
+  /**
+   * Optional provider-owned attach operations for shared local-control backends.
+   *
+   * Keep provider-specific attach eligibility and execution in the backend folder
+   * and expose it through this catalog hook instead of branching in shared CLI code.
+   */
+  getProviderAttachOps?: () => Promise<ProviderAttachOps>;
   /**
    * Whether this agent supports vendor-level resume (NOT Happy session resume).
    *
@@ -92,10 +166,53 @@ export type AgentCatalogEntry = Readonly<{
    */
   getAcpBackendFactory?: () => Promise<CatalogAcpBackendFactory>;
   /**
+   * Optional ACP fork-continuation shaper.
+   *
+   * Used by fork orchestration to keep provider-specific resume/env/metadata shaping
+   * behind the backend catalog after ACP `session/fork` succeeds.
+   */
+  getAcpForkContinuationHandler?: () => Promise<AcpForkContinuationHandler>;
+  /**
+   * Optional provider-native fork handler.
+   *
+   * Used by fork orchestration to delegate provider-specific native fork behavior
+   * through the backend catalog.
+   */
+  getProviderNativeForkHandler?: () => Promise<ProviderNativeForkHandler>;
+  /**
+   * Whether probe RPC handlers should load account settings before invoking probe methods.
+   *
+   * This is used for providers whose probe behavior depends on account settings even when the
+   * caller is not using a configured ACP backend target.
+   *
+   * Keep this provider-owned by setting it in the backend catalog entry instead of branching
+   * on provider ids in shared handlers.
+   */
+  needsAccountSettingsForProbes?: boolean;
+  /**
+   * Optional cache-variant shaper for the dynamic models probe.
+   *
+   * Use this when the provider has multiple distinct runtime flavors (e.g. Codex app-server vs ACP).
+   */
+  resolveModelsProbeVariant?: (params: Readonly<{
+    backendTarget?: BackendTargetRefV1;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+  }>) => string | null;
+  /**
+   * Optional provider-owned adapter for probing dynamic session controls (models/modes/config options)
+   * without starting a full ACP session.
+   *
+   * Keep provider-specific implementations in the backend folder and expose them via this catalog hook.
+   */
+  getPreflightSessionControlsProbeAdapter?: () => Promise<PreflightSessionControlsProbeAdapter | null>;
+  /**
    * Optional capability checklist contributions for agent-specific UX.
    *
    * This is intentionally data-only (no self-registration) so the capabilities
    * engine can stay deterministic and easy to inspect.
    */
   checklists?: AgentChecklistContributions;
+  runtimeInstallableKeys?: readonly InstallableKey[];
 }>;
+
+export type { AcpForkContinuationHandler, DirectSessionProviderOps, DirectSessionsProviderId, ProviderNativeForkHandler };

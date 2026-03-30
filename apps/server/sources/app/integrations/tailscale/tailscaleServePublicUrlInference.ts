@@ -1,22 +1,110 @@
-import { spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { parseBooleanEnv, parseIntEnv } from "@/config/env";
-import { parseTailscaleServeHttpsBaseUrlForPort } from "./tailscaleServeStatusParse";
 
 type TailscaleServeStatusRunner = (params: Readonly<{
     timeoutMs: number;
     env: NodeJS.ProcessEnv;
-    tailscaleBin: string;
+    tailscaleBin?: string;
 }>) => Promise<string>;
+
+const execFileAsync = promisify(execFile);
+
+function stripTrailingSlash(url: string): string {
+    return url.replace(/\/+$/, "");
+}
+
+function normalizeHttpsUrl(raw: string): string | null {
+    const value = String(raw ?? "").trim();
+    if (!value) return null;
+
+    let parsed: URL;
+    try {
+        parsed = new URL(value);
+    } catch {
+        return null;
+    }
+
+    if (parsed.protocol !== "https:") return null;
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return stripTrailingSlash(parsed.toString());
+}
+
+function tryParseProxyTargetFromLine(line: string): URL | null {
+    const trimmed = String(line ?? "").trim();
+    const match = trimmed.match(/\bproxy\s+(\S+)/i);
+    const raw = match?.[1] ? String(match[1]).trim() : "";
+    if (!raw) return null;
+
+    try {
+        return new URL(raw);
+    } catch {
+        return null;
+    }
+}
+
+function extractTailscaleServeHttpsUrl(serveStatusText: string): string | null {
+    const line = String(serveStatusText ?? "")
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .find((value) => value.toLowerCase().includes("https://"));
+    if (!line) return null;
+
+    const match = line.match(/https:\/\/\S+/i);
+    if (!match) return null;
+    return normalizeHttpsUrl(match[0]);
+}
+
+function parseTailscaleServeHttpsBaseUrlForPort(statusText: string, port: number): string | null {
+    const wantedPort = Number.isFinite(port) && port > 0 ? String(Math.trunc(port)) : "";
+    if (!wantedPort) return null;
+
+    let currentBase: string | null = null;
+    const lines = String(statusText ?? "").split(/\r?\n/);
+    for (const rawLine of lines) {
+        const line = String(rawLine ?? "").trim();
+        if (!line) continue;
+
+        const maybeHttps = line.match(/^(https:\/\/\S+)/i)?.[1];
+        if (maybeHttps && !line.toLowerCase().includes("proxy")) {
+            currentBase = normalizeHttpsUrl(maybeHttps);
+            continue;
+        }
+
+        if (!currentBase) continue;
+        const proxyTarget = tryParseProxyTargetFromLine(line);
+        if (!proxyTarget) continue;
+        if (proxyTarget.port === wantedPort) {
+            return currentBase;
+        }
+    }
+
+    return null;
+}
+
+async function runLocalTailscaleServeStatus(params: Readonly<{
+    timeoutMs: number;
+    env: NodeJS.ProcessEnv;
+    tailscaleBin?: string;
+}>): Promise<string> {
+    const command = String(params.tailscaleBin ?? params.env.HAPPIER_TAILSCALE_BIN ?? "tailscale").trim() || "tailscale";
+    const timeoutMs = Math.max(1, Math.min(10_000, Math.trunc(params.timeoutMs)));
+    const mergedEnv = { ...process.env, ...params.env };
+    const result = await execFileAsync(command, ["serve", "status"], {
+        env: mergedEnv,
+        timeout: timeoutMs,
+        maxBuffer: 2 * 1024 * 1024,
+    });
+    return String(result.stdout ?? "");
+}
 
 function resolveTailscaleServeStatusTimeoutMs(env: NodeJS.ProcessEnv): number {
     const raw = String(env.HAPPIER_TAILSCALE_SERVE_STATUS_TIMEOUT_MS ?? "").trim();
     return parseIntEnv(raw, 750, { min: 1, max: 10_000 });
-}
-
-function resolveTailscaleBin(env: NodeJS.ProcessEnv): string {
-    const explicit = String(env.HAPPIER_TAILSCALE_BIN ?? "").trim();
-    return explicit || "tailscale";
 }
 
 function resolveApiPort(env: NodeJS.ProcessEnv): number {
@@ -28,54 +116,6 @@ function shouldInferFromEnv(env: NodeJS.ProcessEnv): boolean {
     return parseBooleanEnv(env.HAPPIER_TAILSCALE_INFER_PUBLIC_URL, true);
 }
 
-async function runTailscaleServeStatus(params: Readonly<{
-    timeoutMs: number;
-    env: NodeJS.ProcessEnv;
-    tailscaleBin: string;
-}>): Promise<string> {
-    const timeoutMs = Math.max(1, Math.trunc(params.timeoutMs));
-    const tailscaleBin = String(params.tailscaleBin ?? "").trim() || "tailscale";
-
-    return await new Promise<string>((resolve, reject) => {
-        const child = spawn(tailscaleBin, ["serve", "status"], {
-            env: params.env,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-
-        let stdout = "";
-        let stderr = "";
-        const timer = setTimeout(() => {
-            try {
-                child.kill("SIGKILL");
-            } catch {
-                // ignore
-            }
-            reject(new Error("tailscale serve status timeout"));
-        }, timeoutMs);
-        timer.unref?.();
-
-        child.stdout?.on("data", (chunk) => {
-            stdout += String(chunk ?? "");
-        });
-        child.stderr?.on("data", (chunk) => {
-            stderr += String(chunk ?? "");
-        });
-
-        child.on("error", (err) => {
-            clearTimeout(timer);
-            reject(err);
-        });
-        child.on("close", (code) => {
-            clearTimeout(timer);
-            if (code === 0) {
-                resolve(stdout);
-                return;
-            }
-            reject(new Error(`tailscale serve status failed (${code ?? "unknown"}): ${stderr}`));
-        });
-    });
-}
-
 export async function inferAndApplyTailscaleServePublicServerUrl(
     env: NodeJS.ProcessEnv,
     deps?: Readonly<{ runTailscaleServeStatus?: TailscaleServeStatusRunner }>,
@@ -85,15 +125,13 @@ export async function inferAndApplyTailscaleServePublicServerUrl(
 
     const port = resolveApiPort(env);
     const statusTimeoutMs = resolveTailscaleServeStatusTimeoutMs(env);
-    const tailscaleBin = resolveTailscaleBin(env);
 
     try {
-        const status = await (deps?.runTailscaleServeStatus ?? runTailscaleServeStatus)({
+        const status = await (deps?.runTailscaleServeStatus ?? runLocalTailscaleServeStatus)({
             timeoutMs: statusTimeoutMs,
             env,
-            tailscaleBin,
         });
-        const inferred = parseTailscaleServeHttpsBaseUrlForPort(status, port);
+        const inferred = parseTailscaleServeHttpsBaseUrlForPort(status, port) ?? extractTailscaleServeHttpsUrl(status);
         if (!inferred) return null;
         if (String(env.HAPPIER_PUBLIC_SERVER_URL ?? "").trim()) return null;
         env.HAPPIER_PUBLIC_SERVER_URL = inferred;

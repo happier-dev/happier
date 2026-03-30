@@ -10,8 +10,15 @@ function readRunAfterInteractionsFallbackDelayMsFromEnv(): number {
 
 export function runAfterInteractionsWithFallback(fn: () => void): () => void {
     if (Platform.OS === 'web') {
-        fn();
-        return () => {};
+        let cancelled = false;
+        const handle = setTimeout(() => {
+            if (cancelled) return;
+            fn();
+        }, 0);
+        return () => {
+            cancelled = true;
+            clearTimeout(handle);
+        };
     }
 
     let didRun = false;
@@ -31,7 +38,7 @@ export function runAfterInteractionsWithFallback(fn: () => void): () => void {
         return () => {
             didRun = true;
             if (fallback !== null) clearTimeout(fallback);
-            (task as any)?.cancel?.();
+            task.cancel();
         };
     } catch {
         if (fallback !== null) clearTimeout(fallback);

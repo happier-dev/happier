@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderSettingsView } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
@@ -9,15 +10,16 @@ import {
     getRequestUrl,
     isFeaturesRequest,
 } from './account.testHelpers';
+import {
+    installAccountSettingsRouteModuleMocks,
+} from './accountSettingsRouteTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native-reanimated', () => ({}));
 
-const routerPushMock = vi.hoisted(() => vi.fn());
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushMock, back: vi.fn() }),
-}));
+installAccountSettingsRouteModuleMocks();
 
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -51,6 +53,22 @@ vi.mock('@/auth/flows/challenge', () => ({
     }),
 }));
 
+function findEncryptionModeSwitch(screen: Awaited<ReturnType<typeof renderSettingsView>>) {
+    return screen.findByTestId('settings-account-encryption-mode-switch');
+}
+
+function findEncryptionModeSwitches(screen: Awaited<ReturnType<typeof renderSettingsView>>) {
+    return screen.findAllByTestId('settings-account-encryption-mode-switch');
+}
+
+function createReachabilityProbeResponse(): { ok: true; status: 200; json: () => Promise<{ ok: true }> } {
+    return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true }),
+    };
+}
+
 describe('Settings → Account (encryption mode toggle)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
@@ -69,36 +87,33 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
+            const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
                     json: async () => createAccountFeaturesResponse({ encryptionAccountOptOutEnabled: false }),
                 };
             }
-            throw new Error(`Unexpected fetch: ${url} (${init?.method ?? 'GET'})`);
+            throw new Error(`Unexpected fetch: ${url} (${method})`);
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
+        let screen: Awaited<ReturnType<typeof renderSettingsView>> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            screen = await renderSettingsView(<AccountScreen />);
             await act(async () => {});
 
-            const encryptionItems =
-                tree?.root.findAll(
-                    (node) =>
-                        node?.props?.rightElement?.props?.testID === 'settings-account-encryption-mode-switch' &&
-                        typeof node?.props?.rightElement?.props?.onValueChange === 'function',
-                ) ?? [];
-            expect(encryptionItems).toHaveLength(0);
+            expect(findEncryptionModeSwitches(screen)).toHaveLength(0);
         } finally {
-            act(() => {
-                tree?.unmount();
-            });
+            await screen?.unmount();
         }
     });
 
@@ -116,6 +131,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
@@ -148,23 +169,16 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
+        let screen: Awaited<ReturnType<typeof renderSettingsView>> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            screen = await renderSettingsView(<AccountScreen />);
             await act(async () => {});
 
-            const encryptionItems =
-                tree?.root.findAll(
-                    (node) =>
-                        node?.props?.rightElement?.props?.testID === 'settings-account-encryption-mode-switch' &&
-                        typeof node?.props?.rightElement?.props?.onValueChange === 'function',
-                ) ?? [];
-            expect(encryptionItems).toHaveLength(1);
+            const encryptionSwitch = findEncryptionModeSwitch(screen);
+            expect(encryptionSwitch).toBeTruthy();
 
             await act(async () => {
-                encryptionItems[0]!.props.rightElement.props.onValueChange(false);
+                await encryptionSwitch?.props.onValueChange(false);
             });
 
             const seen = fetchMock.mock.calls.map((call) => [getRequestUrl(call[0]), (call[1]?.method ?? 'GET').toUpperCase()]);
@@ -175,9 +189,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
                 ]),
             );
         } finally {
-            act(() => {
-                tree?.unmount();
-            });
+            await screen?.unmount();
         }
     });
 
@@ -195,6 +207,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
@@ -223,23 +241,16 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
+        let screen: Awaited<ReturnType<typeof renderSettingsView>> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            screen = await renderSettingsView(<AccountScreen />);
             await act(async () => {});
 
-            const encryptionItems =
-                tree?.root.findAll(
-                    (node) =>
-                        node?.props?.rightElement?.props?.testID === 'settings-account-encryption-mode-switch' &&
-                        typeof node?.props?.rightElement?.props?.onValueChange === 'function',
-                ) ?? [];
-            expect(encryptionItems).toHaveLength(1);
+            const encryptionSwitch = findEncryptionModeSwitch(screen);
+            expect(encryptionSwitch).toBeTruthy();
 
             await act(async () => {
-                await encryptionItems[0]!.props.rightElement.props.onValueChange(false);
+                await encryptionSwitch?.props.onValueChange(false);
             });
 
             expect(alertSpy).toHaveBeenCalledWith(
@@ -247,9 +258,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
                 expect.stringContaining('Encryption opt-out is not enabled on this server'),
             );
         } finally {
-            act(() => {
-                tree?.unmount();
-            });
+            await screen?.unmount();
         }
     });
 
@@ -271,6 +280,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
@@ -308,31 +323,22 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
+        let screen: Awaited<ReturnType<typeof renderSettingsView>> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            screen = await renderSettingsView(<AccountScreen />);
             await act(async () => {});
 
-            const encryptionItems =
-                tree?.root.findAll(
-                    (node) =>
-                        node?.props?.rightElement?.props?.testID === 'settings-account-encryption-mode-switch' &&
-                        typeof node?.props?.rightElement?.props?.onValueChange === 'function',
-                ) ?? [];
-            expect(encryptionItems).toHaveLength(1);
+            const encryptionSwitch = findEncryptionModeSwitch(screen);
+            expect(encryptionSwitch).toBeTruthy();
 
             await act(async () => {
-                await encryptionItems[0]!.props.rightElement.props.onValueChange(true);
+                await encryptionSwitch?.props.onValueChange(true);
             });
 
             expect(loginSpy).toHaveBeenCalledWith('t', expect.any(String));
             expect(alertSpy).toHaveBeenCalled();
         } finally {
-            act(() => {
-                tree?.unmount();
-            });
+            await screen?.unmount();
         }
     });
 
@@ -354,6 +360,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
@@ -379,38 +391,29 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
+        let screen: Awaited<ReturnType<typeof renderSettingsView>> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            screen = await renderSettingsView(<AccountScreen />);
             await act(async () => {});
 
-            const encryptionItems =
-                tree?.root.findAll(
-                    (node) =>
-                        node?.props?.rightElement?.props?.testID === 'settings-account-encryption-mode-switch' &&
-                        typeof node?.props?.rightElement?.props?.onValueChange === 'function',
-                ) ?? [];
-            expect(encryptionItems).toHaveLength(1);
+            const encryptionSwitch = findEncryptionModeSwitch(screen);
+            expect(encryptionSwitch).toBeTruthy();
 
             await act(async () => {
-                await encryptionItems[0]!.props.rightElement.props.onValueChange(true);
+                await encryptionSwitch?.props.onValueChange(true);
             });
 
             expect(loginSpy).not.toHaveBeenCalled();
             expect(alertSpy).toHaveBeenCalledWith(
-                expect.any(String),
-                expect.any(String),
+                'settingsAccount.restoreRequiredTitle',
+                'settingsAccount.restoreRequiredBody',
                 expect.arrayContaining([
-                    expect.objectContaining({ text: expect.stringMatching(/restore/i) }),
-                    expect.objectContaining({ text: expect.stringMatching(/reset|lost access/i) }),
+                    expect.objectContaining({ text: 'navigation.restoreWithSecretKey' }),
+                    expect.objectContaining({ text: 'connect.lostAccessConfirmButton' }),
                 ]),
             );
         } finally {
-            act(() => {
-                tree?.unmount();
-            });
+            await screen?.unmount();
         }
     });
 });

@@ -1,7 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { installSystemToolRendererCommonModuleMocks } from './systemToolRendererTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -30,9 +32,7 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+installSystemToolRendererCommonModuleMocks();
 
 describe('BashView', () => {
     it('tails long stdout by default', async () => {
@@ -48,12 +48,9 @@ describe('BashView', () => {
             result: { stdout: longStdout, stderr: '' },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(BashView, makeToolViewProps(tool)));
-        });
+        const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
 
-        expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('CommandView' as any)).toHaveLength(1);
         expect(commandViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 command: 'echo hi',
@@ -78,12 +75,9 @@ describe('BashView', () => {
             result: { stdout: longStdout, stderr: '' },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })));
-        });
+        const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })));
 
-        expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('CommandView' as any)).toHaveLength(1);
         expect(commandViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 command: 'echo hi',
@@ -111,9 +105,7 @@ describe('BashView', () => {
             },
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(BashView, makeToolViewProps(tool)));
-        });
+        await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
 
         const lastCallProps = commandViewSpy.mock.calls.at(-1)?.[0] as { stdout?: unknown; stderr?: unknown };
         expect(lastCallProps.stdout == null || lastCallProps.stdout === '').toBe(true);
@@ -132,9 +124,7 @@ describe('BashView', () => {
             result: { stdout: '', stderr: '' },
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(BashView, makeToolViewProps(tool)));
-        });
+        await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
 
         expect(commandViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -156,10 +146,7 @@ describe('BashView', () => {
             result: { stdout: '', stderr: '' },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })));
-        });
+        const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })));
 
         // The main command line stays clean.
         expect(commandViewSpy).toHaveBeenCalledWith(expect.objectContaining({ command: 'rm -rf /tmp/x' }));
@@ -167,7 +154,7 @@ describe('BashView', () => {
         // Full view exposes the raw command for transparency.
         expect(codeViewSpy).toHaveBeenCalledWith(expect.objectContaining({ code: raw }));
 
-        const texts = tree.root.findAllByType('Text' as any);
+        const texts = screen.findAllByType('Text' as any);
         const flattened = texts
             .map((t) => t.props.children)
             .flat()

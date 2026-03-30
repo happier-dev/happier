@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env.testkit';
+import { stat } from 'node:fs/promises';
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 describe('persistence file permissions (posix)', () => {
   const envBackup = snapshotEnvValues(['HAPPIER_HOME_DIR']);
@@ -10,7 +9,7 @@ describe('persistence file permissions (posix)', () => {
 
   beforeEach(async () => {
     if (process.platform === 'win32') return;
-    homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-perms-'));
+    homeDir = await createTempDir('happier-cli-perms-');
     applyEnvValues({ HAPPIER_HOME_DIR: homeDir });
     vi.resetModules();
   });
@@ -20,7 +19,7 @@ describe('persistence file permissions (posix)', () => {
     vi.resetModules();
     vi.unstubAllGlobals();
     if (homeDir) {
-      await rm(homeDir, { recursive: true, force: true });
+      await removeTempDir(homeDir);
     }
   });
 

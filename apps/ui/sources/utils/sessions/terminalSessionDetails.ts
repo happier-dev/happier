@@ -6,8 +6,15 @@ export function getAttachCommandForSession(params: {
 }): string | null {
     const { sessionId, terminal } = params;
     if (!terminal) return null;
-    if (terminal.mode !== 'tmux') return null;
-    if (!terminal.tmux?.target) return null;
+    if (terminal.mode === 'tmux') {
+        if (!terminal.tmux?.target) return null;
+    } else if (terminal.mode === 'windows_terminal') {
+        if (!terminal.windows?.windowId) return null;
+    } else if (terminal.mode === 'windows_console') {
+        if (terminal.windows?.host !== 'console') return null;
+    } else {
+        return null;
+    }
     return `happier attach ${sessionId}`;
 }
 

@@ -1,13 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { CatalogAcpRuntimeCreateCall } from '@/testkit/backends/catalogAcpRuntime';
+import { createCatalogAcpBackendSpy, createMessageBufferFixture } from '@/testkit/backends/catalogAcpRuntime';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createKimiAcpRuntime } from './runtime';
-import {
-  createKimiCatalogBackendSpy,
-  createKimiMessageBufferFixture,
-  createKimiPermissionHandlerFixture,
-  createKimiSessionFixture,
-  type KimiRuntimeCreateCall,
-} from './runtime.testkit';
 
 describe('Kimi ACP runtime backend lifecycle', () => {
   afterEach(() => {
@@ -15,15 +12,16 @@ describe('Kimi ACP runtime backend lifecycle', () => {
   });
 
   it('recreates backend after runtime.reset()', async () => {
-    const createCalls: KimiRuntimeCreateCall[] = [];
-    const createSpy = createKimiCatalogBackendSpy(createCalls);
+    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+    const createSpy = createCatalogAcpBackendSpy(createCalls);
 
     const runtime = createKimiAcpRuntime({
       directory: '/tmp',
-      session: createKimiSessionFixture(),
-      messageBuffer: createKimiMessageBufferFixture(),
+      machineId: 'machine-1',
+      session: createApiSessionClientFixture(),
+      messageBuffer: createMessageBufferFixture(),
       mcpServers: {},
-      permissionHandler: createKimiPermissionHandlerFixture(),
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange() {},
     });
 

@@ -1,74 +1,161 @@
-import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { resetDynamicSessionModeProbeCacheForTests } from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
+import { act } from 'react-test-renderer';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import { flushHookEffects, renderHook } from '@/dev/testkit';
+import { installCapabilitiesOpsModuleMock } from '@/dev/testkit/mocks/capabilities';
+import {
+    resetDynamicSessionModeProbeCacheForTests,
+    DYNAMIC_SESSION_MODE_PROBE_ERROR_BACKOFF_MS,
+} from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
 
-let call = 0;
-const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: any, _request: any, _options: any) => {
-  call++;
-  return {
-    supported: true as const,
-    response: {
-      ok: true as const,
-      result: { availableModes: [{ id: `mode${call}`, name: `Mode ${call}` }] },
-    },
-  };
-});
+const machineCapabilitiesInvokeMock = vi.fn();
 
-vi.mock('@/sync/ops/capabilities', () => ({
-  machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
-}));
-
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
-  return {
-    ...actual,
-    getAgentCore: () => ({ sessionModes: { kind: 'acpAgentModes' } }),
-  };
-});
+function assertRefreshFn(value: unknown): asserts value is () => void {
+    if (typeof value !== 'function') {
+        throw new Error('Expected probe.onRefresh to be a function');
+    }
+}
 
 describe('useNewSessionPreflightSessionModesState (refresh)', () => {
-  it('forces a refresh probe without clearing existing options', async () => {
-    vi.resetModules();
-    call = 0;
-    machineCapabilitiesInvokeMock.mockClear();
-    resetDynamicSessionModeProbeCacheForTests();
+    it('forces a refresh probe without clearing existing options', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicSessionModeProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
 
-    const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+        let call = 0;
+        machineCapabilitiesInvokeMock.mockImplementation(async () => {
+            call++;
+            return {
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: { availableModes: [{ id: `mode${call}`, name: `Mode ${call}` }] },
+                },
+            };
+        });
 
-    let latest: any = null;
-    function Harness() {
-      latest = useNewSessionPreflightSessionModesState({
-        agentType: 'opencode' as any,
-        selectedMachineId: 'machine-1',
-        capabilityServerId: 'server-1',
-        cwd: '/repo',
-      });
-      return null;
-    }
+        const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+        const hook = await renderHook(() => useNewSessionPreflightSessionModesState({
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            cwd: '/repo',
+        }));
 
-    let root!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(true);
+
+        const onRefresh = hook.getCurrent().probe?.onRefresh;
+        assertRefreshFn(onRefresh);
+
+        await act(async () => {
+            onRefresh();
+        });
+        await flushHookEffects();
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode2')).toBe(true);
+
+        await hook.unmount();
     });
 
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
-    expect((latest.modeOptions ?? []).some((o: any) => o.id === 'mode1')).toBe(true);
+    it('retries after an error cooldown elapses so transient capability errors do not permanently hide session modes', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicSessionModeProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
 
-    await act(async () => {
-      latest.probe.refresh();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+        machineCapabilitiesInvokeMock
+            .mockImplementationOnce(async () => ({
+                supported: false as const,
+                reason: 'error' as const,
+            }))
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: { availableModes: [{ id: 'mode1', name: 'Mode 1' }] },
+                },
+            }));
+
+        const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+        const hook = await renderHook(() => useNewSessionPreflightSessionModesState({
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            cwd: '/repo',
+        }));
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(false);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DYNAMIC_SESSION_MODE_PROBE_ERROR_BACKOFF_MS + 1);
+        });
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(true);
+
+        await hook.unmount();
+        vi.useRealTimers();
     });
 
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
-    expect((latest.modeOptions ?? []).some((o: any) => o.id === 'mode2')).toBe(true);
+    it('does not enter a render loop when probeContext identity churns but cached values are stable by content', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicSessionModeProbeCacheForTests();
 
-    await act(async () => {
-      root.unmount();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+        machineCapabilitiesInvokeMock.mockRejectedValue(new Error('unexpected probe call'));
+
+        let readCall = 0;
+        const cachedValue = {
+            availableModes: [{ id: 'mode1', name: 'Mode 1' }],
+        };
+        vi.doMock('@/sync/domains/sessionModes/dynamicSessionModeProbeCache', async () => {
+            const actual = await vi.importActual<typeof import('@/sync/domains/sessionModes/dynamicSessionModeProbeCache')>(
+                '@/sync/domains/sessionModes/dynamicSessionModeProbeCache',
+            );
+            return {
+                ...actual,
+                readDynamicSessionModeProbeCache: (_key: string) => {
+                    readCall++;
+                    return {
+                        kind: 'success' as const,
+                        updatedAt: 123,
+                        expiresAt: Date.now() + 60_000,
+                        value: cachedValue,
+                    };
+                },
+            };
+        });
+
+        const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+        const hook = await renderHook(() => useNewSessionPreflightSessionModesState({
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            cwd: '/repo',
+            probeContext: {
+                cacheKeySuffixParts: ['appServer'],
+                capabilityParams: { runtimeKindOverride: 'appServer' },
+            },
+        } as any));
+
+        expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(true);
+        expect(readCall).toBe(1);
+
+        await hook.rerender();
+        expect(readCall).toBe(1);
+        await hook.unmount();
     });
-  });
 });
-

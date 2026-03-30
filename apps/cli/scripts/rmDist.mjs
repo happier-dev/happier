@@ -19,6 +19,12 @@ export function main(argv = process.argv) {
     retries: 25,
     delayMs: 20,
   });
+  if (dir === 'dist') {
+    rmDirSafeSync('package-dist', {
+      retries: 25,
+      delayMs: 20,
+    });
+  }
 }
 
 const isEntrypoint = (() => {

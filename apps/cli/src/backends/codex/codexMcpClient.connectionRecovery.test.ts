@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { dirname } from 'node:path';
+
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createExecutableShim } from '@/testkit/fs/executableShim';
+import { removeTempDir } from '@/testkit/fs/tempDir';
 
 type ClientCall = {
   name: string;
@@ -14,6 +19,20 @@ const callToolSpy = vi.fn(async (_call: ClientCall) => ({
 const createdClientIds: number[] = [];
 const staleClientIds = new Set<number>();
 let nextClientId = 1;
+const envKeys = ['PATH', 'HAPPIER_CODEX_PATH'] as const;
+const TEMP_DIRS = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
+
+async function createFakeCodexBinary(): Promise<string> {
+  const binPath = await createExecutableShim({
+    dirPrefix: 'happier-codex-mcp-client-',
+    fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
+    contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
+  const dir = dirname(binPath);
+  TEMP_DIRS.add(dir);
+  return binPath;
+}
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -68,13 +87,22 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
 });
 
 describe('CodexMcpClient connection recovery', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_CODEX_PATH = await createFakeCodexBinary();
     connectSpy.mockClear();
     closeSpy.mockClear();
     callToolSpy.mockReset();
     createdClientIds.length = 0;
     staleClientIds.clear();
     nextClientId = 1;
+  });
+
+  afterEach(async () => {
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
+    for (const dir of TEMP_DIRS) await removeTempDir(dir);
+    TEMP_DIRS.clear();
   });
 
   it('reconnects and retries continueSession once when MCP transport is closed', async () => {

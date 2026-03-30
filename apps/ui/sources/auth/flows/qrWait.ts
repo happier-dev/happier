@@ -2,6 +2,8 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { QRAuthKeyPair } from './qrStart';
 import { decryptBox } from '@/encryption/libsodium';
 import { serverFetch } from '@/sync/http/client';
+import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
+import { delay } from '@/utils/timing/time';
 
 export interface AuthCredentials {
     secret: Uint8Array;
@@ -19,6 +21,11 @@ export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: num
     while (true) {
         if (shouldCancel && shouldCancel()) {
             return null;
+        }
+
+        if (!isRuntimeActive()) {
+            await delay(1000);
+            continue;
         }
 
         try {
@@ -85,6 +92,6 @@ export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: num
         dots++;
 
         // Wait 1 second before next check
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await delay(1000);
     }
 }

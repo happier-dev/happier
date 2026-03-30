@@ -5,6 +5,28 @@ export type TranscriptInteraction = Readonly<{
     disableToolNavigation?: boolean;
 }>;
 
+export function deriveTranscriptInteractionFromSession(
+    session: Readonly<{
+        accessLevel: 'view' | 'edit' | 'admin' | null | undefined;
+        canApprovePermissions: boolean | null | undefined;
+        active?: boolean | null | undefined;
+        presence?: 'online' | number | null | undefined;
+        disableToolNavigation?: boolean;
+    }>,
+): TranscriptInteraction {
+    // Treat `session.active` as the source of truth. When `active` is missing/unknown, be conservative
+    // and treat the session as inactive for interaction surfaces like permission approvals.
+    const isSessionActive = session.active === true;
+
+    return deriveTranscriptInteraction({
+        kind: 'session',
+        accessLevel: session.accessLevel,
+        canApprovePermissions: session.canApprovePermissions,
+        isSessionActive,
+        disableToolNavigation: session.disableToolNavigation,
+    });
+}
+
 export function deriveTranscriptInteraction(
     input:
         | Readonly<{
@@ -33,13 +55,15 @@ export function deriveTranscriptInteraction(
     const baseCanApprovePermissions = isOwner || input.canApprovePermissions === true;
     const isSessionActive = input.isSessionActive !== false;
     const canApprovePermissions = baseCanApprovePermissions && isSessionActive;
-    const permissionDisabledReason: TranscriptInteraction['permissionDisabledReason'] = isOwner
-        ? (canApprovePermissions ? undefined : 'inactive')
-        : input.accessLevel === 'view'
-            ? 'readOnly'
-            : canApprovePermissions
-                ? undefined
-                : (baseCanApprovePermissions ? 'inactive' : 'notGranted');
+    const permissionDisabledReason: TranscriptInteraction['permissionDisabledReason'] = !isSessionActive
+        ? 'inactive'
+        : isOwner
+            ? (canApprovePermissions ? undefined : 'inactive')
+            : input.accessLevel === 'view'
+                ? 'readOnly'
+                : canApprovePermissions
+                    ? undefined
+                    : (baseCanApprovePermissions ? 'inactive' : 'notGranted');
 
     return {
         canSendMessages,

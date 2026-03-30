@@ -7,6 +7,7 @@ export async function daemonControlPostJson<T = any>(params: {
   timeoutMs?: number;
   controlToken?: string | null;
 }): Promise<{ status: number; data: T }> {
+  const defaultTimeoutMs = params.path === '/spawn-session' ? 90_000 : 30_000;
   try {
     const res = await fetchJson<T>(`http://127.0.0.1:${params.port}${params.path}`, {
       method: 'POST',
@@ -17,7 +18,7 @@ export async function daemonControlPostJson<T = any>(params: {
           : {}),
       },
       body: JSON.stringify(params.body ?? {}),
-      timeoutMs: params.timeoutMs ?? 30_000,
+      timeoutMs: params.timeoutMs ?? defaultTimeoutMs,
     });
     return { status: res.status, data: res.data };
   } catch (error) {

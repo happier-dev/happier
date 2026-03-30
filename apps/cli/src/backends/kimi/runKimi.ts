@@ -9,27 +9,12 @@ import { logger } from '@/ui/logger';
 import type { Credentials } from '@/persistence';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
+import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProviderPromptErrorMessage';
 
 import { KimiTerminalDisplay } from '@/backends/kimi/ui/KimiTerminalDisplay';
 import { createKimiAcpRuntime } from './acp/runtime';
 
-function formatKimiPromptError(err: unknown): { message: string; isAuthError: boolean } {
-  if (err instanceof Error) {
-    const lower = err.message.toLowerCase();
-    return {
-      message: err.message,
-      isAuthError: lower.includes('unauthorized') || lower.includes('authentication') || lower.includes('api key') || lower.includes('401'),
-    };
-  }
-  if (typeof err === 'string') {
-    const lower = err.toLowerCase();
-    return {
-      message: err,
-      isAuthError: lower.includes('unauthorized') || lower.includes('authentication') || lower.includes('api key') || lower.includes('401'),
-    };
-  }
-  return { message: String(err), isAuthError: false };
-}
+const KIMI_AUTH_HINT = 'Kimi appears not configured. Ensure the API key is set for the user running the daemon (e.g. `kimi config set --key api_key --value "..."`).';
 
 export async function runKimi(opts: StandardAcpProviderRunOptions & {
   credentials: Credentials;
@@ -42,15 +27,18 @@ export async function runKimi(opts: StandardAcpProviderRunOptions & {
     providerName: 'Kimi',
     waitingForCommandLabel: 'Kimi',
     agentMessageType: 'kimi',
+    supportsMcpServers: false,
     machineMetadata: initialMachineMetadata,
     terminalDisplay: KimiTerminalDisplay,
-    createRuntime: ({ directory, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode }) => createKimiAcpRuntime({
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => createKimiAcpRuntime({
       directory,
+      machineId,
       session,
       messageBuffer,
       mcpServers,
       permissionHandler,
       onThinkingChange: setThinking,
+      memoryRecallGuidanceEnabled,
       getPermissionMode,
     }),
     onAttachMetadataSnapshotMissing: (error) => {
@@ -59,12 +47,6 @@ export async function runKimi(opts: StandardAcpProviderRunOptions & {
         error ?? undefined,
       );
     },
-    formatPromptErrorMessage: (error) => {
-      const formatted = formatKimiPromptError(error);
-      const extraHint = formatted.isAuthError
-        ? 'Kimi appears not configured. Ensure the API key is set for the user running the daemon (e.g. `kimi config set --key api_key --value "..."`).'
-        : null;
-      return `Error: ${formatted.message}${extraHint ? `\n\n${extraHint}` : ''}`;
-    },
+    formatPromptErrorMessage: (error) => formatProviderPromptErrorMessage(error, { authHint: KIMI_AUTH_HINT }),
   });
 }

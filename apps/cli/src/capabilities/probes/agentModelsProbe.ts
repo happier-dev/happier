@@ -5,12 +5,39 @@ import type { AgentBackend } from '@/agent/core';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
 import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
-import { getAgentModelConfig } from '@happier-dev/agents';
-import { AsyncTtlCache } from '@happier-dev/protocol';
+import { getAgentModelConfig, getAgentStaticModels } from '@happier-dev/agents';
+import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { Credentials } from '@/persistence';
+import { validateCatalogAcpProbeSpawn } from './validateCatalogAcpProbeSpawn';
+import { createConfiguredAcpProbeBackend } from './createConfiguredAcpProbeBackend';
+import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
+import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
 import { spawn } from 'node:child_process';
+import { z } from 'zod';
 
-export type ProbedAgentModel = Readonly<{ id: string; name: string; description?: string }>;
+type ProbedAgentModelOptionValue = string | number | boolean | null;
+
+type ProbedAgentModelOption = Readonly<{
+  id: string;
+  name: string;
+  description?: string;
+  type: string;
+  currentValue: ProbedAgentModelOptionValue;
+  options?: ReadonlyArray<Readonly<{
+    value: ProbedAgentModelOptionValue;
+    name: string;
+    description?: string;
+  }>>;
+}>;
+
+export type ProbedAgentModel = Readonly<{
+  id: string;
+  name: string;
+  description?: string;
+  modelOptions?: ReadonlyArray<ProbedAgentModelOption>;
+}>;
 
 export type ProbedAgentModelsResult = Readonly<{
   provider: CatalogAgentId;
@@ -27,37 +54,122 @@ const agentModelsProbeCache = new AsyncTtlCache<ProbedAgentModelsResult>({
   errorTtlMs: PROBE_MODELS_FAILURE_TTL_MS,
 });
 
-function buildAgentModelsProbeCacheKey(agentId: CatalogAgentId, cwd: string): string {
-  const normalizedCwd = String(cwd ?? '').trim();
-  return `${agentId}:${normalizedCwd}`;
+const ProbeNonEmptyStringSchema = z.string().trim().min(1);
+const ProbeDescriptionSchema = z.string();
+const ProbeOptionValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const ProbeModelOptionChoiceInputSchema = z.object({
+  value: z.unknown().optional(),
+  name: ProbeNonEmptyStringSchema,
+  description: ProbeDescriptionSchema.optional(),
+});
+const ProbeModelOptionInputSchema = z.object({
+  id: ProbeNonEmptyStringSchema,
+  name: ProbeNonEmptyStringSchema,
+  description: ProbeDescriptionSchema.optional(),
+  type: ProbeNonEmptyStringSchema,
+  currentValue: z.unknown().optional(),
+  options: z.array(z.unknown()).optional(),
+});
+const ProbeDynamicModelInputSchema = z.object({
+  id: ProbeNonEmptyStringSchema,
+  name: ProbeNonEmptyStringSchema,
+  description: ProbeDescriptionSchema.optional(),
+  modelOptions: z.array(z.unknown()).optional(),
+});
+const ProbeConfigOptionCandidateSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().optional(),
+  options: z.array(z.unknown()).optional(),
+});
+
+export function resetAgentModelsProbeCacheForTests(): void {
+  agentModelsProbeCache.clear();
 }
 
 function buildStatic(agentId: CatalogAgentId): ProbedAgentModelsResult {
   const cfg = getAgentModelConfig(agentId);
   const supportsFreeform = cfg.supportsSelection === true && cfg.supportsFreeform === true;
-  const allowedModes = cfg.supportsSelection === true && Array.isArray(cfg.allowedModes) ? cfg.allowedModes : [];
-  const allowed = cfg.supportsSelection === true ? ['default', ...allowedModes] : ['default'];
-  const unique = Array.from(new Set(allowed));
+  const seen = new Set<string>();
+  const availableModels = (cfg.supportsSelection === true
+    ? [
+      { id: 'default', name: 'Default' },
+      ...getAgentStaticModels(agentId).map((model) => ({
+        id: model.id,
+        name: model.name,
+        ...(typeof model.description === 'string' ? { description: model.description } : {}),
+        ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0 ? { modelOptions: model.modelOptions } : {}),
+      })),
+    ]
+    : [{ id: 'default', name: 'Default' }]).filter((model) => {
+      const id = typeof model.id === 'string' ? model.id.trim() : '';
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
   return {
     provider: agentId,
-    availableModels: unique.map((id) => ({ id, name: id === 'default' ? 'Default' : id })),
+    availableModels,
     supportsFreeform,
     source: 'static',
+  };
+}
+
+function normalizeProbeOptionValue(value: unknown): ProbedAgentModelOptionValue {
+  const parsed = ProbeOptionValueSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function normalizeProbeModelOptionChoice(choiceRaw: unknown): NonNullable<ProbedAgentModelOption['options']>[number] | null {
+  const parsed = ProbeModelOptionChoiceInputSchema.safeParse(choiceRaw);
+  if (!parsed.success) return null;
+
+  const { value, name, description } = parsed.data;
+  return {
+    value: normalizeProbeOptionValue(value),
+    name,
+    ...(description ? { description } : {}),
+  };
+}
+
+function normalizeProbeModelOption(optionRaw: unknown): ProbedAgentModelOption | null {
+  const parsed = ProbeModelOptionInputSchema.safeParse(optionRaw);
+  if (!parsed.success) return null;
+
+  const normalizedChoices = parsed.data.options
+    ?.map((choice) => normalizeProbeModelOptionChoice(choice))
+    .filter((choice): choice is NonNullable<typeof choice> => choice !== null);
+
+  return {
+    id: parsed.data.id,
+    name: parsed.data.name,
+    type: parsed.data.type,
+    currentValue: normalizeProbeOptionValue(parsed.data.currentValue),
+    ...(parsed.data.description ? { description: parsed.data.description } : {}),
+    ...(normalizedChoices && normalizedChoices.length > 0 ? { options: normalizedChoices } : {}),
+  };
+}
+
+function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {
+  const parsed = ProbeDynamicModelInputSchema.safeParse(modelRaw);
+  if (!parsed.success) return null;
+
+  const normalizedOptions = parsed.data.modelOptions
+    ?.map((option) => normalizeProbeModelOption(option))
+    .filter((option): option is NonNullable<typeof option> => option !== null);
+
+  return {
+    id: parsed.data.id,
+    name: parsed.data.name,
+    ...(parsed.data.description ? { description: parsed.data.description } : {}),
+    ...(normalizedOptions && normalizedOptions.length > 0 ? { modelOptions: normalizedOptions } : {}),
   };
 }
 
 function normalizeDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
   if (!Array.isArray(modelsRaw)) return null;
   const parsed = modelsRaw
-    .map((m) => {
-      if (!m || typeof m !== 'object') return null;
-      const id = typeof (m as any).id === 'string' ? String((m as any).id).trim() : '';
-      const name = typeof (m as any).name === 'string' ? String((m as any).name).trim() : '';
-      const description = typeof (m as any).description === 'string' ? String((m as any).description) : undefined;
-      if (!id || !name) return null;
-      return { id, name, ...(description ? { description } : {}) } satisfies ProbedAgentModel;
-    })
-    .filter(Boolean) as ProbedAgentModel[];
+    .map((model) => normalizeProbeModel(model))
+    .filter((model): model is ProbedAgentModel => model !== null);
 
   if (parsed.length === 0) return null;
 
@@ -81,9 +193,11 @@ async function probeModelsFromCliModelsCommand(params: {
   timeoutMs: number;
 }): Promise<ReadonlyArray<ProbedAgentModel> | null> {
   const timeoutMs = Math.max(250, params.timeoutMs);
+  const stdoutMaxBytes = 256 * 1024;
 
   return await new Promise((resolve) => {
     let stdout = '';
+    let stdoutBytes = 0;
     let settled = false;
 
     const finish = (result: ReadonlyArray<ProbedAgentModel> | null) => {
@@ -122,6 +236,18 @@ async function probeModelsFromCliModelsCommand(params: {
 
     if (child.stdout) {
       child.stdout.on('data', (chunk: Buffer) => {
+        if (settled) return;
+        stdoutBytes += chunk.length;
+        if (stdoutBytes > stdoutMaxBytes) {
+          clearTimeout(timer);
+          if (process.platform === 'win32') {
+            void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+          } else {
+            try { child.kill('SIGKILL'); } catch { /* best-effort */ }
+          }
+          finish(null);
+          return;
+        }
         stdout += chunk.toString('utf8');
       });
     }
@@ -175,28 +301,36 @@ async function probeModelsFromCliModelsCommand(params: {
 function normalizeModelsFromConfigOptions(configOptionsRaw: unknown): ProbedAgentModel[] | null {
   if (!Array.isArray(configOptionsRaw)) return null;
 
-  const configOptions = configOptionsRaw.filter((c) => c && typeof c === 'object' && !Array.isArray(c)) as any[];
+  const configOptions = configOptionsRaw
+    .map((optionRaw) => ProbeConfigOptionCandidateSchema.safeParse(optionRaw))
+    .filter((parsed): parsed is Extract<typeof parsed, { success: true }> => parsed.success)
+    .map((parsed) => parsed.data);
   if (configOptions.length === 0) return null;
 
   const candidate =
-    configOptions.find((c) => typeof c.id === 'string' && String(c.id).trim().toLowerCase() === 'model') ??
-    configOptions.find((c) => typeof c.name === 'string' && String(c.name).trim().toLowerCase() === 'model') ??
+    configOptions.find((option) => option.id?.trim().toLowerCase() === 'model') ??
+    configOptions.find((option) => option.name?.trim().toLowerCase() === 'model') ??
     null;
   if (!candidate) return null;
 
-  const optionsRaw = Array.isArray(candidate.options) ? candidate.options : null;
+  const optionsRaw = candidate.options ?? null;
   if (!optionsRaw) return null;
 
   const parsed = optionsRaw
-    .map((opt: unknown) => {
-      if (!opt || typeof opt !== 'object' || Array.isArray(opt)) return null;
-      const id = typeof (opt as any).value === 'string' ? String((opt as any).value).trim() : '';
-      const name = typeof (opt as any).name === 'string' ? String((opt as any).name).trim() : '';
-      const description = typeof (opt as any).description === 'string' ? String((opt as any).description) : undefined;
-      if (!id || !name) return null;
-      return { id, name, ...(description ? { description } : {}) } satisfies ProbedAgentModel;
+    .map((optionRaw) => {
+      const parsedChoice = ProbeModelOptionChoiceInputSchema.safeParse(optionRaw);
+      if (!parsedChoice.success) return null;
+
+      const id = ProbeNonEmptyStringSchema.safeParse(parsedChoice.data.value);
+      if (!id.success) return null;
+
+      return {
+        id: id.data,
+        name: parsedChoice.data.name,
+        ...(parsedChoice.data.description ? { description: parsedChoice.data.description } : {}),
+      } satisfies ProbedAgentModel;
     })
-    .filter(Boolean) as ProbedAgentModel[];
+    .filter((model): model is ProbedAgentModel => model !== null);
 
   if (parsed.length === 0) return null;
 
@@ -217,29 +351,33 @@ export async function probeModelsFromAcpBackend(params: {
   backend: AgentBackend;
   timeoutMs: number;
 }): Promise<ReadonlyArray<ProbedAgentModel> | null> {
-  const backendAny = params.backend as any;
-  if (typeof backendAny.startSession !== 'function') return null;
+  type ProbeModelsBackend = AgentBackend & Partial<{
+    getSessionModelState: () => { availableModels?: unknown } | null;
+    getSessionConfigOptionsState: () => unknown;
+  }>;
+
+  const backend: ProbeModelsBackend = params.backend;
 
   const timeoutMs = Math.max(250, params.timeoutMs);
   let timerId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timerId = setTimeout(() => reject(new Error(`ACP startSession timeout after ${timeoutMs}ms`)), timeoutMs);
   });
-  await Promise.race([backendAny.startSession(), timeoutPromise]).finally(() => {
+  await Promise.race([backend.startSession(), timeoutPromise]).finally(() => {
     if (timerId !== null) {
       clearTimeout(timerId);
     }
   });
 
-  if (typeof backendAny.getSessionModelState === 'function') {
-    const state = backendAny.getSessionModelState();
+  if (typeof backend.getSessionModelState === 'function') {
+    const state = backend.getSessionModelState();
     const modelsRaw = state?.availableModels;
     const models = normalizeDynamicModels(modelsRaw);
     if (models) return models;
   }
 
-  if (typeof backendAny.getSessionConfigOptionsState === 'function') {
-    const configOptions = backendAny.getSessionConfigOptionsState();
+  if (typeof backend.getSessionConfigOptionsState === 'function') {
+    const configOptions = backend.getSessionConfigOptionsState();
     const models = normalizeModelsFromConfigOptions(configOptions);
     if (models) return models;
   }
@@ -249,12 +387,25 @@ export async function probeModelsFromAcpBackend(params: {
 
 export async function probeAgentModelsBestEffort(params: {
   agentId: CatalogAgentId;
+  backendTarget?: BackendTargetRefV1;
   cwd: string;
   timeoutMs?: number;
+  accountSettings?: Readonly<Record<string, unknown>> | null;
+  credentials?: Credentials | null;
 }): Promise<ProbedAgentModelsResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
-  const cacheKey = buildAgentModelsProbeCacheKey(params.agentId, cwd);
+  const probeVariant = resolveAgentProbeVariant({
+    agentId: params.agentId,
+    backendTarget: params.backendTarget,
+    accountSettings: params.accountSettings,
+  });
+  const cacheKey = buildAgentProbeCacheKey({
+    agentId: params.agentId,
+    cwd,
+    backendTarget: params.backendTarget,
+    variant: probeVariant,
+  });
 
   const cached = agentModelsProbeCache.get(cacheKey);
   if (cached?.kind === 'success' && agentModelsProbeCache.isFresh(cached, nowMs)) return cached.value;
@@ -274,16 +425,75 @@ export async function probeAgentModelsBestEffort(params: {
 
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
 
+    let configuredBackend: AgentBackend | null = null;
+    try {
+      configuredBackend = await createConfiguredAcpProbeBackend({
+        agentId: params.agentId,
+        backendTarget: params.backendTarget,
+        cwd,
+        accountSettings: params.accountSettings,
+        credentials: params.credentials,
+      });
+      if (configuredBackend) {
+        const models = await probeModelsFromAcpBackend({ backend: configuredBackend, timeoutMs }).catch(() => null);
+        if (models) {
+          const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
+          agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+          return res;
+        }
+        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        return fallback;
+      }
+    } catch {
+      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      return fallback;
+    } finally {
+      if (configuredBackend) {
+        await configuredBackend.dispose().catch(() => {});
+      }
+    }
+
+    const preflightModelsAdapter = entry?.getPreflightSessionControlsProbeAdapter
+      ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
+      : null;
+    if (preflightModelsAdapter?.probeModelsRaw) {
+      const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
+        const modelsRaw = await preflightModelsAdapter.probeModelsRaw!({
+          backendTarget: params.backendTarget,
+          cwd,
+          timeoutMs,
+          accountSettings: params.accountSettings ?? null,
+        }).catch(() => null);
+        return normalizeDynamicModels(modelsRaw);
+      };
+
+      let models = await probePreflightModelsOnce();
+      // If the provider marks the preflight probe as authoritative, retry once immediately to
+      // avoid sticky "static fallback" UI states that require an explicit user refresh.
+      if (!models && preflightModelsAdapter.failureCacheStrategy === 'retry') {
+        models = await probePreflightModelsOnce();
+      }
+      if (models) {
+        const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
+        agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+        return res;
+      }
+      if (preflightModelsAdapter.failureCacheStrategy === 'retry') {
+        // For providers where this probe is the primary/authoritative source (e.g. Codex app-server),
+        // cache an error so subsequent calls retry instead of freezing the static fallback.
+        agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        return fallback;
+      }
+    }
+
     // Prefer lightweight CLI preflight probes when the provider offers a `models` command.
     // This avoids needing to start a full ACP session just to populate a menu.
-    const cliProbeArgsByAgent: Partial<Record<CatalogAgentId, ReadonlyArray<string>>> = {
-      opencode: ['models'],
-      kilo: ['models'],
-      auggie: ['model', 'list'],
-    };
-    const cliProbeArgs = cliProbeArgsByAgent[params.agentId];
+    const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs ?? null;
     if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
-      const command = resolveCliPathOverride({ agentId: params.agentId }) ?? params.agentId;
+      const command =
+        resolveProviderCliCommand(params.agentId)?.command
+        ?? resolveCliPathOverride({ agentId: params.agentId })
+        ?? params.agentId;
       const models = await probeModelsFromCliModelsCommand({ command, args: cliProbeArgs, cwd, timeoutMs }).catch(() => null);
       if (models) {
         const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
@@ -293,6 +503,12 @@ export async function probeAgentModelsBestEffort(params: {
     }
 
     if (!entry?.getAcpBackendFactory) {
+      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      return fallback;
+    }
+
+    const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId);
+    if (!spawnValidation.ok) {
       agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
       return fallback;
     }
@@ -325,9 +541,8 @@ export async function probeAgentModelsBestEffort(params: {
       agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
       return fallback;
     } finally {
-      const disposable = backend as any;
-      if (disposable && typeof disposable.dispose === 'function') {
-        await disposable.dispose().catch(() => {});
+      if (backend) {
+        await backend.dispose().catch(() => {});
       }
     }
   });

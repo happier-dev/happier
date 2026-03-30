@@ -14,8 +14,11 @@ describe('self command helpers', () => {
 
   it.each([
     { args: ['--preview'], expected: 'preview' },
+    { args: ['--dev'], expected: 'publicdev' },
     { args: ['--channel=preview'], expected: 'preview' },
+    { args: ['--channel=dev'], expected: 'publicdev' },
     { args: ['--channel', 'preview'], expected: 'preview' },
+    { args: ['--channel', 'dev'], expected: 'publicdev' },
     { args: ['--channel=stable'], expected: 'stable' },
     { args: ['--channel', 'stable'], expected: 'stable' },
     { args: ['--channel=unknown'], expected: 'stable' },
@@ -25,9 +28,16 @@ describe('self command helpers', () => {
     expect(parseSelfChannel(args)).toBe(expected);
   });
 
+  it('infers preview and dev from the invoked shim name when no explicit channel is set', () => {
+    expect(parseSelfChannel([], '/opt/happier/bin/hprev')).toBe('preview');
+    expect(parseSelfChannel([], '/opt/happier/bin/hdev')).toBe('publicdev');
+    expect(parseSelfChannel([], '/opt/happier/bin/happier')).toBe('stable');
+  });
+
   it('builds npm spec from channel and override', () => {
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'stable', to: '' })).toBe('@happier-dev/cli@latest');
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'preview', to: '' })).toBe('@happier-dev/cli@next');
+    expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'publicdev', to: '' })).toBe('@happier-dev/cli@next');
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'preview', to: '1.2.3' })).toBe('@happier-dev/cli@1.2.3');
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'stable', to: '  latest  ' })).toBe('@happier-dev/cli@latest');
   });

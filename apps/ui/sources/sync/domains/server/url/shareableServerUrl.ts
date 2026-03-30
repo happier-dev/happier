@@ -23,11 +23,13 @@ export function sanitizeServerUrlForShareableLink(raw: string | null | undefined
 }
 
 export function resolvePreferredShareableServerUrl(params: Readonly<{
+    preferredShareableServerUrl?: string | null | undefined;
     canonicalServerUrl: string | null | undefined;
     activeServerUrl: string | null | undefined;
 }>): string | null {
+    const preferred = sanitizeServerUrlForShareableLink(params.preferredShareableServerUrl);
+    if (preferred) return preferred;
     const canonical = sanitizeServerUrlForShareableLink(params.canonicalServerUrl);
     if (canonical) return canonical;
     return sanitizeServerUrlForShareableLink(params.activeServerUrl);
 }
-

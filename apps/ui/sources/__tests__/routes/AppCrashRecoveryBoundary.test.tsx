@@ -1,13 +1,13 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { ScrollView } from 'react-native';
+import { renderScreen } from '@/dev/testkit';
+import { installRouteRootCommonModuleMocks } from './routeRootTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+installRouteRootCommonModuleMocks();
 
 vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(async () => {}),
@@ -31,15 +31,10 @@ async function flushPromises(): Promise<void> {
 describe('AppCrashRecoveryBoundary', () => {
   it('renders children when no error is thrown', async () => {
     const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(
-        <AppCrashRecoveryBoundary onRestart={() => {}}>
+    const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={() => {}}>
           <>{React.createElement('ChildOk')}</>
-        </AppCrashRecoveryBoundary>,
-      );
-    });
-    expect(tree!.root.findAllByType('ChildOk' as any)).toHaveLength(1);
+        </AppCrashRecoveryBoundary>);
+    expect(screen.findByType('ChildOk' as any)).toBeTruthy();
   });
 
   it('renders a crash fallback when a child throws during render', async () => {
@@ -49,21 +44,16 @@ describe('AppCrashRecoveryBoundary', () => {
     };
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(
-        <AppCrashRecoveryBoundary onRestart={() => {}}>
+    const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={() => {}}>
           <Thrower />
-        </AppCrashRecoveryBoundary>,
-      );
-    });
+        </AppCrashRecoveryBoundary>);
     consoleError.mockRestore();
 
-    expect(tree!.toJSON()).not.toBeNull();
-    expect(tree!.root.findAllByProps({ testID: 'app-blocking-logo' })).toHaveLength(1);
-    expect(tree!.root.findAllByProps({ testID: 'app-crash-restart' })).toHaveLength(1);
-    expect(tree!.root.findAllByProps({ testID: 'app-crash-report-bug' })).toHaveLength(1);
-    expect(tree!.root.findAllByProps({ testID: 'app-crash-copy-details' })).toHaveLength(1);
+    expect(screen.tree.toJSON()).not.toBeNull();
+    expect(screen.findByTestId('app-blocking-logo')).toBeTruthy();
+    expect(screen.findByTestId('app-crash-restart')).toBeTruthy();
+    expect(screen.findByTestId('app-crash-report-bug')).toBeTruthy();
+    expect(screen.findByTestId('app-crash-copy-details')).toBeTruthy();
   });
 
   it('renders the crash fallback inside a full-height scroll view', async () => {
@@ -73,17 +63,13 @@ describe('AppCrashRecoveryBoundary', () => {
     };
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(
-        <AppCrashRecoveryBoundary onRestart={() => {}}>
+    const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={() => {}}>
           <Thrower />
-        </AppCrashRecoveryBoundary>,
-      );
-    });
+        </AppCrashRecoveryBoundary>);
     consoleError.mockRestore();
 
-    const scrollView = tree!.root.findByType(ScrollView);
+    const { ScrollView } = await import('react-native');
+    const scrollView = screen.findByType(ScrollView);
     expect(scrollView.props.style).toEqual(expect.objectContaining({ flex: 1 }));
     expect(scrollView.props.contentContainerStyle).toEqual(expect.objectContaining({ flexGrow: 1 }));
   });
@@ -96,17 +82,16 @@ describe('AppCrashRecoveryBoundary', () => {
     const onRestart = vi.fn();
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(
-        <AppCrashRecoveryBoundary onRestart={onRestart}>
+    const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={onRestart}>
           <Thrower />
-        </AppCrashRecoveryBoundary>,
-      );
-    });
+        </AppCrashRecoveryBoundary>);
     consoleError.mockRestore();
 
-    const restartButton = tree!.root.findByProps({ testID: 'app-crash-restart' });
+    const restartButton = screen.findByTestId('app-crash-restart');
+    expect(restartButton).not.toBeNull();
+    if (!restartButton) {
+      throw new Error('missing restart button');
+    }
     await act(async () => {
       restartButton.props.onPress?.();
     });
@@ -122,17 +107,16 @@ describe('AppCrashRecoveryBoundary', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const onRestart = vi.fn();
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(
-        <AppCrashRecoveryBoundary onRestart={onRestart}>
+    const screen = await renderScreen(<AppCrashRecoveryBoundary onRestart={onRestart}>
           <Thrower />
-        </AppCrashRecoveryBoundary>,
-      );
-    });
+        </AppCrashRecoveryBoundary>);
     consoleError.mockRestore();
 
-    const reportBugButton = tree!.root.findByProps({ testID: 'app-crash-report-bug' });
+    const reportBugButton = screen.findByTestId('app-crash-report-bug');
+    expect(reportBugButton).not.toBeNull();
+    if (!reportBugButton) {
+      throw new Error('missing report bug button');
+    }
     await act(async () => {
       reportBugButton.props.onPress?.();
       await flushPromises();

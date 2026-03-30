@@ -1,4 +1,4 @@
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
 import { t } from '@/text';
 
 export function getErrorMessage(err: unknown): string {
@@ -6,21 +6,17 @@ export function getErrorMessage(err: unknown): string {
 
     if (typeof err === 'string') return err;
 
+    if (isRpcMethodNotAvailableError(err)) {
+        return t('errors.daemonUnavailableBody');
+    }
+
     if (err instanceof Error) {
-        const rpcErrorCode = (err as any).rpcErrorCode;
-        if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
-            return t('errors.daemonUnavailableBody');
-        }
         // Error.message is often the most user-meaningful; fall back to String(err) for empty messages.
         return err.message || String(err);
     }
 
     if (typeof err === 'object') {
-        const rpcErrorCode = (err as any).rpcErrorCode;
-        if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
-            return t('errors.daemonUnavailableBody');
-        }
-        const maybeMessage = (err as any).message;
+        const maybeMessage = (err as { message?: unknown }).message;
         if (typeof maybeMessage === 'string') return maybeMessage;
     }
 

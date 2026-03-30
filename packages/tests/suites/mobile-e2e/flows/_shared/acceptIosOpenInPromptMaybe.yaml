@@ -1,0 +1,15 @@
+# Best-effort acceptance of iOS's external-app confirmation prompt after
+# opening the Expo Dev Client deep link.
+#
+# iOS can surface a system dialog like `Open in "Happier (dev)"?` before the
+# Dev Client processes the launch URL. The bootstrap must accept it or the flow
+# stays pinned on the Dev Client home screen.
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    when:
+      platform: iOS
+      visible: "Open in .*"
+    commands:
+      - tapOn: "Open"

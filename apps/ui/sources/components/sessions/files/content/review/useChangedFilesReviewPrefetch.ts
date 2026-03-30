@@ -23,6 +23,7 @@ export type ChangedFilesReviewPrefetchState = Readonly<{
      */
     prefetchWindowPaths: readonly string[] | null;
     onViewableItemsChanged: (info: any) => void;
+    viewableRowIndices: readonly number[];
     maxDiffLoadConcurrency: number;
 }>;
 
@@ -180,5 +181,5 @@ export function useChangedFilesReviewPrefetch(input: Readonly<{
     }, [input.diffArea, input.sessionId, input.snapshotSignature, prefetchEnabled, prefetchWindowPaths, requestedPaths]);
 
     const maxDiffLoadConcurrency = prefetchEnabled ? prefetchConcurrency : 1;
-    return { prefetchEnabled, requestedPaths, prefetchWindowPaths, onViewableItemsChanged, maxDiffLoadConcurrency };
+    return { prefetchEnabled, requestedPaths, prefetchWindowPaths, onViewableItemsChanged, viewableRowIndices, maxDiffLoadConcurrency };
 }

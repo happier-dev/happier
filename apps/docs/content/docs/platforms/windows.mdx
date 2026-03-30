@@ -3,28 +3,97 @@ title: Windows
 description: Windows-specific behavior and troubleshooting.
 ---
 
-## Console windows (remote sessions)
+## Remote sessions on Windows
 
-When you start a session on a Windows machine **remotely** (from the app), Happier will usually launch the agent process in a way that **does not** open visible console windows. This prevents the “windows opening and closing / flickering” behavior some users reported.
+When you start a session on a Windows machine from the Happier app, you can choose how that session should be hosted locally on Windows.
 
-### Setting: show a visible console window
+The main options are:
 
-On the machine details screen (for Windows machines only), you can enable:
+- **Hidden** — no visible terminal host; best for purely remote app usage
+- **Windows Terminal** — start the session in a dedicated Windows Terminal host
+- **Console** — start the session in a regular visible console host
 
-- `Show console for remote sessions`
+This replaces the older “show a visible console window” idea with a clearer mode-based model.
 
-When enabled, remote session starts will open **one visible console window** on that Windows machine. This is useful when you want to come back to the machine later and interact locally (for example, switching an agent from remote to local usage inside the console).
+## Which mode should I choose?
 
-### Notes and limitations
+### Hidden
+
+Choose **Hidden** when you mostly want to control the session from the Happier app and do not plan to come back later to a local Windows terminal host.
+
+This is the least distracting mode because it avoids opening a visible terminal window.
+
+### Windows Terminal
+
+Choose **Windows Terminal** when you want the most Windows-native “start remotely, continue locally later” workflow.
+
+This is usually the best choice when:
+
+- you use Windows Terminal already,
+- you want app-started sessions to later continue in a Windows Terminal window,
+- you expect to use `happier attach <session-id>` to bring that host back into focus.
+
+### Console
+
+Choose **Console** when you want a visible local terminal host but do not want to rely on Windows Terminal being installed or detected.
+
+This is a good fallback when:
+
+- Windows Terminal is unavailable,
+- you prefer a plain console host,
+- you still want a visible local session you can come back to later.
+
+## Where to configure it
+
+### Global default
+
+Open:
+
+1. **Settings**
+2. **Session**
+3. Find the **Windows** section
+
+There you can choose the default Windows remote session mode for new app-started sessions on Windows machines.
+
+### Per-machine override
+
+On a Windows machine details page, you can override the global default for that specific machine.
+
+Use this when, for example:
+
+- your laptop should default to **Windows Terminal**,
+- a remote build box should stay **Hidden**,
+- a machine without Windows Terminal should always use **Console**.
+
+### Per-session override
+
+When the selected machine is Windows, the new-session flow shows a Windows mode chip. That chip lets you override the mode for just that one new session.
+
+Precedence is:
+
+1. per-session choice
+2. machine override
+3. global Session setting
+
+## Attach behavior on Windows
+
+If the session was started in an attachable Windows mode:
+
+- **Windows Terminal** sessions can be reopened or focused with `happier attach <session-id>`
+- **Console** sessions can be brought back to the foreground with `happier attach <session-id>`
+
+If the session was started in **Hidden** mode, it is intended for remote app usage and is not designed for later local terminal attachment.
+
+## Notes and limitations
 
 - This setting only applies to **Windows** machines.
-- The goal is to show a **single** console window for the long-running session, while still avoiding extra windows from short-lived subprocesses.
-- If you use tmux-based workflows, note that native Windows does not typically have tmux available unless you’re running inside WSL or another POSIX environment.
+- Native Windows workflows usually use **Windows Terminal** or **Console** mode instead of tmux.
+- If you use WSL or another POSIX environment with tmux, you can still use tmux-backed attach workflows there.
 
 ## Environment variables (advanced)
 
-You can also control the default console mode on a machine via:
+You can also set a default Windows remote session mode via environment variables when operating the daemon/CLI directly.
 
-- `HAPPIER_WINDOWS_REMOTE_SESSION_CONSOLE=visible` (or omit / any other value for hidden)
+Older values such as `HAPPIER_WINDOWS_REMOTE_SESSION_CONSOLE=visible` are treated as the modern **Console** mode.
 
-If you set the in-app toggle for a machine, it will override this environment variable for sessions started from the app.
+User-facing app settings still take precedence for app-started sessions.

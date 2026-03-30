@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -11,8 +11,9 @@ async function loadWorkflow(name) {
   return readFile(join(repoRoot, '.github', 'workflows', name), 'utf8');
 }
 
-async function loadFile(rel) {
-  return readFile(join(repoRoot, rel), 'utf8');
+async function loadMobileReleaseEnvironmentsModule() {
+  const moduleUrl = pathToFileURL(join(repoRoot, 'scripts', 'pipeline', 'expo', 'mobile-release-environments.mjs'));
+  return import(`${moduleUrl.href}?cacheBust=${Date.now()}`);
 }
 
 test('promote-ui publishes mobile assets under ui-mobile-* GitHub release tags', async () => {
@@ -20,9 +21,10 @@ test('promote-ui publishes mobile assets under ui-mobile-* GitHub release tags',
 
   assert.match(raw, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
 
-  const script = await loadFile('scripts/pipeline/expo/publish-apk-release.mjs');
-  assert.match(script, /ui-mobile-v\$\{appVersion\}/);
-  assert.match(script, /ui-mobile-preview/);
+  const { resolveMobileReleaseMetadata } = await loadMobileReleaseEnvironmentsModule();
+  assert.equal(resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' }).tag, 'ui-mobile-v1.2.3');
+  assert.equal(resolveMobileReleaseMetadata({ environment: 'preview', appVersion: '1.2.3' }).tag, 'ui-mobile-preview');
+  assert.equal(resolveMobileReleaseMetadata({ environment: 'publicdev', appVersion: '1.2.3' }).tag, 'ui-mobile-dev');
 
   assert.doesNotMatch(raw, /echo "tag=ui-v/);
   assert.doesNotMatch(raw, /echo "tag=ui-preview"/);
@@ -39,9 +41,10 @@ test('promote-ui labels mobile releases as UI Mobile for clarity', async () => {
 
   assert.match(raw, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
 
-  const script = await loadFile('scripts/pipeline/expo/publish-apk-release.mjs');
-  assert.match(script, /Happier UI Mobile v\$\{appVersion\}/);
-  assert.match(script, /Happier UI Mobile Preview/);
+  const { resolveMobileReleaseMetadata } = await loadMobileReleaseEnvironmentsModule();
+  assert.equal(resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' }).title, 'Happier UI Mobile v1.2.3');
+  assert.equal(resolveMobileReleaseMetadata({ environment: 'preview', appVersion: '1.2.3' }).title, 'Happier UI Mobile Preview');
+  assert.equal(resolveMobileReleaseMetadata({ environment: 'publicdev', appVersion: '1.2.3' }).title, 'Happier UI Mobile Dev');
 
   assert.doesNotMatch(raw, /echo "title=Happier UI v/);
   assert.doesNotMatch(raw, /echo "title=Happier UI Preview"/);

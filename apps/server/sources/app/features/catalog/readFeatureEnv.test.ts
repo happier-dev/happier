@@ -1,12 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
-import { readAuthFeatureEnv, readConnectedServicesFeatureEnv } from './readFeatureEnv';
+import {
+  readAuthFeatureEnv,
+  readChannelBridgesFeatureEnv,
+  readConnectedServicesFeatureEnv,
+  readMachineTransferFeatureEnv,
+  readSessionHandoffFeatureEnv,
+  readTerminalFeatureEnv,
+} from './readFeatureEnv';
 
 describe('readConnectedServicesFeatureEnv', () => {
   it('defaults quotasEnabled to true when env is unset', () => {
     const env: NodeJS.ProcessEnv = {};
     const res = readConnectedServicesFeatureEnv(env);
     expect(res.quotasEnabled).toBe(true);
+  });
+});
+
+describe('readChannelBridgesFeatureEnv', () => {
+  it('defaults enabled to true when env is unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const res = readChannelBridgesFeatureEnv(env);
+    expect(res.enabled).toBe(true);
+  });
+
+  it('defaults telegramEnabled to true when env is unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const res = readChannelBridgesFeatureEnv(env);
+    expect(res.telegramEnabled).toBe(true);
   });
 });
 
@@ -41,5 +62,52 @@ describe('readAuthFeatureEnv', () => {
     const res = readAuthFeatureEnv(env);
     expect(res.recoveryProviderResetEnabled).toBe(false);
     expect(res.uiRecoveryKeyReminderEnabled).toBe(false);
+  });
+});
+
+describe('readTerminalFeatureEnv', () => {
+  it('defaults embeddedPtyEnabled to true when env is unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const res = readTerminalFeatureEnv(env);
+    expect(res.embeddedPtyEnabled).toBe(true);
+  });
+});
+
+describe('readSessionHandoffFeatureEnv', () => {
+  it('defaults session handoff enabled when env is unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const res = readSessionHandoffFeatureEnv(env);
+
+    expect(res.handoffEnabled).toBe(true);
+  });
+});
+
+describe('readMachineTransferFeatureEnv', () => {
+  it('defaults direct-peer and server-routed transfer enabled when env is unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const res = readMachineTransferFeatureEnv(env);
+
+    expect(res.directPeerEnabled).toBe(true);
+    expect(res.serverRoutedEnabled).toBe(true);
+    // Must be bounded even when env is unset (prevents implicit unlimited server-routed streaming).
+    expect(res.serverRoutedMaxBytes).toBe(2 * 1024 * 1024 * 1024);
+  });
+
+  it('reads server-routed transfer max-bytes when configured', () => {
+    const env: NodeJS.ProcessEnv = {
+      HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES: '8192',
+    };
+    const res = readMachineTransferFeatureEnv(env);
+
+    expect(res.serverRoutedMaxBytes).toBe(8192);
+  });
+
+  it('hard-clamps server-routed max-bytes to a bounded ceiling', () => {
+    const env: NodeJS.ProcessEnv = {
+      HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES: String(999 * 1024 * 1024 * 1024),
+    };
+    const res = readMachineTransferFeatureEnv(env);
+
+    expect(res.serverRoutedMaxBytes).toBe(8 * 1024 * 1024 * 1024);
   });
 });

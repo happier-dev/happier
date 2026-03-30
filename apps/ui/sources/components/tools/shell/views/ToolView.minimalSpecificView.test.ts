@@ -1,37 +1,47 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { makeToolCall } from './ToolView.testHelpers';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import {
+    installToolShellCommonModuleMocks,
+    makeToolCall,
+} from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: vi.fn(),
+    },
 }));
 
-vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        NativeModules: {},
-        Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
-    };
-});
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surfaceHigh: '#fff',
-                surfaceHighest: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                warning: '#f00',
+installToolShellCommonModuleMocks({
+    expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            NativeModules: {},
+            Platform: {
+                OS: 'ios',
+                select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null,
             },
-        },
-    }),
-}));
+        }),
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewDetailLevelDefault') return 'summary';
+                    if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+                    if (key === 'toolViewDetailLevelByToolName') return {};
+                    if (key === 'toolViewShowDebugByDefault') return false;
+                    return null;
+                },
+            },
+        }),
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -76,27 +86,18 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => React.createElement('PermissionFooter', null),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'summary';
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        if (key === 'toolViewShowDebugByDefault') return false;
-        return null;
-    },
-}));
-
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
+    DEFAULT_AGENT_ID: 'claude',
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
     resolveAgentIdFromFlavor: () => null,
 }));
 
 describe('ToolView (minimal tools)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('renders a specific tool view even when the tool is marked minimal', async () => {
         const { ToolView } = await import('./ToolView');
 
@@ -106,13 +107,10 @@ describe('ToolView (minimal tools)', () => {
             result: { stdout: 'hello\n', stderr: '' },
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
+        );
 
-        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(1);
     });
 });

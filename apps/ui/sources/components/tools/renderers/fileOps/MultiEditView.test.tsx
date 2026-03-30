@@ -1,38 +1,47 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { collectHostText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import {
+    fileOpsRendererModuleState,
+    installFileOpsRendererCommonModuleMocks,
+    resetFileOpsRendererCommonModuleMockState,
+} from './fileOpsRendererTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-const diffSpy = vi.fn();
-vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
-    ToolDiffView: (props: any) => {
-        diffSpy(props);
-        return React.createElement('ToolDiffView', props);
+resetFileOpsRendererCommonModuleMockState();
+installFileOpsRendererCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key, params) => {
+                if (key === 'tools.common.more' && typeof params?.count === 'number') {
+                    return `+${params.count} more`;
+                }
+                if (key === 'tools.multiEdit.editNumber' && typeof params?.index === 'number' && typeof params?.total === 'number') {
+                    return `Edit ${params.index}/${params.total}`;
+                }
+                if (key === 'tools.multiEdit.replaceAll') {
+                    return 'Replace all';
+                }
+                return key;
+            },
+        });
     },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string, vars?: any) => {
-        if (key === 'tools.multiEdit.editNumber') return `Edit ${vars.index}/${vars.total}`;
-        if (key === 'tools.multiEdit.replaceAll') return 'Replace all';
-        if (key === 'tools.common.more') return `+${vars.count} more`;
-        return key;
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'showLineNumbersInToolViews') return false;
+                return undefined;
+            },
+        });
     },
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'showLineNumbersInToolViews') return false;
-        return undefined;
-    },
-}));
+});
 
 describe('MultiEditView', () => {
     function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
@@ -54,23 +63,19 @@ describe('MultiEditView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { MultiEditView } = await import('./MultiEditView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     MultiEditView,
                     makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
+                ))).tree;
         return tree;
     }
 
     it('renders a compact summary by default (first edit only)', async () => {
-        diffSpy.mockClear();
+        fileOpsRendererModuleState.toolDiffSpy.mockClear();
         const tree = await renderView(makeTool());
 
-        expect(diffSpy).toHaveBeenCalledTimes(1);
-        expect(diffSpy.mock.calls[0]?.[0]).toMatchObject({
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledTimes(1);
+        expect(fileOpsRendererModuleState.toolDiffSpy.mock.calls[0]?.[0]).toMatchObject({
             oldText: 'a',
             newText: 'b',
             showLineNumbers: false,
@@ -82,11 +87,11 @@ describe('MultiEditView', () => {
     });
 
     it('renders all edits with headers when detailLevel=full', async () => {
-        diffSpy.mockClear();
+        fileOpsRendererModuleState.toolDiffSpy.mockClear();
         const tree = await renderView(makeTool(), 'full');
 
-        expect(diffSpy).toHaveBeenCalledTimes(3);
-        expect(diffSpy.mock.calls[0]?.[0]).toMatchObject({
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledTimes(3);
+        expect(fileOpsRendererModuleState.toolDiffSpy.mock.calls[0]?.[0]).toMatchObject({
             oldText: 'a',
             newText: 'b',
             showLineNumbers: true,

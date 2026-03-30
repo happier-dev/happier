@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 
@@ -8,7 +8,23 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
   machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
+vi.mock('../api/session/apiSocket', () => ({
+  apiSocket: {
+    machineRPC: vi.fn(),
+    sessionRPC: vi.fn(),
+  },
+}));
+
+vi.mock('@/sync/runtime/socketIoAckTimeout', () => ({
+  isSocketIoAckTimeoutError: (error: unknown) =>
+    error instanceof Error && error.message.includes('timed out'),
+}));
+
 describe('machineSpawnNewSession error mapping', () => {
+  beforeEach(() => {
+    machineRpcWithServerScopeMock.mockReset();
+  });
+
   it('returns a descriptive error when daemon RPC method is not available', async () => {
     machineRpcWithServerScopeMock.mockRejectedValueOnce(
       Object.assign(new Error('RPC method not available'), {
@@ -20,6 +36,7 @@ describe('machineSpawnNewSession error mapping', () => {
     const result = await machineSpawnNewSession({
       machineId: 'machine-1',
       directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       serverId: 'server-b',
     });
 
@@ -28,5 +45,64 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(result.errorCode).toBe(SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE);
     expect(result.errorMessage.toLowerCase()).toContain('daemon');
     expect(result.errorMessage.toLowerCase()).toContain('rpc');
+  });
+
+  it('uses an extended RPC timeout for spawn session calls', async () => {
+    machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'session-1' });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const { readSpawnSessionRpcTimeoutMsFromEnv } = await import('../domains/session/spawn/spawnSessionRpcTimeout');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+    });
+
+    expect(result.type).toBe('success');
+    expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+    const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0];
+    expect(call).toMatchObject({ timeoutMs: expect.any(Number) });
+    expect(call.timeoutMs).toBe(readSpawnSessionRpcTimeoutMsFromEnv());
+  });
+
+  it('maps socket ack timeouts to SESSION_WEBHOOK_TIMEOUT', async () => {
+    machineRpcWithServerScopeMock.mockRejectedValueOnce(new Error('operation has timed out'));
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+    });
+
+    expect(result.type).toBe('error');
+    if (result.type !== 'error') throw new Error('expected an error result');
+    expect(result.errorCode).toBe(SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT);
+    expect(typeof result.errorMessage).toBe('string');
+    expect(result.errorMessage.length).toBeGreaterThan(0);
+  });
+
+  it('maps legacy daemon error envelopes into a structured spawn error result', async () => {
+    machineRpcWithServerScopeMock.mockResolvedValueOnce({
+      success: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      error: 'Claude CLI override is invalid',
+    });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+    });
+
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'Claude CLI override is invalid',
+    });
   });
 });

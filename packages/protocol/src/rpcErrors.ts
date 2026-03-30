@@ -1,17 +1,35 @@
 import type { RpcErrorCode } from './rpc.js';
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from './rpc.js';
+import { RPC_ERROR_CODES } from './rpc.js';
 
 export type RpcErrorCarrier = {
   rpcErrorCode?: RpcErrorCode | string;
   message?: string;
 };
 
-export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined }): Error {
-  const err = new Error(opts.error);
-  if (typeof opts.errorCode === 'string' && opts.errorCode.length > 0) {
-    (err as Error & { rpcErrorCode?: string }).rpcErrorCode = opts.errorCode;
+export class RpcError extends Error {
+  readonly rpcErrorCode: RpcErrorCode | string;
+
+  constructor(message: string, rpcErrorCode: RpcErrorCode | string) {
+    super(message);
+    this.name = 'RpcError';
+    this.rpcErrorCode = rpcErrorCode;
   }
-  return err;
+}
+
+export function isRpcError(error: unknown): error is RpcError {
+  if (!error || typeof error !== 'object') return false;
+  if (error instanceof RpcError) return true;
+  if (!(error instanceof Error)) return false;
+
+  const carrier = error as { name?: unknown; rpcErrorCode?: unknown };
+  return carrier.name === 'RpcError' && typeof carrier.rpcErrorCode === 'string' && carrier.rpcErrorCode.trim().length > 0;
+}
+
+export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined }): Error {
+  if (typeof opts.errorCode === 'string' && opts.errorCode.length > 0) {
+    return new RpcError(opts.error, opts.errorCode);
+  }
+  return new Error(opts.error);
 }
 
 export function readRpcErrorCode(error: unknown): string | undefined {
@@ -20,22 +38,12 @@ export function readRpcErrorCode(error: unknown): string | undefined {
   return typeof carrier.rpcErrorCode === 'string' ? carrier.rpcErrorCode : undefined;
 }
 
-export function isRpcMethodNotAvailableError(error: RpcErrorCarrier): boolean {
-  if (readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
-    return true;
-  }
-  const msg = typeof error.message === 'string' ? error.message.trim().toLowerCase() : '';
-  return msg === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE.trim().toLowerCase();
+export function isRpcMethodNotAvailableError(error: unknown): boolean {
+  const code = readRpcErrorCode(error);
+  return code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE;
 }
 
-export function isRpcMethodNotFoundError(error: RpcErrorCarrier): boolean {
-  if (readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
-    return true;
-  }
-  const msg = typeof error.message === 'string' ? error.message.trim().toLowerCase() : '';
-  return (
-    msg === RPC_ERROR_MESSAGES.METHOD_NOT_FOUND.trim().toLowerCase()
-    || msg === 'rpc method not found'
-  );
+export function isRpcMethodNotFoundError(error: unknown): boolean {
+  const code = readRpcErrorCode(error);
+  return code === RPC_ERROR_CODES.METHOD_NOT_FOUND;
 }
-

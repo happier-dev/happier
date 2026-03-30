@@ -1,16 +1,21 @@
+import type { ReactNode } from 'react';
+import type { AccountProfile, DirectSessionLinkEnsureRequest, DirectSessionsSource } from '@happier-dev/protocol';
+import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import type { AgentId } from './registryCore';
-import { AGENT_IDS, getAgentCore } from './registryCore';
-import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { AGENT_IDS, getAgentCore, resolveAgentIdFromFlavor } from './registryCore';
+import type { CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { TranslationKey } from '@/text';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { buildAcpLoadSessionPrefetchRequest, readAcpLoadSessionSupport, shouldPrefetchAcpCapabilities } from '@/agents/runtime/acpRuntimeResume';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { CODEX_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/codex/uiBehavior';
+import { CLAUDE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/claude/uiBehavior';
 import { AUGGIE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/auggie/uiBehavior';
 import { OPENCODE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/opencode/uiBehavior';
 import { PI_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/pi/uiBehavior';
+import { CUSTOM_ACP_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/customAcp/uiBehavior';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
-import type { Session } from '@/sync/domains/state/storageTypes';
 
 type CapabilityResults = Partial<Record<CapabilityId, CapabilityDetectResult>>;
 
@@ -27,39 +32,79 @@ export type AgentExperimentSwitchDef = Readonly<{
     getValue?: (settings: Settings) => boolean;
 }>;
 
-export type ResumeRuntimeSupportPrefetchPlan = Readonly<{
-    request: CapabilitiesDetectRequest;
-    timeoutMs: number;
+export type AgentTranscriptStorageMode = 'persisted' | 'direct';
+export type AgentPermissionFooterStopHandling = 'denyOnly' | 'denyAndAbortRun';
+export type AgentPermissionFooterBehavior = Readonly<{
+    usePermissionUpdates: boolean;
+    forceReadOnlyAfterStop: boolean;
+    supportsExecPolicyAmendment: boolean;
+    stopHandling: AgentPermissionFooterStopHandling;
 }>;
 
+export type DirectBrowseSourceOption = Readonly<{
+    key: string;
+    label: string;
+    detail?: string;
+    source: DirectSessionsSource;
+}>;
+
+export type DirectBrowseLinkEnsureRequestExtras = Readonly<
+    Partial<Omit<DirectSessionLinkEnsureRequest, 'machineId' | 'providerId' | 'remoteSessionId' | 'titleHint' | 'directoryHint'>>
+>;
+
 export type AgentUiBehavior = Readonly<{
+    guidance?: Readonly<{
+        includeInSessionGettingStartedCliExamples?: boolean;
+    }>;
+    mcpServers?: Readonly<{
+        supportsDetectedConfigScan?: boolean;
+    }>;
+    permissions?: Readonly<{
+        footer?: Partial<AgentPermissionFooterBehavior>;
+    }>;
     resume?: Readonly<{
         experimentSwitches?: readonly AgentExperimentSwitchDef[];
-        getAllowExperimentalVendorResume?: (opts: { experiments: AgentResumeExperiments }) => boolean;
-        getExperimentalVendorResumeRequiresRuntime?: (opts: { experiments: AgentResumeExperiments }) => boolean;
-        getAllowRuntimeResume?: (opts: { experiments: AgentResumeExperiments; results: CapabilityResults | undefined }) => boolean;
-        getRuntimeResumePrefetchPlan?: (opts: {
-            experiments: AgentResumeExperiments;
-            results: CapabilityResults | undefined;
-        }) => ResumeRuntimeSupportPrefetchPlan | null;
-        getPreflightPrefetchPlan?: (opts: {
-            experiments: AgentResumeExperiments;
-            results: CapabilityResults | undefined;
-        }) => ResumeRuntimeSupportPrefetchPlan | null;
-        getPreflightIssues?: (ctx: ResumePreflightContext) => readonly NewSessionPreflightIssue[];
     }>;
     newSession?: Readonly<{
         buildNewSessionOptions?: (ctx: {
             agentId: AgentId;
             agentOptionState?: Record<string, unknown> | null;
         }) => Record<string, unknown> | null;
+        canSelectWithoutDetectedCli?: (ctx: NewSessionCliSelectabilityContext) => boolean;
         getAgentInputExtraActionChips?: (ctx: {
             agentId: AgentId;
             agentOptionState?: Record<string, unknown> | null;
             setAgentOptionState: (key: string, value: unknown) => void;
         }) => ReadonlyArray<AgentInputExtraActionChip> | undefined;
+        supportsTranscriptStorageMode?: (ctx: {
+            agentId: AgentId;
+            settings: Settings;
+            storageMode: AgentTranscriptStorageMode;
+        }) => boolean;
         getPreflightIssues?: (ctx: NewSessionPreflightContext) => readonly NewSessionPreflightIssue[];
         getRelevantInstallableDepKeys?: (ctx: NewSessionRelevantInstallableDepsContext) => readonly string[];
+    }>;
+    directSessions?: Readonly<{
+        browse?: Readonly<{
+            order?: number;
+            getSourceOptions?: (ctx: {
+                agentId: AgentId;
+                profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
+                settings: Settings;
+            }) => readonly DirectBrowseSourceOption[];
+            resolveLockedSourceOption?: (ctx: {
+                agentId: AgentId;
+                sourceOptions: readonly DirectBrowseSourceOption[];
+                agentOptionState?: Record<string, unknown> | null;
+                profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
+                settings: Settings;
+            }) => DirectBrowseSourceOption | null;
+            buildLinkEnsureRequestExtras?: (ctx: {
+                agentId: AgentId;
+                source: DirectSessionsSource;
+                candidate: Readonly<{ details?: Record<string, unknown> }>;
+            }) => DirectBrowseLinkEnsureRequestExtras;
+        }>;
     }>;
     payload?: Readonly<{
         buildSpawnEnvironmentVariables?: (opts: {
@@ -70,18 +115,39 @@ export type AgentUiBehavior = Readonly<{
         }) => Record<string, string> | undefined;
         buildSpawnSessionExtras?: (opts: {
             agentId: AgentId;
+            settings: Settings;
             experiments: AgentResumeExperiments;
             resumeSessionId: string;
         }) => Record<string, unknown>;
         buildResumeSessionExtras?: (opts: {
             agentId: AgentId;
             experiments: AgentResumeExperiments;
+            settings: Settings;
+            session?: Session | null;
         }) => Record<string, unknown>;
-        buildWakeResumeExtras?: (opts: { agentId: AgentId; resumeCapabilityOptions: ResumeCapabilityOptions }) => Record<string, unknown>;
+        buildWakeResumeExtras?: (opts: {
+            agentId: AgentId;
+            resumeCapabilityOptions: ResumeCapabilityOptions;
+            session?: Session | null;
+        }) => Record<string, unknown>;
     }>;
-    forking?: Readonly<{
-        supportsForkConversation?: (ctx: { session: Session }) => boolean;
-        supportsForkFromMessage?: (ctx: { session: Session }) => boolean;
+    sessionSubagents?: Readonly<{
+        renderLaunchCards?: (ctx: {
+            sessionId: string;
+            scopeId: string;
+            session: Session;
+            subagents: readonly SessionSubagent[];
+        }) => readonly ReactNode[];
+        createTeammateLauncherDetailsTab?: (ctx: {
+            session: Session;
+            teamId: string;
+        }) => DetailsTab | null;
+        renderDetailsTab?: (ctx: {
+            sessionId: string;
+            scopeId: string;
+            tab: DetailsTab;
+        }) => ReactNode | null;
+        getDetailsTabIconName?: (ctx: { tab: DetailsTab }) => string | null;
     }>;
 }>;
 
@@ -92,8 +158,15 @@ export type NewSessionPreflightContext = Readonly<{
     results: CapabilityResults | undefined;
 }>;
 
+export type NewSessionCliSelectabilityContext = Readonly<{
+    agentId: AgentId;
+    settings: Settings;
+    agentOptionState?: Record<string, unknown> | null;
+}>;
+
 export type NewSessionRelevantInstallableDepsContext = Readonly<{
     agentId: AgentId;
+    settings: Settings;
     experiments: AgentResumeExperiments;
     resumeSessionId: string;
 }>;
@@ -106,43 +179,66 @@ export type NewSessionPreflightIssue = Readonly<{
     action: 'openMachine';
 }>;
 
-export type ResumePreflightContext = Readonly<{
-    agentId: AgentId;
-    experiments: AgentResumeExperiments;
-    results: CapabilityResults | undefined;
-}>;
-
 function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     return {
+        ...(a.guidance || b.guidance ? { guidance: { ...(a.guidance ?? {}), ...(b.guidance ?? {}) } } : {}),
+        ...(a.mcpServers || b.mcpServers ? { mcpServers: { ...(a.mcpServers ?? {}), ...(b.mcpServers ?? {}) } } : {}),
+        ...(a.permissions || b.permissions
+            ? {
+                permissions: {
+                    ...(a.permissions ?? {}),
+                    ...(b.permissions ?? {}),
+                    ...(a.permissions?.footer || b.permissions?.footer
+                        ? { footer: { ...(a.permissions?.footer ?? {}), ...(b.permissions?.footer ?? {}) } }
+                        : {}),
+                },
+            }
+            : {}),
         ...(a.resume || b.resume ? { resume: { ...(a.resume ?? {}), ...(b.resume ?? {}) } } : {}),
         ...(a.newSession || b.newSession ? { newSession: { ...(a.newSession ?? {}), ...(b.newSession ?? {}) } } : {}),
+        ...(a.directSessions || b.directSessions
+            ? {
+                directSessions: {
+                    ...(a.directSessions ?? {}),
+                    ...(b.directSessions ?? {}),
+                    ...(a.directSessions?.browse || b.directSessions?.browse
+                        ? { browse: { ...(a.directSessions?.browse ?? {}), ...(b.directSessions?.browse ?? {}) } }
+                        : {}),
+                },
+            }
+            : {}),
         ...(a.payload || b.payload ? { payload: { ...(a.payload ?? {}), ...(b.payload ?? {}) } } : {}),
-        ...(a.forking || b.forking ? { forking: { ...(a.forking ?? {}), ...(b.forking ?? {}) } } : {}),
+        ...(a.sessionSubagents || b.sessionSubagents
+            ? { sessionSubagents: { ...(a.sessionSubagents ?? {}), ...(b.sessionSubagents ?? {}) } }
+            : {}),
     };
 }
 
 function buildDefaultAgentUiBehavior(agentId: AgentId): AgentUiBehavior {
-    const core = getAgentCore(agentId);
-    const runtimeGate = core.resume.runtimeGate;
-    if (runtimeGate === 'acpLoadSession') {
-        return {
-            resume: {
-                getAllowRuntimeResume: ({ results }) => readAcpLoadSessionSupport(agentId, results),
-                getRuntimeResumePrefetchPlan: ({ results }) => {
-                    if (!shouldPrefetchAcpCapabilities(agentId, results)) return null;
-                    return { request: buildAcpLoadSessionPrefetchRequest(agentId), timeoutMs: 8_000 };
-                },
+    const promptProtocol = getAgentCore(agentId).permissions.promptProtocol;
+
+    return {
+        permissions: {
+            footer: {
+                usePermissionUpdates: promptProtocol === 'claude',
+                forceReadOnlyAfterStop: promptProtocol !== 'codexDecision',
+                supportsExecPolicyAmendment: false,
+                stopHandling: 'denyAndAbortRun',
             },
-        };
-    }
-    return {};
+        },
+        newSession: {
+            supportsTranscriptStorageMode: ({ storageMode }) => getAgentCore(agentId).sessionStorage[storageMode] === true,
+        },
+    };
 }
 
 const AGENTS_UI_BEHAVIOR_OVERRIDES: Readonly<Partial<Record<AgentId, AgentUiBehavior>>> = Object.freeze({
+    claude: CLAUDE_UI_BEHAVIOR_OVERRIDE,
     codex: CODEX_UI_BEHAVIOR_OVERRIDE,
     opencode: OPENCODE_UI_BEHAVIOR_OVERRIDE,
     auggie: AUGGIE_UI_BEHAVIOR_OVERRIDE,
     pi: PI_UI_BEHAVIOR_OVERRIDE,
+    customAcp: CUSTOM_ACP_UI_BEHAVIOR_OVERRIDE,
 });
 
 export const AGENTS_UI_BEHAVIOR: Readonly<Record<AgentId, AgentUiBehavior>> = Object.freeze(
@@ -156,10 +252,8 @@ export const AGENTS_UI_BEHAVIOR: Readonly<Record<AgentId, AgentUiBehavior>> = Ob
 );
 
 export function resolveAgentUiBehaviorFromFlavor(flavor: unknown): AgentUiBehavior | null {
-    const id = typeof flavor === 'string' ? flavor.trim() : '';
-    if (!id) return null;
-    if (!(AGENT_IDS as readonly string[]).includes(id)) return null;
-    return AGENTS_UI_BEHAVIOR[id as AgentId] ?? null;
+    const agentId = typeof flavor === 'string' ? resolveAgentIdFromFlavor(flavor) : null;
+    return agentId ? AGENTS_UI_BEHAVIOR[agentId] ?? null : null;
 }
 
 export function getAgentResumeExperimentsFromSettings(agentId: AgentId, settings: Settings): AgentResumeExperiments {
@@ -178,101 +272,17 @@ export function getAgentResumeExperimentsFromSettings(agentId: AgentId, settings
     return { enabled, switches };
 }
 
-export function getAllowExperimentalResumeByAgentIdFromUiState(settings: Settings): Partial<Record<AgentId, boolean>> {
-    const out: Partial<Record<AgentId, boolean>> = {};
-    for (const id of AGENT_IDS) {
-        const fn = AGENTS_UI_BEHAVIOR[id].resume?.getAllowExperimentalVendorResume;
-        if (!fn) continue;
-        const experiments = getAgentResumeExperimentsFromSettings(id, settings);
-        if (fn({ experiments }) === true) out[id] = true;
-    }
-    return out;
-}
-
-export function getAllowRuntimeResumeByAgentIdFromResults(opts: {
-    settings: Settings;
-    results: CapabilityResults | undefined;
-}): Partial<Record<AgentId, boolean>> {
-    const out: Partial<Record<AgentId, boolean>> = {};
-    for (const id of AGENT_IDS) {
-        const fn = AGENTS_UI_BEHAVIOR[id].resume?.getAllowRuntimeResume;
-        if (!fn) continue;
-        const experiments = getAgentResumeExperimentsFromSettings(id, opts.settings);
-        if (fn({ experiments, results: opts.results }) === true) out[id] = true;
-    }
-    return out;
-}
-
 export function buildResumeCapabilityOptionsFromUiState(opts: {
     settings: Settings;
     results: CapabilityResults | undefined;
 }): ResumeCapabilityOptions {
-    const allowExperimental = getAllowExperimentalResumeByAgentIdFromUiState(opts.settings);
-    const allowRuntime = getAllowRuntimeResumeByAgentIdFromResults({ settings: opts.settings, results: opts.results });
-
-    // Generic rule: some agents may expose an experimental resume path that still requires runtime gating
-    // (e.g. ACP loadSession probing). Fail closed until runtime support is confirmed.
-    for (const id of AGENT_IDS) {
-        if (allowExperimental[id] !== true) continue;
-        const fn = AGENTS_UI_BEHAVIOR[id].resume?.getExperimentalVendorResumeRequiresRuntime;
-        if (!fn) continue;
-        const experiments = getAgentResumeExperimentsFromSettings(id, opts.settings);
-        if (fn({ experiments }) === true && allowRuntime[id] !== true) {
-            delete allowExperimental[id];
-        }
-    }
-
-    return buildResumeCapabilityOptionsFromMaps({
-        allowExperimentalResumeByAgentId: allowExperimental,
-        allowRuntimeResumeByAgentId: allowRuntime,
-    });
-}
-
-export function buildResumeCapabilityOptionsFromMaps(opts: {
-    allowExperimentalResumeByAgentId?: Partial<Record<AgentId, boolean>>;
-    allowRuntimeResumeByAgentId?: Partial<Record<AgentId, boolean>>;
-}): ResumeCapabilityOptions {
-    const allowExperimental = opts.allowExperimentalResumeByAgentId ?? {};
-    const allowRuntime = opts.allowRuntimeResumeByAgentId ?? {};
     return {
-        ...(Object.keys(allowExperimental).length > 0 ? { allowExperimentalResumeByAgentId: allowExperimental } : {}),
-        ...(Object.keys(allowRuntime).length > 0 ? { allowRuntimeResumeByAgentId: allowRuntime } : {}),
+        accountSettings: opts.settings,
     };
-}
-
-export function getResumeRuntimeSupportPrefetchPlan(
-    opts: {
-        agentId: AgentId;
-        settings: Settings;
-        results: CapabilityResults | undefined;
-    },
-): ResumeRuntimeSupportPrefetchPlan | null {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId].resume?.getRuntimeResumePrefetchPlan;
-    if (!fn) return null;
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
-    return fn({ experiments, results: opts.results });
-}
-
-export function getResumePreflightPrefetchPlan(
-    opts: {
-        agentId: AgentId;
-        settings: Settings;
-        results: CapabilityResults | undefined;
-    },
-): ResumeRuntimeSupportPrefetchPlan | null {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId].resume?.getPreflightPrefetchPlan;
-    if (!fn) return null;
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
-    return fn({ experiments, results: opts.results });
 }
 
 export function getNewSessionPreflightIssues(ctx: NewSessionPreflightContext): readonly NewSessionPreflightIssue[] {
     const fn = AGENTS_UI_BEHAVIOR[ctx.agentId].newSession?.getPreflightIssues;
-    return fn ? fn(ctx) : [];
-}
-
-export function getResumePreflightIssues(ctx: ResumePreflightContext): readonly NewSessionPreflightIssue[] {
-    const fn = AGENTS_UI_BEHAVIOR[ctx.agentId].resume?.getPreflightIssues;
     return fn ? fn(ctx) : [];
 }
 
@@ -282,6 +292,11 @@ export function buildNewSessionOptionsFromUiState(opts: {
 }): Record<string, unknown> | null {
     const fn = AGENTS_UI_BEHAVIOR[opts.agentId].newSession?.buildNewSessionOptions;
     return fn ? fn(opts) : null;
+}
+
+export function canSelectAgentWithoutDetectedCli(ctx: NewSessionCliSelectabilityContext): boolean {
+    const fn = AGENTS_UI_BEHAVIOR[ctx.agentId].newSession?.canSelectWithoutDetectedCli;
+    return fn ? fn(ctx) : false;
 }
 
 export function getNewSessionAgentInputExtraActionChips(opts: {
@@ -308,7 +323,7 @@ export function buildSpawnSessionExtrasFromUiState(opts: {
     const fn = AGENTS_UI_BEHAVIOR[opts.agentId].payload?.buildSpawnSessionExtras;
     if (!fn) return {};
     const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
-    return fn({ agentId: opts.agentId, experiments, resumeSessionId: opts.resumeSessionId });
+    return fn({ agentId: opts.agentId, settings: opts.settings, experiments, resumeSessionId: opts.resumeSessionId });
 }
 
 export function buildSpawnEnvironmentVariablesFromUiState(opts: {
@@ -324,17 +339,23 @@ export function buildSpawnEnvironmentVariablesFromUiState(opts: {
 export function buildResumeSessionExtrasFromUiState(opts: {
     agentId: AgentId;
     settings: Settings;
+    session?: Session | null;
 }): Record<string, unknown> {
     const fn = AGENTS_UI_BEHAVIOR[opts.agentId].payload?.buildResumeSessionExtras;
     if (!fn) return {};
     const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
-    return fn({ agentId: opts.agentId, experiments });
+    return fn({ agentId: opts.agentId, experiments, settings: opts.settings, session: opts.session });
 }
 
 export function buildWakeResumeExtras(opts: {
     agentId: AgentId;
     resumeCapabilityOptions: ResumeCapabilityOptions;
+    session?: Session | null;
 }): Record<string, unknown> {
     const fn = AGENTS_UI_BEHAVIOR[opts.agentId]?.payload?.buildWakeResumeExtras;
     return fn ? fn(opts) : {};
+}
+
+export function supportsDetectedMcpConfigScan(agentId: AgentId): boolean {
+    return AGENTS_UI_BEHAVIOR[agentId]?.mcpServers?.supportsDetectedConfigScan === true;
 }

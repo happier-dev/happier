@@ -1,27 +1,31 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    AppState: {
-        currentState: 'active',
-        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+installConnectedServicesCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            AppState: {
+                currentState: 'active',
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+            Platform: {
+                OS: 'web',
+                select: (options?: Readonly<{ default?: unknown }>) => (options && 'default' in options ? options.default : undefined),
+            },
+        });
     },
-    Platform: {
-        OS: 'web',
-        select: (options?: Readonly<{ default?: unknown }>) => (options && 'default' in options ? options.default : undefined),
-    },
-}));
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -56,19 +60,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(async () => {}) },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
 vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
     CONNECTED_SERVICES_REGISTRY: [{ serviceId: 'openai-codex', connectCommand: 'happier connect codex', supportsOauth: true }],
     getConnectedServiceRegistryEntry: (_serviceId: string) => ({ serviceId: 'openai-codex', connectCommand: 'happier connect codex', supportsOauth: true }),
@@ -83,11 +74,9 @@ describe('ConnectedServicesSettingsView', () => {
         const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ConnectedServicesSettingsView));
-        });
+        tree = (await renderScreen(React.createElement(ConnectedServicesSettingsView))).tree;
 
-        const items = tree.root.findAllByType('Item' as any);
+        const items = tree.findAllByType('Item' as any);
         expect(items.length).toBe(0);
     });
 });

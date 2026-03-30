@@ -29,15 +29,21 @@ The goal is that both surfaces:
 
 ## What lives where (sources of truth)
 
-### 1) Shared manifest: `@happier-dev/agents`
+### 1) Shared manifest + runtime metadata: `@happier-dev/agents`
 
 Where:
 - `packages/agents/src/manifest.ts`
+- `packages/agents/src/localCli.ts`
+- `packages/agents/src/auth.ts`
+- `packages/agents/src/acp.ts`
 
 What belongs here:
 - canonical ids/types (`AgentId`, `AGENT_IDS`)
 - CLI identity contract (`detectKey`, `cliSubcommand`, `flavorAliases`)
-- resume contract (`resume.vendorResume`, `resume.runtimeGate`, `resume.vendorResumeIdField`)
+- local CLI UX metadata (`machineLoginKey`, login support, docs URL, login launch defaults)
+- declarative auth probe metadata
+- built-in generic ACP launcher/runtime metadata
+- resume contract (`resume.vendorResume`, `resume.vendorResumeIdField`)
 - cloud-connect mapping (when applicable): `cloudConnect`
 
 What does **not** belong here:
@@ -63,8 +69,17 @@ This is the CLI’s explicit assembly of backends into a deterministic map:
 - `export const AGENTS: Record<CatalogAgentId, AgentCatalogEntry> = { ... }`
 - helper resolvers such as `resolveCatalogAgentId(...)`
 
-Backend folders live under:
+True provider-specific backend folders live under:
 - `apps/cli/src/backends/<agentId>/**`
+
+Generic ACP runtime/catalog machinery lives under:
+- `apps/cli/src/agent/acp/**`
+- `apps/cli/src/agent/acp/catalog/**`
+
+That split is intentional:
+- `apps/cli/src/backends/**` is for provider-owned implementations
+- `apps/cli/src/agent/acp/**` is for provider-agnostic ACP plumbing
+- built-in generic ACP agents such as Kiro are declared in `@happier-dev/agents` and consumed by the generic ACP layer
 
 ### 4) App agents catalog: `apps/ui/sources/agents/catalog.ts`
 
@@ -119,16 +134,14 @@ Checklist ids are treated as stable API between daemon and app:
 - `machine-details`
 - `resume.<agentId>`
 
-### ACP runtime-gated resume (`runtimeGate: 'acpLoadSession'`)
+### ACP resume (no runtime probes)
 
-Some agents are resumable only when ACP `loadSession` is supported on the machine.
+We do **not** runtime-probe ACP `loadSession` support in normal UI/CLI flows.
 
-In `@happier-dev/agents`, this is represented as:
-- `AGENTS_CORE[agentId].resume.runtimeGate === 'acpLoadSession'`
-
-In the app, default behavior (see `registryUiBehavior.ts`) will:
-- prefetch `cli.<agentId>` with ACP capability info when needed
-- gate resumability on the runtime result (fail-closed)
+Instead:
+- resumability is driven by the static agents catalog + the selected backend (e.g. `codexBackendMode`)
+- explicit “resume inactive session” is **fail-closed**: if `loadSession` fails, we surface the error instead of silently starting a fresh vendor session
+- any ACP capability probing (e.g. `includeAcpCapabilities`) is reserved for opt-in diagnostics / e2e probes, not day-to-day UX
 
 ---
 
@@ -151,14 +164,16 @@ Edit:
 Add/update:
 - `id`, `cliSubcommand`, `detectKey`
 - `flavorAliases` (if needed)
+- `localCli.ts` metadata when the agent has a local CLI/auth surface
+- `auth.ts` declarative probe metadata when the auth status can be described centrally
+- `acp.ts` built-in ACP metadata when the built-in agent runs through generic ACP
 - `resume.vendorResume` (`supported | unsupported | experimental`)
-- `resume.runtimeGate` (optional, e.g. `'acpLoadSession'`)
 - `resume.vendorResumeIdField` (optional)
 - `cloudConnect` (optional)
 
-### Step 2 — add the CLI backend folder
+### Step 2 — choose between provider-specific backend code and generic ACP
 
-Create:
+If the agent needs provider-specific behavior, create:
 - `apps/cli/src/backends/myagent/`
 
 Common files (as needed):
@@ -169,13 +184,25 @@ Common files (as needed):
 - `acp/backend.ts` (ACP backend, if applicable)
 - `cloud/connect.ts` (cloud connect, if applicable)
 
+If the built-in agent is generic ACP-backed, do not add a bespoke backend folder just to shell out to ACP.
+
+Instead:
+- add its built-in metadata in `@happier-dev/agents`
+- let `apps/cli/src/agent/acp/catalog/**` instantiate it generically
+
+Configured user-defined ACP backends/presets do not become `AgentId`s.
+They live in:
+- `packages/protocol/src/acpCatalog/*`
+- account settings `acpCatalogSettingsV1`
+- CLI generic ACP catalog loaders under `apps/cli/src/agent/acp/catalog/configured/**`
+
 Tool normalization (if the agent emits tools):
 - Ensure the CLI normalizes provider tool calls/results into canonical V2 tool shapes (so the app can render them).
 - See: `docs/tool-normalization.md` (V2 schemas + normalization entrypoints + trace/fixtures workflow).
 
 ### Step 3 — export one catalog entry and wire it into the CLI catalog
 
-Create:
+For provider-specific agents, create:
 - `apps/cli/src/backends/myagent/index.ts`
 
 Pattern:
@@ -265,238 +292,3 @@ Patterns we use:
 - Don’t do side-effect self-registration (“import this file and it registers itself”). It makes ordering brittle and behavior hard to audit.
 - Don’t hardcode agent-specific logic in generic screens; add a typed hook in the provider’s `uiBehavior.ts` instead.
 - Don’t import native assets from code that must run in Node tests (keep assets in `registryUi.ts` and lazy-load).
-# Agent Catalog - CLI
-
-This doc explains how the **Agent Catalog** works in Happier, and how to add a new agent/backend without guessing.
-
----
-
-## Terms (what each thing means)
-
-- **AgentId**: the canonical id for an agent, shared across CLI + Expo (+ server).
-  - Source of truth: `@happier-dev/agents` (`packages/agents`).
-- **Agent Catalog (CLI)**: the declarative mapping of `AgentId -> integration hooks` used to drive:
-  - CLI command routing
-  - capability detection/checklists
-  - daemon spawn wiring
-  - optional ACP backend factories
-  - Source: `apps/cli/src/backends/catalog.ts`
-- **Backend folder**: provider/agent-specific code and wiring.
-  - Source: `apps/cli/src/backends/<agentId>/**`
-- **Protocol**: shared cross-boundary contracts between UI and CLI daemon.
-  - Source: `@happier-dev/protocol` (`packages/protocol`).
-
----
-
-## Sources of truth
-
-### 1) Shared core manifest: `@happier-dev/agents`
-
-Where: `packages/agents/src/manifest.ts`
-
-What belongs here:
-- canonical ids (`AgentId`)
-- identity/aliases for parsing or migration (e.g. `flavorAliases`)
-- resume core capabilities (e.g. `resume.runtimeGate`, `resume.vendorResume`)
-- cloud connect core mapping (if any): `cloudConnect`
-
-What does **not** belong here:
-- UI assets (icons/images)
-- UI routes
-- CLI implementation details (argv, env, paths)
-
-### 2) Cross-boundary contracts: `@happier-dev/protocol`
-
-Where: `packages/protocol/src/*`
-
-What belongs here:
-- daemon RPC result shapes that the Expo app needs to interpret deterministically
-- stable error codes (e.g. spawn/resume failures)
-
-Example:
-- `packages/protocol/src/spawnSession.ts` defines `SpawnSessionErrorCode` + `SpawnSessionResult`.
-
-### 3) CLI agent catalog: `apps/cli/src/backends/catalog.ts`
-
-Where the CLI assembles all backends into a single map:
-- `export const AGENTS: Record<CatalogAgentId, AgentCatalogEntry> = { ... }`
-- helper resolvers like `resolveCatalogAgentId(...)`
-
----
-
-## CLI backend layout (recommended)
-
-Each backend folder exports one canonical entry object from its `index.ts`:
-
-- `apps/cli/src/backends/<agentId>/index.ts` exports:
-  - `export const agent = { ... } satisfies AgentCatalogEntry;`
-
-The global catalog imports those entries and assembles them:
-- `apps/cli/src/backends/catalog.ts`
-
-This keeps backend-specific wiring co-located, while preserving a deterministic, explicit catalog (no self-registration side effects).
-
----
-
-## AgentCatalogEntry hooks (CLI)
-
-Type: `apps/cli/src/backends/types.ts` (`AgentCatalogEntry`)
-
-### Required
-
-- `id: AgentId`
-- `cliSubcommand: AgentId`
-- `vendorResumeSupport: VendorResumeSupportLevel` (from `@happier-dev/agents`)
-
-### Optional hooks (what they do)
-
-- `getCliCommandHandler(): Promise<CommandHandler>`
-  - Provides the `happy <agentId> ...` CLI subcommand handler.
-  - Used by `apps/cli/src/cli/commandRegistry.ts`.
-
-- `getCliCapabilityOverride(): Promise<Capability>`
-  - Defines the `cli.<agentId>` capability descriptor, if the generic one is not sufficient.
-
-- `getCapabilities(): Promise<Capability[]>`
-  - Adds extra capabilities beyond `cli.<agentId>`, typically:
-    - `dep.${string}` (dependency checks)
-    - `tool.${string}` (tool availability)
-  - Example: Codex contributes `dep.codex-acp` etc.
-
-- `getCliDetect(): Promise<CliDetectSpec>`
-  - Provides version/login-status probe argv patterns used by the CLI snapshot.
-  - Consumed by `apps/cli/src/capabilities/snapshots/cliSnapshot.ts`.
-
-- `getCloudConnectTarget(): Promise<CloudConnectTarget>`
-  - Enables `happier connect <agentId>` for this agent.
-  - The preferred source-of-truth for connect availability + vendor mapping is `@happier-dev/agents` (and this hook returns the implementation object).
-
-- `getDaemonSpawnHooks(): Promise<DaemonSpawnHooks>`
-  - Allows per-agent spawn customizations in the daemon, while keeping the wiring co-located with the backend.
-
-- `getHeadlessTmuxArgvTransform(): Promise<(argv: string[]) => string[]>`
-  - Optional argv rewrite for `--tmux` / headless launching.
-
-- `getAcpBackendFactory(): Promise<(opts: unknown) => { backend: AgentBackend }>`
-  - Provides an ACP backend factory for agents that run via ACP.
-
-- `checklists?: AgentChecklistContributions`
-  - Optional additions to the capability checklists system.
-  - Prefer data-only contributions (no side-effect registration).
-
----
-
-## Capabilities + checklists contract (CLI ↔ Expo)
-
-### Capability id conventions (CLI)
-
-Defined in `apps/cli/src/capabilities/types.ts`:
-- `cli.<agentId>`: base “agent detected + login status + (optional) ACP capability surface” probe
-- `tool.${string}`: tool capability (e.g. `tool.tmux`)
-- `dep.${string}`: dependency capability (e.g. `dep.codex-acp`)
-
-### Checklist id conventions (CLI)
-
-Checklist ids are strings; we treat these as stable API between daemon and UI:
-- `new-session`
-- `machine-details`
-- `resume.<agentId>` (one per agent)
-
-### ACP resume runtime gate
-
-Some agents don’t have “vendor resume” universally enabled, but can be resumable depending on whether ACP `loadSession` is supported on the machine.
-
-In `@happier-dev/agents`, this is represented as:
-- `resume.runtimeGate === 'acpLoadSession'`
-
-In the CLI, this is implemented by making `resume.<agentId>` checklists include an agent probe request that sets `includeAcpCapabilities: true`.
-
-So UI logic can treat “ACP resume supported” as:
-- the daemon’s `resume.<agentId>` checklist result contains a `cli.<agentId>` capability whose `acpCapabilities.loadSession` indicates support (shape defined by the CLI capability implementation).
-
----
-
-## Adding a new agent/backend (CLI)
-
-### Step 0 — Pick the id contract
-
-Decide a new canonical id (example): `myagent`.
-
-We strongly prefer:
-- `AgentId === CLI subcommand === detectKey`
-
-### Step 1 — Add the agent to `@happier-dev/agents`
-
-Edit:
-- `packages/agents/src/manifest.ts`
-
-Add:
-- `AgentId` entry
-- any `flavorAliases`
-- `resume.vendorResume` (`supported|unsupported|experimental`)
-- optional `resume.runtimeGate` (e.g. `'acpLoadSession'`)
-- optional `cloudConnect` mapping if it participates in cloud connect UX
-
-### Step 2 — Create a backend folder in the CLI
-
-Create folder:
-- `apps/cli/src/backends/myagent/`
-
-Add whatever you need (examples):
-- `cli/command.ts` (subcommand handler)
-- `cli/capability.ts` (optional override for `cli.myagent`)
-- `cli/detect.ts` (version/login probe spec)
-- `daemon/spawnHooks.ts` (if needed)
-- `acp/backend.ts` (if it’s an ACP backend)
-- `cloud/connect.ts` (if it supports connect)
-
-### Step 3 — Export the catalog entry from `index.ts`
-
-Create:
-- `apps/cli/src/backends/myagent/index.ts`
-
-Pattern:
-```ts
-import { AGENTS_CORE } from '@happier-dev/agents';
-import type { AgentCatalogEntry } from '../types';
-
-export const agent = {
-  id: AGENTS_CORE.myagent.id,
-  cliSubcommand: AGENTS_CORE.myagent.cliSubcommand,
-  vendorResumeSupport: AGENTS_CORE.myagent.resume.vendorResume,
-  getCliCommandHandler: async () => (await import('./cli/command')).handleMyAgentCliCommand,
-  getCliDetect: async () => (await import('./cli/detect')).cliDetect,
-  // other hooks as needed...
-} satisfies AgentCatalogEntry;
-```
-
-### Step 4 — Add it to the catalog assembly
-
-Edit:
-- `apps/cli/src/backends/catalog.ts`
-
-Add:
-```ts
-import { agent as myagent } from '@/backends/myagent';
-
-export const AGENTS = {
-  // ...
-  myagent,
-} satisfies Record<CatalogAgentId, AgentCatalogEntry>;
-```
-
-### Step 5 — Verify
-
-Run:
-```bash
-yarn --cwd cli typecheck
-yarn --cwd cli test
-```
-
----
-
-## What not to do (anti-patterns)
-
-- Don’t “auto-discover” backends by scanning the filesystem. We want deterministic bundling and explicit reviewable changes.
-- Don’t do side-effect self-registration (“import this file and it registers itself”). It makes ordering brittle and behavior hard to audit.
-- Don’t leave long-lived “stubs” (re-export shims) as an architectural layer. Prefer canonical entrypoints and direct imports.

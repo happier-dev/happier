@@ -31,14 +31,25 @@ function mockServerConfig() {
   }));
 }
 
+function resolveNonHealthCall(fetchMock: ReturnType<typeof vi.fn>, expectedUrl: string): RequestInit {
+  const call = fetchMock.mock.calls.find(([input]) => String(input) === expectedUrl);
+  const init = call?.[1];
+  if (!init) {
+    throw new Error(`Expected fetch call for ${expectedUrl}`);
+  }
+  return init;
+}
+
 describe('apiConnectedServicesV2', () => {
 	  it('registers a sealed credential record at the v2 endpoint', async () => {
 	    mockServerConfig();
-	    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
-	      ok: true,
-	      status: 200,
-	      json: async () => ({ success: true }),
-	    }));
+	    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
+        const url = String(input);
+        if (url === 'https://api.example.test/health') {
+          return { ok: true, status: 200, json: async () => ({ ok: true }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ success: true }) };
+      });
 	    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { registerConnectedServiceCredentialSealed } = await import('./apiConnectedServicesV2');
@@ -56,21 +67,26 @@ describe('apiConnectedServicesV2', () => {
         headers: expect.any(Headers),
       }),
     );
-    const init = fetchMock.mock.calls[0]?.[1];
-    if (!init) throw new Error('Expected fetch init');
+    const init = resolveNonHealthCall(fetchMock, 'https://api.example.test/v2/connect/openai-codex/profiles/work/credential');
     expect((init.headers as Headers).get('Authorization')).toBe('Bearer t');
   });
 
   it('fetches a sealed credential record from the v2 endpoint', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        sealed: { format: 'account_scoped_v1', ciphertext: 'cipher-1' },
-        metadata: { kind: 'oauth', providerEmail: 'user@example.com', providerAccountId: null, expiresAt: 123 },
-      }),
-    }));
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          sealed: { format: 'account_scoped_v1', ciphertext: 'cipher-1' },
+          metadata: { kind: 'oauth', providerEmail: 'user@example.com', providerAccountId: null, expiresAt: 123 },
+        }),
+      };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { getConnectedServiceCredentialSealed } = await import('./apiConnectedServicesV2');
@@ -85,18 +101,19 @@ describe('apiConnectedServicesV2', () => {
         headers: expect.any(Headers),
       }),
     );
-    const init = fetchMock.mock.calls[0]?.[1];
-    if (!init) throw new Error('Expected fetch init');
+    const init = resolveNonHealthCall(fetchMock, 'https://api.example.test/v2/connect/openai-codex/profiles/work/credential');
     expect((init.headers as Headers).get('Authorization')).toBe('Bearer t');
   });
 
   it('treats 404 not found as a successful disconnect (idempotent)', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => ({
-      ok: false,
-      status: 404,
-      json: async () => ({ error: 'connect_credential_not_found' }),
-    }));
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: false, status: 404, json: async () => ({ error: 'connect_credential_not_found' }) };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { deleteConnectedServiceCredential } = await import('./apiConnectedServicesV2');
@@ -106,18 +123,19 @@ describe('apiConnectedServicesV2', () => {
       'https://api.example.test/v2/connect/anthropic/profiles/work/credential',
       expect.objectContaining({ method: 'DELETE', headers: expect.any(Headers) }),
     );
-    const init = fetchMock.mock.calls[0]?.[1];
-    if (!init) throw new Error('Expected fetch init');
+    const init = resolveNonHealthCall(fetchMock, 'https://api.example.test/v2/connect/anthropic/profiles/work/credential');
     expect((init.headers as Headers).get('Content-Type')).toBeNull();
   });
 
   it('posts OAuth exchange params to the proxy endpoint and returns bundle', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ bundle: 'bundle-1' }),
-    }));
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ bundle: 'bundle-1' }) };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { exchangeConnectedServiceOauthViaProxy } = await import('./apiConnectedServicesV2');
@@ -138,8 +156,7 @@ describe('apiConnectedServicesV2', () => {
         headers: expect.any(Headers),
       }),
     );
-    const init = fetchMock.mock.calls[0]?.[1];
-    if (!init) throw new Error('Expected fetch init');
+    const init = resolveNonHealthCall(fetchMock, 'https://api.example.test/v2/connect/openai-codex/oauth/exchange');
     const body = JSON.parse(String(init.body));
     expect(body).toEqual(
       expect.objectContaining({
@@ -154,16 +171,22 @@ describe('apiConnectedServicesV2', () => {
 
   it('starts OpenAI Codex device auth via the v2 endpoint', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        deviceAuthId: 'dev-1',
-        userCode: 'ABCD-EFGH',
-        intervalMs: 5000,
-        verificationUrl: 'https://auth.openai.com/codex/device',
-      }),
-    }));
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          deviceAuthId: 'dev-1',
+          userCode: 'ABCD-EFGH',
+          intervalMs: 5000,
+          verificationUrl: 'https://auth.openai.com/codex/device',
+        }),
+      };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { startOpenAiCodexDeviceAuthViaProxy } = await import('./apiConnectedServicesV2');
@@ -178,11 +201,13 @@ describe('apiConnectedServicesV2', () => {
 
   it('polls OpenAI Codex device auth via the v2 endpoint', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ status: 'pending', retryAfterMs: 8000 }),
-    }));
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ status: 'pending', retryAfterMs: 8000 }) };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { pollOpenAiCodexDeviceAuthViaProxy } = await import('./apiConnectedServicesV2');

@@ -1,4 +1,8 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
+import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
+import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const GEMINI_CORE: AgentCoreConfig = {
@@ -13,15 +17,7 @@ export const GEMINI_CORE: AgentCoreConfig = {
         connectRoute: null,
     },
     flavorAliases: ['gemini'],
-    cli: {
-        detectKey: 'gemini',
-        machineLoginKey: 'gemini-cli',
-        installBanner: {
-            installKind: 'ifAvailable',
-            guideUrl: 'https://ai.google.dev/gemini-api/docs/get-started',
-        },
-        spawnAgent: 'gemini',
-    },
+    cli: buildCatalogProviderCliUiConfig('gemini'),
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
@@ -30,18 +26,16 @@ export const GEMINI_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('gemini'),
     },
     model: getAgentModelConfig('gemini'),
-    resume: {
-        // Runtime-gated via ACP capability probing (loadSession).
-        vendorResumeIdField: 'geminiSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'gemini',
         uiVendorResumeIdLabelKey: 'sessionInfo.geminiSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.geminiSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },
+    tools: buildAgentToolsUiConfig({ agentId: 'gemini' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'gemini' }),
     ui: {
         agentPickerIconName: 'planet-outline',
         cliGlyphScale: 1.0,

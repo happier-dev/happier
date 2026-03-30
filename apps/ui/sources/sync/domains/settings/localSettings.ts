@@ -1,31 +1,11 @@
 import { z } from 'zod';
+import { LOCAL_SETTING_ARTIFACTS } from './registry/local/localSettingDefinitions';
 
 //
 // Schema
 //
 
-export const LocalSettingsSchema = z.object({
-    // Developer settings (device-specific)
-    debugMode: z.boolean().describe('Enable debug logging'),
-    devModeEnabled: z.boolean().describe('Enable developer menu in settings'),
-    commandPaletteEnabled: z.boolean().describe('Enable CMD+K command palette (web only)'),
-    themePreference: z.enum(['light', 'dark', 'adaptive']).describe('Theme preference: light, dark, or adaptive (follows system)'),
-    uiFontScale: z.number().describe('In-app UI font scale multiplier (stacks with OS font scale)'),
-    uiFontSize: z.enum(['xxsmall', 'xsmall', 'small', 'default', 'large', 'xlarge', 'xxlarge']).optional().describe('Deprecated: legacy in-app UI font size'),
-    sidebarCollapsed: z.boolean().describe('Collapse the permanent sidebar on tablets'),
-    sidebarWidthPx: z.number().describe('Preferred sidebar width in px'),
-    sidebarWidthBasisPx: z.number().describe('Container width basis for sidebar width scaling'),
-    uiMultiPanePanelsEnabled: z.boolean().describe('Enable multi-pane right/details panels (web/tablet)'),
-    sessionsRightPaneDefaultOpen: z.boolean().describe('Automatically open the right sidebar when entering a session (web/tablet)'),
-    detailsPaneTabsBehavior: z.enum(['preview', 'persistent']).describe('Details pane tab behavior: preview (single slot) or persistent'),
-    editorFocusModeEnabled: z.boolean().describe('Hide main content + sidebar to focus on right/details panes (web/tablet)'),
-    rightPaneWidthPx: z.number().describe('Preferred right pane dock width in px'),
-    rightPaneWidthBasisPx: z.number().describe('Container width basis for right pane width scaling'),
-    detailsPaneWidthPx: z.number().describe('Preferred details pane dock width in px'),
-    detailsPaneWidthBasisPx: z.number().describe('Container width basis for details pane width scaling'),
-    // CLI version acknowledgments - keyed by machineId
-    acknowledgedCliVersions: z.record(z.string(), z.string()).describe('Acknowledged CLI versions per machine'),
-});
+export const LocalSettingsSchema = z.object(LOCAL_SETTING_ARTIFACTS.shape);
 
 //
 // NOTE: Local settings are device-specific and should NOT be synced.
@@ -33,6 +13,7 @@ export const LocalSettingsSchema = z.object({
 //
 
 const LocalSettingsSchemaPartial = LocalSettingsSchema.passthrough().partial();
+type LocalSettingsParseInput = z.infer<typeof LocalSettingsSchemaPartial>;
 
 export type LocalSettings = z.infer<typeof LocalSettingsSchema>;
 
@@ -40,26 +21,7 @@ export type LocalSettings = z.infer<typeof LocalSettingsSchema>;
 // Defaults
 //
 
-export const localSettingsDefaults: LocalSettings = {
-    debugMode: false,
-    devModeEnabled: false,
-    commandPaletteEnabled: false,
-    themePreference: 'adaptive',
-    uiFontScale: 1,
-    uiFontSize: 'default',
-    sidebarCollapsed: false,
-    sidebarWidthPx: 320,
-    sidebarWidthBasisPx: 1200,
-    uiMultiPanePanelsEnabled: true,
-    sessionsRightPaneDefaultOpen: false,
-    detailsPaneTabsBehavior: 'preview',
-    editorFocusModeEnabled: false,
-    rightPaneWidthPx: 360,
-    rightPaneWidthBasisPx: 1200,
-    detailsPaneWidthPx: 520,
-    detailsPaneWidthBasisPx: 1200,
-    acknowledgedCliVersions: {},
-};
+export const localSettingsDefaults: LocalSettings = LOCAL_SETTING_ARTIFACTS.defaults;
 Object.freeze(localSettingsDefaults);
 
 //
@@ -87,7 +49,7 @@ export function localSettingsParse(settings: unknown): LocalSettings {
     const UI_FONT_SCALE_MIN = 0.5;
     const UI_FONT_SCALE_MAX = 2.5;
 
-    const data = parsed.data as any;
+    const data: LocalSettingsParseInput = parsed.data;
     const nextUiFontScaleRaw =
         typeof data.uiFontScale === 'number'
             ? data.uiFontScale

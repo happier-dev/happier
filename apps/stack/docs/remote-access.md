@@ -35,7 +35,8 @@ HAPPIER_STACK_TAILSCALE_SERVE=1 hstack start
 
 Useful knobs:
 - `HAPPIER_STACK_TAILSCALE_WAIT_MS`
-- `HAPPIER_STACK_TAILSCALE_BIN`
+- `HAPPIER_TAILSCALE_BIN` (preferred unified override)
+- `HAPPIER_STACK_TAILSCALE_BIN` (legacy stack-specific alias)
 
 ## Using the native Happier mobile app (optional)
 

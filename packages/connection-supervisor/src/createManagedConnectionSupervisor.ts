@@ -1,0 +1,336 @@
+import { deriveManagedConnectionReason } from './managedConnectionEvents.js';
+import { computeManagedConnectionBackoffMs } from './reconnectBackoff.js';
+import type {
+  ManagedConnectionState,
+  ManagedConnectionSupervisor,
+  ManagedConnectionSupervisorConfig,
+  ManagedConnectionTransport,
+  ReadinessProbeResult,
+  TransportDisconnectEvent,
+} from './managedConnectionTypes.js';
+
+function readProbeErrorMessage(probe: ReadinessProbeResult | undefined, fallback: string | null): string | null {
+  if (!probe || probe.status === 'ready') return fallback;
+  return probe.errorMessage ?? fallback;
+}
+
+function initialState(): ManagedConnectionState {
+  return {
+    phase: 'idle',
+    reason: null,
+    attempt: 0,
+    nextRetryAt: null,
+    lastConnectedAt: null,
+    lastDisconnectedAt: null,
+    lastErrorMessage: null,
+  };
+}
+
+export function createManagedConnectionSupervisor(
+  config: ManagedConnectionSupervisorConfig,
+): ManagedConnectionSupervisor {
+  let state = initialState();
+  let currentTransport: ManagedConnectionTransport | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let isStarted = false;
+  let isStopped = false;
+  let reconnectAttempt = 0;
+  let generation = 0;
+  let detachCurrentListeners: Array<() => void> = [];
+  let startInFlight: Promise<void> | null = null;
+  const maxFastRetries =
+    Number.isFinite(config.maxFastRetries) ? Math.max(0, Math.floor(config.maxFastRetries)) : 0;
+
+  function publish(next: ManagedConnectionState): void {
+    state = next;
+    config.onStateChange?.(state);
+  }
+
+  function clearRetryTimer(): void {
+    if (!retryTimer) return;
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+
+  async function cleanupTransport(params: { intentional?: boolean } = {}): Promise<void> {
+    const transport = currentTransport;
+    currentTransport = null;
+    for (const detach of detachCurrentListeners.splice(0)) {
+      detach();
+    }
+    if (!transport) return;
+    try {
+      await transport.disconnect({ intentional: params.intentional === true });
+    } catch {}
+    await transport.destroy().catch(() => {});
+  }
+
+  async function establishConnection(params: { initial?: boolean; attempt: number }): Promise<void> {
+    const localGeneration = ++generation;
+    clearRetryTimer();
+    if (currentTransport) {
+      await cleanupTransport();
+    }
+    if (isStopped) return;
+
+    if (params.initial && config.probeBeforeInitialConnect) {
+      const probe = await config.probeReadiness().catch((error): ReadinessProbeResult => ({
+        status: 'server_unreachable',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      }));
+      if (localGeneration !== generation || isStopped) return;
+
+      const initialProbeAttempt = Math.max(1, params.attempt + 1);
+      if (probe.status === 'auth_failed') {
+        publish({
+          ...state,
+          phase: 'auth_failed',
+          reason: deriveManagedConnectionReason({ probe }),
+          attempt: initialProbeAttempt,
+          nextRetryAt: null,
+          lastErrorMessage: readProbeErrorMessage(probe, state.lastErrorMessage),
+        });
+        await config.onAuthFailed?.({ state, probe });
+        return;
+      }
+
+      if (probe.status !== 'ready') {
+        const delayMs =
+          probe.status === 'retry_later' && typeof probe.retryAfterMs === 'number' && Number.isFinite(probe.retryAfterMs)
+            ? Math.max(1, probe.retryAfterMs)
+            : computeManagedConnectionBackoffMs({
+                attempt: initialProbeAttempt,
+                minMs: config.backoffMinMs,
+                maxMs: config.backoffMaxMs,
+                jitterRatio: config.jitterRatio,
+              });
+        scheduleReconnect(initialProbeAttempt, delayMs, probe);
+        return;
+      }
+    }
+
+    const transport = config.createTransport();
+    currentTransport = transport;
+
+    detachCurrentListeners = [
+      transport.onConnected(() => {
+        if (localGeneration !== generation || isStopped) return;
+        // Defensive: if we previously scheduled a reconnect timer (e.g. from a transient connect_error) and the
+        // transport still ends up connected, ensure we don't reconnect again later from the stale timer.
+        clearRetryTimer();
+        const now = Date.now();
+        reconnectAttempt = params.attempt;
+        publish({
+          phase: 'online',
+          reason: params.initial ? 'initial_connect' : state.reason,
+          attempt: params.attempt,
+          nextRetryAt: null,
+          lastConnectedAt: now,
+          lastDisconnectedAt: state.lastDisconnectedAt,
+          lastErrorMessage: null,
+        });
+        void config.onConnected?.({ state });
+      }),
+      transport.onDisconnected((event) => {
+        if (localGeneration !== generation || isStopped) return;
+        void handleDisconnect(event);
+      }),
+      transport.onError((error) => {
+        if (localGeneration !== generation || isStopped) return;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (state.phase === 'connecting' && currentTransport === transport && transport.isConnected() !== true) {
+          const nextAttempt = Math.max(1, state.attempt + 1);
+          const delayMs =
+            nextAttempt <= maxFastRetries
+              ? Math.max(0, config.initialFastRetryDelayMs)
+              : computeManagedConnectionBackoffMs({
+                  attempt: nextAttempt,
+                  minMs: config.backoffMinMs,
+                  maxMs: config.backoffMaxMs,
+                  jitterRatio: config.jitterRatio,
+                });
+          scheduleReconnect(nextAttempt, delayMs, {
+            status: 'server_unreachable',
+            errorMessage,
+          });
+          return;
+        }
+        publish({
+          ...state,
+          lastErrorMessage: errorMessage,
+        });
+      }),
+    ];
+
+    publish({
+      ...state,
+      phase: 'connecting',
+      reason: params.initial ? 'initial_connect' : state.reason,
+      attempt: params.attempt,
+      nextRetryAt: null,
+      lastErrorMessage: null,
+    });
+
+    try {
+      await transport.connect();
+    } catch (error) {
+      if (localGeneration !== generation || isStopped) return;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const nextAttempt = Math.max(1, state.attempt + 1);
+      const delayMs =
+        nextAttempt <= maxFastRetries
+          ? Math.max(0, config.initialFastRetryDelayMs)
+          : computeManagedConnectionBackoffMs({
+              attempt: nextAttempt,
+              minMs: config.backoffMinMs,
+              maxMs: config.backoffMaxMs,
+              jitterRatio: config.jitterRatio,
+            });
+      scheduleReconnect(nextAttempt, delayMs, {
+        status: 'server_unreachable',
+        errorMessage,
+      });
+    }
+  }
+
+  async function runProbeAndReconnect(attempt: number): Promise<void> {
+    if (isStopped) return;
+    const localGeneration = generation;
+    const probe = await config.probeReadiness().catch((error): ReadinessProbeResult => ({
+      status: 'server_unreachable',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    }));
+    if (isStopped || localGeneration !== generation) return;
+
+    if (probe.status === 'auth_failed') {
+      publish({
+        ...state,
+        phase: 'auth_failed',
+        reason: deriveManagedConnectionReason({ probe }),
+        attempt,
+        nextRetryAt: null,
+        lastErrorMessage: readProbeErrorMessage(probe, state.lastErrorMessage),
+      });
+      await config.onAuthFailed?.({ state, probe });
+      return;
+    }
+
+    if (probe.status !== 'ready') {
+      const nextAttempt = attempt + 1;
+      const delayMs =
+        probe.status === 'retry_later' && typeof probe.retryAfterMs === 'number' && Number.isFinite(probe.retryAfterMs)
+          ? Math.max(1, probe.retryAfterMs)
+          : computeManagedConnectionBackoffMs({
+              attempt: nextAttempt,
+              minMs: config.backoffMinMs,
+              maxMs: config.backoffMaxMs,
+              jitterRatio: config.jitterRatio,
+            });
+      scheduleReconnect(nextAttempt, delayMs, probe);
+      return;
+    }
+
+    await config.onBeforeReconnect?.({ attempt, state });
+    if (isStopped || localGeneration !== generation) return;
+    await establishConnection({ attempt });
+  }
+
+  function scheduleReconnect(attempt: number, delayMs: number, probe?: ReadinessProbeResult): void {
+    if (isStopped) return;
+    clearRetryTimer();
+    const now = Date.now();
+    publish({
+      phase: 'offline',
+      reason: deriveManagedConnectionReason({ probe }),
+      attempt,
+      nextRetryAt: now + delayMs,
+      lastConnectedAt: state.lastConnectedAt,
+      lastDisconnectedAt: state.lastDisconnectedAt,
+      lastErrorMessage: readProbeErrorMessage(probe, state.lastErrorMessage),
+    });
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void runProbeAndReconnect(attempt);
+    }, Math.max(0, delayMs));
+  }
+
+  async function handleDisconnect(event: TransportDisconnectEvent): Promise<void> {
+    const attempt = reconnectAttempt + 1;
+    reconnectAttempt = attempt;
+    const now = Date.now();
+    publish({
+      phase: 'offline',
+      reason: deriveManagedConnectionReason({ disconnectEvent: event }),
+      attempt,
+      nextRetryAt: null,
+      lastConnectedAt: state.lastConnectedAt,
+      lastDisconnectedAt: now,
+      lastErrorMessage: event.error instanceof Error ? event.error.message : event.error ? String(event.error) : null,
+    });
+    await config.onDisconnected?.({ state, event });
+    if (event.intentional || isStopped) {
+      return;
+    }
+
+    const isFastRetry = attempt <= maxFastRetries;
+    const delayMs = isFastRetry
+      ? Math.max(0, config.initialFastRetryDelayMs)
+      : computeManagedConnectionBackoffMs({
+          attempt,
+          minMs: config.backoffMinMs,
+          maxMs: config.backoffMaxMs,
+          jitterRatio: config.jitterRatio,
+        });
+    scheduleReconnect(attempt, delayMs);
+  }
+
+  return {
+    async start(): Promise<void> {
+      if (startInFlight && !isStopped) {
+        await startInFlight;
+        return;
+      }
+
+      const run = async (): Promise<void> => {
+      if (isStarted && !isStopped) {
+        if (state.phase === 'online' || state.phase === 'connecting') {
+          return;
+        }
+        reconnectAttempt = 0;
+        await establishConnection({ initial: config.probeBeforeInitialConnect === true, attempt: 0 });
+        return;
+      }
+      isStarted = true;
+      isStopped = false;
+      reconnectAttempt = 0;
+      await establishConnection({ initial: true, attempt: 0 });
+      };
+
+      const promise = run();
+      startInFlight = promise;
+      try {
+        await promise;
+      } finally {
+        if (startInFlight === promise) {
+          startInFlight = null;
+        }
+      }
+    },
+    async stop(): Promise<void> {
+      if (isStopped) return;
+      isStopped = true;
+      startInFlight = null;
+      clearRetryTimer();
+      publish({
+        ...state,
+        phase: 'shutting_down',
+        reason: 'intentional_shutdown',
+        nextRetryAt: null,
+      });
+      await cleanupTransport({ intentional: true });
+    },
+    getState(): ManagedConnectionState {
+      return state;
+    },
+  };
+}

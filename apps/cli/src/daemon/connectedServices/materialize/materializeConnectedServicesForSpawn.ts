@@ -14,7 +14,8 @@ import { materializeGeminiConnectedServiceAuth } from '@/backends/gemini/connect
 import { materializeOpenCodeConnectedServiceAuth } from '@/backends/opencode/connectedServices/materializeOpenCodeConnectedServiceAuth';
 import { materializePiConnectedServiceAuth } from '@/backends/pi/connectedServices/materializePiConnectedServiceAuth';
 import { normalizeMaterializationKeyForPath } from './normalizeMaterializationKeyForPath';
-import { requireConnectedServiceTokenCredentialRecord } from '@/backends/connectedServices/connectedServiceCredentialRecord';
+import { requireConnectedServiceTokenCredentialRecord } from '@/daemon/connectedServices/shared/connectedServiceCredentialRecord';
+import { resolveConnectedServiceHomeDir } from '../homes/resolveConnectedServiceHomeDir';
 
 type MaterializeResult = Readonly<{
   env: Record<string, string>;
@@ -34,6 +35,7 @@ function bestEffortCleanupDirectory(path: string): () => void {
 export async function materializeConnectedServicesForSpawn(params: Readonly<{
   agentId: CatalogAgentId;
   materializationKey: string;
+  activeServerDir: string;
   baseDir: string;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
 }>): Promise<MaterializeResult | null> {
@@ -51,9 +53,15 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
 
   if (params.agentId === 'codex') {
     if (codex) {
-      const materialized = await materializeCodexConnectedServiceAuth({ rootDir, record: codex });
+      const stableRootDir = resolveConnectedServiceHomeDir({
+        activeServerDir: params.activeServerDir,
+        serviceId: codex.serviceId,
+        profileId: codex.profileId,
+        agentId: params.agentId,
+      });
+      const materialized = await materializeCodexConnectedServiceAuth({ rootDir: stableRootDir, record: codex });
       Object.assign(env, materialized.env);
-      return { env, cleanupOnFailure: cleanupRoot, cleanupOnExit: cleanupRoot };
+      return { env, cleanupOnFailure: null, cleanupOnExit: null };
     }
     if (!openai) return null;
     const token = requireConnectedServiceTokenCredentialRecord(openai);

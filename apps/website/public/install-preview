@@ -294,6 +294,9 @@ action_uninstall() {
 
   rm -f "${BIN_DIR}/${exe}" "${INSTALL_DIR}/bin/${exe}.new" "${INSTALL_DIR}/bin/${exe}.previous" || true
   rm -f "${INSTALL_DIR}/bin/${exe}" || true
+  if [[ "${PRODUCT}" == "cli" ]]; then
+    rm -rf "${INSTALL_DIR}/cli" || true
+  fi
   if [[ "${PURGE_INSTALL_DIR}" == "1" ]]; then
     rm -rf "${INSTALL_DIR}" || true
   fi
@@ -318,12 +321,69 @@ tar_extract_gz() {
   tar -xzf "${archive_path}" -C "${dest_dir}" 2> >(grep -v -E "^tar: Ignoring unknown extended header keyword" >&2 || true)
 }
 
+normalize_channel() {
+  local raw="${1:-}"
+  case "${raw}" in
+    ""|stable) echo "stable" ;;
+    preview) echo "preview" ;;
+    publicdev|dev) echo "publicdev" ;;
+    *) echo "${raw}" ;;
+  esac
+}
+
+rolling_suffix_for_channel() {
+  case "$1" in
+    stable) echo "stable" ;;
+    preview) echo "preview" ;;
+    publicdev) echo "dev" ;;
+    *) return 1 ;;
+  esac
+}
+
+display_channel_label() {
+  case "$1" in
+    publicdev|dev) echo "dev" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+resolve_release_tag() {
+  local product="$1"
+  local channel="$2"
+  local suffix=""
+  suffix="$(rolling_suffix_for_channel "${channel}")" || return 1
+  case "${product}" in
+    cli) echo "cli-${suffix}" ;;
+    server) echo "server-${suffix}" ;;
+    stack) echo "stack-${suffix}" ;;
+    *) return 1 ;;
+  esac
+}
+
+cli_managed_install_root() {
+  case "$1" in
+    stable) echo "cli" ;;
+    preview) echo "cli-preview" ;;
+    publicdev) echo "cli-dev" ;;
+    *) return 1 ;;
+  esac
+}
+
+cli_shim_name() {
+  case "$1" in
+    stable) echo "happier" ;;
+    preview) echo "hprev" ;;
+    publicdev) echo "hdev" ;;
+    *) return 1 ;;
+  esac
+}
+
 action_version() {
   local name
   name="$(resolve_install_name)"
 
-  if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
-    echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
+  if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" && "${CHANNEL}" != "publicdev" ]]; then
+    echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable, preview, or dev." >&2
     return 1
   fi
 
@@ -336,21 +396,21 @@ action_version() {
     return 1
   fi
 
-  local tag="cli-stable"
+  local tag=""
   local asset_regex="^happier-v.*-${os}-${arch}[.]tar[.]gz$"
   local version_prefix="happier-v"
   if [[ "${PRODUCT}" == "server" ]]; then
-    tag="server-stable"
     asset_regex="^happier-server-v.*-${os}-${arch}[.]tar[.]gz$"
     version_prefix="happier-server-v"
   fi
-  if [[ "${CHANNEL}" == "preview" ]]; then
-    if [[ "${PRODUCT}" == "server" ]]; then
-      tag="server-preview"
-    else
-      tag="cli-preview"
-    fi
+  if [[ "${PRODUCT}" == "stack" ]]; then
+    asset_regex="^hstack-v.*-${os}-${arch}[.]tar[.]gz$"
+    version_prefix="hstack-v"
   fi
+  tag="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}")" || {
+    echo "Unsupported product/channel combination: ${PRODUCT}/${CHANNEL}" >&2
+    return 1
+  }
 
   local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}"
   info "Fetching ${tag} release metadata..."
@@ -387,7 +447,7 @@ action_version() {
   fi
 
   say "${name} installer version check"
-  say "- channel: ${CHANNEL}"
+  say "- channel: $(display_channel_label "${CHANNEL}")"
   say "- product: ${PRODUCT}"
   say "- platform: ${os}-${arch}"
   say "- version: ${version}"
@@ -404,10 +464,16 @@ Preview channel:
   curl -fsSL https://happier.dev/install | HAPPIER_CHANNEL=preview bash
   curl -fsSL https://happier.dev/install-preview | bash
 
+Dev channel:
+  curl -fsSL https://happier.dev/install | bash -s -- --channel dev
+  curl -fsSL https://happier.dev/install | HAPPIER_CHANNEL=dev bash
+  curl -fsSL https://happier.dev/install-dev | bash
+
 Options:
-  --channel <stable|preview>
+  --channel <stable|preview|dev>
   --stable
   --preview
+  --dev
   --with-daemon
   --without-daemon
   --check
@@ -448,6 +514,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --preview)
       CHANNEL="preview"
+      shift 1
+      ;;
+    --dev)
+      CHANNEL="dev"
       shift 1
       ;;
     --with-daemon)
@@ -512,13 +582,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+CHANNEL="$(normalize_channel "${CHANNEL}")"
+
 if [[ "${DEBUG_MODE}" == "1" ]]; then
   VERBOSE_MODE="1"
   set -x
 fi
 
-if [[ "${PRODUCT}" != "cli" && "${PRODUCT}" != "server" ]]; then
-  echo "Invalid HAPPIER_PRODUCT='${PRODUCT}'. Expected cli or server." >&2
+if [[ "${PRODUCT}" != "cli" && "${PRODUCT}" != "server" && "${PRODUCT}" != "stack" ]]; then
+  echo "Invalid HAPPIER_PRODUCT='${PRODUCT}'. Expected cli, server, or stack." >&2
   exit 1
 fi
 
@@ -539,8 +611,8 @@ if [[ "${ACTION}" == "uninstall" ]]; then
   exit $?
 fi
 
-if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
-  echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
+if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" && "${CHANNEL}" != "publicdev" ]]; then
+  echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable, preview, or dev." >&2
   exit 1
 fi
 
@@ -722,13 +794,15 @@ if [[ "${OS}" == "unsupported" || "${ARCH}" == "unsupported" ]]; then
   echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2
   if [[ "${PRODUCT}" == "cli" ]]; then
     echo "Fallback: npm install -g @happier-dev/cli" >&2
+  elif [[ "${PRODUCT}" == "stack" ]]; then
+    echo "Fallback: npx --yes -p @happier-dev/stack@latest hstack --help" >&2
   else
     echo "Fallback: npx --yes --package @happier-dev/relay-server happier-server --help" >&2
   fi
   exit 1
 fi
 
-TAG="cli-stable"
+TAG=""
 ASSET_REGEX="^happier-v.*-${OS}-${ARCH}[.]tar[.]gz$"
 CHECKSUMS_REGEX="^checksums-happier-v.*[.]txt$"
 SIG_REGEX="^checksums-happier-v.*[.]txt[.]minisig$"
@@ -738,11 +812,6 @@ VERSION_PREFIX="happier-v"
 CHECKSUMS_PREFIX="checksums-happier-v"
 
 if [[ "${PRODUCT}" == "server" ]]; then
-  if [[ "${OS}" != "linux" ]]; then
-    echo "Happier server runtime binaries are currently published for Linux only." >&2
-    exit 1
-  fi
-  TAG="server-stable"
   ASSET_REGEX="^happier-server-v.*-${OS}-${ARCH}[.]tar[.]gz$"
   CHECKSUMS_REGEX="^checksums-happier-server-v.*[.]txt$"
   SIG_REGEX="^checksums-happier-server-v.*[.]txt[.]minisig$"
@@ -752,13 +821,20 @@ if [[ "${PRODUCT}" == "server" ]]; then
   CHECKSUMS_PREFIX="checksums-happier-server-v"
 fi
 
-if [[ "${CHANNEL}" == "preview" ]]; then
-  if [[ "${PRODUCT}" == "server" ]]; then
-    TAG="server-preview"
-  else
-    TAG="cli-preview"
-  fi
+if [[ "${PRODUCT}" == "stack" ]]; then
+  ASSET_REGEX="^hstack-v.*-${OS}-${ARCH}[.]tar[.]gz$"
+  CHECKSUMS_REGEX="^checksums-hstack-v.*[.]txt$"
+  SIG_REGEX="^checksums-hstack-v.*[.]txt[.]minisig$"
+  EXE_NAME="hstack"
+  INSTALL_NAME="Happier Stack"
+  VERSION_PREFIX="hstack-v"
+  CHECKSUMS_PREFIX="checksums-hstack-v"
 fi
+
+TAG="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}")" || {
+  echo "Unsupported product/channel combination: ${PRODUCT}/${CHANNEL}" >&2
+  exit 1
+}
 
 API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
 info "Fetching ${TAG} release metadata..."
@@ -776,6 +852,8 @@ curl_auth() {
 if ! RELEASE_JSON="$(curl_auth "${API_URL}")"; then
   if [[ "${CHANNEL}" == "stable" ]]; then
     echo "No stable releases found for ${INSTALL_NAME}." >&2
+  elif [[ "${CHANNEL}" == "publicdev" ]]; then
+    echo "No dev releases found for ${INSTALL_NAME}." >&2
   else
     echo "No preview releases found for ${INSTALL_NAME}." >&2
   fi
@@ -848,47 +926,108 @@ EXTRACT_DIR="${TMP_DIR}/extract"
 mkdir -p "${EXTRACT_DIR}"
 tar_extract_gz "${ARCHIVE_PATH}" "${EXTRACT_DIR}"
 
-BINARY_PATH="$(find "${EXTRACT_DIR}" -type f -name "${EXE_NAME}" -perm -u+x | head -n 1 || true)"
-if [[ -z "${BINARY_PATH}" ]]; then
+PAYLOAD_ROOT="${EXTRACT_DIR}/${VERSION_PREFIX}${VERSION}-${OS}-${ARCH}"
+if [[ ! -d "${PAYLOAD_ROOT}" ]]; then
+  echo "Failed to find extracted payload root: ${PAYLOAD_ROOT}" >&2
+  exit 1
+fi
+
+PAYLOAD_BINARY_PATH="${PAYLOAD_ROOT}/${EXE_NAME}"
+if [[ ! -x "${PAYLOAD_BINARY_PATH}" ]]; then
   echo "Failed to find extracted ${EXE_NAME} binary." >&2
   exit 1
 fi
 
 mkdir -p "${INSTALL_DIR}/bin" "${BIN_DIR}"
 TARGET_BIN="${INSTALL_DIR}/bin/${EXE_NAME}"
-STAGED_BIN="${TARGET_BIN}.new"
-PREVIOUS_BIN="${TARGET_BIN}.previous"
-cp "${BINARY_PATH}" "${STAGED_BIN}"
-chmod +x "${STAGED_BIN}"
-if [[ -f "${TARGET_BIN}" ]]; then
-  cp "${TARGET_BIN}" "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
-  chmod +x "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+DISPLAY_BINARY_PATH="${TARGET_BIN}"
+DISPLAY_SHIM_PATH="${BIN_DIR}/${EXE_NAME}"
+CLI_USED_LEGACY_FALLBACK="0"
+
+if [[ "${PRODUCT}" == "cli" ]]; then
+  CLI_MANAGED_ROOT="$(cli_managed_install_root "${CHANNEL}")" || {
+    echo "Unsupported CLI channel: ${CHANNEL}" >&2
+    exit 1
+  }
+  CLI_SHIM_NAME="$(cli_shim_name "${CHANNEL}")" || {
+    echo "Unsupported CLI shim channel: ${CHANNEL}" >&2
+    exit 1
+  }
+  DISPLAY_BINARY_PATH="${INSTALL_DIR}/${CLI_MANAGED_ROOT}/current/${EXE_NAME}"
+  DISPLAY_SHIM_PATH="${BIN_DIR}/${CLI_SHIM_NAME}"
+  PROMOTION_OUTPUT=""
+  if ! PROMOTION_OUTPUT="$(
+    HAPPIER_HOME_DIR="${INSTALL_DIR}" "${PAYLOAD_BINARY_PATH}" self __install-payload \
+      --component happier-cli \
+      --payload-root "${PAYLOAD_ROOT}" \
+      --version "${VERSION}" \
+      --channel "${CHANNEL}" \
+      2>&1
+  )"; then
+    if printf '%s' "${PROMOTION_OUTPUT}" | grep -Eq 'Unknown self subcommand: __install-payload'; then
+      warn "Falling back to legacy binary install because the extracted CLI does not support payload promotion."
+      CLI_USED_LEGACY_FALLBACK="1"
+      DISPLAY_BINARY_PATH="${TARGET_BIN}"
+    else
+      printf '%s\n' "${PROMOTION_OUTPUT}" >&2
+      exit 1
+    fi
+    STAGED_BIN="${TARGET_BIN}.new"
+    PREVIOUS_BIN="${TARGET_BIN}.previous"
+    cp "${PAYLOAD_BINARY_PATH}" "${STAGED_BIN}"
+    chmod +x "${STAGED_BIN}"
+    if [[ -f "${TARGET_BIN}" ]]; then
+      cp "${TARGET_BIN}" "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+      chmod +x "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+    fi
+    mv -f "${STAGED_BIN}" "${TARGET_BIN}"
+    chmod +x "${TARGET_BIN}"
+  fi
+else
+  STAGED_BIN="${TARGET_BIN}.new"
+  PREVIOUS_BIN="${TARGET_BIN}.previous"
+  cp "${PAYLOAD_BINARY_PATH}" "${STAGED_BIN}"
+  chmod +x "${STAGED_BIN}"
+  if [[ -f "${TARGET_BIN}" ]]; then
+    cp "${TARGET_BIN}" "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+    chmod +x "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+  fi
+  # Avoid ETXTBSY when replacing a running executable: swap the directory entry atomically.
+  mv -f "${STAGED_BIN}" "${TARGET_BIN}"
+  chmod +x "${TARGET_BIN}"
 fi
-# Avoid ETXTBSY when replacing a running executable: swap the directory entry atomically.
-mv -f "${STAGED_BIN}" "${TARGET_BIN}"
-chmod +x "${TARGET_BIN}"
-ln -sf "${INSTALL_DIR}/bin/${EXE_NAME}" "${BIN_DIR}/${EXE_NAME}"
+
+if [[ "${PRODUCT}" == "cli" && "${CLI_USED_LEGACY_FALLBACK}" != "1" ]]; then
+  CLI_INSTALLED_SHIM_PATH="${INSTALL_DIR}/bin/${CLI_SHIM_NAME}"
+  if [[ -x "${CLI_INSTALLED_SHIM_PATH}" ]]; then
+    ln -sf "${CLI_INSTALLED_SHIM_PATH}" "${DISPLAY_SHIM_PATH}"
+  else
+    ln -sf "${DISPLAY_BINARY_PATH}" "${DISPLAY_SHIM_PATH}"
+  fi
+else
+  ln -sf "${TARGET_BIN}" "${DISPLAY_SHIM_PATH}"
+fi
 
 append_path_hint
 
 if [[ "${PRODUCT}" == "cli" && "${WITH_DAEMON}" == "1" ]]; then
   echo
   info "Installing daemon service (user-mode)..."
-  if ! "${INSTALL_DIR}/bin/${EXE_NAME}" daemon service install >/dev/null 2>&1; then
+  if ! "${DISPLAY_SHIM_PATH}" daemon service install >/dev/null 2>&1; then
     echo "Warning: daemon service install failed. You can retry manually:" >&2
-    echo "  ${INSTALL_DIR}/bin/${EXE_NAME} daemon service install" >&2
+    echo "  ${DISPLAY_SHIM_PATH} daemon service install" >&2
   fi
 fi
 
 echo
 echo "${INSTALL_NAME} installed:"
-echo "  binary: ${INSTALL_DIR}/bin/${EXE_NAME}"
-echo "  shim:   ${BIN_DIR}/${EXE_NAME}"
+echo "  binary: ${DISPLAY_BINARY_PATH}"
+echo "  shim:   ${DISPLAY_SHIM_PATH}"
 echo
 if [[ "${NONINTERACTIVE}" != "1" ]]; then
   if [[ "${PRODUCT}" == "server" ]]; then
-    "${INSTALL_DIR}/bin/${EXE_NAME}" --help >/dev/null 2>&1 || true
+    "${DISPLAY_BINARY_PATH}" --help >/dev/null 2>&1 || true
   else
-    "${INSTALL_DIR}/bin/${EXE_NAME}" --version || true
+    "${DISPLAY_BINARY_PATH}" --version || true
   fi
 fi

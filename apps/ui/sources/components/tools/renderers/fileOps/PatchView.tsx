@@ -9,6 +9,7 @@ import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView
 import { useSetting } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 
 
 type PatchChange = {
@@ -66,21 +67,77 @@ function extractChanges(input: unknown): PatchChange[] {
     return out;
 }
 
+function extractChangesFromResult(result: unknown): PatchChange[] {
+    const obj = asRecord(result);
+    const metadata = asRecord(obj?.metadata);
+    const files = Array.isArray(metadata?.files) ? (metadata?.files as unknown[]) : null;
+    if (!files) return [];
+
+    const out: PatchChange[] = [];
+    for (const raw of files) {
+        const file = asRecord(raw);
+        if (!file) continue;
+        const relativePath = firstNonEmptyString(file.relativePath);
+        const absolutePath = firstNonEmptyString(file.filePath);
+        const filePath = relativePath ?? absolutePath;
+        if (!filePath) continue;
+
+        const before = typeof file.before === 'string' ? file.before : '';
+        const after = typeof file.after === 'string' ? file.after : '';
+        if (!before && !after) continue;
+
+        out.push({ filePath, oldText: before, newText: after });
+    }
+
+    return out;
+}
+
+function extractErrorMessage(result: unknown): string | null {
+    if (!result) return null;
+    if (typeof result === 'string') return firstNonEmptyString(result);
+    const obj = asRecord(result);
+    if (!obj) return null;
+
+    return (
+        firstNonEmptyString(obj.errorMessage) ??
+        firstNonEmptyString(obj.error) ??
+        firstNonEmptyString(obj.message) ??
+        null
+    );
+}
+
 export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLevel }) => {
     const { theme } = useUnistyles();
     const { input } = tool;
+    const errorMessage = tool.state === 'error' ? extractErrorMessage(tool.result) : null;
 
     const files: string[] = [];
     if (input?.changes && typeof input.changes === 'object') {
         files.push(...Object.keys(input.changes));
     }
 
+    if (files.length === 0) {
+        if (errorMessage) {
+            return (
+                <ToolSectionView>
+                    <ToolError message={errorMessage} />
+                </ToolSectionView>
+            );
+        }
+        return null;
+    }
+
     if (detailLevel === 'full') {
         const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
-        const changes = extractChanges(tool.input);
+        const changes = (() => {
+            const fromResult = extractChangesFromResult(tool.result);
+            if (fromResult.length > 0) return fromResult;
+            return extractChanges(tool.input);
+        })();
         if (changes.length > 0) {
             return (
                 <ToolSectionView fullWidth>
+                    {errorMessage ? <ToolError message={errorMessage} /> : null}
                     <View style={styles.fullContainer}>
                         {changes.map((change) => {
                             const resolved = resolvePath(change.filePath, metadata);
@@ -124,16 +181,13 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
         (tool.result as any).applied === true
     );
 
-    if (files.length === 0) {
-        return null;
-    }
-
     if (files.length === 1) {
         const filePath = resolvePath(files[0], metadata);
         const fileName = filePath.split('/').pop() || filePath;
 
         return (
             <ToolSectionView>
+                {errorMessage ? <ToolError message={errorMessage} /> : null}
                 <View style={styles.fileContainer}>
                     <Octicons name="file-diff" size={16} color={theme.colors.textSecondary} />
                     <Text style={styles.fileName}>{fileName}</Text>
@@ -146,6 +200,7 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
 
     return (
         <ToolSectionView>
+            {errorMessage ? <ToolError message={errorMessage} /> : null}
             <View style={styles.filesContainer}>
                 {allDeletes ? <Text style={styles.applied}>{t('common.deleted')}</Text> : null}
                 {applied ? <Text style={styles.applied}>{t('common.applied')}</Text> : null}

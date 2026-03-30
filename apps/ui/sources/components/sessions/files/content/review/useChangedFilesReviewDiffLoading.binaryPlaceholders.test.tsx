@@ -1,10 +1,16 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { useChangedFilesReviewDiffLoading } from './useChangedFilesReviewDiffLoading';
+import { renderScreen } from '@/dev/testkit';
+import { installFilesContentCommonModuleMocks } from '../filesContentTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+installFilesContentCommonModuleMocks();
 
 const sessionScmDiffFileSpy = vi.fn(async (..._args: any[]) => ({
     success: true,
@@ -15,10 +21,6 @@ const sessionScmDiffFileSpy = vi.fn(async (..._args: any[]) => ({
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: (...args: any[]) => sessionScmDiffFileSpy(...args),
     sessionReadFile: vi.fn(),
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
 }));
 
 vi.mock('@/scm/utils/filePresentation', () => ({
@@ -40,7 +42,7 @@ describe('useChangedFilesReviewDiffLoading (binary placeholders)', () => {
             linesRemoved: 0,
         } as any;
 
-        let captured: any = null;
+        let diffStateSource: any = null;
 
         function Probe() {
             const reviewFiles = React.useMemo(() => [file], []);
@@ -57,23 +59,23 @@ describe('useChangedFilesReviewDiffLoading (binary placeholders)', () => {
                 normalizeError,
                 fallbackError: 'fallback',
             });
-            captured = hook.getDiffState('src/image.png');
+            diffStateSource = hook.diffStateSource;
             return React.createElement('Probe');
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         for (let i = 0; i < 30; i++) {
             await act(async () => {
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
-            if (captured?.status === 'loaded') break;
+            const current = diffStateSource?.getDiffState?.('src/image.png');
+            if (current?.status === 'loaded') break;
         }
 
         expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
-        expect(captured?.status).toBe('loaded');
-        expect(String(captured?.diff ?? '')).toBe('');
+        const finalState = diffStateSource?.getDiffState?.('src/image.png');
+        expect(finalState?.status).toBe('loaded');
+        expect(String(finalState?.diff ?? '')).toBe('');
     });
 });

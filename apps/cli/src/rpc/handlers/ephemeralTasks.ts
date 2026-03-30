@@ -1,7 +1,8 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
+import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
 
-import { EphemeralTaskRunRequestSchema } from '@happier-dev/protocol';
+import { BackendTargetRefSchema, EphemeralTaskRunRequestSchema, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { runScmCommitMessageTask } from '@/agent/ephemeralTasks/scmCommitMessage/runScmCommitMessageTask';
@@ -17,7 +18,7 @@ export function registerEphemeralTaskHandlers(
   rpc: RpcHandlerRegistrar,
   ctx: Readonly<{
     workingDirectory: string;
-    createBackend: (opts: { backendId: string; permissionMode: string }) => AgentBackend;
+    createBackend: (opts: { backendId: string; permissionMode: string; backendTarget?: BackendTargetRefV1 }) => AgentBackend;
     budgetRegistry?: ExecutionBudgetRegistry;
   }>,
 ): void {
@@ -38,6 +39,7 @@ export function registerEphemeralTaskHandlers(
       }).strict();
 
       const CommitMessageTaskInputSchema = z.object({
+        backendTarget: BackendTargetRefSchema.optional(),
         backendId: z.string().min(1).optional(),
         instructions: z.string().optional(),
         scope: CommitMessageTaskScopeSchema.optional(),
@@ -50,7 +52,10 @@ export function registerEphemeralTaskHandlers(
         return invalidParams();
       }
 
-      const backendId = parsedInput.data.backendId ?? 'claude';
+      const backendTarget = parsedInput.data.backendTarget;
+      const backendId = backendTarget
+        ? resolveExecutionRunRuntimeBackendId(backendTarget)
+        : parsedInput.data.backendId ?? 'claude';
       const instructions = parsedInput.data.instructions;
       const scope = parsedInput.data.scope;
       const maxFiles = parsedInput.data.maxFiles;
@@ -69,7 +74,7 @@ export function registerEphemeralTaskHandlers(
         scope,
         maxFiles,
         maxTotalDiffChars,
-        createBackend: () => ctx.createBackend({ backendId, permissionMode }),
+        createBackend: () => ctx.createBackend({ backendId, permissionMode, ...(backendTarget ? { backendTarget } : {}) }),
       });
       budget?.releaseEphemeralTask(taskId);
       if (!res.ok) return { ok: false, error: { code: res.errorCode, message: res.error } };

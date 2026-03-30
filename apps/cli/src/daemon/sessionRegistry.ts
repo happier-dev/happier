@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import * as z from 'zod';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
 import { SessionRunnerRespawnDescriptorV1Schema } from './processSupervision/sessionRunnerRespawnDescriptor';
+import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
 
 const DaemonSessionMarkerSchema = z.object({
   pid: z.number().int().positive(),
@@ -32,7 +33,11 @@ export function hashProcessCommand(command: string): string {
 }
 
 function daemonSessionsDir(): string {
-  return join(configuration.happyHomeDir, 'tmp', 'daemon-sessions');
+  return join(
+    configuration.happyHomeDir,
+    'tmp',
+    resolveReleaseRingScopedBasename('daemon-sessions', configuration.publicReleaseRing),
+  );
 }
 
 async function ensureDir(dir: string): Promise<void> {

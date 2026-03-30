@@ -1,60 +1,23 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionGitPaneCommonModuleMocks } from './sessionGitPaneTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    FlatList: 'FlatList',
-    ScrollView: 'ScrollView',
-    Pressable: 'Pressable',
-    Platform: { select: (value: any) => value?.default ?? null, OS: 'web' },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
-
+installSessionGitPaneCommonModuleMocks();
 vi.mock('@/components/sessions/files/SourceControlBranchSummary', () => ({
     SourceControlBranchSummary: (props: any) => React.createElement('SourceControlBranchSummary', props),
 }));
-
 vi.mock('@/components/sessions/sourceControl/commitSelection/ScmChangesSelectionHeaderRow', () => ({
     ScmChangesSelectionHeaderRow: (props: any) => React.createElement('ScmChangesSelectionHeaderRow', props),
 }));
-
 vi.mock('@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCard', () => ({
     ScmCommitComposerCard: (props: any) => React.createElement('ScmCommitComposerCard', props),
 }));
-
 vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
-    useScrollEdgeFades: () => ({
-        visibility: { top: false, bottom: false, left: false, right: false },
-        onViewportLayout: () => {},
-        onContentSizeChange: () => {},
-        onScroll: () => {},
-    }),
-}));
-
-vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => ({
-    ScrollEdgeFades: (props: any) => React.createElement('ScrollEdgeFades', props),
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}) },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
 }));
 
 describe('SessionRightPanelGitCommitTab (virtualization)', () => {
@@ -69,9 +32,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         }));
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTab
+        tree = (await renderScreen(<SessionRightPanelGitCommitTab
                     theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f' } }}
                     sessionId="s1"
                     sessionPath="/workspace"
@@ -108,11 +69,9 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                     onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
                     scmStatusFiles={null}
                     showCommitComposer={false}
-                />
-            );
-        });
+                />)).tree;
 
-        expect(() => tree.root.findByType('FlatList' as any)).not.toThrow();
+        expect(() => tree.findByType('FlatList' as any)).not.toThrow();
     });
 
     it('does not render selection summary above the changes list (keeps it near commit composer)', async () => {
@@ -126,9 +85,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         }));
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTab
+        tree = (await renderScreen(<SessionRightPanelGitCommitTab
                     theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f' } }}
                     sessionId="s1"
                     sessionPath="/workspace"
@@ -165,11 +122,9 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                     onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
                     scmStatusFiles={null}
                     showCommitComposer={false}
-                />
-            );
-        });
+                />)).tree;
 
-        expect(() => tree.root.findByType('ScmChangesSelectionHeaderRow' as any)).toThrow();
+        expect(() => tree.findByType('ScmChangesSelectionHeaderRow' as any)).toThrow();
     });
 
     it('filters directory-like SCM entries from the repository changed files list', async () => {
@@ -191,9 +146,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         ];
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTab
+        tree = (await renderScreen(<SessionRightPanelGitCommitTab
                     theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f' } }}
                     sessionId="s1"
                     sessionPath="/workspace"
@@ -230,11 +183,9 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                     onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
                     scmStatusFiles={null}
                     showCommitComposer={false}
-                />
-            );
-        });
+                />)).tree;
 
-        const flatList = tree.root.findByType('FlatList' as any);
+        const flatList = tree.findByType('FlatList' as any);
         expect(Array.isArray(flatList.props.data)).toBe(true);
         expect(flatList.props.data).toHaveLength(1);
         expect(flatList.props.data[0].fullPath).toBe('src/file-0.ts');

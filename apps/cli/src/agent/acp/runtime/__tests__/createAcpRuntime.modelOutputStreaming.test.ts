@@ -5,162 +5,29 @@ import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 
 import { createAcpRuntime } from '../createAcpRuntime';
-import { createFakeAcpRuntimeBackend, createApprovedPermissionHandler } from '../createAcpRuntime.testkit';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 
-describe('createAcpRuntime (model-output delta streaming)', () => {
-  it('debounces model-output text deltas and forwards chunks with a stable happierStreamKey per turn', async () => {
+describe('createAcpRuntime (transcript streaming vNext)', () => {
+  it('writes durable streaming checkpoints with a stable segment localId reused by the final commit', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
-    const sent: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
-
-    vi.useFakeTimers();
-
-    const runtime = createAcpRuntime({
-      provider: 'claude',
-      directory: '/tmp',
-      session: {
-        keepAlive: () => {},
-        sendAgentMessage: (_provider, body, opts) => {
-          sent.push({ body, meta: opts?.meta });
-        },
-        sendAgentMessageCommitted: async () => {},
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
+    const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async (_provider, body, opts) => {
+        durableCalls.push({ localId: opts.localId, body, meta: opts.meta });
       },
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
     });
 
-    try {
-      await runtime.startOrLoad({});
-      runtime.beginTurn();
-
-      backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
-      await vi.advanceTimersByTimeAsync(60);
-
-      backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
-      await vi.advanceTimersByTimeAsync(60);
-
-      const chunkMessages = sent.filter((m) => m.body.type === 'message');
-      expect(chunkMessages.length).toBeGreaterThanOrEqual(2);
-      expect(chunkMessages[0]?.body.type).toBe('message');
-      expect((chunkMessages[0]?.body as any).message).toBe('Hello');
-      expect((chunkMessages[1]?.body as any).message).toBe(' world');
-
-      const k0 = (chunkMessages[0]?.meta as any)?.happierStreamKey;
-      const k1 = (chunkMessages[1]?.meta as any)?.happierStreamKey;
-      expect(typeof k0).toBe('string');
-      expect(k0).toBe(k1);
-
-      runtime.flushTurn();
-
-      runtime.beginTurn();
-      backend.emit({ type: 'model-output', textDelta: 'Second' } satisfies AgentMessage);
-      await vi.advanceTimersByTimeAsync(60);
-
-      const next = sent.filter((m) => m.body.type === 'message').slice(-1)[0];
-      expect((next?.body as any)?.message).toBe('Second');
-      const k2 = (next?.meta as any)?.happierStreamKey;
-      expect(typeof k2).toBe('string');
-      expect(k2).not.toBe(k0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('can disable streaming debounce and forward each delta immediately', async () => {
-    vi.stubEnv('HAPPIER_ACP_STREAM_DELTA_FLUSH_MS', '0');
-
-    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
-    const sent: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
-
-    vi.useFakeTimers();
-
     const runtime = createAcpRuntime({
       provider: 'claude',
       directory: '/tmp',
-      session: {
-        keepAlive: () => {},
-        sendAgentMessage: (_provider, body, opts) => {
-          sent.push({ body, meta: opts?.meta });
-        },
-        sendAgentMessageCommitted: async () => {},
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
+      session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend,
-    });
-
-    try {
-      await runtime.startOrLoad({});
-      runtime.beginTurn();
-
-      backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
-      await vi.advanceTimersByTimeAsync(60);
-
-      backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
-      await vi.advanceTimersByTimeAsync(60);
-
-      const chunkMessages = sent.filter((m) => m.body.type === 'message');
-      expect(chunkMessages.length).toBeGreaterThanOrEqual(2);
-      expect(chunkMessages[0]?.body.type).toBe('message');
-      expect((chunkMessages[0]?.body as any).message).toBe('Hello');
-      expect((chunkMessages[1]?.body as any).message).toBe(' world');
-
-      const k0 = (chunkMessages[0]?.meta as any)?.happierStreamKey;
-      const k1 = (chunkMessages[1]?.meta as any)?.happierStreamKey;
-      expect(typeof k0).toBe('string');
-      expect(k0).toBe(k1);
-
-      runtime.flushTurn();
-
-      runtime.beginTurn();
-      backend.emit({ type: 'model-output', textDelta: 'Second' } satisfies AgentMessage);
-      await vi.advanceTimersByTimeAsync(60);
-
-      const next = sent.filter((m) => m.body.type === 'message').slice(-1)[0];
-      expect((next?.body as any)?.message).toBe('Second');
-      const k2 = (next?.meta as any)?.happierStreamKey;
-      expect(typeof k2).toBe('string');
-      expect(k2).not.toBe(k0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('can disable streaming debounce and forward each delta immediately', async () => {
-    vi.stubEnv('HAPPIER_ACP_STREAM_DELTA_FLUSH_MS', '0');
-
-    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
-    const sent: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
-
-    const runtime = createAcpRuntime({
-      provider: 'claude',
-      directory: '/tmp',
-      session: {
-        keepAlive: () => {},
-        sendAgentMessage: (_provider, body, opts) => {
-          sent.push({ body, meta: opts?.meta });
-        },
-        sendAgentMessageCommitted: async () => {},
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
-      modelOutputStreaming: { deltaFlushIntervalMs: 0 },
     });
 
     await runtime.startOrLoad({});
@@ -169,14 +36,173 @@ describe('createAcpRuntime (model-output delta streaming)', () => {
     backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
     backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
 
-    const chunkMessages = sent.filter((m) => m.body.type === 'message');
-    expect(chunkMessages.length).toBeGreaterThanOrEqual(2);
-    expect((chunkMessages[0]?.body as any).message).toBe('Hello');
-    expect((chunkMessages[1]?.body as any).message).toBe(' world');
+    await runtime.flushTurn();
 
-    const k0 = (chunkMessages[0]?.meta as any)?.happierStreamKey;
-    const k1 = (chunkMessages[1]?.meta as any)?.happierStreamKey;
-    expect(typeof k0).toBe('string');
-    expect(k0).toBe(k1);
+    expect(durableCalls.length).toBeGreaterThanOrEqual(2);
+    expect(typeof durableCalls[0]?.localId).toBe('string');
+    expect(durableCalls[0]!.localId).toBe(durableCalls[durableCalls.length - 1]!.localId);
+    expect((durableCalls[0]!.meta as any)?.happierStreamSegmentV1?.segmentState).toBe('streaming');
+
+    const last = durableCalls[durableCalls.length - 1]!;
+    expect(last.body).toMatchObject({ type: 'message', message: 'Hello world' });
+    expect(last.meta).toMatchObject({
+      happierStreamSegmentV1: expect.objectContaining({
+        segmentLocalId: durableCalls[0]!.localId,
+        segmentState: 'complete',
+      }),
+    });
+  });
+
+  it('can emit each durable checkpoint immediately when stream checkpoint buffering is disabled', async () => {
+    const previousCheckpointMs = process.env.HAPPIER_STREAM_CHECKPOINT_MS;
+    const previousCheckpointMinChars = process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS;
+    process.env.HAPPIER_STREAM_CHECKPOINT_MS = '0';
+    process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = '1';
+
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const durableCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async (_provider, body, opts) => {
+        durableCalls.push({ body, meta: opts.meta });
+      },
+    });
+
+    try {
+      const runtime = createAcpRuntime({
+        provider: 'claude',
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {},
+        ensureBackend: async () => backend,
+      });
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
+      backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
+
+      await vi.waitFor(() => {
+        expect(durableCalls.length).toBeGreaterThanOrEqual(2);
+      });
+
+      expect(durableCalls.slice(0, 2).map((call) => (call.body as any)?.message)).toEqual([
+        'Hello',
+        'Hello world',
+      ]);
+      expect(durableCalls.slice(0, 2).map((call) => (call.meta as any)?.happierStreamSegmentV1?.segmentState)).toEqual([
+        'streaming',
+        'streaming',
+      ]);
+    } finally {
+      if (previousCheckpointMs === undefined) {
+        delete process.env.HAPPIER_STREAM_CHECKPOINT_MS;
+      } else {
+        process.env.HAPPIER_STREAM_CHECKPOINT_MS = previousCheckpointMs;
+      }
+      if (previousCheckpointMinChars === undefined) {
+        delete process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS;
+      } else {
+        process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = previousCheckpointMinChars;
+      }
+    }
+  });
+
+  it('waits for the final durable snapshot before flushTurn resolves', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    let resolveInitialCommit: (() => void) | undefined;
+    let durableCommitCount = 0;
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async () => {
+        durableCommitCount += 1;
+        if (durableCommitCount === 1) {
+          await new Promise<void>((resolve) => {
+            resolveInitialCommit = resolve;
+          });
+        }
+      },
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'claude',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+    backend.emit({ type: 'model-output', textDelta: 'Hello world' } satisfies AgentMessage);
+
+    let didResolveFlushTurn = false;
+    const flushPromise = runtime.flushTurn().then(() => {
+      didResolveFlushTurn = true;
+    });
+
+    await Promise.resolve();
+    expect(didResolveFlushTurn).toBe(false);
+
+    const releaseInitialCommit = resolveInitialCommit;
+    if (!releaseInitialCommit) {
+      throw new Error('expected initial durable commit resolver');
+    }
+    releaseInitialCommit();
+    await flushPromise;
+
+    expect(didResolveFlushTurn).toBe(true);
+    expect(durableCommitCount).toBe(2);
+  });
+
+  it('flushes the active assistant segment before forwarding a permission request', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const durableCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async (_provider, body, opts) => {
+        durableCalls.push({ body, meta: opts.meta });
+      },
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'claude',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    backend.emit({ type: 'model-output', textDelta: 'The' } satisfies AgentMessage);
+    backend.emit({ type: 'model-output', textDelta: ' directory is empty.' } satisfies AgentMessage);
+    backend.emit({
+      type: 'permission-request',
+      id: 'perm-1',
+      reason: 'Write',
+      payload: { toolName: 'Write', input: { path: '/tmp/note.txt' } },
+    } satisfies AgentMessage);
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(durableCalls.length).toBeGreaterThanOrEqual(2);
+    expect(durableCalls[durableCalls.length - 1]).toMatchObject({
+      body: { type: 'message', message: 'The directory is empty.' },
+      meta: {
+        happierStreamSegmentV1: expect.objectContaining({
+          segmentState: 'complete',
+        }),
+      },
+    });
   });
 });

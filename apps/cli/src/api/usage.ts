@@ -7,7 +7,9 @@ export const UsageSchema = z.object({
     cache_creation_input_tokens: z.number().int().nonnegative().optional(),
     cache_read_input_tokens: z.number().int().nonnegative().optional(),
     output_tokens: z.number().int().nonnegative(),
-    service_tier: z.string().optional(),
+    // Some upstream providers emit `service_tier: null` in error payloads.
+    // Treat null as “unknown” so we don't drop the whole message.
+    service_tier: z.string().nullish(),
 }).passthrough();
 
 export type Usage = z.infer<typeof UsageSchema>;

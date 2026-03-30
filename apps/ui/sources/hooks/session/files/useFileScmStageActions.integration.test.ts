@@ -1,6 +1,5 @@
-import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +10,8 @@ const {
 	    invalidateFromMutationAndAwait,
 	    trackingCapture,
 	    mockMachineRPC,
+        readMachineTargetForSession,
+    resolvePreferredServerIdForSessionId,
 	} = vi.hoisted(() => ({
 	    mockSessionRPC: vi.fn(),
 	    modalAlert: vi.fn(),
@@ -21,6 +22,8 @@ const {
 	        (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
 	        throw err;
 	    }),
+        readMachineTargetForSession: vi.fn(() => null),
+        resolvePreferredServerIdForSessionId: vi.fn(() => undefined),
 	}));
 
 	vi.mock('@/sync/api/session/apiSocket', () => ({
@@ -40,13 +43,16 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlert,
-        confirm: vi.fn(),
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlert,
+            confirm: vi.fn(),
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
@@ -54,24 +60,35 @@ vi.mock('@/scm/scmStatusSync', () => ({
     },
 }));
 
+vi.mock('@/sync/ops/sessionMachineTarget', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/ops/sessionMachineTarget')>();
+    return {
+        ...actual,
+        readMachineTargetForSession,
+    };
+});
+
 vi.mock('@/track', () => ({
     tracking: {
         capture: trackingCapture,
     },
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId,
+}));
+
 import { sessionScmStatusSnapshot } from '@/sync/ops';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { storage } from '@/sync/domains/state/storage';
+import { renderHook } from '@/dev/testkit';
 import { createGitSessionRpcHarness, git, initRepo } from '@/sync/ops/__tests__/gitRepoHarness';
 import { normalizeWorkingSnapshotForUi } from '@/scm/scmRepositoryService';
 import { useFileScmStageActions } from './useFileScmStageActions';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const initialStorageState = storage.getState();
-
-type HookProps = Parameters<typeof useFileScmStageActions>[0];
+const initialStorageState = storage.getInitialState();
 
 function createSession(sessionId: string, workspacePath: string) {
     const now = Date.now();
@@ -83,7 +100,6 @@ function createSession(sessionId: string, workspacePath: string) {
         active: true,
         activeAt: now,
         metadata: {
-            machineId: 'machine-1',
             path: workspacePath,
             host: 'localhost',
             version: '1.0.0',
@@ -95,32 +111,6 @@ function createSession(sessionId: string, workspacePath: string) {
         thinkingAt: 0,
         presence: 'online' as const,
         optimisticThinkingAt: null,
-    };
-}
-
-function mountHook(props: HookProps) {
-    let current: ReturnType<typeof useFileScmStageActions> | null = null;
-
-    function Probe() {
-        current = useFileScmStageActions(props);
-        return React.createElement('View');
-    }
-
-    let tree: renderer.ReactTestRenderer;
-    act(() => {
-        tree = renderer.create(React.createElement(Probe));
-    });
-
-    return {
-        getCurrent() {
-            if (!current) {
-                throw new Error('Hook state is unavailable');
-            }
-            return current;
-        },
-        unmount() {
-            tree.unmount();
-        },
     };
 }
 
@@ -165,18 +155,23 @@ describe('useFileScmStageActions integration', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
 	        projectManager.clear();
+        storage.getState().applySettingsLocal({ scmGitRepoPreferredBackend: 'git' } as any);
 
 	        mockSessionRPC.mockReset();
 	        mockMachineRPC.mockReset();
 	        modalAlert.mockReset();
 	        invalidateFromMutationAndAwait.mockReset();
-	        trackingCapture.mockReset();
+        trackingCapture.mockReset();
+        readMachineTargetForSession.mockReset();
+        readMachineTargetForSession.mockReturnValue(null);
 
-	        mockMachineRPC.mockImplementation(async () => {
-	            const err = new Error('RPC method not available');
-	            (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
-	            throw err;
+        mockMachineRPC.mockImplementation(async () => {
+            const err = new Error('RPC method not available');
+            (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
+            throw err;
 	        });
+        resolvePreferredServerIdForSessionId.mockReset();
+        resolvePreferredServerIdForSessionId.mockReturnValue(undefined);
 	    });
 
     it('stages and unstages a full file through real git operations', async () => {
@@ -198,20 +193,22 @@ describe('useFileScmStageActions integration', () => {
         }
 
         const refreshAll = vi.fn(async () => {});
-        const hook = mountHook({
-            sessionId,
-            sessionPath: workspace,
-            filePath: 'a.txt',
-            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
-            scmWriteEnabled: true,
-            scmCommitStrategy: 'git_staging',
-            includeExcludeEnabled: true,
-            diffMode: 'pending',
-            diffContent: git(workspace, ['diff', '--', 'a.txt']),
-            lineSelectionEnabled: false,
-            selectedLineKeys: new Set<string>(),
-            refreshAll,
-            setSelectedLineKeys: vi.fn() as any,
+        const hook = await renderHook(useFileScmStageActions, {
+            initialProps: {
+                sessionId,
+                sessionPath: workspace,
+                filePath: 'a.txt',
+                scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+                scmWriteEnabled: true,
+                scmCommitStrategy: 'git_staging',
+                includeExcludeEnabled: true,
+                diffMode: 'pending',
+                diffContent: git(workspace, ['diff', '--', 'a.txt']),
+                lineSelectionEnabled: false,
+                selectedLineKeys: new Set<string>(),
+                refreshAll,
+                setSelectedLineKeys: vi.fn() as any,
+            },
         });
 
         await act(async () => {
@@ -234,9 +231,7 @@ describe('useFileScmStageActions integration', () => {
         expect(operationLog.some((entry) => entry.operation === 'stage' && entry.status === 'success')).toBe(true);
         expect(operationLog.some((entry) => entry.operation === 'unstage' && entry.status === 'success')).toBe(true);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('tracks virtual commit selection paths when commit strategy is atomic', async () => {
@@ -258,21 +253,23 @@ describe('useFileScmStageActions integration', () => {
         }
 
         const refreshAll = vi.fn(async () => {});
-        const hook = mountHook({
-            sessionId,
-            sessionPath: workspace,
-            filePath: 'a.txt',
-            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
-            scmWriteEnabled: true,
-            includeExcludeEnabled: true,
-            diffMode: 'pending',
-            diffContent: git(workspace, ['diff', '--', 'a.txt']),
-            lineSelectionEnabled: false,
-            selectedLineKeys: new Set<string>(),
-            refreshAll,
-            setSelectedLineKeys: vi.fn() as any,
-            scmCommitStrategy: 'atomic',
-        } as any);
+        const hook = await renderHook(useFileScmStageActions, {
+            initialProps: {
+                sessionId,
+                sessionPath: workspace,
+                filePath: 'a.txt',
+                scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+                scmWriteEnabled: true,
+                includeExcludeEnabled: true,
+                diffMode: 'pending',
+                diffContent: git(workspace, ['diff', '--', 'a.txt']),
+                lineSelectionEnabled: false,
+                selectedLineKeys: new Set<string>(),
+                refreshAll,
+                setSelectedLineKeys: vi.fn() as any,
+                scmCommitStrategy: 'atomic',
+            } as any,
+        });
 
         await act(async () => {
             await hook.getCurrent().handleStage(true);
@@ -293,9 +290,7 @@ describe('useFileScmStageActions integration', () => {
         expect(invalidateFromMutationAndAwait).not.toHaveBeenCalled();
         expect(refreshAll).not.toHaveBeenCalled();
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('stores virtual patch selection for atomic line-selected commit', async () => {
@@ -320,20 +315,22 @@ describe('useFileScmStageActions integration', () => {
         }
 
         const setSelectedLineKeys = vi.fn();
-        const hook = mountHook({
-            sessionId,
-            sessionPath: workspace,
-            filePath: 'a.txt',
-            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
-            scmWriteEnabled: true,
-            scmCommitStrategy: 'atomic',
-            includeExcludeEnabled: false,
-            diffMode: 'pending',
-            diffContent: diff,
-            lineSelectionEnabled: true,
-            selectedLineKeys: new Set<string>([selectedKey]),
-            refreshAll: vi.fn(async () => {}),
-            setSelectedLineKeys: setSelectedLineKeys as any,
+        const hook = await renderHook(useFileScmStageActions, {
+            initialProps: {
+                sessionId,
+                sessionPath: workspace,
+                filePath: 'a.txt',
+                scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+                scmWriteEnabled: true,
+                scmCommitStrategy: 'atomic',
+                includeExcludeEnabled: false,
+                diffMode: 'pending',
+                diffContent: diff,
+                lineSelectionEnabled: true,
+                selectedLineKeys: new Set<string>([selectedKey]),
+                refreshAll: vi.fn(async () => {}),
+                setSelectedLineKeys: setSelectedLineKeys as any,
+            },
         });
 
         await act(async () => {
@@ -348,9 +345,7 @@ describe('useFileScmStageActions integration', () => {
         expect(setSelectedLineKeys).toHaveBeenCalled();
         expect(invalidateFromMutationAndAwait).not.toHaveBeenCalled();
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('replaces atomic path selection with patch selection for the same file', async () => {
@@ -375,20 +370,22 @@ describe('useFileScmStageActions integration', () => {
             throw new Error('expected git snapshot');
         }
 
-        const hook = mountHook({
-            sessionId,
-            sessionPath: workspace,
-            filePath: 'a.txt',
-            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
-            scmWriteEnabled: true,
-            scmCommitStrategy: 'atomic',
-            includeExcludeEnabled: false,
-            diffMode: 'pending',
-            diffContent: diff,
-            lineSelectionEnabled: true,
-            selectedLineKeys: new Set<string>([selectedKey]),
-            refreshAll: vi.fn(async () => {}),
-            setSelectedLineKeys: vi.fn() as any,
+        const hook = await renderHook(useFileScmStageActions, {
+            initialProps: {
+                sessionId,
+                sessionPath: workspace,
+                filePath: 'a.txt',
+                scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+                scmWriteEnabled: true,
+                scmCommitStrategy: 'atomic',
+                includeExcludeEnabled: false,
+                diffMode: 'pending',
+                diffContent: diff,
+                lineSelectionEnabled: true,
+                selectedLineKeys: new Set<string>([selectedKey]),
+                refreshAll: vi.fn(async () => {}),
+                setSelectedLineKeys: vi.fn() as any,
+            },
         });
 
         await act(async () => {
@@ -400,9 +397,7 @@ describe('useFileScmStageActions integration', () => {
         expect(patches).toHaveLength(1);
         expect(patches[0]?.path).toBe('a.txt');
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('stages selected lines only and keeps the remaining diff unstaged', async () => {
@@ -429,20 +424,22 @@ describe('useFileScmStageActions integration', () => {
         const refreshAll = vi.fn(async () => {});
         const setSelectedLineKeys = vi.fn();
 
-        const hook = mountHook({
-            sessionId,
-            sessionPath: workspace,
-            filePath: 'a.txt',
-            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
-            scmWriteEnabled: true,
-            scmCommitStrategy: 'git_staging',
-            includeExcludeEnabled: true,
-            diffMode: 'pending',
-            diffContent: diff,
-            lineSelectionEnabled: true,
-            selectedLineKeys: new Set<string>([selectedKey]),
-            refreshAll,
-            setSelectedLineKeys: setSelectedLineKeys as any,
+        const hook = await renderHook(useFileScmStageActions, {
+            initialProps: {
+                sessionId,
+                sessionPath: workspace,
+                filePath: 'a.txt',
+                scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+                scmWriteEnabled: true,
+                scmCommitStrategy: 'git_staging',
+                includeExcludeEnabled: true,
+                diffMode: 'pending',
+                diffContent: diff,
+                lineSelectionEnabled: true,
+                selectedLineKeys: new Set<string>([selectedKey]),
+                refreshAll,
+                setSelectedLineKeys: setSelectedLineKeys as any,
+            },
         });
 
         await act(async () => {
@@ -460,9 +457,7 @@ describe('useFileScmStageActions integration', () => {
         expect(refreshAll).toHaveBeenCalledTimes(1);
         expect(modalAlert).not.toHaveBeenCalled();
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('unstages selected lines from the staged diff only', async () => {
@@ -489,20 +484,22 @@ describe('useFileScmStageActions integration', () => {
 
         const refreshAll = vi.fn(async () => {});
 
-        const hook = mountHook({
-            sessionId,
-            sessionPath: workspace,
-            filePath: 'a.txt',
-            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
-            scmWriteEnabled: true,
-            scmCommitStrategy: 'git_staging',
-            includeExcludeEnabled: true,
-            diffMode: 'included',
-            diffContent: stagedDiff,
-            lineSelectionEnabled: true,
-            selectedLineKeys: new Set<string>([selectedKey]),
-            refreshAll,
-            setSelectedLineKeys: vi.fn() as any,
+        const hook = await renderHook(useFileScmStageActions, {
+            initialProps: {
+                sessionId,
+                sessionPath: workspace,
+                filePath: 'a.txt',
+                scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+                scmWriteEnabled: true,
+                scmCommitStrategy: 'git_staging',
+                includeExcludeEnabled: true,
+                diffMode: 'included',
+                diffContent: stagedDiff,
+                lineSelectionEnabled: true,
+                selectedLineKeys: new Set<string>([selectedKey]),
+                refreshAll,
+                setSelectedLineKeys: vi.fn() as any,
+            },
         });
 
         await act(async () => {
@@ -519,9 +516,7 @@ describe('useFileScmStageActions integration', () => {
         expect(refreshAll).toHaveBeenCalledTimes(1);
         expect(modalAlert).not.toHaveBeenCalled();
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('unstages selected added replacement lines without requiring paired deletion selection', async () => {
@@ -548,20 +543,22 @@ describe('useFileScmStageActions integration', () => {
 
         const refreshAll = vi.fn(async () => {});
 
-        const hook = mountHook({
-            sessionId,
-            sessionPath: workspace,
-            filePath: 'a.txt',
-            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
-            scmWriteEnabled: true,
-            scmCommitStrategy: 'git_staging',
-            includeExcludeEnabled: true,
-            diffMode: 'included',
-            diffContent: stagedDiff,
-            lineSelectionEnabled: true,
-            selectedLineKeys: new Set<string>([selectedKey]),
-            refreshAll,
-            setSelectedLineKeys: vi.fn() as any,
+        const hook = await renderHook(useFileScmStageActions, {
+            initialProps: {
+                sessionId,
+                sessionPath: workspace,
+                filePath: 'a.txt',
+                scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+                scmWriteEnabled: true,
+                scmCommitStrategy: 'git_staging',
+                includeExcludeEnabled: true,
+                diffMode: 'included',
+                diffContent: stagedDiff,
+                lineSelectionEnabled: true,
+                selectedLineKeys: new Set<string>([selectedKey]),
+                refreshAll,
+                setSelectedLineKeys: vi.fn() as any,
+            },
         });
 
         await act(async () => {
@@ -576,8 +573,6 @@ describe('useFileScmStageActions integration', () => {
         expect(refreshAll).toHaveBeenCalledTimes(1);
         expect(modalAlert).not.toHaveBeenCalled();
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 });

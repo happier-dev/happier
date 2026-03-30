@@ -1,5 +1,5 @@
 import type { AgentId } from '@/agents/catalog/catalog';
-import { getProviderSettingsPlugin } from '@/agents/providers/_registry/providerSettingsRegistry';
+import { getProviderSettingsPlugin } from '@/agents/providers/registry/providerSettingsRegistry';
 
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 

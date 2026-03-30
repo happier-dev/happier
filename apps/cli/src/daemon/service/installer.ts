@@ -1,12 +1,12 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
-import { projectPath } from '@/projectPath';
 
 import { applyDaemonServiceInstallPlan, applyDaemonServiceUninstallPlan } from './apply';
 import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
 import type { DaemonServiceMode } from './plan';
+import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 type SupportedPlatform = 'darwin' | 'linux' | 'win32';
 
@@ -17,11 +17,6 @@ function resolveSupportedPlatform(p: string): SupportedPlatform | null {
   return null;
 }
 
-function looksLikeNodeExecPath(execPath: string): boolean {
-  const base = execPath.replaceAll('\\', '/').split('/').at(-1) ?? '';
-  return base === 'node' || base === 'node.exe';
-}
-
 export async function installDaemonService(options: Readonly<{
   platform?: SupportedPlatform;
   uid?: number;
@@ -29,6 +24,7 @@ export async function installDaemonService(options: Readonly<{
   happierHomeDir?: string;
   mode?: DaemonServiceMode;
   systemUser?: string;
+  channel?: PublicReleaseRingId;
   instanceId?: string;
   serverUrl?: string;
   webappUrl?: string;
@@ -52,13 +48,19 @@ export async function installDaemonService(options: Readonly<{
   const serverUrl = options.serverUrl ?? configuration.apiServerUrl;
   const webappUrl = options.webappUrl ?? configuration.webappUrl;
   const publicServerUrl = options.publicServerUrl ?? configuration.serverUrl;
-  const nodePath = options.nodePath ?? process.execPath;
-  const entryPath = options.entryPath ?? (looksLikeNodeExecPath(nodePath) ? join(projectPath(), 'dist', 'index.mjs') : '');
+  const explicitNodePath = options.nodePath ?? null;
+  const explicitEntryPath = options.entryPath ?? null;
+  const runtimeTarget = await resolveDaemonServiceInstallRuntimeTarget({
+    currentExecPath: process.execPath,
+    explicitNodePath,
+    explicitEntryPath,
+  });
 
   const plan = planDaemonServiceInstall({
     platform,
     mode: options.mode,
     systemUser: options.systemUser,
+    channel: options.channel,
     instanceId,
     uid,
     userHomeDir,
@@ -66,8 +68,8 @@ export async function installDaemonService(options: Readonly<{
     serverUrl,
     webappUrl,
     publicServerUrl,
-    nodePath,
-    entryPath,
+    nodePath: runtimeTarget.nodePath,
+    entryPath: runtimeTarget.entryPath,
   });
   await applyDaemonServiceInstallPlan(plan, { runCommands: options.runCommands });
 }
@@ -78,6 +80,7 @@ export async function uninstallDaemonService(options: Readonly<{
   userHomeDir?: string;
   happierHomeDir?: string;
   mode?: DaemonServiceMode;
+  channel?: PublicReleaseRingId;
   instanceId?: string;
   runCommands?: boolean;
 }> = {}): Promise<void> {
@@ -95,6 +98,7 @@ export async function uninstallDaemonService(options: Readonly<{
   const plan = planDaemonServiceUninstall({
     platform,
     mode: options.mode,
+    channel: options.channel,
     instanceId,
     uid,
     userHomeDir,

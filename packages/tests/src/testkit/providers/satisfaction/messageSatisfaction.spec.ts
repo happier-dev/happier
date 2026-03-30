@@ -70,4 +70,30 @@ describe('scenarioSatisfiedByMessages', () => {
       ),
     ).toBe(true);
   });
+
+  it('matches a substring nested inside a serialized transcript wrapper value', () => {
+    const decoded = [
+      {
+        __happierSerializedJsonValueV1: true,
+        type: 'json',
+        value: {
+          role: 'agent',
+          content: {
+            type: 'acp',
+            data: {
+              type: 'message',
+              message: 'Model not found: openai/does_not_exist.',
+            },
+          },
+        },
+      },
+    ];
+
+    expect(
+      scenarioSatisfiedByMessages(
+        { decodedMessages: decoded },
+        { requiredMessageSubstrings: ['Model not found'] },
+      ),
+    ).toBe(true);
+  });
 });

@@ -1,17 +1,26 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import {
+    renderSettingsView,
+    standardCleanup,
+} from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest, isUsernameRequest } from './account.testHelpers';
+import {
+    getAccountSettingsRouteModalMockRef,
+    getAccountSettingsRouteRouterMockRef,
+    installAccountSettingsRouteModuleMocks,
+} from './accountSettingsRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native-reanimated', () => ({}));
+installAccountSettingsRouteModuleMocks();
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
-}));
+const routerMockRef = getAccountSettingsRouteRouterMockRef();
+const modalMockRef = getAccountSettingsRouteModalMockRef();
 
 vi.mock('expo-camera', () => ({
     useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })],
@@ -28,6 +37,13 @@ vi.mock('@/auth/context/AuthContext', () => ({
         isAuthenticated: true,
         credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
         logout: vi.fn(),
+    }),
+}));
+
+vi.mock('@/hooks/auth/useConnectAccount', () => ({
+    useConnectAccount: () => ({
+        connectAccount: vi.fn(),
+        isLoading: false,
     }),
 }));
 
@@ -48,18 +64,38 @@ vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     }),
 }));
 
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
+}));
+
+vi.mock('@/components/account/ProviderIdentityItems', () => ({
+    ProviderIdentityItems: () => null,
+}));
+
 describe('Settings → Account (username)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+        routerMockRef.current?.spies.push.mockReset();
+        routerMockRef.current?.spies.back.mockReset();
+        routerMockRef.current?.spies.replace.mockReset();
+        routerMockRef.current?.spies.setParams.mockReset();
+        modalMockRef.current = null;
+        standardCleanup();
     });
 
     it('shows a Username item and saves it when friendsAllowUsername is enabled', async () => {
-        vi.resetModules();
         storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({}),
+                } as unknown as Response;
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
@@ -76,44 +112,21 @@ describe('Settings → Account (username)', () => {
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-        const { Modal } = await import('@/modal');
-        const promptSpy = vi.spyOn(Modal, 'prompt').mockResolvedValue('alice');
+        await import('@/modal');
+        modalMockRef.current.spies.prompt.mockResolvedValue('alice');
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        const screen = await renderSettingsView(<AccountScreen />);
+        expect(screen.findRowByTitle('profile.username')).toBeTruthy();
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
-            let items: renderer.ReactTestInstance[] = [];
-            for (let attempt = 0; attempt < 5; attempt += 1) {
-                await act(async () => {});
-                items =
-                    tree?.root.findAll(
-                        (node) => node.props?.title === 'Username' && typeof node.props?.onPress === 'function',
-                    ) ?? [];
-                if (items.length > 0) break;
-            }
-            expect(items.length).toBeGreaterThan(0);
-            const firstItem = items[0];
-            if (!firstItem || typeof firstItem.props?.onPress !== 'function') {
-                throw new Error('Expected Username row onPress handler');
-            }
+        await act(async () => {
+            await screen.pressRowByTitle('profile.username');
+        });
 
-            await act(async () => {
-                await firstItem.props.onPress();
-            });
-
-            expect(promptSpy).toHaveBeenCalled();
-            expect(fetchMock).toHaveBeenCalledWith(
-                expect.stringContaining('/v1/account/username'),
-                expect.objectContaining({ method: 'POST' }),
-            );
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(modalMockRef.current.spies.prompt).toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringContaining('/v1/account/username'),
+            expect.objectContaining({ method: 'POST' }),
+        );
     }, 40_000);
 });

@@ -10,7 +10,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
-import { useIsDataReady, useLocalSetting, useSession } from '@/sync/domains/state/storage';
+import { useIsDataReady, useSession } from '@/sync/domains/state/storage';
 import { sessionReadLogTail } from '@/sync/ops';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
@@ -24,8 +24,6 @@ export default function SessionLogScreen() {
     const { id } = useLocalSearchParams<{ id: string }>();
     const session = useSession(id);
     const isDataReady = useIsDataReady();
-    const localDevModeEnabled = useLocalSetting('devModeEnabled');
-    const devModeEnabled = __DEV__ || localDevModeEnabled === true;
 
     const metadataLogPath = React.useMemo(() => {
         const raw = session?.metadata && typeof (session.metadata as any).sessionLogPath === 'string'
@@ -70,11 +68,10 @@ export default function SessionLogScreen() {
     }, [metadataLogPath, session?.id]);
 
     React.useEffect(() => {
-        if (!devModeEnabled) return;
         if (!session?.id) return;
         if (!metadataLogPath) return;
         void refreshTail();
-    }, [devModeEnabled, metadataLogPath, refreshTail, session?.id]);
+    }, [metadataLogPath, refreshTail, session?.id]);
 
     if (!isDataReady) {
         return (
@@ -96,20 +93,6 @@ export default function SessionLogScreen() {
                 </Text>
                 <Text style={{ color: theme.colors.textSecondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32, ...Typography.default() }}>
                     {t('errors.sessionDeletedDescription')}
-                </Text>
-            </View>
-        );
-    }
-
-    if (!devModeEnabled) {
-        return (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-                <Ionicons name="lock-closed-outline" size={42} color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.text, fontSize: 18, marginTop: 12, textAlign: 'center', ...Typography.default('semiBold') }}>
-                    {t('sessionLog.devModeRequiredTitle')}
-                </Text>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 14, marginTop: 8, textAlign: 'center', ...Typography.default() }}>
-                    {t('sessionLog.devModeRequiredBody')}
                 </Text>
             </View>
         );

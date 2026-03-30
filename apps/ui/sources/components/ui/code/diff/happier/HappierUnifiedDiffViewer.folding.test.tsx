@@ -1,19 +1,24 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastLines: any[] | null = null;
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'filesDiffFoldingEnabled') return true;
         if (key === 'filesDiffFoldingContextThreshold') return 6;
         if (key === 'filesDiffFoldingContextRadius') return 2;
         return undefined;
     },
-}));
+});
+});
 
 vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () => ({
     useCodeLinesSyntaxHighlighting: () => ({
@@ -52,15 +57,11 @@ describe('HappierUnifiedDiffViewer (folding)', () => {
         lastLines = null;
         const { HappierUnifiedDiffViewer } = await import('./HappierUnifiedDiffViewer');
 
-        await act(async () => {
-            renderer.create(
-                <HappierUnifiedDiffViewer
+        await renderScreen(<HappierUnifiedDiffViewer
                     mode="unified"
                     unifiedDiff={buildDemoUnifiedDiff()}
                     filePath="src/demo.ts"
-                />,
-            );
-        });
+                />);
 
         if (!Array.isArray(lastLines)) throw new Error('Expected CodeLinesView lines');
         const lines = lastLines as unknown as unknown[];

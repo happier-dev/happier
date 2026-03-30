@@ -27,12 +27,29 @@ describe('feature catalog', () => {
     expect(isFeatureId('connectedServices.quotas')).toBe(true);
   });
 
+  it('includes channel bridge feature ids', () => {
+    expect(isFeatureId('channelBridges')).toBe(true);
+    expect(isFeatureId('channelBridges.telegram')).toBe(true);
+  });
+
   it('includes OTA updates feature id', () => {
     expect(isFeatureId('updates.ota')).toBe(true);
   });
 
   it('includes attachments uploads feature id', () => {
     expect(isFeatureId('attachments.uploads')).toBe(true);
+  });
+
+  it('includes direct sessions feature id', () => {
+    expect(isFeatureId('sessions.direct')).toBe(true);
+  });
+
+  it('includes session handoff feature ids', () => {
+    expect(isFeatureId('sessions.handoff')).toBe(true);
+    expect(isFeatureId('sessions.handoff.serverRoutedTransfer')).toBe(false);
+    expect(isFeatureId('machines.transfer.serverRouted')).toBe(true);
+    expect(isFeatureId('machines.transfer.directPeer')).toBe(true);
+    expect(isFeatureId('machines.transfer.directPeer.transportRns')).toBe(false);
   });
 
   it('includes sharing feature ids', () => {

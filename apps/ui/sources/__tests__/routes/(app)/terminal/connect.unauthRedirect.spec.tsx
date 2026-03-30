@@ -1,6 +1,8 @@
-import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { installTerminalRouteCommonModuleMocks } from './terminalRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,13 +10,13 @@ const replaceMock = vi.fn();
 const setPendingMock = vi.fn((_pending: { publicKeyB64Url: string; serverUrl: string }) => {});
 const upsertActivateAndSwitchServerMock = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth?: unknown }) => true);
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: vi.fn(), replace: replaceMock }),
-}));
+installTerminalRouteCommonModuleMocks({
+    router: async () =>
+        createExpoRouterMock({
+            router: { back: vi.fn(), replace: replaceMock, push: vi.fn(), setParams: vi.fn() },
+            pathname: '/terminal/connect',
+        }).module,
+});
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ processAuthUrl: vi.fn(async () => {}), isLoading: false }),
@@ -39,43 +41,14 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     upsertActivateAndSwitchServer: upsertActivateAndSwitchServerMock,
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: { OS: 'web' },
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: () => null,
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: () => null,
-}));
-
 describe('TerminalConnectScreen unauthenticated redirect', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
         vi.resetModules();
+        vi.unmock('@/utils/path/terminalConnectUrl');
         replaceMock.mockClear();
         setPendingMock.mockClear();
         upsertActivateAndSwitchServerMock.mockClear();
@@ -84,6 +57,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
                 hash: '#key=abc123&server=https%3A%2F%2Fcompany.example.test',
                 pathname: '/terminal/connect',
                 search: '',
+                href: 'https://ui.example.test/terminal/connect#key=abc123&server=https%3A%2F%2Fcompany.example.test',
             },
             history: { replaceState: vi.fn() },
         };
@@ -92,9 +66,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
     it('stores pending connect and redirects to auth screen immediately', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
+        await renderScreen(<Screen />);
         await act(async () => {});
 
         expect(setPendingMock).toHaveBeenCalledWith({

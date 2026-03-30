@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import {
   deriveBoxPublicKeyFromSeed,
@@ -19,14 +20,13 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('happier session run list (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-run-list-'));
+    happyHomeDir = await createTempDir('happier-cli-session-run-list-');
 
     const sessionId = 'sess_integration_ctrl_123';
     const dek = new Uint8Array(32).fill(3);
@@ -96,18 +96,11 @@ describe('happier session run list (integration)', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
-    mockIo.mockReset();
-
     const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
-    const socket = (() => {
-      const handlers = new Map<string, Array<(...args: any[]) => void>>();
-      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        list.push(cb);
-        handlers.set(event, list);
-      });
-
-      const emit = vi.fn((event: string, data: any, cb?: (...args: any[]) => void) => {
+    const socket = createApiSessionSocketStub({
+      connected: true,
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
         const decodedParams = decodeBase64(String(data.params ?? ''));
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
@@ -123,7 +116,7 @@ describe('happier session run list (integration)', () => {
               callId: 'call_1',
               sidechainId: 'call_1',
               intent: 'review',
-              backendId: 'claude',
+              backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
               permissionMode: 'read_only',
               retentionPolicy: 'ephemeral',
               runClass: 'bounded',
@@ -136,28 +129,9 @@ describe('happier session run list (integration)', () => {
         };
         const encryptedResult = encodeBase64Rpc(encrypt(dek, 'dataKey', resultPayload), 'base64');
         cb?.({ ok: true, result: encryptedResult });
-      });
-
-      const connect = vi.fn(() => {
-        const list = handlers.get('connect') ?? [];
-        for (const cb of list) cb();
-      });
-
-      const disconnect = vi.fn();
-      const close = vi.fn();
-
-      return {
-        connected: true,
-        on,
-        off: vi.fn(),
-        emit,
-        connect,
-        disconnect,
-        close,
-      };
-    })();
-
-    mockIo.mockImplementation(() => socket);
+      },
+    });
+    bindApiSessionSocketMock(mockIo, socket);
   });
 
   afterEach(async () => {
@@ -168,14 +142,12 @@ describe('happier session run list (integration)', () => {
     }
     server = null;
     if (happyHomeDir) {
-      await rm(happyHomeDir, { recursive: true, force: true });
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
     }
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -184,10 +156,7 @@ describe('happier session run list (integration)', () => {
   it('returns session_run_list JSON envelope', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['run', 'list', 'sess_integration_ctrl_123', '--json'], {
@@ -201,15 +170,165 @@ describe('happier session run list (integration)', () => {
         }),
       });
 
-      const raw = stdout.join('\n').trim();
-      const parsed = JSON.parse(raw);
+      const parsed = output.json();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_list');
       expect(parsed.data?.sessionId).toBe('sess_integration_ctrl_123');
       expect(parsed.data?.runs?.[0]?.runId).toBe('run_1');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
+    }
+  });
+
+  it('forwards backend, status, and limit filters from the direct cli wrapper', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
+    const dek = new Uint8Array(32).fill(3);
+    const socket = createApiSessionSocketStub({
+      connected: true,
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        const decodedParams = decodeBase64(String(data.params ?? ''));
+        const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
+        expect(decrypted).toMatchObject({
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          status: 'running',
+          limit: 1,
+        });
+        const encryptedResult = encodeBase64Rpc(encrypt(dek, 'dataKey', { runs: [] }), 'base64');
+        cb?.({ ok: true, result: encryptedResult });
+      },
+    });
+    bindApiSessionSocketMock(mockIo, socket);
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(
+        ['run', 'list', 'sess_integration_ctrl_123', '--backend', 'claude', '--status', 'running', '--limit', '1', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+              machineKey: new Uint8Array(32).fill(8),
+            },
+          }),
+        },
+      );
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_run_list');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('rejects multi-backend csv input for the single-target run list filter', async () => {
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(
+        ['run', 'list', 'sess_integration_ctrl_123', '--backend', 'claude,codex', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+              machineKey: new Uint8Array(32).fill(8),
+            },
+          }),
+        },
+      );
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('session_run_list');
+      expect(parsed.error?.code).toBe('invalid_arguments');
+      expect(parsed.error?.message).toBe('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('merges daemon marker runs when session RPC returns an empty list', async () => {
+    const { handleSessionCommand } = await import('./index');
+    const { writeExecutionRunMarker } = await import('@/daemon/executionRunRegistry');
+
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'sess_integration_ctrl_123',
+      runId: 'run_marker_visible',
+      callId: 'call_marker_visible',
+      sidechainId: 'call_marker_visible',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+      permissionMode: 'workspace_write',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+      retentionPolicy: 'resumable',
+      status: 'running',
+      startedAtMs: 20,
+      updatedAtMs: 21,
+    });
+    await writeExecutionRunMarker({
+      pid: 124,
+      happySessionId: 'sess_other',
+      runId: 'run_marker_hidden',
+      callId: 'call_marker_hidden',
+      sidechainId: 'call_marker_hidden',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'workspace_write',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+      retentionPolicy: 'resumable',
+      status: 'running',
+      startedAtMs: 30,
+      updatedAtMs: 31,
+    });
+
+    const { encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
+    const socket = createApiSessionSocketStub({
+      connected: true,
+      emit: (event: string, args: unknown[]) => {
+        const [_data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        const encryptedResult = encodeBase64Rpc(encrypt(new Uint8Array(32).fill(3), 'dataKey', { runs: [] }), 'base64');
+        cb?.({ ok: true, result: encryptedResult });
+      },
+    });
+    bindApiSessionSocketMock(mockIo, socket);
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(['run', 'list', 'sess_integration_ctrl_123', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+            machineKey: new Uint8Array(32).fill(8),
+          },
+        }),
+      });
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_run_list');
+      expect(parsed.data?.runs).toHaveLength(1);
+      expect(parsed.data?.runs?.[0]?.runId).toBe('run_marker_visible');
+      expect(parsed.data?.runs?.[0]?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'opencode' });
+    } finally {
+      output.restore();
     }
   });
 });

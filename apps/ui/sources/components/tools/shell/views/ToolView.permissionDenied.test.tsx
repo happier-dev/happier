@@ -1,40 +1,60 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
-import { collectHostText, makeToolCall } from './ToolView.testHelpers';
+import {
+    collectHostText,
+    installToolShellCommonModuleMocks,
+    makeToolCall,
+} from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: vi.fn(),
+    },
 }));
 
-vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return { ...rn, AppState: rn.AppState, Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios } };
+installToolShellCommonModuleMocks({
+    expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            AppState: {
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                currentState: 'active',
+            },
+            Platform: {
+                OS: 'ios',
+                select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null,
+            },
+        }),
+    text: async () =>
+        (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+            translate: (key) => key,
+        }),
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewDetailLevelDefault') return 'summary';
+                    if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
+                    if (key === 'toolViewDetailLevelByToolName') return {};
+                    if (key === 'toolViewTapAction') return 'expand';
+                    if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
+                    if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                    if (key === 'permissionPromptSurface') return 'transcript';
+                    return null;
+                },
+            },
+        }),
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surfaceHigh: '#fff',
-                surfaceHighest: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                warning: '#f90',
-                shadow: { color: '#000', opacity: 0.1 },
-            },
-        },
-    }),
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/hooks/ui/useElapsedTime', () => ({
     useElapsedTime: () => 0,
@@ -77,22 +97,6 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => React.createElement('PermissionFooter', null),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'summary';
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        if (key === 'toolViewTapAction') return 'expand';
-        if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
-        if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-        return null;
-    },
-}));
-
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
     DEFAULT_AGENT_ID: 'codex',
@@ -107,6 +111,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 describe('ToolView (permission denied)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('keeps the inferred known tool title even when inference fallback is used', async () => {
         const { ToolView } = await import('./ToolView');
 
@@ -120,18 +128,15 @@ describe('ToolView (permission denied)', () => {
             permission: { id: 'perm1', status: 'denied', decision: 'denied' },
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
+        );
 
-        const flattened = collectHostText(tree!);
-        expect(flattened).toContain('Bash');
-        expect(flattened).toContain('errors.permissionDenied');
+        const text = collectHostText(screen.tree);
+        expect(text).toContain('Bash');
+        expect(text).toContain('errors.permissionDenied');
         // The raw tool description should not replace the known tool title.
-        expect(flattened).not.toContain('execute');
+        expect(text).not.toContain('execute');
     });
 
     it('does not attribute denial to Read Only mode for non-codexLike providers', async () => {
@@ -146,22 +151,19 @@ describe('ToolView (permission denied)', () => {
             permission: { id: 'perm1', status: 'denied' },
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, {
-                    tool,
-                    metadata: { flavor: 'claude', permissionMode: 'read-only' } as any,
-                    messages: [],
-                    sessionId: 's1',
-                    messageId: 'm1',
-                }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, {
+                tool,
+                metadata: { flavor: 'claude', permissionMode: 'read-only' } as any,
+                messages: [],
+                sessionId: 's1',
+                messageId: 'm1',
+            }),
+        );
 
-        const flattened = collectHostText(tree!);
-        expect(flattened).toContain('errors.permissionDenied');
-        expect(flattened.join('\n')).not.toContain('Denied by Read Only mode');
+        const text = collectHostText(screen.tree).join('\n');
+        expect(text).toContain('errors.permissionDenied');
+        expect(text).not.toContain('errors.permissionDeniedReadOnlyMode');
     });
 
     it('attributes denial to Read Only mode for codexLike providers', async () => {
@@ -176,20 +178,16 @@ describe('ToolView (permission denied)', () => {
             permission: { id: 'perm1', status: 'denied' },
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, {
-                    tool,
-                    metadata: { flavor: 'codex', permissionMode: 'read-only' } as any,
-                    messages: [],
-                    sessionId: 's1',
-                    messageId: 'm1',
-                }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, {
+                tool,
+                metadata: { flavor: 'codex', permissionMode: 'read-only' } as any,
+                messages: [],
+                sessionId: 's1',
+                messageId: 'm1',
+            }),
+        );
 
-        const flattened = collectHostText(tree!);
-        expect(flattened.join('\n')).toContain('Denied by Read Only mode');
+        expect(collectHostText(screen.tree).join('\n')).toContain('errors.permissionDeniedReadOnlyMode');
     });
 });

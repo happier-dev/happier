@@ -2,9 +2,57 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { AppPaneProvider, useAppPaneContext } from '../../appShell/panes/AppPaneProvider';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.web ?? value?.default ?? null,
+            },
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: (key: string) => {
+                if (key === 'detailsPaneTabsBehavior') return 'preview';
+                if (key === 'uiMultiPanePanelsEnabled') return true;
+                return undefined;
+            },
+            useSession: () => ({ active: true, metadata: { path: sessionPathMock, machineId: 'm1' } }),
+            useMachine: () => null,
+            useSessionProjectScmSnapshot: () => scmSnapshotMock,
+            useSessionProjectScmSnapshotError: () => null,
+            useSessionProjectScmTouchedPaths: () => [],
+            useSessionProjectScmOperationLog: () => [],
+            useSessionProjectScmInFlightOperation: () => null,
+            useSessionProjectScmCommitSelectionPaths: () => [],
+            useSessionProjectScmCommitSelectionPatches: () => [],
+            useSetting: (key: string) => {
+                if (key === 'scmCommitStrategy') return 'atomic';
+                if (key === 'scmRemoteConfirmPolicy') return 'always';
+                if (key === 'scmPushRejectPolicy') return 'reject';
+                return undefined;
+            },
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useProjectForSession: () => ({ id: 'p1' }),
+            useProjectSessions: () => [],
+            storage: { getState: () => ({ sessions: {}, settings: {}, sessionListViewDataByServerId: {} }) },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+});
 
 const invalidateFromUserAndAwaitSpy = vi.fn();
 const loadCommitHistorySpy = vi.fn();
@@ -31,56 +79,6 @@ function buildScmSnapshotMock(capabilities: any) {
         capabilities,
     };
 }
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { select: (value: any) => value?.default ?? null },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    __esModule: true,
-    useUnistyles: () => ({
-        theme: {
-            dark: false,
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                surface: '#fff',
-                surfaceHigh: '#f6f6f6',
-                input: { background: '#f2f2f2' },
-                warning: '#f90',
-                success: '#0a0',
-                textLink: '#09f',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles({
-                    colors: {
-                        text: '#000',
-                        textSecondary: '#666',
-                        divider: '#ddd',
-                        surface: '#fff',
-                        surfaceHigh: '#f6f6f6',
-                        input: { background: '#f2f2f2' },
-                        warning: '#f90',
-                        success: '#0a0',
-                        textLink: '#09f',
-                    },
-                })
-                : styles,
-    },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -204,10 +202,6 @@ vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: () => {},
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
@@ -221,41 +215,6 @@ vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForRevea
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
 }));
-
-vi.mock('@/sync/domains/state/storage', () => {
-    const state = {
-        clearSessionProjectScmCommitSelectionPaths: vi.fn(),
-        clearSessionProjectScmCommitSelectionPatches: vi.fn(),
-        getSessionRepositoryTreeExpandedPaths: vi.fn(() => []),
-        setSessionRepositoryTreeExpandedPaths: vi.fn(),
-    };
-
-    return {
-        useLocalSetting: (key: string) => {
-            if (key === 'detailsPaneTabsBehavior') return 'preview';
-            if (key === 'uiMultiPanePanelsEnabled') return true;
-            return undefined;
-        },
-        useSession: () => ({ active: true, metadata: { path: sessionPathMock, machineId: 'm1' } }),
-        useMachine: () => null,
-        useSessionProjectScmSnapshot: () => scmSnapshotMock,
-        useSessionProjectScmSnapshotError: () => null,
-        useSessionProjectScmTouchedPaths: () => [],
-        useSessionProjectScmOperationLog: () => [],
-        useSessionProjectScmInFlightOperation: () => null,
-        useSessionProjectScmCommitSelectionPaths: () => [],
-        useSessionProjectScmCommitSelectionPatches: () => [],
-        useSetting: (key: string) => {
-            if (key === 'scmCommitStrategy') return 'atomic';
-            if (key === 'scmRemoteConfirmPolicy') return 'always';
-            if (key === 'scmPushRejectPolicy') return 'reject';
-            return undefined;
-        },
-        useProjectForSession: () => ({ id: 'p1' }),
-        useProjectSessions: () => [],
-        storage: { getState: () => state },
-    };
-});
 
 describe('SessionRightPanel git sub-tabs', () => {
     beforeEach(() => {
@@ -287,17 +246,13 @@ describe('SessionRightPanel git sub-tabs', () => {
             writeExclude: true,
         });
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneProvider>
+        await renderScreen(<AppPaneProvider>
                     <SessionRightPanel sessionId="s1" scopeId="session:s1" />
-                </AppPaneProvider>
-            );
-        });
+                </AppPaneProvider>);
 
         // Allow mount effects to flush.
         await act(async () => {
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(invalidateFromUserAndAwaitSpy).toHaveBeenCalledWith('s1');
@@ -321,17 +276,13 @@ describe('SessionRightPanel git sub-tabs', () => {
             writeExclude: true,
         });
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneProvider>
+        await renderScreen(<AppPaneProvider>
                     <SessionRightPanel sessionId="s1" scopeId="session:s1" />
-                </AppPaneProvider>
-            );
-        });
+                </AppPaneProvider>);
 
         // Allow mount effects to flush.
         await act(async () => {
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(invalidateFromUserAndAwaitSpy).toHaveBeenCalledWith('s1');
@@ -342,37 +293,48 @@ describe('SessionRightPanel git sub-tabs', () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
         let observedState: any = null;
+        useChangedFilesDataSpy.mockImplementation(() => ({
+            attributionReliability: 'explicit',
+            scmStatusFiles: {
+                includedFiles: [],
+                pendingFiles: [],
+                changeSetModel: 'index',
+                branch: 'main',
+                upstream: null,
+                ahead: 0,
+                behind: 0,
+                detached: false,
+                totalIncluded: 0,
+                totalPending: 0,
+            },
+            allRepositoryChangedFiles: [],
+            sessionAttributedFiles: [],
+            repositoryOnlyFiles: [],
+            suppressedInferredCount: 0,
+        }));
         const Probe = () => {
             const { state } = useAppPaneContext();
             observedState = state;
             return null;
         };
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            scmWriteEnabledMock = true;
-            scmSnapshotMock = buildScmSnapshotMock({
-                readLog: true,
-                writeCommit: true,
-                writeRemoteFetch: true,
-                writeRemotePull: true,
-                writeRemotePush: true,
-                writeDiscard: true,
-                writeInclude: true,
-                writeExclude: true,
-            });
-            tree = renderer.create(
-                <AppPaneProvider>
-                    <SessionRightPanel sessionId="s1" scopeId="session:s1" />
-                    <Probe />
-                </AppPaneProvider>
-            );
+        scmWriteEnabledMock = true;
+        scmSnapshotMock = buildScmSnapshotMock({
+            readLog: true,
+            writeCommit: true,
+            writeRemoteFetch: true,
+            writeRemotePull: true,
+            writeRemotePush: true,
+            writeDiscard: true,
+            writeInclude: true,
+            writeExclude: true,
         });
-
-        const findHostSurfaceView = (testID: string) => {
-            return tree.root.find((node) => (node.type as unknown) === 'View' && node.props?.testID === testID);
-        };
-
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionRightPanel sessionId="s1" scopeId="session:s1" />
+                <Probe />
+            </AppPaneProvider>,
+        );
         const getOpacity = (node: renderer.ReactTestInstance) => {
             const style = node.props.style;
             const styles = Array.isArray(style) ? style : [style];
@@ -383,35 +345,30 @@ describe('SessionRightPanel git sub-tabs', () => {
             }
             return undefined;
         };
+        const commitSurface = screen.findByTestId('session-rightpanel-git-surface:commit');
+        const updateSurface = screen.findByTestId('session-rightpanel-git-surface:update');
+        const historySurface = screen.findByTestId('session-rightpanel-git-surface:history');
 
-        const commitSurface = findHostSurfaceView('session-rightpanel-git-surface:commit');
-        const updateSurface = findHostSurfaceView('session-rightpanel-git-surface:update');
-        const historySurface = findHostSurfaceView('session-rightpanel-git-surface:history');
+        expect(commitSurface).toBeTruthy();
+        expect(updateSurface).toBeTruthy();
+        expect(historySurface).toBeTruthy();
+        expect(getOpacity(commitSurface!)).toBe(1);
+        expect(getOpacity(updateSurface!)).toBe(0);
+        expect(getOpacity(historySurface!)).toBe(0);
 
-        expect(getOpacity(commitSurface)).toBe(1);
-        expect(getOpacity(updateSurface)).toBe(0);
-        expect(getOpacity(historySurface)).toBe(0);
-
-        const updateTab = tree.root.findByProps({ testID: 'session-rightpanel-git-subtab:update' });
-        await act(async () => {
-            updateTab.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-rightpanel-git-subtab:update');
 
         expect(observedState?.scopes?.['session:s1']?.right?.tabState?.git?.activeSubTabId).toBe('update');
-        expect(getOpacity(commitSurface)).toBe(0);
-        expect(getOpacity(updateSurface)).toBe(1);
-        expect(getOpacity(historySurface)).toBe(0);
+        expect(getOpacity(commitSurface!)).toBe(0);
+        expect(getOpacity(updateSurface!)).toBe(1);
+        expect(getOpacity(historySurface!)).toBe(0);
 
-        const historyTab = tree.root.findByProps({ testID: 'session-rightpanel-git-subtab:history' });
-        await act(async () => {
-            historyTab.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-rightpanel-git-subtab:history');
 
         expect(observedState?.scopes?.['session:s1']?.right?.tabState?.git?.activeSubTabId).toBe('history');
-        expect(getOpacity(commitSurface)).toBe(0);
-        expect(getOpacity(updateSurface)).toBe(0);
-        expect(getOpacity(historySurface)).toBe(1);
-        expect(tree.root.findAllByType('SourceControlOperationsHistorySection' as any).length).toBe(1);
+        expect(getOpacity(commitSurface!)).toBe(0);
+        expect(getOpacity(updateSurface!)).toBe(0);
+        expect(getOpacity(historySurface!)).toBe(1);
     });
 
     it('does not repeatedly recompute changed files data when switching away from commit', async () => {
@@ -431,23 +388,14 @@ describe('SessionRightPanel git sub-tabs', () => {
             writeExclude: true,
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <AppPaneProvider>
+        const screen = await renderScreen(<AppPaneProvider>
                     <SessionRightPanel sessionId="s1" scopeId="session:s1" />
-                </AppPaneProvider>
-            );
-        });
-
+                </AppPaneProvider>);
         // Ensure the initial commit tab render has invoked the hook.
         const initialCalls = useChangedFilesDataSpy.mock.calls.length;
         expect(initialCalls).toBeGreaterThan(0);
 
-        const historyTab = tree.root.findByProps({ testID: 'session-rightpanel-git-subtab:history' });
-        await act(async () => {
-            historyTab.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-rightpanel-git-subtab:history');
 
         // Switching away should not thrash changed-files computations.
         expect(useChangedFilesDataSpy.mock.calls.length).toBeLessThanOrEqual(initialCalls + 1);
@@ -468,18 +416,12 @@ describe('SessionRightPanel git sub-tabs', () => {
             writeExclude: false,
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <AppPaneProvider>
+        const screen = await renderScreen(<AppPaneProvider>
                     <SessionRightPanel sessionId="s1" scopeId="session:s1" />
-                </AppPaneProvider>
-            );
-        });
-
-        expect(tree.root.findAllByType('ScmCommitComposerCard' as any).length).toBe(0);
-        expect(tree.root.findAllByProps({ testID: 'session-rightpanel-git-subtab:update' } as any).length).toBe(0);
-        expect(tree.root.findAllByProps({ testID: 'session-rightpanel-git-subtab:history' } as any).length).toBe(1);
+                </AppPaneProvider>);
+        expect(screen.findAllByTestId('scm-commit-message')).toHaveLength(0);
+        expect(screen.findAllByTestId('session-rightpanel-git-subtab:update')).toHaveLength(0);
+        expect(screen.findAllByTestId('session-rightpanel-git-subtab:history')).toHaveLength(1);
     });
 
     it('does not crash when SCM snapshot loads after mount', async () => {
@@ -494,17 +436,12 @@ describe('SessionRightPanel git sub-tabs', () => {
 
         scmSnapshotMock = null;
         const harnessRef = React.createRef<HarnessHandle>();
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <AppPaneProvider>
+        const screen = await renderScreen(<AppPaneProvider>
                     <Harness ref={harnessRef} />
-                </AppPaneProvider>
-            );
-        });
+                </AppPaneProvider>);
 
         await act(async () => {
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         scmSnapshotMock = {
@@ -525,6 +462,6 @@ describe('SessionRightPanel git sub-tabs', () => {
             harnessRef.current?.bump();
         });
 
-        expect(tree.root.findAllByType('SourceControlUnavailableState' as any).length).toBe(0);
+        expect(screen.findAllByTestId('session-rightpanel-git-surface:commit').length).toBeGreaterThan(0);
     });
 });

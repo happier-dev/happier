@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "app-env",
+    "bootstrap-qa",
     "testing",
     "devcontainers",
     "release-artifacts"

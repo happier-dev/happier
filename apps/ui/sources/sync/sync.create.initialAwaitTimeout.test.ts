@@ -23,12 +23,17 @@ vi.mock('react-native-mmkv', () => {
 
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
-    const actual = await vi.importActual<any>('react-native');
-    return {
-        ...actual,
-        Platform: { ...(actual?.Platform ?? {}), OS: 'web' },
-        AppState: { addEventListener: appStateAddListener as any },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            Platform: {
+                                                OS: 'web',
+                                            },
+                                            AppState: {
+                                                addEventListener: appStateAddListener as any,
+                                            },
+                                        }
+    );
 });
 
 vi.mock('@/log', () => ({
@@ -57,6 +62,7 @@ vi.mock('@/track', () => ({
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { flushHookEffects } from '@/dev/testkit';
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import { Encryption } from '@/sync/encryption/encryption';
@@ -128,8 +134,8 @@ describe('sync.create initial awaits', () => {
             resolved = true;
         });
 
-        // Current behavior (pre-fix) hangs forever; expected behavior resolves via awaitQueue timeouts.
-        await vi.advanceTimersByTimeAsync(10_000);
+        // Current behavior (pre-fix) hangs forever; expected behavior resolves via the 2500ms awaitQueue timeout.
+        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
         expect(resolved).toBe(true);
 
         await promise;

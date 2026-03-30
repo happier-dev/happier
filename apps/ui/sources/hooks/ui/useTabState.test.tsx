@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,12 +19,6 @@ vi.mock('@/sync/api/account/apiKv', () => ({
   kvBulkGet: (...args: any[]) => mocks.kvBulkGet(...args),
   kvSet: (...args: any[]) => mocks.kvSet(...args),
 }));
-
-async function flushEffects(turns = 3) {
-  for (let i = 0; i < turns; i += 1) {
-    await Promise.resolve();
-  }
-}
 
 describe('useTabState', () => {
   afterEach(() => {
@@ -47,10 +42,7 @@ describe('useTabState', () => {
       return null;
     }
 
-    await act(async () => {
-      renderer.create(<Test />);
-      await flushEffects();
-    });
+    await renderScreen(<Test />);
 
     expect(seen.at(-1)).toEqual({ tab: 'settings', loading: false });
   });
@@ -74,10 +66,7 @@ describe('useTabState', () => {
       return null;
     }
 
-    await act(async () => {
-      renderer.create(<Test />);
-      await flushEffects(6);
-    });
+    await renderScreen(<Test />);
 
     expect(seen).toContain('inbox');
     expect(mocks.kvSet).toHaveBeenCalledWith({ token: 't' }, 'ui:active-tab', 'inbox', -1);

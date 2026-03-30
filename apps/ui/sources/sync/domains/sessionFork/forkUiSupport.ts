@@ -1,12 +1,16 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { resolveAgentUiBehaviorFromFlavor } from '@/agents/registry/registryUiBehavior';
+import { evaluateAgentSessionCapabilitySupport, inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 export function canForkConversation(params: { session: Session | null | undefined; replayEnabled: boolean | null | undefined }): boolean {
   const session = params.session ?? null;
   if (!session) return false;
   if (params.replayEnabled === true) return true;
-  const behavior = resolveAgentUiBehaviorFromFlavor((session as any)?.metadata?.flavor);
-  return behavior?.forking?.supportsForkConversation?.({ session }) === true;
+  const agentId = inferAgentIdFromSessionMetadata(session.metadata);
+  return evaluateAgentSessionCapabilitySupport({
+    agentId,
+    capability: 'sessionFork.conversation',
+    metadata: session.metadata,
+  }) === 'supported';
 }
 
 export function canForkFromMessage(params: {
@@ -16,9 +20,12 @@ export function canForkFromMessage(params: {
 }): boolean {
   const session = params.session ?? null;
   if (!session) return false;
-  if (params.messageSeq == null) return false;
+  if (params.messageSeq == null || !Number.isFinite(params.messageSeq) || params.messageSeq <= 0) return false;
   if (params.replayEnabled === true) return true;
-  const behavior = resolveAgentUiBehaviorFromFlavor((session as any)?.metadata?.flavor);
-  return behavior?.forking?.supportsForkFromMessage?.({ session }) === true;
+  const agentId = inferAgentIdFromSessionMetadata(session.metadata);
+  return evaluateAgentSessionCapabilitySupport({
+    agentId,
+    capability: 'sessionFork.fromMessage',
+    metadata: session.metadata,
+  }) === 'supported';
 }
-

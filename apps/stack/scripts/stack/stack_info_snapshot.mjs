@@ -7,6 +7,12 @@ import { getStackRuntimeStatePath, isPidAlive, readStackRuntimeStateFile } from 
 import { isTcpPortFree } from '../utils/net/ports.mjs';
 import { readTextOrEmpty } from '../utils/fs/ops.mjs';
 import { resolveDefaultRepoEnv } from './stack_environment.mjs';
+import { resolveStackRuntimeMode } from '../runtime/shared/runtime_mode.mjs';
+import { inspectActiveRuntimeSnapshot } from '../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
+import { getObservedStackDaemon, readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
+import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
+import { join } from 'node:path';
+import { checkDaemonState } from '../daemon.mjs';
 
 const readExistingEnv = readTextOrEmpty;
 
@@ -16,13 +22,34 @@ export async function readStackInfoSnapshot({ rootDir, stackName }) {
   const envRaw = await readExistingEnv(envPath);
   const stackEnv = envRaw ? parseEnvToObject(envRaw) : {};
   const runtimeStatePath = getStackRuntimeStatePath(stackName);
-  const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
 
   const serverComponent = getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happier-server-light';
   const stackRemote = getEnvValueAny(stackEnv, ['HAPPIER_STACK_STACK_REMOTE']) || 'upstream';
 
   const pinnedServerPortRaw = getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVER_PORT']);
   const pinnedServerPort = pinnedServerPortRaw ? Number(pinnedServerPortRaw) : null;
+  const stackScopedEnv = applyStackActiveServerScopeEnv({
+    env: { ...process.env, ...stackEnv },
+    stackName,
+    cliIdentity: 'default',
+  });
+  const initialRuntimeState = await readStackRuntimeStateFile(runtimeStatePath);
+  const initialRuntimePorts =
+    initialRuntimeState?.ports && typeof initialRuntimeState.ports === 'object' ? initialRuntimeState.ports : {};
+  const syncServerPort =
+    Number.isFinite(pinnedServerPort) && pinnedServerPort > 0
+      ? pinnedServerPort
+      : Number(initialRuntimePorts?.server) > 0
+        ? Number(initialRuntimePorts.server)
+        : null;
+  const runtimeState = await readStackRuntimeStateWithDaemonSync({
+    runtimeStatePath,
+    cliHomeDir: join(baseDir, 'cli'),
+    internalServerUrl: Number.isFinite(syncServerPort) && syncServerPort > 0 ? `http://127.0.0.1:${syncServerPort}` : '',
+    env: stackScopedEnv,
+  }, {
+    checkDaemonStateImpl: checkDaemonState,
+  });
 
   const runtimePorts = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : {};
   const serverPort =
@@ -44,6 +71,17 @@ export async function readStackInfoSnapshot({ rootDir, stackName }) {
   const serverPid = Number(runtimeState?.processes?.serverPid);
   const expoPid = Number(runtimeState?.processes?.expoPid);
   const expoTailscaleForwarderPid = Number(runtimeState?.processes?.expoTailscaleForwarderPid);
+  const daemonExpected = String(getEnvValueAny(stackEnv, ['HAPPIER_STACK_DAEMON']) ?? '1').trim() !== '0';
+  const observedDaemon = getObservedStackDaemon({
+    cliHomeDir: join(baseDir, 'cli'),
+    internalServerUrl: Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '',
+    runtimeDaemonPid: runtimeState?.processes?.daemonPid ?? null,
+    env: stackScopedEnv,
+  }, {
+    checkDaemonStateImpl: checkDaemonState,
+  });
+  const daemonPid = Number(observedDaemon.pid);
+  const daemonRunning = observedDaemon.running === true;
 
   const ownerAlive = Number.isFinite(ownerPid) && ownerPid > 1 ? isPidAlive(ownerPid) : false;
   const serverPidAlive = Number.isFinite(serverPid) && serverPid > 1 ? isPidAlive(serverPid) : false;
@@ -70,10 +108,10 @@ export async function readStackInfoSnapshot({ rootDir, stackName }) {
     Number.isFinite(uiPort) && uiPort > 0
       ? uiPortListening
       : expoPidAlive;
-  const candidateRuntimePids = [ownerPid, serverPid, expoPid, expoTailscaleForwarderPid]
+  const candidateRuntimePids = [ownerPid, serverPid, expoPid, expoTailscaleForwarderPid, daemonPid]
     .filter((pid) => Number.isFinite(pid) && pid > 1);
   const runningPid = candidateRuntimePids.find((pid) => isPidAlive(pid)) ?? null;
-  const running = ownerAlive || serverRunning || uiRunning || serverPidAlive || expoPidAlive || expoForwarderAlive;
+  const running = ownerAlive || serverRunning || uiRunning || daemonRunning || serverPidAlive || expoPidAlive || expoForwarderAlive;
 
   const healthIssues = [];
   if (Number.isFinite(serverPort) && serverPort > 0 && !serverRunning) {
@@ -81,6 +119,9 @@ export async function readStackInfoSnapshot({ rootDir, stackName }) {
   }
   if (Number.isFinite(uiPort) && uiPort > 0 && !uiRunning) {
     healthIssues.push('ui_down');
+  }
+  if (daemonExpected && running && !daemonRunning) {
+    healthIssues.push('daemon_down');
   }
   const healthStatus = !running ? 'stopped' : healthIssues.length > 0 ? 'degraded' : 'healthy';
 
@@ -91,6 +132,8 @@ export async function readStackInfoSnapshot({ rootDir, stackName }) {
 
   const repoDir = getEnvValueAny(stackEnv, ['HAPPIER_STACK_REPO_DIR']) || resolveDefaultRepoEnv({ rootDir }).HAPPIER_STACK_REPO_DIR;
   const repoWorktreeSpec = repoDir ? worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: repoDir }) || null : null;
+  const runtimeMode = resolveStackRuntimeMode({ argv: [], env: stackEnv }).mode;
+  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: baseDir });
   const dirs = {
     repoDir,
     uiDir: getComponentDir(rootDir, 'happier-ui', { ...process.env, ...stackEnv }),
@@ -119,6 +162,12 @@ export async function readStackInfoSnapshot({ rootDir, stackName }) {
           pid: Number.isFinite(ownerPid) && ownerPid > 1 ? ownerPid : null,
           running: ownerAlive,
         },
+        daemon: {
+          pid: Number.isFinite(daemonPid) && daemonPid > 1 ? daemonPid : null,
+          running: daemonRunning,
+          status: observedDaemon.status,
+          source: observedDaemon.source,
+        },
         server: {
           pid: Number.isFinite(serverPid) && serverPid > 1 ? serverPid : null,
           running: serverRunning,
@@ -145,6 +194,13 @@ export async function readStackInfoSnapshot({ rootDir, stackName }) {
       processes: runtimeState?.processes ?? null,
       startedAt: runtimeState?.startedAt ?? null,
       updatedAt: runtimeState?.updatedAt ?? null,
+      mode: runtimeMode,
+      activeSnapshotId: runtimeInspection.activeSnapshotId,
+      snapshotPath: runtimeInspection.snapshotPath,
+      sourceFingerprint: runtimeInspection.sourceFingerprint,
+      valid: runtimeInspection.valid,
+      errors: runtimeInspection.errors,
+      snapshotComponents: runtimeInspection.manifest?.components ?? null,
     },
     urls: {
       host,

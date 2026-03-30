@@ -9,11 +9,109 @@ import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { Text } from '@/components/ui/text/Text';
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
+import { MessageView } from '@/components/sessions/transcript/MessageView';
 import { t } from '@/text';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useSessionMessagesById, useSessionMessagesReducerState, useSetting } from '@/sync/domains/state/storage';
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { resolveMessageRouteIdForDisplay } from '@/sync/domains/messages/messageRouteIds';
+import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
+import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
+import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
+import { Typography } from '@/constants/Typography';
+
+function shouldRenderGroupedToolCallWithMessageView(
+    message: ToolCallMessage,
+    chromeMode: 'activity_feed' | 'cards',
+    groupExpanded: boolean,
+): boolean {
+    if (chromeMode === 'cards') {
+        return true;
+    }
+    const hasStructuredMeta = Boolean(message.meta?.happier);
+    if (hasStructuredMeta) return true;
+
+    // Avoid switching the renderer for subagent tool calls based on streaming children.
+    // Otherwise the row remounts (ToolTimelineRow → MessageView) and the user's expanded/collapsed state resets.
+    if (isSubAgentTranscriptToolName(message.tool?.name ?? '')) {
+        return groupExpanded;
+    }
+
+    return false;
+}
+
+export function resolveGroupedPreviewSidechainIds(params: Readonly<{
+    chromeMode: 'activity_feed' | 'cards';
+    previewMessages: readonly ToolCallMessage[];
+}>): readonly string[] {
+    if (params.chromeMode !== 'activity_feed') {
+        return [];
+    }
+
+    const sidechainIds = new Set<string>();
+    for (const message of params.previewMessages) {
+        const toolName = typeof message.tool?.name === 'string' ? message.tool.name : '';
+        if (!isSubAgentTranscriptToolName(toolName)) continue;
+        const sidechainId = resolveToolTranscriptSidechainId({
+            tool: message.tool,
+            normalizedToolName: toolName,
+        });
+        if (!sidechainId) continue;
+        sidechainIds.add(sidechainId);
+    }
+    return [...sidechainIds];
+}
+
+function renderGroupedToolCallRowContent(params: Readonly<{
+    message: ToolCallMessage;
+    chromeMode: 'activity_feed' | 'cards';
+    groupExpanded: boolean;
+    metadata: Metadata | null;
+    sessionId: string;
+    nestedMessageId: string | undefined;
+    forcePermissionPromptsInTranscript?: boolean;
+    interaction: TranscriptInteraction;
+}>): React.ReactNode {
+    if (shouldRenderGroupedToolCallWithMessageView(params.message, params.chromeMode, params.groupExpanded)) {
+        return (
+            <MessageView
+                message={params.message}
+                metadata={params.metadata}
+                sessionId={params.sessionId}
+                layoutContext="tool_calls_group"
+                forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
+                interaction={params.interaction}
+            />
+        );
+    }
+
+    if (params.chromeMode === 'activity_feed') {
+        return (
+            <ToolTimelineRow
+                tool={params.message.tool}
+                metadata={params.metadata}
+                messages={params.message.children}
+                sessionId={params.sessionId}
+                messageId={params.nestedMessageId}
+                forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
+                interaction={params.interaction}
+            />
+        );
+    }
+
+    return (
+        <ToolView
+            tool={params.message.tool}
+            metadata={params.metadata}
+            messages={params.message.children}
+            sessionId={params.sessionId}
+            messageId={params.nestedMessageId}
+            forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
+            interaction={params.interaction}
+        />
+    );
+}
 
 export const ToolCallsGroupView = React.memo((props: {
     id: string;
@@ -21,6 +119,7 @@ export const ToolCallsGroupView = React.memo((props: {
     toolMessages: ToolCallMessage[];
     metadata: Metadata | null;
     sessionId: string;
+    forcePermissionPromptsInTranscript?: boolean;
     expanded: boolean;
     setExpanded: (expanded: boolean) => void;
     interaction: TranscriptInteraction;
@@ -30,6 +129,8 @@ export const ToolCallsGroupView = React.memo((props: {
     const normalizedChromeMode = toolViewTimelineChromeMode === 'activity_feed' ? 'activity_feed' : 'cards';
     const transcriptToolCallsGroupShowBackground = useSetting('transcriptToolCallsGroupShowBackground');
     const transcriptToolCallsCollapsedPreviewCount = useSetting('transcriptToolCallsCollapsedPreviewCount');
+    const messagesById = useSessionMessagesById(props.sessionId);
+    const reducerState = useSessionMessagesReducerState(props.sessionId);
     const expanded = props.expanded === true;
     const count = props.toolMessages.length;
     const createdAt = props.toolMessages[0]?.createdAt ?? Date.now();
@@ -51,8 +152,56 @@ export const ToolCallsGroupView = React.memo((props: {
         if (!Number.isFinite(raw)) return 5;
         return Math.max(0, Math.min(15, Math.trunc(raw)));
     })();
-    const previewMessages = !expanded && previewCount > 0 ? props.toolMessages.slice(-previewCount) : [];
+    const latestToolMessageId = props.toolMessages[count - 1]?.id ?? null;
+    const collapsedPreviewAnchorIdRef = React.useRef<string | null>(null);
+    const prevExpandedRef = React.useRef<boolean>(expanded);
+    React.useEffect(() => {
+        const prevExpanded = prevExpandedRef.current;
+        prevExpandedRef.current = expanded;
+        if (expanded) {
+            collapsedPreviewAnchorIdRef.current = null;
+            return;
+        }
+        // Freeze the preview window when a group is collapsed so streaming tool messages don't cause
+        // previously-visible tool rows to disappear (which is jarring while the user is reading).
+        if (collapsedPreviewAnchorIdRef.current == null || prevExpanded) {
+            collapsedPreviewAnchorIdRef.current = latestToolMessageId;
+        }
+    }, [expanded, latestToolMessageId]);
+
+    const previewMessages = React.useMemo(() => {
+        if (expanded || previewCount <= 0 || count === 0) return [];
+        const anchorId = collapsedPreviewAnchorIdRef.current;
+        const anchorIndex = anchorId ? props.toolMessages.findIndex((m) => m.id === anchorId) : -1;
+        const anchoredMessages =
+            anchorIndex >= 0
+                ? props.toolMessages.slice(0, anchorIndex + 1)
+                : props.toolMessages;
+        return anchoredMessages.slice(-previewCount);
+    }, [count, expanded, previewCount, props.toolMessages]);
+
     const hiddenCount = !expanded && previewCount > 0 ? Math.max(0, count - previewMessages.length) : 0;
+    const previewSidechainIds = React.useMemo(() => {
+        return resolveGroupedPreviewSidechainIds({
+            chromeMode: normalizedChromeMode,
+            previewMessages,
+        });
+    }, [normalizedChromeMode, previewMessages]);
+
+    useEnsureSidechainsLoaded({
+        enabled: !expanded && previewSidechainIds.length > 0,
+        sessionId: props.sessionId,
+        sidechainIds: previewSidechainIds,
+    });
+
+    const resolveToolRouteMessageId = React.useCallback((message: ToolCallMessage) => {
+        if (props.interaction.disableToolNavigation) return undefined;
+        return resolveMessageRouteIdForDisplay({
+            message,
+            messagesById,
+            reducerState,
+        });
+    }, [messagesById, props.interaction.disableToolNavigation, reducerState]);
 
     return (
         <View
@@ -115,55 +264,54 @@ export const ToolCallsGroupView = React.memo((props: {
                                     </Text>
                                 </Pressable>
                             ) : null}
-                            {previewMessages.map((m) => (
+                            {previewMessages.map((m) => {
+                                const nestedMessageId = resolveToolRouteMessageId(m);
+                                return (
                                 <View
                                     key={`preview:${m.id}`}
                                     testID="transcript-tool-calls-preview-row"
                                     style={[styles.previewRow, normalizedChromeMode === 'activity_feed' ? styles.previewRowFeed : styles.previewRowCards]}
                                 >
-                                    <ToolTimelineRow
-                                        tool={m.tool}
-                                        metadata={props.metadata}
-                                        messages={m.children}
-                                        sessionId={props.sessionId}
-                                        messageId={m.id}
-                                        interaction={props.interaction}
-                                    />
+                                    {renderGroupedToolCallRowContent({
+                                        message: m,
+                                        chromeMode: normalizedChromeMode,
+                                        groupExpanded: false,
+                                        metadata: props.metadata,
+                                        sessionId: props.sessionId,
+                                        nestedMessageId,
+                                        forcePermissionPromptsInTranscript: props.forcePermissionPromptsInTranscript,
+                                        interaction: props.interaction,
+                                    })}
                                 </View>
-                            ))}
+                                );
+                            })}
                         </View>
                     ) : null}
 
                     <TranscriptCollapsible id={collapsibleId} createdAt={createdAt} expanded={expanded}>
                         <View style={[styles.body, normalizedChromeMode === 'activity_feed' ? styles.bodyFeed : styles.bodyCards]}>
-                            {props.toolMessages.map((m) => (
+                            {props.toolMessages.map((m) => {
+                                const nestedMessageId = resolveToolRouteMessageId(m);
+                                return (
                                 <TranscriptEnterWrapper key={m.id} id={m.id} createdAt={m.createdAt}>
                                     <View
                                         testID="transcript-tool-calls-tool-row"
                                         style={[styles.toolRow, normalizedChromeMode === 'activity_feed' ? styles.toolRowFeed : styles.toolRowCards]}
                                     >
-                                        {normalizedChromeMode === 'activity_feed' ? (
-                                            <ToolTimelineRow
-                                                tool={m.tool}
-                                                metadata={props.metadata}
-                                                messages={m.children}
-                                                sessionId={props.sessionId}
-                                                messageId={m.id}
-                                                interaction={props.interaction}
-                                            />
-                                        ) : (
-                                            <ToolView
-                                                tool={m.tool}
-                                                metadata={props.metadata}
-                                                messages={m.children}
-                                                sessionId={props.sessionId}
-                                                messageId={m.id}
-                                                interaction={props.interaction}
-                                            />
-                                        )}
+                                        {renderGroupedToolCallRowContent({
+                                            message: m,
+                                            chromeMode: normalizedChromeMode,
+                                            groupExpanded: expanded,
+                                            metadata: props.metadata,
+                                            sessionId: props.sessionId,
+                                            nestedMessageId,
+                                            forcePermissionPromptsInTranscript: props.forcePermissionPromptsInTranscript,
+                                            interaction: props.interaction,
+                                        })}
                                     </View>
                                 </TranscriptEnterWrapper>
-                            ))}
+                                );
+                            })}
                         </View>
                     </TranscriptCollapsible>
                 </View>
@@ -209,12 +357,11 @@ const styles = StyleSheet.create((theme) => ({
         flexGrow: 1,
         color: theme.colors.text,
         fontSize: 13,
-        fontWeight: '600',
+        ...Typography.default('semiBold'),
     },
     subtitle: {
         color: theme.colors.agentEventText,
         fontSize: 13,
-        fontWeight: '500',
     },
     headerRight: {
         flexDirection: 'row',
@@ -243,7 +390,7 @@ const styles = StyleSheet.create((theme) => ({
         width: 2,
         borderRadius: 2,
         backgroundColor: theme.colors.agentEventText,
-        opacity: 0.42,
+        opacity: 0.1,
         marginBottom: 7
     },
     contentBody: {
@@ -271,7 +418,7 @@ const styles = StyleSheet.create((theme) => ({
     previewMore: {
         paddingHorizontal: 0,
         paddingTop: 6,
-        paddingBottom: 2,
+        paddingBottom: 6,
         alignSelf: 'flex-start',
     },
     previewMorePressed: {
@@ -279,8 +426,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     previewMoreText: {
         color: theme.colors.textSecondary,
-        fontSize: 12,
-        fontWeight: '600',
+        ...Typography.default('regular'),
+        fontSize: 13,
     },
     body: {
         paddingBottom: 6,

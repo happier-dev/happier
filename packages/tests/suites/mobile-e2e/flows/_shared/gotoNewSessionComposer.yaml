@@ -1,0 +1,19 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    when:
+      visible:
+        id: tabbar-tab-sessions
+    commands:
+      - tapOn:
+          id: tabbar-tab-sessions
+
+- assertVisible:
+    id: main-header-start-new-session
+- tapOn:
+    id: main-header-start-new-session
+
+- extendedWaitUntil:
+    visible:
+      id: new-session-composer-input
+    timeout: 60000

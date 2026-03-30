@@ -1,15 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
-import { initDbSqlite, db } from "@/storage/db";
-import type { Prisma } from "@/storage/prisma";
+import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
-import { restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 import {
     deletePendingMessage,
     discardPendingMessage,
@@ -20,62 +14,24 @@ import {
     restorePendingMessage,
     updatePendingMessage,
 } from "./pendingMessageService";
-
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 120_000,
-            killSignal: "SIGKILL",
-        },
-    );
-    if (res.error) {
-        throw new Error(`prisma migrate deploy failed before completion: ${res.error.message}`);
-    }
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 describe("pendingMessageService (shared sessions)", () => {
-    const envBackup = snapshotEnv();
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-pending-shared-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        Object.assign(process.env, {
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-pending-shared-",
+            initAuth: true,
         });
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = snapshotEnv();
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await auth.init();
     }, 120_000);
 
     afterAll(async () => {
-        await db.$disconnect();
-        restoreEnv(envBackup);
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
 
     beforeEach(() => {
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
     });
 
     const createAccount = async (kind: string) => {
@@ -226,6 +182,60 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(messages.map((m) => m.localId)).toEqual([localIdB, localIdC, localIdA]);
         const aMsg = messages.find((m) => m.localId === localIdA);
         expect((aMsg?.content as any)?.c).toBe("cipher-a-2");
+    });
+
+    it("keeps newly queued messages after pre-existing queued rows when the queue counter lags behind", async () => {
+        const owner = await createAccount("owner");
+        const session = await createSession(owner.id);
+
+        const localIdA = `seed-a-${randomUUID()}`;
+        const localIdB = `seed-b-${randomUUID()}`;
+        const localIdC = `new-c-${randomUUID()}`;
+
+        await db.sessionPendingMessage.create({
+            data: {
+                sessionId: session.id,
+                localId: localIdA,
+                content: { t: "encrypted", c: "cipher-seed-a" },
+                status: "queued",
+                position: 5,
+                authorAccountId: owner.id,
+            },
+        });
+        await db.sessionPendingMessage.create({
+            data: {
+                sessionId: session.id,
+                localId: localIdB,
+                content: { t: "encrypted", c: "cipher-seed-b" },
+                status: "queued",
+                position: 6,
+                authorAccountId: owner.id,
+            },
+        });
+        await db.session.update({
+            where: { id: session.id },
+            data: { pendingQueueSeq: 0 },
+        });
+
+        const enqueue = await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: localIdC,
+            ciphertext: "cipher-new-c",
+        });
+        expect(enqueue.ok).toBe(true);
+        if (!enqueue.ok) throw new Error("expected enqueue to succeed");
+        expect(enqueue.pending.position).toBe(7);
+
+        const listQueued = await listPendingMessages({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            includeDiscarded: false,
+        });
+        expect(listQueued.ok).toBe(true);
+        if (!listQueued.ok) throw new Error("unexpected list failure");
+        expect(listQueued.pending.map((p) => p.localId)).toEqual([localIdA, localIdB, localIdC]);
+        expect(listQueued.pending.map((p) => p.position)).toEqual([5, 6, 7]);
     });
 
     it("forbids non-owner participants from materializing pending", async () => {

@@ -56,10 +56,12 @@ describe('apiChanges', () => {
             nextCursor: '2',
         });
         expect(global.fetch).toHaveBeenCalledWith('https://api.test.com/v2/changes?after=1&limit=50', expect.any(Object));
-        const requestInit = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as RequestInit;
+        const calls = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        const call = calls.find(([input]) => String(input) === 'https://api.test.com/v2/changes?after=1&limit=50');
+        const requestInit = call?.[1] as RequestInit | undefined;
         expect(requestInit).toBeDefined();
-        expect(requestInit.headers).toBeInstanceOf(Headers);
-        expect((requestInit.headers as Headers).get('Authorization')).toBe('Bearer t');
+        expect(requestInit?.headers).toBeInstanceOf(Headers);
+        expect((requestInit!.headers as Headers).get('Authorization')).toBe('Bearer t');
     });
 
     it('returns cursor-gone for 410 responses', async () => {

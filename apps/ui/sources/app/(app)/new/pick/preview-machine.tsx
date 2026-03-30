@@ -9,6 +9,8 @@ import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage'
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 export default React.memo(function PreviewMachinePickerScreen() {
     const { theme } = useUnistyles();
@@ -24,7 +26,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
 
     const headerLeft = React.useCallback(() => (
         <Pressable
-            onPress={() => router.back()}
+            onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/new' })}
             hitSlop={10}
             style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
             accessibilityRole="button"
@@ -32,7 +34,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
         >
             <Ionicons name="chevron-back" size={22} color={theme.colors.header.tint} />
         </Pressable>
-    ), [router, theme.colors.header.tint]);
+    ), [navigation, router, theme.colors.header.tint]);
 
     const screenOptions = React.useCallback(() => {
         return {
@@ -58,18 +60,12 @@ export default React.memo(function PreviewMachinePickerScreen() {
     }, [favoriteMachines, setFavoriteMachines]);
 
     const setPreviewMachineIdOnPreviousRoute = React.useCallback((previewMachineId: string) => {
-        const state = (navigation as any)?.getState?.();
-        const previousRoute = state?.routes?.[state.index - 1];
-        if (!state || typeof state.index !== 'number' || state.index <= 0 || !previousRoute?.key) {
-            return false;
-        }
-        (navigation as any).dispatch({
-            type: 'SET_PARAMS',
-            payload: { params: { previewMachineId } },
-            source: previousRoute.key,
+        return setNewSessionPickerReturnParams({
+            navigation: navigation as any,
+            router,
+            routeParams: { previewMachineId },
         });
-        return true;
-    }, [navigation]);
+    }, [navigation, router]);
 
     return (
         <>
@@ -85,8 +81,10 @@ export default React.memo(function PreviewMachinePickerScreen() {
                     showSearch
                     searchPlacement={favoriteMachineList.length > 0 ? 'favorites' : 'all'}
                     onSelect={(machine) => {
-                        setPreviewMachineIdOnPreviousRoute(machine.id);
-                        router.back();
+                        const returnMode = setPreviewMachineIdOnPreviousRoute(machine.id);
+                        if (returnMode === 'dispatch') {
+                            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+                        }
                     }}
                     onToggleFavorite={(machine) => toggleFavorite(machine.id)}
                 />

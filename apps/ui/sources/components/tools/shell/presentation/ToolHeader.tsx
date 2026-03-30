@@ -4,6 +4,7 @@ import { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
+import { Typography } from '@/constants/Typography';
 
 
 interface ToolHeaderProps {
@@ -58,13 +59,13 @@ const styles = StyleSheet.create((theme) => ({
         gap: 6,
     },
     title: {
-        fontSize: 14,
-        fontWeight: '500',
+        fontSize: 13,
+        ...Typography.default('semiBold'),
         color: theme.colors.text,
         textAlign: 'center',
     },
     subtitle: {
-        fontSize: 11,
+        fontSize: 12,
         color: theme.colors.textSecondary,
         textAlign: 'center',
         marginTop: 2,

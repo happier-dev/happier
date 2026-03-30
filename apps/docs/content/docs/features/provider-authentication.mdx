@@ -1,0 +1,169 @@
+---
+title: Provider authentication
+description: Manage machine-local provider CLI authentication from Happier, check auth status, and open provider login flows inside the app.
+---
+
+Happier can inspect and manage the **machine-local authentication state** of supported provider CLIs directly from each provider settings page.
+
+This is separate from [Connected services](/docs/features/connected-services):
+
+- **Provider authentication** = the native login state of the provider CLI installed on a specific machine
+- **Connected services** = credentials stored in Happier and reused across compatible backends
+
+This also differs from **Custom ACP**:
+
+- built-in providers such as Claude, Codex, Gemini, or Kiro have dedicated provider pages
+- Custom ACP stores readiness/login metadata inside each ACP backend definition instead of exposing one single provider-wide auth state for every custom backend
+
+## Where to find it
+
+Open:
+
+1. **Settings**
+2. **AI provider settings**
+3. Choose a provider
+4. Choose the target machine in the context bar
+5. Look for the **Authentication** section
+
+The Authentication section is machine-specific. If you switch to a different machine, Happier checks that machine’s provider CLI instead.
+
+## What Happier shows
+
+Depending on the provider, Happier can show:
+
+- **Status** — Logged in, logged out, or unknown
+- **Logged in as** — an account email or label when the provider exposes one safely
+- **Method** — for example API key, auth token, OAuth CLI login, credentials file, or Google ADC
+- **Source** — whether the result came from environment variables, local files, or a provider CLI command
+- **Issue** — why login could not be confirmed, such as missing credentials or expired credentials
+- **Last checked** — when Happier last refreshed that auth state
+
+## Actions
+
+### Log in / Re-authenticate
+
+If the provider supports a native CLI login flow, Happier can open it directly inside the app.
+
+What happens:
+
+- on larger layouts, the login terminal opens in the same shared bottom-pane system used by session terminals
+- on phone-sized layouts, Happier uses a more focused terminal presentation
+- Happier launches the provider’s real CLI on the selected machine
+- if the provider needs an in-terminal command such as `/login`, `/auth`, `/setup`, or `/connect`, Happier sends it for you
+- if the provider prints a URL, Happier shows copy/open actions in the terminal UI
+
+When the login flow exits, Happier refreshes the provider auth state automatically.
+
+### Check now
+
+**Check now** forces an immediate auth refresh for the selected provider on the selected machine.
+
+Use it when:
+
+- you logged in outside Happier and want the status to update immediately
+- you changed environment variables
+- you want to re-check a previously unknown status
+
+## What “unknown” means
+
+Some providers expose a safe, non-interactive way to confirm local auth. Others do not.
+
+If Happier shows **Unknown**, that usually means one of these:
+
+- the provider does not expose a reliable non-interactive auth probe yet
+- the provider CLI check timed out or failed
+- Happier intentionally avoided an interactive provider command during background detection
+
+Unknown does **not** automatically mean “logged out”.
+
+## Which providers support what
+
+| Provider | Login from Happier | Auth status detection |
+| --- | --- | --- |
+| Claude | Yes | Yes |
+| Codex | Yes | Yes |
+| Gemini | Yes | Yes |
+| OpenCode | Yes | Yes |
+| Copilot | Yes | Yes |
+| Augment (Auggie) | Yes | Limited / conservative |
+| Kiro | Yes | Limited / conservative |
+| Qwen | Yes | Limited / conservative |
+| Kimi | Yes | Limited / conservative |
+| Kilo | Yes | Limited / conservative |
+| Pi | No native login flow in Happier | Yes, env-based |
+
+“Limited / conservative” means Happier can launch the login flow, but only reports a positive auth state when the provider exposes a safe local signal.
+
+## How this works with Custom ACP
+
+Custom ACP is more generic than a dedicated provider page.
+
+For Custom ACP:
+
+- auth/login hints live on the **ACP backend** definition
+- different ACP backends can expose different login/status behavior
+So if you are using **Custom ACP**, think in terms of:
+
+- “is this backend ready on this machine?”
+- not “does the generic Custom ACP provider have one global login state?”
+
+See [ACP backends](./acp-backends).
+
+## How the login terminal fits with the rest of Happier
+
+The provider login terminal is not a one-off modal. It reuses the same terminal foundation as Happier’s embedded session terminal:
+
+- the same connected-machine terminal transport
+- the same URL detection and open/copy actions
+- the same bottom-pane host on larger layouts
+- the same close / restart / clear behaviors
+
+That keeps provider login flows consistent with the rest of the app instead of introducing a second terminal UI.
+
+## Common use cases
+
+### “I installed a provider CLI and want to finish setup in the app”
+
+Open the provider’s settings page, confirm the CLI is detected, then use **Log in**.
+
+### “I already logged in in my terminal and want Happier to pick it up”
+
+Open the provider’s settings page and use **Check now**.
+
+### “I want to know which account the machine is using”
+
+If the provider exposes an account label safely, Happier shows it in **Logged in as**.
+
+### “I use env-based auth instead of interactive login”
+
+Happier can detect env-backed auth for providers that expose it and shows the auth method accordingly.
+
+## Important limitations
+
+- Provider authentication is **machine-local**. Logging into a provider on one machine does not log it in on another machine.
+- Not every provider supports reliable non-interactive auth detection.
+- Connected services and machine-local auth can both exist for the same provider. They solve different problems.
+- If a provider login flow changes upstream, Happier follows the provider CLI’s real current behavior rather than inventing a custom auth flow.
+- For Custom ACP, authentication/readiness is backend-specific rather than one global provider-wide state.
+
+## Provider authentication and session handoff
+
+This matters directly for **session handoff between machines**.
+
+When you move a session to another machine:
+
+- machine-local provider auth does not come along automatically
+- the target machine must still be able to run that provider/backend
+
+If the provider/backend supports Happier [Connected services](/docs/features/connected-services), that is often the easiest way to make the target machine ready for handoff without depending only on a native CLI login on that machine.
+
+If the provider/backend depends on native machine-local auth, you still need the destination machine to be authenticated.
+
+## Related guides
+
+- [Providers](/docs/providers)
+- [ACP backends](/docs/features/acp-backends)
+- [Session handoff](/docs/features/session-handoff)
+- [Connected services](/docs/features/connected-services)
+- [Embedded terminal](/docs/features/embedded-terminal)
+- [Daemon](/docs/clients/daemon)

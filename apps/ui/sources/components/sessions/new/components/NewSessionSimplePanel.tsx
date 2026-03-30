@@ -1,24 +1,18 @@
 import * as React from 'react';
 import type { ViewStyle } from 'react-native';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View, useWindowDimensions } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SessionTypeSelectorRows } from '@/components/ui/forms/SessionTypeSelector';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
-import { Ionicons } from '@expo/vector-icons';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
-import { PopoverPortalTargetProvider } from '@/components/ui/popover';
 import { t } from '@/text';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
-import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
-import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
-import { sync } from '@/sync/sync';
 import { Text } from '@/components/ui/text/Text';
+import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type { CreatedSessionFollowUpContext } from '../hooks/useCreateNewSession';
+import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 
-
-export function NewSessionSimplePanel(props: Readonly<{
+export type NewSessionSimplePanelProps = Readonly<{
     popoverBoundaryRef: React.RefObject<View>;
     headerHeight: number;
     safeAreaTop: number;
@@ -26,21 +20,27 @@ export function NewSessionSimplePanel(props: Readonly<{
     newSessionTopPadding: number;
     newSessionSidePadding: number;
     newSessionBottomPadding: number;
+    shouldBottomAnchor?: boolean;
     containerStyle: ViewStyle;
-    showSessionTypeSelector: boolean;
-    sessionType: 'simple' | 'worktree';
-    setSessionType: (t: 'simple' | 'worktree') => void;
     sessionPrompt: string;
     setSessionPrompt: (v: string) => void;
-    handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => void;
+    handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (context: CreatedSessionFollowUpContext) => void | Promise<void> }>) => void;
     canCreate: boolean;
     isCreating: boolean;
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     sessionPromptInputMaxHeight: number;
+    submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     agentInputExtraActionChips?: React.ComponentProps<typeof AgentInput>['extraActionChips'];
     agentType: React.ComponentProps<typeof AgentInput>['agentType'];
+    agentLabel?: React.ComponentProps<typeof AgentInput>['agentLabel'];
     handleAgentClick: React.ComponentProps<typeof AgentInput>['onAgentClick'];
+    agentPickerTitle?: React.ComponentProps<typeof AgentInput>['agentPickerTitle'];
+    agentPickerOptions?: React.ComponentProps<typeof AgentInput>['agentPickerOptions'];
+    agentPickerSelectedOptionId?: React.ComponentProps<typeof AgentInput>['agentPickerSelectedOptionId'];
+    onAgentPickerSelect?: React.ComponentProps<typeof AgentInput>['onAgentPickerSelect'];
+    agentPickerApplyLabel?: React.ComponentProps<typeof AgentInput>['agentPickerApplyLabel'];
+    agentPickerProbe?: React.ComponentProps<typeof AgentInput>['agentPickerProbe'];
     permissionMode: React.ComponentProps<typeof AgentInput>['permissionMode'];
     handlePermissionModeChange: React.ComponentProps<typeof AgentInput>['onPermissionModeChange'];
     modelMode: React.ComponentProps<typeof AgentInput>['modelMode'];
@@ -51,105 +51,49 @@ export function NewSessionSimplePanel(props: Readonly<{
     acpSessionModeProbe?: React.ComponentProps<typeof AgentInput>['acpSessionModeOptionsOverrideProbe'];
     acpSessionModeId?: string | null;
     setAcpSessionModeId?: (modeId: string | null) => void;
+    acpConfigOptions?: React.ComponentProps<typeof AgentInput>['acpConfigOptionsOverride'];
+    acpConfigOptionsProbe?: React.ComponentProps<typeof AgentInput>['acpConfigOptionsOverrideProbe'];
+    acpConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
+    setAcpConfigOptionOverride?: (configId: string, value: string) => void;
     connectionStatus: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     machineName: string | undefined;
-    handleMachineClick: React.ComponentProps<typeof AgentInput>['onMachineClick'];
+    machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     selectedPath: string;
-    handlePathClick: React.ComponentProps<typeof AgentInput>['onPathClick'];
+    pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
     showResumePicker: boolean;
     resumeSessionId: string | null;
-    handleResumeClick: React.ComponentProps<typeof AgentInput>['onResumeClick'];
+    resumePopover?: React.ComponentProps<typeof AgentInput>['resumePopover'];
     isResumeSupportChecking: boolean;
     useProfiles: boolean;
     selectedProfileId: string | null;
-    handleProfileClick: React.ComponentProps<typeof AgentInput>['onProfileClick'];
-    selectedProfileEnvVarsCount: number;
-    handleEnvVarsClick: () => void;
-}>): React.ReactElement {
-    const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
-    const attachmentsUploadConfig = useAttachmentsUploadConfig();
-    const attachmentDraftManager = useAttachmentDraftManager({
-        enabled: attachmentsUploadsEnabled,
-        maxFileBytes: attachmentsUploadConfig.maxFileBytes,
-    });
+    profilePopover?: React.ComponentProps<typeof AgentInput>['profilePopover'];
+    targetServerId?: string | null;
+    attachmentFlowId?: string | null;
+}>;
+
+export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.ReactElement {
+    const { width: windowWidth } = useWindowDimensions();
+    const shouldBottomAnchor =
+        props.shouldBottomAnchor ?? (Platform.OS !== 'web' || isMobileLayoutWidth(windowWidth));
+
     const {
+        attachmentsUploadsEnabled,
         filePickerRef,
-        drafts,
         hasSendableAttachments,
         agentInputAttachments,
         addWebFiles,
         addPickedAttachments,
-        applyDraftPatch,
-        clearDrafts,
-    } = attachmentDraftManager;
-
-    const extraActionChips = React.useMemo(() => {
-        const base = props.agentInputExtraActionChips ?? [];
-        if (!attachmentsUploadsEnabled) return base;
-        return [
-            {
-                key: 'attachments-add',
-                render: ({ chipStyle, iconColor, showLabel, textStyle }: any) => (
-                    <Pressable
-                        onPress={() => filePickerRef.current?.open()}
-                        disabled={props.isCreating}
-                        style={({ pressed }) => chipStyle(Boolean(pressed))}
-                    >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Ionicons name="attach-outline" size={16} color={iconColor} />
-                            {showLabel ? <Text style={textStyle}>{t('common.attach')}</Text> : null}
-                        </View>
-                    </Pressable>
-                ),
-            },
-            ...base,
-        ] as any;
-    }, [attachmentsUploadsEnabled, filePickerRef, props.agentInputExtraActionChips, props.isCreating]);
-
-    const handleSend = React.useCallback(() => {
-        if (!attachmentsUploadsEnabled || drafts.length === 0) {
-            props.handleCreateSession();
-            return;
-        }
-
-        const initialPrompt = String(props.sessionPrompt ?? '');
-        props.handleCreateSession({
-            initialMessage: 'skip',
-            afterCreated: async (sessionId) => {
-                const { uploaded } = await uploadAttachmentDraftsToSession({
-                    sessionId,
-                    drafts,
-                    config: attachmentsUploadConfig,
-                    applyDraftPatch,
-                });
-                const attachmentsBlock = formatAttachmentsBlock(uploaded);
-                const trimmed = initialPrompt.trim();
-                const text = trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock;
-                await sync.sendMessage(sessionId, text, trimmed, {
-                    happier: {
-                        kind: 'attachments.v1',
-                        payload: {
-                            attachments: uploaded.map((a) => ({
-                                name: a.name,
-                                path: a.path,
-                                mimeType: a.mimeType,
-                                sizeBytes: a.sizeBytes,
-                                sha256: a.sha256,
-                            })),
-                        },
-                    },
-                } as Record<string, unknown>);
-                clearDrafts();
-            },
-        });
-    }, [
-        applyDraftPatch,
-        attachmentsUploadConfig,
-        attachmentsUploadsEnabled,
-        clearDrafts,
-        drafts,
-        props,
-    ]);
+        extraActionChips,
+        handleSend,
+    } = useNewSessionAttachmentsController({
+        flowId: props.attachmentFlowId,
+        isCreating: props.isCreating,
+        sessionPrompt: props.sessionPrompt,
+        handleCreateSession: props.handleCreateSession,
+        selectedProfileId: props.selectedProfileId,
+        targetServerId: props.targetServerId,
+        baseActionChips: props.agentInputExtraActionChips,
+    });
 
     return (
         <KeyboardAvoidingView
@@ -157,17 +101,16 @@ export function NewSessionSimplePanel(props: Readonly<{
             keyboardVerticalOffset={Platform.OS === 'ios' ? props.headerHeight + props.safeAreaBottom + 16 : 0}
             style={[
                 props.containerStyle,
-                ...(Platform.OS === 'web'
+                ...(shouldBottomAnchor
                     ? [
                         {
-                            justifyContent: 'center' as const,
+                            justifyContent: 'flex-end' as const,
                             paddingTop: 0,
                         },
                     ]
                     : [
                         {
-                            justifyContent: 'flex-end' as const,
-                            paddingTop: 0,
+                            justifyContent: 'center' as const,
                         },
                     ]),
             ]}
@@ -177,39 +120,25 @@ export function NewSessionSimplePanel(props: Readonly<{
                 style={{
                     flex: 1,
                     width: '100%',
-                    // Keep the content centered on web. Without this, the boundary wrapper (flex:1)
-                    // can cause the inner content to stick to the top even when the modal is centered.
-                    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+                    justifyContent: shouldBottomAnchor ? 'flex-end' : 'center',
                 }}
             >
-                <PopoverPortalTargetProvider>
-                    <PopoverBoundaryProvider boundaryRef={props.popoverBoundaryRef}>
+                <PopoverBoundaryProvider boundaryRef={props.popoverBoundaryRef}>
                         <View
                             style={{
                                 width: '100%',
                                 alignSelf: 'center',
                                 paddingTop: props.safeAreaTop + props.newSessionTopPadding,
-                                ...(Platform.OS !== 'web' ? { marginTop: 'auto' } : {}),
+                                ...(shouldBottomAnchor ? { marginTop: 'auto' } : {}),
                             }}
                         >
-                            {/* Session type selector only if enabled via experiments */}
-                            {props.showSessionTypeSelector && (
-                                <View style={{ paddingHorizontal: props.newSessionSidePadding, marginBottom: 16 }}>
-                                    <View style={{ width: '100%', alignSelf: 'center' }}>
-                                        <ItemGroup title={t('newSession.sessionType.title')} containerStyle={{ marginHorizontal: 0 }}>
-                                            <SessionTypeSelectorRows value={props.sessionType} onChange={props.setSessionType} />
-                                        </ItemGroup>
-                                    </View>
-                                </View>
-                            )}
-
                             {/* AgentInput with inline chips - sticky at bottom */}
                             <View
                                 style={{
                                     paddingBottom: props.newSessionBottomPadding,
                                 }}
                             >
-                                <View style={{ paddingHorizontal: props.newSessionSidePadding }}>
+                                <View style={{ paddingHorizontal: props.newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
                                     <View style={{ width: '100%', alignSelf: 'center' }}>
                                         <AgentInput
                                             value={props.sessionPrompt}
@@ -222,8 +151,15 @@ export function NewSessionSimplePanel(props: Readonly<{
                                             autocompleteSuggestions={props.emptyAutocompleteSuggestions}
                                             extraActionChips={extraActionChips}
                                             inputMaxHeight={props.sessionPromptInputMaxHeight}
+                                            submitAccessibilityLabel={props.submitAccessibilityLabel}
                                             agentType={props.agentType}
+                                            agentLabel={props.agentLabel}
                                             onAgentClick={props.handleAgentClick}
+                                            agentPickerOptions={props.agentPickerOptions}
+                                            agentPickerSelectedOptionId={props.agentPickerSelectedOptionId}
+                                            onAgentPickerSelect={props.onAgentPickerSelect}
+                                            agentPickerApplyLabel={props.agentPickerApplyLabel}
+                                            agentPickerProbe={props.agentPickerProbe}
                                             attachments={agentInputAttachments}
                                             onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}
                                             hasSendableAttachments={hasSendableAttachments}
@@ -241,22 +177,31 @@ export function NewSessionSimplePanel(props: Readonly<{
                                                     ? (modeId) => props.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
                                                     : undefined
                                             }
+                                            acpConfigOptionsOverride={props.acpConfigOptions}
+                                            acpConfigOptionsOverrideProbe={props.acpConfigOptionsProbe}
+                                            acpConfigOptionOverridesOverride={props.acpConfigOptionOverrides ?? null}
+                                            onAcpConfigOptionChange={props.setAcpConfigOptionOverride}
                                             connectionStatus={props.connectionStatus}
                                             machineName={props.machineName}
-                                            onMachineClick={props.handleMachineClick}
+                                            machinePopover={props.machinePopover}
+                                            onMachineClick={undefined}
                                             currentPath={props.selectedPath}
-                                            onPathClick={props.handlePathClick}
+                                            onPathClick={undefined}
+                                            pathPopover={props.pathPopover}
                                             resumeSessionId={props.showResumePicker ? props.resumeSessionId : undefined}
-                                            onResumeClick={props.showResumePicker ? props.handleResumeClick : undefined}
+                                            onResumeClick={undefined}
+                                            resumePopover={props.showResumePicker ? props.resumePopover : undefined}
                                             resumeIsChecking={props.isResumeSupportChecking}
                                             contentPaddingHorizontal={0}
                                             maxWidthCap={null}
                                             {...(props.useProfiles
                                                 ? {
                                                     profileId: props.selectedProfileId,
-                                                    onProfileClick: props.handleProfileClick,
-                                                    envVarsCount: props.selectedProfileEnvVarsCount || undefined,
-                                                    onEnvVarsClick: props.selectedProfileEnvVarsCount > 0 ? props.handleEnvVarsClick : undefined,
+                                                    profilePopover: props.profilePopover,
+                                                    onProfileClick: undefined,
+                                                    envVarsCount: undefined,
+                                                    envVarsPopover: undefined,
+                                                    onEnvVarsClick: undefined,
                                                 }
                                                 : {})}
                                         />
@@ -268,7 +213,6 @@ export function NewSessionSimplePanel(props: Readonly<{
                             </View>
                         </View>
                     </PopoverBoundaryProvider>
-                </PopoverPortalTargetProvider>
             </View>
         </KeyboardAvoidingView>
     );

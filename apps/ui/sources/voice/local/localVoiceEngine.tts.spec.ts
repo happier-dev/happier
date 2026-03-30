@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     createdAudioPlayers,
@@ -14,8 +14,44 @@ import {
     setPlatformOs,
 } from './localVoiceEngine.testHarness';
 
+let localVoiceEngine: typeof import('./localVoiceEngine');
+
+async function waitForAudioPlayer() {
+    await vi.waitFor(() => {
+        expect(createdAudioPlayers.length).toBeGreaterThan(0);
+    });
+}
+
+async function waitForVoiceStatus(getStatus: () => string, expectedStatus: string) {
+    await vi.waitFor(() => {
+        expect(getStatus()).toBe(expectedStatus);
+    });
+}
+
+async function waitForDeleteAsyncCall() {
+    await vi.waitFor(() => {
+        expect(deleteAsync.mock.calls.length).toBeGreaterThan(0);
+    });
+}
+
+async function expectPromiseToStayPending(promise: Promise<unknown>) {
+    await vi.waitFor(async () => {
+        const settled = await Promise.race([
+            promise.then(() => true),
+            new Promise<boolean>((resolve) => {
+                setTimeout(() => resolve(false), 0);
+            }),
+        ]);
+        expect(settled).toBe(false);
+    });
+}
+
 describe('local voice engine TTS behavior', () => {
     registerLocalVoiceEngineHarnessHooks();
+
+    beforeEach(async () => {
+        localVoiceEngine = await import('./localVoiceEngine');
+    }, 180_000);
 
     it('auto-speaks the next assistant message when enabled and configured', async () => {
         const storage = await getStorage();
@@ -65,12 +101,10 @@ describe('local voice engine TTS behavior', () => {
             storage.__notify();
         });
 
-        const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
         const stopPromise = toggleLocalVoiceTurn('s1');
-        for (let i = 0; i < 200 && createdAudioPlayers.length === 0; i++) {
-            await Promise.resolve();
-        }
+        await waitForAudioPlayer();
         expect(createdAudioPlayers.length).toBeGreaterThan(0);
         createdAudioPlayers[0].__emit('playbackStatusUpdate', { didJustFinish: true });
         await stopPromise;
@@ -127,25 +161,18 @@ describe('local voice engine TTS behavior', () => {
             storage.__notify();
         });
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
 
-        let resolved = false;
         const stopPromise = toggleLocalVoiceTurn('s1');
-        stopPromise.then(() => {
-            resolved = true;
-        });
 
         // Wait for speech to start.
-        for (let i = 0; i < 200 && getLocalVoiceState().status !== 'speaking'; i++) {
-            await Promise.resolve();
-        }
+        await waitForVoiceStatus(() => getLocalVoiceState().status, 'speaking');
         expect(getLocalVoiceState().status).toBe('speaking');
         expect(expoSpeechSpeak).toHaveBeenCalled();
 
         // Should not resolve until onDone fires.
-        for (let i = 0; i < 10; i++) await Promise.resolve();
-        expect(resolved).toBe(false);
+        await expectPromiseToStayPending(stopPromise);
 
         if (!onDoneRef.current) {
             throw new Error('Expected Expo Speech onDone callback');
@@ -211,15 +238,13 @@ describe('local voice engine TTS behavior', () => {
             storage.__notify();
         });
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
         emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'first turn', confidence: 0.9, segments: [] }] });
         const sendTurnPromise = toggleLocalVoiceTurn('s1');
         emitSpeechRecEvent('end', {});
 
-        for (let i = 0; i < 200 && getLocalVoiceState().status !== 'speaking'; i += 1) {
-            await Promise.resolve();
-        }
+        await waitForVoiceStatus(() => getLocalVoiceState().status, 'speaking');
         expect(getLocalVoiceState().status).toBe('speaking');
 
         await toggleLocalVoiceTurn('s1');
@@ -284,15 +309,13 @@ describe('local voice engine TTS behavior', () => {
             storage.__notify();
         });
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
         emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'first turn', confidence: 0.9, segments: [] }] });
         const sendTurnPromise = toggleLocalVoiceTurn('s1');
         emitSpeechRecEvent('end', {});
 
-        for (let i = 0; i < 200 && getLocalVoiceState().status !== 'speaking'; i += 1) {
-            await Promise.resolve();
-        }
+        await waitForVoiceStatus(() => getLocalVoiceState().status, 'speaking');
         expect(getLocalVoiceState().status).toBe('speaking');
 
         await toggleLocalVoiceTurn('s1');
@@ -353,25 +376,16 @@ describe('local voice engine TTS behavior', () => {
             storage.__notify();
         });
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
 
-        let resolved = false;
         const stopPromise = toggleLocalVoiceTurn('s1');
-        stopPromise.then(() => {
-            resolved = true;
-        });
 
-        for (let i = 0; i < 200 && createdAudioPlayers.length === 0; i++) {
-            await Promise.resolve();
-        }
+        await waitForAudioPlayer();
         expect(createdAudioPlayers.length).toBeGreaterThan(0);
         expect(getLocalVoiceState().status).toBe('speaking');
 
-        for (let i = 0; i < 10; i++) {
-            await Promise.resolve();
-        }
-        expect(resolved).toBe(false);
+        await expectPromiseToStayPending(stopPromise);
 
         createdAudioPlayers[0].__emit('playbackStatusUpdate', { didJustFinish: true });
         await stopPromise;
@@ -425,18 +439,17 @@ describe('local voice engine TTS behavior', () => {
                 arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
             });
 
-        const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
         const stopPromise = toggleLocalVoiceTurn('s1');
 
-        for (let i = 0; i < 200 && createdAudioPlayers.length === 0; i++) {
-            await Promise.resolve();
-        }
+        await waitForAudioPlayer();
         expect(createdAudioPlayers.length).toBeGreaterThan(0);
         createdAudioPlayers[0].__emit('playbackStatusUpdate', { didJustFinish: true });
         await stopPromise;
 
-        expect(deleteAsync).toHaveBeenCalled();
+        await waitForDeleteAsyncCall();
+        expect(deleteAsync).toHaveBeenCalledWith(expect.stringContaining('file:///tmp/happier-voice-'), { idempotent: true });
     });
 
     it('does not auto-speak when sending fails', async () => {
@@ -473,7 +486,7 @@ describe('local voice engine TTS behavior', () => {
 
         sendMessage.mockRejectedValueOnce(new Error('send failed'));
 
-        const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
         await expect(toggleLocalVoiceTurn('s1')).rejects.toThrow('send failed');
 
@@ -536,12 +549,10 @@ describe('local voice engine TTS behavior', () => {
             storage.__notify();
         });
 
-        const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
         const stopPromise = toggleLocalVoiceTurn('s1');
-        for (let i = 0; i < 200 && createdAudioPlayers.length === 0; i++) {
-            await Promise.resolve();
-        }
+        await waitForAudioPlayer();
         expect(createdAudioPlayers.length).toBeGreaterThan(0);
         createdAudioPlayers[0].__emit('playbackStatusUpdate', { didJustFinish: true });
         await stopPromise;
@@ -581,7 +592,7 @@ describe('local voice engine TTS behavior', () => {
             storage.__throwGetStateOnce(new Error('boom'));
         });
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
         await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
 
@@ -645,13 +656,11 @@ describe('local voice engine TTS behavior', () => {
                 storage.__notify();
             });
 
-            const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+            const { toggleLocalVoiceTurn } = localVoiceEngine;
             await toggleLocalVoiceTurn('s1');
             const stopPromise = toggleLocalVoiceTurn('s1');
 
-            for (let i = 0; i < 200 && createdAudioPlayers.length === 0; i++) {
-                await Promise.resolve();
-            }
+            await waitForAudioPlayer();
             expect((URL as any).createObjectURL).toHaveBeenCalledTimes(1);
             expect(createdAudioPlayers.length).toBe(1);
 

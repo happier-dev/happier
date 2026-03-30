@@ -49,6 +49,7 @@ export const Text = React.memo(
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
         const selectableFromScope = React.useContext(TextSelectabilityContext);
         const effectiveSelectable = selectable ?? selectableFromScope;
+        const { accessibilityLabel, testID, ...restProps } = props;
 
         const scaledStyle = React.useMemo(() => scaleTextStyle(style as any, uiFontScale), [style, uiFontScale]);
         const defaultStyle = useDefaultTypography ? Typography.default() : null;
@@ -65,7 +66,9 @@ export const Text = React.memo(
                 ref={ref}
                 style={mergedStyle}
                 selectable={effectiveSelectable}
-                {...props}
+                accessibilityLabel={accessibilityLabel}
+                testID={testID}
+                {...restProps}
             />
         );
     })
@@ -83,6 +86,7 @@ export const TextInput = React.memo(
     ) {
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
+        const { accessibilityLabel, testID, ...restProps } = props;
 
         const scaledStyle = React.useMemo(() => scaleTextStyle(style as any, uiFontScale) as TextStyle, [style, uiFontScale]);
         const defaultStyle = useDefaultTypography ? Typography.default() : null;
@@ -98,7 +102,9 @@ export const TextInput = React.memo(
             <RNTextInput
                 ref={ref}
                 style={mergedStyle}
-                {...props}
+                accessibilityLabel={accessibilityLabel}
+                testID={testID}
+                {...restProps}
             />
         );
     })

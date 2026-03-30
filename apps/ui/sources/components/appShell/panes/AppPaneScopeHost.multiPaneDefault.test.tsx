@@ -1,19 +1,31 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastMultiPaneLayout: any = null;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: { OS: 'web' },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-}));
+installAppPaneScopeHostCommonModuleMocks({
+    getDimensions: () => ({ width: 1200, height: 800 }),
+    getLocalSetting: (key: string) => {
+        if (key === 'uiMultiPanePanelsEnabled') return undefined;
+        if (key === 'editorFocusModeEnabled') return false;
+        if (key === 'rightPaneWidthPx') return 360;
+        if (key === 'rightPaneWidthBasisPx') return 1200;
+        if (key === 'detailsPaneWidthPx') return 420;
+        if (key === 'detailsPaneWidthBasisPx') return 1200;
+        if (key === 'bottomPaneHeightPx') return 320;
+        if (key === 'bottomPaneHeightBasisPx') return 900;
+        return null;
+    },
+});
 
-vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
-    MultiPaneHost: (props: any) => {
+vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
+    MultiPaneHostWithBottom: (props: any) => {
         lastMultiPaneLayout = props.layout;
         return React.createElement('MultiPaneHostStub');
     },
@@ -21,19 +33,6 @@ vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
 
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'uiMultiPanePanelsEnabled') return undefined;
-        if (key === 'editorFocusModeEnabled') return false;
-        if (key === 'rightPaneWidthPx') return 360;
-        if (key === 'rightPaneWidthBasisPx') return 1200;
-        if (key === 'detailsPaneWidthPx') return 420;
-        if (key === 'detailsPaneWidthBasisPx') return 1200;
-        return null;
-    },
-    useLocalSettingMutable: () => [null, vi.fn()],
 }));
 
 vi.mock('./AppPaneProvider', () => ({
@@ -57,16 +56,12 @@ describe('AppPaneScopeHost (multi-pane default)', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         lastMultiPaneLayout = null;
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
+        await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
                     rightPane={<div />}
                     detailsPane={null}
-                />
-            );
-        });
+                />);
 
         expect(lastMultiPaneLayout).not.toBeNull();
         expect(lastMultiPaneLayout.kind).not.toBe('single');

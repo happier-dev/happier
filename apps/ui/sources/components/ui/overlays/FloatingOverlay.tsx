@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { Platform, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades, type ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -13,11 +14,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         backgroundColor: theme.colors.surface,
         borderWidth: Platform.OS === 'web' ? 0 : 0.5,
         borderColor: theme.colors.modal.border,
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 3.84,
-        shadowOpacity: theme.colors.shadow.opacity,
-        elevation: 5,
+        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
 }));
 
@@ -47,6 +44,7 @@ export type FloatingOverlayArrow =
 interface FloatingOverlayProps {
     children: React.ReactNode;
     maxHeight?: number;
+    scrollEnabled?: boolean;
     showScrollIndicator?: boolean;
     keyboardShouldPersistTaps?: boolean | 'always' | 'never' | 'handled';
     edgeFades?: FloatingOverlayEdgeFades;
@@ -73,6 +71,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const { 
         children, 
         maxHeight = 240, 
+        scrollEnabled = true,
         showScrollIndicator = false, 
         keyboardShouldPersistTaps = 'handled',
         edgeFades = false,
@@ -105,10 +104,10 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
 
     const fades = useScrollEdgeFades({
         enabledEdges: {
-            top: Boolean(fadeCfg?.top) || Boolean(indicatorCfg),
-            bottom: Boolean(fadeCfg?.bottom) || Boolean(indicatorCfg),
-            left: Boolean(fadeCfg?.left),
-            right: Boolean(fadeCfg?.right),
+            top: scrollEnabled && (Boolean(fadeCfg?.top) || Boolean(indicatorCfg)),
+            bottom: scrollEnabled && (Boolean(fadeCfg?.bottom) || Boolean(indicatorCfg)),
+            left: scrollEnabled && Boolean(fadeCfg?.left),
+            right: scrollEnabled && Boolean(fadeCfg?.right),
         },
         overflowThreshold: 1,
         edgeThreshold: 1,
@@ -139,21 +138,29 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         }
     }, [arrowCfg?.placement]);
 
+    const content = scrollEnabled ? (
+        <Animated.ScrollView
+            style={[{ maxHeight }, scrollViewStyle]}
+            keyboardShouldPersistTaps={keyboardShouldPersistTaps}
+            showsVerticalScrollIndicator={showScrollIndicator}
+            scrollEventThrottle={32}
+            onLayout={fadeCfg || indicatorCfg ? fades.onViewportLayout : undefined}
+            onContentSizeChange={fadeCfg || indicatorCfg ? fades.onContentSizeChange : undefined}
+            onScroll={fadeCfg || indicatorCfg ? fades.onScroll : undefined}
+            onMomentumScrollEnd={fadeCfg || indicatorCfg ? fades.onMomentumScrollEnd : undefined}
+        >
+            {children}
+        </Animated.ScrollView>
+    ) : (
+        <Animated.View style={[{ maxHeight }, scrollViewStyle]}>
+            {children}
+        </Animated.View>
+    );
+
     const overlay = (
         <Animated.View style={[styles.container, { maxHeight }, containerStyle]}>
-            <Animated.ScrollView
-                style={[{ maxHeight }, scrollViewStyle]}
-                keyboardShouldPersistTaps={keyboardShouldPersistTaps}
-                showsVerticalScrollIndicator={showScrollIndicator}
-                scrollEventThrottle={32}
-                onLayout={fadeCfg || indicatorCfg ? fades.onViewportLayout : undefined}
-                onContentSizeChange={fadeCfg || indicatorCfg ? fades.onContentSizeChange : undefined}
-                onScroll={fadeCfg || indicatorCfg ? fades.onScroll : undefined}
-                onMomentumScrollEnd={fadeCfg || indicatorCfg ? fades.onMomentumScrollEnd : undefined}
-            >
-                {children}
-            </Animated.ScrollView>
-            {fadeCfg ? (
+            {content}
+            {scrollEnabled && fadeCfg ? (
                 <ScrollEdgeFades
                     color={theme.colors.surface}
                     size={fadeCfg.size}
@@ -161,7 +168,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
                 />
             ) : null}
 
-            {indicatorCfg ? (
+            {scrollEnabled && indicatorCfg ? (
                 <ScrollEdgeIndicators
                     edges={fades.visibility}
                     color={theme.colors.textSecondary}
@@ -177,48 +184,72 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const arrowSize = arrowCfg.size;
     const protrusion = arrowSize / 2;
 
-    const arrowStyle = (() => {
-        const base = {
-            position: 'absolute' as const,
-            width: arrowSize,
-            height: arrowSize,
-            backgroundColor: theme.colors.surface,
-            borderWidth: Platform.OS === 'web' ? 0 : 0.5,
-            borderColor: theme.colors.modal.border,
-            ...(Platform.OS === 'web'
-                ? ({
-                        // RN-web can be inconsistent with shadow props on transformed views.
-                        // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
-                        boxShadow: theme.dark
-                            ? '0 4px 14px rgba(0, 0, 0, 0.55)'
-                            : '0 4px 14px rgba(0, 0, 0, 0.24)',
-                    } as any)
-                : {
-                        shadowColor: theme.colors.shadow.color,
-                        shadowOffset: { width: 0, height: 2 },
-                        shadowRadius: 3.84,
-                        shadowOpacity: theme.colors.shadow.opacity,
-                        elevation: 5,
-                    }),
-            transform: [{ rotate: '45deg' as const }],
-            pointerEvents: 'none' as const,
-        };
+    const arrowBoxStyle: ViewStyle & { boxShadow?: string } = {
+        width: arrowSize,
+        height: arrowSize,
+        backgroundColor: theme.colors.surface,
+        borderWidth: Platform.OS === 'web' ? 0 : 0.5,
+        borderColor: theme.colors.modal.border,
+        transform: [{ rotate: '45deg' as const }],
+    };
 
-        switch (arrowSide) {
-            case 'top':
-                return [base, { top: -protrusion, left: '50%', marginLeft: -protrusion }] as const;
-            case 'bottom':
-                return [base, { bottom: -protrusion, left: '50%', marginLeft: -protrusion }] as const;
-            case 'left':
-                return [base, { left: -protrusion, top: '50%', marginTop: -protrusion }] as const;
-            case 'right':
-                return [base, { right: -protrusion, top: '50%', marginTop: -protrusion }] as const;
-        }
-    })();
+    if (Platform.OS === 'web') {
+        // RN-web can be inconsistent with shadow props on transformed views.
+        // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
+        arrowBoxStyle.boxShadow = theme.colors.shadowPopoverArrowBoxShadow;
+    } else {
+        Object.assign(arrowBoxStyle, shadowLevelStyle(theme.colors.shadowLevels[4]));
+    }
+
+    const arrowWrapperStyle: ViewStyle = {
+        position: 'absolute',
+        pointerEvents: 'none',
+    };
+
+    switch (arrowSide) {
+        case 'top':
+            Object.assign(arrowWrapperStyle, {
+                top: -protrusion,
+                left: 0,
+                right: 0,
+                height: arrowSize,
+                alignItems: 'center',
+            });
+            break;
+        case 'bottom':
+            Object.assign(arrowWrapperStyle, {
+                bottom: -protrusion,
+                left: 0,
+                right: 0,
+                height: arrowSize,
+                alignItems: 'center',
+            });
+            break;
+        case 'left':
+            Object.assign(arrowWrapperStyle, {
+                left: -protrusion,
+                top: 0,
+                bottom: 0,
+                width: arrowSize,
+                justifyContent: 'center',
+            });
+            break;
+        case 'right':
+            Object.assign(arrowWrapperStyle, {
+                right: -protrusion,
+                top: 0,
+                bottom: 0,
+                width: arrowSize,
+                justifyContent: 'center',
+            });
+            break;
+    }
 
     return (
         <Animated.View style={{ position: 'relative' }}>
-            <Animated.View testID="floating-overlay-arrow" style={arrowStyle as any} />
+            <View testID="floating-overlay-arrow" style={arrowWrapperStyle}>
+                <View style={arrowBoxStyle} />
+            </View>
             {overlay}
         </Animated.View>
     );

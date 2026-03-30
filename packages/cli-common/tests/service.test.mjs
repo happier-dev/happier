@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -113,6 +114,19 @@ test('buildLaunchdPlistXml includes StartCalendarInterval when provided', () => 
   assert.doesNotMatch(plist, /<key>StartInterval<\/key>/);
 });
 
+test('buildLaunchdPlistXml uses KeepAlive SuccessfulExit=false by default', () => {
+  const plist = buildLaunchdPlistXml({
+    label: 'dev.happier.stack',
+    programArgs: ['/usr/bin/true'],
+    env: {},
+    stdoutPath: '/tmp/out.log',
+    stderrPath: '/tmp/err.log',
+    workingDirectory: '/tmp',
+  });
+  assert.match(plist, /<key>KeepAlive<\/key>\s*<dict>/);
+  assert.match(plist, /<key>SuccessfulExit<\/key>\s*<false\/>/);
+});
+
 test('buildServiceDefinition writes expected service definition paths', () => {
   const linux = buildServiceDefinition({
     backend: 'systemd-user',
@@ -155,6 +169,105 @@ test('buildServiceDefinition writes expected service definition paths', () => {
     },
   });
   assert.match(win.path, /dev\.happier\.test\.ps1$/);
+});
+
+test('buildServiceDefinition injects PATH from the service target executable rather than the installer runtime', () => {
+  const previousPath = process.env.PATH;
+  process.env.PATH = '/custom/tools:/usr/bin:/bin';
+  try {
+    const def = buildServiceDefinition({
+      backend: 'launchd-user',
+      homeDir: '/Users/me',
+      spec: {
+        label: 'dev.happier.test',
+        description: 'Happier Test',
+        programArgs: ['/Users/me/.happier-stack/bin/hstack', 'start'],
+        workingDirectory: '/Users/me/.happier',
+        env: { PORT: '3005' },
+        stdoutPath: '/Users/me/.happier/logs/out.log',
+        stderrPath: '/Users/me/.happier/logs/err.log',
+      },
+    });
+
+    assert.match(def.contents, /<key>PATH<\/key>/);
+    assert.match(def.contents, /\/Users\/me\/\.happier-stack\/bin:\/custom\/tools:\/usr\/bin:\/bin/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+test('buildServiceDefinition injects PATH into non-launchd service definitions when callers omit it', () => {
+  const previousPath = process.env.PATH;
+  process.env.PATH = '/custom/tools:/usr/bin:/bin';
+  try {
+    const linux = buildServiceDefinition({
+      backend: 'systemd-user',
+      homeDir: '/home/me',
+      spec: {
+        label: 'dev.happier.test',
+        description: 'Happier Test',
+        programArgs: ['/home/me/.happier-stack/bin/hstack', 'start'],
+        workingDirectory: '/home/me/.happier',
+        env: { PORT: '3005' },
+      },
+    });
+    assert.match(linux.contents, /Environment=PATH=\/home\/me\/\.happier-stack\/bin:\/custom\/tools:\/usr\/bin:\/bin/);
+
+    process.env.PATH = 'C:\\\\custom\\\\tools;C:\\\\Windows\\\\System32';
+    const win = buildServiceDefinition({
+      backend: 'schtasks-user',
+      homeDir: 'C:\\\\Users\\\\me',
+      spec: {
+        label: 'dev.happier.test',
+        description: 'Happier Test',
+        programArgs: ['C:\\\\Users\\\\me\\\\.happier-stack\\\\bin\\\\hstack.cmd', 'start'],
+        workingDirectory: 'C:\\\\Users\\\\me\\\\.happier',
+        env: { PORT: '3005' },
+      },
+    });
+    assert.match(win.contents, /\$env:Path = "C:\\\\Users\\\\me\\\\\.happier-stack\\\\bin\\;C:\\\\custom\\\\tools;C:\\\\Windows\\\\System32/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+test('buildServiceDefinition normalizes lowercase path env keys to PATH on posix services', () => {
+  const previousPath = process.env.PATH;
+  process.env.PATH = '/custom/tools:/usr/bin:/bin';
+  try {
+    const mac = buildServiceDefinition({
+      backend: 'launchd-user',
+      homeDir: '/Users/me',
+      spec: {
+        label: 'dev.happier.test',
+        description: 'Happier Test',
+        programArgs: ['/Users/me/.happier-stack/bin/hstack', 'start'],
+        workingDirectory: '/Users/me/.happier',
+        env: { path: '/shadow/bin', PORT: '3005' },
+        stdoutPath: '/Users/me/.happier/logs/out.log',
+        stderrPath: '/Users/me/.happier/logs/err.log',
+      },
+    });
+    assert.match(mac.contents, /<key>PATH<\/key>/);
+    assert.match(mac.contents, /\/shadow\/bin/);
+    assert.doesNotMatch(mac.contents, /<key>path<\/key>/);
+
+    const linux = buildServiceDefinition({
+      backend: 'systemd-user',
+      homeDir: '/home/me',
+      spec: {
+        label: 'dev.happier.test',
+        description: 'Happier Test',
+        programArgs: ['/home/me/.happier-stack/bin/hstack', 'start'],
+        workingDirectory: '/home/me/.happier',
+        env: { path: '/shadow/bin', PORT: '3005' },
+      },
+    });
+    assert.match(linux.contents, /Environment=PATH=\/shadow\/bin/);
+    assert.doesNotMatch(linux.contents, /Environment=path=/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
 });
 
 test('planServiceAction uses ONSTART for system scheduled tasks', () => {
@@ -265,4 +378,20 @@ test('applyServicePlan falls back to launchctl load when bootstrap gui/uid fails
   assert.match(trace, /^load\s+-w\s+/m);
 
   await rm(root, { recursive: true, force: true });
+});
+
+test('applyServicePlan does not execute shell metacharacters while probing for commands on Unix', async () => {
+  if (process.platform === 'win32') return;
+
+  const root = await mkdtemp(join(tmpdir(), 'happier-cli-common-service-injection-'));
+  try {
+    const probePath = join(root, 'probe');
+    await assert.rejects(
+      () => applyServicePlan({ writes: [], commands: [{ cmd: `missing-command; touch ${JSON.stringify(probePath)}`, args: [] }] }),
+      /command not found|missing/i,
+    );
+    assert.equal(existsSync(probePath), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

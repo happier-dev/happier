@@ -3,6 +3,7 @@ import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -14,11 +15,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         width: 56,
         height: 56,
         padding: 16,
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 3.84,
-        shadowOpacity: theme.colors.shadow.opacity,
-        elevation: 5,
+        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
     buttonDefault: {
         backgroundColor: theme.colors.fab.background,
@@ -28,7 +25,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
 }));
 
-export const FAB = React.memo(({ onPress }: { onPress: () => void }) => {
+export const FAB = React.memo((props: { onPress: () => void; accessibilityLabel?: string }) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const safeArea = useSafeAreaInsets();
@@ -44,7 +41,9 @@ export const FAB = React.memo(({ onPress }: { onPress: () => void }) => {
                     styles.button,
                     pressed ? styles.buttonPressed : styles.buttonDefault
                 ]}
-                onPress={onPress}
+                onPress={props.onPress}
+                accessibilityRole="button"
+                accessibilityLabel={props.accessibilityLabel}
             >
                 <Ionicons name="add" size={24} color={theme.colors.fab.icon} />
             </Pressable>

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { basename } from 'node:path';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { claudeLocal } from './claudeLocal';
 
 async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T>): Promise<T> {
@@ -41,7 +44,8 @@ vi.mock('./utils/path', () => ({
 }));
 
 vi.mock('./utils/systemPrompt', () => ({
-    systemPrompt: () => 'test-system-prompt'
+    getClaudeSystemPrompt: () => 'test-system-prompt',
+    systemPrompt: () => 'test-system-prompt',
 }));
 
 vi.mock('./utils/resolveClaudeCliPath', () => ({
@@ -127,6 +131,34 @@ describe('claudeLocal --continue handling', () => {
         expect(onSessionFound).toHaveBeenCalledWith('123e4567-e89b-12d3-a456-426614174000');
     });
 
+    it('inserts a "--" delimiter before positional prompts when --mcp-config is present (variadic flag)', async () => {
+        const happierMcp = JSON.stringify({
+            mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs'] } },
+        });
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: ['Hello from QA'],
+            happierMcpConfigJson: happierMcp,
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+
+        const mcpIndex = spawnArgs.indexOf('--mcp-config');
+        expect(mcpIndex).toBeGreaterThan(-1);
+
+        const promptIndex = spawnArgs.indexOf('Hello from QA');
+        expect(promptIndex).toBeGreaterThan(-1);
+
+        // Claude Code treats --mcp-config as a variadic flag and will consume subsequent
+        // non-flag tokens as additional MCP configs unless we delimit positional args.
+        expect(spawnArgs[promptIndex - 1]).toBe('--');
+    });
+
     it('injects --mcp-config when happierMcpConfigJson is provided', async () => {
         const mcpJson = JSON.stringify({
             mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
@@ -176,6 +208,93 @@ describe('claudeLocal --continue handling', () => {
         expect(spawnArgs[mcpFlags[1]! + 1]).toBe(happierMcp);
     });
 
+    it('keeps values attached to flag arguments before injected settings and mcp config', async () => {
+        const userMcp = JSON.stringify({
+            mcpServers: { fixture: { command: 'node', args: ['server.mjs'] } },
+        });
+        const happierMcp = JSON.stringify({
+            mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
+        });
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: ['--mcp-config', userMcp, '--max-turns', '3', '--strict-mcp-config', '--append-system-prompt', 'E2E_APPEND_PROMPT'],
+            happierMcpConfigJson: happierMcp,
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const maxTurnsIndex = spawnArgs.indexOf('--max-turns');
+        expect(maxTurnsIndex).toBeGreaterThan(-1);
+        expect(spawnArgs[maxTurnsIndex + 1]).toBe('3');
+        expect(spawnArgs).toContain('--strict-mcp-config');
+        expect(spawnArgs).toContain('--append-system-prompt');
+        expect(spawnArgs).toContain('E2E_APPEND_PROMPT');
+    });
+
+    it('treats -p as a flag-with-value so the prompt is not misclassified as a positional arg', async () => {
+        const happierMcp = JSON.stringify({
+            mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
+        });
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: ['-p', 'HELLO_FROM_TEST'],
+            happierMcpConfigJson: happierMcp,
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const idx = spawnArgs.indexOf('-p');
+        expect(idx).toBeGreaterThan(-1);
+        expect(spawnArgs[idx + 1]).toBe('HELLO_FROM_TEST');
+        expect(spawnArgs).not.toContain('--');
+    });
+
+    it('uses the centralized system prompt text when provided', async () => {
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+            systemPromptText: 'CENTRALIZED_EFFECTIVE_PROMPT',
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const appendIndex = spawnArgs.indexOf('--append-system-prompt');
+        expect(appendIndex).toBeGreaterThan(-1);
+        expect(spawnArgs[appendIndex + 1]).toBe('CENTRALIZED_EFFECTIVE_PROMPT');
+        expect(spawnArgs).not.toContain('test-system-prompt');
+    });
+
+
+    it('falls back to the shared base prompt when a centralized prompt was not provided', async () => {
+        mockSpawn.mockClear();
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const appendIndex = spawnArgs.indexOf('--append-system-prompt');
+        expect(appendIndex).toBeGreaterThan(-1);
+        const appendText = String(spawnArgs[appendIndex + 1] ?? '');
+        expect(appendText).toContain('# Session title');
+        expect(appendText).toContain('test-system-prompt');
+    });
+
     it('should spawn the Node launcher using process.execPath when running under Node', async () => {
         mockClaudeFindLastSession.mockReturnValue(null);
 
@@ -189,6 +308,143 @@ describe('claudeLocal --continue handling', () => {
 
         expect(mockSpawn).toHaveBeenCalled();
         expect(basename(String(mockSpawn.mock.calls[0]?.[0]))).toMatch(/^node(\.exe)?$/);
+    });
+
+    it('should prefer the managed node override for JS launchers when configured', async () => {
+        const previousManagedNode = process.env.HAPPIER_MANAGED_NODE_BIN;
+        const overrideDir = mkdtempSync(join(tmpdir(), 'happier-claude-local-managed-node-'));
+        const overridePath = join(overrideDir, process.platform === 'win32' ? 'managed-node.cmd' : 'managed-node');
+        writeFileSync(overridePath, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n', 'utf8');
+        if (process.platform !== 'win32') chmodSync(overridePath, 0o755);
+        process.env.HAPPIER_MANAGED_NODE_BIN = overridePath;
+        mockClaudeFindLastSession.mockReturnValue(null);
+
+        try {
+            await claudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                claudeArgs: [],
+            });
+
+            expect(mockSpawn).toHaveBeenCalled();
+            expect(mockSpawn.mock.calls[0]?.[0]).toBe(overridePath);
+        } finally {
+            rmSync(overrideDir, { recursive: true, force: true });
+            if (typeof previousManagedNode === 'string') process.env.HAPPIER_MANAGED_NODE_BIN = previousManagedNode;
+            else delete process.env.HAPPIER_MANAGED_NODE_BIN;
+        }
+    });
+
+    it('fails closed when the JS launcher is required but no JavaScript runtime is available', async () => {
+        vi.resetModules();
+        mockClaudeFindLastSession.mockReturnValue(null);
+        mockResolveClaudeCliPath.mockReturnValue('/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js');
+        mockIsClaudeCliJavaScriptFile.mockReturnValue(true);
+        vi.doMock('@/utils/runtime', () => ({
+            isBun: () => true,
+        }));
+        vi.doMock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+            ensureJavaScriptRuntimeExecutable: async () => null,
+        }));
+
+        try {
+            const { claudeLocal: runtimeResolvedClaudeLocal } = await import('./claudeLocal');
+
+            await expect(runtimeResolvedClaudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                claudeArgs: [],
+            })).rejects.toThrow(/No JavaScript runtime available to execute Claude Code launcher/);
+
+            expect(mockSpawn).not.toHaveBeenCalled();
+        } finally {
+            vi.doUnmock('@/runtime/js/ensureJavaScriptRuntimeExecutable');
+            vi.doUnmock('@/utils/runtime');
+            vi.resetModules();
+        }
+    });
+
+    it('bootstraps the managed JavaScript runtime under bun when the JS launcher is required', async () => {
+        vi.resetModules();
+        mockClaudeFindLastSession.mockReturnValue(null);
+        mockResolveClaudeCliPath.mockReturnValue('/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js');
+        mockIsClaudeCliJavaScriptFile.mockReturnValue(true);
+        vi.doMock('@/utils/runtime', () => ({
+            isBun: () => true,
+        }));
+        vi.doMock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+            ensureJavaScriptRuntimeExecutable: async () => '/managed/js-runtime',
+        }));
+
+        try {
+            const { claudeLocal: runtimeResolvedClaudeLocal } = await import('./claudeLocal');
+
+            await runtimeResolvedClaudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                claudeArgs: [],
+            });
+
+            expect(mockSpawn).toHaveBeenCalled();
+            expect(mockSpawn.mock.calls[0]?.[0]).toBe('/managed/js-runtime');
+        } finally {
+            vi.doUnmock('@/runtime/js/ensureJavaScriptRuntimeExecutable');
+            vi.doUnmock('@/utils/runtime');
+            vi.resetModules();
+        }
+    });
+
+    it('allows the embedded Claude launcher path in compiled bun binaries even when fs existence checks fail', async () => {
+        vi.resetModules();
+        mockClaudeFindLastSession.mockReturnValue(null);
+        mockResolveClaudeCliPath.mockReturnValue('/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js');
+        mockIsClaudeCliJavaScriptFile.mockReturnValue(true);
+        vi.doMock('@/projectPath', () => ({
+            projectPath: () => '/$bunfs',
+        }));
+        vi.doMock('@/utils/runtime', () => ({
+            isBun: () => true,
+        }));
+        vi.doMock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+            ensureJavaScriptRuntimeExecutable: async () => '/managed/js-runtime',
+        }));
+        vi.doMock('node:fs', async () => {
+            const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+            return {
+                ...actual,
+                mkdirSync: vi.fn(),
+                existsSync: vi.fn(() => false),
+            };
+        });
+
+        try {
+            const { claudeLocal: runtimeResolvedClaudeLocal, claudeCliPath: bundledLauncherPath } = await import('./claudeLocal');
+
+            await runtimeResolvedClaudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                claudeArgs: [],
+            });
+
+            expect(bundledLauncherPath).toBe('/$bunfs/scripts/claude_local_launcher.cjs');
+            expect(mockSpawn).toHaveBeenCalled();
+            expect(mockSpawn.mock.calls[0]?.[0]).toBe('/managed/js-runtime');
+            expect(mockSpawn.mock.calls[0]?.[1]?.[0]).toBe('/$bunfs/scripts/claude_local_launcher.cjs');
+        } finally {
+            vi.doUnmock('node:fs');
+            vi.doUnmock('@/runtime/js/ensureJavaScriptRuntimeExecutable');
+            vi.doUnmock('@/utils/runtime');
+            vi.doUnmock('@/projectPath');
+            vi.resetModules();
+        }
     });
 
     it('wraps .cmd Claude shims with cmd.exe on Windows', async () => {
@@ -442,6 +698,31 @@ describe('claudeLocal --continue handling', () => {
         // Prompt must be after all flags (including --settings).
         expect(promptIndex).toBeGreaterThan(settingsIndex + 1);
         expect(promptIndex).toBeGreaterThan(modelIndex + 1);
+    });
+
+    it('treats --effort as a flag with a value (so the effort value is not mis-parsed as the prompt)', async () => {
+        mockClaudeFindLastSession.mockReturnValue(null);
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            hookSettingsPath: '/tmp/settings.json',
+            claudeArgs: ['--effort', 'high', 'fix the bug in main.ts'],
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+
+        const effortIndex = spawnArgs.indexOf('--effort');
+        const effortValueIndex = effortIndex === -1 ? -1 : effortIndex + 1;
+        expect(effortIndex).toBeGreaterThan(-1);
+        expect(spawnArgs[effortValueIndex]).toBe('high');
+
+        const promptIndex = spawnArgs.indexOf('fix the bug in main.ts');
+        expect(promptIndex).toBeGreaterThan(-1);
+        expect(promptIndex).toBeGreaterThan(effortValueIndex);
     });
 });
 

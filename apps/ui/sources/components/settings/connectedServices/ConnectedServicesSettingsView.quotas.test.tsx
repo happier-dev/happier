@@ -1,20 +1,18 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const backSpy = vi.fn();
-const pushSpy = vi.fn();
-
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: backSpy, push: pushSpy }),
-}));
+installConnectedServicesCommonModuleMocks();
 
 const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } as const;
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -71,12 +69,6 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
   getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
 }));
 
-async function flushAsyncEffects(turns: number = 3) {
-  for (let index = 0; index < turns; index += 1) {
-    await Promise.resolve();
-  }
-}
-
 describe('ConnectedServicesSettingsView quotas', () => {
   it('shows quota badges on service rows when pinned meters exist', async () => {
     useFeatureEnabledSpy.mockReturnValue(true);
@@ -118,14 +110,10 @@ describe('ConnectedServicesSettingsView quotas', () => {
     const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServicesSettingsView />);
-    });
+    tree = (await renderScreen(<ConnectedServicesSettingsView />)).tree;
 
-    await act(async () => {
-      await flushAsyncEffects();
-    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
-    expect(tree.root.findAll((n) => n.props?.children === 'Weekly 18%')).not.toHaveLength(0);
+    expect(tree.findAll((n) => n.props?.children === 'Weekly 18%')).not.toHaveLength(0);
   });
 });

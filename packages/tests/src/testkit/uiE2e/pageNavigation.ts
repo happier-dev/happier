@@ -3,12 +3,16 @@ import type { Page } from '@playwright/test';
 export function normalizeLoopbackBaseUrl(input: string): string {
   try {
     const parsed = new URL(input);
-    // Expo web dev server is started with `--host localhost`, and recent Webpack/Metro stacks can
-    // reject loopback IP Host headers (127.0.0.1/::1) depending on allowedHosts configuration.
-    // Normalise to `localhost` so deep links (e.g. /terminal/connect#key=...) work reliably in
-    // Playwright E2E across environments.
-    if (parsed.hostname === '127.0.0.1' || parsed.hostname === '0.0.0.0' || parsed.hostname === '::1') {
-      parsed.hostname = 'localhost';
+    // Keep browser navigation on a routable IPv4 loopback. Some local environments resolve
+    // `localhost` to IPv6 first, while these test servers only listen on 127.0.0.1.
+    if (
+      parsed.hostname === '127.0.0.1'
+      || parsed.hostname === '0.0.0.0'
+      || parsed.hostname === '::1'
+      || parsed.hostname === '[::1]'
+    ) {
+      const port = parsed.port ? `:${parsed.port}` : '';
+      return `${parsed.protocol}//127.0.0.1${port}${parsed.pathname}${parsed.search}${parsed.hash}`.replace(/\/+$/, '');
     }
     return parsed.toString().replace(/\/+$/, '');
   } catch {
@@ -17,6 +21,16 @@ export function normalizeLoopbackBaseUrl(input: string): string {
 }
 
 export async function gotoDomContentLoadedWithRetries(page: Page, url: string, timeoutMs = 90_000): Promise<void> {
+  await gotoWithRetries(page, url, timeoutMs, 'domcontentloaded');
+}
+
+export async function gotoCommittedWithRetries(page: Page, url: string, timeoutMs = 90_000): Promise<void> {
+  await gotoWithRetries(page, url, timeoutMs, 'commit');
+}
+
+async function gotoWithRetries(page: Page, url: string, timeoutMs: number, waitUntil: 'commit' | 'domcontentloaded'): Promise<void> {
+  const normalizeUrl = (value: string): string => value.replace(/\/+$/, '');
+  const targetUrl = normalizeUrl(url);
   const retryable = (error: unknown): boolean => {
     const message = error instanceof Error ? error.message : String(error);
     return (
@@ -27,6 +41,12 @@ export async function gotoDomContentLoadedWithRetries(page: Page, url: string, t
     );
   };
 
+  const isCommittedTimeout = (error: unknown): boolean => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.toLowerCase().includes('timeout')) return false;
+    return normalizeUrl(page.url()) === targetUrl;
+  };
+
   const start = Date.now();
   let attempt = 0;
   // Metro can briefly restart or drop connections during bundling; retry a few times for stability.
@@ -34,11 +54,44 @@ export async function gotoDomContentLoadedWithRetries(page: Page, url: string, t
     attempt += 1;
     try {
       const remaining = Math.max(5_000, timeoutMs - (Date.now() - start));
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: remaining });
+      await page.goto(url, { waitUntil, timeout: remaining });
       return;
     } catch (error) {
+      if (waitUntil === 'commit' && isCommittedTimeout(error)) return;
       if (attempt >= 4 || !retryable(error)) throw error;
       await page.waitForTimeout(500 * attempt);
     }
+  }
+}
+
+function normalizePathname(value: string): string {
+  if (!value) return '/';
+  let pathname = value.trim();
+  if (!pathname.startsWith('/')) pathname = `/${pathname}`;
+  pathname = pathname.replace(/\/+$/, '');
+  return pathname || '/';
+}
+
+export function isGotoTimeoutOnExpectedPath(page: Page, expectedPathname: string, error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.toLowerCase().includes('timeout')) return false;
+  try {
+    return normalizePathname(new URL(page.url()).pathname) === normalizePathname(expectedPathname);
+  } catch {
+    return false;
+  }
+}
+
+export async function gotoDomContentLoadedWithPathFallback(
+  page: Page,
+  url: string,
+  expectedPathname: string,
+  timeoutMs = 90_000,
+): Promise<void> {
+  try {
+    await gotoDomContentLoadedWithRetries(page, url, timeoutMs);
+  } catch (error) {
+    if (isGotoTimeoutOnExpectedPath(page, expectedPathname, error)) return;
+    throw error;
   }
 }

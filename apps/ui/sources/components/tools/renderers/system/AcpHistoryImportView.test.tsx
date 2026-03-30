@@ -2,7 +2,10 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installSystemToolRendererCommonModuleMocks } from './systemToolRendererTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,15 +13,16 @@ const sessionAllow = vi.fn();
 const sessionDeny = vi.fn();
 const modalAlert = vi.fn();
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: (...args: any[]) => modalAlert(...args),
+installSystemToolRendererCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: (...args: any[]) => modalAlert(...args),
+            },
+        }).module;
     },
-}));
+});
 
 vi.mock('../../shell/presentation/ToolSectionView', () => ({
     ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
@@ -51,14 +55,10 @@ describe('AcpHistoryImportView', () => {
     async function renderView(tool: ToolCall, overrides: Record<string, unknown> = {}) {
         const { AcpHistoryImportView } = await import('./AcpHistoryImportView');
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     AcpHistoryImportView,
                     makeToolViewProps(tool, { sessionId: 's1', ...overrides }),
-                ),
-            );
-        });
+                ))).tree;
         return tree!;
     }
 
@@ -75,7 +75,7 @@ describe('AcpHistoryImportView', () => {
         const importButton = findPressableByText(tree, 'tools.acpHistoryImport.actions.import');
         expect(importButton).toBeTruthy();
         await act(async () => {
-            await importButton!.props.onPress();
+            await pressTestInstanceAsync(importButton!);
         });
 
         expect(sessionAllow).toHaveBeenCalledWith('s1', 'perm1');
@@ -89,7 +89,7 @@ describe('AcpHistoryImportView', () => {
         const skipButton = findPressableByText(tree, 'tools.acpHistoryImport.actions.skip');
         expect(skipButton).toBeTruthy();
         await act(async () => {
-            await skipButton!.props.onPress();
+            await pressTestInstanceAsync(skipButton!);
         });
 
         expect(sessionAllow).toHaveBeenCalledTimes(0);
@@ -103,7 +103,7 @@ describe('AcpHistoryImportView', () => {
         const importButton = findPressableByText(tree, 'tools.acpHistoryImport.actions.import');
         expect(importButton).toBeTruthy();
         await act(async () => {
-            await importButton!.props.onPress();
+            await pressTestInstanceAsync(importButton!);
         });
 
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'network-down');
@@ -123,10 +123,8 @@ describe('AcpHistoryImportView', () => {
         expect(importButton).toBeTruthy();
         expect(skipButton).toBeTruthy();
 
-        await act(async () => {
-            await importButton!.props.onPress();
-            await skipButton!.props.onPress();
-        });
+        await pressTestInstanceAsync(importButton!);
+        await pressTestInstanceAsync(skipButton!);
 
         expect(sessionAllow).toHaveBeenCalledTimes(0);
         expect(sessionDeny).toHaveBeenCalledTimes(0);

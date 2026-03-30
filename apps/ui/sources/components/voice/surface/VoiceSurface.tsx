@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { usePathname, useRouter } from 'expo-router';
 
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -10,29 +11,50 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { VoiceBars } from '@/components/ui/status/VoiceBars';
 import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
 import { useSetting } from '@/sync/domains/state/storage';
+import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { useAllSessions } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { toggleLocalVoiceTurn } from '@/voice/local/localVoiceEngine';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { useVoiceSessionSnapshot, voiceSessionManager } from '@/voice/session/voiceSession';
 import { hydrateVoiceAgentActivityFromCarrierSession } from '@/voice/persistence/hydrateVoiceAgentActivityFromCarrierSession';
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
+import { formatVoiceActivityEvent, sortVoiceActivityEventsByTsThenId } from '@/voice/activity/formatVoiceActivityEvent';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
+import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
+import { resolveLatestVoiceSessionBinding, resolveVoiceSessionBindingByControlSessionId } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
+import { voiceSessionBindingManager } from '@/voice/sessionBinding/voiceSessionBindingRuntime';
+import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { isHiddenSystemSession } from '@happier-dev/protocol';
+import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 
 export type VoiceSurfaceVariant = 'sidebar' | 'session';
 
 const EMPTY_EVENTS: ReadonlyArray<any> = [];
 
+function resolveSessionIdFromPathname(pathname: string | null | undefined): string | null {
+  const normalized = String(pathname ?? '').trim();
+  const match = normalized.match(/^\/session\/([^/?#]+)/);
+  const sessionId = typeof match?.[1] === 'string' ? decodeURIComponent(match[1]).trim() : '';
+  return sessionId.length > 0 ? sessionId : null;
+}
+
 export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; sessionId?: string | null; style?: any }>) {
+  const router = useRouter();
+  const pathname = usePathname();
   const { theme } = useUnistyles();
   const styles = stylesheet;
   const snap = useVoiceSessionSnapshot();
   const voice: any = useSetting('voice');
+  const voicePrivacy = readVoicePrivacySettings({ voice });
   const providerId = voice?.providerId ?? 'off';
   const ui = voice?.ui ?? {};
   const scopeDefault = ui.scopeDefault === 'session' ? 'session' : 'global';
@@ -41,6 +63,11 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
   const activityFeedAutoExpandOnStart = voice?.ui?.activityFeedAutoExpandOnStart === true;
 
   const allSessions = useAllSessions();
+  const currentSession = React.useMemo(() => {
+    const sessionId = typeof props.sessionId === 'string' ? props.sessionId.trim() : '';
+    if (!sessionId) return null;
+    return (allSessions as any[]).find((session) => session?.id === sessionId) ?? null;
+  }, [allSessions, props.sessionId]);
   const sessionLabelById = React.useMemo(() => {
     const map = new Map<string, string>();
     for (const s of allSessions as any[]) {
@@ -54,26 +81,27 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
   const lastFocusedSessionId = useVoiceTargetStore((s) => s.lastFocusedSessionId);
   const primaryActionSessionId = useVoiceTargetStore((s) => s.primaryActionSessionId);
   const voiceScope = useVoiceTargetStore((s) => s.scope);
+  const routeSessionId = props.variant === 'sidebar' ? resolveSessionIdFromPathname(pathname) : null;
   const startSessionId =
     props.variant === 'session'
       ? (typeof props.sessionId === 'string' ? props.sessionId : null)
-      : (typeof lastFocusedSessionId === 'string' ? lastFocusedSessionId : null);
+      : (routeSessionId ?? (typeof lastFocusedSessionId === 'string' ? lastFocusedSessionId : null));
 
   const localConversationMode =
     providerId === 'local_conversation' ? (voice?.adapters?.local_conversation?.conversationMode ?? 'direct_session') : null;
+  const voiceAgentEnabled = useFeatureEnabled('voice.agent');
   const allowsGlobalStart =
     providerId === 'realtime_elevenlabs' || (providerId === 'local_conversation' && localConversationMode === 'agent');
 
   const localAgentCfg = providerId === 'local_conversation' ? voice?.adapters?.local_conversation?.agent ?? null : null;
+  const daemonLocalVoiceUnavailable =
+    providerId === 'local_conversation' &&
+    localConversationMode === 'agent' &&
+    localAgentCfg?.backend === 'daemon' &&
+    voiceAgentEnabled !== true;
   const canTeleportToSessionRoot =
     props.variant === 'session'
-    && providerId === 'local_conversation'
-    && localConversationMode === 'agent'
-    && localAgentCfg?.backend === 'daemon'
-    && localAgentCfg?.teleportEnabled !== false
-    && localAgentCfg?.stayInVoiceHome !== true
-    && typeof props.sessionId === 'string'
-    && props.sessionId.trim().length > 0;
+    && getVoiceAgentSessionTeleportAvailability({ voice, sessionId: props.sessionId ?? null }).ok;
 
   const voiceAgentTranscriptCfg = voice?.adapters?.local_conversation?.agent?.transcript ?? null;
   const voiceAgentTranscriptPersistenceMode =
@@ -134,6 +162,44 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     }
   }, [activityFeedAutoExpandOnStart, activityFeedEnabled, expanded, snap.status]);
 
+  const visibleEvents = React.useMemo(() => {
+    if (!Array.isArray(events) || events.length === 0) return EMPTY_EVENTS;
+    const base = props.variant === 'sidebar' ? [...events].sort(sortVoiceActivityEventsByTsThenId) : events;
+    const tail = base.length > 50 ? base.slice(base.length - 50) : base;
+    return [...tail].reverse();
+  }, [events, props.variant]);
+  const bindingsByConversationSessionId = React.useSyncExternalStore(
+    voiceSessionBindingStore.subscribe,
+    () => voiceSessionBindingStore.getState().bindingsByConversationSessionId,
+    () => voiceSessionBindingStore.getState().bindingsByConversationSessionId,
+  );
+  const voiceBindings = React.useMemo(
+    () => Object.values(bindingsByConversationSessionId),
+    [bindingsByConversationSessionId],
+  );
+  const controlSessionCandidates = React.useMemo(() => ([
+    typeof snap.sessionId === 'string' ? snap.sessionId.trim() : '',
+    providerId === 'realtime_elevenlabs' || (providerId === 'local_conversation' && localConversationMode === 'agent')
+      ? VOICE_AGENT_GLOBAL_SESSION_ID
+      : '',
+    typeof props.sessionId === 'string' ? props.sessionId.trim() : '',
+  ].filter(Boolean)), [localConversationMode, props.sessionId, providerId, snap.sessionId]);
+  const openConversationSessionId = React.useMemo(() => {
+    for (const controlSessionId of controlSessionCandidates) {
+      const binding = resolveVoiceSessionBindingByControlSessionId({ controlSessionId, adapterId: providerId });
+      if (binding) {
+        return binding.conversationSessionId;
+      }
+    }
+
+    return resolveLatestVoiceSessionBinding({
+      adapterId: providerId,
+      controlSessionIds: controlSessionCandidates,
+    })?.conversationSessionId ?? null;
+  }, [allSessions, bindingsByConversationSessionId, controlSessionCandidates, providerId]);
+  const fallbackOpenConversationControlSessionId = React.useMemo(() => {
+    return controlSessionCandidates[0] ?? null;
+  }, [controlSessionCandidates]);
   const locationAllowsVariant = (() => {
     if (surfaceLocation === 'sidebar') return props.variant === 'sidebar';
     if (surfaceLocation === 'session') return props.variant === 'session';
@@ -141,17 +207,10 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     return scopeDefault === 'global' ? props.variant === 'sidebar' : props.variant === 'session';
   })();
 
-  const visibleEvents = React.useMemo(() => {
-    if (!Array.isArray(events) || events.length === 0) return EMPTY_EVENTS;
-    const base = props.variant === 'sidebar' ? [...events].sort(sortEventByTsThenId) : events;
-    const tail = base.length > 50 ? base.slice(base.length - 50) : base;
-    return [...tail].reverse();
-  }, [events, props.variant]);
-
   const showSurface =
     providerId !== 'off' &&
     locationAllowsVariant &&
-    true;
+    !(props.variant === 'session' && isHiddenSystemSession({ metadata: currentSession?.metadata ?? null }));
   if (!showSurface) return null;
 
   const statusInfo = (() => {
@@ -168,27 +227,47 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     }
   })();
 
-  const canStart = allowsGlobalStart ? true : Boolean(startSessionId);
+  const canStart = !daemonLocalVoiceUnavailable && (allowsGlobalStart ? true : Boolean(startSessionId));
   const isSpeaking = snap.mode === 'speaking';
   const canStop = snap.canStop && snap.status !== 'disconnected';
-  const toggleDisabledReason = !canStop && !canStart ? t('voiceSurface.selectSessionToStart') : null;
+  const showConnectingSpinner = snap.status === 'connecting' && !canStop;
+  const toggleDisabledReason = !canStop && !canStart
+    ? (daemonLocalVoiceUnavailable
+      ? t('settingsVoice.local.conversation.resumability.disabledVoiceAgent')
+      : t('voiceSurface.selectSessionToStart'))
+    : null;
+  const bargeInEnabled =
+    providerId === 'local_conversation' ? voice?.adapters?.local_conversation?.tts?.bargeInEnabled !== false : false;
+  const canBargeIn =
+    providerId === 'local_conversation' &&
+    isSpeaking &&
+    bargeInEnabled &&
+    typeof snap.sessionId === 'string' &&
+    snap.sessionId.trim().length > 0;
+  const canCancelTurn =
+    typeof snap.sessionId === 'string' &&
+    snap.sessionId.trim().length > 0 &&
+    (snap.mode === 'thinking' || snap.mode === 'speaking');
   const targetLabel =
     props.variant === 'sidebar' && voiceScope === 'global' && primaryActionSessionId
-      ? (sessionLabelById.get(primaryActionSessionId) ?? primaryActionSessionId)
+      ? (
+        sessionLabelById.get(primaryActionSessionId)
+        ?? resolveVoiceSessionLabel(primaryActionSessionId, {
+          voiceShareSessionSummary: voicePrivacy.shareSessionSummary,
+          voiceShareFilePaths: voicePrivacy.shareFilePaths,
+        })
+      )
       : null;
 
-    const onTogglePress = () => {
-      if (canStop) {
-        fireAndForget(voiceSessionManager.stop(''), { tag: 'VoiceSurface.stop' });
-        return;
-      }
-      const resolvedStartSessionId =
-        providerId === 'local_conversation' && localConversationMode === 'agent' && props.variant === 'sidebar'
-          ? ''
-          : (allowsGlobalStart ? (startSessionId ?? '') : startSessionId);
-      if (!resolvedStartSessionId && !allowsGlobalStart) return;
-      fireAndForget(voiceSessionManager.toggle(resolvedStartSessionId ?? ''), { tag: 'VoiceSurface.toggle' });
-    };
+  const onTogglePress = () => {
+    if (canStop) {
+      fireAndForget(voiceSessionManager.stop(''), { tag: 'VoiceSurface.stop' });
+      return;
+    }
+    const resolvedStartSessionId = allowsGlobalStart ? (startSessionId ?? '') : startSessionId;
+    if (!resolvedStartSessionId && !allowsGlobalStart) return;
+    fireAndForget(voiceSessionManager.toggle(resolvedStartSessionId ?? ''), { tag: 'VoiceSurface.toggle' });
+  };
 
   const onClearPress = () => {
     if (props.variant === 'session' && feedSessionId) {
@@ -214,10 +293,30 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     <View style={containerStyle}>
       <View style={styles.headerRow}>
         <View style={styles.statusLeft}>
-          <View style={[styles.micBadge, { backgroundColor: theme.colors.surfaceHigh, borderColor: theme.colors.divider }]}>
-            <StatusDot color={statusInfo.dot} isPulsing={snap.status === 'connecting'} size={7} style={styles.dot as any} />
-            <Ionicons name="mic" size={13} color={theme.colors.text} style={styles.micIcon as any} />
-          </View>
+          {canBargeIn ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('voiceSurface.a11y.bargeIn')}
+              onPress={() => {
+                if (typeof snap.sessionId !== 'string') return;
+                const sid = snap.sessionId.trim();
+                if (!sid) return;
+                fireAndForget(toggleLocalVoiceTurn(sid), { tag: 'VoiceSurface.bargeIn' });
+              }}
+              style={({ pressed }) => [
+                styles.micBadge,
+                { backgroundColor: theme.colors.surfaceHigh, borderColor: theme.colors.divider, opacity: pressed ? 0.72 : 1 },
+              ]}
+            >
+              <StatusDot color={statusInfo.dot} isPulsing={snap.status === 'connecting'} size={7} style={styles.dot as any} />
+              <Ionicons name="mic-off-outline" size={13} color={theme.colors.text} style={styles.micIcon as any} />
+            </Pressable>
+          ) : (
+            <View style={[styles.micBadge, { backgroundColor: theme.colors.surfaceHigh, borderColor: theme.colors.divider }]}>
+              <StatusDot color={statusInfo.dot} isPulsing={snap.status === 'connecting'} size={7} style={styles.dot as any} />
+              <Ionicons name={snap.mode === 'listening' ? 'mic' : 'mic-off-outline'} size={13} color={theme.colors.text} style={styles.micIcon as any} />
+            </View>
+          )}
           <View style={styles.statusTextCol}>
             <Text style={[styles.statusText, { color: theme.colors.text }]} numberOfLines={1}>
               {statusInfo.label}
@@ -237,6 +336,58 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
         <View style={styles.statusRight}>
           {isSpeaking ? <VoiceBars isActive color={theme.colors.textSecondary} size="small" /> : null}
 
+          {canCancelTurn ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('voiceSurface.a11y.cancelTurn')}
+              onPress={() => {
+                if (typeof snap.sessionId !== 'string') return;
+                const sid = snap.sessionId.trim();
+                if (!sid) return;
+                fireAndForget(voiceSessionManager.interrupt(sid), { tag: 'VoiceSurface.cancelTurn' });
+              }}
+              style={({ pressed }) => [{ opacity: pressed ? 0.72 : 1 }, styles.iconAction as any]}
+            >
+              <Ionicons name="close-circle-outline" size={18} color={theme.colors.textSecondary} />
+            </Pressable>
+          ) : null}
+
+          {openConversationSessionId ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('common.open')}
+              onPress={() => {
+                fireAndForget((async () => {
+                  let nextSessionId = openConversationSessionId;
+                  const requestedTargetSessionId =
+                    normalizeNonEmptyString(
+                      props.variant === 'session' ? (props.sessionId ?? null) : (routeSessionId ?? null),
+                    );
+                  const existingBinding = voiceBindings.find(
+                    (binding) => binding.conversationSessionId === openConversationSessionId && binding.adapterId === providerId,
+                  );
+                  const shouldRebindOpenConversation =
+                    !existingBinding
+                    || normalizeNonEmptyString(existingBinding.targetSessionId) !== requestedTargetSessionId;
+                  if (shouldRebindOpenConversation && fallbackOpenConversationControlSessionId) {
+                    const rebound = await voiceSessionBindingManager.ensureBound({
+                      adapterId: providerId,
+                      controlSessionId: fallbackOpenConversationControlSessionId,
+                      requestedTargetSessionId,
+                    }).catch(() => null);
+                    if (rebound?.conversationSessionId) {
+                      nextSessionId = rebound.conversationSessionId;
+                    }
+                  }
+                  router.push(`/session/${nextSessionId}` as any);
+                })(), { tag: 'VoiceSurface.openConversation' });
+              }}
+              style={({ pressed }) => [{ opacity: pressed ? 0.72 : 1 }, styles.iconAction as any]}
+            >
+              <Ionicons name="chatbubble-ellipses-outline" size={18} color={theme.colors.textSecondary} />
+            </Pressable>
+          ) : null}
+
             {canTeleportToSessionRoot ? (
               <Pressable
                 accessibilityRole="button"
@@ -254,8 +405,8 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
 
           <PrimaryCircleIconButton
             onPress={onTogglePress}
-            disabled={snap.status === 'connecting' || (!canStop && !canStart)}
-            loading={snap.status === 'connecting'}
+            disabled={!canStop && !canStart}
+            loading={showConnectingSpinner}
             active={snap.status !== 'disconnected' || providerId !== 'off'}
             accessibilityLabel={canStop ? t('voiceAssistant.tapToEnd') : t('voiceAssistant.label')}
           >
@@ -315,7 +466,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
               ) : (
                 visibleEvents.map((e) => (
                   <Text key={e.id} style={[styles.eventText, { color: theme.colors.text }]} numberOfLines={3}>
-                    {formatEvent(e, sessionLabelById)}
+                    {formatVoiceActivityEvent(e, sessionLabelById)}
                   </Text>
                 ))
               )}
@@ -327,50 +478,13 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
   );
 }
 
-function formatEvent(event: any, sessionLabelById: Map<string, string>): string {
-  const prefix = (() => {
-    const sid = typeof event?.sessionId === 'string' ? event.sessionId : '';
-    if (!sid) return '';
-    const label = sid === VOICE_AGENT_GLOBAL_SESSION_ID ? t('voiceActivity.format.voiceAgent') : (sessionLabelById.get(sid) ?? sid);
-    return `[${label}] `;
-  })();
-  switch (event.kind) {
-    case 'user.text':
-      return `${prefix}${t('voiceActivity.format.you')}: ${event.text}`;
-    case 'assistant.text':
-      return `${prefix}${t('voiceActivity.format.assistant')}: ${event.text}`;
-    case 'assistant.delta':
-      return `${prefix}${t('voiceActivity.format.assistantStreaming')} ${event.textDelta}`;
-    case 'action.executed':
-      return `${prefix}${t('voiceActivity.format.action')}: ${event.summary}`;
-    case 'error':
-      return `${prefix}${t('voiceActivity.format.error')}: ${String(event.errorMessage ?? event.errorCode ?? t('voiceActivity.format.errorFallback')).split(VOICE_AGENT_GLOBAL_SESSION_ID).join(t('voiceActivity.format.voiceAgent'))}`;
-    case 'status':
-      return `${prefix}${t('voiceActivity.format.status')}: ${event.status} (${event.mode})`;
-    case 'lifecycle.start':
-      return `${prefix}${t('voiceActivity.format.started')}`;
-    case 'lifecycle.stop':
-      return `${prefix}${t('voiceActivity.format.stopped')}`;
-    default:
-      return `${prefix}${String(event.kind ?? t('voiceActivity.format.eventFallback'))}`;
-  }
-}
-
-function sortEventByTsThenId(a: any, b: any): number {
-  const ta = typeof a?.ts === 'number' ? a.ts : 0;
-  const tb = typeof b?.ts === 'number' ? b.ts : 0;
-  if (ta !== tb) return ta - tb;
-  const ia = typeof a?.id === 'string' ? a.id : '';
-  const ib = typeof b?.id === 'string' ? b.id : '';
-  return ia.localeCompare(ib);
-}
-
 const stylesheet = StyleSheet.create((theme, runtime) => ({
   container: {
     alignSelf: 'stretch',
     // Match session list grouping density in the sidebar.
     marginHorizontal: 16,
     marginTop: 10,
+    marginBottom: 8,
     borderRadius: 12,
     // Prevent any bleed past sidebar width on web.
     overflow: 'hidden',

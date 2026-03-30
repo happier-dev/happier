@@ -55,6 +55,12 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     const fetchMock = vi.fn(async (input: any, init?: any) => {
       const url = String(input);
       const method = String(init?.method ?? 'GET').toUpperCase();
+      if (url.endsWith('/health') && method === 'GET') {
+        return new Response('', { status: 200 });
+      }
+      if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+        return new Response('', { status: 200 });
+      }
       if (url.endsWith('/v1/account/encryption') && method === 'GET') {
         return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }), { status: 200 });
       }
@@ -81,6 +87,12 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     const fetchMock = vi.fn(async (input: any, init?: any) => {
       const url = String(input);
       const method = String(init?.method ?? 'GET').toUpperCase();
+      if (url.endsWith('/health') && method === 'GET') {
+        return new Response('', { status: 200 });
+      }
+      if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+        return new Response('', { status: 200 });
+      }
       if (url.endsWith('/v1/account/encryption') && method === 'GET') {
         return new Response(JSON.stringify({ mode: 'e2ee', updatedAt: 1 }), { status: 200 });
       }

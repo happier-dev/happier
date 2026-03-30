@@ -61,6 +61,11 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const [transcriptScrollPinEnabled, setTranscriptScrollPinEnabled] = useSettingMutable('transcriptScrollPinEnabled');
     const [transcriptScrollJumpToBottomEnabled, setTranscriptScrollJumpToBottomEnabled] = useSettingMutable('transcriptScrollJumpToBottomEnabled');
 
+    // Code & Diffs settings (moved from Appearance)
+    const [showLineNumbers, setShowLineNumbers] = useSettingMutable('showLineNumbers');
+    const [showLineNumbersInToolViews, setShowLineNumbersInToolViews] = useSettingMutable('showLineNumbersInToolViews');
+    const [wrapLinesInDiffs, setWrapLinesInDiffs] = useSettingMutable('wrapLinesInDiffs');
+
     const [openGroupingMenu, setOpenGroupingMenu] = React.useState(false);
     const [openThinkingDisplayMenu, setOpenThinkingDisplayMenu] = React.useState(false);
     const [openToolChromeMenu, setOpenToolChromeMenu] = React.useState(false);
@@ -707,6 +712,31 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                     subtitle={t('settingsSession.transcript.advancedScrollSubtitle')}
                     icon={<Ionicons name="options-outline" size={29} color={theme.colors.textSecondary} />}
                     onPress={() => router.push(advancedRoute)}
+                />
+            </ItemGroup>
+
+            {/* Code & Diffs (moved from Appearance) */}
+            <ItemGroup title={t('settingsSession.transcript.codeDiffs')} footer={t('settingsSession.transcript.codeDiffsFooter')}>
+                <Item
+                    title={t('settingsAppearance.showLineNumbersInDiffs')}
+                    subtitle={t('settingsAppearance.showLineNumbersInDiffsDescription')}
+                    icon={<Ionicons name="list-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={<Switch value={showLineNumbers} onValueChange={setShowLineNumbers} />}
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsAppearance.showLineNumbersInToolViews')}
+                    subtitle={t('settingsAppearance.showLineNumbersInToolViewsDescription')}
+                    icon={<Ionicons name="code-working-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={<Switch value={showLineNumbersInToolViews} onValueChange={setShowLineNumbersInToolViews} />}
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsAppearance.wrapLinesInDiffs')}
+                    subtitle={t('settingsAppearance.wrapLinesInDiffsDescription')}
+                    icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={<Switch value={wrapLinesInDiffs} onValueChange={setWrapLinesInDiffs} />}
+                    showChevron={false}
                 />
             </ItemGroup>
 

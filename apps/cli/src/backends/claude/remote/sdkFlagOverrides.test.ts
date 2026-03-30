@@ -16,6 +16,8 @@ describe('parseClaudeSdkFlagOverridesFromArgs', () => {
       'model-a',
       '--fallback-model',
       'model-b',
+      '--effort',
+      'medium',
     ]);
 
     expect(parsed).toMatchObject({
@@ -25,6 +27,7 @@ describe('parseClaudeSdkFlagOverridesFromArgs', () => {
       customSystemPrompt: 'system me',
       model: 'model-a',
       fallbackModel: 'model-b',
+      effort: 'medium',
     });
   });
 

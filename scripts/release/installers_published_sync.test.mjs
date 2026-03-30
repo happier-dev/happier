@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -22,10 +22,37 @@ function applyTransform({ source, transform }) {
       })
       .join('\n');
   }
+  if (transform === 'publicdev-default-channel') {
+    const shellUpdated = source.replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-dev');
+    return shellUpdated
+      .split('\n')
+      .map((line) => {
+        if (!line.includes('$Channel')) return line;
+        if (!line.includes('"stable"')) return line;
+        return line.replace('"stable"', '"dev"');
+      })
+      .join('\n');
+  }
   return source;
 }
 
 test('published website installers stay in sync with release-owned installer sources', async () => {
+  const forbidden = [
+    'self-host',
+    'self-host.sh',
+    'self-host-preview',
+    'self-host-preview.sh',
+    'self-host-dev',
+    'self-host-dev.sh',
+    'self-host.ps1',
+    'self-host-preview.ps1',
+    'self-host-dev.ps1',
+  ];
+
+  for (const name of forbidden) {
+    await assert.rejects(() => access(join(websiteRoot, name)), /ENOENT/, `expected ${name} to be removed from apps/website/public`);
+  }
+
   for (const spec of INSTALLER_PUBLISH_SPECS) {
     const rawSource = await readFile(join(sourceRoot, spec.source), 'utf8');
     const source = applyTransform({ source: rawSource, transform: spec.transform });

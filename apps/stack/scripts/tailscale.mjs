@@ -1,17 +1,17 @@
 import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
-import { run, runCapture } from './utils/proc/proc.mjs';
+import { run } from './utils/proc/proc.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
 import { getInternalServerUrl } from './utils/server/urls.mjs';
 import { getStackName, resolveStackEnvPath } from './utils/paths/paths.mjs';
-import { resolveCommandPath } from './utils/proc/commands.mjs';
-import { constants } from 'node:fs';
-import { access } from 'node:fs/promises';
 import { banner, bullets, cmd as cmdFmt, kv, ok, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
 import {
   extractTailscaleServeHttpsUrl,
+  runTailscaleServeEnable as runSharedTailscaleServeEnable,
+  runTailscaleServeReset as runSharedTailscaleServeReset,
+  runTailscaleServeStatus as runSharedTailscaleServeStatus,
   tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
 } from '@happier-dev/cli-common/tailscale';
 
@@ -49,11 +49,6 @@ export async function tailscaleServeHttpsUrlForInternalServerUrl(internalServerU
   }
 }
 
-function extractServeEnableUrl(text) {
-  const m = String(text ?? '').match(/https:\/\/login\.tailscale\.com\/f\/serve\?node=\S+/i);
-  return m ? m[0] : null;
-}
-
 function assertTailscaleAllowed(action) {
   if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     throw new Error(
@@ -89,68 +84,16 @@ function tailscaleUserResetTimeoutMs() {
   return parseTimeoutMs(process.env.HAPPIER_STACK_TAILSCALE_RESET_TIMEOUT_MS, 15000);
 }
 
-function tailscaleEnv() {
-  // LaunchAgents inherit `XPC_SERVICE_NAME`, which can confuse some CLI tools.
-  // In practice, we’ve seen Tailscale commands like `tailscale version` hang under
-  // this env. Strip it for any tailscale subprocesses.
-  const env = { ...process.env };
-  delete env.XPC_SERVICE_NAME;
-  return env;
-}
-
-async function isExecutable(path) {
-  try {
-    await access(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resolveTailscaleCmd() {
-  // Allow explicit override (useful for LaunchAgents where aliases don't exist).
-  if (process.env.HAPPIER_STACK_TAILSCALE_BIN?.trim()) {
-    return process.env.HAPPIER_STACK_TAILSCALE_BIN.trim();
-  }
-
-  // Try PATH first (without executing `tailscale`, which can hang in some environments).
-  try {
-    const found = await resolveCommandPath('tailscale', { env: tailscaleEnv(), timeoutMs: tailscaleProbeTimeoutMs() });
-    if (found) {
-      return found;
-    }
-  } catch {
-    // ignore and fall back
-  }
-
-  // Common macOS app install paths.
-  //
-  // IMPORTANT:
-  // Prefer the lowercase `tailscale` CLI inside the app bundle. The capitalized
-  // `Tailscale` binary can behave differently under LaunchAgents (XPC env),
-  // potentially hanging instead of printing a version and exiting.
-  const appCliPath = '/Applications/Tailscale.app/Contents/MacOS/tailscale';
-  if (await isExecutable(appCliPath)) {
-    return appCliPath;
-  }
-
-  const appPath = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
-  if (await isExecutable(appPath)) {
-    return appPath;
-  }
-
-  throw new Error(
-    `[local] tailscale CLI not found.\n` +
-    `- Install Tailscale, or\n` +
-    `- Put 'tailscale' on PATH, or\n` +
-    `- Set HAPPIER_STACK_TAILSCALE_BIN="${appCliPath}"`
-  );
-}
-
-export async function tailscaleServeHttpsUrl() {
+export async function tailscaleServeHttpsUrl({ internalServerUrl } = {}) {
   try {
     const status = await tailscaleServeStatus();
-    return extractTailscaleServeHttpsUrl(status);
+    const comparableInternalServerUrl =
+      String(internalServerUrl ?? '').trim() ||
+      getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
+    return (
+      tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, comparableInternalServerUrl) ??
+      extractTailscaleServeHttpsUrl(status)
+    );
   } catch {
     return null;
   }
@@ -158,53 +101,43 @@ export async function tailscaleServeHttpsUrl() {
 
 export async function tailscaleServeStatus() {
   assertTailscaleAllowed('status');
-  const cmd = await resolveTailscaleCmd();
-  return await runCapture(cmd, ['serve', 'status'], { env: tailscaleEnv(), timeoutMs: tailscaleProbeTimeoutMs() });
+  return await runSharedTailscaleServeStatus({
+    env: process.env,
+    timeoutMs: tailscaleProbeTimeoutMs(),
+  });
 }
 
 export async function tailscaleServeEnable({ internalServerUrl, timeoutMs } = {}) {
   assertTailscaleAllowed('enable');
-  const cmd = await resolveTailscaleCmd();
   const { upstream, servePath } = getServeConfig(internalServerUrl);
-  const args = ['serve', '--bg'];
-  if (servePath && servePath !== '/' && servePath !== '') {
-    args.push(`--set-path=${servePath}`);
-  }
-  args.push(upstream);
-  const env = tailscaleEnv();
-  const timeout = Number.isFinite(timeoutMs) ? (timeoutMs > 0 ? timeoutMs : 0) : tailscaleUserEnableTimeoutMs();
+  const result = await runSharedTailscaleServeEnable({
+    env: process.env,
+    servePath,
+    timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : tailscaleUserEnableTimeoutMs(),
+    upstreamUrl: upstream,
+  });
 
-  try {
-    // `tailscale serve --bg` can hang in some environments (and should never block stack startup).
-    // Use a short, best-effort timeout; if it prints an enable URL, open it and return a helpful result.
-    await runCapture(cmd, args, { env, timeoutMs: timeout });
-  } catch (e) {
-    const out = e && typeof e === 'object' && 'out' in e ? e.out : '';
-    const err = e && typeof e === 'object' && 'err' in e ? e.err : '';
-    const msg = e instanceof Error ? e.message : String(e);
-    const combined = `${out ?? ''}\n${err ?? ''}\n${msg ?? ''}`.trim();
-    const enableUrl = extractServeEnableUrl(combined);
-    if (enableUrl) {
-      // User-initiated action (CLI / menubar): open the enable page.
-      try {
-        await run('open', [enableUrl]);
-      } catch {
-        // ignore (headless / restricted environment)
-      }
-      return { status: combined || String(e), httpsUrl: null, enableUrl };
+  if (result.approvalUrl) {
+    try {
+      await run('open', [result.approvalUrl]);
+    } catch {
+      // ignore (headless / restricted environment)
     }
-    throw e;
   }
 
-  const status = await runCapture(cmd, ['serve', 'status'], { env, timeoutMs: tailscaleProbeTimeoutMs() }).catch(() => '');
-  return { status, httpsUrl: status ? extractTailscaleServeHttpsUrl(status) : null };
+  return {
+    enableUrl: result.approvalUrl,
+    httpsUrl: result.httpsUrl,
+    status: result.rawStatus,
+  };
 }
 
 export async function tailscaleServeReset({ timeoutMs } = {}) {
   assertTailscaleAllowed('reset');
-  const cmd = await resolveTailscaleCmd();
-  const timeout = Number.isFinite(timeoutMs) ? (timeoutMs > 0 ? timeoutMs : 0) : tailscaleUserResetTimeoutMs();
-  await run(cmd, ['serve', 'reset'], { env: tailscaleEnv(), timeoutMs: timeout });
+  await runSharedTailscaleServeReset({
+    env: process.env,
+    timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : tailscaleUserResetTimeoutMs(),
+  });
 }
 
 export async function maybeEnableTailscaleServe({ internalServerUrl }) {
@@ -393,15 +326,17 @@ async function main() {
     case 'status': {
       const status = await tailscaleServeStatus();
       if (json) {
-        printResult({ json, data: { status, httpsUrl: extractTailscaleServeHttpsUrl(status) } });
+        printResult({
+          json,
+          data: { status, httpsUrl: await tailscaleServeHttpsUrl({ internalServerUrl }) },
+        });
       } else {
         process.stdout.write(status);
       }
       return;
     }
     case 'url': {
-      const status = await tailscaleServeStatus();
-      const url = extractTailscaleServeHttpsUrl(status);
+      const url = await tailscaleServeHttpsUrl({ internalServerUrl });
       if (!url) {
         throw new Error('[tailscale] no https:// URL found in `tailscale serve status` output');
       }

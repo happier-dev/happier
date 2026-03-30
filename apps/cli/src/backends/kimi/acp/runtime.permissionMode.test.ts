@@ -1,13 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { CatalogAcpRuntimeCreateCall } from '@/testkit/backends/catalogAcpRuntime';
+import { createCatalogAcpBackendSpy, createMessageBufferFixture } from '@/testkit/backends/catalogAcpRuntime';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createKimiAcpRuntime } from './runtime';
-import {
-  createKimiCatalogBackendSpy,
-  createKimiMessageBufferFixture,
-  createKimiPermissionHandlerFixture,
-  createKimiSessionFixture,
-  type KimiRuntimeCreateCall,
-} from './runtime.testkit';
 
 describe('Kimi ACP runtime permissionMode wiring', () => {
   afterEach(() => {
@@ -15,16 +12,17 @@ describe('Kimi ACP runtime permissionMode wiring', () => {
   });
 
   it('forwards getPermissionMode() value to createCatalogAcpBackend', async () => {
-    const createCalls: KimiRuntimeCreateCall[] = [];
-    const createSpy = createKimiCatalogBackendSpy(createCalls);
+    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+    const createSpy = createCatalogAcpBackendSpy(createCalls);
 
     let permissionMode: 'default' | 'yolo' = 'default';
     const runtime = createKimiAcpRuntime({
       directory: '/tmp',
-      session: createKimiSessionFixture(),
-      messageBuffer: createKimiMessageBufferFixture(),
+      machineId: 'machine-1',
+      session: createApiSessionClientFixture(),
+      messageBuffer: createMessageBufferFixture(),
       mcpServers: {},
-      permissionHandler: createKimiPermissionHandlerFixture(),
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange() {},
       getPermissionMode: () => permissionMode,
     });
@@ -41,15 +39,16 @@ describe('Kimi ACP runtime permissionMode wiring', () => {
   }, 20_000);
 
   it('falls back to session metadata permissionMode when getPermissionMode is absent', async () => {
-    const createCalls: KimiRuntimeCreateCall[] = [];
-    const createSpy = createKimiCatalogBackendSpy(createCalls);
+    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+    const createSpy = createCatalogAcpBackendSpy(createCalls);
 
     const runtime = createKimiAcpRuntime({
       directory: '/tmp',
-      session: createKimiSessionFixture({ metadataPermissionMode: 'read-only' }),
-      messageBuffer: createKimiMessageBufferFixture(),
+      machineId: 'machine-1',
+      session: createApiSessionClientFixture({ metadataPermissionMode: 'read-only' }),
+      messageBuffer: createMessageBufferFixture(),
       mcpServers: {},
-      permissionHandler: createKimiPermissionHandlerFixture(),
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange() {},
     });
 

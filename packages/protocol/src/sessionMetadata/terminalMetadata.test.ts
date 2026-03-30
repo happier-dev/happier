@@ -21,4 +21,31 @@ describe('sessionMetadata terminal metadata', () => {
     expect(parsed.mode).toBe('tmux');
     expect((parsed as any).tmux?.tmpDir).toBe(null);
   });
+
+  it('parses windows terminal metadata', () => {
+    const parsed = (protocol as any).SessionTerminalMetadataSchema.parse({
+      mode: 'windows_terminal',
+      requested: 'windows_terminal',
+      windows: {
+        host: 'windows_terminal',
+        windowId: 'happy-session-1',
+        pid: 123,
+      },
+    });
+    expect(parsed.mode).toBe('windows_terminal');
+    expect((parsed as any).windows?.windowId).toBe('happy-session-1');
+  });
+
+  it('parses windows console metadata', () => {
+    const parsed = (protocol as any).SessionTerminalMetadataSchema.parse({
+      mode: 'windows_console',
+      requested: 'console',
+      windows: {
+        host: 'console',
+        pid: 456,
+      },
+    });
+    expect(parsed.mode).toBe('windows_console');
+    expect((parsed as any).windows?.host).toBe('console');
+  });
 });

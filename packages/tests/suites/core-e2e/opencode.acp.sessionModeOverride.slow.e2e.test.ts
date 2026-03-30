@@ -255,6 +255,14 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
         expectedVersion: snapBefore.metadataVersion,
       });
 
+      const snapAfterPatch = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+      const metadataAfterPatch = decryptLegacyBase64(snapAfterPatch.metadata, secret) as any;
+      expect(metadataAfterPatch.acpSessionModeOverrideV1).toEqual({
+        v: 1,
+        updatedAt: 2000,
+        modeId: 'plan',
+      });
+
       await waitFor(async () => {
         const raw = await readFile(modeLogPath, 'utf8').catch(() => '');
         const lines = raw

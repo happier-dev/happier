@@ -4,40 +4,32 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installLocalTtsCommonModuleMocks } from './localTtsTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const modalAlertSpy = vi.fn();
 const prepareKokoroTtsSpy = vi.fn();
 const synthesizeKokoroWavSpy = vi.fn();
-
-vi.mock('react-native-unistyles', () => {
-  const theme = { colors: { textSecondary: '#999' } };
-  return {
-    useUnistyles: () => ({ theme }),
-    StyleSheet: {
-      create: (factory: any) => (typeof factory === 'function' ? {} : factory),
-      absoluteFillObject: {},
+installLocalTtsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: vi.fn(),
+                confirm: vi.fn(),
+                alert: (...args: any[]) => modalAlertSpy(...args),
+            },
+        }).module;
     },
-  };
 });
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
-
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(),
-    confirm: vi.fn(),
-    alert: (...args: any[]) => modalAlertSpy(...args),
-  },
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -114,16 +106,12 @@ describe('LocalNeuralTtsSettings (web)', () => {
     const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
 
     let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(LocalNeuralTtsSettings, {
+    tree = (await renderScreen(React.createElement(LocalNeuralTtsSettings, {
           cfgKokoro: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
           setKokoro: vi.fn(),
           networkTimeoutMs: 1000,
           popoverBoundaryRef: null,
-        }),
-      );
-    });
+        }))).tree;
     // Flush async effects that load cache summary and voice catalog.
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
@@ -135,7 +123,7 @@ describe('LocalNeuralTtsSettings (web)', () => {
     expect(modelItem).toBeTruthy();
 
     await act(async () => {
-      modelItem!.props.onPress?.();
+      await pressTestInstanceAsync(modelItem!);
     });
     await act(async () => {});
 
@@ -156,16 +144,12 @@ describe('LocalNeuralTtsSettings (web)', () => {
     const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
 
     let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(LocalNeuralTtsSettings, {
+    tree = (await renderScreen(React.createElement(LocalNeuralTtsSettings, {
           cfgKokoro: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
           setKokoro: vi.fn(),
           networkTimeoutMs: 1000,
           popoverBoundaryRef: null,
-        }),
-      );
-    });
+        }))).tree;
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
@@ -176,7 +160,7 @@ describe('LocalNeuralTtsSettings (web)', () => {
         .find((n) => typeof n.props?.onPress === 'function')!;
 
     await act(async () => {
-      getModelItem().props.onPress?.();
+      await pressTestInstanceAsync(getModelItem());
     });
     await act(async () => {});
 
@@ -197,16 +181,12 @@ describe('LocalNeuralTtsSettings (web)', () => {
     const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
 
     let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(LocalNeuralTtsSettings, {
+    tree = (await renderScreen(React.createElement(LocalNeuralTtsSettings, {
           cfgKokoro: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
           setKokoro: vi.fn(),
           networkTimeoutMs: 15_000,
           popoverBoundaryRef: null,
-        }),
-      );
-    });
+        }))).tree;
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
@@ -217,7 +197,7 @@ describe('LocalNeuralTtsSettings (web)', () => {
     expect(modelItem).toBeTruthy();
 
     await act(async () => {
-      modelItem!.props.onPress?.();
+      await pressTestInstanceAsync(modelItem!);
     });
     await act(async () => {});
 

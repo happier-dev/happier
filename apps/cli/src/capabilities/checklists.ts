@@ -2,15 +2,18 @@ import type { AgentCatalogEntry } from '@/backends/catalog';
 import { AGENTS } from '@/backends/catalog';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
-import { AGENTS_CORE } from '@happier-dev/agents';
-import { CODEX_ACP_DEP_ID, CODEX_MCP_RESUME_DEP_ID } from '@happier-dev/protocol/installables';
+import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
 
 import { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklistIds';
 import type { CapabilityDetectRequest } from './types';
 
-const cliAgentRequests: CapabilityDetectRequest[] = (Object.values(AGENTS) as AgentCatalogEntry[]).map((entry) => ({
-    id: `cli.${entry.id}`,
-}));
+let cachedChecklists: Record<ChecklistId, CapabilityDetectRequest[]> | null = null;
+
+function createCliAgentRequests(): CapabilityDetectRequest[] {
+    return (Object.values(AGENTS) as AgentCatalogEntry[]).map((entry) => ({
+        id: `cli.${entry.id}`,
+    }));
+}
 
 function mergeChecklistContributions(
     base: Record<ChecklistId, CapabilityDetectRequest[]>,
@@ -35,34 +38,61 @@ function mergeChecklistContributions(
     return next;
 }
 
-const resumeChecklistEntries = Object.fromEntries(
-    CATALOG_AGENT_IDS.map((id) => {
-        const runtimeGate = AGENTS_CORE[id].resume.runtimeGate;
-        const requests: CapabilityDetectRequest[] = [];
-        if (runtimeGate === 'acpLoadSession') {
-            requests.push({
-                id: `cli.${id}`,
-                params: { includeAcpCapabilities: true, includeLoginStatus: true },
-            });
-        }
-        return [resumeChecklistId(id), requests] as const;
-    }),
-) as Record<`resume.${CatalogAgentId}`, CapabilityDetectRequest[]>;
+const resumeChecklistEntries = CATALOG_AGENT_IDS.reduce<Record<`resume.${CatalogAgentId}`, CapabilityDetectRequest[]>>(
+    (entries, id) => {
+        entries[resumeChecklistId(id)] = [];
+        return entries;
+    },
+    {} as Record<`resume.${CatalogAgentId}`, CapabilityDetectRequest[]>,
+);
 
-const baseChecklists = {
-    [CHECKLIST_IDS.NEW_SESSION]: [
-        ...cliAgentRequests,
-        { id: 'tool.tmux' },
-        { id: 'tool.executionRuns' },
-    ],
-    [CHECKLIST_IDS.MACHINE_DETAILS]: [
-        ...cliAgentRequests,
-        { id: 'tool.tmux' },
-        { id: 'tool.executionRuns' },
-        { id: CODEX_MCP_RESUME_DEP_ID },
-        { id: CODEX_ACP_DEP_ID },
-    ],
-    ...resumeChecklistEntries,
-} satisfies Record<ChecklistId, CapabilityDetectRequest[]>;
+function buildChecklists(): Record<ChecklistId, CapabilityDetectRequest[]> {
+    const cliAgentRequests = createCliAgentRequests();
+    const baseChecklists = {
+        [CHECKLIST_IDS.NEW_SESSION]: [
+            ...cliAgentRequests,
+            { id: 'tool.tmux' },
+            { id: 'tool.windowsTerminal' },
+            { id: 'tool.executionRuns' },
+        ],
+        [CHECKLIST_IDS.MACHINE_DETAILS]: [
+            ...cliAgentRequests,
+            { id: 'tool.tmux' },
+            { id: 'tool.windowsTerminal' },
+            { id: 'tool.executionRuns' },
+            { id: CODEX_ACP_DEP_ID },
+        ],
+        ...resumeChecklistEntries,
+    } satisfies Record<ChecklistId, CapabilityDetectRequest[]>;
 
-export const checklists: Record<ChecklistId, CapabilityDetectRequest[]> = mergeChecklistContributions(baseChecklists);
+    return mergeChecklistContributions(baseChecklists);
+}
+
+function resolveChecklists(): Record<ChecklistId, CapabilityDetectRequest[]> {
+    if (cachedChecklists) return cachedChecklists;
+    cachedChecklists = buildChecklists();
+    return cachedChecklists;
+}
+
+export const checklists: Record<ChecklistId, CapabilityDetectRequest[]> = new Proxy(
+    {} as Record<ChecklistId, CapabilityDetectRequest[]>,
+    {
+        get(_target, property, receiver) {
+            return Reflect.get(resolveChecklists(), property, receiver);
+        },
+        has(_target, property) {
+            return Reflect.has(resolveChecklists(), property);
+        },
+        ownKeys() {
+            return Reflect.ownKeys(resolveChecklists());
+        },
+        getOwnPropertyDescriptor(_target, property) {
+            const descriptor = Reflect.getOwnPropertyDescriptor(resolveChecklists(), property);
+            if (!descriptor) return undefined;
+            return {
+                ...descriptor,
+                configurable: true,
+            };
+        },
+    },
+);

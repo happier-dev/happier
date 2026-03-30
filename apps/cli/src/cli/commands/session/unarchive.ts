@@ -1,9 +1,10 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { unarchiveSession } from '@/sessionControl/sessionsHttp';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 export async function cmdSessionUnarchive(
   argv: string[],
@@ -25,27 +26,38 @@ export async function cmdSessionUnarchive(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.unarchive',
+    { sessionId: idOrPrefix },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_unarchive',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: {
+          code: normalized.errorCode,
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+        },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(normalized.errorCode);
   }
-  const sessionId = resolved.sessionId;
 
-  await unarchiveSession({ token: credentials.token, sessionId });
-
-  if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_unarchive', data: { sessionId, archivedAt: null } });
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_unarchive', json, result })) {
     return;
   }
 
-  console.log(chalk.green('✓'), `unarchived ${sessionId}`);
-}
+  if (json) {
+    printJsonEnvelope({ ok: true, kind: 'session_unarchive', data: { sessionId: result.sessionId, archivedAt: result.archivedAt } });
+    return;
+  }
 
+  console.log(chalk.green('✓'), `unarchived ${result.sessionId}`);
+}

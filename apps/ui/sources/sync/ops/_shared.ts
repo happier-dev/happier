@@ -1,4 +1,5 @@
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorCode, type SpawnSessionResult } from '@happier-dev/protocol';
+import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -41,6 +42,18 @@ export function normalizeSpawnSessionResult(value: unknown): SpawnSessionResult 
             ? value.errorCode
             : SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
         const errorMessage = typeof value.errorMessage === 'string' ? value.errorMessage : 'Failed to spawn session';
+        return { type: 'error', errorCode, errorMessage };
+    }
+
+    if (value.success === false || value.ok === false) {
+        const errorCode = isSpawnSessionErrorCode(value.errorCode)
+            ? value.errorCode
+            : SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
+        const errorMessage = typeof value.errorMessage === 'string'
+            ? value.errorMessage
+            : typeof value.error === 'string'
+                ? value.error
+                : 'Failed to spawn session';
         return { type: 'error', errorCode, errorMessage };
     }
 

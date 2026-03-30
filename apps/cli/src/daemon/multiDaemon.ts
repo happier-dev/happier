@@ -2,10 +2,14 @@ import { existsSync } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
 import { DaemonLocallyPersistedStateSchema, readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
-
+import { resolveDaemonServiceInstallationSnapshotFromEnv } from '@/daemon/service/cli';
+import { resolveDaemonStateBasenameForRing } from '@/cli/runtime/publicReleaseChannel';
+import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 type NormalizedDaemonState = Readonly<{
   pid: number;
   httpPort: number;
@@ -62,14 +66,32 @@ async function readDaemonStateFromPath(path: string): Promise<NormalizedDaemonSt
 }
 
 function resolveDaemonStatePath(serverId: string): string {
-  return join(configuration.serversDir, serverId, 'daemon.state.json');
+  return join(configuration.serversDir, serverId, resolveDaemonStateBasenameForRing(configuration.publicReleaseRing));
 }
 
 export type DaemonStatusEntry = Readonly<{
   serverId: string;
   name: string;
   serverUrl: string;
+  comparableKey: string | null;
   daemonStatePath: string;
+  auth?: Readonly<{
+    authenticated: boolean;
+    needsAuth: boolean;
+    machineRegistered: boolean;
+    machineId: string | null;
+    accountId: string | null;
+  }>;
+  drift?: Readonly<{
+    activeComparableKey: string | null;
+    matchesActiveRelay: boolean | null;
+  }>;
+  service: Readonly<{
+    installed: boolean;
+    running?: boolean;
+    platform?: string;
+    installedPath?: string;
+  }>;
   daemon: Readonly<{
     pid: number | null;
     httpPort: number | null;
@@ -77,6 +99,66 @@ export type DaemonStatusEntry = Readonly<{
     staleStateFile: boolean;
   }>;
 }>;
+
+function resolveComparableKey(rawUrl: string): string | null {
+  const value = String(rawUrl ?? '').trim();
+  if (!value) {
+    return null;
+  }
+  try {
+    return createServerUrlComparableKey(value);
+  } catch {
+    return null;
+  }
+}
+
+function resolveCredentialPathCandidates(serverId: string): Readonly<{ primaryPath: string; legacyPath: string }> {
+  const primaryPath = join(configuration.serversDir, serverId, 'access.key');
+  const legacyPath = join(configuration.happyHomeDir, 'access.key');
+  return { primaryPath, legacyPath };
+}
+
+async function readAuthTokenForServerId(serverId: string): Promise<string | null> {
+  const { primaryPath, legacyPath } = resolveCredentialPathCandidates(serverId);
+  const canUseLegacy = serverId === 'cloud' && existsSync(legacyPath) && !existsSync(primaryPath);
+
+  const path = existsSync(primaryPath) ? primaryPath : canUseLegacy ? legacyPath : null;
+  if (!path) return null;
+
+  try {
+    const raw = JSON.parse(await readFile(path, 'utf-8'));
+    const token = typeof raw?.token === 'string' ? raw.token.trim() : '';
+    return token ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveAccountIdFromToken(token: string | null): string | null {
+  const value = typeof token === 'string' ? token.trim() : '';
+  if (!value) return null;
+  try {
+    const payload = decodeJwtPayload(value);
+    return typeof payload?.sub === 'string' && payload.sub.trim() ? payload.sub.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveServiceInstallationForServer(serverId: string, serverUrl: string): Readonly<{ installed: boolean }> {
+  try {
+    const snapshot = resolveDaemonServiceInstallationSnapshotFromEnv({
+      processEnv: {
+        ...process.env,
+        HAPPIER_DAEMON_SERVICE_INSTANCE_ID: serverId,
+        HAPPIER_DAEMON_SERVICE_SERVER_URL: serverUrl,
+      },
+    });
+    return { installed: snapshot.installed };
+  } catch {
+    return { installed: false };
+  }
+}
 
 export async function listDaemonStatusesForAllKnownServers(): Promise<DaemonStatusEntry[]> {
   const settings = await readSettings();
@@ -91,6 +173,7 @@ export async function listDaemonStatusesForAllKnownServers(): Promise<DaemonStat
   }
   const serverIds = Object.keys(servers);
   const results: DaemonStatusEntry[] = [];
+  const activeComparableKey = resolveComparableKey(configuration.publicServerUrl || configuration.serverUrl);
 
   for (const serverId of serverIds) {
     const profile = servers[serverId];
@@ -102,11 +185,36 @@ export async function listDaemonStatusesForAllKnownServers(): Promise<DaemonStat
     const state = await readDaemonStateFromPath(daemonStatePath);
     const running = state ? isPidAlive(state.pid) : false;
     const staleStateFile = Boolean(state && !running);
+    const comparableKey = resolveComparableKey(serverUrl);
+    const serviceInstallation = resolveServiceInstallationForServer(serverId, serverUrl);
+    const token = await readAuthTokenForServerId(serverId);
+    const accountId = resolveAccountIdFromToken(token);
+    const machineId = resolveMachineIdForServerFromSettings(settings, serverId, accountId);
+    const authenticated = token != null;
+    const machineRegistered = machineId != null;
+    const needsAuth = !authenticated || !machineRegistered;
+    const matchesActiveRelay = activeComparableKey && comparableKey ? activeComparableKey === comparableKey : null;
     results.push({
       serverId,
       name,
       serverUrl,
+      comparableKey,
       daemonStatePath,
+      auth: {
+        authenticated,
+        needsAuth,
+        machineRegistered,
+        machineId,
+        accountId,
+      },
+      drift: {
+        activeComparableKey,
+        matchesActiveRelay,
+      },
+      service: {
+        ...serviceInstallation,
+        running: serviceInstallation.installed && running,
+      },
       daemon: {
         pid: state?.pid ?? null,
         httpPort: state?.httpPort ?? null,

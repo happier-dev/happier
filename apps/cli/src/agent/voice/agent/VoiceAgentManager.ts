@@ -13,6 +13,7 @@ import {
 import { ingestVoiceAgentStreamingDelta } from './voiceAgentStreamingDeltas';
 import type {
   BackendFactory,
+  ResolveVoiceSystemAppendBlocksArgs,
   VoiceAgentInstance,
   VoiceAgentTurn,
   VoiceAgentTurnStreamState,
@@ -26,6 +27,7 @@ import type {
   VoiceAgentTurnStreamStartResult,
 } from './voiceAgentTypes';
 import { VoiceAgentError } from './voiceAgentTypes';
+import { resolveVoiceActionBlockMemoryRecallGuidanceEnabled } from './resolveVoiceActionBlockMemoryRecallGuidanceEnabled';
 
 export type {
   VoiceAgentCommitResult,
@@ -43,13 +45,44 @@ export class VoiceAgentManager {
   private static readonly MIN_IDLE_TTL_SECONDS = 60;
   private static readonly MAX_IDLE_TTL_SECONDS = 6 * 60 * 60; // 6h
   private readonly createBackend: BackendFactory;
+  private readonly resolveSystemAppendBlocks: (args: ResolveVoiceSystemAppendBlocksArgs) => Promise<readonly string[]>;
+  private readonly responseTimeoutMs: number;
   private readonly getNowMs: () => number;
   private readonly voiceAgents = new Map<string, VoiceAgentInstance>();
   private readonly reaper: NodeJS.Timeout;
   private disposed = false;
 
-  constructor(opts: Readonly<{ createBackend: BackendFactory; getNowMs?: () => number; reaperIntervalMs?: number }>) {
+  private normalizeAssistantTextForActions(
+    assistantText: string,
+    actions: readonly VoiceAssistantAction[],
+  ): string {
+    const trimmed = assistantText.trim();
+    if (actions.some((action) => action?.t === 'sendSessionMessage')) {
+      return 'I sent that to the coding assistant and am waiting for its update.';
+    }
+    return trimmed;
+  }
+
+  private resolveResponseTimeoutMs(explicitTimeoutMs?: number | null): number {
+    if (typeof explicitTimeoutMs === 'number' && Number.isFinite(explicitTimeoutMs) && explicitTimeoutMs > 0) {
+      return Math.floor(explicitTimeoutMs);
+    }
+    return this.responseTimeoutMs;
+  }
+
+  constructor(opts: Readonly<{
+    createBackend: BackendFactory;
+    resolveSystemAppendBlocks?: (args: ResolveVoiceSystemAppendBlocksArgs) => Promise<readonly string[]>;
+    responseTimeoutMs?: number;
+    getNowMs?: () => number;
+    reaperIntervalMs?: number;
+  }>) {
     this.createBackend = opts.createBackend;
+    this.resolveSystemAppendBlocks = opts.resolveSystemAppendBlocks ?? (async () => []);
+    this.responseTimeoutMs =
+      typeof opts.responseTimeoutMs === 'number' && Number.isFinite(opts.responseTimeoutMs) && opts.responseTimeoutMs > 0
+        ? Math.floor(opts.responseTimeoutMs)
+        : 120_000;
     this.getNowMs = opts.getNowMs ?? (() => Date.now());
     const intervalMs = Math.max(5_000, Math.floor(opts.reaperIntervalMs ?? 30_000));
     this.reaper = setInterval(() => {
@@ -64,12 +97,53 @@ export class VoiceAgentManager {
     if (voiceAgent.commitBackend && voiceAgent.commitSessionId) {
       return {
         kind: 'voice_agent_sessions.v1',
-        backendId: voiceAgent.agentId,
+        backendTarget: { kind: 'builtInAgent', agentId: voiceAgent.agentId },
         chatVendorSessionId: voiceAgent.chatSessionId,
         commitVendorSessionId: voiceAgent.commitSessionId,
       };
     }
-    return { kind: 'vendor_session.v1', backendId: voiceAgent.agentId, vendorSessionId: voiceAgent.chatSessionId };
+    return {
+      kind: 'vendor_session.v1',
+      backendTarget: { kind: 'builtInAgent', agentId: voiceAgent.agentId },
+      vendorSessionId: voiceAgent.chatSessionId,
+    };
+  }
+
+  private async ensureCommitBackendSession(voiceAgent: VoiceAgentInstance): Promise<void> {
+    if (voiceAgent.commitBackend && voiceAgent.commitSessionId) {
+      return;
+    }
+
+    let commitBackend: AgentBackend | null = null;
+    try {
+      commitBackend = this.createBackend({
+        agentId: voiceAgent.agentId,
+        modelId: voiceAgent.commitModelId,
+        permissionPolicy: voiceAgent.permissionPolicy,
+        start: { intent: 'voice_agent' },
+      });
+      commitBackend.onMessage((msg) => {
+        if (msg.type !== 'model-output') return;
+        if (typeof msg.textDelta === 'string') voiceAgent.commitBuffer += msg.textDelta;
+        if (typeof msg.fullText === 'string') voiceAgent.commitBuffer = msg.fullText;
+      });
+
+      const sessionId = await (async () => {
+        if (voiceAgent.commitResumeSessionId && commitBackend.loadSession) {
+          const loaded = await commitBackend.loadSession(voiceAgent.commitResumeSessionId);
+          return loaded.sessionId;
+        }
+        const started = await commitBackend.startSession();
+        return started.sessionId;
+      })();
+
+      voiceAgent.commitBackend = commitBackend;
+      voiceAgent.commitSessionId = sessionId;
+      voiceAgent.commitResumeSessionId = null;
+    } catch (e: any) {
+      if (commitBackend) await commitBackend.dispose().catch(() => {});
+      throw new VoiceAgentError('VOICE_AGENT_START_FAILED', e instanceof Error ? e.message : 'commit backend unavailable');
+    }
   }
 
   async start(params: VoiceAgentStartParams): Promise<VoiceAgentStartResult> {
@@ -84,6 +158,14 @@ export class VoiceAgentManager {
     const idleTtlMs =
       Math.max(VoiceAgentManager.MIN_IDLE_TTL_SECONDS, Math.min(VoiceAgentManager.MAX_IDLE_TTL_SECONDS, rawTtlSeconds)) * 1000;
     const verbosity: Verbosity = params.verbosity === 'balanced' ? 'balanced' : 'short';
+    const disabledActionIds = Array.isArray(params.disabledActionIds)
+      ? params.disabledActionIds.map((value) => String(value ?? '').trim()).filter(Boolean)
+      : [];
+    const memoryRecallGuidanceEnabled = await resolveVoiceActionBlockMemoryRecallGuidanceEnabled();
+    const systemAppendBlocks = await this.resolveSystemAppendBlocks({
+      profileId: params.profileId ?? null,
+      sessionId: params.contextSessionId ?? null,
+    });
 
     let chatBackendForCleanup: AgentBackend | undefined;
     try {
@@ -103,6 +185,7 @@ export class VoiceAgentManager {
         agentId: params.agentId,
         modelId: params.chatModelId,
         permissionPolicy: params.permissionPolicy,
+        start: { intent: 'voice_agent' },
       }));
 
       let instanceRef: VoiceAgentInstance | null = null;
@@ -159,6 +242,9 @@ export class VoiceAgentManager {
         chatModelId: params.chatModelId,
         commitModelId: params.commitModelId,
         initialContext: params.initialContext,
+        disabledActionIds,
+        memoryRecallGuidanceEnabled,
+        systemAppendBlocks: [...systemAppendBlocks],
         bootstrapped: Boolean(resume.chatSessionId),
         history: [] as VoiceAgentTurn[],
         lastUsedAt: this.getNowMs(),
@@ -179,24 +265,32 @@ export class VoiceAgentManager {
 
       this.voiceAgents.set(voiceAgentId, instance);
 
+      if (resume.commitSessionId) {
+        await this.ensureCommitBackendSession(instance);
+      }
+
       const bootstrapMode = params.bootstrapMode ?? 'none';
       if (!resume.chatSessionId && bootstrapMode === 'ready_handshake') {
+        const shouldDeferInitialContextUntilFirstTurn = params.initialContextMode === 'first_turn';
         instance.clearChatBuffer();
         const prompt = buildVoiceAgentBootstrapPrompt({
           verbosity: instance.verbosity,
-          initialContext: instance.initialContext,
+          initialContext: shouldDeferInitialContextUntilFirstTurn ? '' : instance.initialContext,
           mode: 'ready_handshake',
+          disabledActionIds: instance.disabledActionIds,
+          memoryRecallGuidanceEnabled: instance.memoryRecallGuidanceEnabled,
+          systemAppendBlocks: instance.systemAppendBlocks,
         });
         await instance.chatBackend.sendPrompt(instance.chatSessionId, prompt);
         if (instance.chatBackend.waitForResponseComplete) {
-          await instance.chatBackend.waitForResponseComplete();
+          await instance.chatBackend.waitForResponseComplete(this.resolveResponseTimeoutMs(params.bootstrapTimeoutMs));
         }
         const response = instance.chatBuffer.trim();
         if (response.toUpperCase() !== 'READY') {
           throw new VoiceAgentError('VOICE_AGENT_START_FAILED', 'Bootstrap failed');
         }
         instance.clearChatBuffer();
-        instance.bootstrapped = true;
+        instance.bootstrapped = !shouldDeferInitialContextUntilFirstTurn;
       }
 
       return {
@@ -248,14 +342,17 @@ export class VoiceAgentManager {
                 verbosity: voiceAgent.verbosity,
                 initialContext: voiceAgent.initialContext,
                 userText: params.userText,
+                disabledActionIds: voiceAgent.disabledActionIds,
+                memoryRecallGuidanceEnabled: voiceAgent.memoryRecallGuidanceEnabled,
+                systemAppendBlocks: voiceAgent.systemAppendBlocks,
               });
 		      await voiceAgent.chatBackend.sendPrompt(voiceAgent.chatSessionId, prompt);
 		      if (voiceAgent.chatBackend.waitForResponseComplete) {
-		        await voiceAgent.chatBackend.waitForResponseComplete();
+		        await voiceAgent.chatBackend.waitForResponseComplete(this.resolveResponseTimeoutMs());
 		      }
           voiceAgent.bootstrapped = true;
 		      const extracted = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer);
-		      const assistantText = extracted.assistantText.trim();
+		      const assistantText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
 		      appendVoiceAgentHistoryTurn(voiceAgent.history, {
 		        userText: params.userText,
 		        assistantText,
@@ -289,10 +386,13 @@ export class VoiceAgentManager {
         initialContext: voiceAgent.initialContext,
         mode: 'welcome',
         welcomeText: params.welcomeText,
+        disabledActionIds: voiceAgent.disabledActionIds,
+        memoryRecallGuidanceEnabled: voiceAgent.memoryRecallGuidanceEnabled,
+        systemAppendBlocks: voiceAgent.systemAppendBlocks,
       });
       await voiceAgent.chatBackend.sendPrompt(voiceAgent.chatSessionId, prompt);
       if (voiceAgent.chatBackend.waitForResponseComplete) {
-        await voiceAgent.chatBackend.waitForResponseComplete();
+        await voiceAgent.chatBackend.waitForResponseComplete(this.resolveResponseTimeoutMs());
       }
       const assistantText = voiceAgent.chatBuffer.trim();
       voiceAgent.clearChatBuffer();
@@ -337,10 +437,13 @@ export class VoiceAgentManager {
                   verbosity: voiceAgent.verbosity,
                   initialContext: voiceAgent.initialContext,
                   userText: params.userText,
+                  disabledActionIds: voiceAgent.disabledActionIds,
+                  memoryRecallGuidanceEnabled: voiceAgent.memoryRecallGuidanceEnabled,
+                  systemAppendBlocks: voiceAgent.systemAppendBlocks,
                 });
 		        await voiceAgent.chatBackend.sendPrompt(voiceAgent.chatSessionId, prompt);
 		        if (voiceAgent.chatBackend.waitForResponseComplete) {
-		          await voiceAgent.chatBackend.waitForResponseComplete();
+		          await voiceAgent.chatBackend.waitForResponseComplete(this.resolveResponseTimeoutMs());
 		        }
             voiceAgent.bootstrapped = true;
 
@@ -352,7 +455,7 @@ export class VoiceAgentManager {
 
 		        const assistantText = voiceAgent.chatBuffer.trim();
 		        const extracted = extractVoiceActionsFromAssistantText(assistantText);
-		        const cleanText = extracted.assistantText.trim();
+		        const cleanText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
 		        appendVoiceAgentHistoryTurn(voiceAgent.history, {
 		          userText: params.userText,
 		          assistantText: cleanText,
@@ -424,29 +527,7 @@ export class VoiceAgentManager {
     if (!stream || stream.id !== params.streamId) {
       throw new VoiceAgentError('VOICE_AGENT_NOT_FOUND', 'Turn stream not found');
     }
-    if (stream.done) {
-      voiceAgent.activeTurnStream = null;
-      return { ok: true };
-    }
-
-    stream.cancelled = true;
-    try {
-      await voiceAgent.chatBackend.cancel(voiceAgent.chatSessionId);
-    } catch {
-      // best-effort cancellation
-    }
-
-    try {
-      await stream.run;
-    } catch {
-      // stream lifecycle converts errors into stream events
-    }
-
-    if (!stream.done) {
-      stream.events.push({ t: 'error', error: 'cancelled' });
-      stream.done = true;
-    }
-
+    await this.cancelActiveTurnStream(voiceAgent, stream);
     return { ok: true };
   }
 
@@ -469,43 +550,14 @@ export class VoiceAgentManager {
             });
             await voiceAgent.chatBackend.sendPrompt(voiceAgent.chatSessionId, prompt);
             if (voiceAgent.chatBackend.waitForResponseComplete) {
-              await voiceAgent.chatBackend.waitForResponseComplete();
+              await voiceAgent.chatBackend.waitForResponseComplete(this.resolveResponseTimeoutMs());
             }
             const commitText = voiceAgent.chatBuffer.trim();
             voiceAgent.clearChatBuffer();
             return { commitText };
           }
 
-          if (!voiceAgent.commitBackend || !voiceAgent.commitSessionId) {
-            let commitBackend: AgentBackend | null = null;
-            try {
-              commitBackend = this.createBackend({
-                agentId: voiceAgent.agentId,
-                modelId: voiceAgent.commitModelId,
-                permissionPolicy: voiceAgent.permissionPolicy,
-              });
-              commitBackend.onMessage((msg) => {
-                if (msg.type !== 'model-output') return;
-                if (typeof msg.textDelta === 'string') voiceAgent.commitBuffer += msg.textDelta;
-                if (typeof msg.fullText === 'string') voiceAgent.commitBuffer = msg.fullText;
-              });
-
-              const sessionId = await (async () => {
-                if (voiceAgent.commitResumeSessionId && commitBackend.loadSession) {
-                  const loaded = await commitBackend.loadSession(voiceAgent.commitResumeSessionId);
-                  return loaded.sessionId;
-                }
-                const started = await commitBackend.startSession();
-                return started.sessionId;
-              })();
-              voiceAgent.commitBackend = commitBackend;
-              voiceAgent.commitSessionId = sessionId;
-              voiceAgent.commitResumeSessionId = null;
-            } catch (e: any) {
-              if (commitBackend) await commitBackend.dispose().catch(() => {});
-              throw new VoiceAgentError('VOICE_AGENT_START_FAILED', e instanceof Error ? e.message : 'commit backend unavailable');
-            }
-          }
+          await this.ensureCommitBackendSession(voiceAgent);
 
 		      voiceAgent.clearCommitBuffer();
 		      const effectiveMaxChars =
@@ -517,7 +569,7 @@ export class VoiceAgentManager {
 		      });
 		      await voiceAgent.commitBackend!.sendPrompt(voiceAgent.commitSessionId!, prompt);
 		      if (voiceAgent.commitBackend!.waitForResponseComplete) {
-		        await voiceAgent.commitBackend!.waitForResponseComplete();
+		        await voiceAgent.commitBackend!.waitForResponseComplete(this.resolveResponseTimeoutMs());
 		      }
       const commitText = voiceAgent.commitBuffer.trim();
       return { commitText };
@@ -535,7 +587,10 @@ export class VoiceAgentManager {
     if (!voiceAgent) throw new VoiceAgentError('VOICE_AGENT_NOT_FOUND', 'Voice agent not found');
     // Remove from registry first to prevent new operations from starting while we await in-flight work.
     this.voiceAgents.delete(params.voiceAgentId);
-    if (voiceAgent.inFlight) {
+    if (voiceAgent.activeTurnStream) {
+      await this.cancelActiveTurnStream(voiceAgent, voiceAgent.activeTurnStream, { awaitCompletion: false });
+    }
+    if (voiceAgent.inFlight && !voiceAgent.activeTurnStream) {
       await voiceAgent.inFlight.catch(() => {});
     }
     await voiceAgent.dispose();
@@ -554,5 +609,43 @@ export class VoiceAgentManager {
     }
     if (toDispose.length === 0) return;
     await Promise.allSettled(toDispose.map((m) => m.dispose()));
+  }
+
+  private async cancelActiveTurnStream(
+    voiceAgent: VoiceAgentInstance,
+    stream: VoiceAgentTurnStreamState,
+    options?: Readonly<{ awaitCompletion?: boolean }>,
+  ): Promise<void> {
+    if (stream.done) {
+      if (voiceAgent.activeTurnStream === stream) {
+        voiceAgent.activeTurnStream = null;
+      }
+      return;
+    }
+
+    stream.cancelled = true;
+    try {
+      await voiceAgent.chatBackend.cancel(voiceAgent.chatSessionId);
+    } catch {
+      // best-effort cancellation
+    }
+
+    const awaitCompletion = options?.awaitCompletion !== false;
+    if (awaitCompletion) {
+      try {
+        await stream.run;
+      } catch {
+        // stream lifecycle converts errors into stream events
+      }
+    }
+
+    if (!stream.done) {
+      stream.events.push({ t: 'error', error: 'cancelled' });
+      stream.done = true;
+    }
+
+    if (voiceAgent.activeTurnStream === stream) {
+      voiceAgent.activeTurnStream = null;
+    }
   }
 }

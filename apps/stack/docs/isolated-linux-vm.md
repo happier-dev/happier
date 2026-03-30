@@ -26,6 +26,14 @@ What it validates (best-effort):
 - UI is served by server-light (`/` returns HTML)
 - monorepo worktree creation (`hstack wt new ...`)
 
+If you want repeated runs with per-iteration logs and JSON metadata, use:
+
+```bash
+HSTACK_REPEAT_COUNT=5 ./scripts/provision/macos-lima-hstack-repeat-validation.sh happy-e2e
+```
+
+The report tree is written under `output/lima-validation-<timestamp>-<vm>/` by default.
+
 Notes:
 - This runs inside the VM (Linux) and uses `npx` by default.
 - You can pin the version under test: `HSTACK_VERSION=0.6.14 ./scripts/provision/macos-lima-hstack-smoke.sh happy-e2e`.

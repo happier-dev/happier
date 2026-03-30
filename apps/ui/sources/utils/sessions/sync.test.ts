@@ -11,10 +11,18 @@ function createDeferred<T>() {
     return { promise, resolve };
 }
 
+async function withFakeTimers(run: () => Promise<void>) {
+    vi.useFakeTimers();
+    try {
+        await run();
+    } finally {
+        vi.useRealTimers();
+    }
+}
+
 describe('InvalidateSync.awaitQueue', () => {
     it('resolves after timeout when the queue never completes', async () => {
-        vi.useFakeTimers();
-        try {
+        await withFakeTimers(async () => {
             const sync = new InvalidateSync(async () => await new Promise<void>(() => {}));
             sync.invalidate();
 
@@ -26,13 +34,11 @@ describe('InvalidateSync.awaitQueue', () => {
             await vi.advanceTimersByTimeAsync(999);
             expect(resolved).toBe(false);
 
-            await vi.advanceTimersByTimeAsync(1);
+            await vi.runOnlyPendingTimersAsync();
             expect(resolved).toBe(true);
 
             await promise;
-        } finally {
-            vi.useRealTimers();
-        }
+        });
     });
 });
 
@@ -84,7 +90,9 @@ describe('InvalidateSync pause behavior', () => {
         const sync = new InvalidateSync(command, { pause, backoff: { minDelayMs: 1, maxDelayMs: 1, maxFailureCount: 'infinite' } });
 
         sync.invalidate();
-        await Promise.resolve();
+        await new Promise<void>((resolve) => {
+            queueMicrotask(resolve);
+        });
         expect(command).toHaveBeenCalledTimes(0);
 
         pause.resume();
@@ -93,31 +101,31 @@ describe('InvalidateSync pause behavior', () => {
     });
 
     it('does not schedule retries while paused', async () => {
-        vi.useFakeTimers();
-        const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
-        try {
-            const pause = new PauseController();
-            const command = vi.fn(async () => {
-                throw new Error('nope');
-            });
-            const sync = new InvalidateSync(command, { pause, backoff: { minDelayMs: 1000, maxDelayMs: 1000, maxFailureCount: 'infinite' } });
+        await withFakeTimers(async () => {
+            const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+            try {
+                const pause = new PauseController();
+                const command = vi.fn(async () => {
+                    throw new Error('nope');
+                });
+                const sync = new InvalidateSync(command, { pause, backoff: { minDelayMs: 1000, maxDelayMs: 1000, maxFailureCount: 'infinite' } });
 
-            sync.invalidate();
-            await vi.runAllTicks();
-            expect(command).toHaveBeenCalledTimes(1);
+                sync.invalidate();
+                await vi.runAllTicks();
+                expect(command).toHaveBeenCalledTimes(1);
 
-            pause.pause();
-            await vi.advanceTimersByTimeAsync(60_000);
-            await vi.runAllTicks();
-            expect(command).toHaveBeenCalledTimes(1);
+                pause.pause();
+                await vi.runOnlyPendingTimersAsync();
+                await vi.runAllTicks();
+                expect(command).toHaveBeenCalledTimes(1);
 
-            pause.resume();
-            await vi.advanceTimersByTimeAsync(1000);
-            await vi.runAllTicks();
-            expect(command).toHaveBeenCalledTimes(2);
-        } finally {
-            randomSpy.mockRestore();
-            vi.useRealTimers();
-        }
+                pause.resume();
+                await vi.runOnlyPendingTimersAsync();
+                await vi.runAllTicks();
+                expect(command).toHaveBeenCalledTimes(2);
+            } finally {
+                randomSpy.mockRestore();
+            }
+        });
     });
 });

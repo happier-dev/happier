@@ -1,9 +1,10 @@
+import { MMKV } from 'react-native-mmkv';
 import * as Sentry from '@sentry/react-native';
 import type { ComponentType } from 'react';
 import { parseOptionalBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
-import { loadSettings } from '@/sync/domains/state/persistence';
+import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 
 declare global {
     // eslint-disable-next-line no-var
@@ -14,6 +15,7 @@ declare global {
 
 const CRASH_REPORTS_FEATURE_ID = 'app.crashReports' as const satisfies FeatureId;
 let cachedReplayIntegration: any | null = null;
+const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
 
 function parseBooleanEnv(raw: string | undefined, defaultValue: boolean): boolean {
     const parsed = parseOptionalBooleanEnv(raw);
@@ -44,18 +46,31 @@ function isTauriRuntime(): boolean {
     return Boolean((w as any).__TAURI__ || (w as any).__TAURI_INTERNALS__);
 }
 
+function readPersistedCrashReportsOptOut(): boolean {
+    try {
+        const storageScope = isWebRuntime ? null : readStorageScopeFromEnv();
+        const storage = storageScope ? new MMKV({ id: scopedStorageId('default', storageScope) }) : new MMKV();
+        const rawSettings = storage.getString('settings');
+        if (!rawSettings) return false;
+
+        const parsed = JSON.parse(rawSettings) as {
+            settings?: {
+                crashReportsOptOut?: unknown;
+            };
+        };
+        return parsed.settings?.crashReportsOptOut === true;
+    } catch {
+        return false;
+    }
+}
+
 function resolveCrashReportsOptOut(): boolean {
     if (typeof globalThis.__HAPPIER_CRASH_REPORTS_OPTOUT__ === 'boolean') {
         return globalThis.__HAPPIER_CRASH_REPORTS_OPTOUT__;
     }
-    try {
-        const loaded = loadSettings();
-        const optOut = loaded.settings.crashReportsOptOut === true;
-        globalThis.__HAPPIER_CRASH_REPORTS_OPTOUT__ = optOut;
-        return optOut;
-    } catch {
-        return false;
-    }
+    const optOut = readPersistedCrashReportsOptOut();
+    globalThis.__HAPPIER_CRASH_REPORTS_OPTOUT__ = optOut;
+    return optOut;
 }
 
 function resolveSentryEnv() {
@@ -202,5 +217,25 @@ export async function captureBugReportSentryEvent(): Promise<BugReportSentryEven
         return { eventId, dsn: resolved.dsn, environment: resolved.environment, release: resolved.release, replayId };
     } catch {
         return null;
+    }
+}
+
+export function captureExceptionIfEnabled(
+    error: unknown,
+    context?: Readonly<{
+        tags?: Record<string, string>;
+        extra?: Record<string, unknown>;
+    }>,
+): void {
+    if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return;
+    if (resolveCrashReportsOptOut()) return;
+    if (!resolveSentryEnv()) return;
+
+    initializeSentryOnce();
+
+    try {
+        Sentry.captureException(error, context);
+    } catch {
+        // ignore reporting failures
     }
 }

@@ -1,24 +1,17 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionFileDetailsCommonModuleMocks } from './sessionFileDetailsTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-}));
+installSessionFileDetailsCommonModuleMocks();
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: vi.fn(async () => ({ success: true })),
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
 }));
 
 vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
@@ -60,9 +53,7 @@ describe('useSessionFileEditorState (start from diff)', () => {
         }
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Harness displayMode="diff" fileText={'console.log(1);'} />);
-        });
+        tree = (await renderScreen(<Harness displayMode="diff" fileText={'console.log(1);'} />)).tree;
 
         expect(latest).not.toBeNull();
 
@@ -107,16 +98,14 @@ describe('useSessionFileEditorState (start from diff)', () => {
         }
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Harness displayMode="file" fileText={'console.log(1);'} />);
-        });
+        tree = (await renderScreen(<Harness displayMode="file" fileText={'console.log(1);'} />)).tree;
 
         await act(async () => {
             latest.startEditingFile();
         });
 
         await act(async () => {
-            latest.setEditorText('console.log(2);');
+            latest.onEditorChange('console.log(2);');
         });
 
         expect(latest.editorDirty).toBe(true);
@@ -125,6 +114,7 @@ describe('useSessionFileEditorState (start from diff)', () => {
             tree.update(<Harness displayMode="file" fileText={'console.log(1);\\n// refreshed'} />);
         });
 
-        expect(latest.editorText).toBe('console.log(2);');
+        expect(latest.getEditorText()).toBe('console.log(2);');
     });
+
 });

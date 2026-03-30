@@ -3,17 +3,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleCodexCliCommand } from './command';
 import * as authModule from '@/ui/auth';
 import * as runCodexModule from '@/backends/codex/runCodex';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
+import { type Credentials } from '@/persistence';
+import * as persistenceModule from '@/persistence';
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe('handleCodexCliCommand', () => {
+  const prevAccountSettingsMode = process.env.HAPPIER_ACCOUNT_SETTINGS_MODE;
+
+  afterEach(() => {
+    if (typeof prevAccountSettingsMode === 'string') {
+      process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = prevAccountSettingsMode;
+    } else {
+      delete process.env.HAPPIER_ACCOUNT_SETTINGS_MODE;
+    }
+  });
+
   it('exits when --happy-starting-mode is invalid', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`exit:${code ?? 0}`);
     }) as any);
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const output = captureConsoleText();
 
     try {
       await expect(
@@ -22,15 +35,17 @@ describe('handleCodexCliCommand', () => {
           terminalRuntime: null,
         } as any),
       ).rejects.toThrow('exit:1');
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --happy-starting-mode'));
+      expect(output.text()).toContain('Invalid --happy-starting-mode');
     } finally {
       exitSpy.mockRestore();
-      errorSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('passes valid starting mode and resume/session flags to runCodex', async () => {
-    const credentials = { token: 't' } as any;
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(null);
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
     const runSpy = vi.spyOn(runCodexModule, 'runCodex').mockResolvedValue();
 
@@ -49,7 +64,9 @@ describe('handleCodexCliCommand', () => {
   });
 
   it('ignores missing values for existing-session/resume flags', async () => {
-    const credentials = { token: 't' } as any;
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(null);
     vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
     const runSpy = vi.spyOn(runCodexModule, 'runCodex').mockResolvedValue();
 
@@ -62,6 +79,24 @@ describe('handleCodexCliCommand', () => {
       existingSessionId: undefined,
       resume: undefined,
       startingMode: 'local',
+    }));
+  });
+
+  it('forwards explicit working directory aliases to runCodex', async () => {
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(null);
+    vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
+    const runSpy = vi.spyOn(runCodexModule, 'runCodex').mockResolvedValue();
+
+    await handleCodexCliCommand({
+      args: ['-C', '/tmp/from-short-flag', '--cd', '/tmp/from-long-flag'],
+      terminalRuntime: null,
+    } as any);
+
+    expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({
+      credentials,
+      directory: '/tmp/from-long-flag',
     }));
   });
 });

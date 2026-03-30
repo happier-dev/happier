@@ -1,5 +1,6 @@
 import type { CapturedEvent } from '../../socketClient';
 
+import { normalizeDecodedTranscriptValue } from '../normalizeDecodedTranscriptValue';
 import { payloadContainsSubstring } from './payloadContainsSubstring';
 
 type UnknownRecord = Record<string, unknown>;
@@ -17,7 +18,7 @@ export function scenarioSatisfiedByMessages(
   if (required.length === 0) return true;
 
   const assistantLikeMessages = params.decodedMessages.flatMap((msg) => {
-    const rec = asRecord(msg);
+    const rec = asRecord(normalizeDecodedTranscriptValue(msg));
     if (!rec) return [];
     const role = typeof rec.role === 'string' ? rec.role : '';
     return role === 'agent' || role === 'assistant' ? [rec] : [];

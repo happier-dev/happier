@@ -6,7 +6,17 @@ import { mkdir, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
-import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
+import {
+  formatPublicReleaseChannel,
+  formatPublicReleaseChannelChoices,
+  getPublicReleaseRingEntry,
+  normalizePublicReleaseChannel,
+  resolveEmbeddedPolicyForChannel,
+  resolveRollingPrerelease,
+  resolveRollingReleaseLabel,
+  resolveRollingReleaseTagSuffix,
+  resolveRollingVersionSuffix,
+} from './lib/public-release-rings.mjs';
 import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
 import { resolveGitHubRepoSlug } from '../github/resolve-github-repo-slug.mjs';
 
@@ -109,22 +119,6 @@ function readHstackVersion(repoRoot) {
 }
 
 /**
- * Derive a stable preview prerelease suffix matching CI conventions.
- * @returns {string}
- */
-function resolvePreviewSuffix() {
-  const runRaw = String(process.env.GITHUB_RUN_NUMBER ?? '').trim();
-  const attemptRaw = String(process.env.GITHUB_RUN_ATTEMPT ?? '').trim();
-
-  const runNumber = runRaw ? Number(runRaw) : NaN;
-  const attemptNumber = attemptRaw ? Number(attemptRaw) : NaN;
-
-  const run = Number.isFinite(runNumber) ? Math.max(0, Math.floor(runNumber)) : Math.floor(Date.now() / 1000);
-  const attempt = Number.isFinite(attemptNumber) ? Math.max(1, Math.floor(attemptNumber)) : Math.max(1, Math.floor(process.pid));
-  return `preview.${run}.${attempt}`;
-}
-
-/**
  * @param {string} repoRoot
  * @param {{ dryRun: boolean }} opts
  */
@@ -143,6 +137,7 @@ async function preflightMinisignKey({ dryRun }) {
   if (!keyRaw) {
     fail('[pipeline] MINISIGN_SECRET_KEY is required to publish signed hstack release artifacts.');
   }
+  const { prepareMinisignSecretKeyFile } = await import('./lib/binary-release.mjs');
   const prepared = await prepareMinisignSecretKeyFile(keyRaw);
   if (prepared.temp) {
     await rm(prepared.cleanupPath ?? prepared.path, { recursive: true, force: true });
@@ -179,10 +174,11 @@ async function main() {
     allowPositionals: false,
   });
 
-  const channel = String(values.channel ?? '').trim();
-  if (!channel) fail('--channel is required');
-  if (channel !== 'preview' && channel !== 'stable') {
-    fail(`--channel must be 'preview' or 'stable' (got: ${channel})`);
+  const requestedChannel = String(values.channel ?? '').trim();
+  if (!requestedChannel) fail('--channel is required');
+  const channel = normalizePublicReleaseChannel(requestedChannel);
+  if (!channel) {
+    fail(`--channel must be ${JSON.stringify(formatPublicReleaseChannelChoices())} (got: ${requestedChannel})`);
   }
   const allowStable = parseBool(values['allow-stable'], '--allow-stable');
   if (channel === 'stable' && !allowStable) {
@@ -196,16 +192,17 @@ async function main() {
 
   const opts = { dryRun };
 
-  const embeddedPolicy = channel === 'stable' ? 'production' : 'preview';
+  const releaseRing = getPublicReleaseRingEntry(channel);
+  const embeddedPolicy = resolveEmbeddedPolicyForChannel(channel);
 
-  const rollingTag = channel === 'preview' ? 'stack-preview' : 'stack-stable';
-  const rollingTitle = channel === 'preview' ? 'Happier Stack Preview' : 'Happier Stack Stable';
-  const prerelease = channel === 'preview' ? 'true' : 'false';
-  const notesBase = channel === 'preview' ? 'Rolling preview hstack binaries.' : 'Rolling stable hstack binaries.';
+  const rollingTag = `stack-${resolveRollingReleaseTagSuffix(channel)}`;
+  const rollingTitle = `Happier Stack ${resolveRollingReleaseLabel(channel)}`;
+  const prerelease = resolveRollingPrerelease(channel);
+  const notesBase = `Rolling ${releaseRing.publicLabel} hstack binaries.`;
 
   const targetSha = run(opts, 'git', ['rev-parse', 'HEAD'], { cwd: repoRoot, stdio: 'pipe' }).trim() || 'UNKNOWN_SHA';
 
-  console.log(`[pipeline] hstack-binaries: channel=${channel} tag=${rollingTag}`);
+  console.log(`[pipeline] hstack-binaries: channel=${formatPublicReleaseChannel(channel)} tag=${rollingTag}`);
 
   await preflightMinisignKey(opts);
 
@@ -224,13 +221,13 @@ async function main() {
   const stackPkgJson = withinRepo(repoRoot, path.join('apps', 'stack', 'package.json'));
   const originalVersion = readHstackVersion(repoRoot);
   const base = normalizeBase(originalVersion);
-  const version = channel === 'preview' ? `${base}-${resolvePreviewSuffix()}` : originalVersion;
+  const version = channel === 'stable' ? originalVersion : `${base}-${resolveRollingVersionSuffix(channel)}`;
   const notes = withCurrentVersionLine(notesBase, version);
 
   /** @type {null | (() => void)} */
   let restoreVersion = null;
   try {
-    if (channel === 'preview') {
+    if (channel !== 'stable') {
       if (dryRun) {
         console.log(`[dry-run] patch ${path.relative(repoRoot, stackPkgJson)} version -> ${version}`);
       } else {
@@ -351,7 +348,7 @@ async function main() {
 
     const versionTag = `stack-v${version}`;
     const versionTitle = `Happier Stack v${version}`;
-    const versionNotes = channel === 'preview' ? `hstack preview build v${version}.` : `hstack stable release v${version}.`;
+    const versionNotes = `hstack ${releaseRing.publicLabel} build v${version}.`;
 
     run(
       opts,
@@ -369,7 +366,7 @@ async function main() {
         '--rolling-tag',
         'false',
         '--generate-notes',
-        'false',
+        'true',
         '--notes',
         versionNotes,
         '--assets-dir',

@@ -5,6 +5,11 @@ describe('runTasksWithLimit', () => {
     it('runs tasks with a concurrency limit and preserves result ordering', async () => {
         let current = 0;
         let maxSeen = 0;
+        let started = 0;
+        let resolveStarted: (() => void) | null = null;
+        const startedPromise = new Promise<void>((resolve) => {
+            resolveStarted = resolve;
+        });
         const blockers = Array.from({ length: 5 }, () => {
             let resolve: (() => void) | null = null;
             const promise = new Promise<void>((innerResolve) => {
@@ -19,6 +24,10 @@ describe('runTasksWithLimit', () => {
         const tasks = Array.from({ length: 5 }, (_, index) => async () => {
             current += 1;
             maxSeen = Math.max(maxSeen, current);
+            started += 1;
+            if (started === 2) {
+                resolveStarted?.();
+            }
             await blockers[index].promise;
             current -= 1;
             return index;
@@ -26,8 +35,7 @@ describe('runTasksWithLimit', () => {
 
         const runPromise = runTasksWithLimit(tasks, 2);
 
-        await Promise.resolve();
-        await Promise.resolve();
+        await startedPromise;
 
         expect(maxSeen).toBe(2);
 

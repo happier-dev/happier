@@ -17,13 +17,62 @@ Remote mode currently has **two implementations**:
 - **Agent SDK remote** (default): uses the official `@anthropic-ai/claude-agent-sdk` to run Claude, publish capabilities, and (optionally) enable file checkpointing.
 - **Legacy remote** (fallback): our older “SDK-like” shim that spawns `claude` with a streaming output format and uses a hook-forwarding workaround for session info.
 
-## Permissions
+## Start in Happier, continue in the terminal
 
-Happier uses a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`, `plan`) and maps it to Claude’s native behaviors when needed.
+Claude supports Happier’s attach flow for app-started sessions:
+
+- start a Claude session from the Happier app,
+- let Happier run it remotely on your machine,
+- later reattach with `happier attach <session-id>`,
+- switch into local mode when you want to use Claude Code’s native terminal UI directly.
+
+You can later switch back to remote mode and continue from the Happier app without starting a new session.
+
+On machines with `tmux`, this is usually a tmux-backed attach flow. On Windows, use Happier’s Windows remote session mode (`Windows Terminal`, `Console`, or `Hidden`) instead of expecting tmux.
+
+For the full workflow, see [Features → Attach to a running session](/docs/features/attach-to-session).
+
+## Permissions and modes
+
+Happier uses:
+
+- a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`)
+- a separate Claude **session mode** surface (including **Plan**)
 
 For the full user guide (CLI flags, UI picker, defaults, and apply timing), see:
 
 - [Permissions](../features/permissions)
+- [Session modes](../features/session-modes)
+
+### Claude plan mode
+
+In current Happier builds, **Plan** is shown under **Mode**, not under the normal permission picker.
+
+That matters because:
+
+- **Mode = Plan** changes Claude’s behavior for the current session
+- **permission mode** still controls how approvals are handled
+
+Plan mode does **not** bypass approvals by itself. Claude can still ask for permission while the session is in plan mode.
+
+### Exiting plan mode
+
+When Claude finishes planning, Happier surfaces **Exit Plan Mode** as a user-action request.
+
+Common choices are:
+
+- **Approve Plan**
+- **Request changes**
+- **Approve Plan (Accept Edits)**
+- **Approve Plan (Bypass All Permissions)**
+
+Those choices affect what happens **after** Claude leaves plan mode:
+
+- **Approve Plan** returns to normal build mode
+- **Accept Edits** returns to build mode with an edit-friendly permission posture
+- **Bypass All Permissions** returns to build mode with a YOLO-style permission posture
+
+If you request changes, Claude stays in plan mode and revises the plan instead of starting execution.
 
 ### Local ↔ remote switching
 
@@ -53,13 +102,32 @@ hstack providers install claude
 claude --version
 ```
 
+## Local authentication in Happier
+
+Claude also supports **machine-local provider authentication** directly in provider settings.
+
+Open:
+
+- **Settings → AI provider settings → Claude**
+
+From there you can:
+
+- check whether Claude is logged in on the selected machine
+- see whether Happier detected CLI login, `ANTHROPIC_API_KEY`, or `ANTHROPIC_AUTH_TOKEN`
+- open Claude’s native login flow inside Happier
+- refresh the auth state with **Check now**
+
+Happier launches Claude and sends `/login` for you when you use **Log in**.
+
+For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
+
 ## Authentication (connected services)
 
 Claude can authenticate through Happier connected services:
 
 - `claude-subscription`: Claude subscription credentials
   - **Setup-token** (recommended default): generate on any machine with Claude Code installed via `claude setup-token`, then paste into Happier
-  - OAuth (advanced): available where supported; less reliable in headless environments
+  - OAuth: available through paste redirect flows everywhere and in-app browser on native
 - `anthropic`: Anthropic API key (Anthropic Console)
 
 In the app:
@@ -83,6 +151,34 @@ For more details (service ids, security model, and env overrides), see:
 
 - [Connected services](/docs/features/connected-services)
 
+Practical guidance:
+
+- Prefer setup-token when you want the most stable Claude subscription credential across machines.
+- Use OAuth when the user does not already have Claude Code installed / logged in.
+- In the new-session auth picker, Claude-compatible backends will show only the Claude-related connected-service options they actually support.
+
+## Session handoff
+
+Claude supports Happier session handoff between machines.
+
+That means you can:
+
+- start a Claude session on one machine
+- hand off the same Happier session id to another machine
+- continue that session there
+- hand it back later if needed
+
+Important notes:
+
+- machine-local Claude login still matters for native Claude CLI workflows
+- connected services can make cross-machine continuity easier because the credential is account-managed instead of machine-local only
+- direct-session handoff support is provider-dependent, but Claude is one of the supported providers
+
+See:
+
+- [Session handoff](/docs/features/session-handoff)
+- [Connected services](/docs/features/connected-services)
+
 ## Where to configure Claude in Happier
 
 In the app:
@@ -100,7 +196,6 @@ The one exception is **Experimental: local permission bridge**, which affects **
 | --- | --- | --- |
 | **Use Agent SDK (remote)** | On | Enables the official Agent SDK remote runner (`@anthropic-ai/claude-agent-sdk`). When off, Happier uses the legacy remote runner. |
 | **Setting sources** | User + Project | Controls what Claude settings get loaded: **Project only** loads repo config (for example `CLAUDE.md`); **User + Project** includes user-global config too (including user-defined MCP servers); **None** ignores both for maximum determinism. |
-| **Partial streaming updates** | Off | Shows partial assistant output while Claude is still responding (remote Agent SDK only). |
 | **Force-enable Agent Teams (experimental)** | Off | When enabled, Happier force-enables Claude Code experimental Agent Teams for all Claude starts (local + remote). When off, Happier does not force-disable and Claude uses its own defaults. |
 | **Experimental: local permission bridge** | On | In local mode, forwards Claude permission prompts into Happier so you can approve/deny from the app UI instead of only in the terminal. |
 | **File checkpointing + /rewind** | Off | Enables file checkpoint capture and the `/rewind` command (remote Agent SDK only). Adds overhead. |
@@ -108,6 +203,10 @@ The one exception is **Experimental: local permission bridge**, which affects **
 | **Disable TODOs** | Off | Adds a remote-mode system instruction that asks Claude not to create TODO items/lists in its output. |
 | **Strict MCP server config** | Off | Fails the remote start if any MCP server config is invalid (instead of trying to continue). |
 | **Advanced options (JSON)** | Empty | Power-user overrides for a limited allowlist of Agent SDK query options (remote Agent SDK only). Invalid JSON is ignored with a user-visible warning. |
+
+For the full user-facing MCP guide in Happier, see:
+
+- [MCP servers](/docs/features/mcp-servers)
 
 ## Environment variables
 
@@ -126,6 +225,13 @@ When Agent Teams are enabled in Claude, Happier can:
 - **Route user messages** from the main session composer to:
   - a specific **team member** (1:1), or
   - a **team broadcast** (team-wide).
+- Surface Claude teammates as first-class rows in the session **Agents** tab, where you can reopen their transcript, launch more teammates into an existing team, and terminate them when needed.
+- Reopen teammate work from both the **Agents** sidebar and the original **transcript/tool entry**.
+
+For the complete user-facing guide to the Agents sidebar, Subagents, details-pane behavior, and Claude team workflows, see:
+
+- [Agents & subagents](/docs/features/subagents)
+- [Participant routing & live run messaging](/docs/features/participant-routing)
 
 ### Routing UI (recipient chip)
 
@@ -137,12 +243,29 @@ When a Claude session has an active team, the session composer shows a **“To:�
 
 Routed messages are stored as a provider-agnostic structured message kind (`participant_message.v1`) so Happier can render them as a distinct card in the transcript (instead of looking like a normal bubble).
 
+The important user-visible rule is:
+
+- Happier shows the message you typed,
+- Happier does **not** show Claude’s internal prompt rewrite for the routing step.
+
 ### View-aware default recipient
 
 When you open a focused tool transcript view:
 
 - `Task` transcripts that contain a teammate spawn event can auto-select that teammate as the recipient (if you haven’t manually picked a different recipient).
 - `SubAgentRun` transcripts auto-select the running execution run as the recipient (while it is running).
+
+If you manually pick a different recipient on that screen, your manual choice wins until you leave/reopen the screen.
+
+### Teammate lifecycle in the recipient picker
+
+The recipient picker follows the active Claude team roster.
+
+That means:
+
+- active teammates remain available as recipients,
+- **Broadcast** remains available while the team exists,
+- terminated teammates are removed from the active recipient list.
 
 ### Current limitation: attachments and review comments
 
@@ -152,6 +275,10 @@ Routed messages currently do **not** support:
 - review comment drafts.
 
 Send those as regular lead messages instead.
+
+Regular non-routed session messages do support Happier attachments.
+
+See: [Attachments & image previews](/docs/features/attachments)
 
 ## Local permission bridge (experimental)
 
@@ -210,6 +337,8 @@ Make sure Claude Code is installed on your machine, then restart Happier.
 ### “Not authenticated”
 
 Log into Claude Code using its normal login flow, then retry.
+
+You can do that either in your terminal or directly from the Claude provider settings page in Happier.
 
 ### Settings changes don’t seem to apply
 

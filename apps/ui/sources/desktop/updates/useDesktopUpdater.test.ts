@@ -1,17 +1,9 @@
-import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
-type DesktopUpdaterSnapshot = {
-    status: 'idle' | 'checking' | 'available' | 'installing' | 'error' | 'dismissed' | 'upToDate';
-    availableVersion: string | null;
-    error: string | null;
-    dismiss: () => void;
-    refresh: () => Promise<void>;
-    startInstall: () => Promise<void>;
-};
+import { useDesktopUpdater } from './useDesktopUpdater';
 
 type DesktopStorage = ReturnType<typeof createLocalStorage>;
 type TauriInvoke = (command: string, args?: Record<string, unknown>) => unknown | Promise<unknown>;
@@ -53,68 +45,34 @@ function setDesktopGlobals(options: {
     (globalThis as any).__TAURI_INTERNALS__ = internals;
 }
 
-async function flushAsyncTurns(turns = 3) {
-    for (let index = 0; index < turns; index += 1) {
-        await Promise.resolve();
-    }
-}
-
-async function mockWebPlatform() {
-    vi.doMock('react-native', async () => {
-        const actual = await vi.importActual<any>('react-native');
-        return {
-            ...actual,
-            Platform: { OS: 'web', select: (x: any) => x?.default },
-        };
-    });
-}
-
 async function renderDesktopUpdaterHook(options: {
     storage: DesktopStorage;
     invokeMock?: TauriInvoke;
     isDesktop: boolean;
 }) {
-    await mockWebPlatform();
-    const { useDesktopUpdater } = await import('./useDesktopUpdater');
-
-    let latest: DesktopUpdaterSnapshot | null = null;
-    function Test() {
-        latest = useDesktopUpdater();
-        return React.createElement('View');
-    }
-
-    await act(async () => {
-        setDesktopGlobals(options);
-        renderer.create(React.createElement(Test));
-        await flushAsyncTurns();
-    });
-
-    return {
-        getLatest: () => latest,
-    };
+    setDesktopGlobals(options);
+    return renderHook(() => useDesktopUpdater());
 }
 
 describe('useDesktopUpdater (hook)', () => {
     beforeEach(() => {
-        vi.resetModules();
         vi.clearAllMocks();
-        vi.unmock('react-native');
-        vi.unmock('@tauri-apps/api/core');
         clearDesktopGlobals();
     });
 
     afterEach(() => {
+        standardCleanup();
         clearDesktopGlobals();
     });
 
     it('stays idle when not running in Tauri', async () => {
         const storage = createLocalStorage();
-        const { getLatest } = await renderDesktopUpdaterHook({
+        const hook = await renderDesktopUpdaterHook({
             storage,
             isDesktop: false,
         });
 
-        const latest = getLatest();
+        const latest = hook.getCurrent();
         expect(latest?.status).toBe('idle');
         expect(latest?.availableVersion).toBe(null);
     });
@@ -133,19 +91,14 @@ describe('useDesktopUpdater (hook)', () => {
         });
 
         const storage = createLocalStorage();
-        const { getLatest } = await renderDesktopUpdaterHook({
+        const hook = await renderDesktopUpdaterHook({
             storage,
             invokeMock,
             isDesktop: true,
         });
 
-        await act(async () => {
-            setDesktopGlobals({ storage, invokeMock, isDesktop: true });
-            await getLatest()?.refresh();
-            await flushAsyncTurns();
-        });
-
-        const latest = getLatest();
+        const latest = hook.getCurrent();
+        expect(invokeMock).toHaveBeenCalledTimes(1);
         expect(invokeMock).toHaveBeenCalledWith('desktop_fetch_update', undefined);
         expect(latest?.status).toBe('available');
         expect(latest?.availableVersion).toBe('9.9.9');
@@ -162,22 +115,17 @@ describe('useDesktopUpdater (hook)', () => {
         });
 
         const storage = createLocalStorage();
-        const { getLatest } = await renderDesktopUpdaterHook({
+        const hook = await renderDesktopUpdaterHook({
             storage,
             invokeMock,
             isDesktop: true,
         });
 
-        await act(async () => {
-            setDesktopGlobals({ storage, invokeMock, isDesktop: true });
-            await getLatest()?.refresh();
-            await flushAsyncTurns();
-        });
-
-        expect(getLatest()?.status).toBe('available');
+        expect(hook.getCurrent()?.status).toBe('available');
         act(() => {
-            getLatest()?.dismiss();
+            hook.getCurrent()?.dismiss();
         });
+        expect(hook.getCurrent()?.status).toBe('dismissed');
         expect(storage.getItem('desktop_update_dismissed_version')).toBe('1.0.1');
     });
 
@@ -198,25 +146,20 @@ describe('useDesktopUpdater (hook)', () => {
         });
 
         const storage = createLocalStorage();
-        const { getLatest } = await renderDesktopUpdaterHook({
+        const hook = await renderDesktopUpdaterHook({
             storage,
             invokeMock,
             isDesktop: true,
         });
 
-        await act(async () => {
-            setDesktopGlobals({ storage, invokeMock, isDesktop: true });
-            await getLatest()?.refresh();
-            await flushAsyncTurns();
-        });
-        expect(getLatest()?.status).toBe('available');
+        expect(hook.getCurrent()?.status).toBe('available');
 
         await act(async () => {
-            await getLatest()?.startInstall();
-            await flushAsyncTurns();
+            await hook.getCurrent()?.startInstall();
         });
+        await flushHookEffects();
 
-        const latest = getLatest();
+        const latest = hook.getCurrent();
         expect(invokeMock).toHaveBeenCalledWith('desktop_install_update', undefined);
         expect(latest?.status).toBe('upToDate');
         expect(latest?.availableVersion).toBe(null);

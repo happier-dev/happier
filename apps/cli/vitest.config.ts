@@ -23,6 +23,9 @@ mergedTestEnv.HAPPIER_FEATURE_POLICY_ENV = '';
 
 export default defineConfig({
     test: {
+        // Keep per-file module isolation so cross-file mocks/env mutations cannot leak.
+        // This matches our integration suite configuration and prevents order-dependent failures.
+        isolate: true,
         // Multiple CLI unit tests mutate `process.env.HAPPIER_HOME_DIR` / config at runtime.
         // Running them in isolated forked processes prevents cross-file env races.
         pool: 'forks',
@@ -42,7 +45,7 @@ export default defineConfig({
             '**/*.e2e.test.ts',
             ...resolveVitestFeatureTestExcludeGlobs(process.env),
         ],
-        globalSetup: ['./src/test-setup.ts'],
+        globalSetup: ['./src/test-setup.unit.ts'],
         coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],

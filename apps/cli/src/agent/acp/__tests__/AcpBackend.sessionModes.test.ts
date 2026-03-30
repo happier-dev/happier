@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
+import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 import type { AgentMessage } from '../../core/AgentMessage';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -67,76 +64,79 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend session modes', () => {
   it('captures modes from newSession and can set the current mode', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-modes-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
+    await withTempDir('happier-acp-modes-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
 
-    let backend: AcpBackend | undefined;
-    try {
-      backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-      });
+      let backend: AcpBackend | undefined;
+      try {
+        backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+        });
 
-      const events: AgentMessage[] = [];
-      backend.onMessage((msg) => {
-        if (msg.type === 'event') events.push(msg);
-      });
+        const events: AgentMessage[] = [];
+        backend.onMessage((msg) => {
+          if (msg.type === 'event') events.push(msg);
+        });
 
-      const started = await backend.startSession();
-      expect(started.sessionId).toBe('test-session');
+        const started = await backend.startSession();
+        expect(started.sessionId).toBe('test-session');
 
-      const modes = backend.getSessionModeState();
-      expect(modes).toEqual({
-        currentModeId: 'ask',
-        availableModes: [
-          { id: 'ask', name: 'Ask', description: 'Ask before changes' },
-          { id: 'code', name: 'Code', description: 'Write code' },
-        ],
-      });
+        const modes = backend.getSessionModeState();
+        expect(modes).toEqual({
+          currentModeId: 'ask',
+          availableModes: [
+            { id: 'ask', name: 'Ask', description: 'Ask before changes' },
+            { id: 'code', name: 'Code', description: 'Write code' },
+          ],
+        });
 
-      expect(events.some((e) => e.type === 'event' && e.name === 'session_modes_state')).toBe(true);
+        expect(events.some((e) => e.type === 'event' && e.name === 'session_modes_state')).toBe(true);
 
-      await backend.setSessionMode(started.sessionId, 'code');
-      const after = backend.getSessionModeState();
-      expect(after?.currentModeId).toBe('code');
+        await backend.setSessionMode(started.sessionId, 'code');
+        const after = backend.getSessionModeState();
+        expect(after?.currentModeId).toBe('code');
 
-      expect(events.some((e) => e.type === 'event' && e.name === 'current_mode_update')).toBe(true);
-    } finally {
-      await backend?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        expect(events.some((e) => e.type === 'event' && e.name === 'current_mode_update')).toBe(true);
+      } finally {
+        await backend?.dispose().catch(() => {});
+      }
+    });
   });
 
   it('rejects setSessionMode when sessionId does not match the active ACP session', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-modes-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
+    await withTempDir('happier-acp-modes-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
 
-    let backend: AcpBackend | undefined;
-    try {
-      backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-      });
+      let backend: AcpBackend | undefined;
+      try {
+        backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+        });
 
-      const started = await backend.startSession();
-      expect(started.sessionId).toBe('test-session');
+        const started = await backend.startSession();
+        expect(started.sessionId).toBe('test-session');
 
-      await expect(backend.setSessionMode('not-the-session', 'code')).rejects.toThrow(
-        /Session ID does not match the active ACP session/,
-      );
-    } finally {
-      await backend?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await expect(backend.setSessionMode('not-the-session', 'code')).rejects.toThrow(
+          /Session ID does not match the active ACP session/,
+        );
+      } finally {
+        await backend?.dispose().catch(() => {});
+      }
+    });
   });
 });

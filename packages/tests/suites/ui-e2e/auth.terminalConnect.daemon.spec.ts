@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
@@ -65,6 +65,27 @@ test.describe('ui e2e: auth + terminal connect', () => {
     await gotoDomContentLoadedWithRetries(page, `${baseUrl}${path}`);
   }
 
+  async function ensureAuthenticatedAccount(page: Page, baseUrl: string): Promise<void> {
+    if (accountSecretKeyFormatted) {
+      await restoreAccountUsingSecretKey(page, baseUrl, accountSecretKeyFormatted, { postRestorePath: null });
+      return;
+    }
+
+    await gotoDomContentLoadedWithRetries(page, baseUrl);
+    await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('welcome-create-account').click();
+    await expect(page.getByTestId('session-getting-started-kind-connect_machine')).toHaveCount(1, { timeout: 120_000 });
+    accountSecretKeyFormatted = await readAccountSecretKeyFromSettings(page, baseUrl);
+  }
+
+  function transcriptMessageLocator(page: Page) {
+    return page.locator('[data-testid^="transcript-message-"]');
+  }
+
+  function getVisibleSessionComposer(page: Page) {
+    return page.locator('[data-testid="session-composer-input"]:visible');
+  }
+
   function resolveServerLightSqliteDbPath(params: { suiteDir: string }): string {
     return resolve(join(params.suiteDir, 'server-light-data', 'happier-server-light.sqlite'));
   }
@@ -113,7 +134,17 @@ test.describe('ui e2e: auth + terminal connect', () => {
   }
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+      HAPPIER_E2E_UI_WEB_MODE: 'export',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '900000',
+      HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
+      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+    };
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
 
     try {
@@ -136,10 +167,8 @@ test.describe('ui e2e: auth + terminal connect', () => {
       ui = await startUiWeb({
         testDir: suiteDir,
         env: {
-          ...process.env,
-          EXPO_PUBLIC_DEBUG: '1',
+          ...uiWebEnv,
           EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-          EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
         },
       });
       uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
@@ -196,6 +225,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
           ...process.env,
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
         },
       });
@@ -221,6 +251,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
           HAPPIER_SERVER_URL: server.baseUrl,
           HAPPIER_WEBAPP_URL: uiBaseUrl,
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
           HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
@@ -295,8 +326,8 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await page.getByTestId('new-session-composer-input').fill(prompt);
       await page.getByTestId('new-session-composer-input').press('Enter');
 
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
-      await expect(page.getByText('FAKE_CLAUDE_OK_1')).toHaveCount(1, { timeout: 180_000 });
+      await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
+      await expect.poll(async () => transcriptMessageLocator(page).count(), { timeout: 180_000 }).toBeGreaterThan(1);
 
       const currentUrl = page.url();
       const { pathname } = new URL(currentUrl);
@@ -326,6 +357,18 @@ test.describe('ui e2e: auth + terminal connect', () => {
         }
       }
     }
+  });
+
+  test('defaults codex backend mode to ACP in account settings', async ({ page }) => {
+    test.setTimeout(240_000);
+    if (!server) throw new Error('missing server fixture');
+    if (!uiBaseUrl) throw new Error('missing ui base url');
+
+    await ensureAuthenticatedAccount(page, uiBaseUrl);
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers/codex`);
+    const backendModeRow = page.getByTestId('settings-provider-field-codexBackendMode');
+    await expect(backendModeRow).toHaveCount(1, { timeout: 60_000 });
+    await expect(backendModeRow).toContainText('ACP', { timeout: 60_000 });
   });
 
   test('daemon can reconnect and UI reflects offline → online', async ({ page }, testInfo) => {
@@ -362,8 +405,8 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
       await page.goto(`${uiBaseUrl}/session/${createdSessionId}`, { waitUntil: 'domcontentloaded' });
 
-      const ok1 = page.getByText('FAKE_CLAUDE_OK_1');
-      const ok1Before = await ok1.count();
+      const transcriptMessages = transcriptMessageLocator(page);
+      const messageCountBefore = await transcriptMessages.count();
 
       const machineId = readLatestMachineIdFromServerLightDb({ suiteDir });
       await daemon.stop();
@@ -401,12 +444,14 @@ test.describe('ui e2e: auth + terminal connect', () => {
         .toBe(true);
 
       await page.goto(`${uiBaseUrl}/session/${createdSessionId}`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
+      await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
 
       const followup = `UI_E2E_MESSAGE_RECONNECT_${run.runId}`;
-      await page.getByTestId('session-composer-input').fill(followup);
-      await page.getByTestId('session-composer-input').press('Enter');
-      await expect(ok1).toHaveCount(ok1Before + 1, { timeout: 180_000 });
+      const composer = getVisibleSessionComposer(page);
+      await expect(composer).toHaveCount(1, { timeout: 120_000 });
+      await composer.fill(followup);
+      await composer.press('Enter');
+      await expect.poll(async () => transcriptMessages.count(), { timeout: 180_000 }).toBeGreaterThan(messageCountBefore);
     } catch (error) {
       thrown = error;
       throw error;
@@ -449,14 +494,42 @@ test.describe('ui e2e: auth + terminal connect', () => {
     let thrown: unknown = null;
     try {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
+
       await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('session-getting-started-start-new-session')).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId('session-getting-started-start-new-session').click();
 
-      const sessionItem = page.getByTestId(`session-list-item-${createdSessionId}`);
-      await expect(sessionItem).toHaveCount(1, { timeout: 120_000 });
-      await sessionItem.click();
+      await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });
+      const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
+      await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId('agent-input-machine-chip').click();
+      await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId(`new-session-machine:${machineId}`).click();
 
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
-      await expect(page).toHaveURL(`${uiBaseUrl}/session/${createdSessionId}`, { timeout: 60_000 });
+      const prompt = `UI_E2E_SELECT_FROM_LIST_${run.runId}`;
+      await page.getByTestId('new-session-composer-input').fill(prompt);
+      await page.getByTestId('new-session-composer-input').press('Enter');
+
+      await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
+
+      const currentUrl = page.url();
+      const { pathname } = new URL(currentUrl);
+      const parts = pathname.split('/').filter(Boolean);
+      const sessionIndex = parts.indexOf('session');
+      const freshSessionId = sessionIndex >= 0 ? (parts[sessionIndex + 1] ?? null) : null;
+      if (!freshSessionId) {
+        throw new Error(`Failed to infer session id from url: ${currentUrl}`);
+      }
+
+      await expect(page.getByTestId('session-header-back')).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId('session-header-back').click();
+
+      const sessionItemSelector = `[data-testid="session-list-item-${freshSessionId}"]:visible`;
+      await expect(page.locator(sessionItemSelector)).toHaveCount(1, { timeout: 120_000 });
+      await page.locator(sessionItemSelector).click();
+
+      await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page).toHaveURL(`${uiBaseUrl}/session/${freshSessionId}`, { timeout: 60_000 });
     } catch (error) {
       thrown = error;
       throw error;
@@ -479,24 +552,32 @@ test.describe('ui e2e: auth + terminal connect', () => {
     }
   });
 
-  test('terminal-connect link redirects to welcome when logged out, then can be approved after restore', async ({ page }, testInfo) => {
+  test('terminal-connect link redirects to welcome when logged out, then can be approved after restore', async ({ page, browser }, testInfo) => {
     test.setTimeout(420_000);
     if (!server || !ui) throw new Error('missing server/ui fixtures');
     if (!uiBaseUrl) throw new Error('missing ui base url');
-    if (!accountSecretKeyFormatted) throw new Error('missing account secret key from prior test');
+    if (!accountSecretKeyFormatted) {
+      await ensureAuthenticatedAccount(page, uiBaseUrl);
+      if (!accountSecretKeyFormatted) {
+        throw new Error('missing account secret key after ensureAuthenticatedAccount');
+      }
+    }
 
     const pageConsole: string[] = [];
     const pageErrors: string[] = [];
     const requestFailures: string[] = [];
     const responseErrors: string[] = [];
 
-    page.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
-    page.on('pageerror', (err) => pageErrors.push(String(err)));
-    page.on('requestfailed', (request) => {
+    const ctx = await browser.newContext();
+    const loggedOutPage = await ctx.newPage();
+
+    loggedOutPage.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
+    loggedOutPage.on('pageerror', (err) => pageErrors.push(String(err)));
+    loggedOutPage.on('requestfailed', (request) => {
       const failure = request.failure();
       requestFailures.push(`${request.method()} ${request.url()} ${failure ? `-> ${failure.errorText}` : ''}`.trim());
     });
-    page.on('response', (response) => {
+    loggedOutPage.on('response', (response) => {
       const status = response.status();
       if (status >= 400) responseErrors.push(`${status} ${response.request().method()} ${response.url()}`);
     });
@@ -520,24 +601,25 @@ test.describe('ui e2e: auth + terminal connect', () => {
         },
       });
 
-      await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-      await expect(page.locator('[data-testid="welcome-terminal-connect-intent"]:visible')).toHaveCount(1, { timeout: 60_000 });
-      await expect(page.locator('[data-testid="welcome-restore"]:visible')).toHaveCount(1, { timeout: 60_000 });
+      await loggedOutPage.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
+      await expect(loggedOutPage.locator('[data-testid="welcome-terminal-connect-intent"]:visible')).toHaveCount(1, { timeout: 60_000 });
+      await expect(loggedOutPage.locator('[data-testid="welcome-restore"]:visible')).toHaveCount(1, { timeout: 60_000 });
 
       // Restore account. The app should automatically open the pending terminal connect approval screen.
-      await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted, { postRestorePath: null });
+      await restoreAccountUsingSecretKey(loggedOutPage, uiBaseUrl, accountSecretKeyFormatted, { postRestorePath: null });
 
-      await page.waitForURL((url) => url.pathname.startsWith('/terminal'), { timeout: 120_000 });
-      const approve = page.getByTestId('terminal-connect-approve');
+      await loggedOutPage.waitForURL((url) => url.pathname.startsWith('/terminal'), { timeout: 120_000 });
+      const approve = loggedOutPage.getByTestId('terminal-connect-approve');
       await expect(approve).toHaveCount(1, { timeout: 120_000 });
 
-      await page.getByTestId('terminal-connect-approve').click();
+      await loggedOutPage.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
     } catch (error) {
       thrown = error;
       throw error;
     } finally {
       await cliLogin?.stop().catch(() => {});
+      await ctx.close().catch(() => {});
       if (thrown) {
         const diagnostic =
           `# Browser diagnostics\n\n` +

@@ -5,7 +5,8 @@ import { ServerFetchAbortedForServerSwitchError, serverFetch } from '@/sync/http
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { parseServerFeatures } from './serverFeaturesParse';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import { normalizeBaseUrl } from './probeAuthenticatedServerAuthPingEndpoint';
 
 const TTL_READY_MS = 10 * 60 * 1000;
 const TTL_UNSUPPORTED_ENDPOINT_MISSING_MS = 60 * 60 * 1000;
@@ -63,19 +64,6 @@ function getCacheKey(serverId?: string): string {
     const requested = String(serverId ?? '').trim();
     if (!requested) return snapshot.serverId;
     return requested;
-}
-
-function normalizeBaseUrl(raw: string): string | null {
-    const value = String(raw ?? '').trim();
-    if (!value) return null;
-    try {
-        const url = new URL(value);
-        url.hash = '';
-        url.search = '';
-        return url.toString().replace(/\/+$/, '');
-    } catch {
-        return value.replace(/\/+$/, '');
-    }
 }
 
 function joinBaseAndPath(baseUrl: string, path: string): string {
@@ -154,9 +142,15 @@ async function getServerFeaturesSnapshotWithRetry(
                 let response: Response;
                 try {
                     response = isExplicitServerRequest
-                        ? await runtimeFetch(joinBaseAndPath(explicitServerUrl!, '/v1/features'), {
-                            method: 'GET',
-                            signal: controller.signal,
+                        ? await runtimeFetchWithServerReachability({
+                            serverUrl: explicitServerUrl!,
+                            token: null,
+                            url: joinBaseAndPath(explicitServerUrl!, '/v1/features'),
+                            init: {
+                                method: 'GET',
+                                signal: controller.signal,
+                            },
+                            timeoutMs,
                         })
                         : await serverFetch(
                             '/v1/features',

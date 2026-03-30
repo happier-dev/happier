@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
+import { installScmOperationsCommonModuleMocks } from './scmOperationsTestHelpers';
+
 const modalAlert = vi.hoisted(() => vi.fn());
 const modalConfirm = vi.hoisted(() => vi.fn());
 const sessionScmChangeDiscard = vi.hoisted(() => vi.fn());
@@ -10,16 +12,17 @@ const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: 
 }));
 const evaluateScmOperationPreflight = vi.hoisted(() => vi.fn(() => ({ allowed: true, message: '' })));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: modalAlert,
-    confirm: modalConfirm,
-  },
-}));
-
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+installScmOperationsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlert,
+                confirm: modalConfirm,
+            },
+        }).module;
+    },
+});
 
 vi.mock('@/sync/ops', () => ({
   sessionScmChangeDiscard,

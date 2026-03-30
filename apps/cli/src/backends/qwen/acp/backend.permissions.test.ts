@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { dirname } from 'node:path';
 
 import type { PermissionMode } from '@/api/types';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { createQwenBackend } from './backend';
 
 type AcpBackendLike = {
@@ -9,7 +13,31 @@ type AcpBackendLike = {
   };
 };
 
+const envKeys = ['PATH', 'HAPPIER_QWEN_PATH'] as const;
+const TEMP_DIRS = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
+
+function createFakeBin(name: string): string {
+  const dir = createTempDirSync('happier-qwen-backend-');
+  TEMP_DIRS.add(dir);
+  const isWindows = process.platform === 'win32';
+  return writeExecutableShimSync({
+    dir,
+    fileName: isWindows ? `${name}.cmd` : name,
+    contents: isWindows ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
+}
+
+afterEach(() => {
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
+  for (const dir of TEMP_DIRS) removeTempDirSync(dir);
+  TEMP_DIRS.clear();
+});
+
 function readArgs(permissionMode: PermissionMode | undefined): string[] {
+  process.env.PATH = '';
+  process.env.HAPPIER_QWEN_PATH = createFakeBin('qwen');
   const backend = createQwenBackend({
     cwd: '/tmp',
     env: {},
@@ -19,6 +47,13 @@ function readArgs(permissionMode: PermissionMode | undefined): string[] {
 }
 
 describe('Qwen ACP backend permissions', () => {
+  it('fails closed when the Qwen CLI is unavailable', () => {
+    process.env.PATH = '';
+    delete process.env.HAPPIER_QWEN_PATH;
+
+    expect(() => createQwenBackend({ cwd: '/tmp', env: {} })).toThrow(/system install/i);
+  });
+
   it.each([
     { mode: undefined, expected: 'default' },
     { mode: 'default', expected: 'default' },
@@ -34,5 +69,19 @@ describe('Qwen ACP backend permissions', () => {
     const modeFlagIndex = args.indexOf('--approval-mode');
     expect(modeFlagIndex).toBeGreaterThanOrEqual(0);
     expect(args[modeFlagIndex + 1]).toBe(expected);
+  });
+
+  it('resolves the CLI from options.env PATH when process PATH is empty', () => {
+    process.env.PATH = '';
+    delete process.env.HAPPIER_QWEN_PATH;
+    const binPath = createFakeBin('qwen');
+
+    const backend = createQwenBackend({
+      cwd: '/tmp',
+      env: { PATH: dirname(binPath) },
+      permissionMode: 'default',
+    }) as unknown as { options: { command: string } };
+
+    expect(backend.options.command).toBe(binPath);
   });
 });

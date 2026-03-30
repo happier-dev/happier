@@ -1,8 +1,13 @@
 import { sessionListDirectory } from '@/sync/ops';
 
+import { sortDirectoryEntries } from './sortDirectoryEntries';
+import { warmInFlight } from './warmInFlight';
+
 export type RepositoryDirectoryEntry = {
     name: string;
     type: 'file' | 'directory';
+    sizeBytes?: number;
+    modifiedMs?: number;
 };
 
 export type ListRepositoryDirectoryEntriesResult =
@@ -34,6 +39,31 @@ export function setCachedRepositoryDirectoryEntries(input: {
     repositoryDirectoryCache.set(key, input.entries.slice());
 }
 
+export function clearCachedRepositoryDirectoryEntries(input: {
+    sessionId: string;
+    directoryPath?: string | null;
+}): void {
+    const sessionPrefix = `${input.sessionId}:`;
+    const directoryPath = typeof input.directoryPath === 'string' ? input.directoryPath : null;
+    if (directoryPath != null) {
+        const key = getCacheKey(input.sessionId, directoryPath);
+        repositoryDirectoryCache.delete(key);
+        repositoryDirectoryWarmInFlight.delete(key);
+        return;
+    }
+
+    for (const key of repositoryDirectoryCache.keys()) {
+        if (key.startsWith(sessionPrefix)) {
+            repositoryDirectoryCache.delete(key);
+        }
+    }
+    for (const key of repositoryDirectoryWarmInFlight.keys()) {
+        if (key.startsWith(sessionPrefix)) {
+            repositoryDirectoryWarmInFlight.delete(key);
+        }
+    }
+}
+
 export async function warmRepositoryDirectoryCache(input: {
     sessionId: string;
     directoryPath: string;
@@ -44,20 +74,7 @@ export async function warmRepositoryDirectoryCache(input: {
     }
 
     const key = getCacheKey(input.sessionId, input.directoryPath);
-    const inFlight = repositoryDirectoryWarmInFlight.get(key);
-    if (inFlight) {
-        return await inFlight;
-    }
-
-    const promise = (async () => {
-        try {
-            return await listRepositoryDirectoryEntries(input);
-        } finally {
-            repositoryDirectoryWarmInFlight.delete(key);
-        }
-    })();
-    repositoryDirectoryWarmInFlight.set(key, promise);
-    return await promise;
+    return await warmInFlight(repositoryDirectoryWarmInFlight, key, async () => await listRepositoryDirectoryEntries(input));
 }
 
 type SessionListDirectoryLikeResponse = {
@@ -66,23 +83,13 @@ type SessionListDirectoryLikeResponse = {
     entries?: Array<{
         name?: string;
         type?: 'file' | 'directory' | 'other';
+        size?: number;
+        modified?: number;
     }>;
 };
 
-function normalizeName(name: string): string {
-    return name.normalize('NFKC');
-}
-
 export function sortRepositoryDirectoryEntries(entries: RepositoryDirectoryEntry[]): RepositoryDirectoryEntry[] {
-    const copy = entries.slice();
-    copy.sort((a, b) => {
-        if (a.type !== b.type) {
-            return a.type === 'directory' ? -1 : 1;
-        }
-        // Normalize only for sorting; keep raw names for identity/path resolution.
-        return normalizeName(a.name).localeCompare(normalizeName(b.name), undefined, { sensitivity: 'base' });
-    });
-    return copy;
+    return sortDirectoryEntries(entries);
 }
 
 export async function listRepositoryDirectoryEntries(input: {
@@ -107,7 +114,13 @@ export async function listRepositoryDirectoryEntries(input: {
         const raw = entry.name.trim();
         if (!raw) continue;
         if (entry.type !== 'file' && entry.type !== 'directory') continue;
-        entries.push({ name: raw, type: entry.type });
+        const sizeBytes = typeof entry.size === 'number' && Number.isFinite(entry.size) && entry.size >= 0
+            ? Math.floor(entry.size)
+            : undefined;
+        const modifiedMs = typeof entry.modified === 'number' && Number.isFinite(entry.modified) && entry.modified >= 0
+            ? Math.floor(entry.modified)
+            : undefined;
+        entries.push({ name: raw, type: entry.type, sizeBytes, modifiedMs });
     }
 
     const sorted = sortRepositoryDirectoryEntries(entries);

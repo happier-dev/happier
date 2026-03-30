@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { spawnDetachedInlineNodeTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 import { listPidsWithEnvNeedles, parsePsPidCommandOutputForNeedles } from './ownership.mjs';
 
 test('parsePsPidCommandOutputForNeedles requires all needles to match', () => {
@@ -46,7 +46,7 @@ test('listPidsWithEnvNeedles finds real stack-owned infra processes', async (t) 
 
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-needles-live-'));
   const envPath = join(tmp, 'env');
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+  const child = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
     env: {
       PATH: process.env.PATH ?? '',
       HOME: process.env.HOME ?? '',
@@ -55,9 +55,7 @@ test('listPidsWithEnvNeedles finds real stack-owned infra processes', async (t) 
       HAPPIER_STACK_PROCESS_KIND: 'infra',
     },
     stdio: 'ignore',
-    detached: true,
   });
-  child.unref();
 
   const childPid = Number(child.pid);
   try {

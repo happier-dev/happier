@@ -104,10 +104,13 @@ export function getForkedTranscriptSnapshotCached(state: MinimalState, childSess
     return existing.snapshot;
   }
 
-  const segments: ForkedTranscriptSegment[] = [];
-  const combinedMessageIdsOldestFirst: string[] = [];
-  const combinedMessagesById: Record<string, Message> = {};
-  const messageOriginById: Record<string, { sessionId: string; isReadOnlyContext: boolean }> = {};
+  const segmentDrafts: Array<{
+    sessionId: string;
+    isReadOnlyContext: boolean;
+    cutoffSeqInclusive: number | null;
+    messageIdsOldestFirst: string[];
+    allMessagesById: Readonly<Record<string, Message>>;
+  }> = [];
 
   for (const seg of segmentsRaw) {
     const sessionMessages = state.sessionMessages[seg.sessionId];
@@ -125,15 +128,44 @@ export function getForkedTranscriptSnapshotCached(state: MinimalState, childSess
             cutoffSeqInclusive: seg.cutoffSeqInclusive,
           });
 
-    segments.push({
+    segmentDrafts.push({
       sessionId: seg.sessionId,
       isReadOnlyContext: seg.isReadOnlyContext,
       cutoffSeqInclusive: seg.cutoffSeqInclusive,
       messageIdsOldestFirst: filteredIds,
+      allMessagesById,
+    });
+  }
+
+  // De-duplicate message ids across segments by preferring the earliest (ancestor) segment.
+  // This matters for provider-native forks where the provider may reuse message ids across forked sessions,
+  // which would otherwise render duplicate rows in the forked transcript view.
+  const seenAcrossSegments = new Set<string>();
+  for (const seg of segmentDrafts) {
+    const nextIds: string[] = [];
+    for (const id of seg.messageIdsOldestFirst) {
+      if (seenAcrossSegments.has(id)) continue;
+      nextIds.push(id);
+      seenAcrossSegments.add(id);
+    }
+    seg.messageIdsOldestFirst = nextIds;
+  }
+
+  const segments: ForkedTranscriptSegment[] = [];
+  const combinedMessageIdsOldestFirst: string[] = [];
+  const combinedMessagesById: Record<string, Message> = {};
+  const messageOriginById: Record<string, { sessionId: string; isReadOnlyContext: boolean }> = {};
+
+  for (const seg of segmentDrafts) {
+    segments.push({
+      sessionId: seg.sessionId,
+      isReadOnlyContext: seg.isReadOnlyContext,
+      cutoffSeqInclusive: seg.cutoffSeqInclusive,
+      messageIdsOldestFirst: seg.messageIdsOldestFirst,
     });
 
-    for (const id of filteredIds) {
-      const message = allMessagesById[id];
+    for (const id of seg.messageIdsOldestFirst) {
+      const message = seg.allMessagesById[id];
       if (!message) continue;
       combinedMessageIdsOldestFirst.push(id);
       combinedMessagesById[id] = message;
@@ -154,4 +186,3 @@ export function getForkedTranscriptSnapshotCached(state: MinimalState, childSess
   cacheByChildSessionId.set(childSessionId, { key, snapshot });
   return snapshot;
 }
-

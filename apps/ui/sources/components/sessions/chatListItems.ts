@@ -1,7 +1,7 @@
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
-import { isPendingUserActionRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
 
 export type ChatListItem =
     | {
@@ -64,12 +64,7 @@ function isPrefix(params: Readonly<{ prefix: readonly string[]; full: readonly s
 }
 
 function canGroupToolCallMessage(message: Message): boolean {
-    if (message.kind !== 'tool-call') return false;
-    return !isPendingUserActionRequest({
-        toolName: message.tool.name,
-        requestKind: message.tool.permission?.kind,
-        permissionStatus: message.tool.permission?.status,
-    });
+    return isToolCallMessageGroupableInTranscript(message);
 }
 
 export function buildChatListItems(opts: {

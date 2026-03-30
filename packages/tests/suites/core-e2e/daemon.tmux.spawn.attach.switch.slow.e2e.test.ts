@@ -280,8 +280,7 @@ describe('core e2e: daemon tmux spawn → attach → Claude remote↔local switc
         { timeoutMs: 45_000, pollMs: 150 },
       );
       expect(Object.prototype.hasOwnProperty.call(sdkInvocation.mergedMcpServers, 'happier')).toBe(true);
-      // Legacy remote runner still uses `--settings` for SessionStart hook forwarding.
-      expect(sdkInvocation.argv).toContain('--settings');
+      expect(sdkInvocation.argv).toContain('--setting-sources');
 
       ui.close();
     } finally {

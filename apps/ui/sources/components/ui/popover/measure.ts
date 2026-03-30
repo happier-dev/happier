@@ -7,10 +7,38 @@ export function measureInWindow(node: any): Promise<PopoverWindowRect | null> {
             if (!node) return resolve(null);
 
             const measureDomRect = (candidate: any): PopoverWindowRect | null => {
-                const el: any =
-                    typeof candidate?.getBoundingClientRect === 'function'
-                        ? candidate
-                        : candidate?.getScrollableNode?.();
+                let el: any = null;
+                let current: any = candidate;
+                const visited = new Set<any>();
+                while (current && !visited.has(current)) {
+                    visited.add(current);
+
+                    if (typeof current?.getBoundingClientRect === 'function') {
+                        el = current;
+                        break;
+                    }
+
+                    const scrollable = current?.getScrollableNode?.();
+                    if (scrollable && typeof scrollable.getBoundingClientRect === 'function') {
+                        el = scrollable;
+                        break;
+                    }
+
+                    if (typeof current?.getNode === 'function') {
+                        current = current.getNode();
+                        continue;
+                    }
+                    if (typeof current?.getHostNode === 'function') {
+                        current = current.getHostNode();
+                        continue;
+                    }
+                    if (typeof current?.getDOMNode === 'function') {
+                        current = current.getDOMNode();
+                        continue;
+                    }
+
+                    break;
+                }
                 if (!el || typeof el.getBoundingClientRect !== 'function') return null;
                 const rect = el.getBoundingClientRect();
                 const x = rect?.left ?? rect?.x;
@@ -34,13 +62,29 @@ export function measureInWindow(node: any): Promise<PopoverWindowRect | null> {
 
             // On native, `measure` can provide pageX/pageY values that are sometimes more reliable
             // than `measureInWindow` when using react-native-screens (modal/drawer presentations).
-            // Prefer it when available.
-            if (Platform.OS !== 'web' && typeof node.measure === 'function') {
-                node.measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
-                    if (![pageX, pageY, width, height].every(n => Number.isFinite(n)) || width <= 0 || height <= 0) {
-                        return resolve(null);
+            // Prefer `measureInWindow` first: in some iOS sheet/drawer presentations, `measure()`
+            // can report coordinates in a different space than `measureInWindow`, which breaks
+            // portal-root delta math (popovers appear vertically offset). We still fall back to
+            // `measure()` if `measureInWindow` is missing or transiently invalid.
+            if (Platform.OS !== 'web' && typeof node.measureInWindow === 'function') {
+                node.measureInWindow((x: number, y: number, width: number, height: number) => {
+                    if ([x, y, width, height].every(n => Number.isFinite(n)) && width > 0 && height > 0) {
+                        resolve({ x, y, width, height });
+                        return;
                     }
-                    resolve({ x: pageX, y: pageY, width, height });
+
+                    if (typeof node.measure === 'function') {
+                        node.measure((mx: number, my: number, mw: number, mh: number, pageX: number, pageY: number) => {
+                            if (![pageX, pageY, mw, mh].every(n => Number.isFinite(n)) || mw <= 0 || mh <= 0) {
+                                resolve(null);
+                                return;
+                            }
+                            resolve({ x: pageX, y: pageY, width: mw, height: mh });
+                        });
+                        return;
+                    }
+
+                    resolve(null);
                 });
                 return;
             }
@@ -55,6 +99,16 @@ export function measureInWindow(node: any): Promise<PopoverWindowRect | null> {
                         return resolve(null);
                     }
                     resolve({ x, y, width, height });
+                });
+                return;
+            }
+
+            if (Platform.OS !== 'web' && typeof node.measure === 'function') {
+                node.measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
+                    if (![pageX, pageY, width, height].every(n => Number.isFinite(n)) || width <= 0 || height <= 0) {
+                        return resolve(null);
+                    }
+                    resolve({ x: pageX, y: pageY, width, height });
                 });
                 return;
             }
@@ -95,4 +149,3 @@ export function getFallbackBoundaryRect(params: { windowWidth: number; windowHei
     // On web, this maps closely to the viewport (measureInWindow is viewport-relative).
     return { x: 0, y: 0, width: params.windowWidth, height: params.windowHeight };
 }
-

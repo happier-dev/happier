@@ -5,6 +5,14 @@ import { join } from 'node:path';
 export type TerminalAttachPlan =
   | { type: 'not-attachable'; reason: string }
   | {
+      type: 'windows_terminal_host';
+      windowId: string;
+    }
+  | {
+      type: 'windows_console_host';
+      pid: number;
+    }
+  | {
       type: 'tmux';
       sessionName: string;
       target: string;
@@ -38,9 +46,43 @@ export function createTerminalAttachPlan(params: {
   currentUid?: number | null;
 }): TerminalAttachPlan {
   if (params.terminal.mode === 'plain') {
+    if (params.terminal.requested === 'windows_terminal' || params.terminal.requested === 'console') {
+      return {
+        type: 'not-attachable',
+        reason: 'This Windows session was started hidden and cannot be attached later.',
+      };
+    }
     return {
       type: 'not-attachable',
       reason: 'Session was not started in tmux.',
+    };
+  }
+
+  if (params.terminal.mode === 'windows_terminal') {
+    const windowId = params.terminal.windows?.windowId;
+    if (typeof windowId !== 'string' || windowId.trim().length === 0) {
+      return {
+        type: 'not-attachable',
+        reason: 'Session does not include a Windows Terminal window id.',
+      };
+    }
+    return {
+      type: 'windows_terminal_host',
+      windowId,
+    };
+  }
+
+  if (params.terminal.mode === 'windows_console') {
+    const pid = params.terminal.windows?.pid;
+    if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
+      return {
+        type: 'not-attachable',
+        reason: 'Session does not include a Windows console process id.',
+      };
+    }
+    return {
+      type: 'windows_console_host',
+      pid,
     };
   }
 

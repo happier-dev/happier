@@ -1,0 +1,252 @@
+---
+title: Profiles
+description: Use backend profiles to reuse environment variables, secret bindings, and startup defaults across the app and CLI.
+---
+
+Backend profiles let you save a **named backend configuration** and reuse it whenever you start a session.
+
+Use profiles when you want to:
+
+- switch a provider to a different endpoint or auth scheme
+- reuse the same environment variables across multiple sessions
+- bind required secrets once and avoid re-entering them
+- keep the app UI, daemon, and CLI using the **same account-synced profile definitions**
+- target either built-in providers or configured **Custom ACP** backends with the same profile model
+
+Examples:
+
+- run Claude against **DeepSeek** or **Z.AI**
+- run Codex against **OpenAI API keys** or **Azure OpenAI**
+- run Gemini with an **API key** or **Vertex AI**
+- create a custom “Work Codex” or “Staging Claude” profile with your own env vars
+
+## What a profile contains
+
+A profile can include:
+
+- **environment variables** to inject at session start
+- **requirements** for variables that must exist before the session starts
+- **saved secret bindings** for required secrets
+- **compatibility** with one or more backend choices, including configured ACP backends
+- **default per-backend startup preferences**, such as permission and transcript-storage defaults where supported
+
+Profiles are applied **only when starting a new session**.
+They are **fixed per session** after launch. If you want a different profile, start a new session.
+
+## Built-in vs custom profiles
+
+Happier ships with built-in profiles for common setups, plus your own custom profiles.
+
+Built-in examples include:
+
+- **Anthropic (Default)**, **Codex (Default)**, **Gemini (Default)** for CLI-login-based setups
+- **DeepSeek (Reasoner)** and **Z.AI (GLM-4.6)** for Claude-compatible routing
+- **OpenAI (GPT-5)** and **Azure OpenAI** for Codex
+- **Gemini (API key)** and **Gemini (Vertex AI)**
+
+You can also create custom profiles for your own endpoints, models, and environment variables.
+
+Note: editing a built-in profile in the UI creates a **custom copy**. The built-in stays unchanged.
+
+## Enable profiles
+
+Profiles are opt-in in the app UI.
+
+1. Open **Settings → Features**
+2. Turn on **Profiles**
+3. Open **Settings → Profiles**
+
+If Profiles is turned off, the app falls back to the machine environment without profile selection.
+
+## Create a profile in the app
+
+1. Open **Settings → Profiles**
+2. Click **Add Profile**
+3. Give the profile a clear name
+4. Choose which backend choices it should be compatible with
+5. Add the environment variables Happier should inject when the session starts
+6. Mark any required values as:
+   - **Secret** when Happier should satisfy them from a saved secret, machine env, or prompt flow
+   - **Config** when the variable must already exist on the target machine
+7. Save the profile
+
+Recommended pattern:
+
+- put provider selection, base URLs, and model ids directly in the profile
+- mark API keys/tokens as **required secrets**
+- use saved secrets for credentials you want to reuse across devices
+
+## Use profiles in the app UI
+
+When Profiles is enabled:
+
+1. Start a new session from the app
+2. Choose the backend you want to run
+3. Pick a profile
+4. Complete any missing requirements if Happier asks
+
+For UI-started or remote-started sessions, Happier can satisfy required secrets from:
+
+- the **machine environment** on the daemon host
+- a **saved secret** bound to that profile
+- a **session-only secret** entered at start time
+
+If a required config variable is missing on the target machine, the app blocks the start instead of launching a broken session.
+
+After the session starts, the chosen profile is shown in **Session Info → AI Profile**.
+
+Configured ACP backends participate in this flow the same way built-in backends do. If a profile is intended for one specific backend, Happier preserves that relationship directly.
+
+## Use profiles in the CLI
+
+The CLI reads the same account settings as the app, so the same saved custom profiles are available there after login.
+
+### List available profiles
+
+```bash
+happier profiles list
+happier profile list
+```
+
+For scripting:
+
+```bash
+happier profiles list --json
+```
+
+If you want to force a fresh settings fetch:
+
+```bash
+happier profiles list --refresh-settings
+```
+
+If you are not logged in, the CLI shows built-in profiles only.
+
+### Start a session with a profile
+
+Pass `--profile <id-or-name>` when starting a session:
+
+```bash
+happier --profile anthropic
+happier claude --profile deepseek
+happier codex --profile openai
+happier codex --profile "Work Codex"
+happier gemini --profile gemini-vertex
+```
+
+Profile lookup rules:
+
+- exact **profile id** match wins first
+- otherwise Happier matches by **case-insensitive name**
+- if more than one profile has the same name, Happier asks you to use the id
+
+The CLI does **not** auto-apply your last-used profile. Use `--profile` explicitly.
+
+### How CLI secret resolution works
+
+When a profile requires secrets, the CLI resolves them in this order:
+
+1. current shell environment
+2. saved secret binding from your Happier settings
+3. interactive prompt in a TTY session
+
+If the CLI is running non-interactively and a required secret is still missing, it fails with guidance instead of starting a broken session.
+
+Required config environment variables must already exist in the shell environment for local CLI starts.
+
+## Saved secrets and bindings
+
+Profiles work best with saved secrets:
+
+- save a secret once in the app
+- bind it to a profile’s required env var
+- reuse that binding from both the app and CLI
+
+This is especially useful for:
+
+- `OPENAI_API_KEY`
+- `DEEPSEEK_AUTH_TOKEN`
+- `GEMINI_API_KEY`
+- other provider tokens you do not want to type repeatedly
+
+See also:
+
+- [Connected services](./connected-services)
+- [Provider integrations](../advanced/provider-integrations)
+
+## Practical examples
+
+### Example: Claude via DeepSeek
+
+Use the built-in **DeepSeek (Reasoner)** profile when you want Claude sessions to run through DeepSeek’s Anthropic-compatible endpoint.
+
+- App UI: start a Claude session and choose **DeepSeek (Reasoner)**
+- CLI: `happier claude --profile deepseek`
+
+Happier will apply the required auth token and the Claude-compatible env mapping for you.
+
+### Example: Codex via OpenAI API key
+
+Use **OpenAI (GPT-5)** when you want Codex to use an OpenAI API key instead of a machine login.
+
+- App UI: start a Codex session and choose **OpenAI (GPT-5)**
+- CLI: `happier codex --profile openai`
+
+### Example: custom work profile
+
+Create a custom profile such as **Work Codex** when you want:
+
+- a fixed endpoint
+- a fixed model
+- a reusable token binding
+- a clear label in session history and Session Info
+
+### Example: profile for a Custom ACP backend
+
+If you have a custom ACP backend such as **Review Bot**, you can create a profile that is compatible only with that backend.
+
+This is useful when you want:
+
+- a backend-specific endpoint or env setup
+- a backend-specific permission default
+- a backend-specific transcript-storage default
+- a profile that should not appear for unrelated backend choices
+
+## Troubleshooting
+
+### “My profile does not appear in the CLI”
+
+Check:
+
+- you are logged in with `happier auth login`
+- the profile exists in **Settings → Profiles**
+- the profile is saved in the same Happier account/server you are targeting
+
+Use:
+
+```bash
+happier profiles list --refresh-settings
+```
+
+### “The CLI says a secret is missing”
+
+Either:
+
+- export the required env var in your shell
+- bind a saved secret to the profile in the app
+- rerun the command in an interactive terminal so Happier can prompt for it
+
+### “The app says a profile is not ready”
+
+That usually means one of these is missing on the selected machine:
+
+- a required secret
+- a required config env var
+- a required CLI login for a machine-login-based profile
+
+Open the profile in **Settings → Profiles** to review its requirements.
+
+## Related guides
+
+- [ACP backends](./acp-backends)
+- [Provider authentication](./provider-authentication)

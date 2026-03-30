@@ -4,7 +4,9 @@ import { checklists } from '@/capabilities/checklists';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { tmuxCapability } from '@/capabilities/registry/toolTmux';
+import { windowsTerminalCapability } from '@/capabilities/registry/toolWindowsTerminal';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
+import { systemTasksCapability } from '@/capabilities/registry/toolSystemTasks';
 import { createCapabilitiesService } from '@/capabilities/service';
 import type { Capability } from '@/capabilities/service';
 import type {
@@ -17,42 +19,120 @@ import type {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsProbe';
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
-import type { AgentId, ProviderCliInstallPlatform } from '@happier-dev/agents';
-import { installProviderCli, resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/providers';
+import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
+import { readCredentials } from '@/persistence';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import type { AgentId } from '@happier-dev/agents';
+import { applyAgentRuntimeKindOverrideToAccountSettings } from '@happier-dev/agents';
+import { BackendTargetRefSchema, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/runtime/managedTools/invokeProviderCliInstall';
 
-const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 15_000;
+const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
 
 function titleCase(value: string): string {
     if (!value) return value;
     return `${value[0].toUpperCase()}${value.slice(1)}`;
 }
 
-function resolveProviderCliInstallPlatform(params?: Record<string, unknown>): ProviderCliInstallPlatform | null {
-    const rawPlatform = typeof params?.platform === 'string' ? params.platform.trim() : '';
-    if (rawPlatform === 'darwin' || rawPlatform === 'linux' || rawPlatform === 'win32') return rawPlatform;
-    return resolvePlatformFromNodePlatform(process.platform);
-}
+async function resolveProbeBackendContext(params?: Record<string, unknown>): Promise<{
+    backendTarget: BackendTargetRefV1 | undefined;
+    credentials: Awaited<ReturnType<typeof readCredentials>> | null;
+    accountSettings: Record<string, unknown> | null;
+}> {
+    const parsedBackendTarget = BackendTargetRefSchema.safeParse((params ?? {}).backendTarget);
+    const backendTarget = parsedBackendTarget.success ? parsedBackendTarget.data : undefined;
+    const runtimeKindOverride = (params ?? {}).runtimeKindOverride;
 
-function invokeProviderCliInstall(agentId: AgentCatalogEntry['id'], params?: Record<string, unknown>): CapabilitiesInvokeResponse {
-    const platform = resolveProviderCliInstallPlatform(params);
-    if (!platform) {
-        return { ok: false, error: { message: `Unsupported platform: ${process.platform}`, code: 'unsupported-platform' } };
+    const agentId = typeof params?.agentId === 'string' ? params.agentId : null;
+    const needsAccountSettingsForProbes =
+        agentId && (AGENTS[agentId as keyof typeof AGENTS] as AgentCatalogEntry | undefined)?.needsAccountSettingsForProbes === true;
+    const shouldLoadAccountSettings = backendTarget?.kind === 'configuredAcpBackend' || needsAccountSettingsForProbes;
+    if (!shouldLoadAccountSettings) {
+      return { backendTarget, credentials: null, accountSettings: null };
     }
 
-    const dryRun = Boolean(params?.dryRun);
-    const skipIfInstalled = typeof params?.skipIfInstalled === 'boolean' ? params.skipIfInstalled : true;
+    const credentials = await readCredentials().catch(() => null);
+    if (!credentials) return { backendTarget, credentials: null, accountSettings: null };
 
-    const result = installProviderCli({
-        providerId: agentId as AgentId,
-        platform,
-        dryRun,
-        skipIfInstalled,
+    const accountSettingsContext = await bootstrapAccountSettingsContext({
+        credentials,
+        ...(params?.agentId ? { agentId: params.agentId as AgentId } : {}),
+        backendTarget,
+        mode: 'blocking',
+        refresh: 'auto',
+    }).catch(() => null);
+
+    const accountSettings = accountSettingsContext?.settings ?? null;
+    const effectiveAccountSettings = params?.agentId
+        ? applyAgentRuntimeKindOverrideToAccountSettings({
+            agentId: params.agentId as AgentId,
+            accountSettings,
+            runtimeKindOverride,
+        })
+        : accountSettings;
+
+    return {
+      backendTarget,
+      credentials,
+      accountSettings: effectiveAccountSettings,
+    };
+}
+
+async function invokeProviderCliInstall(
+    agentId: AgentCatalogEntry['id'],
+    params?: Record<string, unknown>,
+): Promise<CapabilitiesInvokeResponse> {
+    const dryRun = params?.dryRun === true;
+    const allowVendorRecipeExecution = params?.allowVendorRecipeExecution === true;
+    const sharedParams = {
+        ...(typeof params?.skipIfInstalled === 'boolean' ? { skipIfInstalled: params.skipIfInstalled } : {}),
+        ...(typeof params?.platform === 'string' && params.platform.trim().length > 0 ? { platform: params.platform.trim() } : {}),
+        ...(allowVendorRecipeExecution ? { allowVendorRecipeExecution: true } : {}),
+    };
+
+    if (!dryRun) {
+        const preview = await invokeSharedProviderCliInstall({
+            agentId: agentId as AgentId,
+            params: { ...sharedParams, dryRun: true },
+            env: process.env,
+            nodePlatform: process.platform,
+        });
+
+        if (!preview.ok) {
+            return {
+                ok: false,
+                error: { message: preview.errorMessage, code: preview.errorCode },
+                ...(preview.logPath ? { logPath: preview.logPath } : {}),
+            };
+        }
+
+        if (preview.plan.installMode === 'vendor_recipe' && !allowVendorRecipeExecution) {
+            return {
+                ok: false,
+                error: {
+                    message: `Installing ${preview.plan.title} requires explicit confirmation before running vendor install commands.`,
+                    code: 'install-confirmation-required',
+                },
+            };
+        }
+    }
+
+    const result = await invokeSharedProviderCliInstall({
+        agentId: agentId as AgentId,
+        params: {
+            ...sharedParams,
+            ...(dryRun ? { dryRun: true } : {}),
+        },
         env: process.env,
+        nodePlatform: process.platform,
     });
 
     if (!result.ok) {
-        const code = result.errorCode === 'no-recipe' ? 'install-not-available' : 'install-failed';
-        return { ok: false, error: { message: result.errorMessage, code }, ...(result.logPath ? { logPath: result.logPath } : {}) };
+        return {
+            ok: false,
+            error: { message: result.errorMessage, code: result.errorCode },
+            ...(result.logPath ? { logPath: result.logPath } : {}),
+        };
     }
 
     return { ok: true, result: { plan: result.plan, alreadyInstalled: result.alreadyInstalled, logPath: result.logPath ?? null } };
@@ -68,6 +148,7 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
                 install: { title: 'Install' },
                 probeModels: { title: 'Probe models' },
                 probeModes: { title: 'Probe modes' },
+                probeConfigOptions: { title: 'Probe config options' },
             },
         },
         detect: async ({ request, context }) => {
@@ -79,19 +160,51 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
                 return invokeProviderCliInstall(agentId, params);
             }
             if (method === 'probeModels') {
+                const probeContext = await resolveProbeBackendContext({ ...params, agentId });
                 const timeoutMsRaw = (params ?? {}).timeoutMs;
                 const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
                 const cwdRaw = (params ?? {}).cwd;
                 const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-                const result = await probeAgentModelsBestEffort({ agentId, cwd, timeoutMs });
+                const result = await probeAgentModelsBestEffort({
+                    agentId,
+                    backendTarget: probeContext.backendTarget,
+                    cwd,
+                    timeoutMs,
+                    accountSettings: probeContext.accountSettings,
+                    credentials: probeContext.credentials,
+                });
                 return { ok: true, result };
             }
             if (method === 'probeModes') {
+                const probeContext = await resolveProbeBackendContext({ ...params, agentId });
                 const timeoutMsRaw = (params ?? {}).timeoutMs;
                 const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
                 const cwdRaw = (params ?? {}).cwd;
                 const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-                const result = await probeAgentModesBestEffort({ agentId, cwd, timeoutMs });
+                const result = await probeAgentModesBestEffort({
+                    agentId,
+                    backendTarget: probeContext.backendTarget,
+                    cwd,
+                    timeoutMs,
+                    accountSettings: probeContext.accountSettings,
+                    credentials: probeContext.credentials,
+                });
+                return { ok: true, result };
+            }
+            if (method === 'probeConfigOptions') {
+                const probeContext = await resolveProbeBackendContext({ ...params, agentId });
+                const timeoutMsRaw = (params ?? {}).timeoutMs;
+                const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+                const cwdRaw = (params ?? {}).cwd;
+                const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
+                const result = await probeAgentConfigOptionsBestEffort({
+                    agentId,
+                    backendTarget: probeContext.backendTarget,
+                    cwd,
+                    timeoutMs,
+                    accountSettings: probeContext.accountSettings,
+                    credentials: probeContext.credentials,
+                });
                 return { ok: true, result };
             }
             return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
@@ -107,6 +220,7 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
         ...existingMethods,
         ...(existingMethods.probeModels ? {} : { probeModels: { title: 'Probe models' } }),
         ...(existingMethods.probeModes ? {} : { probeModes: { title: 'Probe modes' } }),
+        ...(existingMethods.probeConfigOptions ? {} : { probeConfigOptions: { title: 'Probe config options' } }),
         ...(existingMethods.install ? {} : { install: { title: 'Install' } }),
     };
 
@@ -117,19 +231,51 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
             return invokeProviderCliInstall(agentId, params);
         }
         if (method === 'probeModels') {
+            const probeContext = await resolveProbeBackendContext({ ...params, agentId });
             const timeoutMsRaw = (params ?? {}).timeoutMs;
             const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
             const cwdRaw = (params ?? {}).cwd;
             const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-            const result = await probeAgentModelsBestEffort({ agentId, cwd, timeoutMs });
+            const result = await probeAgentModelsBestEffort({
+                agentId,
+                backendTarget: probeContext.backendTarget,
+                cwd,
+                timeoutMs,
+                accountSettings: probeContext.accountSettings,
+                credentials: probeContext.credentials,
+            });
             return { ok: true, result };
         }
         if (method === 'probeModes') {
+            const probeContext = await resolveProbeBackendContext({ ...params, agentId });
             const timeoutMsRaw = (params ?? {}).timeoutMs;
             const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
             const cwdRaw = (params ?? {}).cwd;
             const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-            const result = await probeAgentModesBestEffort({ agentId, cwd, timeoutMs });
+            const result = await probeAgentModesBestEffort({
+                agentId,
+                backendTarget: probeContext.backendTarget,
+                cwd,
+                timeoutMs,
+                accountSettings: probeContext.accountSettings,
+                credentials: probeContext.credentials,
+            });
+            return { ok: true, result };
+        }
+        if (method === 'probeConfigOptions') {
+            const probeContext = await resolveProbeBackendContext({ ...params, agentId });
+            const timeoutMsRaw = (params ?? {}).timeoutMs;
+            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+            const cwdRaw = (params ?? {}).cwd;
+            const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
+            const result = await probeAgentConfigOptionsBestEffort({
+                agentId,
+                backendTarget: probeContext.backendTarget,
+                cwd,
+                timeoutMs,
+                accountSettings: probeContext.accountSettings,
+                credentials: probeContext.credentials,
+            });
             return { ok: true, result };
         }
         if (baseInvoke) return await baseInvoke({ method, params });
@@ -170,7 +316,9 @@ export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegist
                 ...cliCapabilities,
                 ...extraCapabilities,
                 tmuxCapability,
+                windowsTerminalCapability,
                 executionRunsCapability,
+                systemTasksCapability,
             ],
             checklists,
             buildContext: buildDetectContext,

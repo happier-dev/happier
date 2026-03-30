@@ -161,6 +161,19 @@ test('npm-e2e-smoke cli-smoke.sh supports preinstalled happier-cli mode', () => 
   assert.match(cliSmoke, /command -v happier/);
 });
 
+test('release-assets-e2e remote host install shims make repeated CLI installs idempotent', () => {
+  const entrypoints = [
+    join(here, 'bin', 'remote-host-entrypoint.sh'),
+    join(here, 'bin', 'remote-host-systemd-entrypoint.sh'),
+  ];
+
+  for (const entrypoint of entrypoints) {
+    const script = fs.readFileSync(entrypoint, 'utf8');
+    assert.match(script, /rm -f "\$prefix\/bin\/happier"/);
+    assert.match(script, /npm install -g --force \/packs\/cli\.tgz --no-audit --no-fund/);
+  }
+});
+
 test('npm-e2e-smoke dockerhub postgres smoke waits for postgres readiness', () => {
   const content = fs.readFileSync(runScript, 'utf8');
   assert.match(content, /waiting for dockerhub postgres/i);
@@ -210,4 +223,30 @@ test('release-assets-e2e run.sh cleanup does not crash when docker is unavailabl
 
   assert.notEqual(res.status, 0);
   assert.doesNotMatch(res.stderr ?? '', /unbound variable/i);
+});
+
+test('release-assets-e2e run.sh surfaces npm pack output on failure', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'happier-release-assets-e2e-npm-pack-fail-test-'));
+  const binDir = join(tmp, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+
+  const dockerShim = join(binDir, 'docker');
+  fs.writeFileSync(dockerShim, '#!/usr/bin/env sh\nexit 0\n', { encoding: 'utf8' });
+  fs.chmodSync(dockerShim, 0o755);
+
+  const npmShim = join(binDir, 'npm');
+  fs.writeFileSync(npmShim, '#!/usr/bin/env sh\necho \"npm shim: pack failed\"\nexit 2\n', { encoding: 'utf8' });
+  fs.chmodSync(npmShim, 0o755);
+
+  const res = spawnSync(
+    'bash',
+    [runScript, '--mode=local', '--no-remote-daemon', '--no-remote-server', '--timeout-s=1', '--keep'],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
+    }
+  );
+
+  assert.equal(res.status, 2, res.stderr || res.stdout);
+  assert.match(`${res.stdout ?? ''}\n${res.stderr ?? ''}`, /npm shim: pack failed/);
 });

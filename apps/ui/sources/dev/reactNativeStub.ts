@@ -34,9 +34,23 @@ export const PixelRatio = {
     roundToNearestPixel: (value: number) => value,
 } as const;
 
-export const Platform = { OS: 'node', select: (x: any) => x?.default ?? x?.web ?? x?.ios ?? x?.android } as const;
-export const AppState = { addEventListener: () => ({ remove: () => {} }) } as const;
-export const InteractionManager = { runAfterInteractions: (fn: () => void) => fn() } as const;
+export const Platform = {
+    OS: 'node',
+    select: (x: any) => x?.default ?? x?.web ?? x?.native ?? x?.ios ?? x?.android,
+} as const;
+export const AppState = {
+    currentState: 'active',
+    addEventListener: () => ({ remove: () => {} }),
+} as const;
+export const InteractionManager = {
+    runAfterInteractions: (fn: () => void) => {
+        fn();
+        return { cancel: () => {} };
+    },
+} as const;
+export const Keyboard = {
+    addListener: () => ({ remove: () => {} }),
+} as const;
 export const Linking = {
     canOpenURL: async () => true,
     openURL: async () => {},
@@ -50,10 +64,13 @@ function flattenStyle(style: any): any {
     if (typeof style === 'object') return style;
     return {};
 }
-export const StyleSheet = { create: (styles: any) => styles, flatten: flattenStyle } as const;
+export const StyleSheet = { create: (styles: any) => styles, flatten: flattenStyle, hairlineWidth: 1 } as const;
 // Many components spread this object into style definitions.
 (StyleSheet as any).absoluteFillObject = {};
-export const TurboModuleRegistry = { getEnforcing: () => ({}) } as const;
+export const TurboModuleRegistry = {
+    get: (_name: string) => ({}),
+    getEnforcing: (_name: string) => ({}),
+} as const;
 export const registerCallableModule = () => {};
 
 class AnimatedValue {
@@ -75,6 +92,14 @@ export const Animated = {
     createAnimatedComponent: (component: any) => component,
     timing: (_value: any, _config: any) => ({
         start: (cb?: any) => {
+            cb?.({ finished: true });
+        },
+    }),
+    parallel: (steps: Array<{ start?: (cb?: (result: { finished: boolean }) => void) => void }>) => ({
+        start: (cb?: (result: { finished: boolean }) => void) => {
+            for (const step of steps) {
+                step?.start?.();
+            }
             cb?.({ finished: true });
         },
     }),

@@ -44,7 +44,7 @@ describe('voiceSettings', () => {
   it('defaults include local voice agent transcript persistence settings', () => {
     const agent = (voiceSettingsDefaults as any).adapters?.local_conversation?.agent;
     expect(agent?.idleTtlSeconds).toBe(1800);
-    expect(agent?.prewarmOnConnect).toBe(false);
+    expect(agent?.prewarmOnConnect).toBe(true);
     expect(agent?.resumabilityMode).toBe('replay');
     expect(agent?.providerResume?.fallbackToReplay).toBe(true);
     expect(agent?.replay?.strategy).toBe('recent_messages');
@@ -56,10 +56,85 @@ describe('voiceSettings', () => {
     expect(agent?.transcript?.epoch).toBe(0);
   });
 
+  it('defaults include hands-free endpointing settings for local voice', () => {
+    const localConversation = (voiceSettingsDefaults as any).adapters?.local_conversation;
+    expect(localConversation?.handsFree?.endpointing?.silenceMs).toBe(5000);
+    expect(localConversation?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
+
+    const localDirect = (voiceSettingsDefaults as any).adapters?.local_direct;
+    expect(localDirect?.handsFree?.endpointing?.silenceMs).toBe(5000);
+    expect(localDirect?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
+  });
+
+  it('migrates legacy hands-free endpointing defaults to the new voice defaults', () => {
+    const parsed = voiceSettingsParse({
+      adapters: {
+        local_conversation: {
+          handsFree: {
+            enabled: false,
+            endpointing: { silenceMs: 450, minSpeechMs: 120 },
+          },
+        },
+        local_direct: {
+          handsFree: {
+            enabled: false,
+            endpointing: { silenceMs: 450, minSpeechMs: 120 },
+          },
+        },
+      },
+    });
+
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.silenceMs).toBe(5000);
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
+    expect((parsed as any).adapters?.local_direct?.handsFree?.endpointing?.silenceMs).toBe(5000);
+    expect((parsed as any).adapters?.local_direct?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
+  });
+
+  it('preserves custom hands-free endpointing values when they are not the legacy defaults', () => {
+    const parsed = voiceSettingsParse({
+      adapters: {
+        local_conversation: {
+          handsFree: {
+            enabled: true,
+            endpointing: { silenceMs: 700, minSpeechMs: 300 },
+          },
+        },
+      },
+    });
+
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.enabled).toBe(true);
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.silenceMs).toBe(700);
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.minSpeechMs).toBe(300);
+  });
+
+  it('migrates the old minimum-speech default even when silence timeout is already on the newer default', () => {
+    const parsed = voiceSettingsParse({
+      adapters: {
+        local_conversation: {
+          handsFree: {
+            enabled: false,
+            endpointing: { silenceMs: 5000, minSpeechMs: 120 },
+          },
+        },
+      },
+    });
+
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.silenceMs).toBe(5000);
+    expect((parsed as any).adapters?.local_conversation?.handsFree?.endpointing?.minSpeechMs).toBe(1000);
+  });
+
+  it('defaults include a generous streamed-turn timeout for local voice agents', () => {
+    const streaming = (voiceSettingsDefaults as any).adapters?.local_conversation?.streaming;
+    expect(streaming?.enabled).toBe(true);
+    expect(streaming?.ttsEnabled).toBe(true);
+    expect(streaming?.turnStreamTimeoutMs).toBe(1800000);
+  });
+
   it('defaults include local voice agent machine + directory policies', () => {
     const agent = (voiceSettingsDefaults as any).adapters?.local_conversation?.agent;
     expect(agent?.machineTargetMode).toBe('auto');
     expect(agent?.machineTargetId).toBe(null);
+    expect(agent?.autoTargetMachineId).toBe(null);
     expect(agent?.stayInVoiceHome).toBe(false);
     expect(agent?.teleportEnabled).toBe(true);
     expect(agent?.rootSessionPolicy).toBe('single');

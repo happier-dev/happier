@@ -62,6 +62,7 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
         HAPPIER_SERVER_URL: server.baseUrl,
         HAPPIER_WEBAPP_URL: server.baseUrl,
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
 
@@ -150,13 +151,16 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
         HAPPIER_SERVER_URL: server.baseUrl,
         HAPPIER_WEBAPP_URL: server.baseUrl,
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
 
+    const daemonPort = daemon.state.httpPort;
+    expect(daemonPort).toBeGreaterThan(0);
     const controlToken = (daemon.state as any)?.controlToken as string | undefined;
     const prompt = 'E2E_DAEMON_INITIAL_PROMPT_SHOULD_NOT_DROP';
     const spawnRes = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
-      port: daemon.state.httpPort,
+      port: daemonPort,
       path: '/spawn-session',
       controlToken,
       body: {
@@ -182,11 +186,12 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
       throw new Error('Missing sessionId from daemon spawn-session');
     }
 
-    await waitForFakeClaudeInvocation(
+    const fakeClaudeInvocation = await waitForFakeClaudeInvocation(
       fakeLogPath,
-      (i) => i.mode === 'sdk',
+      () => true,
       { timeoutMs: 60_000, pollMs: 150 },
     );
+    expect(fakeClaudeInvocation.argv.length).toBeGreaterThan(0);
 
     await waitFor(async () => {
       const rows = await fetchAllMessages(server!.baseUrl, auth.token, sessionId);

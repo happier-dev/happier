@@ -261,7 +261,7 @@ Interested in contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for developme
 
 ### For Gemini
 
-- Gemini CLI installed (`npm install -g @google/gemini-cli`)
+- Gemini CLI installed (`gemini` command available in PATH or installed via Happier provider settings)
 - Google account authenticated via `happier connect gemini`
 
 ## License

@@ -44,7 +44,7 @@ export function AutomationsGate(props: { children: React.ReactNode }) {
     const styles = stylesheet;
     const support = useAutomationsSupport();
 
-    if (!support) {
+    if (!support || support.loading) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="small" color={theme.colors.textSecondary} />

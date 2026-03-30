@@ -157,4 +157,45 @@ describe('make-latest-json (tool)', () => {
             expect(latest.platforms['darwin-aarch64'].signature).toBe(filesByPlatform['darwin-aarch64'].expected);
         });
     });
+
+    it('accepts dev as the public updater channel alias', () => {
+        withTempDir('happier-make-latest-json-dev-', (tmp) => {
+            const artifactsDir = path.join(tmp, 'artifacts');
+            const outPath = path.join(tmp, 'latest.json');
+
+            const filesByPlatform: Record<string, { name: string; sig: string }> = {
+                'linux-x86_64': { name: 'linux.AppImage.tar.gz', sig: 'sig-linux' },
+                'windows-x86_64': { name: 'windows.msi.zip', sig: 'sig-windows' },
+                'darwin-x86_64': { name: 'darwin-x86_64.app.tar.gz', sig: 'sig-macos-intel' },
+                'darwin-aarch64': { name: 'darwin-aarch64.app.tar.gz', sig: 'sig-macos-arm' },
+            };
+            for (const [platformKey, { name, sig }] of Object.entries(filesByPlatform)) {
+                const basePath = path.join(artifactsDir, platformKey, name);
+                writeFile(basePath, 'payload');
+                writeFile(`${basePath}.sig`, sig);
+            }
+
+            runMakeLatestJson([
+                '--channel',
+                'dev',
+                '--version',
+                '1.2.3-dev.1',
+                '--pub-date',
+                '2026-02-06T00:00:00Z',
+                '--notes',
+                'dev',
+                '--repo',
+                'happier-dev/happier',
+                '--release-tag',
+                'ui-desktop-dev',
+                '--artifacts-dir',
+                artifactsDir,
+                '--out',
+                outPath,
+            ]);
+
+            const latest = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+            expect(latest.version).toBe('1.2.3-dev.1');
+        });
+    });
 });

@@ -1,23 +1,27 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { makeToolCall, makeToolViewProps, findPressableByText } from '../../shell/views/ToolView.testHelpers';
+import renderer from 'react-test-renderer';
+import { makeToolCall, makeToolViewProps, findPressableByText } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { installFileOpsRendererCommonModuleMocks } from './fileOpsRendererTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'showLineNumbersInToolViews') return false;
-        if (key === 'wrapLinesInDiffs') return true;
-        return undefined;
+installFileOpsRendererCommonModuleMocks({
+    storage: async (_importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'showLineNumbersInToolViews') return false;
+                if (key === 'wrapLinesInDiffs') return true;
+                return undefined;
+            },
+            useSessionReviewCommentsDrafts: () => [],
+            storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
+        });
     },
-    useSessionReviewCommentsDrafts: () => [],
-    storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
@@ -43,9 +47,7 @@ describe('DiffView (controls row)', () => {
         });
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(DiffView, makeToolViewProps(tool)));
-        });
+        tree = (await renderScreen(React.createElement(DiffView, makeToolViewProps(tool)))).tree;
 
         expect(findPressableByText(tree, 'machineLauncher.showAll')).toBeUndefined();
     });

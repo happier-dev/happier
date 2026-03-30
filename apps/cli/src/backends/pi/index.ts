@@ -9,7 +9,10 @@ export const agent = {
   getCliCommandHandler: async () => (await import('@/backends/pi/cli/command')).handlePiCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/pi/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/pi/cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('@/backends/pi/cli/auth/piCliAuthSpec')).piCliAuthSpec,
   vendorResumeSupport: AGENTS_CORE.pi.resume.vendorResume,
+  getPreflightSessionControlsProbeAdapter: async () =>
+    (await import('@/backends/pi/preflight/piPreflightModelsProbeAdapter')).piPreflightModelsProbeAdapter,
   getAcpBackendFactory: async () => {
     const { createPiBackend } = await import('@/backends/pi/acp/backend');
     return (opts) => ({ backend: createPiBackend(opts as any) });

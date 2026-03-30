@@ -9,6 +9,14 @@ import { UsageSchema } from "@/api/usage";
 
 export { UsageSchema };
 
+const UsageBestEffortSchema = z
+  .unknown()
+  .transform((value) => {
+    if (value === undefined) return undefined;
+    const parsed = UsageSchema.safeParse(value);
+    return parsed.success ? parsed.data : undefined;
+  });
+
 // Main schema with minimal validation for only the fields we use
 // NOTE: Schema is intentionally lenient to handle various Claude Code message formats
 // including synthetic error messages, API errors, and different SDK versions
@@ -31,7 +39,7 @@ export const RawJSONLinesSchema = z.discriminatedUnion("type", [
     uuid: z.string(),
     type: z.literal("assistant"),
     message: z.object({
-      usage: UsageSchema.optional(), // Used in session/sessionClient.ts
+      usage: UsageBestEffortSchema.optional(), // Used in session/sessionClient.ts
       model: z.string().optional(), // Used for cost calculation
     }).passthrough().optional()
   }).passthrough(),

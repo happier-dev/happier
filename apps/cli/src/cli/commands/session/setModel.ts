@@ -1,12 +1,10 @@
 import chalk from 'chalk';
 
-import { computeNextMetadataStringOverrideV1 } from '@happier-dev/agents';
-
 import type { Credentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 function normalizeModelIdOrThrow(raw: string): string {
   const trimmed = raw.trim();
@@ -41,51 +39,38 @@ export async function cmdSessionSetModel(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.model.set',
+    { sessionId: idOrPrefix, modelId },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_set_model',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: {
+          code: normalized.errorCode,
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+        },
       });
       return;
     }
-    throw new Error(resolved.code);
-  }
-  const sessionId = resolved.sessionId;
-
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_set_model', error: { code: 'session_not_found', sessionId } });
-      return;
-    }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
+    throw new Error(normalized.errorCode);
   }
 
-  const updatedAt = Date.now();
-  await updateSessionMetadataWithRetry({
-    token: credentials.token,
-    credentials,
-    sessionId,
-    rawSession,
-    updater: (metadata) =>
-      computeNextMetadataStringOverrideV1({
-        metadata,
-        overrideKey: 'modelOverrideV1',
-        valueKey: 'modelId',
-        value: modelId,
-        updatedAt,
-      }),
-  });
-
-  if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_set_model', data: { sessionId, modelId, updatedAt } });
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_model', json, result })) {
     return;
   }
 
-  console.log(chalk.green('✓'), `model set for ${sessionId}: ${modelId}`);
-}
+  if (json) {
+    printJsonEnvelope({ ok: true, kind: 'session_set_model', data: { sessionId: result.sessionId, modelId: result.modelId ?? modelId, updatedAt: result.updatedAt ?? null } });
+    return;
+  }
 
+  console.log(chalk.green('✓'), `model set for ${result.sessionId}: ${result.modelId ?? modelId}`);
+}

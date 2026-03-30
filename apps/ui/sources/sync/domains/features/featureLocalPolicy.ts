@@ -13,6 +13,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
         parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED, true)
         && resolveUiFeatureToggleEnabled(settings, 'connectedServices'),
     'connectedServices.quotas': (settings) => resolveUiFeatureToggleEnabled(settings, 'connectedServices.quotas'),
+    channelBridges: (settings) => resolveUiFeatureToggleEnabled(settings, 'channelBridges'),
     'updates.ota': () => parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_UPDATES_OTA__ENABLED, true),
     'attachments.uploads': (settings) => resolveUiFeatureToggleEnabled(settings, 'attachments.uploads'),
     'social.friends': (settings) => resolveUiFeatureToggleEnabled(settings, 'social.friends'),
@@ -29,11 +30,10 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'files.editor': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.editor'),
     'files.syntaxHighlighting.advanced': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.syntaxHighlighting.advanced'),
     'memory.search': (settings) => resolveUiFeatureToggleEnabled(settings, 'memory.search'),
-    'session.typeSelector': (settings) => resolveUiFeatureToggleEnabled(settings, 'session.typeSelector'),
+    'terminal.embeddedPty': (settings) => resolveUiFeatureToggleEnabled(settings, 'terminal.embeddedPty'),
+    'sessions.direct': (settings) => resolveUiFeatureToggleEnabled(settings, 'sessions.direct'),
     'zen.navigation': (settings) => resolveUiFeatureToggleEnabled(settings, 'zen.navigation'),
     'usage.reporting': (settings) => resolveUiFeatureToggleEnabled(settings, 'usage.reporting'),
-    'codex.resume.mcp': (settings) => settings.codexBackendMode === 'mcp_resume',
-    'codex.resume.acp': (settings) => settings.codexBackendMode === 'acp',
 };
 
 export function resolveLocalFeaturePolicyEnabled(featureId: FeatureId, settings: Settings): boolean {

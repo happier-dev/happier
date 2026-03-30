@@ -1,8 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,16 +28,10 @@ describe('MCPToolView', () => {
 
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { MCPToolView } = await import('./MCPToolView');
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
-                    MCPToolView,
-                    makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
-        return tree;
+        return renderScreen(React.createElement(
+            MCPToolView,
+            makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
+        ));
     }
 
     it('renders a compact subtitle + output preview in summary mode', async () => {
@@ -46,8 +41,8 @@ describe('MCPToolView', () => {
                 _mcp: { display: { subtitle: 'Bug: MCP tool rendering summary' } },
             },
         });
-        const tree = await renderView(tool, 'summary');
-        const rendered = collectHostText(tree).join('\n');
+        const screen = await renderView(tool, 'summary');
+        const rendered = screen.getTextContent();
 
         expect(rendered).toContain('Bug: MCP tool rendering summary');
         expect(rendered).toContain('Created issue LIN-42');
@@ -62,8 +57,8 @@ describe('MCPToolView', () => {
             },
             result: { output: { status: 'ok' } },
         });
-        const tree = await renderView(tool, 'summary');
-        const rendered = collectHostText(tree).join('\n').replace(/\s+/g, ' ');
+        const screen = await renderView(tool, 'summary');
+        const rendered = screen.getTextContent().replace(/\s+/g, ' ');
 
         expect(rendered).toContain('/repo/src/file.ts');
         expect(rendered).not.toContain('ok');
@@ -79,8 +74,8 @@ describe('MCPToolView', () => {
     });
 
     it('renders input + output blocks in full mode', async () => {
-        const tree = await renderView(makeMcpTool(), 'full');
-        const rendered = collectHostText(tree).join('\n');
+        const screen = await renderView(makeMcpTool(), 'full');
+        const rendered = screen.getTextContent();
 
         expect(rendered).toContain('MCP: Linear Create Issue');
         expect(rendered).toContain('Input');
@@ -89,7 +84,7 @@ describe('MCPToolView', () => {
     });
 
     it('renders nothing in title mode', async () => {
-        const tree = await renderView(makeMcpTool(), 'title');
-        expect(tree.root.findAllByType('Text' as any)).toHaveLength(0);
+        const screen = await renderView(makeMcpTool(), 'title');
+        expect(screen.findAllByType('Text' as any)).toHaveLength(0);
     });
 });

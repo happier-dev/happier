@@ -23,11 +23,22 @@ const credentials: AuthCredentials = { token: 't', secret: 's' };
 function mockError(status: number, payload: unknown) {
     vi.stubGlobal(
         'fetch',
-        vi.fn(async () => ({
-            ok: false,
-            status,
-            json: async () => payload,
-        })) as unknown as typeof fetch,
+        vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({}),
+                } as unknown as Response;
+            }
+
+            return {
+                ok: false,
+                status,
+                json: async () => payload,
+            } as unknown as Response;
+        }) as unknown as typeof fetch,
     );
 }
 
@@ -64,13 +75,24 @@ describe('sendFriendRequest', () => {
         const invalidJsonError = new Error('invalid json');
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({
-                ok: false,
-                status: 400,
-                json: async () => {
-                    throw invalidJsonError;
-                },
-            })) as unknown as typeof fetch,
+            vi.fn(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+                    return {
+                        ok: true,
+                        status: 200,
+                        json: async () => ({}),
+                    } as unknown as Response;
+                }
+
+                return {
+                    ok: false,
+                    status: 400,
+                    json: async () => {
+                        throw invalidJsonError;
+                    },
+                } as unknown as Response;
+            }) as unknown as typeof fetch,
         );
 
         await expect(sendFriendRequest(credentials, 'u2')).rejects.toMatchObject({

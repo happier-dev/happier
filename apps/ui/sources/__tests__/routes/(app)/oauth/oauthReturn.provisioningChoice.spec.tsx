@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 import {
   clearPendingExternalAuthMock,
@@ -8,7 +9,6 @@ import {
   loginWithCredentialsSpy,
   replaceSpy,
   resetOAuthHarness,
-  runWithOAuthScreen,
   setPendingExternalAuthState,
 } from '@/auth/providers/github/test/oauthReturnHarness';
 
@@ -22,6 +22,20 @@ afterEach(() => {
 });
 
 describe('oauth/[provider] return (provisioning choice)', () => {
+  function isReachabilityProbeUrl(url: string): boolean {
+    return url.endsWith('/health') || url.endsWith('/v1/auth/ping');
+  }
+
+  async function renderOAuthReturnScreen() {
+    const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    await act(async () => {
+      screen = await renderScreen(<Screen />);
+    });
+    await flushOAuthEffects();
+    return screen!;
+  }
+
   it('shows the encryption choice on optional servers and finalizes plaintext (keyless) when chosen', async () => {
     replaceSpy.mockReset();
     loginWithCredentialsSpy.mockReset();
@@ -38,7 +52,11 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
-      if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
+      const rawUrl = String(url);
+      if (isReachabilityProbeUrl(rawUrl)) {
+        return new Response('', { status: 200 });
+      }
+      if (typeof url === 'string' && rawUrl.includes('/v1/auth/external/github/finalize-keyless')) {
         const body = JSON.parse(String(init?.body ?? '{}'));
         if (body?.pending !== 'p3' || body?.proof !== 'proof_3') {
           return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
@@ -52,25 +70,27 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await runWithOAuthScreen(async (tree) => {
-      await flushOAuthEffects();
-
-      expect(fetchMock).not.toHaveBeenCalled();
+    const screen = await renderOAuthReturnScreen();
+    try {
+      const nonReachabilityCalls = fetchMock.mock.calls.filter(([calledUrl]) => !isReachabilityProbeUrl(String(calledUrl)));
+      expect(nonReachabilityCalls).toHaveLength(0);
       expect(replaceSpy).not.toHaveBeenCalledWith('/');
 
-      const choice = tree.root.findByProps({ testID: 'oauth-provisioning-choice-plain' });
-      expect(typeof choice.props.onPress).toBe('function');
+      const choice = screen.findByTestId('oauth-provisioning-choice-plain');
+      expect(choice).toBeTruthy();
 
-      await act(async () => {
-        choice.props.onPress();
-      });
+      await pressTestInstanceAsync(choice, 'oauth-provisioning-choice-plain');
       await flushOAuthEffects(2);
 
-      expect(fetchMock).toHaveBeenCalled();
+      expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
       expect(loginWithCredentialsSpy).toHaveBeenCalled();
       expect(replaceSpy).toHaveBeenCalledWith('/');
-    });
+    } finally {
+      await act(async () => {
+        screen.tree.unmount();
+      });
+    }
 
     vi.stubGlobal('fetch', originalFetch);
   });
@@ -92,7 +112,11 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
-      if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
+      const rawUrl = String(url);
+      if (isReachabilityProbeUrl(rawUrl)) {
+        return new Response('', { status: 200 });
+      }
+      if (typeof url === 'string' && rawUrl.includes('/v1/auth/external/github/finalize-keyless')) {
         const body = JSON.parse(String(init?.body ?? '{}'));
         if (body?.pending !== 'p4' || body?.proof !== 'proof_4') {
           return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
@@ -106,16 +130,21 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await runWithOAuthScreen(async (tree) => {
+    const screen = await renderOAuthReturnScreen();
+    try {
       await flushOAuthEffects(8);
 
-      expect(fetchMock).toHaveBeenCalled();
+      expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
       expect(loginWithCredentialsSpy).toHaveBeenCalled();
       expect(replaceSpy).toHaveBeenCalledWith('/');
 
-      expect(tree.root.findAllByProps({ testID: 'oauth-provisioning-choice-plain' })).toHaveLength(0);
-    });
+      expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        screen.tree.unmount();
+      });
+    }
 
     vi.stubGlobal('fetch', originalFetch);
   });

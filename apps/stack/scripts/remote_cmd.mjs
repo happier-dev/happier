@@ -1,7 +1,8 @@
 import './utils/env/env.mjs';
 
 import { pathToFileURL } from 'node:url';
-import { run, runCapture } from './utils/proc/proc.mjs';
+import { getReleaseRingCatalogEntry, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { run } from './utils/proc/proc.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 
 function takeFlagValue(args, name) {
@@ -39,53 +40,88 @@ function safeBashSingleQuote(s) {
   return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
 }
 
-function parseJsonLinesBestEffort(stdout) {
-  const out = String(stdout ?? '');
-  const lines = out
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  for (const line of lines) {
-    try {
-      return JSON.parse(line);
-    } catch {
-      continue;
-    }
-  }
-  return null;
+function displayChannel(channel) {
+  const normalized = normalizePublicReleaseRingId(channel);
+  if (!normalized) return String(channel ?? '').trim() || 'stable';
+  return getReleaseRingCatalogEntry(normalized).publicLabel;
 }
 
-async function runSsh({ target, command }) {
-  await run('ssh', [target, 'bash', '-lc', safeBashSingleQuote(command)], { env: process.env });
+function assertPublicChannel(channel, source = '--channel') {
+  const normalized = normalizePublicReleaseRingId(channel);
+  if (!normalized) {
+    throw new Error(`[remote] invalid ${source} value: ${channel} (expected stable|preview|dev)`);
+  }
+  return normalized;
 }
 
-async function runSshJson({ target, command }) {
-  const out = await runCapture('ssh', [target, 'bash', '-lc', safeBashSingleQuote(command)], { env: process.env });
-  const parsed = parseJsonLinesBestEffort(out);
-  if (!parsed) {
-    throw new Error('Remote command did not return valid JSON');
-  }
-  return parsed;
-}
+export async function runRemoteDaemonSetupWithDeps(argvRaw, deps = {}) {
+  const resolvedDeps = {
+    runLocalMachineBootstrap: async ({ args }) => {
+      await run('happier', args, { env: process.env });
+    },
+    ...deps,
+  };
 
-async function runLocalJson({ args }) {
-  const out = await runCapture('happier', args, { env: process.env });
-  const parsed = parseJsonLinesBestEffort(out);
-  if (!parsed) {
-    throw new Error('Local command did not return valid JSON');
+  const argv0 = argvRaw.slice();
+  const json = wantsJson(argv0);
+
+  let args = argv0.slice();
+  const ssh = takeFlagValue(args, '--ssh');
+  args = ssh.rest;
+  if (!ssh.value) {
+    process.stderr.write('Missing required flag: --ssh <user@host>\n');
+    process.exit(2);
   }
-  return parsed;
+
+  const sshConfigFile = takeFlagValue(args, '--ssh-config-file');
+  args = sshConfigFile.rest;
+
+  const channel = assertPublicChannel(resolveChannel(argv0));
+
+  const service = resolveService(argv0);
+  if (service !== 'user' && service !== 'none') {
+    throw new Error(`[remote] invalid --service value: ${service} (expected user or none)`);
+  }
+
+  const serverUrlFlag = takeFlagValue(args, '--server-url');
+  args = serverUrlFlag.rest;
+  const webappUrlFlag = takeFlagValue(args, '--webapp-url');
+  args = webappUrlFlag.rest;
+  const publicServerUrlFlag = takeFlagValue(args, '--public-server-url');
+  args = publicServerUrlFlag.rest;
+
+  await resolvedDeps.runLocalMachineBootstrap({
+    args: [
+      'machine',
+      'setup',
+      '--ssh',
+      ssh.value,
+      ...(channel === 'stable' ? [] : [`--channel=${channel}`]),
+      `--service-mode=${service}`,
+      ...(sshConfigFile.value ? [`--ssh-config-file=${sshConfigFile.value}`] : []),
+      ...(serverUrlFlag.value ? [`--server-url=${serverUrlFlag.value}`] : []),
+      ...(webappUrlFlag.value ? [`--webapp-url=${webappUrlFlag.value}`] : []),
+      ...(publicServerUrlFlag.value ? [`--public-server-url=${publicServerUrlFlag.value}`] : []),
+      ...(json ? ['--json'] : []),
+    ],
+  });
 }
 
 function usageText() {
   return [
     '[remote] usage:',
-    '  hstack remote daemon setup --ssh <user@host> [--preview|--stable] [--channel <stable|preview>]',
-    '    [--service <user|none>]',
+    '  hstack remote daemon setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
+    '    [--service <user|none>] [--ssh-config-file <path>]',
     '    [--server-url=<url>] [--webapp-url=<url>] [--public-server-url=<url>]',
     '    [--json]',
     '',
-    '  hstack remote server setup --ssh <user@host> [--preview|--stable] [--channel <stable|preview>]',
+    '  hstack remote server setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
+    '    [--mode <user|system>]',
+    '    [--self-host-server-binary <path>]',
+    '    [--env KEY=VALUE]...',
+    '    [--json]',
+    '',
+    '  hstack remote relay setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
     '    [--mode <user|system>]',
     '    [--self-host-server-binary <path>]',
     '    [--env KEY=VALUE]...',
@@ -99,78 +135,19 @@ function usageText() {
   ].join('\n');
 }
 
-export function splitRemoteServerSetupEnvValues(envValues) {
-  const values = Array.isArray(envValues) ? envValues : [];
-  const serviceEnvValues = [];
-  let selfHostServerBinary = '';
-
-  for (const raw of values) {
-    const entry = String(raw ?? '').trim();
-    if (!entry) continue;
-    const eq = entry.indexOf('=');
-    const key = (eq >= 0 ? entry.slice(0, eq) : entry).trim();
-    const value = eq >= 0 ? entry.slice(eq + 1) : '';
-
-    if (key === 'HAPPIER_SELF_HOST_SERVER_BINARY') {
-      selfHostServerBinary = value.trim();
-      continue;
-    }
-
-    serviceEnvValues.push(entry);
-  }
-
-  return { serviceEnvValues, selfHostServerBinary };
-}
-
-export function buildRemoteSelfHostInstallCommand({ channel, mode, envValues }) {
-  const installUrl = 'https://happier.dev/install';
-  const remoteHstack = '$HOME/.happier/bin/hstack';
-
-  // Always disable auto-service setup in the installer so this command controls remote service behavior.
-  const installCmd = [
-    `curl -fsSL ${installUrl} |`,
-    `HAPPIER_CHANNEL=${channel} HAPPIER_WITH_DAEMON=0 HAPPIER_NONINTERACTIVE=1 bash`,
-  ].join(' ');
-
-  const split = splitRemoteServerSetupEnvValues(envValues);
-  const envArgs = split.serviceEnvValues.map((value) => `--env ${safeBashSingleQuote(value)}`).join(' ');
-
-  // `hstack self-host install` only reads this override from process.env (not from --env),
-  // so forward it via `env VAR=...` and do not persist it into the installed service env file.
-  const installEnvParts = [];
-  if (split.selfHostServerBinary) {
-    installEnvParts.push(`HAPPIER_SELF_HOST_SERVER_BINARY=${safeBashSingleQuote(split.selfHostServerBinary)}`);
-  }
-  const installEnvPrefix = installEnvParts.length ? `env ${installEnvParts.join(' ')} ` : '';
-
-  const baseSelfHostCmd = [
-    remoteHstack,
-    'self-host',
-    'install',
-    `--channel=${channel}`,
-    `--mode=${mode}`,
-    '--without-cli',
-    '--non-interactive',
-    '--json',
-  ].join(' ');
-  const sudoPrefix = mode === 'system' ? 'sudo -E ' : '';
-  const selfHostCmd = `${sudoPrefix}${installEnvPrefix}${baseSelfHostCmd}${envArgs ? ` ${envArgs}` : ''}`;
-
-  return { installCmd, selfHostCmd };
-}
-
 function resolveChannel(argv) {
   if (argv.includes('--preview')) return 'preview';
+  if (argv.includes('--dev')) return 'publicdev';
   if (argv.includes('--stable')) return 'stable';
   const picked = argv.find((a) => a === '--channel' || a.startsWith('--channel='));
   if (!picked) return 'stable';
   if (picked === '--channel') {
     const idx = argv.indexOf('--channel');
     const v = String(argv[idx + 1] ?? '').trim();
-    return v || 'stable';
+    return normalizePublicReleaseRingId(v) || v || 'stable';
   }
   const v = String(picked.slice('--channel='.length)).trim();
-  return v || 'stable';
+  return normalizePublicReleaseRingId(v) || v || 'stable';
 }
 
 function resolveService(argv) {
@@ -223,105 +200,7 @@ function collectEnvValues(argv) {
 }
 
 async function runRemoteDaemonSetup(argvRaw) {
-  const argv0 = argvRaw.slice();
-  const json = wantsJson(argv0);
-
-  let args = argv0.slice();
-  const ssh = takeFlagValue(args, '--ssh');
-  args = ssh.rest;
-  if (!ssh.value) {
-    process.stderr.write('Missing required flag: --ssh <user@host>\n');
-    process.exit(2);
-  }
-
-  const channel = resolveChannel(argv0);
-  if (channel !== 'stable' && channel !== 'preview') {
-    throw new Error(`[remote] invalid --channel value: ${channel}`);
-  }
-
-  const service = resolveService(argv0);
-  if (service !== 'user' && service !== 'none') {
-    throw new Error(`[remote] invalid --service value: ${service} (expected user or none)`);
-  }
-
-  const serverUrlFlag = takeFlagValue(args, '--server-url');
-  args = serverUrlFlag.rest;
-  const webappUrlFlag = takeFlagValue(args, '--webapp-url');
-  args = webappUrlFlag.rest;
-  const publicServerUrlFlag = takeFlagValue(args, '--public-server-url');
-  args = publicServerUrlFlag.rest;
-
-  const serverFlags = {
-    serverUrl: serverUrlFlag.value,
-    webappUrl: webappUrlFlag.value,
-    publicServerUrl: publicServerUrlFlag.value,
-    localArgs: [
-      ...(serverUrlFlag.value ? [`--server-url=${serverUrlFlag.value}`] : []),
-      ...(webappUrlFlag.value ? [`--webapp-url=${webappUrlFlag.value}`] : []),
-      ...(publicServerUrlFlag.value ? [`--public-server-url=${publicServerUrlFlag.value}`] : []),
-    ],
-  };
-
-  const installUrl = 'https://happier.dev/install';
-  const remoteBin = '$HOME/.happier/bin/happier';
-
-  // Always disable auto-service setup in the installer so this command controls service behavior.
-  const installCmd = [
-    `curl -fsSL ${installUrl} |`,
-    `HAPPIER_CHANNEL=${channel} HAPPIER_WITH_DAEMON=0 HAPPIER_NONINTERACTIVE=1 bash`,
-  ].join(' ');
-
-  await runSsh({ target: ssh.value, command: installCmd });
-
-  if (serverFlags.serverUrl) {
-    const serverUrl = safeBashSingleQuote(serverFlags.serverUrl);
-    const webappUrl = safeBashSingleQuote(serverFlags.webappUrl || serverFlags.serverUrl);
-    // Persist server targeting on the remote host so future `happier daemon start` uses the same server.
-    await runSsh({
-      target: ssh.value,
-      command: `${remoteBin} server set --server-url ${serverUrl} --webapp-url ${webappUrl} --json`,
-    });
-  }
-
-  const request = await runSshJson({ target: ssh.value, command: `${remoteBin} auth request --json` });
-  const publicKey = typeof request?.publicKey === 'string' ? request.publicKey : '';
-  if (!publicKey) {
-    throw new Error('Remote auth request did not include "publicKey"');
-  }
-
-  await runLocalJson({
-    args: [...serverFlags.localArgs, 'auth', 'approve', '--public-key', publicKey, '--json'],
-  });
-
-  await runSshJson({
-    target: ssh.value,
-    command: `${remoteBin} auth wait --public-key ${safeBashSingleQuote(publicKey)} --json`,
-  });
-
-  if (service === 'user') {
-    const envParts = [];
-    if (serverFlags.serverUrl) envParts.push(`HAPPIER_DAEMON_SERVICE_SERVER_URL=${safeBashSingleQuote(serverFlags.serverUrl)}`);
-    if (serverFlags.webappUrl) envParts.push(`HAPPIER_DAEMON_SERVICE_WEBAPP_URL=${safeBashSingleQuote(serverFlags.webappUrl)}`);
-    if (serverFlags.publicServerUrl) envParts.push(`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${safeBashSingleQuote(serverFlags.publicServerUrl)}`);
-    const envPrefix = envParts.length ? `${envParts.join(' ')} ` : '';
-
-    await runSsh({ target: ssh.value, command: `${envPrefix}${remoteBin} daemon service install` });
-    await runSsh({ target: ssh.value, command: `${envPrefix}${remoteBin} daemon service start` });
-  }
-
-  printResult({
-    json,
-    data: { ok: true, ssh: ssh.value, channel, service, publicKey },
-    text: json
-      ? null
-      : [
-          '✓ Remote daemon setup complete',
-          `- ssh: ${ssh.value}`,
-          `- channel: ${channel}`,
-          `- service: ${service}`,
-          `- publicKey: ${publicKey}`,
-        ].join('\n'),
-  });
+  await runRemoteDaemonSetupWithDeps(argvRaw);
 }
 
 async function runRemoteServerSetup(argvRaw) {
@@ -336,10 +215,7 @@ async function runRemoteServerSetup(argvRaw) {
     process.exit(2);
   }
 
-  const channel = resolveChannel(argv0);
-  if (channel !== 'stable' && channel !== 'preview') {
-    throw new Error(`[remote] invalid --channel value: ${channel}`);
-  }
+  const channel = assertPublicChannel(resolveChannel(argv0));
 
   const mode = resolveMode(argv0);
   if (mode !== 'user' && mode !== 'system') {
@@ -350,29 +226,23 @@ async function runRemoteServerSetup(argvRaw) {
   args = selfHostServerBinaryFlag.rest;
 
   const envValues = collectEnvValues(argv0);
-  if (selfHostServerBinaryFlag.value) {
-    // Forward this override to `hstack self-host install` via process.env, without persisting it
-    // in the installed service env file.
-    envValues.push(`HAPPIER_SELF_HOST_SERVER_BINARY=${selfHostServerBinaryFlag.value}`);
-  }
-  const built = buildRemoteSelfHostInstallCommand({ channel, mode, envValues });
 
-  await runSsh({ target: ssh.value, command: built.installCmd });
-  await runSsh({ target: ssh.value, command: built.selfHostCmd });
-
-  printResult({
-    json,
-    data: { ok: true, ssh: ssh.value, channel, mode, env: envValues, selfHostServerBinary: selfHostServerBinaryFlag.value || null },
-    text: json
-      ? null
-      : [
-          '✓ Remote server setup complete',
-          `- ssh: ${ssh.value}`,
-          `- channel: ${channel}`,
-          `- mode: ${mode}`,
-          `- env: ${envValues.length ? envValues.join(', ') : '(none)'}`,
-        ].join('\n'),
-  });
+  await run(
+    'happier',
+    [
+      'relay',
+      'host',
+      'install',
+      '--ssh',
+      ssh.value,
+      `--channel=${channel === 'publicdev' ? 'dev' : channel}`,
+      `--mode=${mode}`,
+      ...(selfHostServerBinaryFlag.value ? ['--self-host-server-binary', selfHostServerBinaryFlag.value] : []),
+      ...envValues.flatMap((value) => ['--env', value]),
+      ...(json ? ['--json'] : []),
+    ],
+    { env: process.env },
+  );
 }
 
 async function main() {
@@ -391,6 +261,10 @@ async function main() {
     return;
   }
   if (top === 'server' && sub === 'setup') {
+    await runRemoteServerSetup(argvRaw);
+    return;
+  }
+  if (top === 'relay' && sub === 'setup') {
     await runRemoteServerSetup(argvRaw);
     return;
   }

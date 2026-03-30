@@ -1,36 +1,25 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { installSessionExecutionRunListCommonModuleMocks } from './sessionExecutionRunListTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  Text: 'Text',
-  Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
-  AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+installSessionExecutionRunListCommonModuleMocks({
+    text: async () => ({
+        ...createTextModuleMock({
+            translate: (key: string, params?: { groupId?: string }) => {
+                if (key === 'runs.groupLabel') {
+                    return `Group ${String(params?.groupId ?? '')}`.trim();
+                }
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
-    theme: {
-      colors: {
-        surface: '#fff',
-        divider: '#ddd',
-        shadow: { color: '#000', opacity: 0.2 },
-        textSecondary: '#aaa',
-      },
-    },
-  }),
-  StyleSheet: { create: (input: any) => (typeof input === 'function' ? input({ colors: { shadow: { color: '#000', opacity: 0.2 } } }) : input) },
-}));
-
-vi.mock('@/text', () => ({
-  t: (key: string, params?: any) => {
-    if (key === 'runs.groupLabel') return `Group ${params?.groupId ?? ''}`.trim();
-    return key;
-  },
-}));
+                return key;
+            },
+        }),
+    }),
+});
 
 vi.mock('./ExecutionRunRow', () => ({
   ExecutionRunRow: ({ run }: { run: any }) => React.createElement('ExecutionRunRow', { runId: run?.runId ?? '' }),
@@ -40,21 +29,14 @@ describe('ExecutionRunList', () => {
   it('groups runs by display.groupId when provided', async () => {
     const { ExecutionRunList } = await import('./ExecutionRunList');
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(ExecutionRunList, {
+    const screen = await renderScreen(React.createElement(ExecutionRunList, {
           runs: [
-            { runId: 'r1', intent: 'review', backendId: 'claude', status: 'running', display: { groupId: 'g1' } },
-            { runId: 'r2', intent: 'review', backendId: 'claude', status: 'running', display: { groupId: 'g1' } },
-            { runId: 'r3', intent: 'plan', backendId: 'codex', status: 'succeeded' },
+            { runId: 'r1', intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, status: 'running', display: { groupId: 'g1' } },
+            { runId: 'r2', intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, status: 'running', display: { groupId: 'g1' } },
+            { runId: 'r3', intent: 'plan', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, status: 'succeeded' },
           ],
-        }),
-      );
-      await Promise.resolve();
-    });
+        }));
 
-    const texts = tree!.root.findAllByType('Text').map((n: any) => String(n.props.children));
-    expect(texts.join('\n')).toContain('Group g1');
+    expect(screen.getTextContent()).toContain('Group g1');
   });
 });

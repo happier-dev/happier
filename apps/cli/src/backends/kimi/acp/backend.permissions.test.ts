@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { dirname } from 'node:path';
 
 import type { PermissionMode } from '@/api/types';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { createKimiBackend } from './backend';
 
 type AcpBackendLike = {
@@ -9,7 +13,31 @@ type AcpBackendLike = {
   };
 };
 
+const envKeys = ['PATH', 'HAPPIER_KIMI_PATH'] as const;
+const TEMP_DIRS = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
+
+function createFakeBin(name: string): string {
+  const dir = createTempDirSync('happier-kimi-backend-');
+  TEMP_DIRS.add(dir);
+  const isWindows = process.platform === 'win32';
+  return writeExecutableShimSync({
+    dir,
+    fileName: isWindows ? `${name}.cmd` : name,
+    contents: isWindows ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
+}
+
+afterEach(() => {
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
+  for (const dir of TEMP_DIRS) removeTempDirSync(dir);
+  TEMP_DIRS.clear();
+});
+
 function getArgs(permissionMode: PermissionMode): string[] {
+  process.env.PATH = '';
+  process.env.HAPPIER_KIMI_PATH = createFakeBin('kimi');
   const backend = createKimiBackend({
     cwd: '/tmp',
     env: {},
@@ -25,6 +53,13 @@ function readAgentFilePath(args: string[]): string | null {
 }
 
 describe('Kimi ACP backend permissions', () => {
+  it('fails closed when the Kimi CLI is unavailable', () => {
+    process.env.PATH = '';
+    delete process.env.HAPPIER_KIMI_PATH;
+
+    expect(() => createKimiBackend({ cwd: '/tmp', env: {} })).toThrow(/system install/i);
+  });
+
   it.each([
     { mode: 'default', hasYolo: false, hasAgentFile: false },
     { mode: 'acceptEdits', hasYolo: false, hasAgentFile: false },
@@ -50,7 +85,23 @@ describe('Kimi ACP backend permissions', () => {
     }
   });
 
+  it('resolves the CLI from options.env PATH when process PATH is empty', () => {
+    process.env.PATH = '';
+    delete process.env.HAPPIER_KIMI_PATH;
+    const binPath = createFakeBin('kimi');
+
+    const backend = createKimiBackend({
+      cwd: '/tmp',
+      env: { PATH: dirname(binPath) },
+      permissionMode: 'default',
+    }) as unknown as { options: { command: string } };
+
+    expect(backend.options.command).toBe(binPath);
+  });
+
   it('does not attach MCP servers (Kimi ACP does not support MCP servers)', () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_KIMI_PATH = createFakeBin('kimi');
     const backend = createKimiBackend({
       cwd: '/tmp',
       env: {},

@@ -1,6 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { installAccountCommonModuleMocks } from './accountTestHelpers';
+
 
 (
     globalThis as typeof globalThis & {
@@ -8,39 +11,52 @@ import renderer, { act } from 'react-test-renderer';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    Platform: {
-        OS: 'ios',
-        select: (options: { ios?: unknown; default?: unknown }) => options.ios ?? options.default,
-    },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
-
 const show = vi.fn();
-vi.mock('@/modal', () => ({
-    Modal: {
-        show,
-        alert: vi.fn(),
-        prompt: vi.fn(),
-        confirm: vi.fn(),
-    },
-}));
 
 const push = vi.fn();
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push }),
-}));
+
+vi.mock('react-native-reanimated', () => ({}));
+
+installAccountCommonModuleMocks({
+    icons: () => ({
+        Ionicons: 'Ionicons',
+    }),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: show,
+                alert: vi.fn(),
+                prompt: vi.fn(),
+                confirm: vi.fn(),
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'ios',
+                select: (options: { ios?: unknown; default?: unknown }) => options.ios ?? options.default,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push },
+        });
+        return expoRouterMock.module;
+    },
+});
+
+vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
@@ -70,16 +86,32 @@ const getServerFeatures = vi.fn(async () => ({
         },
     },
 }));
+const getCachedServerFeatures = vi.fn<
+    () => {
+        features: {
+            auth: {
+                ui: {
+                    recoveryKeyReminder: {
+                        enabled: boolean;
+                    };
+                };
+            };
+        };
+    } | null
+>(() => null);
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: () => getServerFeatures(),
+    getCachedReadyServerFeatures: () => getCachedServerFeatures(),
 }));
 
 const getRecoveryKeyReminderDismissed = vi.fn(async () => false);
 const setRecoveryKeyReminderDismissed = vi.fn(async () => true);
+const getCachedRecoveryKeyReminderDismissed = vi.fn<() => boolean | null>(() => null);
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getRecoveryKeyReminderDismissed,
         setRecoveryKeyReminderDismissed,
+        getCachedRecoveryKeyReminderDismissed,
     },
     // RecoveryKeyReminderBanner gates on legacy credentials; include this export to
     // keep the mock aligned with the real module surface.
@@ -94,17 +126,31 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: {
         onPress?: () => void;
         rightElement?: React.ReactNode;
+        testID?: string;
     }) => {
-        const dismissElement =
-            React.isValidElement<{ accessibilityLabel?: string }>(props.rightElement)
-                ? React.cloneElement(props.rightElement, {
+        const dismissElement = React.isValidElement<{
+            accessibilityLabel?: string;
+            testID?: string;
+            onPress?: (event?: { stopPropagation?: () => void }) => void | Promise<void>;
+        }>(props.rightElement)
+            ? (() => {
+                  const rightElement = props.rightElement;
+                  return React.cloneElement(rightElement, {
                       accessibilityLabel: 'recovery-key-dismiss',
-                  })
-                : props.rightElement;
+                      testID: 'recovery-key-dismiss',
+                      onPress: async () => {
+                          await rightElement.props.onPress?.({
+                              stopPropagation: vi.fn(),
+                          } as never);
+                      },
+                  });
+              })()
+            : props.rightElement;
         return (
             <>
                 {React.createElement('Pressable', {
                     accessibilityLabel: 'recovery-key-item',
+                    testID: 'recovery-key-item',
                     onPress: props.onPress,
                 })}
                 {dismissElement}
@@ -121,10 +167,8 @@ async function flushEffects(turns = 4): Promise<void> {
 
 async function renderBanner() {
     const { RecoveryKeyReminderBanner } = await import('./RecoveryKeyReminderBanner');
-    let tree: renderer.ReactTestRenderer | undefined;
-    await act(async () => {
-        tree = renderer.create(<RecoveryKeyReminderBanner />);
-    });
+    let tree: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    tree = await renderScreen(<RecoveryKeyReminderBanner />);
     await flushEffects();
     return tree!;
 }
@@ -158,12 +202,8 @@ describe('RecoveryKeyReminderBanner', () => {
         getRecoveryKeyReminderDismissed.mockResolvedValue(false);
         setRecoveryKeyReminderDismissed.mockResolvedValue(true);
 
-        const tree = await renderBanner();
-        const openItem = tree.root.findByProps({ accessibilityLabel: 'recovery-key-item' });
-
-        await act(async () => {
-            openItem.props.onPress();
-        });
+        const screen = await renderBanner();
+        await screen.pressByTestIdAsync('recovery-key-item');
 
         expect(show).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -172,10 +212,7 @@ describe('RecoveryKeyReminderBanner', () => {
             }),
         );
 
-        const dismissButton = tree.root.findByProps({ accessibilityLabel: 'recovery-key-dismiss' });
-        await act(async () => {
-            dismissButton.props.onPress({ stopPropagation: vi.fn() });
-        });
+        await screen.pressByTestIdAsync('recovery-key-dismiss');
 
         expect(setRecoveryKeyReminderDismissed).toHaveBeenCalledWith(true);
     });
@@ -185,12 +222,35 @@ describe('RecoveryKeyReminderBanner', () => {
         show.mockClear();
         push.mockClear();
         getServerFeatures.mockRejectedValueOnce(new Error('network'));
+        getCachedServerFeatures.mockReturnValue(null);
         getRecoveryKeyReminderDismissed.mockResolvedValue(false);
+        getCachedRecoveryKeyReminderDismissed.mockReturnValue(null);
 
         const tree = await renderBanner();
-        const itemNodes = tree.root.findAllByProps({ accessibilityLabel: 'recovery-key-item' });
+        const itemNodes = tree.findAllByTestId('recovery-key-item');
 
         expect(itemNodes).toHaveLength(0);
         expect(show).not.toHaveBeenCalled();
+    });
+
+    it('renders immediately when cached banner visibility state is already available', async () => {
+        vi.resetModules();
+        show.mockClear();
+        push.mockClear();
+        getCachedServerFeatures.mockReturnValue({
+            features: {
+                auth: {
+                    ui: { recoveryKeyReminder: { enabled: true } },
+                },
+            },
+        });
+        getCachedRecoveryKeyReminderDismissed.mockReturnValue(false);
+        getServerFeatures.mockImplementation(() => new Promise(() => {}));
+        getRecoveryKeyReminderDismissed.mockImplementation(() => new Promise(() => {}));
+
+        const { RecoveryKeyReminderBanner } = await import('./RecoveryKeyReminderBanner');
+        const screen = await renderScreen(<RecoveryKeyReminderBanner />, { flushOptions: { cycles: 0 } });
+
+        expect(screen.findAllByTestId('recovery-key-item')).toHaveLength(1);
     });
 });

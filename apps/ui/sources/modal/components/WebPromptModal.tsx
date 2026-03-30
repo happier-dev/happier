@@ -6,6 +6,7 @@ import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { ModalCardFrame } from './card/ModalCardFrame';
 
 
 interface WebPromptModalProps {
@@ -20,6 +21,17 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
     const { theme } = useUnistyles();
     const [inputValue, setInputValue] = useState(config.defaultValue || '');
     const inputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
+    const didResolveRef = useRef(false);
+
+    const resolveAndClose = React.useCallback((value: string | null) => {
+        if (didResolveRef.current) {
+            return;
+        }
+
+        didResolveRef.current = true;
+        onConfirm(value);
+        onClose();
+    }, [onClose, onConfirm]);
 
     useEffect(() => {
         // Auto-focus the input when modal opens
@@ -30,13 +42,11 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
     }, []);
 
     const handleCancel = () => {
-        onConfirm(null);
-        onClose();
+        resolveAndClose(null);
     };
 
     const handleConfirm = () => {
-        onConfirm(inputValue);
-        onClose();
+        resolveAndClose(inputValue);
     };
 
     const getKeyboardType = (): KeyboardTypeOptions => {
@@ -51,20 +61,6 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
     };
 
     const styles = StyleSheet.create({
-        container: {
-            backgroundColor: theme.colors.surface,
-            borderRadius: 14,
-            width: 270,
-            overflow: 'hidden',
-            shadowColor: theme.colors.shadow.color,
-            shadowOffset: {
-                width: 0,
-                height: 2
-            },
-            shadowOpacity: 0.25,
-            shadowRadius: 4,
-            elevation: 5
-        },
         content: {
             paddingHorizontal: 16,
             paddingTop: 20,
@@ -131,7 +127,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}
         >
-            <View style={styles.container}>
+            <ModalCardFrame dimensions={{ width: 270, maxHeightRatio: 0.48 }}>
                 <View style={styles.content}>
                     <Text style={[styles.title, Typography.default('semiBold')]}>
                         {config.title}
@@ -143,6 +139,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                     )}
                     <TextInput
                         ref={inputRef}
+                        testID="web-prompt-input"
                         style={[styles.input, Typography.default()]}
                         value={inputValue}
                         onChangeText={setInputValue}
@@ -164,6 +161,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                             styles.button,
                             pressed && styles.buttonPressed
                         ]}
+                        testID="web-prompt-cancel"
                         accessibilityRole="button"
                         accessibilityLabel={config.cancelText || t('common.cancel')}
                         onPress={handleCancel}
@@ -182,8 +180,10 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                             styles.button,
                             pressed && styles.buttonPressed
                         ]}
+                        testID="web-prompt-confirm"
                         accessibilityRole="button"
                         accessibilityLabel={config.confirmText || t('common.ok')}
+                        onPressIn={handleConfirm}
                         onPress={handleConfirm}
                     >
                         <Text style={[
@@ -194,7 +194,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                         </Text>
                     </Pressable>
                 </View>
-            </View>
+            </ModalCardFrame>
         </BaseModal>
     );
 }

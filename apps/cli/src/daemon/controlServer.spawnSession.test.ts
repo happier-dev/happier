@@ -10,6 +10,7 @@ describe('daemon control server: /spawn-session', () => {
   it('requires a control token at startup', () => {
     expect(() => createDaemonControlApp({
       getChildren: () => [],
+      machineId: 'machine_local',
       stopSession: async () => false,
       spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
       requestShutdown: () => {},
@@ -21,6 +22,7 @@ describe('daemon control server: /spawn-session', () => {
   it('rejects requests without the control token', async () => {
     const app = createDaemonControlApp({
       getChildren: () => [],
+      machineId: 'machine_local',
       stopSession: async () => false,
       spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
       requestShutdown: () => {},
@@ -43,11 +45,12 @@ describe('daemon control server: /spawn-session', () => {
     }
   });
 
-  it('passes terminal + environmentVariables + token through to spawnSession', async () => {
+  it('passes canonical daemon spawn fields through to spawnSession and preserves fresh sessionId', async () => {
     let observed: any = null;
 
     const app = createDaemonControlApp({
       getChildren: () => [],
+      machineId: 'machine_local',
       stopSession: async () => false,
       spawnSession: async (options: any) => {
         observed = options;
@@ -67,9 +70,16 @@ describe('daemon control server: /spawn-session', () => {
         payload: JSON.stringify({
           directory: '/tmp',
           sessionId: 'explicit-session',
-          agent: 'codex',
-          token: 'dummy-token',
+          spawnNonce: 'spawn-nonce-1',
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
           experimentalCodexAcp: true,
+          transcriptStorage: 'direct',
+          mcpSelection: {
+            v: 1,
+            managedServersEnabled: false,
+            forceIncludeServerIds: ['server-portable'],
+            forceExcludeServerIds: ['server-disabled'],
+          },
           terminal: {
             mode: 'tmux',
             tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
@@ -97,10 +107,17 @@ describe('daemon control server: /spawn-session', () => {
 
       expect(observed).toEqual({
         directory: '/tmp',
-        existingSessionId: 'explicit-session',
-        agent: 'codex',
-        token: 'dummy-token',
-        experimentalCodexAcp: true,
+        sessionId: 'explicit-session',
+        spawnNonce: 'spawn-nonce-1',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        codexBackendMode: 'acp',
+        transcriptStorage: 'direct',
+        mcpSelection: {
+          v: 1,
+          managedServersEnabled: false,
+          forceIncludeServerIds: ['server-portable'],
+          forceExcludeServerIds: ['server-disabled'],
+        },
         terminal: {
           mode: 'tmux',
           tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
@@ -121,9 +138,49 @@ describe('daemon control server: /spawn-session', () => {
     }
   });
 
+  it('prefers explicit existingSessionId for attach spawns', async () => {
+    let observed: any = null;
+
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => false,
+      spawnSession: async (options: any) => {
+        observed = options;
+        return { type: 'success', sessionId: 'happy-test-123' };
+      },
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/spawn-session',
+        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+        payload: JSON.stringify({
+          directory: '/tmp',
+          sessionId: 'fresh-session-id',
+          existingSessionId: 'existing-session-id',
+        }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(observed).toEqual({
+        directory: '/tmp',
+        existingSessionId: 'existing-session-id',
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it('returns a structured 500 when spawnSession throws', async () => {
     const app = createDaemonControlApp({
       getChildren: () => [],
+      machineId: 'machine_local',
       stopSession: async () => false,
       spawnSession: async () => {
         throw new Error('boom');
@@ -158,6 +215,7 @@ describe('daemon control server: /spawn-session', () => {
 
     const app = createDaemonControlApp({
       getChildren: () => [],
+      machineId: 'machine_local',
       stopSession: async () => false,
       spawnSession: async (options: any) => {
         observed = options;
@@ -176,7 +234,7 @@ describe('daemon control server: /spawn-session', () => {
         headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
         payload: JSON.stringify({
           directory: '/tmp',
-          agent: 'unknown-agent',
+          backendTarget: { kind: 'builtInAgent', agentId: 'unknown-agent' },
         }),
       });
 

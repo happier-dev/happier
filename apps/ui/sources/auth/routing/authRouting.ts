@@ -8,6 +8,9 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // Home (welcome / login / create account)
     if (first === 'index') return true;
 
+    // Desktop setup/onboarding must be reachable before authentication.
+    if (first === 'setup') return true;
+
     // Server configuration must be reachable before authentication.
     if (first === 'server') return true;
 

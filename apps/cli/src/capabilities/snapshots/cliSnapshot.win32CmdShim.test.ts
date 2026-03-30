@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { snapshotEnvValues, restoreEnvValues } from '@/testkit/env/envSnapshot';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 const ORIGINAL_PLATFORM_DESCRIPTOR = Object.getOwnPropertyDescriptor(process, 'platform');
 const SCOPED_ENV_KEYS = ['PATH', 'PATHEXT', 'HAPPIER_CODEX_PATH', 'ComSpec'] as const;
 type ScopedEnvKey = (typeof SCOPED_ENV_KEYS)[number];
-const envBaseline = Object.fromEntries(
-  SCOPED_ENV_KEYS.map((key) => [key, (process.env as any)[key] as string | undefined]),
-) as Record<ScopedEnvKey, string | undefined>;
+const envBaseline = snapshotEnvValues(SCOPED_ENV_KEYS) as Record<ScopedEnvKey, string | undefined>;
 
 describe('detectCliSnapshotOnDaemonPath (Windows cmd shim)', () => {
   let workDir: string | null = null;
@@ -17,16 +17,12 @@ describe('detectCliSnapshotOnDaemonPath (Windows cmd shim)', () => {
     if (ORIGINAL_PLATFORM_DESCRIPTOR) {
       Object.defineProperty(process, 'platform', ORIGINAL_PLATFORM_DESCRIPTOR);
     }
-    for (const key of SCOPED_ENV_KEYS) {
-      const value = envBaseline[key];
-      if (value === undefined) delete (process.env as any)[key];
-      else (process.env as any)[key] = value;
-    }
+    restoreEnvValues(envBaseline);
     vi.doUnmock('child_process');
     vi.doUnmock('@/backends/catalog');
     vi.resetModules();
     vi.restoreAllMocks();
-    if (workDir) rmSync(workDir, { recursive: true, force: true });
+    if (workDir) removeTempDirSync(workDir);
     workDir = null;
   });
 
@@ -44,12 +40,15 @@ describe('detectCliSnapshotOnDaemonPath (Windows cmd shim)', () => {
       },
     }));
 
-    workDir = mkdtempSync(join(tmpdir(), 'happier-cliSnapshot-win32-'));
+    workDir = createTempDirSync('happier-cliSnapshot-win32-');
     const binDir = join(workDir, 'bin');
     mkdirSync(binDir, { recursive: true });
 
-    const codexCmd = join(binDir, 'codex.cmd');
-    writeFileSync(codexCmd, '@echo off\r\necho codex 0.43.0\r\n', 'utf8');
+    const codexCmd = writeExecutableShimSync({
+      dir: binDir,
+      fileName: 'codex.cmd',
+      contents: '@echo off\r\necho codex 0.43.0\r\n',
+    });
     process.env.HAPPIER_CODEX_PATH = codexCmd;
     process.env.PATH = binDir;
     process.env.PATHEXT = '.CMD';

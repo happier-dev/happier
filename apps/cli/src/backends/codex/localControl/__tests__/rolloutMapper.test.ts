@@ -28,6 +28,35 @@ describe('mapCodexRolloutEventToActions', () => {
             { debug: false },
         );
         expect(filtered).toEqual([]);
+
+        const debugFiltered = mapCodexRolloutEventToActions(
+            {
+                type: 'response_item',
+                payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<subagent_notification>\n{}\n</subagent_notification>' }] },
+            },
+            { debug: true },
+        );
+        expect(debugFiltered).toEqual([]);
+
+        const completionFromNotification = mapCodexRolloutEventToActions(
+            {
+                type: 'response_item',
+                payload: {
+                    type: 'message',
+                    role: 'user',
+                    content: [{ type: 'input_text', text: '<subagent_notification>\n{"agent_id":"thread_child","status":{"completed":"done"}}\n</subagent_notification>' }],
+                },
+            },
+            { debug: false },
+        );
+        expect(completionFromNotification).toEqual([
+            {
+                type: 'subagent-complete',
+                threadId: 'thread_child',
+                status: 'completed',
+                summaryText: 'done',
+            },
+        ]);
     });
 
     it('maps assistant message to assistant-text', () => {
@@ -39,6 +68,57 @@ describe('mapCodexRolloutEventToActions', () => {
             { debug: false },
         );
         expect(actions).toEqual([{ type: 'assistant-text', text: 'hi' }]);
+    });
+
+    it('maps collaboration events into synthetic subagent actions', () => {
+        const spawnActions = mapCodexRolloutEventToActions(
+            {
+                type: 'event_msg',
+                payload: {
+                    type: 'collab_agent_spawn_end',
+                    new_thread_id: 'thread_child',
+                    new_agent_nickname: 'Lovelace',
+                    new_agent_role: 'explorer',
+                    prompt: 'inspect the repo',
+                },
+            },
+            { debug: false },
+        );
+
+        expect(spawnActions).toEqual([
+            {
+                type: 'subagent-spawn',
+                threadId: 'thread_child',
+                nickname: 'Lovelace',
+                role: 'explorer',
+                prompt: 'inspect the repo',
+            },
+        ]);
+
+        const completionActions = mapCodexRolloutEventToActions(
+            {
+                type: 'event_msg',
+                payload: {
+                    type: 'collab_waiting_end',
+                    agent_statuses: [
+                        {
+                            thread_id: 'thread_child',
+                            status: { completed: 'done' },
+                        },
+                    ],
+                },
+            },
+            { debug: false },
+        );
+
+        expect(completionActions).toEqual([
+            {
+                type: 'subagent-complete',
+                threadId: 'thread_child',
+                status: 'completed',
+                summaryText: 'done',
+            },
+        ]);
     });
 
     it('maps exec_command function_call to Bash tool-call', () => {
@@ -126,6 +206,32 @@ describe('mapCodexRolloutEventToActions', () => {
                 callId: 'call_dbg_1',
                 name: 'new_unknown_tool',
                 input: { foo: 'bar', _happier: { sessionMode: 'local_control' } },
+            },
+        ]);
+    });
+
+    it('suppresses collaboration plumbing tool calls because synthetic subagent events replace them', () => {
+        const actions = mapCodexRolloutEventToActions(
+            {
+                type: 'response_item',
+                payload: {
+                    type: 'function_call',
+                    name: 'spawn_agent',
+                    arguments: '{"role":"default"}',
+                    call_id: 'call_spawn_1',
+                },
+            },
+            { debug: true },
+        );
+
+        expect(actions).toEqual([
+            {
+                type: 'collaboration-tool-call',
+                callId: 'call_spawn_1',
+                name: 'spawn_agent',
+                prompt: null,
+                nickname: null,
+                role: 'default',
             },
         ]);
     });

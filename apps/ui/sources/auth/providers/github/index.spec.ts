@@ -9,12 +9,15 @@ vi.mock('@/utils/timing/time', () => ({
     backoff: async <T>(fn: () => Promise<T>) => await fn(),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string, params?: Record<string, unknown>) => {
         const provider = typeof params?.provider === 'string' ? params.provider : '';
         return provider ? `${key}:${provider}` : key;
     },
-}));
+    });
+});
 
 import { githubAuthProvider } from './index';
 

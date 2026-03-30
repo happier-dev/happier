@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
+import { applyEnvValues, restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 
 describe("auth (oauth state fallback)", () => {
     const envBackup = snapshotEnv();
@@ -12,7 +12,7 @@ describe("auth (oauth state fallback)", () => {
     });
 
     it("keeps auth token flow available when oauth-state backend init fails", async () => {
-        process.env.HANDY_MASTER_SECRET = "fallback-seed";
+        applyEnvValues({ HANDY_MASTER_SECRET: "fallback-seed" });
 
         vi.doMock("privacy-kit", async (importOriginal) => {
             const actual = await importOriginal<typeof import("privacy-kit")>();
@@ -44,7 +44,7 @@ describe("auth (oauth state fallback)", () => {
     });
 
     it("fails auth initialization when persistent auth token backend init fails", async () => {
-        process.env.HANDY_MASTER_SECRET = "fallback-seed";
+        applyEnvValues({ HANDY_MASTER_SECRET: "fallback-seed" });
 
         vi.doMock("privacy-kit", async (importOriginal) => {
             const actual = await importOriginal<typeof import("privacy-kit")>();
@@ -70,7 +70,7 @@ describe("auth (oauth state fallback)", () => {
     });
 
     it("retries persistent auth token initialization when runtime key import is incompatible", async () => {
-        process.env.HANDY_MASTER_SECRET = "fallback-seed";
+        applyEnvValues({ HANDY_MASTER_SECRET: "fallback-seed" });
 
         let generatorCalls = 0;
         const mockGenerator = {

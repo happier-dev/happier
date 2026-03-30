@@ -1,0 +1,272 @@
+import * as React from 'react';
+import { describe, expect, it, vi } from 'vitest';
+
+import { renderHook, renderScreen, flushHookEffects } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import type { Router } from 'expo-router';
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        storage: {
+            getState: () => ({}),
+        },
+    });
+});
+
+vi.mock('@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent', () => ({
+    LinkFilePickerPopoverContent: (props: Record<string, unknown>) => React.createElement('LinkFilePickerPopoverContent', props),
+}));
+
+describe('useNewSessionAgentInputPresentation', () => {
+    it('exposes automation controls via an action chip (no inline automation section)', async () => {
+        const { useNewSessionAgentInputPresentation } = await import('./useNewSessionAgentInputPresentation');
+        const routerMock = createExpoRouterMock();
+        const router = {
+            back: () => routerMock.state.router.back(),
+            canGoBack: vi.fn(() => false),
+            push: (value: any) => routerMock.state.router.push(value),
+            navigate: vi.fn<Router['navigate']>(),
+            replace: (value: any) => routerMock.state.router.replace(value),
+            dismiss: vi.fn<Router['dismiss']>(),
+            dismissTo: vi.fn<Router['dismissTo']>(),
+            dismissAll: vi.fn<Router['dismissAll']>(),
+            canDismiss: vi.fn(() => false),
+            setParams: vi.fn() as any,
+            reload: vi.fn<Router['reload']>(),
+            prefetch: vi.fn<Router['prefetch']>(),
+        } as unknown as Router;
+
+        const hook = await renderHook(() => useNewSessionAgentInputPresentation({
+            theme: {
+                colors: {
+                    success: '#0f0',
+                    textDestructive: '#f00',
+                },
+            },
+            selectedMachine: null,
+            automationFeatureEnabled: true,
+            automationDraft: {
+                enabled: true,
+                name: 'Nightly',
+                description: 'Run nightly work',
+                scheduleKind: 'interval',
+                everyMinutes: 30,
+                cronExpr: '0 * * * *',
+                timezone: 'UTC',
+            },
+            effectiveAutomationDraft: {
+                enabled: true,
+                name: 'Nightly',
+                description: 'Run nightly work',
+                scheduleKind: 'interval',
+                everyMinutes: 30,
+                cronExpr: '0 * * * *',
+                timezone: 'UTC',
+            },
+            setAutomationDraft: vi.fn(),
+            repoScmSnapshot: null,
+            checkoutChipModel: {
+                selectedOptionId: 'current_path',
+                options: [{ id: 'current_path', kind: 'current_path', path: '/repo' }],
+            },
+            checkoutPickerOpen: false,
+            setCheckoutPickerOpen: vi.fn(),
+            checkoutCreationDraft: null,
+            selectedMachineId: null,
+            selectedPath: '/repo',
+            setSelectedPath: vi.fn(),
+            setCheckoutCreationDraft: vi.fn(),
+            pendingGitWorktreeBaseRefRef: { current: null },
+            pendingGitWorktreeSourceKindRef: { current: 'current' },
+            shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
+            router,
+            sessionPrompt: '',
+            setSessionPrompt: vi.fn(),
+            handleCreateSession: vi.fn(),
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentType: 'claude',
+            agentOptionState: null,
+            setAgentOptionStateForCurrentAgent: vi.fn(),
+            connectedServicesAuthChip: null,
+            showAutomationActionChips: true,
+            showServerPickerChip: false,
+            targetServerId: null,
+            targetServerName: 'Server A',
+            mcpChip: null,
+            directSessionsFeatureEnabled: false,
+            supportsDirectTranscriptStorage: false,
+            transcriptStorage: 'persisted',
+            hasUserSelectedTranscriptStorageRef: { current: false },
+            setTranscriptStorage: vi.fn(),
+            selectedMachineIsWindows: false,
+            effectiveWindowsRemoteSessionLaunchMode: null,
+            windowsTerminalAvailable: false,
+            setWindowsRemoteSessionLaunchModeOverride: vi.fn(),
+        }));
+
+        expect(hook.getCurrent().agentInputExtraActionChips.some((chip) => chip.key === 'new-session-automate')).toBe(true);
+    });
+
+    it('adds a link-file chip that appends the selected file path into the draft prompt', async () => {
+        const { useNewSessionAgentInputPresentation } = await import('./useNewSessionAgentInputPresentation');
+        const routerMock = createExpoRouterMock();
+        let currentPrompt = 'hello';
+        const setSessionPromptSpy = vi.fn();
+        const setSessionPrompt: React.Dispatch<React.SetStateAction<string>> = (next) => {
+            setSessionPromptSpy(next);
+            if (typeof next === 'function') {
+                // Emulate a "string-only" setter (common wrapper pattern) that ignores functional updates.
+                // The new-session link-file chip must still work in this scenario.
+                return;
+            }
+            currentPrompt = next;
+        };
+
+        const router = {
+            back: () => routerMock.state.router.back(),
+            canGoBack: vi.fn(() => false),
+            push: (value: any) => routerMock.state.router.push(value),
+            navigate: vi.fn<Router['navigate']>(),
+            replace: (value: any) => routerMock.state.router.replace(value),
+            dismiss: vi.fn<Router['dismiss']>(),
+            dismissTo: vi.fn<Router['dismissTo']>(),
+            dismissAll: vi.fn<Router['dismissAll']>(),
+            canDismiss: vi.fn(() => false),
+            setParams: vi.fn() as any,
+            reload: vi.fn<Router['reload']>(),
+            prefetch: vi.fn<Router['prefetch']>(),
+        } as unknown as Router;
+
+        const hook = await renderHook(() => useNewSessionAgentInputPresentation({
+            theme: {
+                colors: {
+                    success: '#0f0',
+                    textDestructive: '#f00',
+                },
+            },
+            selectedMachine: null,
+            automationFeatureEnabled: true,
+            automationDraft: {
+                enabled: false,
+                name: '',
+                description: '',
+                scheduleKind: 'interval',
+                everyMinutes: 30,
+                cronExpr: '0 * * * *',
+                timezone: 'UTC',
+            },
+            effectiveAutomationDraft: {
+                enabled: false,
+                name: '',
+                description: '',
+                scheduleKind: 'interval',
+                everyMinutes: 30,
+                cronExpr: '0 * * * *',
+                timezone: 'UTC',
+            },
+            setAutomationDraft: vi.fn(),
+            repoScmSnapshot: null,
+            checkoutChipModel: {
+                selectedOptionId: 'current_path',
+                options: [{ id: 'current_path', kind: 'current_path', path: '/repo' }],
+            },
+            checkoutPickerOpen: false,
+            setCheckoutPickerOpen: vi.fn(),
+            checkoutCreationDraft: null,
+            selectedMachineId: 'm1',
+            selectedPath: '/repo',
+            setSelectedPath: vi.fn(),
+            setCheckoutCreationDraft: vi.fn(),
+            pendingGitWorktreeBaseRefRef: { current: null },
+            pendingGitWorktreeSourceKindRef: { current: 'current' },
+            shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
+            router,
+            sessionPrompt: 'hello',
+            setSessionPrompt,
+            handleCreateSession: vi.fn(),
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentType: 'claude',
+            agentOptionState: null,
+            setAgentOptionStateForCurrentAgent: vi.fn(),
+            connectedServicesAuthChip: null,
+            showAutomationActionChips: false,
+            showServerPickerChip: false,
+            targetServerId: 'srv',
+            targetServerName: 'Server A',
+            mcpChip: null,
+            directSessionsFeatureEnabled: false,
+            supportsDirectTranscriptStorage: false,
+            transcriptStorage: 'persisted',
+            hasUserSelectedTranscriptStorageRef: { current: false },
+            setTranscriptStorage: vi.fn(),
+            selectedMachineIsWindows: false,
+            effectiveWindowsRemoteSessionLaunchMode: null,
+            windowsTerminalAvailable: false,
+            setWindowsRemoteSessionLaunchModeOverride: vi.fn(),
+        }));
+
+        const chip = hook.getCurrent().agentInputExtraActionChips.find((c) => c.key === 'new-session-link-file');
+        expect(chip).toBeTruthy();
+
+        // New-session link-file must behave like the existing-session chip: it opens a popover with a file browser,
+        // not a separate modal or an extra "Link file" button inside the popover.
+        expect(chip?.collapsedAction).toBeUndefined();
+        expect(chip?.collapsedContentPopover).toBeTruthy();
+        if (!chip?.collapsedContentPopover) {
+            throw new Error('Expected link-file chip to define collapsedContentPopover');
+        }
+        // Popover content must be scroll-enabled so it doesn't collapse to 0-height on native.
+        expect(chip.collapsedContentPopover.scrollEnabled).toBe(true);
+        const renderContent = chip.collapsedContentPopover.renderContent;
+        if (typeof renderContent !== 'function') {
+            throw new Error('Expected collapsedContentPopover.renderContent to be a function');
+        }
+
+        const contentNode = renderContent({ requestClose: vi.fn(), maxHeight: 300 });
+        if (!React.isValidElement(contentNode)) {
+            throw new Error('Expected link-file popover content to be a React element');
+        }
+
+        const { LinkFilePickerPopoverContent } = await import('@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent');
+        expect(contentNode.type).toBe(LinkFilePickerPopoverContent);
+        const { onPickPath } = contentNode.props as { onPickPath: (path: string) => void };
+        expect(typeof onPickPath).toBe('function');
+
+        onPickPath('/repo/file.ts');
+
+        expect(setSessionPromptSpy).toHaveBeenCalled();
+        const arg = setSessionPromptSpy.mock.calls.at(-1)?.[0];
+        expect(typeof arg).toBe('string');
+        expect(currentPrompt).toBe('hello @file.ts ');
+
+        // The link-file chip must render a visible interactive chip in the action bar (not only an action-menu item).
+        setSessionPromptSpy.mockClear();
+
+        const toggleCollapsedPopover = vi.fn();
+        const chipUi = chip!.render({
+            chipStyle: () => ({}),
+            showLabel: true,
+            iconColor: '#000',
+            textStyle: {},
+            countTextStyle: {},
+            chipAnchorRef: { current: null },
+            popoverAnchorRef: { current: null },
+            toggleCollapsedPopover,
+        });
+        if (!React.isValidElement(chipUi)) {
+            throw new Error('Expected chip renderer to return an element');
+        }
+        const screen = await renderScreen(chipUi);
+        expect(screen.findByTestId('new-session-link-file-chip')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('new-session-link-file-chip');
+        await flushHookEffects({ cycles: 1, turns: 1 });
+        expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-link-file');
+    });
+});

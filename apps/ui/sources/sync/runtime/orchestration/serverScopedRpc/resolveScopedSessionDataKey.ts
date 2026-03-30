@@ -1,5 +1,5 @@
 import { type V2SessionByIdResponse, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -9,7 +9,12 @@ function getOrCreateTokenCacheKey(token: string): string {
   // Avoid using the raw token in cache keys (accidental leaks in error/debug output),
   // but also avoid collision-prone hashing (which can cause cross-token cache reuse).
   let key = tokenCacheKeyByToken.get(token);
-  if (key) return key;
+  if (key) {
+    // Refresh LRU ordering.
+    tokenCacheKeyByToken.delete(token);
+    tokenCacheKeyByToken.set(token, key);
+    return key;
+  }
 
   const cryptoAny = (globalThis as any).crypto as { randomUUID?: () => string } | undefined;
   key =
@@ -17,6 +22,13 @@ function getOrCreateTokenCacheKey(token: string): string {
       ? cryptoAny.randomUUID()
       : `tk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
   tokenCacheKeyByToken.set(token, key);
+
+  const max = readMaxSessionKeyCacheEntriesFromEnv();
+  while (tokenCacheKeyByToken.size > max) {
+    const oldest = tokenCacheKeyByToken.keys().next();
+    if (oldest.done) break;
+    tokenCacheKeyByToken.delete(oldest.value);
+  }
   return key;
 }
 
@@ -71,13 +83,19 @@ async function fetchSessionCryptoContext(params: Readonly<{
   const timeoutId = controller ? setTimeout(() => controller.abort(), Math.max(1, params.timeoutMs)) : null;
 
   try {
-    const response = await runtimeFetch(`${params.serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${params.token}`,
-        'Content-Type': 'application/json',
+    const response = await runtimeFetchWithServerReachability({
+      serverUrl: params.serverUrl,
+      token: params.token,
+      url: `${params.serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}`,
+      init: {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${params.token}`,
+          'Content-Type': 'application/json',
+        },
+        ...(controller ? { signal: controller.signal } : {}),
       },
-      ...(controller ? { signal: controller.signal } : {}),
+      timeoutMs: params.timeoutMs,
     });
     if (!response.ok) return { encryptionMode: 'unknown', sessionDataKey: null };
 

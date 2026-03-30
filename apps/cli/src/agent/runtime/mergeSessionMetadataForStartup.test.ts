@@ -42,6 +42,79 @@ describe('mergeSessionMetadataForStartup', () => {
         expect(merged.hostPid).toBe(2);
     });
 
+    it('uses runtime machine identity fields when attaching with runtime identity replacement', () => {
+        const nowMs = 1;
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                path: '/workspace/source',
+                host: 'source-host',
+                homeDir: '/Users/source',
+                happyHomeDir: '/Users/source/.happier',
+                machineId: 'machine-source',
+            } as any,
+            next: {
+                path: '/workspace/target',
+                host: 'target-host',
+                homeDir: '/Users/target',
+                happyHomeDir: '/Users/target/.happier',
+                machineId: 'machine-target',
+                hostPid: 2,
+            } as any,
+            nowMs,
+            mode: 'attach',
+            attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+        });
+
+        expect(merged.path).toBe('/workspace/target');
+        expect(merged.host).toBe('target-host');
+        expect(merged.homeDir).toBe('/Users/target');
+        expect(merged.happyHomeDir).toBe('/Users/target/.happier');
+        expect(merged.machineId).toBe('machine-target');
+        expect(merged.hostPid).toBe(2);
+    });
+
+    it('drops workspace identity fields from metadata when attaching', () => {
+        const nowMs = 1;
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                workspaceId: 'ws_authoritative',
+                workspaceLocationId: 'loc_authoritative',
+                workspaceCheckoutId: 'checkout_authoritative',
+            } as any,
+            next: {
+                workspaceId: 'ws_wrong',
+                workspaceLocationId: 'loc_wrong',
+                workspaceCheckoutId: 'checkout_wrong',
+                hostPid: 2,
+            } as any,
+            nowMs,
+            mode: 'attach',
+        });
+
+        expect((merged as Record<string, unknown>).workspaceId).toBeUndefined();
+        expect((merged as Record<string, unknown>).workspaceLocationId).toBeUndefined();
+        expect((merged as Record<string, unknown>).workspaceCheckoutId).toBeUndefined();
+        expect(merged.hostPid).toBe(2);
+    });
+
+    it('does not seed workspace identity from next metadata when attaching', () => {
+        const nowMs = 1;
+        const merged = mergeSessionMetadataForStartup({
+            current: {} as any,
+            next: {
+                workspaceId: 'ws_wrong',
+                workspaceLocationId: 'loc_wrong',
+                workspaceCheckoutId: 'checkout_wrong',
+            } as any,
+            nowMs,
+            mode: 'attach',
+        });
+
+        expect((merged as Record<string, unknown>).workspaceId).toBeUndefined();
+        expect((merged as Record<string, unknown>).workspaceLocationId).toBeUndefined();
+        expect((merged as Record<string, unknown>).workspaceCheckoutId).toBeUndefined();
+    });
+
     it('does not seed permissionMode from next metadata when attaching', () => {
         const nowMs = 50;
         const merged = mergeSessionMetadataForStartup({
@@ -141,6 +214,7 @@ describe('mergeSessionMetadataForStartup', () => {
             acpSessionModeOverride: { modeId: 'plan', updatedAt: 1 } as any,
         } as any);
 
+        expect((merged as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 101, modeId: 'plan' });
         expect((merged as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 101, modeId: 'plan' });
     });
 
@@ -166,5 +240,74 @@ describe('mergeSessionMetadataForStartup', () => {
         } as any);
 
         expect((merged as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 101, modelId: 'gpt-5-codex-high' });
+    });
+
+    it('does not seed mcpSelectionV1 from next metadata when attaching', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {} as any,
+            next: {
+                mcpSelectionV1: {
+                    v: 1,
+                    managedServersEnabled: false,
+                    forceIncludeServerIds: ['server-a'],
+                    forceExcludeServerIds: [],
+                },
+            } as any,
+            nowMs: 50,
+            mode: 'attach',
+        } as any);
+
+        expect((merged as any).mcpSelectionV1).toBeUndefined();
+    });
+
+    it('preserves existing mcpSelectionV1 when attaching', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                mcpSelectionV1: {
+                    v: 1,
+                    managedServersEnabled: false,
+                    forceIncludeServerIds: ['server-a'],
+                    forceExcludeServerIds: ['server-b'],
+                },
+            } as any,
+            next: {
+                mcpSelectionV1: {
+                    v: 1,
+                    managedServersEnabled: true,
+                    forceIncludeServerIds: [],
+                    forceExcludeServerIds: [],
+                },
+            } as any,
+            nowMs: 50,
+            mode: 'attach',
+        } as any);
+
+        expect((merged as any).mcpSelectionV1).toEqual({
+            v: 1,
+            managedServersEnabled: false,
+            forceIncludeServerIds: ['server-a'],
+            forceExcludeServerIds: ['server-b'],
+        });
+    });
+
+    it('can remove specific attach-only metadata keys during startup merge', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                acpSessionModesV1: { v: 1, provider: 'codex' },
+                acpSessionModelsV1: { v: 1, provider: 'codex' },
+                acpConfigOptionsV1: { v: 1, provider: 'codex' },
+                permissionMode: 'read-only',
+            } as any,
+            next: { hostPid: 42 } as any,
+            nowMs: 50,
+            mode: 'attach',
+            metadataKeysToUnsetOnAttach: ['acpSessionModesV1', 'acpSessionModelsV1', 'acpConfigOptionsV1'],
+        } as any);
+
+        expect((merged as any).acpSessionModesV1).toBeUndefined();
+        expect((merged as any).acpSessionModelsV1).toBeUndefined();
+        expect((merged as any).acpConfigOptionsV1).toBeUndefined();
+        expect(merged.permissionMode).toBe('read-only');
+        expect((merged as any).hostPid).toBe(42);
     });
 });

@@ -50,6 +50,7 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
             <View style={{ flexBasis: 0, flexGrow: 1 }}>
                 {content ? (
                     <Animated.View
+                        pointerEvents="box-none"
                         style={[{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }, animatedStyle]}
                     >
                         {content}

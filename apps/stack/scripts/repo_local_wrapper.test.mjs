@@ -1,25 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
 import { resolveStablePortStart } from './utils/expo/metro_ports.mjs';
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal, stdout, stderr }));
-  });
-}
 
 async function listenOnPort(port) {
   const srv = createServer((socket) => {
@@ -160,6 +148,28 @@ test('repo-local wrapper preserves flag-only tui args', async () => {
   assert.equal(data.args[2], '--json');
 });
 
+test('repo-local wrapper preserves explicit tui tauri flags', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const res = await runNode(
+    [join(packageRoot, 'scripts', 'repo_local.mjs'), 'tui', '--tauri', '--mobile', '--dry-run'],
+    {
+      cwd: repoRoot,
+      env: process.env,
+    }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.equal(data.args[1], 'tui');
+  assert.equal(data.args[2], '--tauri');
+  assert.equal(data.args[3], '--mobile');
+  assert.equal(data.env.HAPPIER_STACK_CLI_BUILD_MODE, 'always');
+});
+
 test('repo-local wrapper forwards --help when a subcommand is provided', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir); // apps/stack
@@ -225,6 +235,27 @@ test('repo-local wrapper maps `mobile:install` to stack mobile:install for the r
   assert.ok(
     data.args.some((a) => String(a).startsWith('--name=')),
     `expected wrapper to set a default --name=... for mobile:install:\n${JSON.stringify(data.args, null, 2)}`
+  );
+});
+
+test('repo-local wrapper uses a development-friendly default name for `mobile:install --app-env=development`', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+
+  const res = await runNode(
+    [join(packageRoot, 'scripts', 'repo_local.mjs'), 'mobile:install', '--app-env=development', '--dry-run'],
+    {
+      cwd: repoRoot,
+      env: process.env,
+    }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.ok(
+    data.args.includes('--name=Happier Dev (Local)'),
+    `expected development install to default to a development-friendly app name:\n${JSON.stringify(data.args, null, 2)}`
   );
 });
 
@@ -437,6 +468,7 @@ test('repo-local wrapper persists a stable pinned server port when none is prese
             HAPPIER_STACK_STORAGE_DIR: stacksRoot,
             HAPPIER_STACK_SERVER_PORT_BASE: String(reserved.base),
             HAPPIER_STACK_SERVER_PORT_RANGE: String(reserved.range),
+            HAPPIER_STACK_REPO_LOCAL_AUTO_INSTALL: '0',
             HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
           },
         }

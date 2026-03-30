@@ -12,12 +12,15 @@
  * - Therefore, reading/merging user settings here is redundant and can introduce bugs (stale merges, invalid JSON).
  */
 
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
-import { projectPath } from '@/projectPath';
+import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJavaScriptRuntimeMessage';
+import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
 import { isBun } from '@/utils/runtime';
+import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
 
 export interface GenerateHookSettingsOptions {
     enableLocalPermissionBridge?: boolean;
@@ -26,6 +29,9 @@ export interface GenerateHookSettingsOptions {
 
 type ClaudeHookSettingsOverlay = Readonly<{
     hooks: Record<string, unknown>;
+    permissions?: Readonly<{
+        allow?: readonly string[];
+    }>;
 }>;
 
 /**
@@ -35,7 +41,11 @@ type ClaudeHookSettingsOverlay = Readonly<{
  * @returns Path to the generated settings file
  */
 export function generateHookSettingsFile(port: number, options: GenerateHookSettingsOptions = {}): string {
-    const hooksDir = join(configuration.happyHomeDir, 'tmp', 'hooks');
+    const hooksDir = join(
+        configuration.happyHomeDir,
+        'tmp',
+        resolveReleaseRingScopedBasename('hooks', configuration.publicReleaseRing),
+    );
     mkdirSync(hooksDir, { recursive: true });
 
     // Unique filename per process to avoid conflicts
@@ -43,9 +53,14 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
     const filepath = join(hooksDir, filename);
 
     // Path to the hook forwarder script
-    const forwarderScript = resolve(projectPath(), 'scripts', 'session_hook_forwarder.cjs');
-    // Prefer the current Node binary when available to avoid PATH-related failures on Windows.
-    const nodeExecutable = isBun() ? 'node' : process.execPath;
+    const forwarderScript = resolveCliRuntimeAssetPath('scripts', 'session_hook_forwarder.cjs');
+    const nodeExecutable = resolveJavaScriptRuntimeExecutable({ isBunRuntime: isBun() });
+
+    // Fail closed if no JavaScript runtime is available (binary-safe runtime contract)
+    if (!nodeExecutable) {
+        throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('session hook forwarder'));
+    }
+
     const hookCommand = `${JSON.stringify(nodeExecutable)} ${JSON.stringify(forwarderScript)} ${port}`;
 
     const hooks: Record<string, unknown> = {
@@ -63,7 +78,7 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
     };
 
     if (options.enableLocalPermissionBridge) {
-        const permissionForwarderScript = resolve(projectPath(), 'scripts', 'permission_hook_forwarder.cjs');
+        const permissionForwarderScript = resolveCliRuntimeAssetPath('scripts', 'permission_hook_forwarder.cjs');
         const secretPart =
             typeof options.permissionHookSecret === 'string' && options.permissionHookSecret.length > 0
                 ? ` ${JSON.stringify(options.permissionHookSecret)}`
@@ -83,7 +98,15 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
         ];
     }
 
-    const settings: ClaudeHookSettingsOverlay = { hooks };
+    const settings: ClaudeHookSettingsOverlay = {
+        hooks,
+        permissions: {
+            allow: [
+                'mcp__happier__change_title',
+                'mcp__happier__session_title_set',
+            ],
+        },
+    };
 
     writeFileSync(filepath, JSON.stringify(settings, null, 2));
     logger.debug(`[generateHookSettings] Created hook settings file: ${filepath}`);

@@ -5,10 +5,15 @@ import { HappyError } from '@/utils/errors/errors';
 import { tryShowDaemonUnavailableAlertForRpcError } from '@/utils/errors/daemonUnavailableAlert';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 
-export function useHappyAction(action: () => Promise<void>) {
+export type HappyActionMode = 'drop' | 'rerun_latest';
+
+export function useHappyAction(action: () => Promise<void>, options?: Readonly<{ mode?: HappyActionMode }>) {
     const [loading, setLoading] = React.useState(false);
     const loadingRef = React.useRef(false);
+    const pendingRerunRef = React.useRef(false);
     const mountedRef = useMountedRef();
+    const mode: HappyActionMode = options?.mode ?? 'drop';
+    const doActionRef = React.useRef<null | (() => void)>(null);
 
     const setLoadingSafe = React.useCallback((value: boolean) => {
         if (!mountedRef.current) return;
@@ -17,6 +22,9 @@ export function useHappyAction(action: () => Promise<void>) {
 
     const doAction = React.useCallback(() => {
         if (loadingRef.current) {
+            if (mode === 'rerun_latest') {
+                pendingRerunRef.current = true;
+            }
             return;
         }
         loadingRef.current = true;
@@ -59,8 +67,21 @@ export function useHappyAction(action: () => Promise<void>) {
             } finally {
                 loadingRef.current = false;
                 setLoadingSafe(false);
+
+                if (mode === 'rerun_latest' && pendingRerunRef.current) {
+                    pendingRerunRef.current = false;
+                    // Rerun on a later tick so we don't recurse within the same call stack.
+                    // This keeps state updates predictable and avoids surprising sync reentrancy.
+                    Promise.resolve().then(() => {
+                        if (!mountedRef.current) return;
+                        doActionRef.current?.();
+                    });
+                }
             }
         })();
-    }, [action, mountedRef, setLoadingSafe]);
+    }, [action, mode, mountedRef, setLoadingSafe]);
+
+    doActionRef.current = doAction;
+
     return [loading, doAction] as const;
 }

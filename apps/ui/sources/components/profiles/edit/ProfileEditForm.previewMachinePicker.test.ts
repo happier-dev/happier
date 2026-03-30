@@ -1,8 +1,14 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
-import { ProfileEditForm } from './ProfileEditForm';
+import { renderScreen } from '@/dev/testkit';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import {
+    installProfileEditFormModuleMocks,
+    profileEditFormTestState,
+} from './profileEditFormTestHelpers';
 
 (
     globalThis as typeof globalThis & {
@@ -11,98 +17,50 @@ import { ProfileEditForm } from './ProfileEditForm';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const capture = vi.hoisted(() => ({
-    routerPush: vi.fn(),
-    modalShow: vi.fn(),
     previewMachinePress: null as null | (() => void),
     reset() {
-        this.routerPush.mockReset();
-        this.modalShow.mockReset();
         this.previewMachinePress = null;
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'ios',
-        select: (spec: { ios?: unknown; default?: unknown }) => (spec && 'ios' in spec ? spec.ios : spec?.default),
-    },
-    View: 'View',
-    Text: 'Text',
-    TextInput: 'TextInput',
-    Pressable: 'Pressable',
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    Linking: {},
-    useWindowDimensions: () => ({ height: 800, width: 400 }),
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: capture.routerPush }),
-    useLocalSearchParams: () => ({}),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                header: { tint: '#000' },
-                textSecondary: '#666',
-                button: { secondary: { tint: '#000' }, primary: { background: '#00f' } },
-                surface: '#fff',
-                text: '#000',
-                status: { connected: '#0f0', disconnected: '#f00' },
-                input: { placeholder: '#999' },
+installProfileEditFormModuleMocks({
+    reactNative: () =>
+        createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (spec: { ios?: unknown; default?: unknown }) =>
+                    spec && 'ios' in spec ? spec.ios : spec?.default,
             },
-        },
-        rt: { themeName: 'light' },
-    }),
-    StyleSheet: { create: () => ({}) },
-}));
+            View: 'View',
+            Text: 'Text',
+            TextInput: 'TextInput',
+            Pressable: 'Pressable',
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            useWindowDimensions: () => ({ height: 800, width: 400 }),
+        }),
+    storageModule: () =>
+        createStorageModuleStub({
+            useSetting: () => ({}),
+            useSettings: () => ({}),
+            useAllMachines: () => [{ id: 'm1', metadata: { displayName: 'M1' } }],
+            useMachine: () => null,
+            useSettingMutable: (key: string) => {
+                if (key === 'favoriteMachines') return [[], vi.fn()] as const;
+                if (key === 'secrets') return [[], vi.fn()] as const;
+                if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
+                return [[], vi.fn()] as const;
+            },
+        }),
+});
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: (...args: unknown[]) => capture.modalShow(...args),
-        alert: vi.fn(),
-    },
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: () => ({}),
-    useAllMachines: () => [{ id: 'm1', metadata: { displayName: 'M1' } }],
-    useMachine: () => null,
-    useSettingMutable: (key: string) => {
-        if (key === 'favoriteMachines') return [[], vi.fn()] as const;
-        if (key === 'secrets') return [[], vi.fn()] as const;
-        if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
-        return [[], vi.fn()] as const;
-    },
-}));
-
-vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
-    MachineSelector: () => null,
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
 }));
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
     useCLIDetection: () => ({ status: 'unknown' }),
-}));
-
-vi.mock('@/components/profiles/environmentVariables/EnvironmentVariablesList', () => ({
-    EnvironmentVariablesList: () => null,
-}));
-
-vi.mock('@/components/ui/forms/SessionTypeSelector', () => ({
-    SessionTypeSelector: () => null,
-}));
-
-vi.mock('@/components/ui/forms/OptionTiles', () => ({
-    OptionTiles: () => null,
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
@@ -111,62 +69,17 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
+    DEFAULT_AGENT_ID: 'claude',
     getAgentCore: () => ({ permissions: { modeGroup: 'default' } }),
 }));
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: () => null,
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-}));
-
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: { title?: string; onPress?: () => void }) => {
-        if (props?.title === 'profiles.previewMachine.itemTitle' && typeof props.onPress === 'function') {
-            capture.previewMachinePress = props.onPress;
+    Item: ({ title, onPress }: { title?: string; onPress?: () => void }) => {
+        if (title === 'profiles.previewMachine.itemTitle' && typeof onPress === 'function') {
+            capture.previewMachinePress = onPress;
         }
         return null;
     },
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: () => null,
-}));
-
-vi.mock('@/utils/sessions/machineUtils', () => ({
-    isMachineOnline: () => true,
-}));
-
-vi.mock('@/sync/domains/profiles/profileUtils', () => ({
-    getBuiltInProfileDocumentation: () => null,
-}));
-
-vi.mock('@/sync/domains/permissions/permissionTypes', () => ({
-    normalizeProfileDefaultPermissionMode: <T,>(value: T) => value,
-}));
-
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeLabelForAgentType: () => '',
-    getPermissionModeOptionsForAgentType: () => [],
-    normalizePermissionModeForAgentType: <T,>(value: T) => value,
-}));
-
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 900 },
-}));
-
-vi.mock('@/utils/profiles/envVarTemplate', () => ({
-    parseEnvVarTemplate: () => ({ variables: [] }),
-}));
-
-vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementModal: () => null,
 }));
 
 function buildProfile(): AIBackendProfile {
@@ -175,7 +88,15 @@ function buildProfile(): AIBackendProfile {
         name: 'P',
         environmentVariables: [],
         defaultPermissionModeByAgent: {},
+        defaultPermissionModeByTargetKey: {},
+        defaultPersistenceModeByAgent: {},
+        defaultPersistenceModeByTargetKey: {},
         compatibility: { claude: true, codex: true, gemini: true },
+        compatibilityByTargetKey: {
+            'agent:claude': true,
+            'agent:codex': true,
+            'agent:gemini': true,
+        },
         envVarRequirements: [],
         isBuiltIn: false,
         createdAt: 0,
@@ -187,17 +108,18 @@ function buildProfile(): AIBackendProfile {
 describe('ProfileEditForm (native preview machine picker)', () => {
     it('opens a picker screen instead of a modal overlay on native', async () => {
         capture.reset();
+        profileEditFormTestState.routerPushSpy.mockReset();
+        profileEditFormTestState.modalShowSpy.mockReset();
+        profileEditFormTestState.modalAlertSpy.mockReset();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ProfileEditForm, {
-                    profile: buildProfile(),
-                    machineId: null,
-                    onSave: () => true,
-                    onCancel: vi.fn(),
-                }),
-            );
-        });
+        const { ProfileEditForm } = await import('./ProfileEditForm');
+
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile: buildProfile(),
+            machineId: null,
+            onSave: () => true,
+            onCancel: vi.fn(),
+        }));
 
         expect(capture.previewMachinePress).toBeTruthy();
 
@@ -205,9 +127,9 @@ describe('ProfileEditForm (native preview machine picker)', () => {
             capture.previewMachinePress?.();
         });
 
-        expect(capture.modalShow).not.toHaveBeenCalled();
-        expect(capture.routerPush).toHaveBeenCalledTimes(1);
-        expect(capture.routerPush).toHaveBeenCalledWith({
+        expect(profileEditFormTestState.modalShowSpy).not.toHaveBeenCalled();
+        expect(profileEditFormTestState.routerPushSpy).toHaveBeenCalledTimes(1);
+        expect(profileEditFormTestState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new/pick/preview-machine',
             params: {},
         });

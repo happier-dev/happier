@@ -48,6 +48,7 @@ describe('messages domain: resetSessionMessages', () => {
                 content: { type: 'text', text: 'hello' },
             } as any,
         ]);
+        domain.applyMessagesLoaded('s1');
 
         expect(get().sessionMessages.s1.isLoaded).toBe(true);
         expect(get().sessionMessages.s1.messageIdsOldestFirst).toHaveLength(1);

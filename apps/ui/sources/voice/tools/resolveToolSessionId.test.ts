@@ -10,13 +10,13 @@ describe('resolveToolSessionId', () => {
     expect(resolveToolSessionId({ explicitSessionId: 's_explicit', currentSessionId: 's_current' })).toBe('s_explicit');
   });
 
-  it('uses global primaryActionSessionId when scope is global', async () => {
+  it('prefers currentSessionId over a stale global primaryActionSessionId when scope is global', async () => {
     vi.resetModules();
     const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
     const { resolveToolSessionId } = await import('./resolveToolSessionId');
 
     useVoiceTargetStore.setState({ scope: 'global', primaryActionSessionId: 's_global' } as any);
-    expect(resolveToolSessionId({ explicitSessionId: null, currentSessionId: 's_current' })).toBe('s_global');
+    expect(resolveToolSessionId({ explicitSessionId: null, currentSessionId: 's_current' })).toBe('s_current');
   });
 
   it('falls back to currentSessionId when scope is global but no target is set', async () => {

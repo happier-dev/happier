@@ -1,21 +1,23 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-  const actual = await vi.importActual<typeof import('react-native')>('react-native');
-  return {
-    ...actual,
-    Platform: { ...actual.Platform, OS: 'ios' },
-  };
+installConnectedServicesCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+        });
+    },
+    searchParams: { serviceId: 'openai-codex', profileId: 'work' },
 });
-
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: vi.fn(), push: vi.fn() }),
-  useLocalSearchParams: () => ({ serviceId: 'openai-codex', profileId: 'work' }),
-}));
 
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => false);
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -24,10 +26,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
-}));
-
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
 }));
 
 vi.mock('@/components/ui/navigation/OAuthView', () => ({
@@ -45,11 +43,9 @@ describe('ConnectedServiceOauthView gating', () => {
     const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceOauthView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceOauthView />)).tree;
 
-    expect(tree.root.findAllByType('OAuthViewUnsupported' as any).length).toBeGreaterThan(0);
-    expect(tree.root.findAllByType('OAuthView' as any)).toHaveLength(0);
+    expect(tree.findAllByType('OAuthViewUnsupported' as any).length).toBeGreaterThan(0);
+    expect(tree.findAllByType('OAuthView' as any)).toHaveLength(0);
   });
 });

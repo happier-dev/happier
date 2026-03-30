@@ -1,17 +1,30 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { installCodeDiffCommonModuleMocks } from './codeDiffTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const clearLayoutCacheOnUpdateSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-}));
+installCodeDiffCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            useWindowDimensions: () => ({ width: 1200, height: 800 }),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock();
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    },
+});
 
 vi.mock('@shopify/flash-list', () => ({
     FlashList: React.forwardRef((props: any, ref: any) => {
@@ -32,32 +45,8 @@ vi.mock('@shopify/flash-list', () => ({
     }),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                divider: '#ddd',
-                surfaceHigh: '#fff',
-                surface: '#fff',
-                surfaceHighest: '#fff',
-                text: '#111',
-                textSecondary: '#666',
-                textLink: '#00f',
-                warning: '#f00',
-                accent: { indigo: '#00f' },
-                success: '#0f0',
-                warningCritical: '#f00',
-            },
-        }),
-    },
-}));
-
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
 }));
 
 vi.mock('@/components/ui/code/diff/pierre/PierreScrollRootVirtualizerProvider', () => ({
@@ -80,9 +69,7 @@ describe('DiffFilesListView (FlashList layout cache)', () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <DiffFilesListView
+        tree = (await renderScreen(<DiffFilesListView
                     files={[
                         { key: 'k1', filePath: 'src/a.ts', unifiedDiff: 'diff\n', oldText: null, newText: null },
                         { key: 'k2', filePath: 'src/b.ts', unifiedDiff: 'diff\n', oldText: null, newText: null },
@@ -94,16 +81,12 @@ describe('DiffFilesListView (FlashList layout cache)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     virtualizeFileList
-                />,
-            );
-        });
+                />)).tree;
 
-        const pressables = tree.root.findAllByType('Pressable' as any);
-        expect(pressables.length).toBeGreaterThan(0);
+        const pressable = findTestInstanceByTypeContainingText(tree, 'Pressable', 'src/a.ts');
+        expect(pressable).toBeTruthy();
 
-        act(() => {
-            pressables[0]!.props.onPress();
-        });
+        pressTestInstance(pressable, 'DiffFilesListView file row');
 
         expect(clearLayoutCacheOnUpdateSpy).toHaveBeenCalledTimes(1);
         expect(onToggleExpanded).toHaveBeenCalledWith('k1');
@@ -120,9 +103,7 @@ describe('DiffFilesListView (FlashList layout cache)', () => {
         ] as any;
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <DiffFilesListView
+        tree = (await renderScreen(<DiffFilesListView
                     files={files}
                     expandedKeys={new Set()}
                     onToggleExpanded={vi.fn()}
@@ -131,9 +112,7 @@ describe('DiffFilesListView (FlashList layout cache)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     virtualizeFileList
-                />,
-            );
-        });
+                />)).tree;
 
         clearLayoutCacheOnUpdateSpy.mockClear();
 
@@ -153,5 +132,35 @@ describe('DiffFilesListView (FlashList layout cache)', () => {
         });
 
         expect(clearLayoutCacheOnUpdateSpy).toHaveBeenCalledTimes(0);
+    });
+
+    it('exposes an imperative handle to clear FlashList layout cache (for programmatic expansion)', async () => {
+        clearLayoutCacheOnUpdateSpy.mockClear();
+
+        const { DiffFilesListView } = await import('./DiffFilesListView');
+
+        const ref = React.createRef<any>();
+
+        await renderScreen(<DiffFilesListView
+                    ref={ref}
+                    files={[
+                        { key: 'k1', filePath: 'src/a.ts', unifiedDiff: 'diff\n', oldText: null, newText: null },
+                    ] as any}
+                    expandedKeys={new Set()}
+                    onToggleExpanded={vi.fn()}
+                    canRenderInlineDiffs={true}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    virtualizeFileList
+                />);
+
+        expect(ref.current).toBeTruthy();
+
+        act(() => {
+            ref.current.clearLayoutCacheOnUpdate();
+        });
+
+        expect(clearLayoutCacheOnUpdateSpy).toHaveBeenCalledTimes(1);
     });
 });

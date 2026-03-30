@@ -1,20 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 describe('hydrateReplayDialogFromTranscript (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
   let server: Server | null = null;
   let happyHomeDir = '';
+  let envScope = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR']);
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-replay-hydrate-'));
+    envScope = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR']);
+    happyHomeDir = await createTempDir('happier-cli-replay-hydrate-');
   });
 
   afterEach(async () => {
@@ -25,15 +23,9 @@ describe('hydrateReplayDialogFromTranscript (integration)', () => {
     }
     server = null;
     if (happyHomeDir) {
-      await rm(happyHomeDir, { recursive: true, force: true });
+      await removeTempDir(happyHomeDir);
     }
-
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    envScope.restore();
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -98,9 +90,11 @@ describe('hydrateReplayDialogFromTranscript (integration)', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Failed to resolve replay hydrate server address');
 
-    process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
-    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
-    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    envScope.patch({
+      HAPPIER_SERVER_URL: `http://127.0.0.1:${address.port}`,
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+      HAPPIER_HOME_DIR: happyHomeDir,
+    });
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
@@ -190,9 +184,11 @@ describe('hydrateReplayDialogFromTranscript (integration)', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Failed to resolve replay hydrate server address');
 
-    process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
-    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
-    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    envScope.patch({
+      HAPPIER_SERVER_URL: `http://127.0.0.1:${address.port}`,
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+      HAPPIER_HOME_DIR: happyHomeDir,
+    });
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
@@ -291,9 +287,11 @@ describe('hydrateReplayDialogFromTranscript (integration)', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Failed to resolve replay hydrate server address');
 
-    process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
-    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
-    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    envScope.patch({
+      HAPPIER_SERVER_URL: `http://127.0.0.1:${address.port}`,
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+      HAPPIER_HOME_DIR: happyHomeDir,
+    });
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
@@ -308,5 +306,85 @@ describe('hydrateReplayDialogFromTranscript (integration)', () => {
     expect(res).not.toBeNull();
     expect((res as any)?.synopsisText).toBe('SYNOPSIS_OK');
     expect(res?.dialog.map((v) => v.text)).toEqual(['hello', 'reply']);
+  });
+
+  it('respects caller max dialog limit when replaying large transcripts', async () => {
+    const sessionId = 'sess_plain_limit_1';
+
+    const sessionRow = {
+      id: sessionId,
+      seq: 220,
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      archivedAt: null,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({ flavor: 'claude', path: '/tmp' }),
+      metadataVersion: 0,
+      agentState: null,
+      agentStateVersion: 0,
+      pendingCount: 0,
+      pendingVersion: 0,
+      dataEncryptionKey: null,
+      share: null,
+    };
+
+    const messages = Array.from({ length: 220 }, (_unused, index) => ({
+      seq: index + 1,
+      createdAt: index + 1,
+      content: {
+        t: 'plain',
+        v: { role: 'user', content: { type: 'text', text: `message-${index + 1}` } },
+      },
+    }));
+
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+
+      if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ session: sessionRow }));
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ messages }));
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => {
+      server!.listen(0, '127.0.0.1', () => resolve());
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Failed to resolve replay hydrate server address');
+
+    envScope.patch({
+      HAPPIER_SERVER_URL: `http://127.0.0.1:${address.port}`,
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+      HAPPIER_HOME_DIR: happyHomeDir,
+    });
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
+
+    const { hydrateReplayDialogFromTranscript } = await import('./hydrateReplayDialogFromTranscript');
+
+    const res = await hydrateReplayDialogFromTranscript({
+      credentials: { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      previousSessionId: sessionId,
+      limit: 220,
+    });
+
+    expect(res).not.toBeNull();
+    expect(res?.dialog).toHaveLength(220);
+    expect(res?.dialog?.[0]?.text).toBe('message-1');
+    expect(res?.dialog?.[219]?.text).toBe('message-220');
   });
 });

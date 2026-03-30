@@ -1,22 +1,29 @@
 import * as React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installRestoreRouteCommonModuleMocks, resetRestoreRouteTestState } from './restoreRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'web',
-        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+installRestoreRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+            },
+            Dimensions: {
+                get: () => ({ width: 1400, height: 900, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 1400, height: 900, scale: 2, fontScale: 1 }),
+        });
     },
-    Dimensions: {
-        get: () => ({ width: 1400, height: 900, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 1400, height: 900, scale: 2, fontScale: 1 }),
-}));
+});
 
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
@@ -45,6 +52,7 @@ vi.mock('@/components/account/restore/RestoreScanComputerQrView', () => ({
 afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    resetRestoreRouteTestState();
 });
 describe('/restore (web desktop)', () => {
     it('defaults to the show-QR restore flow when the web environment is not mobile-like', async () => {
@@ -60,16 +68,15 @@ describe('/restore (web desktop)', () => {
         vi.resetModules();
         const { default: Screen } = await import('@/app/(app)/restore/index');
 
-        let tree: ReactTestRenderer | null = null;
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
-            act(() => {
-                tree = create(<Screen />);
-            });
-            const qrView = tree!.root.findAllByProps({ 'data-testid': 'RestoreQrView' });
+            screen = await renderScreen(<Screen />);
+            await act(async () => {});
+            const qrView = screen.findAllByType('div').filter((node) => node.props['data-testid'] === 'RestoreQrView');
             expect(qrView).toHaveLength(1);
         } finally {
-            act(() => {
-                tree?.unmount();
+            await act(async () => {
+                screen?.tree.unmount();
             });
         }
     });

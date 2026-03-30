@@ -2,13 +2,17 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { useScmTreeBadgeIndex } from './useScmTreeBadgeIndex';
+import { installRepositoryTreeCommonModuleMocks } from './repositoryTreeTestHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-}));
+installRepositoryTreeCommonModuleMocks();
+
+type UseScmTreeBadgeIndex = typeof import('./useScmTreeBadgeIndex').useScmTreeBadgeIndex;
+
+let useScmTreeBadgeIndex: UseScmTreeBadgeIndex;
 
 function makeSnapshot() {
     return {
@@ -29,7 +33,7 @@ function makeSnapshot() {
             writeRemoteFetch: false,
             writeRemotePull: false,
             writeRemotePush: false,
-            workspaceWorktreeCreate: false,
+            worktreeCreate: false,
             changeSetModel: 'index',
             supportedDiffAreas: ['pending'],
         },
@@ -67,22 +71,32 @@ function Harness(props: Readonly<{ snapshot: any | null }>) {
 
 describe('useScmTreeBadgeIndex', () => {
     it('defers index computation on web for progressive rendering', async () => {
-        vi.useFakeTimers();
+        ({ useScmTreeBadgeIndex } = await import('./useScmTreeBadgeIndex'));
+
         const snapshot = makeSnapshot();
+        let scheduledCompute: (() => void) | undefined;
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: TimerHandler) => {
+            scheduledCompute = () => {
+                if (typeof callback === 'function') {
+                    callback();
+                }
+            };
+            return 1 as ReturnType<typeof setTimeout>;
+        }) as typeof setTimeout);
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Harness snapshot={snapshot} />);
-        });
+        try {
+            let tree!: renderer.ReactTestRenderer;
+            tree = (await renderScreen(<Harness snapshot={snapshot} />)).tree;
 
-        expect(tree.root.findByType('Text').props.value).toBe('none');
+            expect(tree.findByType('Text').props.value).toBe('none');
 
-        await act(async () => {
-            vi.runAllTimers();
-        });
+            await act(async () => {
+                scheduledCompute?.();
+            });
 
-        expect(tree.root.findByType('Text').props.value).toBe('M:2:1');
-
-        vi.useRealTimers();
+            expect(tree.findByType('Text').props.value).toBe('M:2:1');
+        } finally {
+            setTimeoutSpy.mockRestore();
+        }
     });
 });

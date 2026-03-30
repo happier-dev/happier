@@ -10,7 +10,7 @@ import {
 describe('automationValidation', () => {
     it('normalizes automation name and description', () => {
         expect(normalizeAutomationName('  Nightly  ')).toBe('Nightly');
-        expect(normalizeAutomationName('   ')).toBe('Scheduled Session');
+        expect(normalizeAutomationName('   ')).toBe('Scheduled automation');
         expect(normalizeAutomationDescription('  Run docs  ')).toBe('Run docs');
         expect(normalizeAutomationDescription('')).toBeNull();
     });

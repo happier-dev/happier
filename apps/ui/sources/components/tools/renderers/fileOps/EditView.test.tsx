@@ -1,32 +1,31 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { describe, expect, it } from 'vitest';
+
+import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import {
+    fileOpsRendererModuleState,
+    installFileOpsRendererCommonModuleMocks,
+} from './fileOpsRendererTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-const diffSpy = vi.fn();
-vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
-    ToolDiffView: (props: any) => {
-        diffSpy(props);
-        return React.createElement('ToolDiffView', props);
+installFileOpsRendererCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'showLineNumbersInToolViews') return false;
+                return undefined;
+            },
+        });
     },
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'showLineNumbersInToolViews') return false;
-        return undefined;
-    },
-}));
+});
 
 describe('EditView', () => {
     it('truncates long edit strings by default', async () => {
-        diffSpy.mockClear();
+        fileOpsRendererModuleState.toolDiffSpy.mockClear();
         const { EditView } = await import('./EditView');
 
         const longText = Array.from({ length: 30 }, (_, i) => `line-${i}`).join('\n');
@@ -37,17 +36,15 @@ describe('EditView', () => {
             result: null,
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(EditView, makeToolViewProps(tool)));
-        });
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool)));
 
-        expect(diffSpy).toHaveBeenCalledWith(
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 showLineNumbers: false,
                 showPlusMinusSymbols: false,
             })
         );
-        expect(diffSpy).toHaveBeenCalledWith(
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 oldText: Array.from({ length: 20 }, (_, i) => `line-${i}`).join('\n'),
                 newText: Array.from({ length: 20 }, (_, i) => `line-${i}`).join('\n'),
@@ -56,7 +53,7 @@ describe('EditView', () => {
     });
 
     it('passes filePath to ToolDiffView when present in input', async () => {
-        diffSpy.mockClear();
+        fileOpsRendererModuleState.toolDiffSpy.mockClear();
         const { EditView } = await import('./EditView');
 
         const tool = makeToolCall({
@@ -66,11 +63,9 @@ describe('EditView', () => {
             result: null,
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(EditView, makeToolViewProps(tool)));
-        });
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool)));
 
-        expect(diffSpy).toHaveBeenCalledWith(
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 filePath: '/tmp/a.ts',
             }),
@@ -78,7 +73,7 @@ describe('EditView', () => {
     });
 
     it('shows full edit content when detailLevel=full', async () => {
-        diffSpy.mockClear();
+        fileOpsRendererModuleState.toolDiffSpy.mockClear();
         const { EditView } = await import('./EditView');
 
         const longText = Array.from({ length: 30 }, (_, i) => `line-${i}`).join('\n');
@@ -89,13 +84,9 @@ describe('EditView', () => {
             result: null,
         });
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(EditView, makeToolViewProps(tool, { detailLevel: 'full' }))
-            );
-        });
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool, { detailLevel: 'full' })));
 
-        expect(diffSpy).toHaveBeenCalledWith(
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 showLineNumbers: true,
                 showPlusMinusSymbols: true,

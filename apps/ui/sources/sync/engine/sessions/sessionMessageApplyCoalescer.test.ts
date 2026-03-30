@@ -24,7 +24,7 @@ describe('createSessionMessageApplyCoalescer', () => {
         vi.useRealTimers();
     });
 
-    it('coalesces multiple enqueues into a single flush per session', () => {
+    it('coalesces multiple enqueues into a single flush per session', async () => {
         const applied: Array<{ sessionId: string; messageIds: string[] }> = [];
         const applyBatch = vi.fn((sessionId: string, messages: NormalizedMessage[]) => {
             applied.push({ sessionId, messageIds: messages.map((m) => m.id) });
@@ -40,7 +40,7 @@ describe('createSessionMessageApplyCoalescer', () => {
 
         expect(applyBatch).not.toHaveBeenCalled();
 
-        vi.advanceTimersByTime(16);
+        await vi.runAllTimersAsync();
 
         expect(applyBatch).toHaveBeenCalledTimes(1);
         expect(applied).toEqual([{ sessionId: 's1', messageIds: ['m1', 'm2'] }]);
@@ -60,7 +60,7 @@ describe('createSessionMessageApplyCoalescer', () => {
         expect((applyBatch.mock.calls[0]?.[1] as NormalizedMessage[]).map((m) => m.id)).toEqual(['m1']);
     });
 
-    it('respects maxBatchSize and preserves order across flushes', () => {
+    it('respects maxBatchSize and preserves order across flushes', async () => {
         const batches: string[][] = [];
         const applyBatch = vi.fn((_sessionId: string, messages: NormalizedMessage[]) => {
             batches.push(messages.map((m) => m.id));
@@ -77,11 +77,11 @@ describe('createSessionMessageApplyCoalescer', () => {
 
         expect(batches).toEqual([['m1', 'm2']]);
 
-        vi.advanceTimersByTime(16);
+        await vi.runAllTimersAsync();
         expect(batches).toEqual([['m1', 'm2'], ['m3']]);
     });
 
-    it('exposes queued max seq for in-flight batches', () => {
+    it('exposes queued max seq for in-flight batches', async () => {
         const applyBatch = vi.fn();
         const coalescer = createSessionMessageApplyCoalescer({
             getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 200 }),
@@ -95,8 +95,27 @@ describe('createSessionMessageApplyCoalescer', () => {
 
         expect(coalescer.getQueuedMaxSeq('s1')).toBe(5);
 
-        vi.advanceTimersByTime(16);
+        await vi.runAllTimersAsync();
 
         expect(coalescer.getQueuedMaxSeq('s1')).toBe(0);
+    });
+
+    it('drops queued messages by id before a delayed flush', async () => {
+        const applyBatch = vi.fn();
+        const coalescer = createSessionMessageApplyCoalescer({
+            getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 200 }),
+            applyBatch,
+        });
+
+        coalescer.enqueue('s1', [
+            buildUserTextMessage('m1', 1),
+            buildUserTextMessage('m2', 2),
+        ]);
+
+        coalescer.dropQueuedMessageIds('s1', ['m1']);
+        await vi.runAllTimersAsync();
+
+        expect(applyBatch).toHaveBeenCalledTimes(1);
+        expect((applyBatch.mock.calls[0]?.[1] as NormalizedMessage[]).map((message) => message.id)).toEqual(['m2']);
     });
 });

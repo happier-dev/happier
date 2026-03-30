@@ -22,7 +22,7 @@ describe("githubConnect (AccountChange integration)", () => {
     });
 
     beforeEach(() => {
-        harness.restoreEnv();
+        harness.resetEnv();
         vi.unstubAllGlobals();
     });
 

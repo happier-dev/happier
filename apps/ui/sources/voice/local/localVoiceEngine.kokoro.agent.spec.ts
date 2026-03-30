@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
 vi.mock('@/voice/kokoro/runtime/synthesizeKokoroWav', () => ({
@@ -17,8 +17,20 @@ import {
   setPlatformOs,
 } from './localVoiceEngine.testHarness';
 
+let localVoiceEngine: typeof import('./localVoiceEngine');
+
+async function waitForAudioPlayer() {
+  await vi.waitFor(() => {
+    expect(createdAudioPlayers.length).toBeGreaterThan(0);
+  });
+}
+
 describe('local voice engine agent behavior (kokoro)', () => {
   registerLocalVoiceEngineHarnessHooks();
+
+  beforeEach(async () => {
+    localVoiceEngine = await import('./localVoiceEngine');
+  }, 180_000);
 
   it('agent mode auto-speaks via Kokoro provider when enabled', async () => {
     setPlatformOs('web');
@@ -80,14 +92,12 @@ describe('local voice engine agent behavior (kokoro)', () => {
         json: async () => ({ choices: [{ message: { content: 'Voice agent reply' } }] }),
       });
 
-    const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+    const { toggleLocalVoiceTurn } = localVoiceEngine;
 
     await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
     const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-    for (let i = 0; i < 2000 && createdAudioPlayers.length === 0; i++) {
-      await Promise.resolve();
-    }
+    await waitForAudioPlayer();
     expect(createdAudioPlayers.length).toBeGreaterThan(0);
     createdAudioPlayers[0].__emit('playbackStatusUpdate', { didJustFinish: true });
     await stopPromise;

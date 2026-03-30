@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
-import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
+import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakePermissionAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-permission-agent.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -98,41 +94,42 @@ function writeFakePermissionAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-permission-agent.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend permission deny cleanup', () => {
   it('aborts the in-flight prompt when permission is denied', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-perm-deny-'));
-    const scriptPath = writeFakePermissionAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-perm-deny-', async (dir) => {
+      const scriptPath = writeFakePermissionAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        permissionHandler: {
-          handleToolCall: async () => ({ decision: 'denied' }),
-        },
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 1_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          permissionHandler: {
+            handleToolCall: async () => ({ decision: 'denied' }),
+          },
+          transportHandler: createAcpTestTransportHandler({
+            initTimeoutMs: 1_000,
+            idleTimeoutMs: 1,
+          }),
+        });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'please run bash with permission');
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'please run bash with permission');
 
-      await expect(backend.waitForResponseComplete(250)).rejects.toMatchObject({ name: 'AbortError' });
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await expect(backend.waitForResponseComplete(250)).rejects.toMatchObject({ name: 'AbortError' });
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   });
 });

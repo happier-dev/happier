@@ -7,13 +7,16 @@ export function buildDaemonAuthNotice({
   stackName,
   internalServerUrl = '',
   daemonPid = null,
+  daemonRunning = null,
   authed = false,
   // Let callers opt out if daemon isn't intended to run.
   startDaemon = true,
 } = {}) {
   const name = String(stackName ?? '').trim() || 'main';
   const pid = Number(daemonPid);
-  const isRunning = Number.isFinite(pid) && pid > 1;
+  const isRunning = typeof daemonRunning === 'boolean'
+    ? daemonRunning
+    : Number.isFinite(pid) && pid > 1;
   if (!startDaemon) return { show: false, summaryLines: [], paneTitle: null, paneLines: [] };
   if (isRunning) return { show: false, summaryLines: [], paneTitle: null, paneLines: [] };
 

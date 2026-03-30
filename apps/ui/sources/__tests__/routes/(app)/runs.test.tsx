@@ -1,166 +1,170 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import { createPassThroughComponent, createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { createExpoVectorIconsMock } from '@/dev/testkit/mocks/icons';
+import {
+    createExpoRouterMock,
+    createStackOptionsCapture,
+} from '@/dev/testkit/mocks/router';
+import { installRouteRootCommonModuleMocks } from '../routeRootTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 type MachineExecutionRunsListArgs = [string, Record<string, unknown>?];
 
 const machineExecutionRunsListSpy = vi.fn(async (..._args: MachineExecutionRunsListArgs) => ({
-  ok: true,
-  runs: [],
+    ok: true as const,
+    runs: [],
 }));
-const stackScreenSpy = vi.fn((_props: any) => null);
-
-vi.mock('react-native', async () => {
-  const rn = await import('@/dev/reactNativeStub');
-  return {
-    ...rn,
-    Platform: { ...rn.Platform, OS: 'web', select: (values: any) => values?.web ?? values?.default },
-  };
-});
-
-const routerMock = { push: vi.fn(), back: vi.fn(), replace: vi.fn(), navigate: vi.fn() };
-vi.mock('expo-router', () => ({
-  useRouter: () => routerMock,
-  Stack: { Screen: (props: any) => stackScreenSpy(props) },
-}));
-
-vi.mock('react-native-unistyles', () => {
-  const theme = {
-    colors: {
-      surface: '#111',
-      surfaceHigh: '#222',
-      divider: '#333',
-      shadow: { color: '#000', opacity: 0.2 },
-      text: '#eee',
-      textSecondary: '#aaa',
-      header: { tint: '#eee' },
-      status: { error: '#f00' },
+const routerPushSpy = vi.fn();
+const routerBackSpy = vi.fn();
+const routerReplaceSpy = vi.fn();
+const routerNavigateSpy = vi.fn();
+const stackOptionsCapture = createStackOptionsCapture();
+const routerMock = createExpoRouterMock({
+    router: {
+        push: routerPushSpy,
+        back: routerBackSpy,
+        replace: routerReplaceSpy,
+        setParams: vi.fn(),
     },
-  };
-  return {
-    useUnistyles: () => ({ theme }),
-    StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
-  };
+    stackOptionsCapture,
 });
 
-vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+installRouteRootCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock();
+    },
+    router: () => ({
+        ...routerMock.module,
+        useRouter: () => ({
+            ...routerMock.state.router,
+            navigate: routerNavigateSpy,
+        }),
+    }),
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                surface: '#111',
+                surfaceHigh: '#222',
+                divider: '#333',
+                text: '#eee',
+                textSecondary: '#aaa',
+                header: { tint: '#eee' },
+                status: { error: '#f00' },
+                shadow: { color: '#000', opacity: 0.2 },
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const machines = [
+            {
+                id: 'machine-1',
+                active: true,
+                createdAt: 1,
+                updatedAt: 1,
+                activeAt: Date.now(),
+                metadata: { host: 'a.local', happyCliVersion: '1.0.0', happyHomeDir: '/tmp', homeDir: '/tmp' },
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 1,
+                seq: 0,
+            },
+        ];
+        const machineListByServerId = { 'server-a': machines as any };
+        const machineListStatusByServerId = { 'server-a': 'idle' as const };
+        return createPartialStorageModuleMock(importOriginal, {
+            useMachineListByServerId: () => machineListByServerId,
+            useMachineListStatusByServerId: () => machineListStatusByServerId,
+            useSetting: () => false,
+        });
+    },
+});
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
-vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
+vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
 
-vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (_props: any) => null,
-}));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-  ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-vi.mock('@/components/ui/lists/ItemList', () => ({
-  ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-vi.mock('@/components/sessions/runs/ExecutionRunRow', () => ({
-  ExecutionRunRow: (_props: any) => null,
+vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
+
+vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
+
+vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
+
+vi.mock('@/components/ui/layout/ConstrainedScreenContent', () => ({
+    ConstrainedScreenContent: createPassThroughComponent('ConstrainedScreenContent'),
 }));
 
-vi.mock('@/modal', () => ({ Modal: { alert: vi.fn(), confirm: vi.fn(), prompt: vi.fn(), show: vi.fn() } }));
+vi.mock('@/components/sessions/runs/ExecutionRunRow', () => createPassThroughModule(['ExecutionRunRow']));
 
 vi.mock('@/sync/ops/machineExecutionRuns', () => ({
-  machineExecutionRunsList: (...args: MachineExecutionRunsListArgs) => machineExecutionRunsListSpy(...args),
+    machineExecutionRunsList: (...args: MachineExecutionRunsListArgs) => machineExecutionRunsListSpy(...args),
 }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-  sessionExecutionRunStop: vi.fn(async () => ({ ok: true })),
+    sessionExecutionRunStop: vi.fn(async () => ({ ok: true as const })),
 }));
 
 vi.mock('@/sync/ops/machines', () => ({
-  machineStopSession: vi.fn(async () => ({ ok: true })),
+    machineStopSession: vi.fn(async () => ({ ok: true as const })),
 }));
-
-vi.mock('@/sync/domains/state/storage', () => {
-  const machines = [
-    {
-      id: 'machine-1',
-      active: true,
-      createdAt: 1,
-      updatedAt: 1,
-      activeAt: Date.now(),
-      metadata: { host: 'a.local', happyCliVersion: '1.0.0', happyHomeDir: '/tmp', homeDir: '/tmp' },
-      metadataVersion: 1,
-      daemonState: null,
-      daemonStateVersion: 1,
-      seq: 0,
-    },
-  ];
-  const machineListByServerId = { 'server-a': machines as any };
-  const machineListStatusByServerId = { 'server-a': 'idle' as const };
-  return {
-    useMachineListByServerId: () => machineListByServerId,
-    useMachineListStatusByServerId: () => machineListStatusByServerId,
-    useSetting: () => false,
-  };
-});
 
 vi.mock('@/utils/sessions/machineUtils', () => ({ isMachineOnline: () => true }));
 
 describe('Runs screen', () => {
-  it('configures a header title and right-side icon actions', async () => {
-    stackScreenSpy.mockClear();
-    const Screen = (await import('@/app/(app)/runs')).default;
+    let Screen: React.ComponentType<any>;
 
-    await act(async () => {
-      renderer.create(React.createElement(Screen));
-      await Promise.resolve();
+    beforeEach(async () => {
+        Screen = (await import('@/app/(app)/runs')).default;
+        machineExecutionRunsListSpy.mockClear();
+        routerPushSpy.mockClear();
+        routerBackSpy.mockClear();
+        routerReplaceSpy.mockClear();
+        routerNavigateSpy.mockClear();
+        stackOptionsCapture.reset();
     });
 
-    expect(stackScreenSpy).toHaveBeenCalled();
-    const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
-    expect(stackOptions?.headerTitle).toBe('runs.title');
-    expect(typeof stackOptions?.headerRight).toBe('function');
-
-    let headerRightTree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
-    });
-    const rightButtons = headerRightTree!.root.findAllByType('Pressable');
-    const labels = rightButtons.map((button: any) => button.props.accessibilityLabel);
-    expect(labels).toContain('runs.a11y.refresh');
-    expect(labels).toContain('runs.a11y.toggleFinished');
-  });
-
-  it('constrains runs content to the shared max width', async () => {
-    const Screen = (await import('@/app/(app)/runs')).default;
-
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Screen));
-      await Promise.resolve();
+    afterEach(() => {
+        standardCleanup();
     });
 
-    const views = tree!.root.findAllByType('View');
-    const hasConstrainedContainer = views.some((node: any) => {
-      const raw = node.props.style;
-      const styles = Array.isArray(raw) ? raw : [raw];
-      return styles.some((entry: any) => {
-        if (!entry || typeof entry !== 'object') return false;
-        return entry.maxWidth === 999 && entry.width === '100%' && entry.alignSelf === 'center';
-      });
+    async function renderRunsScreen() {
+        const screen = await renderScreen(<Screen />);
+        await flushHookEffects({ cycles: 2 });
+        return screen;
+    }
+
+    async function renderHeaderRight() {
+        const options = stackOptionsCapture.getResolved();
+        expect(options?.headerTitle).toBe('runs.title');
+        expect(typeof options?.headerRight).toBe('function');
+        return renderScreen(React.createElement(options!.headerRight as React.ComponentType));
+    }
+
+    it('configures a header title and right-side icon actions', async () => {
+        await renderRunsScreen();
+
+        const headerRightScreen = await renderHeaderRight();
+        expect(headerRightScreen.findByProps({ accessibilityLabel: 'runs.a11y.refresh' })).toBeTruthy();
+        expect(headerRightScreen.findByProps({ accessibilityLabel: 'runs.a11y.toggleFinished' })).toBeTruthy();
     });
 
-    expect(hasConstrainedContainer).toBe(true);
-  });
+    it('renders runs inside the constrained route content wrapper', async () => {
+        const screen = await renderRunsScreen();
 
-  it('lists daemon execution runs for machines in the server-scoped machine cache', async () => {
-    machineExecutionRunsListSpy.mockClear();
-
-    const Screen = (await import('@/app/(app)/runs')).default;
-
-    await act(async () => {
-      renderer.create(React.createElement(Screen));
-      await Promise.resolve();
-      await Promise.resolve();
+        expect(screen.findByType('ConstrainedScreenContent' as any)).toBeTruthy();
     });
 
-    expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', { serverId: 'server-a' });
-  });
+    it('lists daemon execution runs for machines in the server-scoped machine cache', async () => {
+        await renderRunsScreen();
+
+        expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', { serverId: 'server-a' });
+    });
 });

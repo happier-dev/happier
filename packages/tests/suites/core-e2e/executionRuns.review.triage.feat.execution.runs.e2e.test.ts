@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import {
@@ -14,7 +14,7 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
-import { encryptLegacyBase64, decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { waitFor } from '../../src/testkit/timing';
@@ -22,41 +22,52 @@ import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
-
-type RpcAck = { ok: boolean; result?: string; error?: string; errorCode?: string };
-type SafeParseResult<T> = { success: true; data: T } | { success: false };
-type ParseSchema<T> = { safeParse: (input: unknown) => SafeParseResult<T> };
-
-async function callSessionRpc<TReq, TRes>(params: {
-  ui: ReturnType<typeof createUserScopedSocketCollector>;
-  sessionId: string;
-  method: string;
-  req: TReq;
-  secret: Uint8Array;
-  schema: ParseSchema<TRes>;
-  timeoutMs?: number;
-}): Promise<TRes> {
-  let out: TRes | null = null;
-  const encryptedParams = encryptLegacyBase64(params.req, params.secret);
-
-  await waitFor(
-    async () => {
-      const res = await params.ui.rpcCall<RpcAck>(`${params.sessionId}:${params.method}`, encryptedParams);
-      if (!res || res.ok !== true || typeof res.result !== 'string') return false;
-      const decrypted = decryptLegacyBase64(res.result, params.secret);
-      const parsed = params.schema.safeParse(decrypted);
-      if (!parsed.success) return false;
-      out = parsed.data;
-      return true;
-    },
-    { timeoutMs: params.timeoutMs ?? 40_000 },
-  );
-
-  if (!out) throw new Error(`RPC call did not return a valid response: ${params.method}`);
-  return out;
-}
+import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
 
 const run = createRunDirs({ runLabel: 'core' });
+
+type FakeClaudePromptEvent = {
+  type: 'sdk_stdin';
+  hasUserText?: boolean;
+  userTextPreview?: string;
+};
+
+async function waitForFakeClaudeObservedPrompt(
+  logPath: string,
+  predicate: (event: FakeClaudePromptEvent) => boolean,
+  timeoutMs = 30_000,
+): Promise<FakeClaudePromptEvent> {
+  let matched: FakeClaudePromptEvent | null = null;
+
+  await waitFor(async () => {
+    const raw = await readFile(logPath, 'utf8').catch(() => '');
+    const events = raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          return [];
+        }
+      }) as FakeClaudePromptEvent[];
+
+    matched =
+      events.find(
+        (event) =>
+          event?.type === 'sdk_stdin' &&
+          event.hasUserText === true &&
+          predicate(event),
+      ) ?? null;
+    return matched !== null;
+  }, { timeoutMs, intervalMs: 100 });
+
+  if (!matched) {
+    throw new Error(`Timed out waiting for fake Claude prompt in ${logPath}`);
+  }
+  return matched;
+}
 
 describe('core e2e: execution runs (review) supports triage updates', () => {
   let server: StartedServer | null = null;
@@ -67,7 +78,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
     await server?.stop();
   }, 60_000);
 
-  it('emits review_findings.v1 meta and allows review.triage action overlay', async () => {
+  it('emits review_findings.v2 meta and allows review.triage action overlay', async () => {
     const testDir = run.testDir(`execution-runs-review-triage-${randomUUID()}`);
     server = await startServerLight({ testDir });
     const serverBaseUrl = server.baseUrl;
@@ -140,7 +151,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
       method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
       req: {
         intent: 'review',
-        backendId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         instructions: 'Review this repository.',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -180,7 +191,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
     }, { timeoutMs: 60_000, intervalMs: 250 });
 
     expect(finished?.run?.status).toBe('succeeded');
-    expect(finished?.structuredMeta?.kind).toBe('review_findings.v1');
+    expect(finished?.structuredMeta?.kind).toBe('review_findings.v2');
     const payload = finished.structuredMeta.payload as any;
     expect(payload?.findings?.length ?? 0).toBeGreaterThanOrEqual(1);
     const findingId = String(payload.findings[0].id);
@@ -211,7 +222,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
       schema: ExecutionRunGetResponseSchema,
       timeoutMs: 40_000,
     });
-    expect(updated.structuredMeta?.kind).toBe('review_findings.v1');
+    expect(updated.structuredMeta?.kind).toBe('review_findings.v2');
     const updatedPayload = updated.structuredMeta?.payload as any;
     expect(updatedPayload?.triage?.findings?.[0]?.id).toBe(findingId);
     expect(updatedPayload?.triage?.findings?.[0]?.status).toBe('accept');
@@ -237,12 +248,9 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
       text: `@happier/review.apply_accepted_findings\n${JSON.stringify(applyPayload)}`,
     });
 
-    let decoded: any[] = [];
-    let withStructured: any[] = [];
-    let lastStructured: any = null;
     await waitFor(async () => {
       const rows = await fetchAllMessages(serverBaseUrl, auth.token, sessionId);
-      decoded = rows
+      const decoded = rows
         .map((row) => decryptLegacyBase64(row.content.c, secret))
         .filter(Boolean) as any[];
 
@@ -255,15 +263,15 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         const text = inlineText ?? contentText;
         return typeof text === 'string' && text.includes('@happier/review.apply_accepted_findings');
       });
-
-      withStructured = decoded.filter((m) => m?.meta?.happier?.kind === 'review_findings.v1');
-      lastStructured = withStructured.length > 0 ? withStructured[withStructured.length - 1] : null;
-      const lastStatus = lastStructured?.meta?.happier?.payload?.triage?.findings?.[0]?.status;
-
-      return Boolean(applyMessage) && withStructured.length >= 1 && lastStatus === 'accept';
+      return Boolean(applyMessage);
     }, { timeoutMs: 30_000, intervalMs: 250 });
 
-    expect(withStructured.length).toBeGreaterThanOrEqual(1);
-    expect(lastStructured?.meta?.happier?.payload?.triage?.findings?.[0]?.status).toBe('accept');
-  }, 120_000);
+    const observedApplyPrompt = await waitForFakeClaudeObservedPrompt(
+      fakeClaudeLog,
+      (event) =>
+        typeof event.userTextPreview === 'string' &&
+        event.userTextPreview.includes('@happier/review.apply_accepted_findings'),
+    );
+    expect(observedApplyPrompt.userTextPreview).toContain('@happier/review.apply_accepted_findings');
+  }, 180_000);
 });

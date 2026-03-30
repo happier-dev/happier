@@ -11,6 +11,7 @@ export function createCodexPermissionHandler(params: {
   session: ApiSessionClient;
   pushSender?: PermissionRequestPushSender | null;
   getAccountSettings?: (() => AccountSettings | null) | null;
+  getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
   onAbortRequested?: (() => void | Promise<void>) | null;
   toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
   triggerAbortCallbackOnAbortDecision?: boolean;
@@ -18,6 +19,7 @@ export function createCodexPermissionHandler(params: {
   return new CodexPermissionHandler(params.session, {
     pushSender: params.pushSender ?? null,
     getAccountSettings: params.getAccountSettings ?? null,
+    getAccountSettingsSecretsReadKeys: params.getAccountSettingsSecretsReadKeys ?? null,
     onAbortRequested: params.onAbortRequested ?? null,
     toolTrace: params.toolTrace ?? null,
     triggerAbortCallbackOnAbortDecision: params.triggerAbortCallbackOnAbortDecision,

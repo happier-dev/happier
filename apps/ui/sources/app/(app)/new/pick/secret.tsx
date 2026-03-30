@@ -7,6 +7,8 @@ import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { SecretsList } from '@/components/secrets/SecretsList';
 import { useUnistyles } from 'react-native-unistyles';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 export default React.memo(function SecretPickerScreen() {
     const { theme } = useUnistyles();
@@ -18,13 +20,19 @@ export default React.memo(function SecretPickerScreen() {
     const [secrets, setSecrets] = useSettingMutable('secrets');
 
     const setSecretParamAndClose = React.useCallback((secretId: string) => {
-        router.setParams({ secretId });
-        navigation.goBack();
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation: navigation as any,
+            router,
+            routeParams: { secretId },
+        });
+        if (returnMode === 'dispatch') {
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+        }
     }, [navigation, router]);
 
     const handleBackPress = React.useCallback(() => {
-        navigation.goBack();
-    }, [navigation]);
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
+    }, [navigation, router]);
 
     const headerTitle = t('settings.secrets');
     const headerBackTitle = t('common.back');

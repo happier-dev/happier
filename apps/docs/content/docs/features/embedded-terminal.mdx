@@ -1,0 +1,157 @@
+---
+title: Embedded terminal
+description: Use the connected machine terminal directly inside Happier, including the bottom panel, sidebar, details panel, and mobile behavior.
+---
+
+Happier can show a live terminal for the current session directly inside the app UI.
+
+This is useful when you want to run quick shell commands, inspect project state, follow logs, or open detected local URLs without leaving the session.
+
+The same terminal foundation is also reused for **provider login flows** from provider settings.
+
+## What it does
+
+- Opens a live shell backed by your connected Happier daemon.
+- Treats the terminal as part of the current session, not as a separate detached tool.
+- Reuses the same terminal session when you move it between panel locations.
+- Preserves the terminal across normal navigation and page refresh for that session.
+
+## Where the terminal can appear
+
+Choose a preferred location in **Settings → Features → Embedded terminal location**:
+
+- **Bottom panel** — the recommended default on web/tablet; best for wide command output.
+- **Sidebar** — useful when you want the transcript and terminal visible side by side.
+- **Details panel** — useful when the terminal is a secondary detail view for the current session.
+
+On phones, Happier uses a more focused terminal presentation instead of trying to keep desktop-style docked panels on screen at the same time.
+
+## How to open it
+
+1. Open a session.
+2. Use the **Terminal** button in the session header.
+3. Happier opens the terminal in your selected dock location.
+
+Inside the terminal toolbar you can:
+
+- move it to another dock location,
+- clear the visible transcript,
+- restart the terminal session,
+- close the current terminal surface.
+
+## Bottom panel behavior
+
+The bottom panel is a real panel region in the session layout, not a one-off terminal overlay.
+
+### Resize behavior
+
+- Drag the top edge of the bottom panel to resize it.
+- If the screen still has enough height for both the main content and the bottom panel, the panel stays **docked**.
+- If the panel becomes too tall to fit beside the main content, Happier automatically switches it to an **overlay**.
+- If you shrink it again, it returns to the docked layout.
+
+### Overlay behavior
+
+When the bottom panel is shown as an overlay:
+
+- it appears above the session content,
+- tapping the scrim closes it,
+- pressing **Escape** closes it when focus is outside terminal text input.
+
+## Session continuity
+
+The embedded terminal is meant to feel like one session-owned terminal, even if you move it around.
+
+What to expect:
+
+- Switching between **bottom**, **sidebar**, and **details** keeps the same underlying terminal session.
+- Refreshing the page with the terminal open restores the open panel and reconnects to the same terminal for that session.
+- Returning to a session restores that session’s terminal state.
+- A different session does **not** automatically inherit another session’s terminal state.
+
+## Mobile behavior
+
+On mobile/native clients, Happier renders the terminal through an embedded WebView terminal surface.
+
+That gives you:
+
+- live terminal input and output,
+- resize handling,
+- restart and clear actions,
+- detected URL copy/open actions,
+- mobile quick keys where supported.
+
+On smaller phone layouts, the terminal behaves more like a focused terminal screen than a multi-pane desktop layout.
+
+## Requirements
+
+The embedded terminal depends on all of the following:
+
+- the **Embedded terminal** feature toggle is enabled in **Settings → Features**,
+- your **daemon is running and connected** for the machine you want to control,
+- the current session resolves to a reachable machine target.
+
+If the daemon is offline or the machine target is unavailable, Happier shows a terminal error state instead of a live shell.
+
+## Important things to know
+
+- Commands run on the connected machine for the current session.
+- The embedded terminal is best for session-adjacent work: quick shell commands, local scripts, logs, git inspection, and following links emitted by tools or dev servers.
+- The terminal surface can reconnect automatically after short-lived daemon/RPC hiccups.
+- Detected local URLs can appear as a banner so you can open or copy them quickly.
+
+## Common use cases
+
+- Run `git status`, `git diff`, or project scripts while reading the transcript.
+- Start a local dev server and open the detected URL from the terminal banner.
+- Follow logs while keeping the main transcript visible.
+- Keep one session’s shell history open while moving between panel layouts.
+- Open a provider login flow from settings without leaving Happier.
+
+## Provider login terminal
+
+When a provider supports native CLI login from Happier, the app opens that login flow with the same terminal transport and pane system used for session terminals.
+
+What stays consistent:
+
+- the shared connected-machine terminal session model
+- detected URL banners with copy/open actions
+- restart, clear, and close actions
+- bottom-pane presentation on larger layouts
+- focused presentation on smaller layouts
+
+Provider login flows are documented in [Provider authentication](/docs/features/provider-authentication).
+
+## Troubleshooting
+
+### I enabled the feature but the terminal still does not open
+
+Check:
+
+- the **Embedded terminal** toggle is enabled,
+- the daemon is running,
+- the session is attached to a reachable machine,
+- you are on the same server profile as the daemon you connected.
+
+For daemon setup and lifecycle commands, see [Daemon](/docs/clients/daemon).
+
+### The terminal opens, but I want it somewhere else
+
+Change the location in:
+
+- **Settings → Features → Embedded terminal location**
+
+or use the **Dock to …** control in the terminal toolbar.
+
+### The bottom terminal covers the session
+
+That should happen only when the panel no longer fits in a docked layout.
+Shrink it again and it returns to the docked bottom-panel layout.
+
+## Related guides
+
+- [App](/docs/clients/app)
+- [Daemon](/docs/clients/daemon)
+- [Provider authentication](/docs/features/provider-authentication)
+- [Git & files](/docs/features/git)
+- [Feature matrix](/docs/features/feature-matrix)

@@ -26,15 +26,24 @@ const validSessionById = {
 };
 
 describe('resolveScopedSessionDataKey', () => {
-  afterEach(() => {
+  afterEach(async () => {
     runtimeFetchMock.mockReset();
     resetScopedSessionDataKeyCacheForTests();
+    try {
+      const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+      await resetServerReachabilitySupervisors();
+    } catch {
+      // ignore
+    }
   });
 
   it('loads and decrypts the session data encryption key from a valid by-id response', async () => {
-    runtimeFetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ session: validSessionById }),
+    runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : String(input);
+      if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      return { ok: true, status: 200, json: async () => ({ session: validSessionById }) };
     });
     const decrypt = vi.fn(async () => new Uint8Array([9, 9]));
 
@@ -46,15 +55,18 @@ describe('resolveScopedSessionDataKey', () => {
       decryptEncryptionKey: decrypt,
     });
 
-    expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+    expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v2/sessions/session-1'))).toBe(true);
     expect(decrypt).toHaveBeenCalledWith('k1');
     expect(key).toEqual(new Uint8Array([9, 9]));
   });
 
   it('returns null and does not call decryption for an invalid by-id shape', async () => {
-    runtimeFetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ session: { id: 'session-1', dataEncryptionKey: 'k1' } }),
+    runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : String(input);
+      if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      return { ok: true, status: 200, json: async () => ({ session: { id: 'session-1', dataEncryptionKey: 'k1' } }) };
     });
 
     const decrypt = vi.fn(async () => new Uint8Array([9]));
@@ -73,9 +85,12 @@ describe('resolveScopedSessionDataKey', () => {
   });
 
   it('does not cache transient failures', async () => {
-    runtimeFetchMock.mockResolvedValue({
-      ok: false,
-      json: async () => ({}),
+    runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : String(input);
+      if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      return { ok: false, status: 500, json: async () => ({}) };
     });
     const decrypt = vi.fn(async () => new Uint8Array([9]));
 
@@ -99,6 +114,6 @@ describe('resolveScopedSessionDataKey', () => {
     expect(first).toBeNull();
     expect(second).toBeNull();
     expect(decrypt).not.toHaveBeenCalled();
-    expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
+    expect(runtimeFetchMock.mock.calls.filter(([input]) => String(input).includes('/v2/sessions/session-1')).length).toBe(2);
   });
 });

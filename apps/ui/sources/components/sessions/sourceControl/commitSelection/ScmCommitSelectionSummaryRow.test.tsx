@@ -1,27 +1,34 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { pressTestInstance, renderScreen } from '@/dev/testkit';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+
+import { installSourceControlCommitSelectionCommonModuleMocks } from './sourceControlCommitSelectionTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  Pressable: 'Pressable',
-  Platform: { OS: 'ios', select: (s: any) => s.ios ?? s.default },
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-  Text: 'Text',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-  Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/text', () => ({
-  t: (_k: string, vars?: any) => (vars?.count != null ? `selected:${vars.count}` : 'clear'),
-}));
+installSourceControlCommitSelectionCommonModuleMocks({
+    reactNative: async () =>
+        createReactNativeWebMock({
+            View: 'View',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'ios',
+                select: (s: any) => s.ios ?? s.default,
+            },
+        }),
+    typography: async () => ({
+        Typography: { default: () => ({}) },
+    }),
+    text: async () =>
+        createTextModuleMock({
+            translate: (_k: string, vars?: any) =>
+                vars?.count != null ? `selected:${vars.count}` : 'clear',
+        }),
+});
 
 describe('ScmCommitSelectionSummaryRow', () => {
   it('renders and calls onClear', async () => {
@@ -39,15 +46,10 @@ describe('ScmCommitSelectionSummaryRow', () => {
       },
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ScmCommitSelectionSummaryRow theme={theme} count={3} onClear={onClear} density="compact" />);
-    });
-    const pressable = tree.root.findByType('Pressable' as any);
-
-    await act(async () => {
-      pressable.props.onPress();
-    });
+    const screen = await renderScreen(
+      <ScmCommitSelectionSummaryRow theme={theme} count={3} onClear={onClear} density="compact" />,
+    );
+    pressTestInstance(screen.findByProps({ accessibilityRole: 'button' }), 'files.clearSelection');
 
     expect(onClear).toHaveBeenCalled();
   });

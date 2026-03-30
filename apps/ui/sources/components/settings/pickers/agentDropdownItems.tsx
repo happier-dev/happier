@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import { getAgentCore } from '@/agents/catalog/catalog';
+import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 
@@ -23,7 +24,11 @@ export function getAgentDropdownMenuItems(params: {
             id: String(id),
             title: t(core.displayNameKey),
             subtitle: String(id),
-            icon: <Ionicons name={iconName as any} size={iconSize} color={params.iconColor} />,
+            icon: renderDropdownItemIcon({
+                name: iconName as any,
+                color: params.iconColor,
+                size: iconSize,
+            }),
         };
     });
 }

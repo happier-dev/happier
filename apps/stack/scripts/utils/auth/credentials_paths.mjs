@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileHasContent } from '../fs/file_has_content.mjs';
 
@@ -23,10 +23,81 @@ function sanitizeServerIdForFilesystem(raw, fallback = 'default') {
   return value;
 }
 
+function readStackCliSettingsSnapshot({ cliHomeDir }) {
+  const home = String(cliHomeDir ?? '').trim();
+  if (!home) return null;
+  const settingsPath = join(home, 'settings.json');
+  if (!existsSync(settingsPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object') return null;
+    const servers = parsed.servers && typeof parsed.servers === 'object' ? parsed.servers : null;
+    return {
+      activeServerId: typeof parsed.activeServerId === 'string' ? parsed.activeServerId.trim() : '',
+      servers,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function profileMatchesServerUrl(profile, serverUrl) {
+  const target = normalizeServerUrl(serverUrl);
+  if (!target || !profile || typeof profile !== 'object') return false;
+
+  const values = [
+    profile.serverUrl,
+    profile.publicServerUrl,
+    profile.localServerUrl,
+  ]
+    .map((value) => normalizeServerUrl(value))
+    .filter(Boolean);
+
+  return values.some((value) => value === target);
+}
+
+export function resolvePreferredStackServerIdFromCliSettings({ cliHomeDir, serverUrl = '' } = {}) {
+  const settings = readStackCliSettingsSnapshot({ cliHomeDir });
+  if (!settings) return '';
+
+  const entries = Object.entries(settings.servers ?? {});
+  if (!entries.length) return '';
+
+  const activeServerId = sanitizeServerIdForFilesystem(settings.activeServerId, '');
+  const activeProfile = activeServerId ? settings.servers?.[activeServerId] : null;
+  if (activeServerId && profileMatchesServerUrl(activeProfile, serverUrl)) {
+    return activeServerId;
+  }
+
+  const matches = entries
+    .filter(([, profile]) => profileMatchesServerUrl(profile, serverUrl))
+    .map(([id]) => sanitizeServerIdForFilesystem(id, ''))
+    .filter(Boolean);
+
+  if (!matches.length) return '';
+  if (matches.length === 1) return matches[0];
+
+  if (activeServerId && matches.includes(activeServerId)) {
+    return activeServerId;
+  }
+
+  const preferred = [...matches].sort((a, b) => {
+    const aStable = a.includes('__id_') ? 1 : 0;
+    const bStable = b.includes('__id_') ? 1 : 0;
+    if (aStable !== bStable) return aStable - bStable;
+    return a.localeCompare(b);
+  });
+  return preferred[0] || '';
+}
+
 function resolveActiveServerIdOverride(env = process.env) {
   const raw = String(env?.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
   if (!raw) return '';
   return sanitizeServerIdForFilesystem(raw, '');
+}
+
+function hasExplicitServerContext({ serverUrl = '', env = process.env }) {
+  return normalizeServerUrl(serverUrl) !== '' || resolveActiveServerIdOverride(env) !== '';
 }
 
 function deriveServerIdFromUrl(url) {
@@ -71,26 +142,33 @@ export function resolveStackCredentialPaths({ cliHomeDir, serverUrl = '', env = 
     'default'
   );
   const hostPortServerId = deriveLoopbackHostPortServerId(normalizedServerUrl);
-  const overrideServerId = resolveActiveServerIdOverride(env);
-  const activeServerId = overrideServerId || urlHashServerId;
+  const stableScopeServerId = resolveActiveServerIdOverride(env);
+  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({ cliHomeDir: home, serverUrl: normalizedServerUrl });
+  const activeServerId = settingsServerId || stableScopeServerId || urlHashServerId;
   const serverScopedPath = join(home, 'servers', activeServerId, 'access.key');
-  const urlHashServerScopedPath =
-    urlHashServerId && urlHashServerId !== activeServerId
-      ? join(home, 'servers', urlHashServerId, 'access.key')
-      : '';
+  const aliasServerIds = [
+    stableScopeServerId && stableScopeServerId !== activeServerId ? stableScopeServerId : null,
+    urlHashServerId && urlHashServerId !== activeServerId ? urlHashServerId : null,
+    hostPortServerId && hostPortServerId !== activeServerId && hostPortServerId !== urlHashServerId ? hostPortServerId : null,
+  ]
+    .filter(Boolean);
+  const uniqueAliasServerIds = [...new Set(aliasServerIds)];
+  const aliasServerScopedPaths = uniqueAliasServerIds.map((id) => join(home, 'servers', id, 'access.key'));
+  const urlHashServerScopedPath = aliasServerScopedPaths.find((path) => path.includes(`/servers/${urlHashServerId}/`)) || '';
   const hostPortServerScopedPath =
-    hostPortServerId && hostPortServerId !== activeServerId && hostPortServerId !== urlHashServerId
-      ? join(home, 'servers', hostPortServerId, 'access.key')
-      : '';
-  const paths = [serverScopedPath, urlHashServerScopedPath, hostPortServerScopedPath, legacyPath].filter(Boolean);
+    aliasServerScopedPaths.find((path) => path.includes(`/servers/${hostPortServerId}/`)) || '';
+  const paths = [serverScopedPath, ...aliasServerScopedPaths, legacyPath].filter(Boolean);
   return {
     activeServerId,
+    settingsServerId,
+    stableScopeServerId,
     urlHashServerId,
     hostPortServerId,
     legacyPath,
     serverScopedPath,
     urlHashServerScopedPath,
     hostPortServerScopedPath,
+    aliasServerScopedPaths,
     paths,
   };
 }
@@ -103,32 +181,34 @@ export function resolveStackDaemonStatePaths({ cliHomeDir, serverUrl = '', env =
     'default'
   );
   const hostPortServerId = deriveLoopbackHostPortServerId(normalizedServerUrl);
-  const overrideServerId = resolveActiveServerIdOverride(env);
-  const activeServerId = overrideServerId || urlHashServerId;
+  const stableScopeServerId = resolveActiveServerIdOverride(env);
+  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({ cliHomeDir: home, serverUrl: normalizedServerUrl });
+  const activeServerId = settingsServerId || stableScopeServerId || urlHashServerId;
 
   const legacyStatePath = join(home, 'daemon.state.json');
   const legacyLockPath = join(home, 'daemon.state.json.lock');
   const serverScopedStatePath = join(home, 'servers', activeServerId, 'daemon.state.json');
   const serverScopedLockPath = join(home, 'servers', activeServerId, 'daemon.state.json.lock');
-  const urlHashServerScopedStatePath =
-    urlHashServerId && urlHashServerId !== activeServerId
-      ? join(home, 'servers', urlHashServerId, 'daemon.state.json')
-      : '';
-  const urlHashServerScopedLockPath =
-    urlHashServerId && urlHashServerId !== activeServerId
-      ? join(home, 'servers', urlHashServerId, 'daemon.state.json.lock')
-      : '';
-  const hostPortServerScopedStatePath =
-    hostPortServerId && hostPortServerId !== activeServerId && hostPortServerId !== urlHashServerId
-      ? join(home, 'servers', hostPortServerId, 'daemon.state.json')
-      : '';
-  const hostPortServerScopedLockPath =
-    hostPortServerId && hostPortServerId !== activeServerId && hostPortServerId !== urlHashServerId
-      ? join(home, 'servers', hostPortServerId, 'daemon.state.json.lock')
-      : '';
+  const aliasServerIds = [
+    stableScopeServerId && stableScopeServerId !== activeServerId ? stableScopeServerId : null,
+    urlHashServerId && urlHashServerId !== activeServerId ? urlHashServerId : null,
+    hostPortServerId && hostPortServerId !== activeServerId && hostPortServerId !== urlHashServerId ? hostPortServerId : null,
+  ]
+    .filter(Boolean);
+  const uniqueAliasServerIds = [...new Set(aliasServerIds)];
+  const aliasStatePaths = uniqueAliasServerIds.map((id) => ({
+    statePath: join(home, 'servers', id, 'daemon.state.json'),
+    lockPath: join(home, 'servers', id, 'daemon.state.json.lock'),
+  }));
+  const urlHashServerScopedStatePath = aliasStatePaths.find((pair) => pair.statePath.includes(`/servers/${urlHashServerId}/`))?.statePath || '';
+  const urlHashServerScopedLockPath = aliasStatePaths.find((pair) => pair.lockPath.includes(`/servers/${urlHashServerId}/`))?.lockPath || '';
+  const hostPortServerScopedStatePath = aliasStatePaths.find((pair) => pair.statePath.includes(`/servers/${hostPortServerId}/`))?.statePath || '';
+  const hostPortServerScopedLockPath = aliasStatePaths.find((pair) => pair.lockPath.includes(`/servers/${hostPortServerId}/`))?.lockPath || '';
 
   return {
     activeServerId,
+    settingsServerId,
+    stableScopeServerId,
     urlHashServerId,
     hostPortServerId,
     legacyStatePath,
@@ -139,21 +219,19 @@ export function resolveStackDaemonStatePaths({ cliHomeDir, serverUrl = '', env =
     urlHashServerScopedLockPath,
     hostPortServerScopedStatePath,
     hostPortServerScopedLockPath,
+    aliasStatePaths,
     pairs: [
       { statePath: serverScopedStatePath, lockPath: serverScopedLockPath },
-      ...(hostPortServerScopedStatePath
-        ? [{ statePath: hostPortServerScopedStatePath, lockPath: hostPortServerScopedLockPath }]
-        : []),
-      ...(urlHashServerScopedStatePath
-        ? [{ statePath: urlHashServerScopedStatePath, lockPath: urlHashServerScopedLockPath }]
-        : []),
+      ...aliasStatePaths,
       { statePath: legacyStatePath, lockPath: legacyLockPath },
     ],
   };
 }
 
 export function resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl = '', env = process.env }) {
+  const home = requireCliHomeDir(cliHomeDir);
   const resolved = resolveStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
+  const allowAnyServerScopedFallback = !hasExplicitServerContext({ serverUrl, env });
   const serverScopedExists =
     fileHasContent(resolved.serverScopedStatePath) || existsSync(resolved.serverScopedLockPath);
   if (serverScopedExists) {
@@ -176,12 +254,68 @@ export function resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl = 
     }
   }
 
+  if (allowAnyServerScopedFallback) {
+    const anyServerScoped = findAnyDaemonStatePairInCliHome({ cliHomeDir: home });
+    if (anyServerScoped) {
+      return anyServerScoped;
+    }
+  }
+
   const legacyExists = fileHasContent(resolved.legacyStatePath) || existsSync(resolved.legacyLockPath);
   if (legacyExists) {
     return { statePath: resolved.legacyStatePath, lockPath: resolved.legacyLockPath };
   }
 
   return { statePath: resolved.serverScopedStatePath, lockPath: resolved.serverScopedLockPath };
+}
+
+export function findAnyDaemonStatePairInCliHome({ cliHomeDir }) {
+  const home = requireCliHomeDir(cliHomeDir);
+
+  const serversDir = join(home, 'servers');
+  try {
+    const entries = readdirSync(serversDir, { withFileTypes: true })
+      .filter((ent) => ent.isDirectory())
+      .map((ent) => ent.name)
+      .sort();
+    let best = null;
+    let bestMtimeMs = -1;
+    for (const id of entries) {
+      const statePath = join(serversDir, id, 'daemon.state.json');
+      const lockPath = join(serversDir, id, 'daemon.state.json.lock');
+      const stateExists = fileHasContent(statePath);
+      const lockExists = existsSync(lockPath);
+      if (!stateExists && !lockExists) continue;
+
+      let mtimeMs = 0;
+      try {
+        if (stateExists) {
+          mtimeMs = Math.max(mtimeMs, Number(statSync(statePath).mtimeMs) || 0);
+        }
+      } catch {
+        // ignore
+      }
+      try {
+        if (lockExists) {
+          mtimeMs = Math.max(mtimeMs, Number(statSync(lockPath).mtimeMs) || 0);
+        }
+      } catch {
+        // ignore
+      }
+      if (mtimeMs >= bestMtimeMs) {
+        bestMtimeMs = mtimeMs;
+        best = { statePath, lockPath };
+      }
+    }
+    if (best) return best;
+  } catch {
+    // ignore
+  }
+
+  const legacyStatePath = join(home, 'daemon.state.json');
+  const legacyLockPath = join(home, 'daemon.state.json.lock');
+  const legacyExists = fileHasContent(legacyStatePath) || existsSync(legacyLockPath);
+  return legacyExists ? { statePath: legacyStatePath, lockPath: legacyLockPath } : null;
 }
 
 export function findExistingStackCredentialPath({ cliHomeDir, serverUrl = '', env = process.env }) {

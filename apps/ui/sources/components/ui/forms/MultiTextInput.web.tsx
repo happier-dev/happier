@@ -157,6 +157,9 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             if (file) files.push(file);
         }
         if (files.length > 0) cb(files);
+        if (files.length > 0) {
+            e.preventDefault();
+        }
     }, [props.onFilesPasted]);
 
     const dragDepthRef = React.useRef(0);

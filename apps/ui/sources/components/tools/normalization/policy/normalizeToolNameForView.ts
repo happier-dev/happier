@@ -1,3 +1,5 @@
+import { canonicalizeGenericSubAgentToolName, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+
 const legacyToolNameToCanonical: Record<string, string> = {
     // Provider-branded historical names.
     CodexBash: 'Bash',
@@ -5,9 +7,9 @@ const legacyToolNameToCanonical: Record<string, string> = {
     CodexDiff: 'Diff',
     GeminiReasoning: 'Reasoning',
     CodexReasoning: 'Reasoning',
-    TaskCreate: 'Task',
-    TaskList: 'Task',
-    TaskUpdate: 'Task',
+    TaskCreate: 'SubAgent',
+    TaskList: 'SubAgent',
+    TaskUpdate: 'SubAgent',
 
     // Legacy lowercase names (ACP + older sessions).
     edit: 'Edit',
@@ -26,6 +28,8 @@ const legacyToolNameToCanonical: Record<string, string> = {
 
 export function normalizeToolNameForView(toolName: string): string {
     if (toolName.startsWith('mcp__')) return toolName;
+    if (isChangeTitleToolNameAlias(toolName)) return 'change_title';
+    const genericSubAgentToolName = canonicalizeGenericSubAgentToolName(toolName);
+    if (genericSubAgentToolName) return genericSubAgentToolName;
     return legacyToolNameToCanonical[toolName] ?? toolName;
 }
-

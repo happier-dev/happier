@@ -51,7 +51,20 @@ describe('apiAutomations', () => {
 
         await runAutomationNow(credentials, 'auto-1');
 
-        const request = fetchSpy.mock.calls[0]?.[1];
+        const toUrlString = (input: RequestInfo | URL): string => {
+            if (typeof input === 'string') return input;
+            if (input instanceof URL) return input.toString();
+            if (input && typeof (input as Request).url === 'string') return (input as Request).url;
+            return String(input);
+        };
+
+        const runNowCall = fetchSpy.mock.calls.find(
+            ([input]) => toUrlString(input).includes('/v2/automations/auto-1/run-now'),
+        );
+
+        expect(runNowCall).toBeTruthy();
+
+        const request = runNowCall?.[1];
         const headers = new Headers(request?.headers);
 
         expect(headers.get('Authorization')).toBe('Bearer token-1');

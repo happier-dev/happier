@@ -1,6 +1,7 @@
-import type { z } from 'zod';
+import { z } from 'zod';
+import { buildSettingArtifacts, type SettingDefinitionMap } from '@happier-dev/protocol';
 
-import type { ProviderSettingsDefinition, ProviderSettingsShape } from '../types.js';
+import type { ProviderSettingsDefinition } from '../types.js';
 
 export const MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS = 16_384;
 
@@ -54,58 +55,131 @@ export function normalizeClaudeRemoteAdvancedOptionsJson(raw: unknown): string {
   return normalized.length <= MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS ? normalized : '';
 }
 
-export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS = Object.freeze({
-  claudeRemoteAgentSdkEnabled: true,
-  /**
-   * Legacy (v1) setting sources.
-   *
-   * Kept for back-compat with older clients that haven't shipped the multi-select UI yet.
-   * Prefer `claudeRemoteSettingSourcesV2`.
-   */
-  claudeRemoteSettingSources: 'user_project' as 'project' | 'user_project' | 'none',
-  /**
-   * v2 setting sources (multi-select).
-   *
-   * Default: all sources selected to match Claude Code's default behavior.
-   * When all are selected, the runners should avoid forcing an explicit override and let
-   * Claude apply its own defaults (future-proof).
-   */
-  claudeRemoteSettingSourcesV2: ['user', 'project', 'local'] as readonly ClaudeSettingSourceV2[],
-  claudeRemoteIncludePartialMessages: false,
-  // Force-enable Claude Code experimental Agent Teams (aka "agent swarm") across local + remote starts.
-  // When false, Happier does not override Claude's default behavior.
-  claudeCodeExperimentalAgentTeamsEnabled: false,
-  claudeLocalPermissionBridgeEnabled: true,
-  claudeLocalPermissionBridgeWaitIndefinitely: false,
-  claudeLocalPermissionBridgeTimeoutSeconds: 600,
-  claudeRemoteEnableFileCheckpointing: false,
-  claudeRemoteMaxThinkingTokens: null as number | null,
-  claudeRemoteDisableTodos: false,
-  claudeRemoteStrictMcpServerConfig: false,
-  claudeRemoteAdvancedOptionsJson: '',
-});
+function serializeClaudeSettingSourcesV2(raw: unknown): string {
+  const normalized = normalizeClaudeSettingSourcesV2(raw);
+  if (!normalized || normalized.length === 0) return 'none';
+  return normalized.join('+');
+}
 
-export function buildClaudeRemoteProviderSettingsShape(zod: typeof z): ProviderSettingsShape {
-  return {
-    claudeRemoteAgentSdkEnabled: zod.boolean(),
-    claudeRemoteSettingSources: zod.enum(['project', 'user_project', 'none']),
-    claudeRemoteSettingSourcesV2: zod.array(zod.enum(['user', 'project', 'local'])).max(3),
-    claudeRemoteIncludePartialMessages: zod.boolean(),
-    claudeCodeExperimentalAgentTeamsEnabled: zod.boolean(),
-    claudeLocalPermissionBridgeEnabled: zod.boolean(),
-    claudeLocalPermissionBridgeWaitIndefinitely: zod.boolean(),
-    claudeLocalPermissionBridgeTimeoutSeconds: zod.number().int().positive(),
-    claudeRemoteEnableFileCheckpointing: zod.boolean(),
-    claudeRemoteMaxThinkingTokens: zod.number().int().positive().nullable(),
-    claudeRemoteDisableTodos: zod.boolean(),
-    claudeRemoteStrictMcpServerConfig: zod.boolean(),
-    claudeRemoteAdvancedOptionsJson: zod.string().refine(isValidClaudeRemoteAdvancedOptionsJson, {
+export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
+  claudeRemoteAgentSdkEnabled: {
+    schema: z.boolean(),
+    default: true,
+    description: 'Use Claude Agent SDK in remote mode',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeRemoteSettingSources: {
+    schema: z.enum(['project', 'user_project', 'none']),
+    default: 'user_project' as 'project' | 'user_project' | 'none',
+    description: 'Legacy Claude settings source mode',
+    storageScope: 'account',
+  },
+  claudeRemoteSettingSourcesV2: {
+    schema: z.array(z.enum(['user', 'project', 'local'])).max(3),
+    default: ['user', 'project', 'local'] as readonly ClaudeSettingSourceV2[],
+    description: 'Claude settings sources',
+    storageScope: 'account',
+    analytics: {
+      trackCurrentState: true,
+      trackChanges: true,
+      valueKind: 'enum',
+      privacy: 'safe',
+      identityScope: 'person',
+      serializeCurrent: (value) => serializeClaudeSettingSourcesV2(value),
+    },
+  },
+  claudeCodeExperimentalAgentTeamsEnabled: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Force-enable Claude experimental agent teams',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeLocalPermissionBridgeEnabled: {
+    schema: z.boolean(),
+    default: true,
+    description: 'Enable local Claude permission bridge',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeLocalPermissionBridgeWaitIndefinitely: {
+    schema: z.boolean(),
+    default: true,
+    description: 'Keep local permission requests open until the user responds',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeLocalPermissionBridgeTimeoutSeconds: {
+    schema: z.number().int().positive(),
+    default: 600,
+    description: 'Local permission bridge timeout in seconds',
+    storageScope: 'account',
+  },
+  claudeRemoteEnableFileCheckpointing: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Enable Claude file checkpointing',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeRemoteMaxThinkingTokens: {
+    schema: z.number().int().positive().nullable(),
+    default: null as number | null,
+    description: 'Maximum Claude thinking tokens override',
+    storageScope: 'account',
+  },
+  claudeRemoteDisableTodos: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Disable TODO generation in Claude remote mode',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeRemoteStrictMcpServerConfig: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Fail if Claude MCP server config is invalid',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeRemoteAdvancedOptionsJson: {
+    schema: z.string().refine(isValidClaudeRemoteAdvancedOptionsJson, {
       message: 'Must be empty or a valid JSON object string',
     }),
-  } as const;
+    default: '',
+    description: 'Advanced Claude remote options JSON',
+    storageScope: 'account',
+    analytics: {
+      trackCurrentState: true,
+      trackChanges: true,
+      valueKind: 'presence',
+      privacy: 'presence_only',
+      identityScope: 'person',
+      serializeCurrent: (value) => normalizeClaudeRemoteAdvancedOptionsJson(value) !== '',
+    },
+  },
+} as const satisfies SettingDefinitionMap;
+
+const CLAUDE_REMOTE_PROVIDER_ARTIFACTS = buildSettingArtifacts(CLAUDE_REMOTE_PROVIDER_FIELDS);
+
+export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS = Object.freeze(CLAUDE_REMOTE_PROVIDER_ARTIFACTS.defaults);
+
+export function buildClaudeRemoteProviderSettingsShape(_zod: typeof z) {
+  return CLAUDE_REMOTE_PROVIDER_ARTIFACTS.shape;
 }
 
 export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const readBoolean = <T extends keyof typeof CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS>(key: T): boolean => {
+    const value = settings[key as string];
+    return typeof value === 'boolean' ? value : Boolean(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS[key]);
+  };
+
+  const readNumber = <T extends keyof typeof CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS>(key: T): number => {
+    const value = settings[key as string];
+    return typeof value === 'number' ? value : Number(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS[key]);
+  };
+
   const normalizedV2 = normalizeClaudeSettingSourcesV2(settings.claudeRemoteSettingSourcesV2);
   const normalizedLegacy =
     typeof settings.claudeRemoteSettingSources === 'string'
@@ -115,32 +189,29 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
     normalizedV2 !== null
       ? normalizedV2
       : normalizedLegacy
-        ? (mapLegacyClaudeSettingSourcesToV2(normalizedLegacy) ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2)
-        : CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2;
+        ? (mapLegacyClaudeSettingSourcesToV2(normalizedLegacy)
+          ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as readonly ClaudeSettingSourceV2[])
+        : CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as readonly ClaudeSettingSourceV2[];
   const legacyFromV2 = tryMapSettingSourcesV2ToLegacy(effectiveV2);
 
   return {
-    claudeRemoteAgentSdkEnabled: Boolean(settings.claudeRemoteAgentSdkEnabled),
+    claudeRemoteAgentSdkEnabled: readBoolean('claudeRemoteAgentSdkEnabled'),
     claudeRemoteSettingSourcesV2: effectiveV2,
     ...(legacyFromV2 ? { claudeRemoteSettingSources: legacyFromV2 } : {}),
-    claudeRemoteIncludePartialMessages: Boolean(settings.claudeRemoteIncludePartialMessages),
-    claudeCodeExperimentalAgentTeamsEnabled: Boolean(settings.claudeCodeExperimentalAgentTeamsEnabled),
-    claudeLocalPermissionBridgeEnabled: Boolean(settings.claudeLocalPermissionBridgeEnabled),
-    claudeLocalPermissionBridgeWaitIndefinitely: Boolean(settings.claudeLocalPermissionBridgeWaitIndefinitely),
-    claudeLocalPermissionBridgeTimeoutSeconds: typeof settings.claudeLocalPermissionBridgeTimeoutSeconds === 'number'
-      ? settings.claudeLocalPermissionBridgeTimeoutSeconds
-      : 600,
-    claudeRemoteEnableFileCheckpointing: Boolean(settings.claudeRemoteEnableFileCheckpointing),
+    claudeCodeExperimentalAgentTeamsEnabled: readBoolean('claudeCodeExperimentalAgentTeamsEnabled'),
+    claudeLocalPermissionBridgeEnabled: readBoolean('claudeLocalPermissionBridgeEnabled'),
+    claudeLocalPermissionBridgeWaitIndefinitely: readBoolean('claudeLocalPermissionBridgeWaitIndefinitely'),
+    claudeLocalPermissionBridgeTimeoutSeconds: readNumber('claudeLocalPermissionBridgeTimeoutSeconds'),
+    claudeRemoteEnableFileCheckpointing: readBoolean('claudeRemoteEnableFileCheckpointing'),
     claudeRemoteMaxThinkingTokens: typeof settings.claudeRemoteMaxThinkingTokens === 'number' ? settings.claudeRemoteMaxThinkingTokens : null,
-    claudeRemoteDisableTodos: Boolean(settings.claudeRemoteDisableTodos),
-    claudeRemoteStrictMcpServerConfig: Boolean(settings.claudeRemoteStrictMcpServerConfig),
+    claudeRemoteDisableTodos: readBoolean('claudeRemoteDisableTodos'),
+    claudeRemoteStrictMcpServerConfig: readBoolean('claudeRemoteStrictMcpServerConfig'),
     claudeRemoteAdvancedOptionsJson: normalizeClaudeRemoteAdvancedOptionsJson(settings.claudeRemoteAdvancedOptionsJson),
   };
 }
 
 export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION: ProviderSettingsDefinition = Object.freeze({
   providerId: 'claude',
-  buildSettingsShape: buildClaudeRemoteProviderSettingsShape,
-  settingsDefaults: CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
+  fields: CLAUDE_REMOTE_PROVIDER_ARTIFACTS.definitions,
   buildOutgoingMessageMetaExtras: ({ settings }) => buildClaudeRemoteOutgoingMessageMetaExtras(settings),
 });

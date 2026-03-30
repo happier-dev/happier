@@ -5,7 +5,9 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { type ItemAction } from '@/components/ui/lists/itemActions';
+import { useServerRetentionPolicies } from '@/hooks/server/useServerRetentionPolicies';
 import { t } from '@/text';
+import { formatSavedServerRetentionSummary } from '@/sync/domains/server/retention/formatServerRetentionPolicy';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serverSelectionTypes';
@@ -30,6 +32,8 @@ type SavedServersSectionProps = Readonly<{
 export function SavedServersSection(props: SavedServersSectionProps) {
     const { theme } = useUnistyles();
     const groups = Array.isArray(props.serverGroups) ? props.serverGroups : [];
+    const retentionPoliciesByServerId = useServerRetentionPolicies(props.servers.map((profile) => profile.id));
+    const supportsWholeRowPress = Platform.OS !== 'web';
     return (
         <ItemGroup title={t('server.savedServersTitle')}>
             {groups.map((group) => {
@@ -65,8 +69,8 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                           selected={isSelected}
                           showChevron={false}
                           detail={isSelected ? t('server.active') : undefined}
-                          onPress={() => props.onSwitchGroup?.(group)}
-                        rightElement={(
+                          onPress={supportsWholeRowPress ? () => props.onSwitchGroup?.(group) : undefined}
+                          rightElement={(
                             <ItemRowActions
                                 title={group.name}
                                 actions={actions}
@@ -93,7 +97,12 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                         : authStatus === 'signedOut'
                             ? t('server.signedOut')
                             : t('server.authStatusUnknown');
-                const subtitle = `${toServerUrlDisplay(profile.serverUrl)}\n${statusLabel}`;
+                const retentionSummary = isActive
+                    ? null
+                    : formatSavedServerRetentionSummary(retentionPoliciesByServerId[profile.id] ?? null);
+                const subtitle = [toServerUrlDisplay(profile.serverUrl), statusLabel, retentionSummary]
+                    .filter((value): value is string => Boolean(value))
+                    .join('\n');
                 const actions: ItemAction[] = Platform.OS === 'web'
                     ? [
                         {
@@ -141,6 +150,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                 return (
                     <Item
                         key={profile.id}
+                        testID={`saved-server-row-${profile.id}`}
                         title={profile.name}
                         subtitle={subtitle}
                         subtitleLines={0}
@@ -148,7 +158,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                         selected={isActive}
                         showChevron={false}
                         detail={isActive ? t('server.active') : isDeviceDefault ? t('server.default') : undefined}
-                        onPress={() => props.onSwitch(profile, 'device')}
+                        onPress={supportsWholeRowPress ? () => props.onSwitch(profile, 'device') : undefined}
                         rightElement={(
                             <ItemRowActions
                                 title={profile.name}

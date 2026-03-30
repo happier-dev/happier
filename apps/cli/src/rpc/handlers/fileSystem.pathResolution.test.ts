@@ -89,13 +89,30 @@ describe('registerFileSystemHandlers', () => {
 
     const read = mgr.handlers.get(RPC_METHODS.READ_FILE);
     if (!read) throw new Error('expected read handler');
+    vi.mocked(stat).mockResolvedValueOnce({ size: 1, mtime: new Date(), isDirectory: () => false } as any);
     await read({ path: 'notes.txt' });
     expect(readFile).toHaveBeenCalledWith(resolve('/work/dir', 'notes.txt'));
 
     const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
     if (!write) throw new Error('expected write handler');
     await write({ path: './sub/file.bin', content: Buffer.from('x').toString('base64'), expectedHash: null });
+    expect(mkdir).toHaveBeenCalledWith(resolve('/work/dir', 'sub'), { recursive: true });
     expect(writeFile).toHaveBeenCalledWith(resolve('/work/dir', 'sub', 'file.bin'), expect.any(Buffer));
+  });
+
+  it('rejects reading files larger than the configured read limit', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir');
+
+    const read = mgr.handlers.get(RPC_METHODS.READ_FILE);
+    if (!read) throw new Error('expected read handler');
+
+    vi.mocked(stat).mockResolvedValueOnce({ size: 3_000_000, mtime: new Date() } as any);
+    const result = await read({ path: 'big.bin' });
+
+    expect(result).toMatchObject({ success: false });
+    expect(readFile).not.toHaveBeenCalled();
   });
 
   it('allows overwriting an existing file when expectedHash is undefined', async () => {

@@ -1,18 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createDeferred } from '@/testkit/async/deferred';
 import { DeferredApiSessionClient } from './DeferredApiSessionClient';
 import type { Metadata } from '@/api/types';
-
-function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolveFn: ((value: T) => void) | null = null;
-  const promise = new Promise<T>((resolve) => {
-    resolveFn = resolve;
-  });
-  return {
-    promise,
-    resolve: (value: T) => resolveFn?.(value),
-  };
-}
 
 function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
   return {

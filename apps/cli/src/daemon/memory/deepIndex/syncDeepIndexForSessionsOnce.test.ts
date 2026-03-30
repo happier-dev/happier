@@ -96,11 +96,99 @@ describe('syncDeepIndexForSessionsOnce', () => {
             failureBackoffBaseMs: 0,
             failureBackoffMaxMs: 0,
           },
-          embeddings: { enabled: true, provider: 'test', modelId: 'm1' },
+          embeddings: {
+            enabled: true,
+            mode: 'custom',
+            presetId: null,
+            providerKind: 'test',
+            modelId: 'm1',
+            blend: { ftsWeight: 0.7, embeddingWeight: 0.3 },
+            providerConfig: null,
+          },
         },
         embedDocuments: async () => [new Float32Array([0.25, 0.5])],
         fetchDecryptedTranscriptPageAfterSeq: async ({ afterSeq }: { afterSeq: number }) =>
           allRows.filter((r) => r.seq > afterSeq) as any,
+      });
+
+      const embeddingMap = deep.loadEmbeddings({
+        provider: 'test',
+        modelId: 'm1',
+        keys: [{ sessionId: 'sess-1', seqFrom: 1, seqTo: 2 }],
+      });
+      expect(embeddingMap.get('sess-1:1-2')).toBeTruthy();
+
+      deep.close();
+      tier1.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('backfills embeddings for existing chunks when embeddings become available later', async () => {
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-deep-sync-backfill-'));
+    try {
+      const tier1Path = join(dir, 'memory.sqlite');
+      const deepPath = join(dir, 'deep.sqlite');
+      const tier1 = openSummaryShardIndexDb({ dbPath: tier1Path });
+      tier1.init();
+      const deep = openDeepIndexDb({ dbPath: deepPath });
+      deep.init();
+
+      const allRows = [
+        { seq: 1, createdAtMs: 1000, role: 'user' as const, content: { type: 'text', text: 'hello openclaw' }, meta: null },
+        { seq: 2, createdAtMs: 1001, role: 'agent' as const, content: { type: 'text', text: 'deep index is useful' }, meta: null },
+      ];
+
+      await (syncDeepIndexForSessionsOnce as any)({
+        sessionIds: ['sess-1'],
+        tier1,
+        deep,
+        now: () => 10_000,
+        settings: {
+          enabled: true,
+          indexMode: 'deep',
+          deep: {
+            maxChunkChars: 8000,
+            maxChunkMessages: 20,
+            minChunkMessages: 1,
+            includeAssistantAcpMessage: true,
+            failureBackoffBaseMs: 0,
+            failureBackoffMaxMs: 0,
+          },
+        },
+        fetchDecryptedTranscriptPageAfterSeq: async ({ afterSeq }: { afterSeq: number }) =>
+          allRows.filter((r) => r.seq > afterSeq) as any,
+      });
+
+      await (syncDeepIndexForSessionsOnce as any)({
+        sessionIds: ['sess-1'],
+        tier1,
+        deep,
+        now: () => 20_000,
+        settings: {
+          enabled: true,
+          indexMode: 'deep',
+          deep: {
+            maxChunkChars: 8000,
+            maxChunkMessages: 20,
+            minChunkMessages: 1,
+            includeAssistantAcpMessage: true,
+            failureBackoffBaseMs: 0,
+            failureBackoffMaxMs: 0,
+          },
+          embeddings: {
+            enabled: true,
+            mode: 'custom',
+            presetId: null,
+            providerKind: 'test',
+            modelId: 'm1',
+            blend: { ftsWeight: 0.7, embeddingWeight: 0.3 },
+            providerConfig: null,
+          },
+        },
+        embedDocuments: async () => [new Float32Array([0.25, 0.5])],
+        fetchDecryptedTranscriptPageAfterSeq: async () => [],
       });
 
       const embeddingMap = deep.loadEmbeddings({

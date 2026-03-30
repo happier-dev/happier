@@ -1,6 +1,7 @@
 import { machineSpawnNewSession } from '@/sync/ops/machines';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 
 import { openVoiceSessionSpawnPicker } from '@/voice/pickers/openVoiceSessionSpawnPicker';
 import { resolveSpawnAgentIdFromState } from './spawnSessionAgent';
@@ -24,12 +25,18 @@ export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?
   const requestedModelId = normalizeNonEmptyString(params.modelId);
   const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
   const modelUpdatedAt = modelId ? Date.now() : null;
+  const machineMetadata = (state?.machines?.[picked.machineId] ?? Object.values(state?.machines ?? {}).find((entry: any) => entry?.id === picked.machineId) ?? null)?.metadata ?? null;
+  const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
+    machineMetadata,
+    settings: state?.settings ?? {},
+  }).mode;
 
   const spawned = await machineSpawnNewSession({
     machineId: picked.machineId,
     directory: picked.directory,
-    agent,
+    backendTarget: { kind: 'builtInAgent', agentId: agent },
     serverId,
+    ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
     ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),
   });
 

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { Metadata } from '@/api/types';
@@ -32,7 +32,9 @@ export async function writeTerminalAttachmentInfo(params: {
   terminal: NonNullable<Metadata['terminal']>;
 }): Promise<void> {
   const dir = sessionsDir(params.happyHomeDir);
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  // Best-effort: mkdir does not update permissions for existing dirs.
+  await chmod(dir, 0o700).catch(() => {});
 
   const info: TerminalAttachmentInfo = {
     version: 1,
@@ -44,8 +46,9 @@ export async function writeTerminalAttachmentInfo(params: {
   const path = sessionFilePath(params.happyHomeDir, params.sessionId);
   const tmpPath = `${path}.tmp`;
 
-  await writeFile(tmpPath, JSON.stringify(info, null, 2), 'utf8');
+  await writeFile(tmpPath, JSON.stringify(info, null, 2), { encoding: 'utf8', mode: 0o600 });
   await rename(tmpPath, path);
+  await chmod(path, 0o600).catch(() => {});
 }
 
 export async function readTerminalAttachmentInfo(params: {
@@ -73,7 +76,14 @@ export async function readTerminalAttachmentInfo(params: {
     if (parsed.version !== 1) return null;
     if (parsed.sessionId !== params.sessionId) return null;
     if (!parsed.terminal || typeof parsed.terminal !== 'object') return null;
-    if (parsed.terminal.mode !== 'plain' && parsed.terminal.mode !== 'tmux') return null;
+    if (
+      parsed.terminal.mode !== 'plain'
+      && parsed.terminal.mode !== 'tmux'
+      && parsed.terminal.mode !== 'windows_terminal'
+      && parsed.terminal.mode !== 'windows_console'
+    ) {
+      return null;
+    }
     return parsed as TerminalAttachmentInfo;
   } catch {
     return null;

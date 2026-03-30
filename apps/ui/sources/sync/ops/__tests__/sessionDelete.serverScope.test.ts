@@ -1,9 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockRequest, mockResolveContext, mockRuntimeFetch } = vi.hoisted(() => ({
+const { mockRequest, mockResolveContext, mockRuntimeFetch, mockStorageState } = vi.hoisted(() => ({
   mockRequest: vi.fn(),
   mockResolveContext: vi.fn(),
   mockRuntimeFetch: vi.fn(),
+  mockStorageState: {
+    sessions: {},
+    sessionListViewDataByServerId: {},
+    applySessions: vi.fn(),
+  } as {
+    sessions: Record<string, unknown>;
+    sessionListViewDataByServerId: Record<string, unknown>;
+    applySessions: ReturnType<typeof vi.fn>;
+  },
 }));
 
 vi.mock('../../api/session/apiSocket', () => ({
@@ -20,7 +29,13 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
   runtimeFetch: mockRuntimeFetch,
 }));
 
-import { sessionDeleteWithServerScope } from '../../ops';
+vi.mock('../../domains/state/storage', () => ({
+  storage: {
+    getState: () => mockStorageState,
+  },
+}));
+
+import { sessionDelete, sessionDeleteWithServerScope } from '../../ops';
 
 function makeResponse(opts: Readonly<{ ok: boolean; status?: number; json?: unknown; text?: string }>) {
   return {
@@ -37,6 +52,9 @@ describe('sessionDeleteWithServerScope', () => {
     mockRequest.mockReset();
     mockResolveContext.mockReset();
     mockRuntimeFetch.mockReset();
+    mockStorageState.sessions = {};
+    mockStorageState.sessionListViewDataByServerId = {};
+    mockStorageState.applySessions.mockReset();
   });
 
   it('uses active apiSocket.request when scope is active', async () => {
@@ -80,5 +98,27 @@ describe('sessionDeleteWithServerScope', () => {
     );
     expect(mockRequest).not.toHaveBeenCalled();
   });
-});
 
+  it('sessionDelete defaults to the preferred owner server from local cache', async () => {
+    mockStorageState.sessions = {
+      'sid-owned': {
+        serverId: 'server-owned',
+      },
+    };
+    mockResolveContext.mockResolvedValue({
+      scope: 'active',
+      targetServerUrl: 'https://active.example',
+      targetServerId: 'server-owned',
+      token: 'tok',
+      timeoutMs: 1000,
+      encryption: null,
+    });
+    mockRequest.mockResolvedValue(makeResponse({ ok: true }));
+
+    const res = await sessionDelete('sid-owned');
+
+    expect(res).toEqual({ success: true });
+    expect(mockResolveContext).toHaveBeenCalledWith({ serverId: 'server-owned' });
+    expect(mockRequest).toHaveBeenCalledWith('/v1/sessions/sid-owned', { method: 'DELETE' });
+  });
+});

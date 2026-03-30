@@ -3,12 +3,13 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
-import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
+import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import { DetectedClisModal } from '@/components/machines/DetectedClisModal';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { getAgentCore, getAgentCliGlyph } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { useMachine } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
 
 
@@ -46,10 +47,12 @@ export const MachineCliGlyphs = React.memo(({ machineId, isOnline, serverId, aut
     useUnistyles(); // re-render on theme changes
     const styles = stylesheet;
     const enabledAgents = useEnabledAgentIds();
+    const machine = useMachine(machineId);
 
-    const { state } = useMachineCapabilitiesCache({
+    const { state } = useDaemonScopedMachineCapabilitiesCache({
         machineId,
         serverId,
+        daemonStateVersion: machine?.daemonStateVersion ?? 0,
         enabled: autoDetect && isOnline,
         request: CAPABILITIES_REQUEST_NEW_SESSION,
     });

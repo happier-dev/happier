@@ -16,7 +16,13 @@ export const EMPTY_SCM_CAPABILITIES: ScmCapabilities = {
     writeRemoteFetch: false,
     writeRemotePull: false,
     writeRemotePush: false,
-    workspaceWorktreeCreate: false,
+    writeRemotePublish: false,
+    readBranches: false,
+    writeBranchCreate: false,
+    writeBranchCheckout: false,
+    readStash: false,
+    writeStash: false,
+    worktreeCreate: false,
     changeSetModel: 'working-copy',
     supportedDiffAreas: ['pending', 'both'],
 };
@@ -59,6 +65,7 @@ export function mapProtocolSnapshotToUiSnapshot(
             rootPath: snapshot.repo.rootPath,
             backendId: snapshot.repo.backendId,
             mode: snapshot.repo.mode,
+            worktrees: snapshot.repo.worktrees,
         },
         capabilities: mergeScmCapabilities(snapshot.capabilities),
         branch: {

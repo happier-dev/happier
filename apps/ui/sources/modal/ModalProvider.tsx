@@ -46,16 +46,35 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
         setState({ modals: [] });
     }, []);
 
+    const updateCustomModalProps = useCallback((id: string, props: Record<string, unknown>) => {
+        setState((prev) => ({
+            modals: prev.modals.map((modal) => {
+                if (modal.id !== id || modal.type !== 'custom') {
+                    return modal;
+                }
+
+                return {
+                    ...modal,
+                    props: {
+                        ...(modal.props ?? {}),
+                        ...props,
+                    },
+                };
+            }),
+        }));
+    }, []);
+
     // Initialize ModalManager with functions
     useEffect(() => {
-        Modal.setFunctions(showModal, hideModal, hideAllModals);
-    }, [showModal, hideModal, hideAllModals]);
+        Modal.setFunctions(showModal, hideModal, hideAllModals, updateCustomModalProps);
+    }, [showModal, hideModal, hideAllModals, updateCustomModalProps]);
 
     const contextValue: ModalContextValue = {
         state,
         showModal,
         hideModal,
-        hideAllModals
+        hideAllModals,
+        updateCustomModalProps,
     };
 
     const topIndex = state.modals.length - 1;
@@ -90,7 +109,10 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
                             <WebAlertModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => hideModal(modal.id)}
+                                onClose={() => {
+                                    Modal.resolveConfirm(modal.id, false);
+                                    hideModal(modal.id);
+                                }}
                                 onConfirm={(value) => {
                                     Modal.resolveConfirm(modal.id, value);
                                     hideModal(modal.id);
@@ -106,7 +128,10 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
                             <WebPromptModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => hideModal(modal.id)}
+                                onClose={() => {
+                                    Modal.resolvePrompt(modal.id, null);
+                                    hideModal(modal.id);
+                                }}
                                 onConfirm={(value) => {
                                     Modal.resolvePrompt(modal.id, value);
                                     hideModal(modal.id);

@@ -4,118 +4,60 @@ import {
   decideCodexLocalControlSupport,
   formatCodexLocalControlLaunchFallbackMessage,
   formatCodexLocalControlSwitchDeniedMessage,
-  shouldUseCodexMcpResumeServer,
 } from '../localControlSupport';
 
 describe('Codex local-control support (pure decisions)', () => {
-  describe('shouldUseCodexMcpResumeServer', () => {
-    it('returns true when a vendor resume id is present', () => {
-      expect(shouldUseCodexMcpResumeServer({
-        experimentalCodexResumeEnabled: true,
-        vendorResumeId: 'abc',
-        localControlSupported: false,
-      })).toBe(true);
-    });
-
-    it('returns true when local-control is supported (even with no resume id yet)', () => {
-      expect(shouldUseCodexMcpResumeServer({
-        experimentalCodexResumeEnabled: true,
-        vendorResumeId: null,
-        localControlSupported: true,
-      })).toBe(true);
-    });
-
-    it('returns false when experimental resume is disabled', () => {
-      expect(shouldUseCodexMcpResumeServer({
-        experimentalCodexResumeEnabled: false,
-        vendorResumeId: 'abc',
-        localControlSupported: true,
-      })).toBe(false);
-    });
-
-    it('returns false when resume is not needed and local-control is unsupported', () => {
-      expect(shouldUseCodexMcpResumeServer({
-        experimentalCodexResumeEnabled: true,
-        vendorResumeId: null,
-        localControlSupported: false,
-      })).toBe(false);
-    });
-
-    it('treats whitespace vendor resume ids as absent', () => {
-      expect(shouldUseCodexMcpResumeServer({
-        experimentalCodexResumeEnabled: true,
-        vendorResumeId: '   ',
-        localControlSupported: false,
-      })).toBe(false);
-    });
-  });
-
   describe('decideCodexLocalControlSupport', () => {
-    it('fails closed when started by daemon', () => {
+    it('fails closed when started by daemon without a TTY', () => {
       expect(decideCodexLocalControlSupport({
         startedBy: 'daemon',
-        experimentalCodexAcpEnabled: false,
-        experimentalCodexResumeEnabled: true,
-        acpLoadSessionSupported: true,
+        experimentalCodexAcpEnabled: true,
+        hasTtyForLocal: false,
       })).toEqual({ ok: false, reason: 'started-by-daemon' });
     });
 
-    it('fails closed for ACP when loadSession is unsupported', () => {
+    it('allows switching to local control when started by daemon with a TTY', () => {
       expect(decideCodexLocalControlSupport({
-        startedBy: 'cli',
+        startedBy: 'daemon',
         experimentalCodexAcpEnabled: true,
-        experimentalCodexResumeEnabled: false,
-        acpLoadSessionSupported: false,
-      })).toEqual({ ok: false, reason: 'acp-load-session-unsupported' });
+        hasTtyForLocal: true,
+      })).toEqual({ ok: true, backend: 'acp' });
     });
 
-    it('fails closed when neither experimental resume nor ACP is enabled', () => {
+    it('fails closed when ACP is disabled', () => {
       expect(decideCodexLocalControlSupport({
         startedBy: 'cli',
         experimentalCodexAcpEnabled: false,
-        experimentalCodexResumeEnabled: false,
-        acpLoadSessionSupported: true,
+        hasTtyForLocal: true,
       })).toEqual({ ok: false, reason: 'resume-disabled' });
     });
 
-    it('returns ok for MCP when resume server is available', () => {
-      expect(decideCodexLocalControlSupport({
-        startedBy: 'cli',
-        experimentalCodexAcpEnabled: false,
-        experimentalCodexResumeEnabled: true,
-        acpLoadSessionSupported: true,
-      })).toEqual({ ok: true, backend: 'mcp' });
-    });
-
-    it('returns ok for ACP when loadSession is supported', () => {
+    it('returns ok for ACP when enabled', () => {
       expect(decideCodexLocalControlSupport({
         startedBy: 'cli',
         experimentalCodexAcpEnabled: true,
-        experimentalCodexResumeEnabled: false,
-        acpLoadSessionSupported: true,
+        hasTtyForLocal: true,
       })).toEqual({ ok: true, backend: 'acp' });
     });
 
-    it('prefers ACP backend when both ACP and resume are enabled', () => {
+    it('returns ok for app-server when local control is enabled there', () => {
       expect(decideCodexLocalControlSupport({
         startedBy: 'cli',
         experimentalCodexAcpEnabled: true,
-        experimentalCodexResumeEnabled: true,
-        acpLoadSessionSupported: true,
-      })).toEqual({ ok: true, backend: 'acp' });
+        hasTtyForLocal: true,
+        localControlBackend: 'appServer',
+      })).toEqual({ ok: true, backend: 'appServer' });
     });
   });
 
   describe('user-facing messages', () => {
     it('formats launch fallback reasons', () => {
       expect(formatCodexLocalControlLaunchFallbackMessage('started-by-daemon')).toContain('daemon');
-      expect(formatCodexLocalControlLaunchFallbackMessage('resume-disabled')).toContain('resume support');
-      expect(formatCodexLocalControlLaunchFallbackMessage('acp-load-session-unsupported')).toContain('loadSession');
+      expect(formatCodexLocalControlLaunchFallbackMessage('resume-disabled')).toContain('resumable');
     });
 
     it('formats switch denied reasons', () => {
-      expect(formatCodexLocalControlSwitchDeniedMessage('resume-disabled')).toContain('disabled');
-      expect(formatCodexLocalControlSwitchDeniedMessage('acp-load-session-unsupported')).toContain('loadSession');
+      expect(formatCodexLocalControlSwitchDeniedMessage('resume-disabled')).toContain('enabled');
       expect(formatCodexLocalControlSwitchDeniedMessage('started-by-daemon')).toContain('daemon');
     });
   });

@@ -7,9 +7,9 @@ export type AttachmentDraft = Readonly<{
     source: AttachmentsUploadFileSource;
     status: AttachmentDraftStatus;
     error?: string;
+    uploadProgress?: Readonly<{ uploadedBytes: number; totalBytes: number }>;
     uploadedPath?: string;
     uploadedSizeBytes?: number;
     uploadedMimeType?: string;
     sha256?: string;
 }>;
-

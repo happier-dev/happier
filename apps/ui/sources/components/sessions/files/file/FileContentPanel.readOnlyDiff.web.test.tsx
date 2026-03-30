@@ -1,15 +1,13 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { installSessionFileViewCommonModuleMocks } from './sessionFileViewTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: 'ScrollView',
-    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? null },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+installSessionFileViewCommonModuleMocks();
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -31,10 +29,6 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
 describe('FileContentPanel (web read-only diff)', () => {
     const theme = { colors: { textSecondary: '#999' } };
 
@@ -42,9 +36,7 @@ describe('FileContentPanel (web read-only diff)', () => {
         const { FileContentPanel } = await import('./FileContentPanel');
 
         let tree!: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <FileContentPanel
+        tree = (await renderScreen(<FileContentPanel
                     theme={theme as any}
                 displayMode="diff"
                 sessionId="s1"
@@ -55,11 +47,9 @@ describe('FileContentPanel (web read-only diff)', () => {
                 selectedLineKeys={new Set()}
                 lineSelectionEnabled={false}
                 onToggleLine={vi.fn()}
-            />
-        );
-    });
+            />)).tree;
 
-        expect(tree.root.findAllByType('DiffViewer' as any)).toHaveLength(1);
-        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(0);
+        expect(tree.findAllByType('DiffViewer' as any)).toHaveLength(1);
+        expect(tree.findAllByType('CodeLinesView' as any)).toHaveLength(0);
     });
 });

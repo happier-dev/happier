@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { encryptSessionPayload, type SessionEncryptionContext } from '@/sessionControl/sessionEncryptionContext';
+import { encryptSessionPayload, type SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { decryptTranscriptRows } from './decryptTranscriptRows';
 

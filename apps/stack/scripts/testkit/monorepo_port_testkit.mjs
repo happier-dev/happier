@@ -1,31 +1,19 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { run, runCapture } from '../utils/proc/proc.mjs';
+import { sanitizeDefinedEnv } from '../utils/test/test_env.mjs';
+import { ensureMinimalMonorepoLayout } from './core/minimal_monorepo_layout.mjs';
+import { buildGitIdentityEnv } from './core/env_scope.mjs';
+import { createTempFixture } from './core/temp_fixture.mjs';
 
 export async function withTempRoot(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-monorepo-port-'));
-  t.after(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-  return dir;
+  return (await createTempFixture(t, { prefix: 'happy-stacks-monorepo-port-' })).root;
 }
 
 export function gitEnv() {
-  const clean = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('HAPPIER_STACK_')) continue;
-    clean[k] = v;
-  }
-  return {
-    ...clean,
-    GIT_AUTHOR_NAME: 'Test',
-    GIT_AUTHOR_EMAIL: 'test@example.com',
-    GIT_COMMITTER_NAME: 'Test',
-    GIT_COMMITTER_EMAIL: 'test@example.com',
-  };
+  return buildGitIdentityEnv();
 }
 
 export async function initMonorepoStub({ dir, env, seed = {}, layout = 'packages' }) {
@@ -34,12 +22,7 @@ export async function initMonorepoStub({ dir, env, seed = {}, layout = 'packages
   await run('git', ['checkout', '-q', '-b', 'main'], { cwd: dir, env });
 
   void layout;
-  await mkdir(join(dir, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(dir, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(dir, 'apps', 'server'), { recursive: true });
-  await writeFile(join(dir, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(dir, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(dir, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+  await ensureMinimalMonorepoLayout(dir);
   for (const [rel, content] of Object.entries(seed)) {
     // eslint-disable-next-line no-await-in-loop
     await mkdir(join(dir, rel.split('/').slice(0, -1).join('/')), { recursive: true });
@@ -79,7 +62,7 @@ function withTimeout(task, { timeoutMs, message }) {
 }
 
 export function spawnNodeWithCapture(command, args, { cwd, env, stdio = ['pipe', 'pipe', 'pipe'] } = {}) {
-  const child = spawn(command, args, { cwd, env, stdio });
+  const child = spawn(command, args, { cwd, env: sanitizeDefinedEnv(env), stdio });
   let stdout = '';
   let stderr = '';
   const outputWaiters = new Set();

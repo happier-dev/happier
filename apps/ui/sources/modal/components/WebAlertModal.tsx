@@ -6,6 +6,7 @@ import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { ModalCardFrame } from './card/ModalCardFrame';
 
 
 interface WebAlertModalProps {
@@ -17,20 +18,6 @@ interface WebAlertModalProps {
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: 14,
-        width: 270,
-        overflow: 'hidden',
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: {
-            width: 0,
-            height: 2,
-        },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 5,
-    },
     content: {
         paddingHorizontal: 16,
         paddingTop: 20,
@@ -138,7 +125,7 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}
         >
-            <View style={styles.container}>
+            <ModalCardFrame dimensions={{ width: 270, maxHeightRatio: 0.48 }}>
                 <View style={styles.content}>
                     <Text style={[styles.title, Typography.default('semiBold')]}>
                         {config.title}
@@ -255,7 +242,9 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                         ))}
                     </View>
                 )}
-            </View>
+            </ModalCardFrame>
         </BaseModal>
     );
 }
+
+export { ModalCardFrame } from './card/ModalCardFrame';

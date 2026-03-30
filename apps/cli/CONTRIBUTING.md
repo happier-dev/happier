@@ -256,13 +256,16 @@ Cross-platform via Node.js - works identically on Windows, macOS, and Linux!
 
 Profile synchronization ensures AI backend configurations created in the Happier mobile/web GUI work seamlessly with the CLI daemon.
 
-### Profile Schema Validation
+### Profile Schema Validation (Single Source of Truth)
 
-The profile schema is defined in both repositories:
-- **GUI:** `sources/sync/settings.ts` (AIBackendProfileSchema)
-- **CLI:** `src/persistence.ts` (AIBackendProfileSchema)
+Backend profile schema + built-in catalog are canonicalized in `@happier-dev/protocol`:
+- `packages/protocol/src/profiles/backendProfileSchema.ts`
+- `packages/protocol/src/profiles/builtInBackendProfiles.ts`
+- `packages/protocol/src/profiles/profileCompatibility.ts`
+- `packages/protocol/src/profiles/profileRequirements.ts`
+- `packages/protocol/src/profiles/resolveBackendProfile.ts`
 
-**Critical:** These schemas MUST stay in sync to prevent sync failures.
+The UI and CLI import these helpers (the UI may re-export them for convenience). Avoid re-defining schemas in app code to prevent drift.
 
 ### Testing Profile Sync
 
@@ -276,36 +279,36 @@ The profile schema is defined in both repositories:
 
 2. **Verify CLI receives profile:**
    ```bash
-   # Start daemon with dev variant
-   npm run dev:daemon:start
+   # List profiles (built-ins always present; custom requires auth)
+   happier profiles list
+   happier profiles list --json
 
-   # Check daemon logs
-   tail -f ~/.happy-dev/logs/*.log | grep -i profile
+   # Force-refresh settings before listing (useful during iterative development)
+   happier profiles list --refresh-settings
    ```
 
 3. **Test profile-based session spawning:**
    ```bash
-   # From GUI: Start new session with custom profile
-   # Check CLI daemon logs for:
-   # - "Loaded X environment variables from profile"
-   # - "Using GUI-provided profile environment variables"
+   # Start sessions explicitly with a profile:
+   happier --profile <id-or-name>
+   happier claude --profile <id-or-name>
+   happier codex --profile <id-or-name>
    ```
 
 4. **Verify environment variable expansion:**
    ```bash
-   # If profile uses ${VAR} references:
-   # - Set reference var in daemon environment: export Z_AI_AUTH_TOKEN="sk-..."
-   # - Start session from GUI
-   # - Verify daemon logs show expansion: "${Z_AI_AUTH_TOKEN}" → "sk-..."
+   # Profiles may use ${VAR} references:
+   # - if VAR is provided via the profile env overlay (UI/CLI injection), expansion must still work
+   # - if VAR is not provided anywhere, the daemon will fail closed for auth-related vars
    ```
 
 ### Testing Schema Compatibility
 
 When modifying profile schemas:
 
-1. **Update both repositories** - Never update one without the other
-2. **Test migration** - Existing profiles should migrate gracefully
-3. **Version bump** - Update `CURRENT_PROFILE_VERSION` if schema changes
+1. **Update protocol** - Make schema changes only in `packages/protocol/src/profiles/*`
+2. **Run tests** - Protocol + UI + CLI unit tests should remain green
+3. **Test migration** - Existing profiles should migrate gracefully
 4. **Test validation** - Invalid profiles should be caught with clear errors
 
 ### Common Issues
@@ -316,9 +319,9 @@ When modifying profile schemas:
 - Ensure compatibility.claude or compatibility.codex is true
 
 **Environment variables not expanding:**
-- Reference variable must be set in daemon's process.env
-- Check daemon logs for expansion warnings
-- Verify no typos in ${VAR} references
+- Verify no typos in `${VAR}` references
+- For CLI-started sessions, use `--profile` and ensure required secrets/config are satisfied (env, saved secret binding, or interactive prompt)
+- For GUI-started sessions, ensure required secrets are satisfied and injected via the profile overlay
 
 ## Publishing to npm
 

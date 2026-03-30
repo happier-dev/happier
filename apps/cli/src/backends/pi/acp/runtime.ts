@@ -9,24 +9,30 @@ import { maybeUpdatePiSessionIdMetadata } from '@/backends/pi/utils/piSessionIdM
 
 export function createPiAcpRuntime(params: {
   directory: string;
+  machineId: string;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  memoryRecallGuidanceEnabled?: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
   const lastPublishedPiSessionId = { value: null as string | null };
 
   return createCatalogProviderAcpRuntime({
     provider: 'pi',
-    loggerLabel: 'PiRPC',
+    loggerLabel: 'PiACP',
     directory: params.directory,
     session: params.session,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    memoryRecallGuidance: {
+      enabled: params.memoryRecallGuidanceEnabled === true,
+      machineId: params.machineId,
+    },
     getPermissionMode: params.getPermissionMode,
     inFlightSteer: { enabled: true },
     onSessionIdChange: (nextSessionId) => {

@@ -2,9 +2,11 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Typography } from '@/constants/Typography';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { ToolTimelineIconFrame } from './ToolTimelineIconFrame';
 
 export type ToolTimelineRowDensity = 'comfortable' | 'compact';
 
@@ -16,6 +18,7 @@ export type ToolTimelineRowHeaderDisclosure =
 
 export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(props: {
     testID?: string;
+    openActionTestID?: string;
     density: ToolTimelineRowDensity;
     icon: React.ReactNode;
     title: string;
@@ -34,70 +37,76 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
     const canOpen = props.canOpen === true && typeof props.onOpen === 'function';
     const disclosure = props.disclosure ?? null;
     const hoverEnabled = Platform.OS === 'web' && disclosure?.behavior === 'hover' && Boolean(props.onPress);
+    const hoverRevealOpenAction = Platform.OS === 'web' && Boolean(props.onPress);
+    const trackHoverState = hoverEnabled || hoverRevealOpenAction;
     const [isHovered, setIsHovered] = React.useState(false);
 
     const handleHoverIn = React.useCallback(() => setIsHovered(true), []);
     const handleHoverOut = React.useCallback(() => setIsHovered(false), []);
+    const handleOpenPress = React.useCallback((event?: { stopPropagation?: () => void }) => {
+        event?.stopPropagation?.();
+        props.onOpen?.();
+    }, [props]);
 
     const chevronSize = props.density === 'compact' ? 16 : 18;
     const disclosureChevronName: IoniconName | null =
         disclosure?.state === 'expanded' ? 'chevron-up' : disclosure?.state === 'collapsed' ? 'chevron-down' : null;
 
     return (
-        <Pressable
-            testID={props.testID}
-            onPress={props.onPress ?? undefined}
-            disabled={!props.onPress}
-            onHoverIn={hoverEnabled ? handleHoverIn : undefined}
-            onHoverOut={hoverEnabled ? handleHoverOut : undefined}
-            style={({ pressed }) => [
-                styles.row,
-                props.density === 'compact' ? styles.rowCompact : null,
-                pressed && styles.rowPressed,
-            ]}
-        >
-            <View style={styles.icon}>
-                {disclosure?.behavior === 'persistent' && disclosureChevronName ? (
-                    <Ionicons name={disclosureChevronName} size={chevronSize} color={theme.colors.textSecondary} />
-                ) : hoverEnabled && disclosureChevronName ? (
-                    <View style={styles.iconStack}>
-                        <View
-                            style={[
-                                styles.iconLayer,
-                                Platform.OS === 'web' ? styles.iconLayerTransition : null,
-                                isHovered ? styles.iconLayerHidden : null,
-                            ]}
-                        >
-                            {props.icon}
+        <View style={styles.container}>
+            <Pressable
+                testID={props.testID}
+                onPress={props.onPress ?? undefined}
+                disabled={!props.onPress}
+                onHoverIn={trackHoverState ? handleHoverIn : undefined}
+                onHoverOut={trackHoverState ? handleHoverOut : undefined}
+                style={({ pressed }) => [
+                    styles.row,
+                    props.density === 'compact' ? styles.rowCompact : null,
+                    pressed && styles.rowPressed,
+                ]}
+            >
+                <View style={styles.icon}>
+                    {disclosure?.behavior === 'persistent' && disclosureChevronName ? (
+                        <Ionicons name={disclosureChevronName} size={chevronSize} color={theme.colors.textSecondary} />
+                    ) : hoverEnabled && disclosureChevronName ? (
+                        <View style={styles.iconStack}>
+                            <View
+                                style={[
+                                    styles.iconLayer,
+                                    isHovered ? styles.iconLayerHidden : null,
+                                ]}
+                            >
+                                <ToolTimelineIconFrame icon={props.icon} />
+                            </View>
+                            <View
+                                style={[
+                                    styles.iconLayer,
+                                    styles.iconLayerOverlay,
+                                    isHovered ? null : styles.iconLayerHidden,
+                                ]}
+                            >
+                                <Ionicons
+                                    name={disclosureChevronName}
+                                    size={chevronSize}
+                                    color={theme.colors.textSecondary}
+                                />
+                            </View>
                         </View>
-                        <View
-                            style={[
-                                styles.iconLayer,
-                                styles.iconLayerOverlay,
-                                Platform.OS === 'web' ? styles.iconLayerTransition : null,
-                                isHovered ? null : styles.iconLayerHidden,
-                            ]}
-                        >
-                            <Ionicons
-                                name={disclosureChevronName}
-                                size={chevronSize}
-                                color={theme.colors.textSecondary}
-                            />
-                        </View>
-                    </View>
-                ) : (
-                    props.icon
-                )}
-            </View>
-            <View style={styles.text}>
-                <Text
-                    style={[styles.title, props.density === 'compact' ? styles.titleCompact : null]}
-                    numberOfLines={1}
-                >
-                    {props.title}
+                    ) : (
+                        <ToolTimelineIconFrame icon={props.icon} />
+                    )}
+                </View>
+                <View style={styles.text}>
+                    <Text
+                        style={[styles.title, props.density === 'compact' ? styles.titleCompact : null]}
+                        numberOfLines={1}
+                    >
+                        {props.title}
+                    </Text>
                     {showSubtitleInline ? (
                         <Text style={styles.subtitleInline} numberOfLines={1}>
-                            {` — ${props.subtitle}`}
+                            {`${props.subtitle}`}
                         </Text>
                     ) : null}
                     {showStatusInline ? (
@@ -105,25 +114,42 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                             {` · ${props.statusText}`}
                         </Text>
                     ) : null}
-                </Text>
-            </View>
-            {props.rightElement ? <View style={styles.actions}>{props.rightElement}</View> : null}
+                </View>
+                {props.rightElement ? <View style={styles.actions}>{props.rightElement}</View> : null}
+            </Pressable>
             {canOpen ? (
-                <Pressable
-                    onPress={props.onOpen ?? undefined}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('toolView.open')}
-                    style={({ pressed }) => [styles.open, pressed && styles.openPressed]}
+                <View
+                    style={[
+                        styles.openSlot,
+                        hoverRevealOpenAction ? (isHovered ? styles.openSlotVisible : styles.openSlotHidden) : null,
+                    ]}
                 >
-                    <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
-                </Pressable>
+                    <Pressable
+                        testID={props.openActionTestID}
+                        onPress={handleOpenPress}
+                        onHoverIn={trackHoverState ? handleHoverIn : undefined}
+                        onHoverOut={trackHoverState ? handleHoverOut : undefined}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('toolView.open')}
+                        style={({ pressed }) => [styles.open, pressed && styles.openPressed]}
+                    >
+                        <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
+                    </Pressable>
+                </View>
             ) : null}
-        </Pressable>
+        </View>
     );
 });
 
 const styles = StyleSheet.create((theme, _runtime) => ({
+    container: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
     row: {
+        flex: 1,
+        minWidth: 0,
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 0,
@@ -163,40 +189,54 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    iconLayerTransition: {
-        transitionProperty: 'opacity',
-        transitionDuration: '140ms',
-        transitionTimingFunction: 'ease',
-    },
     iconLayerHidden: {
         opacity: 0,
     },
     text: {
         flex: 1,
+        flexDirection: 'row',
         minWidth: 0,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        gap: 8,
+        fontSize: 13,
     },
     title: {
-        fontSize: 14,
+        fontSize: 13,
         lineHeight: 20,
-        fontWeight: '600',
+        ...Typography.default('semiBold'),
         color: theme.colors.text,
+        flexShrink: 0,
     },
     titleCompact: {
         fontSize: 13,
         lineHeight: 18,
     },
     subtitleInline: {
-        fontWeight: '500',
+        fontSize: 13,
         color: theme.colors.textSecondary,
+        ...Typography.default('regular'),
     },
     statusInline: {
-        fontWeight: '500',
+        fontSize: 13,
         opacity: 0.4,
+        ...Typography.default('regular'),
     },
     actions: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
+    },
+    openSlot: {
+        width: 26,
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+    },
+    openSlotHidden: {
+        opacity: 0,
+    },
+    openSlotVisible: {
+        opacity: 1,
     },
     open: {
         padding: 4,

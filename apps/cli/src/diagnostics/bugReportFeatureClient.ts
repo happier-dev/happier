@@ -24,9 +24,6 @@ export async function fetchBugReportsFeatureFromServer(serverUrl: string): Promi
     return DEFAULT_BUG_REPORT_FEATURE;
   }
 
-  const gateEnabled = snapshot.features.features.bugReports.enabled === true;
-  if (!gateEnabled) return DEFAULT_BUG_REPORT_FEATURE;
-
   const capabilities = snapshot.features.capabilities.bugReports;
   if (!capabilities.providerUrl) return DEFAULT_BUG_REPORT_FEATURE;
 

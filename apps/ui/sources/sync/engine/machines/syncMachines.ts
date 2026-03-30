@@ -2,6 +2,9 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { log } from '@/log';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { serverFetch } from '@/sync/http/client';
+import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
+import type { MachineDisplayCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 
 type MachineEncryption = {
     decryptMetadata: (version: number, value: string) => Promise<any>;
@@ -13,6 +16,19 @@ type SyncEncryption = {
     initializeMachines: (machineKeysMap: Map<string, Uint8Array | null>) => Promise<void>;
     getMachineEncryption: (machineId: string) => MachineEncryption | null;
 };
+
+const warnedMachineDataEncryptionKeyFailuresByEncryption = new WeakMap<SyncEncryption, Set<string>>();
+
+function warnMachineDataEncryptionKeyDecryptFailureOnce(encryption: SyncEncryption, machineId: string): void {
+    let warnedMachineIds = warnedMachineDataEncryptionKeyFailuresByEncryption.get(encryption);
+    if (!warnedMachineIds) {
+        warnedMachineIds = new Set<string>();
+        warnedMachineDataEncryptionKeyFailuresByEncryption.set(encryption, warnedMachineIds);
+    }
+    if (warnedMachineIds.has(machineId)) return;
+    warnedMachineIds.add(machineId);
+    console.warn(`Failed to decrypt data encryption key for machine ${machineId}; falling back to legacy machine encryption.`);
+}
 
 export async function buildUpdatedMachineFromSocketUpdate(params: {
     machineUpdate: any;
@@ -110,6 +126,11 @@ export async function fetchAndApplyMachines(params: {
     machineDataKeys: Map<string, Uint8Array>;
     request?: (path: string, init: RequestInit) => Promise<Response>;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
+    getExistingMachine?: (machineId: string) => Machine | null | undefined;
+    applyMachineDisplayEntries?: (machines: MachineDisplayRenderable[], options?: { replace?: boolean }) => void;
+    cachedMachineDisplayEntries?: Record<string, MachineDisplayCacheEntryV1>;
+    machineDisplayHydrationConcurrencyLimit?: number;
+    shouldContinue?: () => boolean;
     /**
      * When true, drop any locally-cached machines that are missing from the
      * latest fetch response.
@@ -118,11 +139,21 @@ export async function fetchAndApplyMachines(params: {
      * inconsistencies (SWR-style) and to avoid confusing UI flicker.
      */
     replace?: boolean;
+    /**
+     * When true, propagate network/HTTP/parse failures to the caller.
+     *
+     * Defaults to false so callers can use SWR-style refresh semantics without
+     * spurious error surfaces.
+     */
+    throwOnError?: boolean;
 }): Promise<void> {
     const { credentials, encryption, machineDataKeys, applyMachines } = params;
     const request =
         params.request
         ?? ((path: string, init: RequestInit) => serverFetch(path, init, { includeAuth: false }));
+    const concurrencyLimit = Math.max(1, Math.trunc(params.machineDisplayHydrationConcurrencyLimit ?? 4));
+    const shouldContinue = params.shouldContinue ?? (() => true);
+    const throwOnError = params.throwOnError === true;
 
     let response: Response;
     try {
@@ -133,12 +164,16 @@ export async function fetchAndApplyMachines(params: {
             },
         });
     } catch (error) {
-        console.error('Failed to fetch machines:', error);
+        if (throwOnError) {
+            throw error;
+        }
         return;
     }
 
     if (!response.ok) {
-        console.error(`Failed to fetch machines: ${response.status}`);
+        if (throwOnError) {
+            throw new Error(`Failed to fetch machines: ${response.status}`);
+        }
         return;
     }
 
@@ -146,7 +181,9 @@ export async function fetchAndApplyMachines(params: {
     try {
         data = await response.json();
     } catch (error) {
-        console.error('Failed to parse machines response:', error);
+        if (throwOnError) {
+            throw error;
+        }
         return;
     }
     const machines = data as Array<{
@@ -164,50 +201,135 @@ export async function fetchAndApplyMachines(params: {
         updatedAt: number;
     }>;
 
+    if (!shouldContinue()) {
+        return;
+    }
+
     // First, collect and decrypt encryption keys for all machines
     const machineKeysMap = new Map<string, Uint8Array | null>();
-    for (const machine of machines) {
-        if (machine.dataEncryptionKey) {
-            const decryptedKey = await encryption.decryptEncryptionKey(machine.dataEncryptionKey);
-            if (!decryptedKey) {
-                console.error(`Failed to decrypt data encryption key for machine ${machine.id}`);
-                // Keep the machine in sync; fall back to legacy machine encryption for metadata/daemonState.
-                // This prevents a single bad key from making the machine list appear empty.
-                machineKeysMap.set(machine.id, null);
-                continue;
+    const keyResults = await runTasksWithLimit(
+        machines.map((machine) => async () => {
+            if (!machine.dataEncryptionKey) {
+                return { machineId: machine.id, decryptedKey: null as Uint8Array | null, hasEnvelope: false };
             }
-            machineKeysMap.set(machine.id, decryptedKey);
-            machineDataKeys.set(machine.id, decryptedKey);
-        } else {
-            machineKeysMap.set(machine.id, null);
+            try {
+                const decryptedKey = await encryption.decryptEncryptionKey(machine.dataEncryptionKey);
+                return { machineId: machine.id, decryptedKey, hasEnvelope: true };
+            } catch {
+                return { machineId: machine.id, decryptedKey: null as Uint8Array | null, hasEnvelope: true };
+            }
+        }),
+        concurrencyLimit,
+    );
+    for (const result of keyResults) {
+        if (!result.decryptedKey && result.hasEnvelope) {
+            warnMachineDataEncryptionKeyDecryptFailureOnce(encryption, result.machineId);
+            machineKeysMap.set(result.machineId, null);
+            continue;
+        }
+        machineKeysMap.set(result.machineId, result.decryptedKey);
+        if (result.decryptedKey) {
+            machineDataKeys.set(result.machineId, result.decryptedKey);
         }
     }
 
     // Initialize machine encryptions
-    await encryption.initializeMachines(machineKeysMap);
+    let machineEncryptionReady = true;
+    try {
+        await encryption.initializeMachines(machineKeysMap);
+    } catch (error) {
+        machineEncryptionReady = false;
+        console.error('[machinesSnapshot] Failed to initialize machine encryption; continuing with cached/unencrypted machine rows', error);
+    }
 
-    // Process all machines first, then update state once
-    const decryptedMachines: Machine[] = [];
+    if (!shouldContinue()) {
+        return;
+    }
 
-    for (const machine of machines) {
-        // Get machine-specific encryption (might exist from previous initialization)
+    const cachedMachineDisplayEntries = params.cachedMachineDisplayEntries ?? {};
+    const shouldApplyMachineDisplays = typeof params.applyMachineDisplayEntries === 'function';
+    const needsMachineWarmHydration = (machine: typeof machines[number]): boolean => {
+        if (cachedMachineDisplayEntries[machine.id]?.metadataVersion !== machine.metadataVersion) {
+            return true;
+        }
+        return typeof machine.daemonState === 'string' && machine.daemonState.length > 0;
+    };
+
+    const buildDisplayFromRowAndCache = (machine: typeof machines[number], cachedEntry: MachineDisplayCacheEntryV1 | undefined): MachineDisplayRenderable => ({
+        id: machine.id,
+        updatedAt: machine.updatedAt,
+        active: machine.active,
+        activeAt: machine.activeAt,
+        revokedAt: machine.revokedAt ?? null,
+        metadataVersion: machine.metadataVersion,
+        metadata: cachedEntry?.metadataVersion === machine.metadataVersion
+            ? {
+                displayName: cachedEntry.displayName ?? null,
+                host: cachedEntry.host ?? null,
+                homeDir: cachedEntry.homeDir ?? null,
+            }
+            : null,
+    });
+
+    const buildMachineFromRowAndCache = (
+        machine: typeof machines[number],
+        cachedEntry: MachineDisplayCacheEntryV1 | undefined,
+        existingMachine: Machine | null | undefined,
+    ): Machine => {
+        const hasEncryptedDaemonState = typeof machine.daemonState === 'string' && machine.daemonState.length > 0;
+        const metadata = cachedEntry?.metadataVersion === machine.metadataVersion && existingMachine?.metadata
+            ? {
+                ...existingMachine.metadata,
+                displayName: cachedEntry.displayName ?? existingMachine.metadata.displayName,
+                host: cachedEntry.host ?? existingMachine.metadata.host,
+                homeDir: cachedEntry.homeDir ?? existingMachine.metadata.homeDir,
+            }
+            : null;
+        return ({
+            id: machine.id,
+            seq: machine.seq,
+            createdAt: machine.createdAt,
+            updatedAt: machine.updatedAt,
+            active: machine.active,
+            activeAt: machine.activeAt,
+            revokedAt: machine.revokedAt ?? null,
+            metadataVersion: machine.metadataVersion,
+            metadata,
+            daemonState: hasEncryptedDaemonState ? existingMachine?.daemonState ?? null : null,
+            daemonStateVersion: hasEncryptedDaemonState
+                ? existingMachine?.daemonStateVersion ?? (machine.daemonStateVersion || 0)
+                : (machine.daemonStateVersion || 0),
+        });
+    };
+
+    const decryptMachine = async (machine: typeof machines[number]): Promise<Machine | null> => {
         const machineEncryption = encryption.getMachineEncryption(machine.id);
         if (!machineEncryption) {
             console.error(`Machine encryption not found for ${machine.id} - this should never happen`);
-            continue;
+            return {
+                id: machine.id,
+                seq: machine.seq,
+                createdAt: machine.createdAt,
+                updatedAt: machine.updatedAt,
+                active: machine.active,
+                activeAt: machine.activeAt,
+                revokedAt: machine.revokedAt ?? null,
+                metadata: null,
+                metadataVersion: machine.metadataVersion,
+                daemonState: null,
+                daemonStateVersion: machine.daemonStateVersion || 0,
+            };
         }
 
         try {
-            // Use machine-specific encryption (which handles fallback internally)
             const metadata = machine.metadata
                 ? await machineEncryption.decryptMetadata(machine.metadataVersion, machine.metadata)
                 : null;
-
             const daemonState = machine.daemonState
                 ? await machineEncryption.decryptDaemonState(machine.daemonStateVersion || 0, machine.daemonState)
                 : null;
 
-            decryptedMachines.push({
+            return {
                 id: machine.id,
                 seq: machine.seq,
                 createdAt: machine.createdAt,
@@ -219,11 +341,10 @@ export async function fetchAndApplyMachines(params: {
                 metadataVersion: machine.metadataVersion,
                 daemonState,
                 daemonStateVersion: machine.daemonStateVersion || 0,
-            });
+            };
         } catch (error) {
             console.error(`Failed to decrypt machine ${machine.id}:`, error);
-            // Still add the machine with null metadata
-            decryptedMachines.push({
+            return {
                 id: machine.id,
                 seq: machine.seq,
                 createdAt: machine.createdAt,
@@ -235,9 +356,53 @@ export async function fetchAndApplyMachines(params: {
                 metadataVersion: machine.metadataVersion,
                 daemonState: null,
                 daemonStateVersion: 0,
+            };
+        }
+    };
+
+    if (shouldApplyMachineDisplays) {
+        const displayEntries = machines.map((machine) => buildDisplayFromRowAndCache(machine, cachedMachineDisplayEntries[machine.id]));
+        params.applyMachineDisplayEntries!(displayEntries, { replace: params.replace ?? false });
+        applyMachines(
+            machines.map((machine) =>
+                buildMachineFromRowAndCache(
+                    machine,
+                    cachedMachineDisplayEntries[machine.id],
+                    params.getExistingMachine?.(machine.id),
+                )),
+            params.replace ?? false,
+        );
+
+        const machinesNeedingHydration = machineEncryptionReady
+            ? machines.filter((machine) => needsMachineWarmHydration(machine))
+            : [];
+        if (machinesNeedingHydration.length > 0) {
+            void runTasksWithLimit(
+                machinesNeedingHydration.map((machine) => async () => {
+                    if (!shouldContinue()) return null;
+                    const decryptedMachine = await decryptMachine(machine);
+                    if (!shouldContinue()) return null;
+                    if (decryptedMachine) {
+                        applyMachines([decryptedMachine], false);
+                    }
+                    return decryptedMachine;
+                }),
+                concurrencyLimit,
+            ).catch((error) => {
+                console.error('[machinesSnapshot] Background hydration failed', error);
             });
         }
+
+        log.log(`🖥️ fetchMachines completed - rendered ${displayEntries.length} machine display rows before selective hydration`);
+        return;
     }
+
+    // Process all machines first, then update state once
+    const decryptedResults = await runTasksWithLimit(
+        machines.map((machine) => async () => decryptMachine(machine)),
+        concurrencyLimit,
+    );
+    const decryptedMachines = decryptedResults.filter((machine): machine is Machine => Boolean(machine));
 
     // Prefer SWR-style merges by default: do not drop machines that are missing from a
     // particular refresh response unless the caller opts into a hard replace.

@@ -1,35 +1,29 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installLocalTtsCommonModuleMocks } from '../../localTtsTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-unistyles', () => {
-  const theme = { colors: { textSecondary: '#999' } };
-  return {
-    useUnistyles: () => ({ theme }),
-    StyleSheet: {
-      create: (factory: any) => (typeof factory === 'function' ? {} : factory),
-      absoluteFillObject: {},
-    },
-  };
-});
+const promptSpy = vi.fn();
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
-
-const promptSpy = vi.fn();
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: (...args: any[]) => promptSpy(...args),
-    alert: vi.fn(),
-  },
-}));
+installLocalTtsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: (...args: any[]) => promptSpy(...args),
+            },
+        }).module;
+    },
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -80,9 +74,7 @@ describe('GoogleCloudTtsSettings', () => {
     const { googleCloudTtsProviderSpec } = await import('./googleCloudTtsProvider');
 
     let tree: any;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(googleCloudTtsProviderSpec.Settings, {
+    tree = (await renderScreen(React.createElement(googleCloudTtsProviderSpec.Settings, {
           cfgTts: {
             provider: 'google_cloud',
             openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
@@ -102,11 +94,9 @@ describe('GoogleCloudTtsSettings', () => {
           setTts,
           networkTimeoutMs: 15_000,
           popoverBoundaryRef: null,
-        }),
-      );
-    });
+        }))).tree;
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
     const languageDropdown = tree.root
@@ -135,9 +125,7 @@ describe('GoogleCloudTtsSettings', () => {
     const { googleCloudTtsProviderSpec } = await import('./googleCloudTtsProvider');
 
     let tree: any;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(googleCloudTtsProviderSpec.Settings, {
+    tree = (await renderScreen(React.createElement(googleCloudTtsProviderSpec.Settings, {
           cfgTts: {
             provider: 'google_cloud',
             openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
@@ -157,20 +145,18 @@ describe('GoogleCloudTtsSettings', () => {
           setTts,
           networkTimeoutMs: 15_000,
           popoverBoundaryRef: null,
-        }),
-      );
-    });
+        }))).tree;
 
-    const speakRateItem = tree.root.findAll((n: any) => n.type === 'Item' && n.props?.title === 'settingsVoice.local.googleCloudTts.speakingRate.title')[0];
-    const pitchItem = tree.root.findAll((n: any) => n.type === 'Item' && n.props?.title === 'settingsVoice.local.googleCloudTts.pitch.title')[0];
+    const speakRateItem = tree.findAll((n: any) => n.type === 'Item' && n.props?.title === 'settingsVoice.local.googleCloudTts.speakingRate.title')[0];
+    const pitchItem = tree.findAll((n: any) => n.type === 'Item' && n.props?.title === 'settingsVoice.local.googleCloudTts.pitch.title')[0];
     expect(speakRateItem).toBeTruthy();
     expect(pitchItem).toBeTruthy();
 
     await act(async () => {
-      await speakRateItem.props.onPress?.();
+      await pressTestInstanceAsync(speakRateItem);
     });
     await act(async () => {
-      await pitchItem.props.onPress?.();
+      await pressTestInstanceAsync(pitchItem);
     });
 
     expect(setTts).toHaveBeenCalledWith(

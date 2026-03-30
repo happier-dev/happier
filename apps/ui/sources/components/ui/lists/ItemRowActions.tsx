@@ -8,10 +8,27 @@ import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
 import { t } from '@/text';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
 export interface ItemRowActionsProps {
     title: string;
     actions: ItemAction[];
+    /**
+     * Optional override for the layout width used to decide whether the row is in "compact" mode.
+     * When omitted, the current window width from `useWindowDimensions()` is used.
+     *
+     * This is useful for responsive icon rows that live inside a container that can be narrower
+     * than the window (e.g. a resizable sidebar header).
+     */
+    layoutWidthPx?: number | null;
+    overflowTriggerTestID?: string;
+    renderOverflowTrigger?: (props: Readonly<{
+        open: boolean;
+        toggle: () => void;
+        testID?: string;
+        accessibilityLabel: string;
+        accessibilityHint: string;
+    }>) => React.ReactNode;
     compactThreshold?: number;
     compactActionIds?: string[];
     /**
@@ -31,7 +48,8 @@ export interface ItemRowActionsProps {
     /**
      * Optional explicit boundary ref for the popover. Useful when the row is rendered
      * inside a scroll container that should bound the popover sizing/placement.
-     * If omitted, the PopoverBoundaryProvider context (e.g. ItemGroup) is used.
+     * If omitted, Popover falls back to PopoverBoundaryProvider context when present,
+     * otherwise it clamps to the window/screen.
      */
     popoverBoundaryRef?: React.RefObject<any> | null;
 }
@@ -39,8 +57,14 @@ export interface ItemRowActionsProps {
 export function ItemRowActions(props: ItemRowActionsProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const { width } = useWindowDimensions();
-    const compact = width < (props.compactThreshold ?? 450);
+    const { width: windowWidth } = useWindowDimensions();
+    const widthForCompact =
+        typeof props.layoutWidthPx === 'number'
+        && Number.isFinite(props.layoutWidthPx)
+        && props.layoutWidthPx > 0
+            ? props.layoutWidthPx
+            : windowWidth;
+    const compact = widthForCompact < (props.compactThreshold ?? 450);
     const [showOverflow, setShowOverflow] = React.useState(false);
     const overflowAnchorRef = React.useRef<View>(null);
 
@@ -101,11 +125,18 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     const overflowActionItems = React.useMemo((): ActionListItem[] => {
         return overflowActions.map((action) => {
             const color = action.color ?? (action.destructive ? theme.colors.deleteAction : theme.colors.button.secondary.tint);
+            const iconNode =
+                typeof action.icon === 'string'
+                    ? <Ionicons name={action.icon} size={18} color={color} />
+                    : action.icon;
             return {
                 id: action.id,
+                testID: action.id,
                 label: action.title,
-                icon: <Ionicons name={action.icon} size={18} color={color} />,
+                subtitle: action.subtitle,
+                icon: iconNode,
                 onPress: () => closeThen(action.onPress),
+                disabled: action.disabled,
             };
         });
     }, [closeThen, overflowActions, theme.colors.button.secondary.tint, theme.colors.deleteAction]);
@@ -114,9 +145,22 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     const gap = props.gap ?? 16;
 
     const renderInlineAction = React.useCallback((action: ItemAction) => {
+        const color = action.color ?? (action.destructive ? theme.colors.deleteAction : theme.colors.button.secondary.tint);
+        const iconNode =
+            typeof action.icon === 'string'
+                ? (
+                    <Ionicons
+                        name={action.icon}
+                        size={iconSize}
+                        color={color}
+                    />
+                )
+                : action.icon;
+
         return (
             <Pressable
                 key={action.id}
+                testID={action.inlineTestID}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 onPressIn={() => props.onActionPressIn?.()}
                 onPress={(e: GestureResponderEvent) => {
@@ -126,39 +170,54 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 accessibilityRole="button"
                 accessibilityLabel={action.title}
             >
-                <Ionicons
-                    name={action.icon}
-                    size={iconSize}
-                    color={action.color ?? (action.destructive ? theme.colors.deleteAction : theme.colors.button.secondary.tint)}
-                />
+                {normalizeNodeForView(
+                    iconNode,
+                )}
             </Pressable>
         );
     }, [iconSize, props, theme.colors.button.secondary.tint, theme.colors.deleteAction]);
 
     const renderOverflow = React.useCallback(() => {
+        const accessibilityLabel = t('common.moreActions');
+        const accessibilityHint = t('common.moreActionsHint');
+        const toggleOverflow = () => setShowOverflow((v) => !v);
+
         return (
             <View key="overflow" style={{ position: 'relative' }}>
                 <View ref={overflowAnchorRef}>
-                    <Pressable
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={showOverflow ? { opacity: 0 } : undefined}
-                        onPressIn={() => props.onActionPressIn?.()}
-                        onPress={(e: GestureResponderEvent) => {
-                            e?.stopPropagation?.();
-                            setShowOverflow((v) => !v);
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common.moreActions')}
-                        accessibilityHint={t('common.moreActionsHint')}
-                        // @ts-expect-error - react-native types do not model the web-only `title` attribute; RN Web forwards it.
-                        title={t('common.moreActions')}
-                    >
-                        <Ionicons
-                            name="ellipsis-vertical"
-                            size={iconSize + 2}
-                            color={theme.colors.button.secondary.tint}
-                        />
-                    </Pressable>
+                    {props.renderOverflowTrigger
+                        ? props.renderOverflowTrigger({
+                            open: showOverflow,
+                            toggle: toggleOverflow,
+                            testID: props.overflowTriggerTestID,
+                            accessibilityLabel,
+                            accessibilityHint,
+                        })
+                        : (
+                            <Pressable
+                                testID={props.overflowTriggerTestID}
+                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                style={showOverflow ? { opacity: 0 } : undefined}
+                                onPressIn={() => props.onActionPressIn?.()}
+                                onPress={(e: GestureResponderEvent) => {
+                                    e?.stopPropagation?.();
+                                    toggleOverflow();
+                                }}
+                                accessibilityRole="button"
+                                accessibilityLabel={accessibilityLabel}
+                                accessibilityHint={accessibilityHint}
+                                // @ts-expect-error - react-native types do not model the web-only `title` attribute; RN Web forwards it.
+                                title={accessibilityLabel}
+                            >
+                                {normalizeNodeForView(
+                                    <Ionicons
+                                        name="ellipsis-horizontal"
+                                        size={iconSize + 2}
+                                        color={theme.colors.button.secondary.tint}
+                                    />,
+                                )}
+                            </Pressable>
+                        )}
                 </View>
 
                 {showOverflow ? (
@@ -182,12 +241,12 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                         backdrop={{
                             effect: 'blur',
                             blurOnWeb: Platform.OS === 'web' ? { px: 3, tintColor: blurTintOnWeb } : undefined,
-                            anchorOverlay: () => (
+                            anchorOverlay: () => normalizeNodeForView(
                                 <Ionicons
-                                    name="ellipsis-vertical"
+                                    name="ellipsis-horizontal"
                                     size={iconSize + 2}
                                     color={theme.colors.button.secondary.tint}
-                                />
+                                />,
                             ),
                             closeOnPan: true,
                         }}

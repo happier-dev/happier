@@ -1,41 +1,20 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { generateKeyPairSync, createSign, randomBytes } from "node:crypto";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
+import { db } from "@/storage/db";
 import { connectRoutes } from "@/app/api/routes/connect/connectRoutes";
 import { auth } from "@/app/auth/auth";
-import { initEncrypt } from "@/modules/encrypt";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { createAppCloseTracker } from "@/app/api/testkit/appLifecycle";
+import { applyEnvValues } from "@/testkit/env";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
-
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -72,11 +51,21 @@ async function readBody(req: IncomingMessage): Promise<string> {
     return Buffer.concat(chunks).toString("utf8");
 }
 
+function applyOidcOffboardingEnv(providersConfig: unknown, strict?: string): void {
+    applyEnvValues({
+        AUTH_SIGNUP_PROVIDERS: "okta",
+        AUTH_REQUIRED_LOGIN_PROVIDERS: "okta",
+        AUTH_OFFBOARDING_ENABLED: "true",
+        AUTH_OFFBOARDING_INTERVAL_SECONDS: "60",
+        AUTH_OFFBOARDING_STRICT: strict,
+        AUTH_PROVIDERS_CONFIG_JSON: JSON.stringify(providersConfig),
+        HAPPIER_WEBAPP_URL: "https://app.example.test",
+    });
+}
+
 describe("OIDC offboarding refresh (integration)", () => {
-    const envBackup = { ...process.env };
     const originalFetch = globalThis.fetch;
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     const authCodes = new Map<string, { nonce: string }>();
     let oidcServer: ReturnType<typeof createServer> | null = null;
@@ -215,40 +204,16 @@ describe("OIDC offboarding refresh (integration)", () => {
         const address = oidcServer.address();
         if (!address || typeof address === "string") throw new Error("failed to bind oidc stub server");
         oidcIssuer = `http://127.0.0.1:${address.port}`;
-
-        baseDir = await mkdtemp(join(tmpdir(), "happier-oidc-offboarding-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await auth.init();
-        await initEncrypt();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-oidc-offboarding-",
+            initAuth: true,
+            initEncrypt: true,
+        });
     }, 120_000);
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) delete (process.env as any)[key];
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") process.env[key] = value;
-        }
-    };
 
     afterEach(async () => {
         await closeTrackedApps();
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         globalThis.fetch = originalFetch;
         authCodes.clear();
         groupsForTokens = ["eng"];
@@ -261,21 +226,15 @@ describe("OIDC offboarding refresh (integration)", () => {
     });
 
     afterAll(async () => {
-        await db.$disconnect();
-        restoreEnv(envBackup);
+        await harness.close();
         globalThis.fetch = originalFetch;
         if (oidcServer) {
             await new Promise<void>((resolve) => oidcServer!.close(() => resolve()));
         }
-        await rm(baseDir, { recursive: true, force: true });
     });
 
     it("re-checks eligibility using refresh token at the offboarding interval", async () => {
-        process.env.AUTH_SIGNUP_PROVIDERS = "okta";
-        process.env.AUTH_REQUIRED_LOGIN_PROVIDERS = "okta";
-        process.env.AUTH_OFFBOARDING_ENABLED = "true";
-        process.env.AUTH_OFFBOARDING_INTERVAL_SECONDS = "60";
-        process.env.AUTH_PROVIDERS_CONFIG_JSON = JSON.stringify([
+        applyOidcOffboardingEnv([
             {
                 id: "okta",
                 type: "oidc",
@@ -289,7 +248,6 @@ describe("OIDC offboarding refresh (integration)", () => {
                 allow: { groupsAny: ["eng"] },
             },
         ]);
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
 
         const seed = new Uint8Array(32).fill(1);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -356,11 +314,7 @@ describe("OIDC offboarding refresh (integration)", () => {
     });
 
     it("fails closed when refresh token grant returns invalid_grant and restrictions are configured", async () => {
-        process.env.AUTH_SIGNUP_PROVIDERS = "okta";
-        process.env.AUTH_REQUIRED_LOGIN_PROVIDERS = "okta";
-        process.env.AUTH_OFFBOARDING_ENABLED = "true";
-        process.env.AUTH_OFFBOARDING_INTERVAL_SECONDS = "60";
-        process.env.AUTH_PROVIDERS_CONFIG_JSON = JSON.stringify([
+        applyOidcOffboardingEnv([
             {
                 id: "okta",
                 type: "oidc",
@@ -374,7 +328,6 @@ describe("OIDC offboarding refresh (integration)", () => {
                 allow: { groupsAny: ["eng"] },
             },
         ]);
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
 
         const seed = new Uint8Array(32).fill(2);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -441,12 +394,7 @@ describe("OIDC offboarding refresh (integration)", () => {
     });
 
     it("allows access when refresh token grant fails with a transient server error (non-strict mode)", async () => {
-        process.env.AUTH_SIGNUP_PROVIDERS = "okta";
-        process.env.AUTH_REQUIRED_LOGIN_PROVIDERS = "okta";
-        process.env.AUTH_OFFBOARDING_ENABLED = "true";
-        process.env.AUTH_OFFBOARDING_INTERVAL_SECONDS = "60";
-        delete process.env.AUTH_OFFBOARDING_STRICT;
-        process.env.AUTH_PROVIDERS_CONFIG_JSON = JSON.stringify([
+        applyOidcOffboardingEnv([
             {
                 id: "okta",
                 type: "oidc",
@@ -460,7 +408,6 @@ describe("OIDC offboarding refresh (integration)", () => {
                 allow: { groupsAny: ["eng"] },
             },
         ]);
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
 
         const seed = new Uint8Array(32).fill(4);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -526,12 +473,8 @@ describe("OIDC offboarding refresh (integration)", () => {
     });
 
     it("fails closed when refresh token grant fails with a transient server error in strict mode", async () => {
-        process.env.AUTH_SIGNUP_PROVIDERS = "okta";
-        process.env.AUTH_REQUIRED_LOGIN_PROVIDERS = "okta";
-        process.env.AUTH_OFFBOARDING_ENABLED = "true";
-        process.env.AUTH_OFFBOARDING_INTERVAL_SECONDS = "60";
-        process.env.AUTH_OFFBOARDING_STRICT = "true";
-        process.env.AUTH_PROVIDERS_CONFIG_JSON = JSON.stringify([
+        applyOidcOffboardingEnv(
+            [
             {
                 id: "okta",
                 type: "oidc",
@@ -544,8 +487,9 @@ describe("OIDC offboarding refresh (integration)", () => {
                 scopes: "openid profile email offline_access",
                 allow: { groupsAny: ["eng"] },
             },
-        ]);
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+            ],
+            "true",
+        );
 
         const seed = new Uint8Array(32).fill(5);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -611,11 +555,7 @@ describe("OIDC offboarding refresh (integration)", () => {
     });
 
     it("fails closed when refresh token subject does not match the linked provider user id", async () => {
-        process.env.AUTH_SIGNUP_PROVIDERS = "okta";
-        process.env.AUTH_REQUIRED_LOGIN_PROVIDERS = "okta";
-        process.env.AUTH_OFFBOARDING_ENABLED = "true";
-        process.env.AUTH_OFFBOARDING_INTERVAL_SECONDS = "60";
-        process.env.AUTH_PROVIDERS_CONFIG_JSON = JSON.stringify([
+        applyOidcOffboardingEnv([
             {
                 id: "okta",
                 type: "oidc",
@@ -629,7 +569,6 @@ describe("OIDC offboarding refresh (integration)", () => {
                 allow: { groupsAny: ["eng"] },
             },
         ]);
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
 
         const seed = new Uint8Array(32).fill(7);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);

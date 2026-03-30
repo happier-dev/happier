@@ -1,51 +1,48 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-                shadow: { color: '#000', opacity: 0.2 },
-            },
-        },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#eee',
-                        text: '#000',
-                        textSecondary: '#666',
-                        shadow: { color: '#000', opacity: 0.2 },
-                    },
-                })
-                : value,
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+        });
     },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
+    icons: () => ({
+        Octicons: 'Octicons',
+        Ionicons: 'Ionicons',
+    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock();
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                // Boundary mock: SessionDetailsPanel only reads editor focus mode in this suite.
+                useLocalSetting: ((key: string) => {
+                    if (key === 'editorFocusModeEnabled') return false;
+                    return null;
+                }) as any,
+                // Boundary mock: the suite only needs a stable boolean mutable local setting tuple.
+                useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+            },
+        });
+    },
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -66,18 +63,6 @@ vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
 
 vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => ({
     SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'editorFocusModeEnabled') return false;
-        return null;
-    },
-    useLocalSettingMutable: () => [false, vi.fn()],
 }));
 
 const pinDetailsTab = vi.fn();
@@ -102,19 +87,23 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     }),
 }));
 
+afterEach(() => {
+    standardCleanup();
+    pinDetailsTab.mockClear();
+    SessionFileDetailsViewMock.mockClear();
+});
+
 describe('SessionDetailsPanel (auto pin on edit)', () => {
     it('pins a preview file tab when editing begins', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        await act(async () => {
-            renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
         expect(SessionFileDetailsViewMock).toHaveBeenCalledTimes(1);
         const props = SessionFileDetailsViewMock.mock.calls[0]?.[0];
         expect(typeof props?.onStartEditingFile).toBe('function');
 
-        act(() => {
+        await act(async () => {
             props.onStartEditingFile();
         });
 

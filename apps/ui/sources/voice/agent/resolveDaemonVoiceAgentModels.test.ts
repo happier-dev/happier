@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveDaemonVoiceAgentModelIds } from './resolveDaemonVoiceAgentModels';
+import { getAgentCore } from '@/agents/catalog/catalog';
 
 describe('resolveDaemonVoiceAgentModelIds', () => {
     it('uses custom chat model and commit=chat when configured', () => {
@@ -65,5 +66,22 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
         });
         expect(result.chatModelId).toBe('default');
         expect(result.commitModelId).toBe('default');
+    });
+
+    it('uses the target session flavor defaults for default sentinel values', () => {
+        const result = resolveDaemonVoiceAgentModelIds({
+            session: { id: 's1', metadata: { flavor: 'codex' }, modelMode: 'default' } as any,
+            agent: {
+                chatModelSource: 'custom',
+                chatModelId: 'default',
+                commitModelSource: 'chat',
+                commitModelId: 'default',
+            },
+        });
+
+        expect(result).toEqual({
+            chatModelId: getAgentCore('codex').model.defaultMode,
+            commitModelId: getAgentCore('codex').model.defaultMode,
+        });
     });
 });

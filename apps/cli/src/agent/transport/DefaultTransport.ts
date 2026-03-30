@@ -83,7 +83,23 @@ export class DefaultTransport implements TransportHandler {
     }
 
     // Authentication errors - surface an actionable message.
-    if (lower.includes('unauthorized') || lower.includes('authentication') || lower.includes('api key') || trimmed.includes('401')) {
+    //
+    // Be conservative: stderr may contain unrelated text that mentions "authentication" or "API keys"
+    // (e.g. documentation snippets, prompts, or structured payloads). Prefer common error phrasing
+    // and status-code signals instead of raw substring matches.
+    const looksLikeAuthError =
+      lower.includes('unauthorized') ||
+      trimmed.includes('401') ||
+      lower.includes('authentication failed') ||
+      lower.includes('authentication error') ||
+      lower.includes('invalid api key') ||
+      lower.includes('missing api key') ||
+      lower.includes('no api key') ||
+      lower.includes('api key not set') ||
+      lower.includes('api_key') ||
+      /\b(openai|anthropic|codex|gemini|google)_(api|access)_key\b/i.test(trimmed);
+
+    if (looksLikeAuthError) {
       const message: AgentMessage = {
         type: 'status',
         status: 'error',
@@ -193,6 +209,13 @@ export class DefaultTransport implements TransportHandler {
     _context: ToolNameContext
   ): string {
     return toolName;
+  }
+
+  /**
+   * Default: no special pre-tool idle window (falls back to standard idle timeout handling).
+   */
+  getPreToolCallIdleTimeoutMs(): number | undefined {
+    return undefined;
   }
 }
 

@@ -1,5 +1,3 @@
-import type { Socket } from 'socket.io-client';
-
 export type SocketRpcResult =
     | { ok: true; result: string }
     | { ok: false; error?: string; errorCode?: string };
@@ -10,6 +8,7 @@ export type ServerScopedMachineRpcParams<A> = Readonly<{
     payload: A;
     serverId?: string | null;
     timeoutMs?: number;
+    preferScoped?: boolean;
 }>;
 
 export type ActiveServerRpcContext = Readonly<{
@@ -58,4 +57,8 @@ export type ScopedSocketConnectParams = Readonly<{
     timeoutMs: number;
 }>;
 
-export type ScopedSocketClient = Socket;
+export type ScopedSocketClient = Readonly<{
+    timeout: (ms: number) => { emitWithAck: (event: string, payload: any) => Promise<unknown> };
+    emit: (event: string, payload: any) => void;
+    disconnect: () => void;
+}>;

@@ -1,22 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
-  });
-}
+import { buildStackHarnessEnv, writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
+import { runNodeCapture } from './testkit/core/run_node_capture.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 
 async function writeYarnOkPackage({ dir, name, scriptOutput }) {
   await mkdir(join(dir, 'node_modules'), { recursive: true });
@@ -42,31 +32,52 @@ async function writeYarnOkPackage({ dir, name, scriptOutput }) {
   await writeFile(join(dir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
 }
 
+async function writeFakeYarn({ dir }) {
+  return writeFakeBin({
+    root: dir,
+    name: 'yarn',
+    content: [
+      '#!/usr/bin/env node',
+      "const args = process.argv.slice(2);",
+      "if (args[0] === '-s') args.shift();",
+      "if (args[0] !== 'test') process.exit(0);",
+      "const { spawnSync } = require('node:child_process');",
+      "const { readFileSync } = require('node:fs');",
+      "const pkg = JSON.parse(readFileSync('package.json', 'utf8'));",
+      "const command = String(pkg.scripts.test || '');",
+      "const parts = command.split(/\\s+/).filter(Boolean);",
+      "const res = spawnSync(parts[0], parts.slice(1), { stdio: 'inherit' });",
+      "process.exit(res.status == null ? 1 : res.status);",
+    ].join('\n'),
+  });
+}
+
 async function setupTestCmdFixture({ importMetaUrl, t, tmpPrefix }) {
   const scriptsDir = dirname(fileURLToPath(importMetaUrl));
   const rootDir = dirname(scriptsDir);
 
-  const tmp = await mkdtemp(join(tmpdir(), tmpPrefix));
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true }).catch(() => {});
-  });
+  const fixture = await createTempFixture(t, { prefix: tmpPrefix });
+  const tmp = fixture.root;
 
   const monoRoot = join(tmp, 'mono');
   const appDir = join(monoRoot, 'apps', 'ui');
+  const { binDir } = await writeFakeYarn({ dir: tmp });
 
   await mkdir(appDir, { recursive: true });
 
   await writeYarnOkPackage({ dir: monoRoot, name: 'monorepo', scriptOutput: 'ROOT_TEST_RUN' });
   await writeYarnOkPackage({ dir: appDir, name: 'happy-app', scriptOutput: 'APP_TEST_RUN' });
 
-  const env = {
-    ...process.env,
-    HAPPIER_STACK_REPO_DIR: monoRoot,
-    // Prevent env.mjs from auto-discovering and loading a real machine stack env file,
-    // which would overwrite our component dir override.
-    HAPPIER_STACK_STACK: 'test-stack',
-    HAPPIER_STACK_ENV_FILE: join(tmp, 'nonexistent-env'),
-  };
+  const env = buildStackHarnessEnv({
+    binDirs: [binDir],
+    extraEnv: {
+      HAPPIER_STACK_REPO_DIR: monoRoot,
+      // Prevent env.mjs from auto-discovering and loading a real machine stack env file,
+      // which would overwrite our component dir override.
+      HAPPIER_STACK_STACK: 'test-stack',
+      HAPPIER_STACK_ENV_FILE: join(tmp, 'nonexistent-env'),
+    },
+  });
 
   return { rootDir, monoRoot, appDir, env };
 }
@@ -78,7 +89,7 @@ test('hstack test --json keeps stdout JSON-only and runs monorepo root when happ
     tmpPrefix: 'happy-stacks-test-cmd-json-',
   });
 
-  const res = await runNode([join(fixture.rootDir, 'scripts', 'test_cmd.mjs'), 'ui', '--json'], {
+  const res = await runNodeCapture([join(fixture.rootDir, 'scripts', 'test_cmd.mjs'), 'ui', '--json'], {
     cwd: fixture.rootDir,
     env: fixture.env,
   });
@@ -119,7 +130,7 @@ test('hstack test (non-json) keeps monorepo-root routing and reports human-reada
     tmpPrefix: 'happy-stacks-test-cmd-text-',
   });
 
-  const res = await runNode([join(fixture.rootDir, 'scripts', 'test_cmd.mjs'), 'ui'], {
+  const res = await runNodeCapture([join(fixture.rootDir, 'scripts', 'test_cmd.mjs'), 'ui'], {
     cwd: fixture.rootDir,
     env: fixture.env,
   });

@@ -1,22 +1,15 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { installAccountCommonModuleMocks } from '../../account/accountTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.spyOn(globalThis, 'setInterval').mockImplementation(() => 0 as any);
 vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {});
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Pressable: 'Pressable',
-    Platform: {
-        OS: 'web',
-        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-    },
-}));
+installAccountCommonModuleMocks();
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -35,13 +28,6 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: 'RoundButton',
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(async () => {}),
-        alertAsync: vi.fn(async () => {}),
-    },
-}));
-
 const AUTH_FIXTURE = Object.freeze({
     isAuthenticated: true,
     credentials: Object.freeze({ token: 't', secret: 's' }),
@@ -54,26 +40,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
 let featureState: 'enabled' | 'disabled' | 'unknown' = 'enabled';
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({ state: featureState }),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                accent: { blue: 'blue' },
-                input: { placeholder: '#999' },
-            },
-        },
-    }),
-    StyleSheet: { create: (styles: any) => styles },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
 }));
 
 vi.mock('@/platform/cryptoRandom', () => ({
@@ -132,13 +98,10 @@ describe('AddPhoneSettingsView', () => {
         } as any;
         const { AddPhoneSettingsView } = await import('./AddPhoneSettingsView');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(<AddPhoneSettingsView />);
-        });
-        if (!tree) throw new Error('Expected renderer');
-
-        const qr = tree.root.findByType('QRCode');
+        const screen = await renderScreen(<AddPhoneSettingsView />);
+        const qrContainer = screen.findByTestId('add-phone-qr');
+        if (!qrContainer) throw new Error('Expected QR container');
+        const qr = qrContainer.findByType('QRCode');
         expect(String(qr.props.data)).toContain('happier:///pair?v=1');
         expect(String(qr.props.data)).toContain('pairId=pair_123');
     });
@@ -153,26 +116,14 @@ describe('AddPhoneSettingsView', () => {
         } as any;
         const { AddPhoneSettingsView } = await import('./AddPhoneSettingsView');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(<AddPhoneSettingsView />);
-        });
-        if (!tree) throw new Error('Expected renderer');
+        const screen = await renderScreen(<AddPhoneSettingsView />);
+        await flushHookEffects({ cycles: 1 });
 
-        await act(async () => {
-            await Promise.resolve();
-        });
+        const qrContainer = screen.findByTestId('add-phone-qr');
+        expect(qrContainer?.findAllByType('QRCode') ?? []).toHaveLength(0);
 
-        const qrs = tree.root.findAllByType('QRCode');
-        expect(qrs).toHaveLength(0);
-
-        const textNodes = tree.root.findAllByType('Text');
-        const allText = textNodes
-            .map((node) => node.props.children)
-            .flat()
-            .filter((row) => typeof row === 'string')
-            .join('\\n');
-        expect(allText).toContain('connect.pairingQrExpired');
+        const textContent = screen.getTextContent();
+        expect(textContent).toContain('connect.pairingQrExpired');
     });
 
     it('does not show a sign-in prompt when the feature is disabled', async () => {
@@ -185,21 +136,11 @@ describe('AddPhoneSettingsView', () => {
         } as any;
         const { AddPhoneSettingsView } = await import('./AddPhoneSettingsView');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(<AddPhoneSettingsView />);
-        });
-        if (!tree) throw new Error('Expected renderer');
+        const screen = await renderScreen(<AddPhoneSettingsView />);
 
-        const textNodes = tree.root.findAllByType('Text');
-        const allText = textNodes
-            .map((node) => node.props.children)
-            .flat()
-            .filter((row) => typeof row === 'string')
-            .join('\n');
-
-        expect(allText).toContain('common.unavailable');
-        expect(allText).not.toContain('modals.pleaseSignInFirst');
+        const textContent = screen.getTextContent();
+        expect(textContent).toContain('common.unavailable');
+        expect(textContent).not.toContain('modals.pleaseSignInFirst');
     });
 
     it('shows a server reachability hint when the QR code cannot embed localhost', async () => {
@@ -212,20 +153,10 @@ describe('AddPhoneSettingsView', () => {
         } as any;
         const { AddPhoneSettingsView } = await import('./AddPhoneSettingsView');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(<AddPhoneSettingsView />);
-        });
-        if (!tree) throw new Error('Expected renderer');
+        const screen = await renderScreen(<AddPhoneSettingsView />);
 
-        const textNodes = tree.root.findAllByType('Text');
-        const allText = textNodes
-            .map((node) => node.props.children)
-            .flat()
-            .filter((row) => typeof row === 'string')
-            .join('\n');
-
-        expect(allText).toContain('connect.serverUrlNotEmbeddedTitle');
-        expect(allText).toContain('connect.serverUrlNotEmbeddedBody');
+        const textContent = screen.getTextContent();
+        expect(textContent).toContain('connect.serverUrlNotEmbeddedTitle');
+        expect(textContent).toContain('connect.serverUrlNotEmbeddedBody');
     });
 });

@@ -9,11 +9,15 @@ export const agent = {
   getCliCommandHandler: async () => (await import('@/backends/auggie/cli/command')).handleAuggieCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/auggie/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/auggie/cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('@/backends/auggie/cli/auth/auggieCliAuthSpec')).auggieCliAuthSpec,
   vendorResumeSupport: AGENTS_CORE.auggie.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createAuggieBackend } = await import('@/backends/auggie/acp/backend');
     return (opts) => ({ backend: createAuggieBackend(opts as any) });
   },
+  getPreflightSessionControlsProbeAdapter: async () => ({
+    failureCacheStrategy: 'cooldown',
+    cliModelsCommandArgs: ['model', 'list'],
+  }),
   checklists,
 } satisfies AgentCatalogEntry;
-

@@ -1,7 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { t } from '@/text';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -91,24 +93,19 @@ describe('/ (welcome) terminal connect intent notice', () => {
         vi.resetModules();
         const { default: Screen } = await import('@/app/(app)/index');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
+        const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
-        const intentBlocks = tree!.root.findAll((n) => n.props?.testID === 'welcome-terminal-connect-intent');
+        const intentBlocks = screen.findAllByTestId('welcome-terminal-connect-intent');
         expect(intentBlocks).toHaveLength(1);
 
-        const textValues = tree!.root
-            .findAll((n) => typeof n.props?.children === 'string')
-            .map((n) => String(n.props.children));
+        const textValues = screen.getTextContent();
 
         expect(textValues).toContain(t('terminal.connectTerminal'));
         expect(textValues).toContain(t('modals.pleaseSignInFirst'));
 
         act(() => {
-            tree?.unmount();
+            screen.tree.unmount();
         });
     });
 });

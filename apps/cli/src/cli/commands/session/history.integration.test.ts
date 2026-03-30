@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import {
   deriveBoxPublicKeyFromSeed,
@@ -10,14 +10,13 @@ import {
 } from '@happier-dev/protocol';
 
 describe('happier session history (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-history-'));
+    happyHomeDir = await createTempDir('happier-cli-session-history-');
 
     const sessionId = 'sess_integration_history_123';
     const dek = new Uint8Array(32).fill(3);
@@ -51,6 +50,23 @@ describe('happier session history (integration)', () => {
             happier: {
               kind: 'review_findings.v1',
               payload: { findings: [{ id: 'f1', title: 't', severity: 'warning' }] },
+            },
+          },
+        },
+        dek,
+      ),
+      'base64',
+    );
+
+    const memoryArtifactCiphertext = encodeBase64Session(
+      encryptWithDataKey(
+        {
+          role: 'agent',
+          content: { type: 'text', text: 'should stay hidden' },
+          meta: {
+            happier: {
+              kind: 'session_synopsis.v1',
+              payload: { v: 1, seqTo: 2, updatedAtMs: 3, synopsis: 'Cached summary' },
             },
           },
         },
@@ -117,6 +133,11 @@ describe('happier session history (integration)', () => {
           JSON.stringify({
             messages: [
               {
+                seq: 2,
+                createdAt: 1690000000000,
+                content: { t: 'encrypted', c: memoryArtifactCiphertext },
+              },
+              {
                 seq: 3,
                 createdAt: 1700000000000,
                 content: { t: 'encrypted', c: msg1Ciphertext },
@@ -154,15 +175,12 @@ describe('happier session history (integration)', () => {
     }
     server = null;
     if (happyHomeDir) {
-      await rm(happyHomeDir, { recursive: true, force: true });
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
     }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -171,10 +189,7 @@ describe('happier session history (integration)', () => {
   it('returns compact history with structuredKind hints', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(
@@ -190,25 +205,53 @@ describe('happier session history (integration)', () => {
           }),
         },
       );
-      const parsedDefault = JSON.parse(stdout.join('\n').trim());
+      const parsedDefault = output.json();
       expect(parsedDefault.v).toBe(1);
       expect(parsedDefault.ok).toBe(true);
       expect(parsedDefault.kind).toBe('session_history');
       expect(parsedDefault.data?.format).toBe('compact');
       expect(parsedDefault.data?.sessionId).toBe('sess_integration_history_123');
+      expect(parsedDefault.data?.messages).toHaveLength(1);
       expect(parsedDefault.data?.messages?.[0]?.structuredKind).toBe('review_findings.v1');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
+    }
+  });
+
+  it('skips memory artifact transcript rows in raw history output', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(
+        ['history', 'sess_integration_history_123', '--limit', '10', '--format', 'raw', '--include-meta', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+              machineKey: new Uint8Array(32).fill(8),
+            },
+          }),
+        },
+      );
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_history');
+      expect(parsed.data?.format).toBe('raw');
+      expect(parsed.data?.messages).toHaveLength(1);
+      expect(parsed.data?.messages?.[0]?.raw?.meta?.happier?.kind).toBe('review_findings.v1');
+    } finally {
+      output.restore();
     }
   });
 
   it('accepts <session-id-or-prefix>', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(
@@ -224,25 +267,24 @@ describe('happier session history (integration)', () => {
           }),
         },
       );
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_history');
       expect(parsed.data?.sessionId).toBe('sess_integration_history_123');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });
 
 describe('happier session history (plaintext integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-history-plain-'));
+    happyHomeDir = await createTempDir('happier-cli-session-history-plain-');
 
     const sessionId = 'sess_integration_history_plain_123';
     const metadataPlaintext = JSON.stringify({
@@ -352,15 +394,12 @@ describe('happier session history (plaintext integration)', () => {
     }
     server = null;
     if (happyHomeDir) {
-      await rm(happyHomeDir, { recursive: true, force: true });
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
     }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -369,10 +408,7 @@ describe('happier session history (plaintext integration)', () => {
   it('returns compact history for plaintext sessions', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(
@@ -387,14 +423,14 @@ describe('happier session history (plaintext integration)', () => {
           }),
         },
       );
-      const parsedDefault = JSON.parse(stdout.join('\n').trim());
+      const parsedDefault = output.json();
       expect(parsedDefault.ok).toBe(true);
       expect(parsedDefault.kind).toBe('session_history');
       expect(parsedDefault.data?.format).toBe('compact');
       expect(parsedDefault.data?.sessionId).toBe('sess_integration_history_plain_123');
       expect(parsedDefault.data?.messages?.[0]?.structuredKind).toBe('review_findings.v1');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { CODEX_BACKEND_MODES, type CodexBackendMode } from '../providers/codex/backendMode.js';
+
 /**
  * Session metadata override payloads (V1).
  *
@@ -85,4 +87,30 @@ export function buildAcpConfigOptionOverridesV1(params: Readonly<{
     updatedAt: params.updatedAt,
     overrides: params.overrides,
   };
+}
+
+export function createCodexRuntimeDescriptorV1Schema(zod: typeof z) {
+  return zod
+    .object({
+      v: zod.literal(1),
+      backendMode: zod.enum(CODEX_BACKEND_MODES),
+    })
+    .passthrough();
+}
+
+export const CodexRuntimeDescriptorV1Schema = createCodexRuntimeDescriptorV1Schema(z);
+export type CodexRuntimeDescriptorV1 = z.infer<typeof CodexRuntimeDescriptorV1Schema>;
+
+export function buildCodexRuntimeDescriptorV1(params: Readonly<{
+  backendMode: CodexBackendMode;
+}>): CodexRuntimeDescriptorV1 {
+  return {
+    v: 1,
+    backendMode: params.backendMode,
+  };
+}
+
+export function readCodexRuntimeDescriptorV1BackendMode(value: unknown): CodexBackendMode | null {
+  const parsed = CodexRuntimeDescriptorV1Schema.safeParse(value);
+  return parsed.success ? parsed.data.backendMode : null;
 }

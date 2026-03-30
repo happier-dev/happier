@@ -1,3 +1,5 @@
+import { buildPosixShellCommand } from '@/utils/posixShellCommand';
+
 export function readNonNegativeIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -25,11 +27,4 @@ export function normalizeExitCode(code: number | null): number {
   return code ?? 1;
 }
 
-function quoteForPosixShell(arg: string): string {
-  // POSIX-safe single-quote escaping: ' -> '\'' .
-  return `'${arg.replace(/'/g, `'\\''`)}'`;
-}
-
-export function buildPosixShellCommand(args: string[]): string {
-  return args.map(quoteForPosixShell).join(' ');
-}
+export { buildPosixShellCommand };

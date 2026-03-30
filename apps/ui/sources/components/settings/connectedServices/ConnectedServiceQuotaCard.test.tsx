@@ -14,6 +14,8 @@ import type {
 } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 import { ConnectedServiceQuotaCard } from './ConnectedServiceQuotaCard';
+import { flushHookEffects, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,12 +59,6 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
   requestConnectedServiceQuotaSnapshotRefreshV3: requestConnectedServiceQuotaSnapshotRefreshV3Spy,
 }));
 
-async function flushAsyncEffects(turns: number = 3) {
-  for (let index = 0; index < turns; index += 1) {
-    await Promise.resolve();
-  }
-}
-
 describe('ConnectedServiceQuotaCard', () => {
   it('loads a snapshot and toggles pinned meter ids', async () => {
     const secretBytes = new Uint8Array(32).fill(3);
@@ -102,27 +98,21 @@ describe('ConnectedServiceQuotaCard', () => {
     const onSetPinnedMeterIds = vi.fn();
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ConnectedServiceQuotaCard
+    tree = (await renderScreen(<ConnectedServiceQuotaCard
           serviceId="anthropic"
           profileId="work"
           title="Quotas"
           pinnedMeterIds={[]}
           onSetPinnedMeterIds={onSetPinnedMeterIds}
-        />,
-      );
-    });
+        />)).tree;
 
+    await flushHookEffects({ turns: 3 });
+
+    expect(tree.findAll((n) => n.props?.title === 'Weekly')).toHaveLength(1);
+
+    const row = tree.find((n) => n.props?.meter?.meterId === 'weekly' && typeof n.props?.onTogglePin === 'function');
     await act(async () => {
-      await flushAsyncEffects();
-    });
-
-    expect(tree.root.findAll((n) => n.props?.title === 'Weekly')).toHaveLength(1);
-
-    const row = tree.root.find((n) => n.props?.meter?.meterId === 'weekly' && typeof n.props?.onTogglePin === 'function');
-    await act(async () => {
-      row.props.onTogglePin();
+      invokeTestInstanceHandler(row, 'onTogglePin', );
     });
 
     expect(onSetPinnedMeterIds).toHaveBeenCalledWith(['weekly']);
@@ -164,26 +154,20 @@ describe('ConnectedServiceQuotaCard', () => {
     const onSnapshot = vi.fn();
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ConnectedServiceQuotaCard
+    tree = (await renderScreen(<ConnectedServiceQuotaCard
           serviceId="anthropic"
           profileId="work"
           title="Quotas"
           pinnedMeterIds={[]}
           onSetPinnedMeterIds={() => {}}
           onSnapshot={onSnapshot}
-        />,
-      );
-    });
+        />)).tree;
 
-    const refreshItem = tree.root.find((n) => n.props?.title === 'Refresh');
+    const refreshItem = tree.find((n) => n.props?.title === 'Refresh');
     await act(async () => {
-      refreshItem.props.onPress?.();
+      await pressTestInstanceAsync(refreshItem);
     });
-    await act(async () => {
-      await flushAsyncEffects();
-    });
+    await flushHookEffects({ cycles: 1, turns: 3, advanceTimersMs: 10_000 });
 
     expect(requestConnectedServiceQuotaSnapshotRefreshSpy).toHaveBeenCalledWith(
       expect.anything(),
@@ -191,9 +175,6 @@ describe('ConnectedServiceQuotaCard', () => {
     );
 
     // The card should attempt to reload until it sees a newer fetchedAt.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
-    });
     expect(onSnapshot).toHaveBeenCalledWith(expect.objectContaining({ fetchedAt: 222 }));
     vi.useRealTimers();
   });

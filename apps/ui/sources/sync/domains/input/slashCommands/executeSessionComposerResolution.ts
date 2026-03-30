@@ -1,8 +1,10 @@
-import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
+import { buildBackendTargetKey, type ActionExecuteResult, type ActionExecutorContext, type ActionId, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type { SessionComposerSendResolution } from './resolveSessionComposerSend';
 import { storage } from '@/sync/domains/state/storage';
-import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
+import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
+import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/actions/resolveExecutionRunActionDefaultPermissionMode';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 export type SessionComposerActionExecutor = Readonly<{
   execute: (actionId: ActionId, input: unknown, ctx?: ActionExecutorContext) => Promise<ActionExecuteResult>;
@@ -12,6 +14,7 @@ export async function executeSessionComposerResolution(args: Readonly<{
   resolved: SessionComposerSendResolution;
   sessionId: string;
   agentId: string;
+  backendTarget?: BackendTargetRefV1 | null;
   permissionMode: string | null;
   actionExecutor: SessionComposerActionExecutor;
   previousMessage?: string | null;
@@ -53,12 +56,12 @@ export async function executeSessionComposerResolution(args: Readonly<{
       // Insert a local-only draft card instead of sending a transcript message.
       storage.getState().createSessionActionDraft(args.sessionId, {
         actionId: 'review.start',
-        input: buildActionDraftInput({
+        input: buildExecutionRunActionDraftInputForUi({
           actionId: 'review.start' as any,
           sessionId: args.sessionId,
+          defaultBackendTarget: args.backendTarget ?? null,
           defaultBackendId: args.agentId,
           instructions: '',
-          extra: { permissionMode: args.permissionMode ?? 'read_only' },
         }),
       });
       return true;
@@ -68,48 +71,45 @@ export async function executeSessionComposerResolution(args: Readonly<{
     args.setMessage('');
     args.clearDraft();
     args.trackMessageSent();
-
-    const engineIds = [args.agentId];
+    const input = buildExecutionRunActionDraftInputForUi({
+      actionId: 'review.start' as any,
+      sessionId: args.sessionId,
+      defaultBackendTarget: args.backendTarget ?? null,
+      defaultBackendId: args.agentId,
+      instructions,
+    });
+    if (!Array.isArray(input.engineIds) || input.engineIds.length === 0) {
+      input.engineIds = [args.agentId];
+    }
 
     const started = await args.actionExecutor.execute(
       'review.start',
-      {
-        sessionId: args.sessionId,
-        engineIds,
-        instructions,
-        permissionMode: args.permissionMode ?? 'read_only',
-        changeType: 'committed',
-        base: { kind: 'none' },
-      },
+      input,
       ctx,
     );
 
-    if (!started.ok) {
+    const startError = resolveActionExecutionFailureMessage(started, 'Failed to start execution run');
+    if (startError) {
       if (previousMessage) args.setMessage(previousMessage);
-      args.modalAlert('Error', started.error ?? 'Failed to start execution run');
-    } else {
-      const inner: any = started.result;
-      if (inner && typeof inner === 'object' && inner.ok === false) {
-        if (previousMessage) args.setMessage(previousMessage);
-        args.modalAlert('Error', inner.error ?? 'Failed to start execution run');
-      }
+      args.modalAlert('Error', startError);
     }
     return true;
   }
 
-  if (actionId === 'plan.start' || actionId === 'delegate.start') {
+  if (actionId === 'subagents.plan.start' || actionId === 'subagents.delegate.start') {
+    const permissionMode = resolveExecutionRunActionDefaultPermissionMode(actionId) ?? 'read-only';
     const instructions = rest.trim();
     if (instructions.length === 0) {
       args.setMessage('');
       args.clearDraft();
       storage.getState().createSessionActionDraft(args.sessionId, {
         actionId,
-        input: buildActionDraftInput({
+        input: buildExecutionRunActionDraftInputForUi({
           actionId: actionId as any,
           sessionId: args.sessionId,
+          defaultBackendTarget: args.backendTarget ?? null,
           defaultBackendId: args.agentId,
           instructions: '',
-          extra: { permissionMode: args.permissionMode ?? (actionId === 'delegate.start' ? 'safe-yolo' : 'read_only') },
         }),
       });
       return true;
@@ -124,22 +124,17 @@ export async function executeSessionComposerResolution(args: Readonly<{
       actionId,
       {
         sessionId: args.sessionId,
-        backendIds: [args.agentId],
+        backendTargetKeys: [buildBackendTargetKey(args.backendTarget ?? { kind: 'builtInAgent', agentId: args.agentId as any })],
         instructions,
-        permissionMode: args.permissionMode ?? (actionId === 'delegate.start' ? 'safe-yolo' : 'read_only'),
+        permissionMode,
       },
       ctx,
     );
 
-    if (!started.ok) {
+    const startError = resolveActionExecutionFailureMessage(started, 'Failed to start execution run');
+    if (startError) {
       if (previousMessage) args.setMessage(previousMessage);
-      args.modalAlert('Error', started.error ?? 'Failed to start execution run');
-    } else {
-      const inner: any = started.result;
-      if (inner && typeof inner === 'object' && inner.ok === false) {
-        if (previousMessage) args.setMessage(previousMessage);
-        args.modalAlert('Error', inner.error ?? 'Failed to start execution run');
-      }
+      args.modalAlert('Error', startError);
     }
     return true;
   }

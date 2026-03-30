@@ -66,3 +66,20 @@ test('resolveOptionalDockerBuildArgs includes POSTHOG_API_KEY and POSTHOG_HOST w
     'POSTHOG_HOST=https://eu.i.posthog.com',
   ]);
 });
+
+test('resolveOptionalDockerBuildArgs includes EXPO_PUBLIC_HAPPIER_SERVER_URL when set', () => {
+  assert.deepEqual(resolveOptionalDockerBuildArgs({ EXPO_PUBLIC_HAPPIER_SERVER_URL: 'https://api.happier.dev' }), [
+    '--build-arg',
+    'EXPO_PUBLIC_HAPPIER_SERVER_URL=https://api.happier.dev',
+  ]);
+});
+
+test('resolveOptionalDockerBuildArgs maps legacy server-url aliases to EXPO_PUBLIC_HAPPIER_SERVER_URL', () => {
+  assert.deepEqual(resolveOptionalDockerBuildArgs({
+    EXPO_PUBLIC_HAPPY_SERVER_URL: 'https://legacy-happy.example.test',
+    EXPO_PUBLIC_SERVER_URL: 'https://legacy-generic.example.test',
+  }), [
+    '--build-arg',
+    'EXPO_PUBLIC_HAPPIER_SERVER_URL=https://legacy-happy.example.test',
+  ]);
+});

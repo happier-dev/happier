@@ -23,4 +23,9 @@ describe('extractMcpToolCallResultOutput', () => {
     expect(extractMcpToolCallResultOutput(null)).toBeNull();
     expect(extractMcpToolCallResultOutput({ value: 1 })).toEqual({ value: 1 });
   });
+
+  it('unwraps common wrapper fields used by Codex app-server tool results', () => {
+    expect(extractMcpToolCallResultOutput({ output: { status: 'ok' } })).toEqual({ status: 'ok' });
+    expect(extractMcpToolCallResultOutput({ result: { status: 'ok' } })).toEqual({ status: 'ok' });
+  });
 });

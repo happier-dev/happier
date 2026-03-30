@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-let accountFindUnique: any;
-let accountChangeFindMany: any;
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+
+const { db, reset: resetDbMocks } = createDbMocks({
+    account: ["findUnique"],
+    accountChange: ["findMany"],
+});
+
+const accountFindUnique = db.account.findUnique;
+const accountChangeFindMany = db.accountChange.findMany;
 
 const changesRequestsInc = vi.fn();
 const changesReturnedInc = vi.fn();
@@ -19,29 +27,13 @@ vi.mock("@/utils/logging/log", () => ({
     warn: warnSpy,
 }));
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        account: {
-            findUnique: (...args: any[]) => accountFindUnique(...args),
-        },
-        accountChange: {
-            findMany: (...args: any[]) => accountChangeFindMany(...args),
-        },
-    },
+installDbModuleMock(() => ({
+    db,
 }));
-
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get(path: string, _opts: any, handler: any) {
-        this.routes.set(`GET ${path}`, handler);
-    }
-    post() {}
-}
 
 describe("changesRoutes (/v2/changes cursor safety)", () => {
     beforeEach(() => {
+        resetDbMocks();
         changesRequestsInc.mockClear();
         changesReturnedInc.mockClear();
         debugSpy.mockClear();
@@ -49,17 +41,20 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
     });
 
     it("returns 410 when after is in the future", async () => {
-        accountFindUnique = vi.fn(async () => ({ seq: 10, changesFloor: 0 }));
-        accountChangeFindMany = vi.fn(async () => []);
+        accountFindUnique.mockResolvedValue({ seq: 10, changesFloor: 0 });
+        accountChangeFindMany.mockResolvedValue([]);
 
         const { changesRoutes } = await import("./changesRoutes");
-        const app = new FakeApp();
-        changesRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v2/changes",
+            defaultRequest: { userId: "u1", query: { after: 999, limit: 10 } },
+            registerRoutes(app) {
+                changesRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("GET /v2/changes");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-
-        const response = await handler({ userId: "u1", query: { after: 999, limit: 10 } }, reply);
+        const { reply, response } = await route.invoke();
 
         expect(reply.code).toHaveBeenCalledWith(410);
         expect(response).toEqual({ error: "cursor-gone", currentCursor: 10 });
@@ -71,17 +66,20 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
     });
 
     it("returns 410 when after is behind changesFloor", async () => {
-        accountFindUnique = vi.fn(async () => ({ seq: 100, changesFloor: 50 }));
-        accountChangeFindMany = vi.fn(async () => []);
+        accountFindUnique.mockResolvedValue({ seq: 100, changesFloor: 50 });
+        accountChangeFindMany.mockResolvedValue([]);
 
         const { changesRoutes } = await import("./changesRoutes");
-        const app = new FakeApp();
-        changesRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v2/changes",
+            defaultRequest: { userId: "u1", query: { after: 10, limit: 10 } },
+            registerRoutes(app) {
+                changesRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("GET /v2/changes");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-
-        const response = await handler({ userId: "u1", query: { after: 10, limit: 10 } }, reply);
+        const { reply, response } = await route.invoke();
 
         expect(reply.code).toHaveBeenCalledWith(410);
         expect(response).toEqual({ error: "cursor-gone", currentCursor: 100 });
@@ -93,20 +91,23 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
     });
 
     it("returns ordered changes and nextCursor when cursor is valid", async () => {
-        accountFindUnique = vi.fn(async () => ({ seq: 100, changesFloor: 0 }));
-        accountChangeFindMany = vi.fn(async () => [
+        accountFindUnique.mockResolvedValue({ seq: 100, changesFloor: 0 });
+        accountChangeFindMany.mockResolvedValue([
             { cursor: 11, kind: "session", entityId: "s1", changedAt: new Date(1), hint: null },
             { cursor: 12, kind: "machine", entityId: "m1", changedAt: new Date(2), hint: { a: 1 } },
         ]);
 
         const { changesRoutes } = await import("./changesRoutes");
-        const app = new FakeApp();
-        changesRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v2/changes",
+            defaultRequest: { userId: "u1", query: { after: 10, limit: 10 } },
+            registerRoutes(app) {
+                changesRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("GET /v2/changes");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-
-        const response = await handler({ userId: "u1", query: { after: 10, limit: 10 } }, reply);
+        const { reply, response } = await route.invoke();
 
         expect(reply.code).not.toHaveBeenCalled();
         expect(response).toEqual({
@@ -125,17 +126,20 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
     });
 
     it("returns nextCursor==after when there are no changes", async () => {
-        accountFindUnique = vi.fn(async () => ({ seq: 100, changesFloor: 0 }));
-        accountChangeFindMany = vi.fn(async () => []);
+        accountFindUnique.mockResolvedValue({ seq: 100, changesFloor: 0 });
+        accountChangeFindMany.mockResolvedValue([]);
 
         const { changesRoutes } = await import("./changesRoutes");
-        const app = new FakeApp();
-        changesRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v2/changes",
+            defaultRequest: { userId: "u1", query: { after: 50, limit: 3 } },
+            registerRoutes(app) {
+                changesRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("GET /v2/changes");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-
-        const response = await handler({ userId: "u1", query: { after: 50, limit: 3 } }, reply);
+        const { response } = await route.invoke();
 
         expect(accountChangeFindMany).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -151,17 +155,20 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
     });
 
     it("GET /v2/cursor returns current cursor and changesFloor", async () => {
-        accountFindUnique = vi.fn(async () => ({ seq: 10, changesFloor: 7 }));
-        accountChangeFindMany = vi.fn(async () => []);
+        accountFindUnique.mockResolvedValue({ seq: 10, changesFloor: 7 });
+        accountChangeFindMany.mockResolvedValue([]);
 
         const { changesRoutes } = await import("./changesRoutes");
-        const app = new FakeApp();
-        changesRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v2/cursor",
+            defaultRequest: { userId: "u1" },
+            registerRoutes(app) {
+                changesRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("GET /v2/cursor");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-
-        const response = await handler({ userId: "u1" }, reply);
+        const { reply, response } = await route.invoke();
 
         expect(reply.code).not.toHaveBeenCalled();
         expect(response).toEqual({ cursor: 10, changesFloor: 7 });

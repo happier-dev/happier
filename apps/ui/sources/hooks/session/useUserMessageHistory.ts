@@ -2,6 +2,7 @@ import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { readStoredSessionMessagesFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { useSessionMessagesById, useSessionTranscriptIds } from '@/sync/domains/state/storage';
 
@@ -25,17 +26,15 @@ export function collectUserTextMessagesBySessionIdFromSessionMessagesState(
     const map = sessionMessages ?? {};
 
     for (const [sessionId, value] of Object.entries(map)) {
-        const ids = Array.isArray(value?.messageIdsOldestFirst) ? value.messageIdsOldestFirst : [];
-        const byId = (value?.messagesById ?? value?.messagesMap ?? {}) as Record<string, Message>;
+        const messages = readStoredSessionMessagesFromStateLike(value);
 
-        if (ids.length === 0) {
+        if (messages.length === 0) {
             out[sessionId] = [];
             continue;
         }
 
         const userMessages: Message[] = [];
-        for (const id of ids) {
-            const m = byId[id];
+        for (const m of messages) {
             if (!m || m.kind !== 'user-text') continue;
             userMessages.push(m);
         }

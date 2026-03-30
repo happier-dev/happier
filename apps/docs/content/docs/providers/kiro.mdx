@@ -1,0 +1,70 @@
+---
+title: Kiro
+description: Configure Kiro in Happier, including local CLI login, machine-specific authentication behavior, and how Kiro differs from Custom ACP.
+---
+
+Happier supports **Kiro** as a local CLI-backed provider.
+
+Kiro is a built-in provider in its own right. It is **not** the same thing as **Custom ACP**.
+
+- **Kiro**: Happier's dedicated built-in Kiro integration
+- **Custom ACP**: the generic provider family for arbitrary ACP-compatible CLIs and user-defined backends
+
+That means custom ACP backends do **not** run through the Kiro provider path.
+
+## Requirements
+
+- Kiro CLI installed locally
+- binary available on `PATH` (or set `HAPPIER_KIRO_PATH` if needed)
+
+## Install Kiro
+
+Install Kiro using the official Kiro CLI guide, then verify:
+
+```bash
+kiro-cli --version
+```
+
+## Local authentication in Happier
+
+Kiro supports launching its native login flow from:
+
+- **Settings → AI provider settings → Kiro**
+
+From there you can:
+
+- open `kiro-cli login` directly inside Happier
+- use **Check now** to re-run auth detection on the selected machine
+
+Auth-status detection for Kiro is currently conservative, so Happier may still show **Unknown** even though the login flow is available.
+
+For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
+
+## Kiro and ACP
+
+Kiro also appears in Happier's **ACP Backends** settings screen because it is a built-in ACP-capable provider.
+
+That screen is useful when you want to understand how ACP backends work in general, but you do **not** need to configure Kiro there for normal Kiro usage.
+
+Use:
+
+- **Kiro provider page** when you want Kiro itself
+- **Custom ACP / ACP Backends** when you want to add arbitrary ACP-compatible CLIs or create your own backend choices
+
+See:
+
+- [ACP backends](/docs/features/acp-backends)
+- [Custom ACP](/docs/providers/custom-acp)
+
+## Notes
+
+- Kiro runs locally on your machine through the real Kiro CLI.
+- When Kiro exposes more reliable non-interactive auth signals, Happier can surface richer status details here without changing the login flow.
+
+## Troubleshooting
+
+If Kiro is not detected:
+
+1. Verify `kiro-cli --version` works.
+2. Restart Happier.
+3. Re-open the provider settings page and use **Check now**.

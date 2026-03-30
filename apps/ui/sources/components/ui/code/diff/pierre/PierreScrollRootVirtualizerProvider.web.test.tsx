@@ -108,6 +108,94 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         });
     });
 
+    it('translates ScrollToOptions into RN-web scrollTo({x,y}) calls when present', async () => {
+        vi.resetModules();
+        setupSpy.mockClear();
+        cleanUpSpy.mockClear();
+
+        (globalThis as any).IntersectionObserver = class {};
+        (globalThis as any).ResizeObserver = class {};
+
+        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+
+        let scrollRoot: HTMLDivElement | null = null;
+        let scrollTop = 0;
+        let scrollLeft = 0;
+        const calls: unknown[][] = [];
+
+        await act(async () => {
+            root.render(
+                React.createElement(
+                    PierreScrollRootVirtualizerProvider,
+                    null,
+                    React.createElement(
+                        'div',
+                        null,
+                        React.createElement('div', {
+                            'data-testid': 'nested-scroll-root',
+                            ref: (node: HTMLDivElement | null) => {
+                                if (!node || node === scrollRoot) return;
+                                scrollRoot = node;
+                                node.style.overflowY = 'auto';
+                                defineSizeProperty(node, 'clientHeight', 120);
+                                defineSizeProperty(node, 'scrollHeight', 560);
+
+                                Object.defineProperty(node, 'scrollTop', {
+                                    configurable: true,
+                                    get: () => scrollTop,
+                                    set: (value: number) => {
+                                        scrollTop = Number.isFinite(value) ? value : 0;
+                                    },
+                                });
+                                Object.defineProperty(node, 'scrollLeft', {
+                                    configurable: true,
+                                    get: () => scrollLeft,
+                                    set: (value: number) => {
+                                        scrollLeft = Number.isFinite(value) ? value : 0;
+                                    },
+                                });
+
+                                // Simulate RN-web ScrollView semantics:
+                                // - supports object args with {x,y}
+                                // - supports deprecated numeric args scrollTo(y, x, animated)
+                                // - ignores DOM ScrollToOptions {top,left}
+                                (node as any).scrollTo = (arg1: unknown, arg2?: unknown) => {
+                                    calls.push([arg1, arg2]);
+                                    if (arg1 && typeof arg1 === 'object') {
+                                        const anyArg = arg1 as any;
+                                        if (typeof anyArg.y === 'number') scrollTop = anyArg.y;
+                                        if (typeof anyArg.x === 'number') scrollLeft = anyArg.x;
+                                        return;
+                                    }
+                                    if (typeof arg1 === 'number') scrollTop = arg1;
+                                    if (typeof arg2 === 'number') scrollLeft = arg2;
+                                };
+                            },
+                        }),
+                    ),
+                ),
+            );
+        });
+
+        expect(scrollRoot).not.toBeNull();
+        expect(setupSpy).toHaveBeenCalled();
+
+        calls.length = 0;
+        scrollRoot!.scrollTo({ top: 150, left: 0, behavior: 'instant' } as any);
+        expect(scrollRoot!.scrollTop).toBe(150);
+        const lastCall = calls.at(-1)?.[0] as any;
+        expect(lastCall && typeof lastCall === 'object').toBe(true);
+        expect(lastCall).toEqual(expect.objectContaining({ x: 0, y: 150 }));
+
+        await act(async () => {
+            root.unmount();
+        });
+    });
+
     it('binds virtualization to a nested scroll container when present', async () => {
         vi.resetModules();
         setupSpy.mockClear();

@@ -1,11 +1,39 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { dirname } from 'node:path';
 
 import type { AgentBackend } from '@/agent/core';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { createAuggieBackend } from './backend';
 
 type BackendWithArgs = AgentBackend & { options: { args: string[] } };
 
+const envKeys = ['PATH', 'HAPPIER_AUGGIE_PATH'] as const;
+const TEMP_DIRS = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
+
+function createFakeBin(name: string): string {
+  const dir = createTempDirSync('happier-auggie-backend-');
+  TEMP_DIRS.add(dir);
+  const isWindows = process.platform === 'win32';
+  return writeExecutableShimSync({
+    dir,
+    fileName: isWindows ? `${name}.cmd` : name,
+    contents: isWindows ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
+}
+
+afterEach(() => {
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
+  for (const dir of TEMP_DIRS) removeTempDirSync(dir);
+  TEMP_DIRS.clear();
+});
+
 function getBackendArgs(permissionMode: 'read-only' | 'safe-yolo' | 'yolo'): string[] {
+  process.env.PATH = '';
+  process.env.HAPPIER_AUGGIE_PATH = createFakeBin('auggie');
   const backend = createAuggieBackend({
     cwd: '/tmp',
     env: {},
@@ -25,9 +53,29 @@ function getPermissionRules(args: string[]): string[] {
 }
 
 describe('Auggie ACP backend permissions', () => {
+  it('fails closed when the Auggie CLI is unavailable', () => {
+    process.env.PATH = '';
+    delete process.env.HAPPIER_AUGGIE_PATH;
+
+    expect(() => createAuggieBackend({ cwd: '/tmp', env: {} })).toThrow(/system install/i);
+  });
+
   it('enables --ask in read-only mode', () => {
     const args = getBackendArgs('read-only');
     expect(args).toContain('--ask');
+  });
+
+  it('resolves the CLI from options.env PATH when process PATH is empty', () => {
+    process.env.PATH = '';
+    delete process.env.HAPPIER_AUGGIE_PATH;
+    const binPath = createFakeBin('auggie');
+
+    const backend = createAuggieBackend({
+      cwd: '/tmp',
+      env: { PATH: dirname(binPath) },
+    }) as unknown as { options: { command: string } };
+
+    expect(backend.options.command).toBe(binPath);
   });
 
   it('allows all tools in yolo mode via explicit --permission rules', () => {

@@ -1,7 +1,7 @@
 import { switchConnectionToActiveServer } from '../../runtime/orchestration/connectionManager';
 import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } from './serverRuntime';
 import type { ServerProfileSource } from './serverProfiles';
-import { canonicalizeServerUrl } from './url/serverUrlCanonical';
+import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
 
 export function normalizeServerUrl(raw: string): string {
     return canonicalizeServerUrl(raw);
@@ -19,7 +19,9 @@ export function defaultServerNameFromUrl(rawUrl: string): string {
 }
 
 export function isSameServerUrl(left: string, right: string): boolean {
-    return normalizeServerUrl(left) === normalizeServerUrl(right);
+    const leftKey = createServerUrlComparableKey(left);
+    if (!leftKey) return false;
+    return leftKey === createServerUrlComparableKey(right);
 }
 
 export async function upsertActivateAndSwitchServer(params: Readonly<{

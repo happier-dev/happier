@@ -1,17 +1,22 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('expo-router', () => ({
-  Link: (props: any) => React.createElement('Link', props, props.children),
-}));
+installMarkdownCommonModuleMocks();
 
 function mockPlatform(os: 'web' | 'ios') {
-  vi.doMock('react-native', () => ({
-    Platform: { OS: os },
-  }));
+  vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+      Platform: {
+        OS: os,
+      },
+    });
+  });
 }
 
 vi.mock('../ui/text/Text', () => ({
@@ -20,22 +25,17 @@ vi.mock('../ui/text/Text', () => ({
 
 describe('MarkdownSpansView (link rel hardening)', () => {
   it('adds rel="noopener noreferrer" for spans with url (web anchor attrs path)', async () => {
-    vi.resetModules();
     mockPlatform('web');
+    vi.resetModules();
 
     const { MarkdownSpansView } = await import('./MarkdownSpansView');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MarkdownSpansView
+    const screen = await renderScreen(<MarkdownSpansView
           linkStyle={{ color: 'red' }}
           spans={[{ text: 'example', styles: [], url: 'https://example.com' }] as any}
-        />
-      );
-    });
+        />);
 
-    const link = tree.root.findByType('Link' as any);
+    const link = screen.findByType('Link' as any);
     expect(link.props.target).toBe('_blank');
     expect(link.props.rel).toBe('noopener noreferrer');
     // On web we intentionally avoid `asChild` so Expo Router can forward href attrs to an anchor-like element.
@@ -46,23 +46,18 @@ describe('MarkdownSpansView (link rel hardening)', () => {
   });
 
   it('renders link spans as selectable Text on native so long-press selection works', async () => {
-    vi.resetModules();
     mockPlatform('ios');
+    vi.resetModules();
 
     const { MarkdownSpansView } = await import('./MarkdownSpansView');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MarkdownSpansView
+    const screen = await renderScreen(<MarkdownSpansView
           spans={[{ text: 'example', styles: [], url: 'https://example.com' }] as any}
-        />
-      );
-    });
+        />);
 
-    const link = tree.root.findByType('Link' as any);
+    const link = screen.findByType('Link' as any);
     expect(link.props.asChild).toBe(true);
-    const childText = link.findByType('Text' as any);
+    const childText = screen.findByType('Text' as any);
     expect(childText.props.selectable).toBe(true);
   });
 });

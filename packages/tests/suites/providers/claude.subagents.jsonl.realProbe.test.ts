@@ -36,7 +36,7 @@ describe('real Claude subagent JSONL probe', () => {
 
       const prompt = [
         'This is a test harness for validating Claude Code subagent JSONL output.',
-        'You MUST use the Task tool exactly once to spawn a subagent.',
+        'You MUST spawn a single subagent (Claude may use Task or Agent depending on build).',
         'Do not use Bash. Do not access files. Do not use any other tools.',
         'Ask the subagent to reply with EXACT text: SUBAGENT_OK.',
         'After spawning the subagent, reply yourself with EXACT text: OK.',
@@ -45,10 +45,25 @@ describe('real Claude subagent JSONL probe', () => {
       const result = await runRealClaudeCliStreamJsonProbe({
         prompt,
         timeoutMs: 90_000,
-        maxTurns: 1,
+        maxTurns: 4,
+        stopWhen: ({ toolUseNames, toolResults }) => {
+          const hasSubagentTool = toolUseNames.some((t) => t === 'Task' || t === 'Agent');
+          const hasAgentId = toolResults.some((r) => {
+            if (!r.result || typeof r.result !== 'object' || Array.isArray(r.result)) return false;
+            const tur = (r.result as any)?.tool_use_result;
+            if (!tur || typeof tur !== 'object' || Array.isArray(tur)) return false;
+            const agentId = typeof tur.agent_id === 'string'
+              ? tur.agent_id.trim()
+              : typeof tur.agentId === 'string'
+                ? tur.agentId.trim()
+                : '';
+            return Boolean(agentId);
+          });
+          return hasSubagentTool && hasAgentId;
+        },
       });
 
-      expect(result.toolUseNames).toContain('Task');
+      expect(result.toolUseNames.some((t) => t === 'Task' || t === 'Agent')).toBe(true);
       expect(typeof result.sessionId === 'string' && result.sessionId.trim().length > 0).toBe(true);
       expect(result.agentIds.length).toBeGreaterThan(0);
 

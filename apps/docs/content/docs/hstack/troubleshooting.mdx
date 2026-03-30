@@ -26,6 +26,14 @@ hstack auth seed --force
 hstack stack auth <stack> copy-from dev-auth
 ```
 
+If the stack already has seeded auth but still fails with an auth error or a daemon `401`, repair the stack-scoped login state directly:
+
+```bash
+hstack stack auth <stack> login --force
+```
+
+This is safer than deleting files by hand. In current builds, `--force` clears stale stack-specific aliases before reauth and keeps unrelated credentials untouched.
+
 ---
 
 ## “This stack is using the wrong checkout”
@@ -69,6 +77,51 @@ If you’re using full server (`happier-server`), verify Docker:
 
 ```bash
 docker ps
+```
+
+If the stack is supposed to use a runtime snapshot, inspect that explicitly:
+
+```bash
+hstack stack info <stack>
+hstack stack info <stack> --json
+hstack stack doctor <stack> --json
+```
+
+Look for:
+
+- `runtime.mode`
+- `runtime.activeSnapshotId`
+- `runtime.snapshotPath`
+- `runtime.valid`
+- `runtime.errors`
+
+Common fixes:
+
+```bash
+# rebuild and activate a fresh runtime snapshot
+hstack stack build <stack> --activate-runtime
+
+# force the next launch to use the runtime snapshot
+hstack stack start <stack> --runtime
+
+# temporarily bypass the runtime snapshot and run from source
+hstack stack start <stack> --source
+```
+
+If you only rebuilt one component, remember that builds update artifacts, not the active runtime:
+
+```bash
+# new web artifact exists, but the runtime still serves the old UI until activation
+hstack stack build <stack> --web
+hstack stack runtime <stack> activate --web
+# then reload the browser
+```
+
+```bash
+# server/daemon partial activation still requires a restart
+hstack stack build <stack> --server
+hstack stack runtime <stack> activate --server
+hstack stack service <stack> restart
 ```
 
 ---

@@ -22,6 +22,35 @@ export const DoctorSnapshotServerProfileSchema = z.object({
 
 export type DoctorSnapshotServerProfile = z.infer<typeof DoctorSnapshotServerProfileSchema>;
 
+export const DoctorSnapshotDaemonStatusSchema = z.object({
+  server: z.object({
+    activeServerId: NonEmptyString,
+    serverUrl: NonEmptyString,
+    localServerUrl: NonEmptyString.nullable(),
+    publicServerUrl: NonEmptyString,
+    webappUrl: NonEmptyString,
+    comparableKey: NonEmptyString.nullable(),
+  }),
+  daemon: z.object({
+    running: z.boolean(),
+    pid: z.number().int().positive().nullable(),
+    httpPort: z.number().int().positive().nullable(),
+  }),
+  service: z.object({
+    installed: z.boolean(),
+    running: z.boolean(),
+  }),
+  auth: z.object({
+    authenticated: z.boolean(),
+    machineRegistered: z.boolean(),
+    machineId: NonEmptyString.nullable(),
+    needsAuth: z.boolean(),
+    accountId: NonEmptyString.nullable(),
+  }),
+});
+
+export type DoctorSnapshotDaemonStatus = z.infer<typeof DoctorSnapshotDaemonStatusSchema>;
+
 export const DoctorSnapshotSchema = z.object({
   capturedAt: NonEmptyString,
   server: z.object({
@@ -36,6 +65,7 @@ export const DoctorSnapshotSchema = z.object({
     servers: z.array(DoctorSnapshotServerProfileSchema),
     knownAccountIds: z.array(NonEmptyString),
   }),
+  daemonStatus: DoctorSnapshotDaemonStatusSchema.optional(),
 });
 
 export type DoctorSnapshot = z.infer<typeof DoctorSnapshotSchema>;
@@ -58,6 +88,20 @@ export function sanitizeDoctorSnapshotUrls(snapshot: DoctorSnapshot): DoctorSnap
         webappUrl: sanitizeUrl(entry.webappUrl),
       })),
     },
+    daemonStatus: snapshot.daemonStatus
+      ? {
+          ...snapshot.daemonStatus,
+          server: {
+            ...snapshot.daemonStatus.server,
+            serverUrl: sanitizeUrl(snapshot.daemonStatus.server.serverUrl),
+            localServerUrl: snapshot.daemonStatus.server.localServerUrl
+              ? sanitizeUrl(snapshot.daemonStatus.server.localServerUrl)
+              : null,
+            publicServerUrl: sanitizeUrl(snapshot.daemonStatus.server.publicServerUrl),
+            webappUrl: sanitizeUrl(snapshot.daemonStatus.server.webappUrl),
+          },
+        }
+      : undefined,
   };
 }
 

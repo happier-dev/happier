@@ -46,7 +46,7 @@ const helpScenarios = [
   {
     title: 'hstack stack build -h prints build help (not root help)',
     args: ['stack', 'build', '-h'],
-    includes: ['hstack stack build <name>', '--tauri'],
+    includes: ['hstack stack build <name>', '--tauri', '--server', '--daemon', '--activate-runtime'],
     excludes: ['hstack stack new <name>'],
   },
   {
@@ -58,7 +58,7 @@ const helpScenarios = [
   {
     title: 'hstack stack build <stack> -h prints build help (not root help)',
     args: ['stack', 'build', 'dev', '-h'],
-    includes: ['hstack stack build <name>', '--tauri'],
+    includes: ['hstack stack build <name>', '--tauri', '--server', '--daemon', '--activate-runtime'],
     excludes: ['hstack stack new <name>'],
   },
   {
@@ -108,6 +108,12 @@ const helpScenarios = [
     args: ['self-host', '-h'],
     includes: ['hstack self-host install', 'hstack self-host status', 'hstack self-host update'],
     excludes: ['hstack self check'],
+  },
+  {
+    title: 'hstack self-host --channel=dev -h accepts the public dev channel',
+    args: ['self-host', '--channel=dev', '-h'],
+    includes: ['hstack self-host install', '--channel=stable|preview|dev'],
+    excludes: ['invalid channel'],
   },
   {
     title: 'hstack contrib sync -h prints sync help (not root help)',

@@ -1,4 +1,6 @@
 import { readCredentials, type Credentials } from '@/persistence';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { hasFlag } from '@/cli/commands/shared/argvFlags';
 
 import { cmdSessionList } from './list';
 import { cmdSessionHistory } from './history';
@@ -12,7 +14,7 @@ import { cmdSessionUnarchive } from './unarchive';
 import { cmdSessionSetTitle } from './setTitle';
 import { cmdSessionSetPermissionMode } from './setPermissionMode';
 import { cmdSessionSetModel } from './setModel';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { cmdSessionRunGet } from './run/get';
 import { cmdSessionRunList } from './run/list';
 import { cmdSessionRunStart } from './run/start';
@@ -29,6 +31,7 @@ import { cmdSessionDelegateStart } from './delegate/start';
 import { cmdSessionVoiceAgentStart } from './voiceAgent/start';
 import { cmdSessionActionsList } from './actions/list';
 import { cmdSessionActionsDescribe } from './actions/describe';
+import { cmdSessionActionsExecute } from './actions/execute';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 
 function inferSessionKind(argv: readonly string[]): string {
@@ -50,6 +53,7 @@ function inferSessionKind(argv: readonly string[]): string {
     const actionSub = String(argv[1] ?? '').trim();
     if (actionSub === 'list') return 'session_actions_list';
     if (actionSub === 'describe') return 'session_actions_describe';
+    if (actionSub === 'execute') return 'session_actions_execute';
     return 'session_actions_unknown';
   }
   if (sub === 'run') {
@@ -73,6 +77,34 @@ function inferSessionKind(argv: readonly string[]): string {
   return `session_${sub}`;
 }
 
+function printSessionSubcommandHelp(subcommand: string): boolean {
+  switch (subcommand) {
+    case 'list':
+      console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
+      return true;
+    case 'status':
+      console.log('happier session status <session-id-or-prefix> [--live] [--json]');
+      return true;
+    case 'create':
+      console.log('happier session create [--path <path>] [--backend <backend-target>] [--title <title>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]');
+      return true;
+    case 'send':
+      console.log('happier session send <session-id-or-prefix> <message> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
+      return true;
+    case 'set-title':
+      console.log('happier session set-title <session-id-or-prefix> <title> [--json]');
+      return true;
+    case 'set-permission-mode':
+      console.log('happier session set-permission-mode <session-id-or-prefix> <mode> [--json]');
+      return true;
+    case 'set-model':
+      console.log('happier session set-model <session-id-or-prefix> <model-id> [--json]');
+      return true;
+    default:
+      return false;
+  }
+}
+
 export async function handleSessionCommand(
   argv: string[],
   deps?: Readonly<{
@@ -81,32 +113,65 @@ export async function handleSessionCommand(
 ): Promise<void> {
   const json = wantsJson(argv);
   const kind = inferSessionKind(argv);
+  const subcommand = String(argv[0] ?? '').trim();
+  const hasHelpFlag = hasFlag(argv, '--help') || hasFlag(argv, '-h');
 
   try {
-    const subcommand = String(argv[0] ?? '').trim();
     if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-      console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--json]');
-      console.log('happier session history <session-id> [--limit N] [--format compact|raw] [--include-meta] [--include-structured-payload] [--json]');
-      console.log('happier session set-title <session-id> <title> [--json]');
-      console.log('happier session set-permission-mode <session-id> <mode> [--json]');
-      console.log('happier session set-model <session-id> <model-id> [--json]');
-      console.log('happier session archive <session-id> [--json]');
-      console.log('happier session unarchive <session-id> [--json]');
+      console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
+      console.log('happier session status <session-id-or-prefix> [--live] [--json]');
+      console.log('happier session create [--path <path>] [--backend <backend-target>] [--tag <tag>] [--title <title>] [--prompt <text>|--message <text>] [--json]');
+      console.log('happier session send <session-id-or-prefix> <message> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
+      console.log('happier session wait <session-id-or-prefix> [--timeout <seconds>] [--json]');
+      console.log('happier session stop <session-id-or-prefix> [--json]');
+      console.log('happier session history <session-id-or-prefix> [--limit N] [--format compact|raw] [--include-meta] [--include-structured-payload] [--json]');
+      console.log('happier session set-title <session-id-or-prefix> <title> [--json]');
+      console.log('happier session set-permission-mode <session-id-or-prefix> <mode> [--json]');
+      console.log('happier session set-model <session-id-or-prefix> <model-id> [--json]');
+      console.log('happier session archive <session-id-or-prefix> [--json]');
+      console.log('happier session unarchive <session-id-or-prefix> [--json]');
       console.log('happier session review start <session-id> --engines <id1,id2> --instructions <text> [--json]');
       console.log('happier session plan start <session-id> --backends <id1,id2> --instructions <text> [--json]');
       console.log('happier session delegate start <session-id> --backends <id1,id2> --instructions <text> [--json]');
       console.log('happier session voice-agent start <session-id> --backends <id1,id2> --instructions <text> [--json]');
       console.log('happier session actions list [--json]');
       console.log('happier session actions describe <action-id> [--json]');
+      console.log('happier session actions execute <session-id> <action-id> [--input-json <json>] [--json]');
+      console.log('happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
       console.log('happier session run list <session-id> [--json]');
       console.log('happier session run get <session-id> <run-id> [--include-structured] [--json]');
+      console.log('happier session run send <session-id> <run-id> <message> [--resume] [--json]');
+      console.log('happier session run stop <session-id> <run-id> [--json]');
+      console.log('happier session run action <session-id> <run-id> <action-id> [--input-json <json>] [--json]');
+      console.log('happier session run wait <session-id> <run-id> [--timeout <seconds>] [--json]');
       console.log('happier session run stream-start <session-id> <run-id> <message> [--resume] [--json]');
       console.log('happier session run stream-read <session-id> <run-id> <stream-id> --cursor <n> [--max-events <n>] [--json]');
       console.log('happier session run stream-cancel <session-id> <run-id> <stream-id> [--json]');
       return;
     }
 
-    const readCredentialsFn = deps?.readCredentialsFn ?? (async () => await readCredentials());
+    if (hasHelpFlag && printSessionSubcommandHelp(subcommand)) {
+      return;
+    }
+
+    const baseReadCredentialsFn = deps?.readCredentialsFn ?? (async () => await readCredentials());
+    const readCredentialsFn = async () => {
+      const credentials = await baseReadCredentialsFn();
+      if (!credentials) return credentials;
+
+      try {
+        await bootstrapAccountSettingsContext({
+          credentials,
+          mode: 'blocking',
+          refresh: 'force',
+        });
+      } catch {
+        // Best-effort: session control commands should still work when
+        // account settings are unavailable (offline / older servers).
+      }
+
+      return credentials;
+    };
 
     switch (subcommand) {
       case 'list':
@@ -236,6 +301,10 @@ export async function handleSessionCommand(
         }
         if (actionSub === 'describe') {
           await cmdSessionActionsDescribe(argv);
+          return;
+        }
+        if (actionSub === 'execute') {
+          await cmdSessionActionsExecute(argv, { readCredentialsFn });
           return;
         }
         throw new Error(`Unknown session actions subcommand: ${actionSub}`);

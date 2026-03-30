@@ -156,6 +156,28 @@ async function probeAccountCount({ serverComponentName, serverDir, env, lightDbP
   return Number(parsed.accountCount ?? 0);
 }
 
+export async function probeExistingAccountCountForServerComponent({
+  serverComponentName,
+  serverDir,
+  env,
+}) {
+  try {
+    const lightDbProvider =
+      serverComponentName === 'happier-server-light'
+        ? resolveLightDbProviderFromEnv(env)
+        : 'sqlite';
+    const accountCount = await probeAccountCount({
+      serverComponentName,
+      serverDir,
+      env,
+      lightDbProvider,
+    });
+    return { ok: true, accountCount };
+  } catch (e) {
+    return { ok: false, accountCount: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export function resolveAutoCopyFromMainEnabled({ env, stackName, isInteractive }) {
   // Sandboxes should be isolated by default.
   // Auto auth seeding can copy credentials/account rows from another stack (global state),

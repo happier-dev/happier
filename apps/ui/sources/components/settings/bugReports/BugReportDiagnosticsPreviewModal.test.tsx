@@ -1,117 +1,105 @@
-import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { pressTestInstance, renderScreen } from '@/dev/testkit';
+import { installBugReportComponentCommonModuleMocks } from './bugReportComponentTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => {
-  const React = require('react');
-  return {
-    View: (props: any) => React.createElement('View', props, props.children),
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    useWindowDimensions: () => ({ width: 390, height: 700, scale: 2, fontScale: 2 }),
-  };
+installBugReportComponentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (values: any) => values?.ios ?? values?.default,
+            },
+            useWindowDimensions: () => ({ width: 390, height: 700, scale: 2, fontScale: 2 }),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: Record<string, unknown>) =>
+                key === 'common.back'
+                    ? 'Back'
+                    : key === 'common.close'
+                        ? 'Close'
+                        : key === 'bugReports.composer.diagnostics.preview.openArtifactA11y' && typeof params?.filename === 'string'
+                            ? `Open ${params.filename}`
+                            : key,
+        });
+    },
 });
 
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 20, bottom: 20, left: 0, right: 0 }),
+    useSafeAreaInsets: () => ({ top: 20, bottom: 20, left: 0, right: 0 }),
 }));
-
-function findStyleValue(style: any, key: string) {
-  const list = Array.isArray(style) ? style : [style];
-  for (const entry of list) {
-    if (entry && typeof entry === 'object' && key in entry) return (entry as any)[key];
-  }
-  return undefined;
-}
-
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (styles: any) => styles },
-  useUnistyles: () => ({
-    theme: {
-      colors: {
-        surface: '#fff',
-        surfaceHigh: '#f5f5f5',
-        divider: '#eee',
-        text: '#111',
-        textSecondary: '#666',
-        shadow: { color: '#000', opacity: 0.1 },
-      },
-    },
-  }),
-}));
-
-vi.mock('@expo/vector-icons', () => {
-  const React = require('react');
-  return { Ionicons: (props: any) => React.createElement('Ionicons', props) };
-});
-
-vi.mock('@/components/ui/text/Text', () => {
-  const React = require('react');
-  return { Text: (props: any) => React.createElement('Text', props, props.children) };
-});
 
 describe('BugReportDiagnosticsPreviewModal', () => {
-  it('sets an explicit height so the scroll body can measure on native', async () => {
-    const { BugReportDiagnosticsPreviewModal } = await import('./BugReportDiagnosticsPreviewModal');
+    it('sets card chrome to use a fixed-height layout so the scroll body can measure', async () => {
+        const { BugReportDiagnosticsPreviewModal } = await import('./BugReportDiagnosticsPreviewModal');
 
-    const onClose = vi.fn();
-    const artifacts = [
-      {
-        filename: 'app-context.json',
-        sourceKind: 'ui-mobile',
-        contentType: 'application/json',
-        sizeBytes: 10,
-        content: '{"hello":"world"}',
-      },
-    ];
+        const onClose = vi.fn();
+        const setChrome = vi.fn();
+        const artifacts = [
+            {
+                filename: 'app-context.json',
+                sourceKind: 'ui-mobile',
+                contentType: 'application/json',
+                sizeBytes: 10,
+                content: '{"hello":"world"}',
+            },
+        ];
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    act(() => {
-      tree = renderer.create(<BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} />);
+        await renderScreen(
+            <BugReportDiagnosticsPreviewModal artifacts={artifacts} onClose={onClose} setChrome={setChrome} />,
+        );
+
+        expect(setChrome).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'card',
+                layout: 'fill',
+            }),
+        );
     });
 
-    // window.height=700, insets top+bottom=40, extra padding=96 => 564
-    const expected = 564;
-    const rootView = tree!.root.findByType('View' as any);
-    expect(findStyleValue(rootView.props.style, 'height')).toBe(expected);
-    expect(findStyleValue(rootView.props.style, 'maxHeight')).toBe(expected);
-  });
+    it('drills into an artifact and shows its content', async () => {
+        const { BugReportDiagnosticsPreviewModal } = await import('./BugReportDiagnosticsPreviewModal');
 
-  it('drills into an artifact and shows its content', async () => {
-    const { BugReportDiagnosticsPreviewModal } = await import('./BugReportDiagnosticsPreviewModal');
+        const onClose = vi.fn();
+        const setChrome = vi.fn();
+        const artifacts = [
+            {
+                filename: 'app-context.json',
+                sourceKind: 'ui-mobile',
+                contentType: 'application/json',
+                sizeBytes: 10,
+                content: '{"hello":"world"}',
+            },
+        ];
 
-    const onClose = vi.fn();
-    const artifacts = [
-      {
-        filename: 'app-context.json',
-        sourceKind: 'ui-mobile',
-        contentType: 'application/json',
-        sizeBytes: 10,
-        content: '{"hello":"world"}',
-      },
-    ];
+        const screen = await renderScreen(
+            <BugReportDiagnosticsPreviewModal artifacts={artifacts} onClose={onClose} setChrome={setChrome} />,
+        );
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    act(() => {
-      tree = renderer.create(<BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} />);
+        const artifactButton = screen.find((node) => (
+            node.props?.accessibilityRole === 'button'
+            && String(node.props?.accessibilityLabel ?? '').includes(artifacts[0]!.filename)
+        ));
+
+        act(() => {
+            pressTestInstance(artifactButton, 'artifact row');
+        });
+
+        const textContent = screen.getTextContent();
+        expect(textContent).toContain('{"hello":"world"}');
+
+        const nextChrome = setChrome.mock.calls.at(-1)?.[0];
+        expect(nextChrome).toEqual(
+            expect.objectContaining({
+                kind: 'card',
+                title: 'app-context.json',
+            }),
+        );
     });
-
-    const openButtons = tree!.root
-      .findAllByProps({ accessibilityLabel: 'Open app-context.json' })
-      .filter((node) => typeof node.props.onPress === 'function');
-    expect(openButtons.length).toBeGreaterThan(0);
-
-    act(() => {
-      openButtons[0]!.props.onPress();
-    });
-
-    expect(tree!.root.findAllByProps({ accessibilityLabel: 'Back' }).length).toBeGreaterThan(0);
-    const textNodes = tree!.root.findAllByType('Text' as any);
-    const combined = textNodes.map((node) => String(node.props.children ?? '')).join('\n');
-    expect(combined).toContain('app-context.json');
-    expect(combined).toContain('{"hello":"world"}');
-  });
 });

@@ -55,6 +55,26 @@ describe('appPaneReduce', () => {
         ]);
     });
 
+    it('supports unpinning a details tab back into the preview slot', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('a.txt'), openAs: 'pinned' });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('b.txt'), openAs: 'preview' });
+        expect(state.scopes['session:1']?.details.tabs.map((t) => [t.key, t.isPreview, t.isPinned])).toEqual([
+            ['file:a.txt', false, true],
+            ['file:b.txt', true, false],
+        ]);
+
+        state = appPaneReduce(state, { type: 'unpinDetailsTab', scopeId: 'session:1', tabKey: 'file:a.txt' });
+
+        // Unpinned tab becomes the sole preview; existing preview is removed.
+        expect(state.scopes['session:1']?.details.tabs.map((t) => [t.key, t.isPreview, t.isPinned])).toEqual([
+            ['file:a.txt', true, false],
+        ]);
+        expect(state.scopes['session:1']?.details.activeTabKey).toBe('file:a.txt');
+    });
+
     it('evicts least-recently-used scopes beyond the max', () => {
         let state = createAppPaneState({ maxScopesInMemory: 2 });
         state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
@@ -79,6 +99,20 @@ describe('appPaneReduce', () => {
         state = appPaneReduce(state, { type: 'closeRight', scopeId: 'session:1' });
         state = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'git' });
 
-        expect((state.scopes['session:1'] as any)?.right?.tabState?.git).toEqual({ commitMessageDraft: 'wip: draft' });
+        expect(state.scopes['session:1']?.right.tabState.git).toEqual({ commitMessageDraft: 'wip: draft' });
+    });
+
+    it('retains bottom tab state across open/close cycles', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+
+        state = appPaneReduce(state, { type: 'openBottom', scopeId: 'session:1', tabId: 'terminal' });
+
+        state = appPaneReduce(state, { type: 'setBottomTabState', scopeId: 'session:1', tabId: 'terminal', nextState: { history: ['echo hello'] } });
+
+        state = appPaneReduce(state, { type: 'closeBottom', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openBottom', scopeId: 'session:1', tabId: 'terminal' });
+
+        expect(state.scopes['session:1']?.bottom.tabState.terminal).toEqual({ history: ['echo hello'] });
     });
 });

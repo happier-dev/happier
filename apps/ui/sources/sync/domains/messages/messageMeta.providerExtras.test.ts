@@ -26,7 +26,6 @@ describe('addProviderMessageMetaExtras', () => {
         const settings = settingsParse({
             claudeRemoteAgentSdkEnabled: true,
             claudeRemoteSettingSourcesV2: ['project'],
-            claudeRemoteIncludePartialMessages: true,
             claudeLocalPermissionBridgeEnabled: true,
         });
 
@@ -46,7 +45,6 @@ describe('addProviderMessageMetaExtras', () => {
         expect((merged as any).claudeRemoteAgentSdkEnabled).toBe(true);
         expect((merged as any).claudeRemoteSettingSources).toBe('project');
         expect((merged as any).claudeRemoteSettingSourcesV2).toEqual(['project']);
-        expect((merged as any).claudeRemoteIncludePartialMessages).toBe(true);
         expect((merged as any).claudeLocalPermissionBridgeEnabled).toBe(true);
     });
 

@@ -16,7 +16,7 @@ export function handleAgentMessageChunk(
   // Dropping these avoids spammy blank lines and reduces unnecessary UI churn.
   if (!text.trim()) return { handled: true };
 
-  logger.debug(`[AcpBackend] Received message chunk (length: ${text.length}): ${text.substring(0, 50)}...`);
+  logger.debug(`[AcpBackend] Received message chunk (length: ${text.length})`);
   ctx.emit({
     type: 'model-output',
     textDelta: text,
@@ -26,7 +26,12 @@ export function handleAgentMessageChunk(
   ctx.clearIdleTimeout();
 
   // Set timeout to emit 'idle' after a short delay when no more chunks arrive.
-  const idleTimeoutMs = ctx.transport.getIdleTimeout?.() ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const idleTimeoutMs =
+    (ctx.toolCallCountSincePrompt === 0
+      ? ctx.transport.getPreToolCallIdleTimeoutMs?.()
+      : null) ??
+    ctx.transport.getIdleTimeout?.() ??
+    DEFAULT_IDLE_TIMEOUT_MS;
   ctx.setIdleTimeout(() => {
     if (ctx.activeToolCalls.size === 0) {
       logger.debug('[AcpBackend] No more chunks received, emitting idle status');

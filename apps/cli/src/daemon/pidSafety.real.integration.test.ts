@@ -7,13 +7,13 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { waitForPidInspection } from '@/testkit/process/pidInspection';
 import { isPidSafeHappySessionProcess } from './pidSafety';
 import { findHappyProcessByPid } from './doctor';
 import { hashProcessCommand } from './sessionRegistry';
 import {
   shouldRunDaemonReattachIntegration,
   spawnHappyLookingProcess,
-  waitForPidInspection,
 } from './testkit/realIntegration.testkit';
 
 describe.skipIf(!shouldRunDaemonReattachIntegration())('pidSafety (real) integration tests (opt-in)', { timeout: 20_000 }, () => {

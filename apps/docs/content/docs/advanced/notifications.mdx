@@ -9,6 +9,62 @@ Happier uses **Expo Push Notifications** as a delivery mechanism. In the current
 - The **server** stores push tokens per account (it does *not* send push payloads).
 - The **CLI** fetches the user’s saved tokens from the server and sends notifications via Expo’s push API (for example: *“It’s ready!”* or *Permission Request*).
 
+## What notifications can do
+
+Happier can notify you when a session needs attention, including:
+
+- **Ready** notifications when a turn finishes and the agent is waiting
+- **Permission requests** when a tool/action needs approval
+- **User-action requests** when the agent needs a structured human response
+
+On the mobile app, permission and action-request notifications can also expose **action buttons**:
+
+- **Permission requests**: `Allow` / `Deny`
+- **User-action requests**: `Answer`
+
+Current behavior is intentionally conservative:
+
+- tapping the notification opens the targeted session
+- pressing a notification action button also opens the app
+- Happier only auto-sends a permission response when the notification’s server is already active or already saved on the device
+- if the server is not saved yet, Happier routes you into the safest add/switch flow instead of silently approving on the wrong server
+
+For the exact routing behavior, see [Notification routing](/docs/features/notifications-routing).
+
+## Richer notification details
+
+Permission and action-request notifications include more context than a generic “the app needs permission” alert.
+
+In current builds, Happier tries to show:
+
+- the **tool or request type** being asked for
+- a short **detail hint** when it is useful and safe to show
+
+Examples of detail hints include:
+
+- a short file hint such as `src/file.ts`
+- a command hint such as `Command: npm`
+- a compact question count such as `1 question` or `3 questions`
+
+Happier does **not** try to dump full raw tool input into the push notification. The goal is to give you enough context to decide quickly without exposing unnecessary command arguments or request payloads on the lock screen.
+
+Platform details:
+
+- **iOS** can show the tool/request name as a notification subtitle
+- **Android** uses dedicated channels for permission requests and action requests so users can tune them separately at the OS level
+
+## Notification preferences
+
+The app also exposes notification preferences so users can tune how noisy Happier should be.
+
+Current settings include:
+
+- **Push notifications** on/off for the account
+- per-type toggles for **Ready**, **Permission requests**, and **User-action requests**
+- **In-app notifications** behavior while the app is open: `Full`, `Silent`, or `Off`
+
+When you are already looking at a given session, Happier suppresses notifications for that same session to avoid duplicate noise while you are actively reading it.
+
 ## What you need to configure
 
 ### 1) Server (any deployment)
@@ -51,6 +107,20 @@ If a user runs their **own server + CLI**, they must:
 3. Run the CLI against that same server URL.
 
 Once the app has registered a push token to your server, the CLI can send notifications (including permission notifications) via Expo.
+
+## Multi-server behavior
+
+Notifications are also **multi-server-aware**.
+
+When a notification targets a different server than the one currently active in the app, Happier tries to route you correctly:
+
+- if that server is already saved, Happier switches to it first
+- if it is the first server on the device, Happier can bootstrap that server so the deep link still works
+- if the app already has saved servers and the incoming server is not one of them, Happier opens **Server settings** with the URL prefilled so you can review and add it explicitly
+
+After you add and use that server, Happier continues to the original session/request automatically.
+
+See [Multi-server](/docs/features/multi-server) and [Notification routing](/docs/features/notifications-routing) for the full user-facing flow.
 
 ## API key restrictions (Android / Firebase)
 

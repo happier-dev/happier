@@ -4,7 +4,7 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
-import { readBackendChildSessionId } from '@/agent/executionRuns/controllers/types';
+import { readBackendResumableChildSessionId } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
@@ -22,6 +22,7 @@ type FinishRunNext = Omit<
   | 'sessionId'
   | 'depth'
   | 'intent'
+  | 'backendTarget'
   | 'backendId'
   | 'instructions'
   | 'permissionMode'
@@ -54,9 +55,9 @@ export function finishExecutionRun(args: Readonly<{
 
   const resumeHandle: ExecutionRunResumeHandle | null = (() => {
     if (existing.retentionPolicy !== 'resumable') return null;
-    const vendorSessionId = readBackendChildSessionId(args.controllers.get(args.runId) ?? null);
+    const vendorSessionId = readBackendResumableChildSessionId(args.controllers.get(args.runId) ?? null);
     if (typeof vendorSessionId === 'string' && vendorSessionId.trim().length > 0) {
-      return { kind: 'vendor_session.v1', backendId: existing.backendId, vendorSessionId };
+      return { kind: 'vendor_session.v1', backendTarget: existing.backendTarget, vendorSessionId };
     }
     return existing.resumeHandle ?? null;
   })();
@@ -84,8 +85,9 @@ export function finishExecutionRun(args: Readonly<{
     callId: updated.callId,
     sidechainId: updated.sidechainId,
     intent: updated.intent,
-    backendId: updated.backendId,
+    backendTarget: updated.backendTarget,
     ...(updated.display ? { display: updated.display } : {}),
+    permissionMode: updated.permissionMode,
     runClass: updated.runClass,
     ioMode: updated.ioMode,
     retentionPolicy: updated.retentionPolicy,

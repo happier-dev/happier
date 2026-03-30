@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getProjectPath } from './path';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 let previousClaudeConfigDir: string | undefined;
 
@@ -61,6 +61,23 @@ describe('getProjectPath', () => {
     expect(getProjectPath('/Users/alice/~ scratch/repo')).toBe(
       join('/test/home/.claude', 'projects', '-Users-alice---scratch-repo'),
     );
+  });
+
+  it('keeps Claude project ids length-safe for deep absolute workspace roots', () => {
+    process.env.CLAUDE_CONFIG_DIR = '/test/home/.claude';
+    const workingDir = join(
+      '/Users',
+      'alice',
+      ...Array.from({ length: 12 }, (_, index) => `very-long-segment-${String(index).padStart(2, '0')}`),
+      'repo-with-an-exceptionally-long-name-for-claude-project-id-derivation',
+    );
+
+    const result = getProjectPath(workingDir);
+    const projectId = result.slice(join('/test/home/.claude', 'projects').length + 1);
+    const rawProjectId = resolve(workingDir).replace(/[^a-zA-Z0-9-]/g, '-');
+
+    expect(projectId).not.toBe(rawProjectId);
+    expect(projectId.length).toBeLessThan(120);
   });
 
   it('should handle relative paths by resolving them first', () => {

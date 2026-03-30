@@ -1,38 +1,43 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSessionFixture, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { Project } from '@/sync/runtime/orchestration/projectManager';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  ScrollView: 'ScrollView',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-  __esModule: true,
-  useUnistyles: () => ({
-    theme: {
-      dark: true,
-      colors: {
-        text: '#fff',
-        textSecondary: '#bbb',
-        surface: '#000',
-        surfaceHigh: '#111',
-        divider: '#222',
-      },
+installSessionFilesViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (spec: any) => spec?.ios ?? spec?.default,
+            },
+        });
     },
-  }),
-  StyleSheet: { create: (value: any) => (typeof value === 'function' ? value({ colors: { divider: '#222', surface: '#000' } }) : value) },
-}));
+    storage: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSession: () => binarySession,
+            useProjectForSession: () => binaryProject,
+            useSessions: () => [],
+            useSessionReviewCommentsDrafts: () => [],
+            useSessionProjectScmCommitSelectionPaths: () => [],
+            useSessionProjectScmCommitSelectionPatches: () => [],
+            useSessionProjectScmInFlightOperation: () => null,
+            useSessionProjectScmSnapshot: () => binarySnapshot,
+            useSetting: () => null,
+            importOriginal,
+        });
+    },
+});
 
-vi.mock('@/components/ui/layout/layout', () => ({
-  layout: { maxWidth: 1024 },
-}));
-
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
+vi.mock('@expo/vector-icons', () => ({
+  Ionicons: 'Ionicons',
 }));
 
 vi.mock('@/components/sessions/files/file/FileHeader', () => ({
@@ -89,6 +94,83 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
   }),
 }));
 
+const startDownloadSpy = vi.fn(async (_input: any) => ({ ok: true as const }));
+const downloadAvailabilityState = { value: true };
+const binarySession: Session = createSessionFixture({
+    id: 's1',
+    active: true,
+    metadata: {
+        path: '/workspace',
+        host: 'tester.local',
+        homeDir: '/Users/tester',
+        machineId: 'm1',
+    } as Session['metadata'],
+});
+const binaryProject: Project = {
+    id: 'project-1',
+    key: { machineId: 'm1', path: '/workspace' },
+    sessionIds: ['s1'],
+    createdAt: 1,
+    updatedAt: 1,
+};
+const binaryEntry: ScmWorkingSnapshot['entries'][number] = {
+    path: 'bin.dat',
+    kind: 'modified',
+    includeStatus: 'unmodified',
+    pendingStatus: 'modified',
+    hasIncludedDelta: false,
+    hasPendingDelta: true,
+    previousPath: null,
+    stats: {
+        pendingAdded: 1,
+        pendingRemoved: 1,
+        includedAdded: 0,
+        includedRemoved: 0,
+        isBinary: true,
+    },
+};
+const binarySnapshot: ScmWorkingSnapshot = {
+    projectKey: 'project-1',
+    fetchedAt: 1,
+    repo: {
+        isRepo: true,
+        rootPath: '/workspace',
+        backendId: 'git',
+        mode: '.git',
+        worktrees: [],
+    },
+    branch: {
+        head: 'main',
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        detached: false,
+    },
+    hasConflicts: false,
+    entries: [binaryEntry],
+    totals: {
+        includedFiles: 0,
+        pendingFiles: 1,
+        untrackedFiles: 0,
+        includedAdded: 0,
+        includedRemoved: 0,
+        pendingAdded: 1,
+        pendingRemoved: 1,
+    },
+    capabilities: { writeDiscard: true } as ScmWorkingSnapshot['capabilities'],
+};
+
+vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
+  useWorkspaceFileTransfers: () => ({
+    uploadState: { status: 'idle' },
+    downloadState: { status: 'idle' },
+    startUploads: vi.fn(async () => ({ ok: true })),
+    cancelUploads: vi.fn(),
+    startDownload: (input: any) => startDownloadSpy(input),
+    cancelDownload: vi.fn(),
+  }),
+}));
+
 const refreshSpy = vi.fn(async (..._args: any[]) => ({
   status: 'ready' as const,
   error: null,
@@ -113,8 +195,10 @@ vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
 vi.mock('./sessionFileDetails/useSessionFileEditorState', () => ({
   useSessionFileEditorState: () => ({
     editorSurfaceEnabled: false,
-    editorText: '',
-    setEditorText: vi.fn(),
+    editorSeedText: '',
+    editorHandleRef: { current: null },
+    onEditorChange: vi.fn(),
+    getEditorText: () => '',
     editorDirty: false,
     editorTooLarge: false,
     editorChunkTooLarge: false,
@@ -154,6 +238,7 @@ vi.mock('@/utils/code/fileLanguage', () => ({
 }));
 
 vi.mock('@/scm/settings/commitStrategy', () => ({
+  SCM_COMMIT_STRATEGIES: ['atomic', 'git_staging'],
   allowsLiveStaging: () => false,
   isAtomicCommitStrategy: () => true,
 }));
@@ -162,52 +247,47 @@ vi.mock('@/scm/diff/defaultMode', () => ({
   resolveDefaultDiffModeForFile: () => 'pending',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSession: () => ({ active: true, metadata: { path: '/workspace', machineId: 'm1' } }),
-  useProjectForSession: () => ({ key: { machineId: 'm1', path: '/workspace' } }),
-  useSessions: () => [],
-  useSessionReviewCommentsDrafts: () => [],
-  useSessionProjectScmCommitSelectionPaths: () => [],
-  useSessionProjectScmCommitSelectionPatches: () => [],
-  useSessionProjectScmInFlightOperation: () => null,
-  useSessionProjectScmSnapshot: () => ({
-    repo: { isRepo: true },
-    entries: [
-      {
-        path: 'bin.dat',
-        kind: 'modified',
-        hasIncludedDelta: false,
-        hasPendingDelta: true,
-        previousPath: null,
-        stats: {
-          pendingAdded: 1,
-          pendingRemoved: 1,
-          includedAdded: 0,
-          includedRemoved: 0,
-          isBinary: true,
-        },
-      },
-    ],
-    capabilities: { writeDiscard: true },
-  }),
-  useSetting: () => null,
+vi.mock('@/components/sessions/files/useSessionFileDownloadAvailability', () => ({
+  useSessionFileDownloadAvailability: () => downloadAvailabilityState.value,
 }));
 
+beforeEach(() => {
+  downloadAvailabilityState.value = true;
+});
+
 describe('SessionFileDetailsView (binary)', () => {
+  it('hides the download action when downloads are unavailable', async () => {
+    downloadAvailabilityState.value = false;
+    const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="bin.dat" />)).tree;
+
+    await act(async () => {});
+
+    expect(tree.findAllByType('FileHeader' as any).length).toBe(1);
+    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(0);
+  });
+
   it('renders header actions even when file content is binary', async () => {
     const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="bin.dat" />);
-    });
+    tree = (await renderScreen(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="bin.dat" />)).tree;
 
     // Flush the refresh effect.
     await act(async () => {});
 
     expect(refreshSpy).toHaveBeenCalled();
-    expect(tree.root.findAllByType('FileHeader' as any).length).toBe(1);
-    expect(tree.root.findAllByType('ScmChangeDiscardButton' as any).length).toBe(1);
-    expect(tree.root.findAllByType('FileBinaryState' as any).length).toBe(1);
+    expect(tree.findAllByType('FileHeader' as any).length).toBe(1);
+    expect(tree.findAllByType('ScmChangeDiscardButton' as any).length).toBe(1);
+    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
+    expect(tree.findAllByType('FileBinaryState' as any).length).toBe(1);
+
+    await act(async () => {
+      await pressTestInstanceAsync(tree.findByProps({ testID: 'file-header-download', accessibilityRole: 'button' }));
+    });
+
+    expect(startDownloadSpy).toHaveBeenCalledWith({ path: 'bin.dat', asZip: false });
   });
 });

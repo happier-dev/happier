@@ -22,23 +22,42 @@ function isLoopbackHostname(hostname: string): boolean {
   return false;
 }
 
-function sanitizeServerUrlForShareableLink(raw: string): string | null {
+function parseSafeServerUrl(raw: string): URL | null {
   const value = String(raw ?? '').trim();
   if (!value) return null;
   try {
     const parsed = new URL(value);
     if (!SAFE_SERVER_PROTOCOLS.has(parsed.protocol)) return null;
-    if (isLoopbackHostname(parsed.hostname)) return null;
     if (parsed.username || parsed.password) {
       parsed.username = '';
       parsed.password = '';
     }
     parsed.search = '';
     parsed.hash = '';
-    return stripTrailingSlash(parsed.toString());
+    return parsed;
   } catch {
     return null;
   }
+}
+
+function isLocalWebappUrl(raw: string): boolean {
+  const parsed = parseSafeServerUrl(raw);
+  if (!parsed) return false;
+  return isLoopbackHostname(parsed.hostname);
+}
+
+function sanitizeServerUrlForWebLink(raw: string, webappUrl: string): string | null {
+  const parsed = parseSafeServerUrl(raw);
+  if (!parsed) return null;
+  if (isLoopbackHostname(parsed.hostname) && !isLocalWebappUrl(webappUrl)) return null;
+  return stripTrailingSlash(parsed.toString());
+}
+
+function sanitizeServerUrlForMobileLink(raw: string): string | null {
+  const parsed = parseSafeServerUrl(raw);
+  if (!parsed) return null;
+  if (isLoopbackHostname(parsed.hostname)) return null;
+  return stripTrailingSlash(parsed.toString());
 }
 
 export function buildTerminalConnectLinks(params: Readonly<{
@@ -47,16 +66,18 @@ export function buildTerminalConnectLinks(params: Readonly<{
   publicKeyB64Url: string;
 }>): TerminalConnectLinks {
   const webappUrl = stripTrailingSlash(String(params.webappUrl ?? '').trim());
-  const serverUrl = sanitizeServerUrlForShareableLink(params.serverUrl);
+  const webServerUrl = sanitizeServerUrlForWebLink(params.serverUrl, webappUrl);
+  const mobileServerUrl = sanitizeServerUrlForMobileLink(params.serverUrl);
   const publicKeyB64Url = String(params.publicKeyB64Url ?? '').trim();
-  const encodedServerUrl = serverUrl ? encodeURIComponent(serverUrl) : '';
+  const encodedWebServerUrl = webServerUrl ? encodeURIComponent(webServerUrl) : '';
+  const encodedMobileServerUrl = mobileServerUrl ? encodeURIComponent(mobileServerUrl) : '';
 
   return {
-    webUrl: serverUrl
-      ? `${webappUrl}/terminal/connect#key=${publicKeyB64Url}&server=${encodedServerUrl}`
+    webUrl: webServerUrl
+      ? `${webappUrl}/terminal/connect#key=${publicKeyB64Url}&server=${encodedWebServerUrl}`
       : `${webappUrl}/terminal/connect#key=${publicKeyB64Url}`,
-    mobileUrl: serverUrl
-      ? `happier://terminal?key=${publicKeyB64Url}&server=${encodedServerUrl}`
+    mobileUrl: mobileServerUrl
+      ? `happier://terminal?key=${publicKeyB64Url}&server=${encodedMobileServerUrl}`
       : `happier://terminal?key=${publicKeyB64Url}`,
   };
 }
@@ -66,16 +87,18 @@ export function buildConfigureServerLinks(params: Readonly<{
   serverUrl: string;
 }>): ConfigureServerLinks {
   const webappUrl = stripTrailingSlash(String(params.webappUrl ?? '').trim());
-  const serverUrl = sanitizeServerUrlForShareableLink(params.serverUrl);
-  const encodedServerUrl = serverUrl ? encodeURIComponent(serverUrl) : '';
-  if (!serverUrl) {
+  const webServerUrl = sanitizeServerUrlForWebLink(params.serverUrl, webappUrl);
+  const mobileServerUrl = sanitizeServerUrlForMobileLink(params.serverUrl);
+  const encodedWebServerUrl = webServerUrl ? encodeURIComponent(webServerUrl) : '';
+  const encodedMobileServerUrl = mobileServerUrl ? encodeURIComponent(mobileServerUrl) : '';
+  if (!webServerUrl && !mobileServerUrl) {
     return { webUrl: webappUrl, mobileUrl: `happier://server` };
   }
 
   return {
     // Prefer setting the server on any screen via `?server=` so callers don't need to navigate
     // to a dedicated server selection route first.
-    webUrl: `${webappUrl}/?server=${encodedServerUrl}`,
-    mobileUrl: `happier://server?url=${encodedServerUrl}`,
+    webUrl: webServerUrl ? `${webappUrl}/?server=${encodedWebServerUrl}` : webappUrl,
+    mobileUrl: mobileServerUrl ? `happier://server?url=${encodedMobileServerUrl}` : `happier://server`,
   };
 }

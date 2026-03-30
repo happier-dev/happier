@@ -1,61 +1,30 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
+import {
+    findFirstHostNodeByTestId,
+    findHostNodesByTestId,
+    findPopoverContentView,
+    flattenTestStyle,
+    withPopoverWebGlobals,
+} from '@/dev/testkit/harness/popoverHarness';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit';
+import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
+
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-function flattenStyle(style: any): Record<string, any> {
-    if (!style) return {};
-    if (Array.isArray(style)) {
-        return style.reduce((acc, item) => ({ ...acc, ...flattenStyle(item) }), {});
-    }
-    return style;
-}
-
-function nearestView(instance: any) {
-    let node = instance?.parent;
-    while (node && node.type !== 'View') node = node.parent;
-    return node;
-}
-
-function flushMicrotasks(times: number) {
-    return new Promise<void>((resolve) => {
-        let remaining = times;
-        const step = () => {
-            remaining -= 1;
-            if (remaining <= 0) return resolve();
-            queueMicrotask(step);
-        };
-        queueMicrotask(step);
-    });
-}
 
 const INITIAL_POSITIONING_TICKS = 3;
 
 async function flushInitialPositioning() {
-    await flushMicrotasks(INITIAL_POSITIONING_TICKS);
-}
-
-async function withImmediateRequestAnimationFrame(run: () => Promise<void>) {
-    const previous = (globalThis as any).requestAnimationFrame;
-    (globalThis as any).requestAnimationFrame = (cb: () => void) => {
-        cb();
-        return 0 as any;
-    };
-    try {
-        await run();
-    } finally {
-        if (previous === undefined) {
-            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-            delete (globalThis as any).requestAnimationFrame;
-        } else {
-            (globalThis as any).requestAnimationFrame = previous;
-        }
-    }
+    await flushHookEffects({ cycles: 1, turns: INITIAL_POSITIONING_TICKS });
 }
 
 vi.mock('@/components/ui/popover', () => ({
     usePopoverBoundaryRef: () => null,
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('expo-blur', () => {
@@ -65,14 +34,18 @@ vi.mock('expo-blur', () => {
     };
 });
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'ios' },
-        useWindowDimensions: () => ({ width: 390, height: 844 }),
-        View: (props: any) => React.createElement('View', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    };
+installPopoverCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+            useWindowDimensions: () => ({ width: 390, height: 844 }),
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        });
+    },
 });
 
 function PopoverChild() {
@@ -80,6 +53,17 @@ function PopoverChild() {
 }
 
 describe('Popover (native portal)', () => {
+    let restorePopoverWebGlobals: (() => void) | null = null;
+
+    beforeEach(() => {
+        restorePopoverWebGlobals = withPopoverWebGlobals();
+    });
+
+    afterEach(() => {
+        restorePopoverWebGlobals?.();
+        restorePopoverWebGlobals = null;
+    });
+
     it('positions using anchor coordinates relative to the portal root when available (avoids iOS header/sheet offsets)', async () => {
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');
@@ -100,9 +84,7 @@ describe('Popover (native portal)', () => {
         } as any;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     OverlayPortalProvider,
                     null,
                     React.createElement(
@@ -120,21 +102,187 @@ describe('Popover (native portal)', () => {
                         } as any,
                     ),
                     React.createElement(OverlayPortalHost),
-                ),
-            );
-        });
+                ))).tree;
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const container = nearestView(child);
-        const style = flattenStyle(container?.props?.style);
+        const container = tree ? findPopoverContentView(tree) : null;
+        const style = flattenTestStyle(container?.props?.style);
 
         // placement=bottom => top = y + height + gap (default gap=8)
         expect(style.left).toBe(10);
         expect(style.top).toBe(68);
+        expect(style.width).toBe(30);
+    });
+
+    it('anchors top-placed portals using the portal root height (not the window height) so contained sheets/drawers do not offset', async () => {
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = { _id: 'portal-root' };
+
+        const anchorRef = {
+            current: {
+                measureLayout: (relativeTo: any, onSuccess: any) => {
+                    if (relativeTo !== portalRootNode) throw new Error('expected measureLayout relativeTo portal root');
+                    // Simulate a trigger near the bottom of a contained sheet/drawer.
+                    queueMicrotask(() => onSuccess(10, 450, 30, 40));
+                },
+                // If Popover mistakenly uses window coords here, it will position incorrectly.
+                measureInWindow: (cb: any) => queueMicrotask(() => cb(999, 999, 30, 40)),
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(
+                PopoverPortalTargetContextProvider,
+                {
+                    // Simulate a contained modal/sheet that's shorter than the device window.
+                    value: { rootRef: { current: portalRootNode } as any, layout: { width: 390, height: 794 } },
+                    children: React.createElement(Popover, {
+                        open: true,
+                        anchorRef,
+                        placement: 'top',
+                        portal: { native: true },
+                        backdrop: false,
+                        children: () => React.createElement(PopoverChild),
+                    } as any),
+                } as any,
+            ),
+            React.createElement(OverlayPortalHost),
+        ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const container = tree ? findPopoverContentView(tree) : null;
+        const style = flattenTestStyle(container?.props?.style);
+
+        // placement=top uses `bottom` positioning pinned to (anchorTop - gap).
+        // Expected bottom = portalHeight - (anchorTop - gap) = 794 - (450 - 8) = 352.
+        expect(style.bottom).toBe(352);
+        expect(style.left).toBe(10);
+        expect(style.width).toBe(30);
+    });
+
+    it('falls back to deriving portal-root-relative anchor coordinates from window measurements when measureLayout is unavailable', async () => {
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            _id: 'portal-root',
+            measureInWindow: (cb: any) => queueMicrotask(() => cb(50, 100, 390, 844)),
+        };
+
+        const anchorRef = {
+            current: {
+                // Simulate an anchor node without `measureLayout` (some RN host components).
+                measureInWindow: (cb: any) => queueMicrotask(() => cb(70, 150, 30, 40)),
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+                    OverlayPortalProvider,
+                    null,
+                    React.createElement(
+                        PopoverPortalTargetContextProvider,
+                        {
+                            value: { rootRef: { current: portalRootNode } as any, layout: { width: 390, height: 844 } },
+                            children: React.createElement(Popover, {
+                                open: true,
+                                anchorRef,
+                                placement: 'bottom',
+                                portal: { native: true },
+                                backdrop: false,
+                                children: () => React.createElement(PopoverChild),
+                            } as any),
+                        } as any,
+                    ),
+                    React.createElement(OverlayPortalHost),
+                ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const container = tree ? findPopoverContentView(tree) : null;
+        const style = flattenTestStyle(container?.props?.style);
+
+        // Portal-root-relative anchor rect = window(anchor) - window(portalRoot):
+        // x = 70-50=20, y = 150-100=50.
+        // placement=bottom => top = y + height + gap (default gap=8)
+        expect(style.left).toBe(20);
+        expect(style.top).toBe(98);
+        expect(style.width).toBe(30);
+    });
+
+    it('can derive portal-root-relative anchor coordinates from the boundary window rect when the portal root cannot be measured', async () => {
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            _id: 'portal-root',
+            // Simulate a portal root that cannot be measured (common in cross-root / modal presentations).
+            // The popover should still be able to derive portal-relative coordinates via the boundary.
+        };
+
+        const boundaryRef = {
+            current: {
+                measureInWindow: (cb: any) => queueMicrotask(() => cb(50, 100, 390, 844)),
+            },
+        } as any;
+
+        const anchorRef = {
+            current: {
+                // Simulate an anchor node without `measureLayout`.
+                measureInWindow: (cb: any) => queueMicrotask(() => cb(70, 150, 30, 40)),
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(
+                PopoverPortalTargetContextProvider,
+                {
+                    value: { rootRef: { current: portalRootNode } as any, layout: { width: 390, height: 844 } },
+                    children: React.createElement(Popover, {
+                        open: true,
+                        anchorRef,
+                        boundaryRef,
+                        placement: 'bottom',
+                        portal: { native: true },
+                        backdrop: false,
+                        children: () => React.createElement(PopoverChild),
+                    } as any),
+                } as any,
+            ),
+            React.createElement(OverlayPortalHost),
+        ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const container = tree ? findPopoverContentView(tree) : null;
+        const style = flattenTestStyle(container?.props?.style);
+
+        // Portal-relative anchor rect = window(anchor) - window(boundary):
+        // x = 70-50=20, y = 150-100=50.
+        // placement=bottom => top = y + height + gap (default gap=8)
+        expect(style.left).toBe(20);
+        expect(style.top).toBe(98);
         expect(style.width).toBe(30);
     });
 
@@ -164,9 +312,7 @@ describe('Popover (native portal)', () => {
         } as any;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     OverlayPortalProvider,
                     null,
                     React.createElement(
@@ -185,17 +331,14 @@ describe('Popover (native portal)', () => {
                         } as any,
                     ),
                     React.createElement(OverlayPortalHost),
-                ),
-            );
-        });
+                ))).tree;
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const container = nearestView(child);
-        const style = flattenStyle(container?.props?.style);
+        const container = tree ? findPopoverContentView(tree) : null;
+        const style = flattenTestStyle(container?.props?.style);
 
         // placement=bottom => top = y + height + gap (default gap=8)
         expect(style.top).toBe(148);
@@ -206,50 +349,43 @@ describe('Popover (native portal)', () => {
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');
 
-        await withImmediateRequestAnimationFrame(async () => {
-            let measureCalls = 0;
-            const anchorRef = {
-                current: {
-                    measureInWindow: (cb: any) => {
-                        measureCalls += 1;
-                        if (measureCalls === 1) {
-                            cb(200, 200, 0, 0);
-                            return;
-                        }
-                        cb(200, 200, 20, 20);
-                    },
+        let measureCalls = 0;
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => {
+                    measureCalls += 1;
+                    if (measureCalls === 1) {
+                        cb(200, 200, 0, 0);
+                        return;
+                    }
+                    cb(200, 200, 20, 20);
                 },
-            } as any;
+            },
+        } as any;
 
-            let tree: ReturnType<typeof renderer.create> | undefined;
-            await act(async () => {
-                tree = renderer.create(
-                    React.createElement(
-                        OverlayPortalProvider,
-                        null,
-                        React.createElement(Popover, {
-                            open: true,
-                            anchorRef,
-                            placement: 'bottom',
-                            portal: { native: true },
-                            backdrop: false,
-                            children: () => React.createElement(PopoverChild),
-                        }),
-                        React.createElement(OverlayPortalHost),
-                    ),
-                );
-            });
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+                    OverlayPortalProvider,
+                    null,
+                    React.createElement(Popover, {
+                        open: true,
+                        anchorRef,
+                        placement: 'bottom',
+                        portal: { native: true },
+                        backdrop: false,
+                        children: () => React.createElement(PopoverChild),
+                    }),
+                    React.createElement(OverlayPortalHost),
+                ))).tree;
 
-            await act(async () => {
-                await flushInitialPositioning();
-            });
-
-            expect(measureCalls).toBeGreaterThanOrEqual(2);
-
-            const child = tree?.root.findByType('PopoverChild' as any);
-            const contentView = nearestView(child);
-            expect(flattenStyle(contentView?.props?.style).opacity).toBe(1);
+        await act(async () => {
+            await flushInitialPositioning();
         });
+
+        expect(measureCalls).toBeGreaterThanOrEqual(2);
+
+        const contentView = tree ? findPopoverContentView(tree) : null;
+        expect(flattenTestStyle(contentView?.props?.style).opacity).toBe(1);
     });
 
     it('renders inline when no OverlayPortalProvider is present', async () => {
@@ -262,9 +398,7 @@ describe('Popover (native portal)', () => {
         } as any;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     'View',
                     { testID: 'inline-slot' },
                         React.createElement(Popover, {
@@ -274,11 +408,9 @@ describe('Popover (native portal)', () => {
                             backdrop: false,
                             children: () => React.createElement(PopoverChild),
                         }),
-                ),
-            );
-        });
+                ))).tree;
 
-        expect(tree?.root.findByProps({ testID: 'inline-slot' }).findAllByType('PopoverChild' as any).length).toBe(1);
+        expect(findFirstHostNodeByTestId(tree, 'inline-slot')?.findAllByType('PopoverChild' as any).length).toBe(1);
     });
 
     it('renders into OverlayPortalHost when usePortalOnNative is enabled', async () => {
@@ -292,9 +424,7 @@ describe('Popover (native portal)', () => {
         } as any;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     OverlayPortalProvider,
                     null,
                     React.createElement(
@@ -313,12 +443,10 @@ describe('Popover (native portal)', () => {
                         { testID: 'host-slot' },
                         React.createElement(OverlayPortalHost),
                     ),
-                ),
-            );
-        });
+                ))).tree;
 
-        expect(tree?.root.findByProps({ testID: 'inline-slot' }).findAllByType('PopoverChild' as any).length).toBe(0);
-        expect(tree?.root.findByProps({ testID: 'host-slot' }).findAllByType('PopoverChild' as any).length).toBe(1);
+        expect(findFirstHostNodeByTestId(tree, 'inline-slot')?.findAllByType('PopoverChild' as any).length).toBe(0);
+        expect(findFirstHostNodeByTestId(tree, 'host-slot')?.findAllByType('PopoverChild' as any).length).toBe(1);
 
         await act(async () => {
             tree?.update(
@@ -345,7 +473,7 @@ describe('Popover (native portal)', () => {
             );
         });
 
-        expect(tree?.root.findByProps({ testID: 'host-slot' }).findAllByType('PopoverChild' as any).length).toBe(0);
+        expect(findFirstHostNodeByTestId(tree, 'host-slot')?.findAllByType('PopoverChild' as any).length).toBe(0);
     });
 
     it('keeps portal content hidden until it can be positioned (prevents visible jiggle)', async () => {
@@ -361,9 +489,7 @@ describe('Popover (native portal)', () => {
         } as any;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     OverlayPortalProvider,
                     null,
                     React.createElement(Popover, {
@@ -375,37 +501,31 @@ describe('Popover (native portal)', () => {
                         children: () => React.createElement(PopoverChild),
                     }),
                     React.createElement(OverlayPortalHost),
-                ),
-            );
-        });
+                ))).tree;
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const contentView = nearestView(child);
-        expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
+        const contentView = tree ? findPopoverContentView(tree) : null;
+        expect(flattenTestStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const childAfterMeasure = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfterMeasure = nearestView(childAfterMeasure);
-        expect(flattenStyle(contentViewAfterMeasure?.props?.style).opacity).toBe(0);
+        const contentViewAfterMeasure = tree ? findPopoverContentView(tree) : null;
+        expect(flattenTestStyle(contentViewAfterMeasure?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             contentViewAfterMeasure?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 0 } } });
         });
 
-        const childAfterFirstLayout = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfterFirstLayout = nearestView(childAfterFirstLayout);
-        expect(flattenStyle(contentViewAfterFirstLayout?.props?.style).opacity).toBe(0);
+        const contentViewAfterFirstLayout = tree ? findPopoverContentView(tree) : null;
+        expect(flattenTestStyle(contentViewAfterFirstLayout?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             contentViewAfterFirstLayout?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 120 } } });
         });
 
-        const childAfterLayout = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfterLayout = nearestView(childAfterLayout);
-        expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
+        const contentViewAfterLayout = tree ? findPopoverContentView(tree) : null;
+        expect(flattenTestStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
     it('can spotlight the anchor so it stays crisp above the blur', async () => {
@@ -421,9 +541,7 @@ describe('Popover (native portal)', () => {
         } as any;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     OverlayPortalProvider,
                     null,
                     React.createElement(Popover, {
@@ -436,18 +554,13 @@ describe('Popover (native portal)', () => {
                         children: () => React.createElement(PopoverChild),
                     } as any),
                     React.createElement(OverlayPortalHost),
-                ),
-            );
-        });
+                ))).tree;
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const effects = tree?.root.findAllByProps({ testID: 'popover-backdrop-effect' } as any) ?? [];
-        // Our native test shims represent `BlurView` as a wrapper component returning a host element,
-        // so `findAllByProps` will match both. Filter to host nodes for stable assertions.
-        const hostEffects = effects.filter((node: any) => typeof node.type === 'string');
+        const hostEffects = tree ? findHostNodesByTestId(tree, 'popover-backdrop-effect') : [];
         expect(hostEffects.length).toBe(4);
     });
 
@@ -464,9 +577,7 @@ describe('Popover (native portal)', () => {
         } as any;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     OverlayPortalProvider,
                     null,
                     React.createElement(Popover, {
@@ -479,19 +590,16 @@ describe('Popover (native portal)', () => {
                         children: () => React.createElement(PopoverChild),
                     } as any),
                     React.createElement(OverlayPortalHost),
-                ),
-            );
-        });
+                ))).tree;
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const overlays = tree?.root.findAllByProps({ testID: 'popover-anchor-overlay' } as any) ?? [];
-        const hostOverlays = overlays.filter((node: any) => typeof node.type === 'string');
+        const hostOverlays = tree ? findHostNodesByTestId(tree, 'popover-anchor-overlay') : [];
         expect(hostOverlays.length).toBe(1);
 
-        const overlayStyle = flattenStyle(hostOverlays[0]?.props?.style);
+        const overlayStyle = flattenTestStyle(hostOverlays[0]?.props?.style);
         expect(overlayStyle.position).toBe('absolute');
         expect(overlayStyle.left).toBe(140);
         expect(overlayStyle.top).toBe(120);

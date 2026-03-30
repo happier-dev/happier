@@ -34,13 +34,13 @@ export type RpcHandlerMap = Map<string, RpcHandler>;
  */
 export interface RpcRequest {
     method: string;
-    params: string; // Base64 encoded encrypted params
+    params: unknown;
 }
 
 /**
  * RPC response callback
  */
-export type RpcResponseCallback = (response: string) => void;
+export type RpcResponseCallback = (response: unknown) => void;
 
 /**
  * Configuration for RPC handler manager
@@ -49,6 +49,7 @@ export interface RpcHandlerConfig {
     scopePrefix: string;
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
+    encryptionMode?: 'e2ee' | 'plain';
     logger?: (message: string, data?: any) => void;
 }
 

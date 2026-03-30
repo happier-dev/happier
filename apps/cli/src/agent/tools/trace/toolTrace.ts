@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configuration } from '@/configuration';
+import { safeJsonStringify } from '@/utils/safeJson';
 
 export type ToolTraceProtocol = 'acp' | 'codex' | 'claude';
 
@@ -47,24 +48,22 @@ export class ToolTraceWriter {
 }
 
 function safeJsonStringifyToolTraceEvent(event: ToolTraceEventV1): string {
-    const replacer = createSafeJsonReplacer();
     try {
-        return JSON.stringify(event, replacer);
+        return safeJsonStringify(event);
     } catch (error) {
         const details =
             error instanceof Error
                 ? (error.message || String(error))
                 : String(error);
         try {
-            return JSON.stringify(
+            return safeJsonStringify(
                 {
                     ...event,
                     payload: `[unserializable payload: ${details}]`,
                 } satisfies ToolTraceEventV1,
-                createSafeJsonReplacer(),
             );
         } catch {
-            return JSON.stringify({
+            return safeJsonStringify({
                 v: event.v,
                 ts: event.ts,
                 direction: event.direction,
@@ -78,39 +77,6 @@ function safeJsonStringifyToolTraceEvent(event: ToolTraceEventV1): string {
             });
         }
     }
-}
-
-function createSafeJsonReplacer(): (key: string, value: unknown) => unknown {
-    const seen = new WeakSet<object>();
-    return (_key: string, value: unknown): unknown => {
-        if (typeof value === 'bigint') {
-            return `${value.toString()}n`;
-        }
-
-        if (value instanceof Error) {
-            return {
-                name: value.name,
-                message: value.message,
-                stack: value.stack,
-            };
-        }
-
-        if (typeof value === 'object' && value !== null) {
-            if (seen.has(value)) return '[Circular]';
-            seen.add(value);
-
-            // Cross-realm Error-like objects (where instanceof Error fails).
-            const rec = value as Record<string, unknown>;
-            const stack = typeof rec.stack === 'string' ? rec.stack : undefined;
-            const message = typeof rec.message === 'string' ? rec.message : undefined;
-            const name = typeof rec.name === 'string' ? rec.name : undefined;
-            // Only treat objects as Error-like when they include a stack trace. Many non-error payloads
-            // legitimately contain a `name` field (e.g. tool-call `name`) and must not be collapsed.
-            if (stack) return { name, message, stack };
-        }
-
-        return value;
-    };
 }
 
 function isTruthyEnv(value: string | undefined): boolean {

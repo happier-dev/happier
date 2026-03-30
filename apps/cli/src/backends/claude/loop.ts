@@ -7,6 +7,7 @@ import { claudeRemoteLauncher } from "./claudeRemoteLauncher"
 import type { JsRuntime } from "./runClaude"
 import type { PushNotificationClient } from "@/api/pushNotifications"
 import type { AccountSettings } from '@happier-dev/protocol';
+import type { McpServerConfig } from '@/agent';
 
 // Re-export permission mode type from api/types
 // Single unified type with 7 modes - Codex modes mapped at SDK boundary
@@ -31,12 +32,17 @@ export interface EnhancedMode {
     fallbackModel?: string;
     customSystemPrompt?: string;
     appendSystemPrompt?: string;
+    /**
+     * Model-scoped "Thinking" selection (generic id: reasoning_effort).
+     *
+     * For Claude Code this maps to `--effort <level>` when supported.
+     */
+    reasoningEffort?: string;
 
     // Claude remote-mode (provider-scoped) settings forwarded via message meta.
     claudeRemoteAgentSdkEnabled?: boolean;
     claudeRemoteSettingSourcesV2?: ReadonlyArray<'user' | 'project' | 'local'>;
     claudeRemoteSettingSources?: 'project' | 'user_project' | 'none';
-    claudeRemoteIncludePartialMessages?: boolean;
     claudeCodeExperimentalAgentTeamsEnabled?: boolean;
     claudeRemoteEnableFileCheckpointing?: boolean;
     claudeRemoteMaxThinkingTokens?: number | null;
@@ -57,6 +63,7 @@ interface LoopOptions {
     session: SessionClientPort
     pushSender?: PushNotificationClient | null
     accountSettings?: AccountSettings | null
+    accountSettingsSecretsReadKeys?: readonly Uint8Array[]
     claudeArgs?: string[]
     messageQueue: MessageQueue2<EnhancedMode>
     onSessionReady?: (session: Session) => void
@@ -65,6 +72,8 @@ interface LoopOptions {
     /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
     jsRuntime?: JsRuntime
     startedBy?: 'daemon' | 'terminal'
+    defaultSystemPromptText?: string
+    precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null
 }
 
 export async function loop(opts: LoopOptions): Promise<number> {
@@ -75,6 +84,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         client: opts.session,
         pushSender: opts.pushSender ?? null,
         accountSettings: opts.accountSettings ?? null,
+        accountSettingsSecretsReadKeys: opts.accountSettingsSecretsReadKeys ?? [],
         path: opts.path,
         sessionId: null,
         claudeArgs: opts.claudeArgs,
@@ -84,6 +94,8 @@ export async function loop(opts: LoopOptions): Promise<number> {
         hookSettingsPath: opts.hookSettingsPath,
         jsRuntime: opts.jsRuntime,
         startedBy: opts.startedBy ?? 'terminal',
+        defaultSystemPromptText: opts.defaultSystemPromptText,
+        precomputedMcpBridge: opts.precomputedMcpBridge ?? null,
     });
     session.claudeCodeExperimentalAgentTeamsEnabled = opts.claudeCodeExperimentalAgentTeamsEnabled === true;
     session.spawnPermissionMode = opts.permissionMode ?? 'default';

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunRef.js';
 
 /**
  * Structured payload emitted by execution runs with `intent='delegate'`.
@@ -15,11 +16,7 @@ export const DelegateDeliverableV1Schema = z.object({
 export type DelegateDeliverableV1 = z.infer<typeof DelegateDeliverableV1Schema>;
 
 export const DelegateOutputV1Schema = z.object({
-  runRef: z.object({
-    runId: z.string().min(1),
-    callId: z.string().min(1),
-    backendId: z.string().min(1),
-  }).passthrough(),
+  runRef: ExecutionRunStructuredRunRefSchema,
   summary: z.string().min(1).max(20_000),
   deliverables: z.array(DelegateDeliverableV1Schema).max(200),
   generatedAtMs: z.number().int().nonnegative(),
@@ -30,4 +27,3 @@ export function parseDelegateOutputV1(input: unknown): DelegateOutputV1 | null {
   const parsed = DelegateOutputV1Schema.safeParse(input);
   return parsed.success ? parsed.data : null;
 }
-

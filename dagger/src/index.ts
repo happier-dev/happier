@@ -82,15 +82,22 @@ export class HappierPipeline {
     expoAppScheme: string = "",
     expoAppName: string = "",
     expoAppBundleId: string = "",
+    containerPlatform: string = "linux/amd64",
   ): Promise<Directory> {
     const workdir = "/repo"
     const ext = path.extname(artifactName || "") || ".apk"
-    const internalArtifact = `/tmp/happier-ui-mobile-android${ext}`
-    const internalOutJson = "/tmp/eas_build_android.json"
+    // Note: /tmp is mounted as tmpfs to keep EAS local build working dirs off the container snapshot.
+    // Dagger cannot reliably export files from tmpfs, so we write the *final* artifacts under /repo.
+    const artifactDir = `${workdir}/.project/dagger-artifacts`
+    const internalArtifact = `${artifactDir}/happier-ui-mobile-android${ext}`
+    const internalOutJson = `${artifactDir}/eas_build_android.json`
 
-    let container = dag
-      .container({ platform: "linux/amd64" })
+    let container = dag.container({ platform: containerPlatform })
       .from("ghcr.io/cirruslabs/android-sdk:34")
+      // EAS local builds generate a large working directory. Mount it as a cache volume so:
+      // - we avoid tmpfs ENOSPC failures
+      // - we avoid exploding the container snapshot/engine cache
+      .withMountedCache("/tmp/eas-workdir", dag.cacheVolume("happier-expo-eas-workdir"))
       .withExec([
         "bash",
         "-lc",
@@ -118,11 +125,16 @@ export class HappierPipeline {
       .withMountedDirectory(workdir, repo)
       .withWorkdir(workdir)
       .withExec(["git", "init"])
+      .withExec(["bash", "-lc", `set -euo pipefail && mkdir -p "${artifactDir}"`])
+      .withEnvVariable("HAPPIER_PIPELINE_LOCAL_RUNTIME", "dagger")
       .withSecretVariable("EXPO_TOKEN", expoToken)
       .withSecretVariable("SENTRY_AUTH_TOKEN", sentryAuthToken)
       .withEnvVariable("EAS_CLI_VERSION", easCliVersion)
       .withEnvVariable("HAPPIER_INSTALL_SCOPE", "ui,protocol,agents")
       .withEnvVariable("HAPPIER_UI_VENDOR_WEB_ASSETS", "0")
+      // Hint to EAS local builds to keep their working dir under /tmp (temp-mounted above).
+      // If ignored by EAS, it's harmless.
+      .withEnvVariable("EAS_LOCAL_BUILD_WORKINGDIR", "/tmp/eas-workdir")
       .withEnvVariable("npm_config_registry", "https://registry.npmjs.org")
       .withEnvVariable("NPM_CONFIG_REGISTRY", "https://registry.npmjs.org")
       .withMountedCache("/root/.cache/yarn", dag.cacheVolume("happier-yarn-cache"))

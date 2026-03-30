@@ -1,10 +1,82 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
 
 const maxForksEnv = Number.parseInt(process.env.VITEST_UI_MAX_FORKS ?? '', 10);
-const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0 ? maxForksEnv : 4;
+const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0 ? maxForksEnv : 1;
+
+function resolveExpoNodeModuleStub(id: string): string | null {
+    if (id === 'expo-modules-core' || /(?:^|[\\/])node_modules[\\/](?:@[^\\/]+[\\/])?expo-modules-core[\\/]src[\\/]index\.ts$/.test(id) || /expo-modules-core[\\/]src[\\/]index\.ts$/.test(id)) {
+        return resolve('./sources/dev/expoModulesCoreStub.ts');
+    }
+
+    if (id === 'expo-constants' || /(?:^|[\\/])node_modules[\\/](?:@[^\\/]+[\\/])?expo-constants[\\/]src[\\/]Constants\.ts$/.test(id) || /expo-constants[\\/]src[\\/]Constants\.ts$/.test(id)) {
+        return resolve('./sources/dev/expoConstantsStub.ts');
+    }
+
+    return null;
+}
+
+function resolveWorkspacePackageSource(
+    id: string,
+    packageName: string,
+    packageSourceRoot: string,
+): string | null {
+    if (id === packageName) {
+        return resolve(packageSourceRoot, 'index.ts');
+    }
+
+    if (!id.startsWith(`${packageName}/`)) {
+        return null;
+    }
+
+    const subpath = id.slice(packageName.length + 1);
+    const candidates = [
+        resolve(packageSourceRoot, `${subpath}.ts`),
+        resolve(packageSourceRoot, `${subpath}.tsx`),
+        resolve(packageSourceRoot, subpath, 'index.ts'),
+        resolve(packageSourceRoot, subpath, 'index.tsx'),
+    ];
+
+    return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function resolveProtocolWorkspaceSource(id: string): string | null {
+    return resolveWorkspacePackageSource(
+        id,
+        '@happier-dev/protocol',
+        resolve('../../packages/protocol/src'),
+    );
+}
+
+function resolveAgentsWorkspaceSource(id: string): string | null {
+    return resolveWorkspacePackageSource(
+        id,
+        '@happier-dev/agents',
+        resolve('../../packages/agents/src'),
+    );
+}
+
+function resolveConnectionSupervisorWorkspaceSource(id: string): string | null {
+    return resolveWorkspacePackageSource(
+        id,
+        '@happier-dev/connection-supervisor',
+        resolve('../../packages/connection-supervisor/src'),
+    );
+}
+
+const expoNodeModuleStubsPlugin = {
+    name: 'happier-vitest-expo-node-module-stubs',
+    enforce: 'pre' as const,
+    resolveId(id: string) {
+        return resolveProtocolWorkspaceSource(id)
+            ?? resolveAgentsWorkspaceSource(id)
+            ?? resolveConnectionSupervisorWorkspaceSource(id)
+            ?? resolveExpoNodeModuleStub(id);
+    },
+};
 
 export default defineConfig({
     define: {
@@ -13,7 +85,7 @@ export default defineConfig({
     optimizeDeps: {
         // Workspace packages (like `@happier-dev/protocol`) can change frequently during development.
         // Excluding them ensures Vitest doesn't keep using stale optimized dependency caches.
-        exclude: ['@happier-dev/protocol'],
+        exclude: ['@happier-dev/protocol', '@happier-dev/agents', '@happier-dev/connection-supervisor'],
     },
     test: {
         // Ensure per-file module isolation so test-local `vi.mock(...)` does not leak
@@ -30,14 +102,20 @@ export default defineConfig({
         },
         // Our UI test suite is occasionally CPU-bound on developer machines / CI runners.
         // Increase the default timeout so unrelated load doesn't cause spurious failures.
-        testTimeout: 20_000,
+        testTimeout: 60_000,
+        // Global setup/teardown can import and reset large module graphs. Ensure hooks have
+        // enough time even when running a single focused test file in isolation.
+        hookTimeout: 60_000,
         globals: false,
         environment: 'node',
         env: {
             HAPPIER_FEATURE_POLICY_ENV: '',
         },
         setupFiles: [resolve('./sources/dev/vitestSetup.ts')],
-        include: ['sources/**/*.{spec,test}.{ts,tsx}'],
+        include: [
+            'sources/**/*.{spec,test}.{ts,tsx}',
+            'tools/**/*.{spec,test}.{ts,tsx}',
+        ],
         exclude: [
             'sources/**/*.integration.test.{ts,tsx}',
             'sources/**/*.real.integration.test.{ts,tsx}',
@@ -66,7 +144,8 @@ export default defineConfig({
             { find: /^react-native$/, replacement: resolve('./sources/dev/reactNativeStub.ts') },
             // Expo packages commonly depend on `expo-modules-core`, whose exports point to TS sources that import `react-native`.
             // In node/Vitest we stub the minimal surface needed by our tests.
-            { find: 'expo-modules-core', replacement: resolve('./sources/dev/expoModulesCoreStub.ts') },
+            { find: /expo-modules-core\/src\/index\.ts$/, replacement: resolve('./sources/dev/expoModulesCoreStub.ts') },
+            { find: /^expo-modules-core(?:\/.*)?$/, replacement: resolve('./sources/dev/expoModulesCoreStub.ts') },
             // `expo-constants` uses conditional exports that Vite/Vitest can't always resolve cleanly under node.
             { find: 'expo-constants', replacement: resolve('./sources/dev/expoConstantsStub.ts') },
             // `expo-localization` depends on Expo modules that don't exist in Vitest's node env.
@@ -105,6 +184,8 @@ export default defineConfig({
             // RevenueCat native SDKs depend on RN native modules.
             { find: 'react-native-purchases', replacement: resolve('./sources/dev/reactNativePurchasesStub.ts') },
             { find: 'react-native-purchases-ui', replacement: resolve('./sources/dev/reactNativePurchasesUiStub.ts') },
+            { find: '@shopify/flash-list', replacement: resolve('./sources/dev/shopifyFlashListStub.ts') },
+            { find: 'react-native-mmkv', replacement: resolve('./sources/dev/reactNativeMmkvStub.ts') },
             // Use libsodium-wrappers in tests instead of the RN native binding.
             { find: '@more-tech/react-native-libsodium', replacement: 'libsodium-wrappers' },
             // Use node-safe platform adapters in tests (avoid static expo-crypto imports).
@@ -115,4 +196,5 @@ export default defineConfig({
             { find: '@', replacement: resolve('./sources') },
         ],
     },
+    plugins: [expoNodeModuleStubsPlugin],
 })

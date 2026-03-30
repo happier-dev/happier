@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { AgentMessage } from '@/agent';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import {
   handleAcpModelOutputDelta,
   handleAcpStatusRunning,
@@ -10,9 +11,11 @@ import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgen
 import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
 import { GeminiDiffProcessor } from '../utils/diffProcessor';
+import { buildGeminiWorkspaceProjectAuthenticationMessage } from '../utils/buildGeminiWorkspaceProjectGuidance';
 import { GeminiTurnMessageState } from './geminiTurnMessageState';
 
 export function createGeminiBackendMessageHandler(params: {
@@ -20,14 +23,17 @@ export function createGeminiBackendMessageHandler(params: {
   messageBuffer: MessageBuffer;
   state: GeminiTurnMessageState;
   diffProcessor: GeminiDiffProcessor;
+  transcriptStream?: Pick<StreamedTranscriptWriter, 'appendThinkingDelta' | 'flushAll'>;
 }): (msg: AgentMessage) => void {
   const forwarder = createAcpAgentMessageForwarder({
     sendAcp: (provider, body) => params.session.sendAgentMessage(provider, body),
-    provider: 'gemini' as any,
+    provider: 'gemini',
     makeId: () => randomUUID(),
   });
+  const shapeLogger = createEventShapeLoggerForLog({ logger, scope: 'gemini' });
 
   return (msg: AgentMessage): void => {
+    shapeLogger.log(msg.type, msg);
     switch (msg.type) {
       case 'model-output':
         if (msg.textDelta) {
@@ -92,11 +98,7 @@ export function createGeminiBackendMessageHandler(params: {
           }
 
           if (errorMessage.includes('Authentication required')) {
-            errorMessage =
-              `Authentication required.\n` +
-              `For Google Workspace accounts, run: happier gemini project set <project-id>\n` +
-              `Or use a different Google account: happier connect gemini\n` +
-              `Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca`;
+            errorMessage = buildGeminiWorkspaceProjectAuthenticationMessage();
           }
 
           params.messageBuffer.addMessage(`Error: ${errorMessage}`, 'status');
@@ -110,6 +112,11 @@ export function createGeminiBackendMessageHandler(params: {
 
       case 'tool-call': {
         params.state.hadToolCallInTurn = true;
+        if (params.transcriptStream) {
+          void Promise.resolve(params.transcriptStream.flushAll({ reason: 'tool-call-boundary' })).catch((error) => {
+            logger.debug('[gemini] Failed to flush streamed thinking at tool-call boundary', error);
+          });
+        }
         const toolArgs = msg.args ? JSON.stringify(msg.args).substring(0, 100) : '';
         const isInvestigationTool =
           msg.toolName === 'codebase_investigator' ||
@@ -117,7 +124,8 @@ export function createGeminiBackendMessageHandler(params: {
 
         logger.debug(`[gemini] 🔧 Tool call received: ${msg.toolName} (${msg.callId})${isInvestigationTool ? ' [INVESTIGATION]' : ''}`);
         if (isInvestigationTool && msg.args && typeof msg.args === 'object' && 'objective' in msg.args) {
-          logger.debug(`[gemini] 🔍 Investigation objective: ${String((msg.args as any).objective).substring(0, 150)}...`);
+          const objectiveText = String((msg.args as any).objective);
+          logger.debug('[gemini] 🔍 Investigation objective received', { length: objectiveText.length });
         }
 
         params.messageBuffer.addMessage(
@@ -170,11 +178,11 @@ export function createGeminiBackendMessageHandler(params: {
           // Intentionally skip terminal spam for streaming chunks.
         } else if (isError) {
           const errorMsg = (msg.result as any).error || 'Tool call failed';
-          logger.debug(`[gemini] ❌ Tool call error: ${errorMsg.substring(0, 300)}`);
+          logger.debug('[gemini] ❌ Tool call error received', { length: String(errorMsg).length });
           params.messageBuffer.addMessage(`Error: ${errorMsg}`, 'status');
         } else {
           if (resultSize > 1000) {
-            logger.debug(`[gemini] ✅ Large tool result (${resultSize} bytes) - first 200 chars: ${truncatedResult}`);
+            logger.debug(`[gemini] ✅ Large tool result received (${resultSize} bytes)`);
           }
           params.messageBuffer.addMessage(`Result: ${truncatedResult}`, 'result');
         }
@@ -253,16 +261,20 @@ export function createGeminiBackendMessageHandler(params: {
               ? String(thinkingPayload.text || '')
               : '';
           if (thinkingText) {
-            logger.debug(`[gemini] 💭 Thinking chunk received: ${thinkingText.length} chars - Preview: ${thinkingText.substring(0, 100)}...`);
+            logger.debug(`[gemini] 💭 Thinking chunk received (${thinkingText.length} chars)`);
             if (!thinkingText.startsWith('**')) {
               const thinkingPreview = thinkingText.substring(0, 100);
               params.messageBuffer.updateLastMessage(`[Thinking] ${thinkingPreview}...`, 'system');
             }
           }
-          params.session.sendAgentMessage('gemini', {
-            type: 'thinking',
-            text: thinkingText,
-          });
+          if (params.transcriptStream) {
+            params.transcriptStream.appendThinkingDelta(thinkingText);
+          } else {
+            params.session.sendAgentMessage('gemini', {
+              type: 'thinking',
+              text: thinkingText,
+            });
+          }
         }
         break;
 

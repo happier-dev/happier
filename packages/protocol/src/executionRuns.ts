@@ -1,5 +1,36 @@
 import { z } from 'zod';
+
 import { VoiceAssistantActionSchema } from './voiceActions.js';
+import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
+import {
+  ExecutionRunClassSchema,
+  type ExecutionRunClass,
+  ExecutionRunDisplaySchema,
+  type ExecutionRunDisplay,
+  ExecutionRunIntentSchema,
+  type ExecutionRunIntent,
+  ExecutionRunIoModeSchema,
+  type ExecutionRunIoMode,
+  ExecutionRunReplaySeedRequestSchema,
+  type ExecutionRunReplaySeedRequest,
+  ExecutionRunResumeHandleSchema,
+  type ExecutionRunResumeHandle,
+  ExecutionRunResumeHandleVendorSessionV1Schema,
+  type ExecutionRunResumeHandleVendorSessionV1,
+  ExecutionRunResumeHandleVoiceAgentSessionsV1Schema,
+  type ExecutionRunResumeHandleVoiceAgentSessionsV1,
+  ExecutionRunRetentionPolicySchema,
+  type ExecutionRunRetentionPolicy,
+  ExecutionRunStartRequestSchema,
+  type ExecutionRunStartRequest,
+  ExecutionRunStartResponseSchema,
+  type ExecutionRunStartResponse,
+  normalizeLegacyExecutionRunBackendTargetInput,
+} from './executionRunStartRequest.js';
+import {
+  ExecutionRunListRequestSchema as ExecutionRunListRequestSchemaBase,
+  ExecutionRunStatusSchema as ExecutionRunStatusSchemaBase,
+} from './executionRunListRequest.js';
 
 /**
  * Public contract for execution runs (sub-agents / reviews / planning / delegation / voice agent).
@@ -9,14 +40,33 @@ import { VoiceAssistantActionSchema } from './voiceActions.js';
  * - Rich/large UI payloads (e.g. full review findings) are carried via transcript message `meta.happier`.
  */
 
-export const ExecutionRunIntentSchema = z.enum([
-  'review',
-  'plan',
-  'delegate',
-  'voice_agent',
-  'memory_hints',
-]);
-export type ExecutionRunIntent = z.infer<typeof ExecutionRunIntentSchema>;
+export {
+  ExecutionRunIntentSchema,
+  ExecutionRunRetentionPolicySchema,
+  ExecutionRunClassSchema,
+  ExecutionRunIoModeSchema,
+  normalizeLegacyExecutionRunBackendTargetInput,
+  ExecutionRunResumeHandleVendorSessionV1Schema,
+  ExecutionRunResumeHandleVoiceAgentSessionsV1Schema,
+  ExecutionRunResumeHandleSchema,
+  ExecutionRunDisplaySchema,
+  ExecutionRunReplaySeedRequestSchema,
+  ExecutionRunStartRequestSchema,
+  ExecutionRunStartResponseSchema,
+};
+export type {
+  ExecutionRunIntent,
+  ExecutionRunRetentionPolicy,
+  ExecutionRunClass,
+  ExecutionRunIoMode,
+  ExecutionRunResumeHandleVendorSessionV1,
+  ExecutionRunResumeHandleVoiceAgentSessionsV1,
+  ExecutionRunResumeHandle,
+  ExecutionRunDisplay,
+  ExecutionRunReplaySeedRequest,
+  ExecutionRunStartRequest,
+  ExecutionRunStartResponse,
+};
 
 // Canonical, stable error code vocabulary for RPC `errorCode` and MCP `error.code`.
 // Keep this pinned and deterministic; clients should branch on these strings.
@@ -33,15 +83,10 @@ export const ExecutionRunTransportErrorCodeSchema = z.enum([
   'permission_denied',
 ]);
 export type ExecutionRunTransportErrorCode = z.infer<typeof ExecutionRunTransportErrorCodeSchema>;
-
-export const ExecutionRunStatusSchema = z.enum([
-  'running',
-  'succeeded',
-  'failed',
-  'cancelled',
-  'timeout',
-]);
+export const ExecutionRunStatusSchema = ExecutionRunStatusSchemaBase;
 export type ExecutionRunStatus = z.infer<typeof ExecutionRunStatusSchema>;
+export const ExecutionRunListRequestSchema = ExecutionRunListRequestSchemaBase;
+export type ExecutionRunListRequest = z.infer<typeof ExecutionRunListRequestSchema>;
 
 export const ExecutionRunErrorSchema = z.object({
   code: z.string().min(1),
@@ -49,58 +94,18 @@ export const ExecutionRunErrorSchema = z.object({
 }).passthrough();
 export type ExecutionRunError = z.infer<typeof ExecutionRunErrorSchema>;
 
-export const ExecutionRunRetentionPolicySchema = z.enum(['ephemeral', 'resumable']);
-export type ExecutionRunRetentionPolicy = z.infer<typeof ExecutionRunRetentionPolicySchema>;
-
-export const ExecutionRunClassSchema = z.enum(['bounded', 'long_lived']);
-export type ExecutionRunClass = z.infer<typeof ExecutionRunClassSchema>;
-
-export const ExecutionRunIoModeSchema = z.enum(['request_response', 'streaming']);
-export type ExecutionRunIoMode = z.infer<typeof ExecutionRunIoModeSchema>;
-
-export const ExecutionRunResumeHandleVendorSessionV1Schema = z.object({
-  kind: z.literal('vendor_session.v1'),
-  backendId: z.string().min(1),
-  vendorSessionId: z.string().min(1),
+export const ExecutionRunTranscriptSchema = z.object({
+  persistenceMode: z.enum(['ephemeral', 'persistent']),
+  epoch: z.number().int().min(0),
 }).passthrough();
-export type ExecutionRunResumeHandleVendorSessionV1 = z.infer<typeof ExecutionRunResumeHandleVendorSessionV1Schema>;
-
-export const ExecutionRunResumeHandleVoiceAgentSessionsV1Schema = z.object({
-  kind: z.literal('voice_agent_sessions.v1'),
-  backendId: z.string().min(1),
-  chatVendorSessionId: z.string().min(1),
-  commitVendorSessionId: z.string().min(1),
-}).passthrough();
-export type ExecutionRunResumeHandleVoiceAgentSessionsV1 = z.infer<typeof ExecutionRunResumeHandleVoiceAgentSessionsV1Schema>;
-
-export const ExecutionRunResumeHandleSchema = z.discriminatedUnion('kind', [
-  ExecutionRunResumeHandleVendorSessionV1Schema,
-  ExecutionRunResumeHandleVoiceAgentSessionsV1Schema,
-]);
-export type ExecutionRunResumeHandle = z.infer<typeof ExecutionRunResumeHandleSchema>;
-
-export const ExecutionRunDisplaySchema = z.object({
-  /**
-   * Optional user-facing label/title for the run (used for future group chat + participant labeling).
-   */
-  title: z.string().min(1).max(200).optional(),
-  /**
-   * Optional short participant label (e.g. "Reviewer A") for merged/group views.
-   */
-  participantLabel: z.string().min(1).max(80).optional(),
-  /**
-   * Optional group ID used to render multiple runs as a logical "group chat" in UI.
-   */
-  groupId: z.string().min(1).max(120).optional(),
-}).passthrough();
-export type ExecutionRunDisplay = z.infer<typeof ExecutionRunDisplaySchema>;
+export type ExecutionRunTranscript = z.infer<typeof ExecutionRunTranscriptSchema>;
 
 export const ExecutionRunPublicStateSchema = z.object({
   runId: z.string().min(1),
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
   intent: ExecutionRunIntentSchema,
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   display: ExecutionRunDisplaySchema.optional(),
   // Policy/class fields are required for client surfaces (e.g. to decide if send/resume controls apply).
   permissionMode: z.string().min(1),
@@ -108,35 +113,15 @@ export const ExecutionRunPublicStateSchema = z.object({
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,
   status: ExecutionRunStatusSchema,
+  turnInFlight: z.boolean().optional(),
+  availableActionIds: z.array(z.string().min(1)).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.optional(),
+  transcript: ExecutionRunTranscriptSchema.optional(),
   startedAtMs: z.number().int().nonnegative(),
   finishedAtMs: z.number().int().nonnegative().optional(),
   error: ExecutionRunErrorSchema.optional(),
 }).passthrough();
 export type ExecutionRunPublicState = z.infer<typeof ExecutionRunPublicStateSchema>;
-
-export const ExecutionRunStartRequestSchema = z.object({
-  intent: ExecutionRunIntentSchema,
-  backendId: z.string().min(1),
-  instructions: z.string().optional(),
-  display: ExecutionRunDisplaySchema.optional(),
-  permissionMode: z.string().min(1),
-  retentionPolicy: ExecutionRunRetentionPolicySchema,
-  runClass: ExecutionRunClassSchema,
-  ioMode: ExecutionRunIoModeSchema,
-  resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
-}).passthrough();
-export type ExecutionRunStartRequest = z.infer<typeof ExecutionRunStartRequestSchema>;
-
-export const ExecutionRunStartResponseSchema = z.object({
-  runId: z.string().min(1),
-  callId: z.string().min(1),
-  sidechainId: z.string().min(1),
-}).passthrough();
-export type ExecutionRunStartResponse = z.infer<typeof ExecutionRunStartResponseSchema>;
-
-export const ExecutionRunListRequestSchema = z.object({}).passthrough();
-export type ExecutionRunListRequest = z.infer<typeof ExecutionRunListRequestSchema>;
 
 export const ExecutionRunListResponseSchema = z.object({
   runs: z.array(ExecutionRunPublicStateSchema),
@@ -223,6 +208,7 @@ export type ExecutionRunActionResponse = z.infer<typeof ExecutionRunActionRespon
 export const ExecutionRunTurnStreamStartRequestSchema = z.object({
   runId: z.string().min(1),
   message: z.string().min(1),
+  displayMessage: z.string().min(1).optional(),
   resume: z.boolean().optional(),
 }).passthrough();
 export type ExecutionRunTurnStreamStartRequest = z.infer<typeof ExecutionRunTurnStreamStartRequestSchema>;

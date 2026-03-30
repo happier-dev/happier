@@ -7,6 +7,7 @@ export type PiRpcCommand =
   | { id: string; type: 'get_session_stats' }
   | { id: string; type: 'get_available_models' }
   | { id: string; type: 'set_model'; provider: string; modelId: string }
+  | { id: string; type: 'set_thinking_level'; level: string }
   | { id: string; type: 'get_commands' };
 
 export type PiRpcCommandWithoutId =
@@ -29,6 +30,7 @@ export type PiRpcStateData = Readonly<{
   sessionId?: string;
   sessionFile?: string;
   isStreaming?: boolean;
+  thinkingLevel?: string;
   model?: Readonly<{ id?: string; provider?: string; name?: string }> | null;
 }>;
 
@@ -49,6 +51,7 @@ export type PiRpcModel = Readonly<{
   id?: string;
   provider?: string;
   name?: string;
+  reasoning?: boolean;
 }>;
 
 export type PiRpcModelsData = Readonly<{

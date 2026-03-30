@@ -13,32 +13,55 @@ describe('authQRStart', () => {
     it('retries when aborted due to a server switch', async () => {
         upsertAndActivateServer({ serverUrl: 'http://server.example.test', scope: 'tab' });
 
-        let callCount = 0;
-        setRuntimeFetch(async () => {
-            callCount += 1;
-            if (callCount === 1) {
-                abortServerFetches('server-switch');
-                throw new DOMException('Aborted', 'AbortError');
+        let totalFetchCount = 0;
+        let authRequestCount = 0;
+        let didAbort = false;
+
+        setRuntimeFetch(async (input) => {
+            totalFetchCount += 1;
+            const url = String(input ?? '');
+            const isAuthRequest = url.includes('/v1/auth/account/request');
+
+            if (isAuthRequest) {
+                authRequestCount += 1;
+                if (!didAbort) {
+                    didAbort = true;
+                    abortServerFetches('server-switch');
+                    throw new DOMException('Aborted', 'AbortError');
+                }
             }
+
             return new Response(null, { status: 200 });
         });
 
         await expect(authQRStart(generateAuthKeyPair())).resolves.toBe(true);
-        expect(callCount).toBe(2);
+        expect(authRequestCount).toBe(2);
+        expect(totalFetchCount).toBeGreaterThanOrEqual(authRequestCount);
     });
 
     it('returns false after repeated server-switch aborts', async () => {
         upsertAndActivateServer({ serverUrl: 'http://server.example.test', scope: 'tab' });
 
-        let callCount = 0;
-        setRuntimeFetch(async () => {
-            callCount += 1;
-            abortServerFetches('server-switch');
-            throw new DOMException('Aborted', 'AbortError');
+        let totalFetchCount = 0;
+        let authRequestCount = 0;
+
+        setRuntimeFetch(async (input) => {
+            totalFetchCount += 1;
+            const url = String(input ?? '');
+            const isAuthRequest = url.includes('/v1/auth/account/request');
+
+            if (isAuthRequest) {
+                authRequestCount += 1;
+                abortServerFetches('server-switch');
+                throw new DOMException('Aborted', 'AbortError');
+            }
+
+            return new Response(null, { status: 200 });
         });
 
         await expect(authQRStart(generateAuthKeyPair())).resolves.toBe(false);
-        expect(callCount).toBeGreaterThan(1);
-        expect(callCount).toBeLessThan(8);
+        expect(authRequestCount).toBeGreaterThan(1);
+        expect(authRequestCount).toBeLessThanOrEqual(4);
+        expect(totalFetchCount).toBeGreaterThanOrEqual(authRequestCount);
     });
 });

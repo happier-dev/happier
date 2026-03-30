@@ -4,7 +4,9 @@ import type { ExecutionRunManagerStartParams } from '@/agent/executionRuns/runti
 import type { ExecutionRunController, ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
 import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from '@/agent/executionRuns/runtime/turnDelivery';
-import { logger } from '@/lib';
+import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import { buildReviewGuidanceBlock } from '@/agent/reviews/prompt/buildStandardReviewPrompt';
+import { logger } from '@/ui/logger';
 
 function stripTrailingJsonObjectFromText(text: string): string {
   const trimmed = String(text ?? '');
@@ -59,15 +61,18 @@ export async function executeBoundedBackendRun(args: Readonly<{
       callId,
       sidechainId,
       intent: params.intent,
-      backendId: params.backendId,
+      backendId: resolveExecutionRunRuntimeBackendId(params.backendTarget),
+      backendTarget: params.backendTarget,
       instructions: params.instructions ?? '',
+      intentInput: params.intentInput,
       permissionMode: params.permissionMode,
       retentionPolicy: params.retentionPolicy,
       runClass: params.runClass,
       ioMode: params.ioMode,
       startedAtMs,
     } as const;
-    const prompt = profile.buildPrompt(start);
+    let effectiveInstructions = start.instructions;
+    const prompt = profile.buildPrompt({ ...start, instructions: effectiveInstructions });
 
     function waitForExternalMessage(): Promise<void> {
       if (backendCtrl.pendingExternalMessages.length > 0) return Promise.resolve();
@@ -81,18 +86,24 @@ export async function executeBoundedBackendRun(args: Readonly<{
       return backendCtrl.pendingExternalMessagesSignal.promise;
     }
 
-    async function sendTurnPrompt(turnPrompt: string): Promise<void> {
+    function sendTurnPrompt(turnPrompt: string): Promise<void> {
       backendCtrl.turnCount += 1;
       backendCtrl.turnEpoch += 1;
       backendCtrl.turnInFlight = true;
       backendCtrl.buffer = '';
       backendCtrl.sidechainStreamBuffer = '';
       backendCtrl.sidechainStreamKey = '';
-      await backendCtrl.backend.sendPrompt(backendCtrl.childSessionId!, turnPrompt);
+      return backendCtrl.backend.sendPrompt(backendCtrl.childSessionId!, turnPrompt);
     }
 
-    async function waitForTurnComplete(): Promise<void> {
+    async function waitForTurnComplete(sendPromptPromise: Promise<void>): Promise<void> {
+      await sendPromptPromise;
       if (backendCtrl.backend.waitForResponseComplete) {
+        const timeoutMs = args.boundedTimeoutMs;
+        if (typeof timeoutMs === 'number') {
+          await backendCtrl.backend.waitForResponseComplete(timeoutMs);
+          return;
+        }
         await backendCtrl.backend.waitForResponseComplete();
       }
     }
@@ -100,9 +111,9 @@ export async function executeBoundedBackendRun(args: Readonly<{
     async function runTurnWithExternalMessages(turnPrompt: string): Promise<void> {
       backendCtrl.turnCancelReason = null;
       backendCtrl.turnCancelEpoch = null;
-      await sendTurnPrompt(turnPrompt);
+      const sendPromptPromise = sendTurnPrompt(turnPrompt);
       let activeEpoch = backendCtrl.turnEpoch;
-      let completionPromise: Promise<void> = waitForTurnComplete();
+      let completionPromise: Promise<void> = waitForTurnComplete(sendPromptPromise);
 
       while (true) {
         if (backendCtrl.cancelled) return;
@@ -152,26 +163,39 @@ export async function executeBoundedBackendRun(args: Readonly<{
         // cancel_and_send
         backendCtrl.turnCancelReason = 'steer';
         backendCtrl.turnCancelEpoch = activeEpoch;
-        try {
-          await backendCtrl.backend.cancel(backendCtrl.childSessionId!);
-        } catch {
-          // best effort
-        }
+        await backendCtrl.streamWriter?.flushAll({ reason: 'abort', interruptedReason: 'steer' });
+        void Promise.resolve()
+          .then(() => backendCtrl.backend.cancel(backendCtrl.childSessionId!))
+          .catch(() => {});
 
         void completionPromise.catch((error) => {
           if (isAbortLikeError(error)) return;
           logger.debug('[ExecutionRuns] canceled turn completion rejected (ignored)', error);
         });
 
-        await sendTurnPrompt(next.message);
+        const updateText = String(next.message ?? '').trim();
+        if (updateText) {
+          effectiveInstructions = effectiveInstructions
+            ? `${effectiveInstructions}\n\nUser update:\n${updateText}`
+            : `User update:\n${updateText}`;
+        }
+        const updatedPrompt = profile.buildPrompt({ ...start, instructions: effectiveInstructions });
+        const updatedSendPromise = sendTurnPrompt(updatedPrompt);
+        // ACK as soon as the bounded runtime adopts the replacement turn. Waiting for the backend
+        // send promise to settle can incorrectly surface "Run is busy" even though the follow-up
+        // prompt has already been accepted into the run state machine.
+        next.resolve();
+        void updatedSendPromise.catch((error) => {
+          logger.debug('[ExecutionRuns] replacement turn send rejected after external ACK', error);
+        });
         activeEpoch = backendCtrl.turnEpoch;
         backendCtrl.turnCancelReason = null;
         backendCtrl.turnCancelEpoch = null;
-        completionPromise = waitForTurnComplete();
-        next.resolve();
+        completionPromise = waitForTurnComplete(updatedSendPromise);
       }
 
       backendCtrl.turnInFlight = false;
+      await backendCtrl.streamWriter?.flushAll({ reason: 'turn-end' });
     }
 
     const runPromise = runTurnWithExternalMessages(prompt);
@@ -200,49 +224,76 @@ export async function executeBoundedBackendRun(args: Readonly<{
       finishedAtMs,
     });
 
-    // Review runs rely on a strict trailing JSON object for structured findings. Models sometimes violate
-    // this contract; for resilience we attempt ONE deterministic "repair" pass.
-    if (params.intent === 'review') {
-      const errorCode = (completion as any)?.toolResultOutput?.error?.code;
-      if (completion.status === 'failed' && errorCode === 'invalid_output') {
-        const repairPrompt = [
+    const errorCode = (completion as any)?.toolResultOutput?.error?.code;
+    const shouldRepair =
+      completion.status === 'failed'
+      && errorCode === 'invalid_output'
+      && (params.intent === 'review' || params.intent === 'plan' || params.intent === 'delegate');
+
+    if (shouldRepair) {
+      const repairPrompt = (() => {
+        if (params.intent === 'review') {
+          return [
+            'Your previous response did not include the required final JSON object.',
+            'If you have already completed the review, convert your conclusions into the required JSON now.',
+            'If you have not yet inspected the workspace or gathered enough evidence, continue the review first using the available read-only tools, then return ONLY valid JSON (parsable by JSON.parse).',
+            'Do not wrap it in markdown code fences. Do not include any extra text before or after the JSON.',
+            buildReviewGuidanceBlock(),
+            '',
+            'Content to convert:',
+            rawText,
+          ].join('\n');
+        }
+
+        if (params.intent === 'plan') {
+          return [
+            'Your previous response did not include the required final JSON object.',
+            'Do not run any tools. Return ONLY valid JSON (parsable by JSON.parse).',
+            'Do not wrap it in markdown code fences. Do not include any extra text before or after the JSON.',
+            'Return a single JSON object with this shape:',
+            '{',
+            '  "summary": "Ok",',
+            '  "sections": [{ "title": "Steps", "items": ["Step 1"] }],',
+            '  "risks": [],',
+            '  "milestones": [],',
+            '  "recommendedBackendId": "claude"',
+            '}',
+            '',
+            'Content to convert:',
+            rawText,
+          ].join('\n');
+        }
+
+        // delegate
+        return [
           'Your previous response did not include the required final JSON object.',
-          'Return ONLY valid JSON with this shape:',
+          'Do not run any tools. Return ONLY valid JSON (parsable by JSON.parse).',
+          'Do not wrap it in markdown code fences. Do not include any extra text before or after the JSON.',
+          'Return a single JSON object with this shape:',
           '{',
-          '  "summary": string,',
-          '  "findings": Array<{',
-          '    "id": string,',
-          '    "title": string,',
-          '    "severity": "blocker"|"high"|"medium"|"low"|"nit",',
-          '    "category": "correctness"|"security"|"performance"|"maintainability"|"testing"|"style"|"docs",',
-          '    "summary": string,',
-          '    "filePath"?: string,',
-          '    "startLine"?: number,',
-          '    "endLine"?: number,',
-          '    "suggestion"?: string,',
-          '    "patch"?: string',
-          '  }>',
+          '  "summary": "Ok",',
+          '  "deliverables": [{ "id": "d1", "title": "Deliverable", "details": "Optional details" }]',
           '}',
           '',
           'Content to convert:',
           rawText,
         ].join('\n');
+      })();
 
-        // Reset buffers so the second pass is parsed deterministically.
-        backendCtrl.buffer = '';
-        backendCtrl.sidechainStreamBuffer = '';
-        backendCtrl.sidechainStreamKey = '';
-        backendCtrl.turnInFlight = false;
+      // Reset buffers so the second pass is parsed deterministically.
+      backendCtrl.buffer = '';
+      backendCtrl.sidechainStreamBuffer = '';
+      backendCtrl.sidechainStreamKey = '';
+      backendCtrl.turnInFlight = false;
 
-        await runTurnWithExternalMessages(repairPrompt);
+      await runTurnWithExternalMessages(repairPrompt);
 
-        const repairedRawText = backendCtrl.buffer.trim();
-        completion = profile.onBoundedComplete({
-          start,
-          rawText: repairedRawText,
-          finishedAtMs,
-        });
-      }
+      const repairedRawText = backendCtrl.buffer.trim();
+      completion = profile.onBoundedComplete({
+        start,
+        rawText: repairedRawText,
+        finishedAtMs,
+      });
     }
 
     const sidechainMessage = (() => {
@@ -262,7 +313,10 @@ export async function executeBoundedBackendRun(args: Readonly<{
       return rawText;
     })();
 
-    const streamed = params.ioMode === 'streaming' && backendCtrl.sidechainStreamBuffer.trim().length > 0;
+    const streamed =
+      params.ioMode === 'streaming'
+      && Boolean(backendCtrl.streamWriter)
+      && backendCtrl.sidechainStreamBuffer.trim().length > 0;
     if (shouldMaterializeInTranscript && params.intent === 'review') {
       // Even when streaming progress, emit a final terminal summary line so users get a clear completion status.
       if (sidechainMessage && sidechainMessage.trim().length > 0) {
@@ -271,6 +325,8 @@ export async function executeBoundedBackendRun(args: Readonly<{
     } else if (shouldMaterializeInTranscript && !streamed && sidechainMessage && sidechainMessage.trim().length > 0) {
       args.sendAcp(args.parentProvider, { type: 'message', message: sidechainMessage.trim(), sidechainId });
     }
+
+    await backendCtrl.streamWriter?.flushAll({ reason: 'turn-end' });
 
     args.finishRun(
       runId,
@@ -287,6 +343,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       } catch {
         // best effort
       }
+      await backendCtrl.streamWriter?.flushAll({ reason: 'abort', interruptedReason: message });
       const finishedAtMs = args.getNowMs();
       args.finishRun(
         runId,
@@ -307,6 +364,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       );
       return;
     }
+    await backendCtrl.streamWriter?.flushAll({ reason: 'abort', interruptedReason: message });
     const finishedAtMs = args.getNowMs();
     args.finishRun(
       runId,

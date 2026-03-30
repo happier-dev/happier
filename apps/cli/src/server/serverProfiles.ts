@@ -1,6 +1,7 @@
 import { readSettings, updateSettings } from '@/persistence';
 import { deriveServerIdFromName, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 export type ServerProfile = Readonly<{
   id: string;
@@ -78,6 +79,35 @@ function findProfileIdByIdOrName(servers: Record<string, any>, identifierRaw: st
     if (profile.id.toLowerCase() === lowered) return id;
     if (profile.name.toLowerCase() === lowered) return id;
   }
+  return null;
+}
+
+function findProfileIdByComparableUrl(servers: Record<string, any>, serverUrlRaw: string): string | null {
+  const serverUrl = String(serverUrlRaw ?? '').trim();
+  if (!serverUrl) return null;
+
+  let comparableKey: string;
+  try {
+    comparableKey = createServerUrlComparableKey(serverUrl);
+  } catch {
+    return null;
+  }
+
+  for (const [id, value] of Object.entries(servers)) {
+    const profile = coerceProfile(value);
+    if (!profile) continue;
+    try {
+      if (createServerUrlComparableKey(profile.serverUrl) === comparableKey) {
+        return id;
+      }
+      if (profile.localServerUrl && createServerUrlComparableKey(profile.localServerUrl) === comparableKey) {
+        return id;
+      }
+    } catch {
+      continue;
+    }
+  }
+
   return null;
 }
 
@@ -201,6 +231,63 @@ export async function addServerProfile(opts: Readonly<{
     throw new Error(`Failed to create server profile: ${id}`);
   }
   return created;
+}
+
+export async function upsertServerProfileByUrl(opts: Readonly<{
+  name: string;
+  serverUrl: string;
+  localServerUrl?: string;
+  webappUrl: string;
+  use?: boolean;
+}>): Promise<ServerProfile> {
+  const name = String(opts.name ?? '').trim();
+  const serverUrl = String(opts.serverUrl ?? '').trim();
+  const localServerUrl = String(opts.localServerUrl ?? '').trim();
+  const webappUrl = String(opts.webappUrl ?? '').trim();
+  const shouldUse = opts.use === true;
+  const now = Date.now();
+
+  let resolvedId: string | null = null;
+  await updateSettings((current: any) => {
+    const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
+    const matchedId = findProfileIdByComparableUrl(servers, serverUrl)
+      ?? (localServerUrl ? findProfileIdByComparableUrl(servers, localServerUrl) : null);
+    if (!matchedId) {
+      return current;
+    }
+
+    const existing = coerceProfile((servers as any)[matchedId]);
+    if (!existing) {
+      return current;
+    }
+
+    resolvedId = matchedId;
+    return {
+      ...current,
+      activeServerId: shouldUse ? matchedId : current?.activeServerId,
+      servers: {
+        ...servers,
+        [matchedId]: {
+          ...existing,
+          name: name || existing.name,
+          serverUrl,
+          ...(localServerUrl && localServerUrl !== serverUrl ? { localServerUrl } : {}),
+          webappUrl,
+          updatedAt: now,
+          lastUsedAt: shouldUse ? now : existing.lastUsedAt,
+        },
+      },
+    };
+  });
+
+  if (!resolvedId) {
+    return await addServerProfile(opts);
+  }
+
+  if (shouldUse) {
+    return await getActiveServerProfile();
+  }
+  return await getServerProfile(resolvedId);
 }
 
 export async function removeServerProfile(

@@ -1,28 +1,33 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const alertSpy = vi.fn(async () => {});
 const confirmSpy = vi.fn(async () => true);
+const applySettingsSpy = vi.fn(async () => {});
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: vi.fn(), push: vi.fn() }),
-  useLocalSearchParams: () => ({ serviceId: 'claude-subscription' }),
-}));
+installConnectedServicesCommonModuleMocks({
+    searchParams: { serviceId: 'claude-subscription' },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: vi.fn(async () => null),
+                alert: alertSpy,
+                alertAsync: vi.fn(async () => {}),
+                confirm: confirmSpy,
+            },
+        }).module;
+    },
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
-}));
-
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(async () => null),
-    alert: alertSpy,
-    alertAsync: vi.fn(async () => {}),
-    confirm: confirmSpy,
-  },
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -54,6 +59,10 @@ vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: vi.fn(async () => {}), applySettings: vi.fn(async () => {}) },
 }));
 
+vi.mock('@/sync/store/settingsWriters', () => ({
+  useApplySettings: () => applySettingsSpy,
+}));
+
 const deleteSpy = vi.fn(async () => {
   throw new Error('boom');
 });
@@ -74,11 +83,9 @@ describe('ConnectedServiceDetailView disconnect error handling', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    const actionHosts = tree.root.findAllByType('ItemRowActions' as any);
+    const actionHosts = tree.findAllByType('ItemRowActions' as any);
     expect(actionHosts.length).toBeGreaterThan(0);
     const actions = actionHosts[0]?.props?.actions as Array<any>;
     const disconnect = actions.find((a) => a?.id === 'disconnect');
@@ -93,4 +100,3 @@ describe('ConnectedServiceDetailView disconnect error handling', () => {
     expect(alertSpy).toHaveBeenCalled();
   });
 });
-

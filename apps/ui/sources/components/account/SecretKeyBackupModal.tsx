@@ -6,38 +6,23 @@ import * as Clipboard from 'expo-clipboard';
 
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { Modal } from '@/modal';
+import { Modal, type CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
-    modal: {
-        width: 360,
-        maxWidth: '92%',
-        backgroundColor: theme.colors.surface,
-        borderRadius: 14,
-        padding: 16,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-    },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 10,
-    },
-    title: {
-        fontSize: 18,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
+    body: {
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+        gap: 12,
     },
     description: {
         fontSize: 14,
         color: theme.colors.textSecondary,
         lineHeight: 20,
-        marginBottom: 14,
         ...Typography.default(),
     },
     keyContainer: {
@@ -82,7 +67,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export function SecretKeyBackupModal(props: { secret: string; onClose: () => void }) {
+type Props = CustomModalInjectedProps & Readonly<{
+    secret: string;
+}>;
+
+export function SecretKeyBackupModal(props: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
@@ -100,15 +89,23 @@ export function SecretKeyBackupModal(props: { secret: string; onClose: () => voi
         }
     }, [formattedSecret]);
 
-    return (
-        <View style={styles.modal}>
-            <View style={styles.header}>
-                <Text style={styles.title}>{t('settingsAccount.secretKey')}</Text>
-                <Pressable onPress={props.onClose} hitSlop={12}>
-                    <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
-                </Pressable>
-            </View>
+    const footer = React.useMemo(() => (
+        <RoundButton title={t('common.ok')} onPress={props.onClose} size="normal" />
+    ), [props.onClose]);
 
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title: t('settingsAccount.secretKey'),
+        testID: 'secret-key-backup-modal',
+        closeButtonTestID: 'secret-key-backup-close',
+        footer,
+        dimensions: { width: 360, maxHeightRatio: 0.85, size: 'dialog' as const },
+    }), [footer]);
+
+    useModalCardChrome(props.setChrome, chrome);
+
+    return (
+        <View style={styles.body}>
             <Text style={styles.description}>{t('settingsAccount.backupDescription')}</Text>
 
             <View style={styles.keyContainer}>
@@ -133,8 +130,6 @@ export function SecretKeyBackupModal(props: { secret: string; onClose: () => voi
                     <RoundButton title={t('common.copy')} onPress={handleCopy} size="normal" />
                 </View>
             </View>
-
-            <RoundButton title={t('common.ok')} onPress={props.onClose} size="normal" />
         </View>
     );
 }

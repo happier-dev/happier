@@ -1,22 +1,44 @@
 import type { Machine, Session } from '../../domains/state/storageTypes';
+import {
+    buildMachineDisplayRenderableFromMachine,
+    getMachineDisplaySubtitle,
+    resolveBestMachineDisplayRenderableForHost,
+    type MachineDisplayRenderable,
+} from '../../domains/machines/machineDisplayRenderable';
 import type { Settings } from '../../domains/settings/settings';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
-import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
+import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
+import { resolveSessionProjectGroupingKeyParts } from '../../domains/session/listing/sessionListProjectGroupingKeys';
+import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
+import {
+    buildSessionListViewDataWithServerScope,
+} from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import { projectManager } from '../../runtime/orchestration/projectManager';
+import {
+    resolveWarmCacheAccountScope,
+    type MachineDisplayCacheEntryV1,
+    saveMachineDisplayWarmCacheEntries,
+} from '../../domains/state/warmCachePersistence';
+import { buildMachineDisplayCacheEntriesFromRenderables } from '../../domains/state/warmCacheAdapters';
 
 import type { StoreGet, StoreSet } from './_shared';
 
 export type MachinesDomain = {
     machines: Record<string, Machine>;
+    machineDisplayById: Record<string, MachineDisplayRenderable>;
     machineListByServerId: Record<string, Machine[] | null>;
     machineListStatusByServerId: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
+    replaceMachineDisplays: (machines: MachineDisplayRenderable[]) => void;
 };
 
 type MachinesDomainDependencies = Readonly<{
     sessions: Record<string, Session>;
+    sessionListRenderables: Record<string, SessionListRenderableSession>;
+    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; path?: string | null } | null } | null;
+    profile: { id: string };
     settings: Settings;
     sessionListViewData: SessionListViewItem[] | null;
     sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
@@ -33,13 +55,18 @@ function resolveGroupingForSection(
     return settings.groupInactiveSessionsByProject ? 'project' : 'date';
 }
 
-function getMachineProjectHeaderSubtitle(machine: Machine | undefined, machineId: string): string {
-    const meta: any = machine?.metadata ?? null;
-    const displayName = typeof meta?.displayName === 'string' ? meta.displayName.trim() : '';
-    if (displayName) return displayName;
-    const host = typeof meta?.host === 'string' ? meta.host.trim() : '';
-    if (host) return host;
-    return machine?.id ?? machineId;
+function saveWarmMachineCacheForState(
+    state: MachinesDomain & MachinesDomainDependencies,
+    previousEntries?: Record<string, MachineDisplayCacheEntryV1>,
+): void {
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    const accountId = resolveWarmCacheAccountScope(state.profile?.id);
+    if (!activeServerId || !accountId) return;
+    saveMachineDisplayWarmCacheEntries(
+        activeServerId,
+        accountId,
+        buildMachineDisplayCacheEntriesFromRenderables(state.machineDisplayById ?? {}, previousEntries),
+    );
 }
 
 function mergeMachineListById(
@@ -70,21 +97,27 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
 }): MachinesDomain {
     return {
         machines: {},
+        machineDisplayById: {},
         machineListByServerId: {},
         machineListStatusByServerId: {},
         applyMachines: (machines, replace = false) =>
             set((state) => {
                 let mergedMachines: Record<string, Machine>;
+                let mergedMachineDisplays: Record<string, MachineDisplayRenderable>;
 
                 if (replace) {
                     mergedMachines = {};
+                    mergedMachineDisplays = {};
                     machines.forEach((machine) => {
                         mergedMachines[machine.id] = machine;
+                        mergedMachineDisplays[machine.id] = buildMachineDisplayRenderableFromMachine(machine);
                     });
                 } else {
                     mergedMachines = { ...state.machines };
+                    mergedMachineDisplays = { ...state.machineDisplayById };
                     machines.forEach((machine) => {
                         mergedMachines[machine.id] = machine;
+                        mergedMachineDisplays[machine.id] = buildMachineDisplayRenderableFromMachine(machine);
                     });
                 }
 
@@ -97,19 +130,49 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     const usesProjectGrouping = activeGrouping === 'project' || inactiveGrouping === 'project';
 
                     if (usesProjectGrouping) {
-                        const referencedMachineIds = new Set<string>();
-                        for (const session of Object.values(state.sessions)) {
-                            const path = String(session.metadata?.path ?? '').trim();
-                            if (!path) continue;
-                            const machineId = String(session.metadata?.machineId ?? '').trim() || 'unknown';
-                            referencedMachineIds.add(machineId);
+                        const referencedGroupIds = new Set<string>();
+                        const resolveMachineGroupId = (
+                            parts: ReturnType<typeof resolveSessionProjectGroupingKeyParts>,
+                            machinesById: Record<string, MachineDisplayRenderable>,
+                        ): string => {
+                            const machine = parts.machineId ? machinesById[parts.machineId] : undefined;
+                            const host = parts.host ?? normalizeNonEmptyString(machine?.metadata?.host);
+                            return host ? `host:${host}` : parts.machineId ? `id:${parts.machineId}` : 'unknown';
+                        };
+
+                        for (const session of Object.values(state.sessionListRenderables ?? {})) {
+                            const parts = resolveSessionProjectGroupingKeyParts(session.metadata ?? null);
+                            if (!parts.pathKey) continue;
+                            const prevGroupId = resolveMachineGroupId(parts, state.machineDisplayById ?? {});
+                            const nextGroupId = resolveMachineGroupId(parts, mergedMachineDisplays);
+                            referencedGroupIds.add(prevGroupId);
+                            referencedGroupIds.add(nextGroupId);
+                            if (prevGroupId !== nextGroupId) {
+                                needsSessionListViewDataRebuild = true;
+                                needsProjectManagerUpdate = true;
+                                break;
+                            }
                         }
 
-                        for (const machineId of referencedMachineIds) {
-                            const prev = state.machines[machineId];
-                            const next = mergedMachines[machineId];
-                            const prevSubtitle = getMachineProjectHeaderSubtitle(prev, machineId);
-                            const nextSubtitle = getMachineProjectHeaderSubtitle(next, machineId);
+                        const resolveSubtitleForGroup = (
+                            groupId: string,
+                            machinesById: Record<string, MachineDisplayRenderable>,
+                        ): string => {
+                            if (groupId.startsWith('host:')) {
+                                const host = groupId.slice('host:'.length);
+                                const machine = resolveBestMachineDisplayRenderableForHost(machinesById, host) ?? undefined;
+                                return getMachineDisplaySubtitle(machine, host);
+                            }
+                            if (groupId.startsWith('id:')) {
+                                const machineId = groupId.slice('id:'.length);
+                                return getMachineDisplaySubtitle(machinesById[machineId], machineId);
+                            }
+                            return 'unknown';
+                        };
+
+                        for (const groupId of referencedGroupIds) {
+                            const prevSubtitle = resolveSubtitleForGroup(groupId, state.machineDisplayById ?? {});
+                            const nextSubtitle = resolveSubtitleForGroup(groupId, mergedMachineDisplays);
                             if (prevSubtitle !== nextSubtitle) {
                                 needsSessionListViewDataRebuild = true;
                                 needsProjectManagerUpdate = true;
@@ -121,8 +184,8 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
 
                 const sessionListViewData = needsSessionListViewDataRebuild
                     ? buildSessionListViewDataWithServerScope({
-                        sessions: state.sessions,
-                        machines: mergedMachines,
+                        sessions: state.sessionListRenderables ?? {},
+                        machines: mergedMachineDisplays,
                         groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
                         activeGroupingV1: state.settings.sessionListActiveGroupingV1,
                         inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
@@ -147,9 +210,10 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         { replace },
                     )
                     : null;
-                return {
+                const nextState = {
                     ...state,
                     machines: mergedMachines,
+                    machineDisplayById: mergedMachineDisplays,
                     sessionListViewData,
                     sessionListViewDataByServerId: needsSessionListViewDataRebuild && sessionListViewData
                         ? setActiveServerSessionListCache(
@@ -164,6 +228,31 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         ? { ...state.machineListStatusByServerId, [activeServerId]: 'idle' }
                         : state.machineListStatusByServerId,
                 };
+                saveWarmMachineCacheForState(nextState as MachinesDomain & MachinesDomainDependencies);
+                return nextState;
+            }),
+        replaceMachineDisplays: (machines) =>
+            set((state) => {
+                const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [machine.id, machine]));
+                const previousEntries = buildMachineDisplayCacheEntriesFromRenderables(state.machineDisplayById ?? {});
+                const sessionListViewData = buildSessionListViewDataWithServerScope({
+                    sessions: state.sessionListRenderables ?? {},
+                    machines: nextMachineDisplays,
+                    groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+                    activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                    inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                });
+                const nextState = {
+                    ...state,
+                    machineDisplayById: nextMachineDisplays,
+                    sessionListViewData,
+                    sessionListViewDataByServerId: setActiveServerSessionListCache(
+                        state.sessionListViewDataByServerId,
+                        sessionListViewData,
+                    ),
+                };
+                saveWarmMachineCacheForState(nextState as MachinesDomain & MachinesDomainDependencies, previousEntries);
+                return nextState;
             }),
     };
 }

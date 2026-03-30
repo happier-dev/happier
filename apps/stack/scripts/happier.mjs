@@ -1,13 +1,24 @@
 import './utils/env/env.mjs';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getComponentDir, getRootDir, getStackName } from './utils/paths/paths.mjs';
 import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
 import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv } from './utils/server/urls.mjs';
-import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
+import { resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { applyStackActiveServerScopeEnv, buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
+import { resolvePreferredStackServerIdFromCliSettings } from './utils/auth/credentials_paths.mjs';
+import { readCliDistIntegrity } from './utils/cli/cliDistIntegrity.mjs';
+import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+
+function isNodeRuntimeEntrypoint(entrypoint) {
+  return /\.(?:cjs|js|mjs)$/i.test(String(entrypoint ?? '').trim());
+}
 
 function printHstackHappierHelp({ json }) {
   printResult({
@@ -27,32 +38,84 @@ function printHstackHappierHelp({ json }) {
   });
 }
 
-function hasExplicitServerSelectionArg(argv) {
-  const args = Array.isArray(argv) ? argv.map((a) => String(a ?? '')) : [];
-  const check = (name) => args.includes(name) || args.some((a) => a.startsWith(`${name}=`));
-  return (
-    check('--server') ||
-    check('--server-url') ||
-    check('--webapp-url') ||
-    check('--public-server-url')
-  );
+function stripHstackHappierWrapperFlags(argv) {
+  return argv.filter((arg) => arg !== '--stack-help' && arg !== '--runtime' && arg !== '--source');
 }
 
-function readArgValue(argv, flagName) {
-  const args = Array.isArray(argv) ? argv.map((a) => String(a ?? '')) : [];
-  for (let i = args.length - 1; i >= 0; i -= 1) {
-    const arg = args[i];
-    if (arg === flagName) {
-      const next = args[i + 1];
-      const value = String(next ?? '').trim();
-      return value || null;
+function takePrefixFlagValue(args, name) {
+  const a0 = String(args[0] ?? '');
+  if (a0 === name) {
+    const next = String(args[1] ?? '');
+    const value = next.trim();
+    if (!value || value.startsWith('--')) {
+      throw new Error(`Missing value for ${name}`);
     }
-    if (arg.startsWith(`${flagName}=`)) {
-      const value = arg.slice(flagName.length + 1).trim();
-      return value || null;
-    }
+    return { value, consumed: 2 };
   }
-  return null;
+  if (a0.startsWith(`${name}=`)) {
+    const value = a0.slice(name.length + 1).trim();
+    if (!value) {
+      throw new Error(`Missing value for ${name}`);
+    }
+    return { value, consumed: 1 };
+  }
+  return { value: null, consumed: 0 };
+}
+
+function readPrefixServerSelection(argv) {
+  const args = Array.isArray(argv) ? argv.map((a) => String(a ?? '')) : [];
+  const readExplicitServerFlags = (scanArgs, { includeServer }) => {
+    let server = null;
+    let serverUrl = null;
+    let webappUrl = null;
+    let publicServerUrl = null;
+    let localServerUrl = null;
+
+    for (let i = 0; i < scanArgs.length; i += 1) {
+      const slice = scanArgs.slice(i);
+
+      if (includeServer) {
+        const serverFlag = takePrefixFlagValue(slice, '--server');
+        if (serverFlag.consumed) {
+          server = serverFlag.value;
+          i += serverFlag.consumed - 1;
+          continue;
+        }
+      }
+      const serverUrlFlag = takePrefixFlagValue(slice, '--server-url');
+      if (serverUrlFlag.consumed) {
+        serverUrl = serverUrlFlag.value;
+        i += serverUrlFlag.consumed - 1;
+        continue;
+      }
+      const webappUrlFlag = takePrefixFlagValue(slice, '--webapp-url');
+      if (webappUrlFlag.consumed) {
+        webappUrl = webappUrlFlag.value;
+        i += webappUrlFlag.consumed - 1;
+        continue;
+      }
+      const localServerUrlFlag = takePrefixFlagValue(slice, '--local-server-url');
+      if (localServerUrlFlag.consumed) {
+        localServerUrl = localServerUrlFlag.value;
+        i += localServerUrlFlag.consumed - 1;
+        continue;
+      }
+      const publicServerUrlFlag = takePrefixFlagValue(slice, '--public-server-url');
+      if (publicServerUrlFlag.consumed) {
+        publicServerUrl = publicServerUrlFlag.value;
+        i += publicServerUrlFlag.consumed - 1;
+      }
+    }
+
+    return { server, serverUrl, webappUrl, publicServerUrl, localServerUrl };
+  };
+
+  const { server, serverUrl, webappUrl, publicServerUrl, localServerUrl } = readExplicitServerFlags(args, { includeServer: true });
+
+  return {
+    hasExplicitSelection: Boolean(server || serverUrl || webappUrl || publicServerUrl || localServerUrl),
+    explicitServerUrl: serverUrl || publicServerUrl || null,
+  };
 }
 
 function normalizeServerUrl(url) {
@@ -70,6 +133,134 @@ function deriveEnvServerIdFromUrl(url) {
   return `env_${(h >>> 0).toString(16)}`;
 }
 
+function coerceServerProfileFromSettings(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+  const serverUrl = normalizeServerUrl(raw.serverUrl);
+  const webappUrl = normalizeServerUrl(raw.webappUrl);
+  const localServerUrl = normalizeServerUrl(raw.localServerUrl);
+  const legacyPublicServerUrl = normalizeServerUrl(raw.publicServerUrl);
+  const canonicalServerUrl = legacyPublicServerUrl && legacyPublicServerUrl !== serverUrl ? legacyPublicServerUrl : serverUrl;
+  if (!id || !canonicalServerUrl || !webappUrl) return null;
+  return {
+    id,
+    serverUrl: canonicalServerUrl,
+    localServerUrl: localServerUrl || null,
+    webappUrl,
+  };
+}
+
+function readActiveServerUrlsFromCliSettings(homeDir) {
+  const baseDir = String(homeDir ?? '').trim();
+  if (!baseDir) return null;
+  const settingsPath = join(baseDir, 'settings.json');
+  if (!existsSync(settingsPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object') return null;
+    const schemaVersion = Number(parsed.schemaVersion ?? 0);
+    if (!Number.isFinite(schemaVersion) || schemaVersion < 5) return null;
+    const activeServerId = typeof parsed.activeServerId === 'string' ? parsed.activeServerId.trim() : '';
+    const servers = parsed.servers && typeof parsed.servers === 'object' ? parsed.servers : null;
+    if (!activeServerId || !servers) return null;
+    return coerceServerProfileFromSettings(servers[activeServerId]);
+  } catch {
+    return null;
+  }
+}
+
+function bestEffortSeedStackServerProfileInCliSettings({ cliHomeDir, stackName, cliIdentity, internalServerUrl, publicServerUrl }) {
+  const home = String(cliHomeDir ?? '').trim();
+  if (!home) return;
+  const serverUrl = normalizeServerUrl(internalServerUrl);
+  const webappUrl = normalizeServerUrl(publicServerUrl);
+  if (!serverUrl || !webappUrl) return;
+
+  const settingsPath = join(home, 'settings.json');
+  if (!existsSync(settingsPath)) return;
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+  } catch {
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object') return;
+  const schemaVersion = Number(parsed.schemaVersion ?? 0);
+  if (!Number.isFinite(schemaVersion) || schemaVersion < 5) return;
+
+  const serversRaw = parsed.servers && typeof parsed.servers === 'object' ? parsed.servers : {};
+  const servers = { ...serversRaw };
+
+  const matchingId = Object.entries(servers).find(([, profile]) => {
+    const coerced = coerceServerProfileFromSettings(profile);
+    if (!coerced) return false;
+    return normalizeServerUrl(coerced.serverUrl) === serverUrl || normalizeServerUrl(coerced.localServerUrl) === serverUrl;
+  })?.[0] ?? '';
+
+  const stableId = buildStackStableScopeId({ stackName, cliIdentity });
+  const targetId = matchingId || stableId;
+
+  const existing = servers[targetId] && typeof servers[targetId] === 'object' ? servers[targetId] : {};
+  const now = Date.now();
+  const nextProfile = {
+    ...existing,
+    id: targetId,
+    name: typeof existing.name === 'string' && existing.name.trim() ? existing.name : `Stack ${stackName}`,
+    serverUrl,
+    localServerUrl: serverUrl,
+    webappUrl,
+    createdAt: Number.isFinite(existing.createdAt) ? existing.createdAt : now,
+    updatedAt: now,
+    lastUsedAt: now,
+  };
+
+  const shouldWrite =
+    parsed.activeServerId !== targetId ||
+    !servers[targetId] ||
+    normalizeServerUrl(servers[targetId].serverUrl) !== serverUrl ||
+    normalizeServerUrl(servers[targetId].webappUrl) !== webappUrl;
+
+  if (!shouldWrite) return;
+
+  servers[targetId] = nextProfile;
+  const nextSettings = { ...parsed, activeServerId: targetId, servers };
+
+  try {
+    writeFileSync(settingsPath, JSON.stringify(nextSettings, null, 2) + '\n', 'utf-8');
+  } catch {
+    // best-effort
+  }
+}
+
+function resolveCliEntrypoint(cliDir) {
+  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  const distIntegrity = readCliDistIntegrity(distEntrypoint);
+  if (distIntegrity.ok) {
+    return { kind: 'dist', nodeArgs: [distEntrypoint], distEntrypoint };
+  }
+
+  const srcEntrypoint = join(cliDir, 'src', 'index.ts');
+  if (!existsSync(srcEntrypoint)) {
+    return null;
+  }
+
+  try {
+    const require = createRequire(import.meta.url);
+    const tsxPkgJsonPath = require.resolve('tsx/package.json');
+    const tsxLoaderPath = join(dirname(tsxPkgJsonPath), 'dist', 'esm', 'index.mjs');
+    if (!existsSync(tsxLoaderPath)) return null;
+    return {
+      kind: 'tsx',
+      nodeArgs: ['--import', tsxLoaderPath, srcEntrypoint],
+      distEntrypoint,
+      tsconfigPath: join(cliDir, 'tsconfig.json'),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const { flags } = parseArgs(argv);
@@ -83,55 +274,141 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
 
   const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName();
-  const serverPort = resolveServerPortFromEnv({ env: process.env, defaultPort: 3005 });
+  const runtimeStatePath = join(resolveStackEnvPath(stackName, process.env).baseDir, 'stack.runtime.json');
+  const serverPort = await resolveLocalServerPortForStack({
+    env: process.env,
+    stackMode: true,
+    stackName,
+    runtimeStatePath,
+    defaultPort: 3005,
+  });
+  const prefixServerSelection = readPrefixServerSelection(argv);
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env });
 
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const { publicServerUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort, stackName });
 
   const cliHomeDir = resolveCliHomeDir();
 
-  const cliDir = getComponentDir(rootDir, 'happier-cli');
-  const entrypoint = join(cliDir, 'dist', 'index.mjs');
-  if (wantsHelp(argv, { flags }) && !existsSync(entrypoint)) {
+  const cliLaunchSpec = runtimeLaunchContext.snapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null;
+  const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli');
+  const resolvedCli = cliLaunchSpec
+    ? isNodeRuntimeEntrypoint(cliLaunchSpec.entrypoint)
+      ? {
+          kind: 'runtime-node',
+          nodeArgs: [cliLaunchSpec.entrypoint],
+          distEntrypoint: cliLaunchSpec.entrypoint,
+        }
+      : {
+          kind: 'runtime',
+          command: cliLaunchSpec.command,
+          args: cliLaunchSpec.args,
+          distEntrypoint: cliLaunchSpec.entrypoint,
+        }
+    : resolveCliEntrypoint(cliDir);
+  if (wantsHelp(argv, { flags }) && !resolvedCli) {
     printHstackHappierHelp({ json });
     return;
   }
-  if (!existsSync(entrypoint)) {
-    console.error(`[happier] missing CLI build at: ${entrypoint}`);
+  if (!resolvedCli) {
+    const expectedDistEntrypoint = join(cliDir, 'dist', 'index.mjs');
+    console.error(`[happier] missing CLI build at: ${expectedDistEntrypoint}`);
     console.error('Run: hstack bootstrap');
     process.exit(1);
   }
 
   let env = { ...process.env };
   env.HAPPIER_HOME_DIR = env.HAPPIER_HOME_DIR || cliHomeDir;
-  env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
-  env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
-  if (hasExplicitServerSelectionArg(argv)) {
+  // IMPORTANT:
+  // When running under a stack-scoped wrapper (`hstack stack happier <name>` / `hstack <stack> happier`),
+  // the user's CLI settings.json may still point at Happier Cloud (or another server). We must not let that
+  // override the stack-local server URL; otherwise stack-scoped commands would silently target the wrong
+  // server and resolve credentials from the wrong per-server directory.
+  //
+  // We treat an invocation as "stack-scoped" only when the stack env file actually exists (or when the
+  // CLI home dir is explicitly overridden by the stack). This keeps plain `hstack happier` able to
+  // reuse the user's CLI settings even when stack helper env vars are present in test/dev harnesses.
+  const stackEnvFilePath = String(env.HAPPIER_STACK_ENV_FILE ?? '').trim();
+  const isStackScopedInvocation =
+    Boolean(String(env.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim()) ||
+    Boolean(stackEnvFilePath && existsSync(stackEnvFilePath));
+
+  if (isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection) {
+    const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';
+    bestEffortSeedStackServerProfileInCliSettings({
+      cliHomeDir,
+      stackName,
+      cliIdentity,
+      internalServerUrl,
+      publicServerUrl,
+    });
+  }
+
+  const settingsDefaults =
+    !isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection
+      ? readActiveServerUrlsFromCliSettings(env.HAPPIER_HOME_DIR)
+      : null;
+  if (settingsDefaults) {
+    if (settingsDefaults.localServerUrl && settingsDefaults.localServerUrl !== settingsDefaults.serverUrl) {
+      env.HAPPIER_PUBLIC_SERVER_URL = settingsDefaults.serverUrl;
+      env.HAPPIER_LOCAL_SERVER_URL = settingsDefaults.localServerUrl;
+      env.HAPPIER_SERVER_URL = settingsDefaults.localServerUrl;
+    } else {
+      delete env.HAPPIER_PUBLIC_SERVER_URL;
+      delete env.HAPPIER_LOCAL_SERVER_URL;
+      env.HAPPIER_SERVER_URL = settingsDefaults.serverUrl;
+    }
+    env.HAPPIER_WEBAPP_URL = settingsDefaults.webappUrl;
+    delete env.HAPPIER_ACTIVE_SERVER_ID;
+  }
+  // Only set default env vars when no explicit server selection flags are present
+  if (!prefixServerSelection.hasExplicitSelection && !settingsDefaults) {
+    env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
+    env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
+  }
+  if (resolvedCli.kind === 'tsx') {
+    // TSX resolves path aliases (`@/...`) using the tsconfig it finds. When the CLI runs from arbitrary
+    // working directories (common in stack + daemon flows), it can pick up the wrong tsconfig unless
+    // we provide an explicit path.
+    env.TSX_TSCONFIG_PATH = env.TSX_TSCONFIG_PATH || resolvedCli.tsconfigPath;
+  }
+  if (prefixServerSelection.hasExplicitSelection) {
     // If the user explicitly selects a server/profile, do not force a stack-stable active server id.
     // Otherwise credentials can be resolved from the wrong per-server directory, causing 401s.
-    const explicitServerUrl =
-      readArgValue(argv, '--server-url')
-      || readArgValue(argv, '--public-server-url')
-      || null;
-    const derived = explicitServerUrl ? deriveEnvServerIdFromUrl(explicitServerUrl) : null;
+    const derived = prefixServerSelection.explicitServerUrl
+      ? deriveEnvServerIdFromUrl(prefixServerSelection.explicitServerUrl)
+      : null;
     if (derived) {
       env.HAPPIER_ACTIVE_SERVER_ID = derived;
     } else {
       delete env.HAPPIER_ACTIVE_SERVER_ID;
     }
-  } else {
+  } else if (!settingsDefaults) {
     env = applyStackActiveServerScopeEnv({
       env,
       stackName,
       cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
     });
+    const settingsServerId = resolvePreferredStackServerIdFromCliSettings({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+    });
+    if (settingsServerId) {
+      env.HAPPIER_ACTIVE_SERVER_ID = settingsServerId;
+    }
   }
 
-  const forwardedArgv = argv.filter((a) => a !== '--stack-help');
-  const res = spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', entrypoint, ...forwardedArgv], {
-    stdio: 'inherit',
-    env,
-  });
+  const forwardedArgv = stripHstackHappierWrapperFlags(argv);
+  const res =
+    resolvedCli.kind === 'runtime'
+      ? spawnSync(resolvedCli.command, [...resolvedCli.args, ...forwardedArgv], {
+          stdio: 'inherit',
+          env,
+        })
+      : spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', ...resolvedCli.nodeArgs, ...forwardedArgv], {
+          stdio: 'inherit',
+          env,
+        });
 
   if (res.error) {
     const msg = res.error instanceof Error ? res.error.message : String(res.error);

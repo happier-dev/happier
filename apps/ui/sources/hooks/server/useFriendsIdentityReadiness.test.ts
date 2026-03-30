@@ -1,8 +1,10 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,10 +56,7 @@ describe('useFriendsIdentityReadiness', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-            await new Promise((r) => setTimeout(r, 0));
-        });
+        await renderScreen(React.createElement(Test));
 
         expect(seen.map((s) => s.reason)).toContain('loadingFeatures');
         expect(seen.at(-1)?.reason).toBe('needsUsername');
@@ -108,10 +107,7 @@ describe('useFriendsIdentityReadiness', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-            await new Promise((r) => setTimeout(r, 0));
-        });
+        await renderScreen(React.createElement(Test));
 
         expect(seen).toContain('loadingFeatures');
         expect(seen.at(-1)).toBe('needsProvider');
@@ -171,10 +167,7 @@ describe('useFriendsIdentityReadiness', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-            await new Promise((r) => setTimeout(r, 0));
-        });
+        await renderScreen(React.createElement(Test));
 
         expect(seen.at(-1)).toBe('ready');
     });

@@ -132,7 +132,7 @@ rl.on('close', () => process.exit(0));
       const started = await manager.start({
         sessionId: 'parent_session_1' as SessionId,
         intent: 'review',
-        backendId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         instructions: 'Review this repo.',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -207,7 +207,7 @@ rl.on('close', () => process.exit(0));
 	      const started = await manager.start({
 	        sessionId: 'parent_session_1' as SessionId,
 	        intent: 'delegate',
-	        backendId: 'claude',
+	        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
 	        instructions: '',
         permissionMode: 'workspace_write',
         retentionPolicy: 'ephemeral',

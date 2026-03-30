@@ -1,12 +1,9 @@
 import { storage } from '@/sync/domains/state/storage';
-import { ensureVoiceCarrierSessionForSessionRoot } from '@/voice/agent/voiceCarrierSession';
 import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-
-function normalizeNonEmptyString(value: unknown): string | null {
-  const trimmed = String(value ?? '').trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
+import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { voiceSessionBindingManager } from '@/voice/sessionBinding/voiceSessionBindingRuntime';
 
 export type VoiceTeleportResult =
   | Readonly<{ ok: true }>
@@ -20,19 +17,15 @@ export async function teleportVoiceAgentToSessionRoot(params: Readonly<{ session
   if (!sessionId) return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
 
   const state: any = storage.getState();
-  const voice = state?.settings?.voice ?? null;
-  if (voice?.providerId !== 'local_conversation') return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
+  const availability = getVoiceAgentSessionTeleportAvailability({ voice: state?.settings?.voice ?? null, sessionId });
+  if (!availability.ok) return availability;
 
-  const adapterCfg = voice?.adapters?.local_conversation ?? null;
-  if (adapterCfg?.conversationMode !== 'agent') return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
-
-  const agentCfg = adapterCfg?.agent ?? null;
-  if (agentCfg?.stayInVoiceHome === true) return { ok: false, code: 'VOICE_TELEPORT_BLOCKED_BY_HOME' };
-  if (agentCfg?.teleportEnabled === false) return { ok: false, code: 'VOICE_TELEPORT_DISABLED' };
-  if ((agentCfg?.backend ?? 'daemon') !== 'daemon') return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
-
-  await ensureVoiceCarrierSessionForSessionRoot({ sessionId });
+  const binding = await voiceSessionBindingManager.ensureBound({
+    adapterId: 'local_conversation',
+    controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+    requestedTargetSessionId: sessionId,
+  });
+  if (!binding) return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
   await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID).catch(() => {});
   return { ok: true };
 }
-

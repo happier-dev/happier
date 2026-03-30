@@ -1,19 +1,25 @@
 import { readFileSync } from 'fs';
-import { join } from 'path';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonLocallyPersistedState } from '@/persistence';
 import { readDaemonState, writeDaemonState } from '@/persistence';
 import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
-import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
-import { writeSessionExitReport } from '@/daemon/sessionExitReport';
 import { gcExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { findHappyProcessByPid } from '@/daemon/doctor';
+import { resolveComparableCliVersion } from '@/daemon/resolveComparableCliVersion';
+import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
+import { configuration } from '@/configuration';
+import {
+  gcWorkspaceReplicationCas,
+  gcWorkspaceReplicationJobs,
+  recoverWorkspaceReplicationJobsAfterRestart,
+} from '@/workspaces/replication/state/workspaceReplicationGc';
+import { recoverSessionHandoffPrepareTargetJobsAfterRestart } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 
-import { reportDaemonObservedSessionExit } from '../sessionTermination';
 import type { TrackedSession } from '../types';
-import { removeSessionMarker } from '../sessionRegistry';
+import { cleanupPidSessionResources } from '../sessions/cleanupPidSessionResources';
+import { createOnChildExited } from '../sessions/onChildExited';
 
 function parsePositiveInt(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? '', 10);
@@ -23,6 +29,18 @@ function parsePositiveInt(rawValue: string | undefined, fallback: number): numbe
 function parseNonNegativeInt(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? '', 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function isPidAliveBestEffort(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = error && typeof error === 'object' ? (error as any).code : null;
+    // EPERM means the process exists but we lack permission to signal it. Fail closed and treat it as alive.
+    if (code === 'ESRCH') return false;
+    return true;
+  }
 }
 
 async function waitForReplacementDaemon(params: Readonly<{
@@ -70,6 +88,15 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     requestShutdown,
   } = params;
 
+  const onChildExitedForPrune =
+    onChildExited ??
+    createOnChildExited({
+      pidToTrackedSession,
+      spawnResourceCleanupByPid,
+      sessionAttachCleanupByPid,
+      getApiMachineForSessions,
+    });
+
   // Every 60 seconds:
   // 1. Prune stale sessions
   // 2. Check if daemon needs update
@@ -82,7 +109,59 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     process.env.HAPPIER_DAEMON_EXECUTION_RUN_TERMINAL_TTL_MS,
     6 * 60 * 60 * 1000,
   );
+  const workspaceReplicationJobTerminalTtlMs = parseNonNegativeInt(
+    process.env.HAPPIER_DAEMON_WORKSPACE_REPLICATION_JOB_TERMINAL_TTL_MS,
+    14 * 24 * 60 * 60 * 1000,
+  );
+  const workspaceReplicationCasUnreferencedTtlMs = parseNonNegativeInt(
+    process.env.HAPPIER_DAEMON_WORKSPACE_REPLICATION_CAS_UNREFERENCED_TTL_MS,
+    14 * 24 * 60 * 60 * 1000,
+  );
+  const workspaceReplicationCasMaxBytes = parseNonNegativeInt(
+    process.env.HAPPIER_DAEMON_WORKSPACE_REPLICATION_CAS_MAX_BYTES,
+    0,
+  );
   let heartbeatRunning = false;
+  let workspaceReplicationRecoveryPromise: Promise<void> | null = null;
+  let sessionHandoffPrepareTargetRecoveryPromise: Promise<void> | null = null;
+
+  const ensureWorkspaceReplicationRecovery = (): Promise<void> => {
+    if (workspaceReplicationRecoveryPromise) {
+      return workspaceReplicationRecoveryPromise;
+    }
+    workspaceReplicationRecoveryPromise = (async () => {
+      try {
+        await recoverWorkspaceReplicationJobsAfterRestart({
+          activeServerDir: configuration.activeServerDir,
+          nowMs: Date.now(),
+        });
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to recover workspace replication jobs', error);
+      }
+    })();
+    return workspaceReplicationRecoveryPromise;
+  };
+
+  const ensureSessionHandoffPrepareTargetRecovery = (): Promise<void> => {
+    if (sessionHandoffPrepareTargetRecoveryPromise) {
+      return sessionHandoffPrepareTargetRecoveryPromise;
+    }
+    sessionHandoffPrepareTargetRecoveryPromise = (async () => {
+      try {
+        await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+          activeServerDir: configuration.activeServerDir,
+          nowMs: Date.now(),
+        });
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to recover session-handoff prepare-target jobs', error);
+      }
+    })();
+    return sessionHandoffPrepareTargetRecoveryPromise;
+  };
+
+  // Kick off recovery immediately; do not wait for the first heartbeat tick.
+  void ensureWorkspaceReplicationRecovery();
+  void ensureSessionHandoffPrepareTargetRecovery();
 
   const intervalHandle = setInterval(async () => {
     if (heartbeatRunning) {
@@ -94,61 +173,16 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         logger.debug(`[DAEMON RUN] Health check started at ${new Date().toLocaleString()}`);
       }
 
+      await ensureWorkspaceReplicationRecovery();
+      await ensureSessionHandoffPrepareTargetRecovery();
+
       // Prune stale sessions
       for (const [pid, _] of pidToTrackedSession.entries()) {
-        try {
-          // Check if process is still alive (signal 0 doesn't kill, just checks)
-          process.kill(pid, 0);
-        } catch (error) {
+        if (!isPidAliveBestEffort(pid)) {
           // Process is dead, remove from tracking
           logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists)`);
-          if (onChildExited) {
-            onChildExited(pid, { reason: 'process-missing', code: null, signal: null });
-            continue;
-          }
-          const tracked = pidToTrackedSession.get(pid);
-          if (tracked) {
-            const apiMachine = getApiMachineForSessions();
-            if (apiMachine) {
-              reportDaemonObservedSessionExit({
-                apiMachine,
-                trackedSession: tracked,
-                now: () => Date.now(),
-                exit: { reason: 'process-missing', code: null, signal: null },
-              });
-            }
-            void writeSessionExitReport({
-              sessionId: tracked.happySessionId ?? null,
-              pid,
-              report: {
-                observedAt: Date.now(),
-                observedBy: 'daemon',
-                reason: 'process-missing',
-                code: null,
-                signal: null,
-              },
-            }).catch((e) => logger.debug('[DAEMON RUN] Failed to write session exit report', e));
-          }
-          const cleanup = spawnResourceCleanupByPid.get(pid);
-          if (cleanup) {
-            spawnResourceCleanupByPid.delete(pid);
-            try {
-              cleanup();
-            } catch (cleanupError) {
-              logger.debug('[DAEMON RUN] Failed to cleanup spawn resources', cleanupError);
-            }
-          }
-          const attachCleanup = sessionAttachCleanupByPid.get(pid);
-          if (attachCleanup) {
-            sessionAttachCleanupByPid.delete(pid);
-            try {
-              await attachCleanup();
-            } catch (cleanupError) {
-              logger.debug('[DAEMON RUN] Failed to cleanup session attach file', cleanupError);
-            }
-          }
-          pidToTrackedSession.delete(pid);
-          void removeSessionMarker(pid);
+          onChildExitedForPrune(pid, { reason: 'process-missing', code: null, signal: null });
+          continue;
         }
       }
 
@@ -157,12 +191,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           nowMs: Date.now(),
           terminalTtlMs: executionRunTerminalTtlMs,
           isPidAlive: (pid) => {
-            try {
-              process.kill(pid, 0);
-              return true;
-            } catch {
-              return false;
-            }
+            return isPidAliveBestEffort(pid);
           },
           isPidSafeHappyProcess: async (pid) => {
             if (pidToTrackedSession.has(pid)) return true;
@@ -174,57 +203,61 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         logger.debug('[DAEMON RUN] Failed to gc execution run markers', error);
       }
 
-      // Cleanup any spawn resources for sessions no longer tracked (e.g. stopSession removed them).
-      for (const [pid, cleanup] of spawnResourceCleanupByPid.entries()) {
-        if (pidToTrackedSession.has(pid)) continue;
-        try {
-          process.kill(pid, 0);
-        } catch {
-          spawnResourceCleanupByPid.delete(pid);
-          try {
-            cleanup();
-          } catch (cleanupError) {
-            logger.debug('[DAEMON RUN] Failed to cleanup spawn resources', cleanupError);
-          }
-        }
+      try {
+        await gcWorkspaceReplicationJobs({
+          activeServerDir: configuration.activeServerDir,
+          nowMs: Date.now(),
+          terminalTtlMs: workspaceReplicationJobTerminalTtlMs,
+        });
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to gc workspace replication jobs', error);
       }
 
-      for (const [pid, cleanup] of sessionAttachCleanupByPid.entries()) {
-        if (pidToTrackedSession.has(pid)) continue;
-        try {
-          process.kill(pid, 0);
-        } catch {
-          sessionAttachCleanupByPid.delete(pid);
-          try {
-            await cleanup();
-          } catch (cleanupError) {
-            logger.debug('[DAEMON RUN] Failed to cleanup session attach file', cleanupError);
+      try {
+        if (workspaceReplicationCasUnreferencedTtlMs > 0 || workspaceReplicationCasMaxBytes > 0) {
+          await gcWorkspaceReplicationCas({
+            activeServerDir: configuration.activeServerDir,
+            nowMs: Date.now(),
+            unreferencedTtlMs: workspaceReplicationCasUnreferencedTtlMs,
+            ...(workspaceReplicationCasMaxBytes > 0 ? { maxBytes: workspaceReplicationCasMaxBytes } : {}),
+          });
+        }
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to gc workspace replication cas', error);
+      }
+
+      // Cleanup any spawn resources for sessions no longer tracked (e.g. stopSession removed them).
+      const cleanupPidMapIfUntracked = async (map: Map<number, unknown>) => {
+        for (const [pid] of map.entries()) {
+          if (pidToTrackedSession.has(pid)) continue;
+          if (!isPidAliveBestEffort(pid)) {
+            await cleanupPidSessionResources({
+              pid,
+              spawnResourceCleanupByPid,
+              sessionAttachCleanupByPid,
+            });
           }
         }
-      }
+      };
+
+      await cleanupPidMapIfUntracked(spawnResourceCleanupByPid);
+      await cleanupPidMapIfUntracked(sessionAttachCleanupByPid);
 
       // Check if daemon needs update
       // If version on disk is different from the one in package.json - we need to restart
       // BIG if - does this get updated from underneath us on npm upgrade?
-      let projectVersion: string | null = null;
-      try {
-        projectVersion = JSON.parse(
-          readFileSync(join(projectPath(), 'package.json'), 'utf-8'),
-        ).version;
-      } catch (error) {
-        logger.debug('[DAEMON RUN] Failed to read package.json version; skipping self-restart check', error);
-      }
+      const projectVersion = resolveComparableCliVersion({
+        fallbackVersion: currentCliVersion,
+        projectRootPath: projectPath(),
+        readFileSyncImpl: readFileSync,
+      });
 
       if (projectVersion && projectVersion !== currentCliVersion) {
         logger.debug('[DAEMON RUN] Daemon is outdated, triggering self-restart with latest version');
 
         let spawnStarted = false;
         try {
-          const spawned = spawnHappyCLI(['daemon', 'start-sync'], {
-            detached: true,
-            stdio: 'ignore',
-            env: process.env,
-          });
+          const spawned = await spawnDetachedDaemonStartSync();
           spawned.unref?.();
           spawnStarted = true;
         } catch (error) {
@@ -264,6 +297,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           httpPort: controlPort,
           startedAt: fileState.startedAt,
           startedWithCliVersion: fileState.startedWithCliVersion,
+          machineId: fileState.machineId,
           lastHeartbeatAt: Date.now(),
           daemonLogPath: fileState.daemonLogPath,
           controlToken: fileState.controlToken,

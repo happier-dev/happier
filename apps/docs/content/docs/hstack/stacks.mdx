@@ -146,11 +146,125 @@ Production-like mode (background):
 hstack stack start exp1 --background
 ```
 
-Build UI for a stack (server-light serving):
+Build stack artifacts:
 
 ```bash
 hstack stack build exp1
+hstack stack build exp1 --web
+hstack stack build exp1 --server
+hstack stack build exp1 --daemon
+hstack stack build exp1 --all
 ```
+
+Build and activate a fresh full runtime snapshot:
+
+```bash
+hstack stack build exp1 --activate-runtime
+hstack stack start exp1 --runtime
+```
+
+Activate only selected components into the active runtime:
+
+```bash
+hstack stack runtime exp1 activate --web
+hstack stack runtime exp1 activate --server
+hstack stack runtime exp1 activate --daemon
+hstack stack runtime exp1 activate --all
+```
+
+Notes:
+
+- `hstack stack build <name>` with no component flags keeps the legacy behavior and builds the web bundle only.
+- `--all` means `--web --server --daemon`.
+- `hstack stack build <name> --activate-runtime` still assembles a complete runtime snapshot (`web + server + daemon`) under the stack folder.
+- `hstack stack runtime <name> activate ...` creates a new active runtime snapshot by combining the selected latest artifact(s) with the currently active runtime for unselected components.
+- Building an artifact alone does **not** change the active runtime. The running stack keeps serving the currently active snapshot until you activate a new runtime.
+- `--tauri` remains the legacy local `hstack build` flag. It is not part of named-stack artifact/runtime builds in v1.
+- Runtime snapshots are currently for **named stacks**. Repo-local `yarn tui` / `hstack start` remain source-backed flows.
+- `hstack stack auth <name> login` follows the same mode: if a valid runtime snapshot is active, guided login uses the stack-served runtime UI instead of waiting for Expo.
+
+Select how a named stack starts:
+
+```bash
+# use source code directly (default)
+hstack stack start exp1 --source
+
+# require the active runtime snapshot
+hstack stack start exp1 --runtime
+
+# persist the default launch mode in the stack env
+hstack stack env exp1 set HAPPIER_STACK_RUNTIME_MODE=prefer
+```
+
+## Named stack runtime flow (recommended for production-like local stacks)
+
+Create a named stack pinned to a checkout/worktree:
+
+```bash
+hstack stack new dev-built --repo=/absolute/path/to/your/dev-checkout
+```
+
+Build and activate a stack-local runtime snapshot:
+
+```bash
+hstack stack build dev-built --activate-runtime
+```
+
+Persist runtime preference for future `start` and `service` runs:
+
+```bash
+hstack stack env dev-built set HAPPIER_STACK_RUNTIME_MODE=prefer
+```
+
+Start it from the activated runtime snapshot:
+
+```bash
+hstack stack start dev-built --runtime
+```
+
+Update flow after code changes:
+
+```bash
+# rebuild a fresh runtime snapshot from the pinned checkout
+hstack stack build dev-built --activate-runtime
+
+# restart the service so it picks up the new active snapshot
+hstack stack service dev-built restart
+```
+
+Component-only update flows:
+
+```bash
+# UI-only change: build the new web artifact, activate only web, then reload the browser
+hstack stack build dev-built --web
+hstack stack runtime dev-built activate --web
+```
+
+```bash
+# Server-only change: build + activate only server, then restart the stack or service
+hstack stack build dev-built --server
+hstack stack runtime dev-built activate --server
+hstack stack service dev-built restart
+```
+
+```bash
+# CLI/daemon-only change: build + activate only daemon, then restart the daemon or service
+hstack stack build dev-built --daemon
+hstack stack runtime dev-built activate --daemon
+hstack stack service dev-built restart
+```
+
+Important:
+
+- You do **not** need to reinstall the named-stack service after rebuilding a runtime snapshot.
+- The service keeps pointing at the stack env file; it picks the active snapshot on the next start/restart.
+- If the stack is in `prefer` mode, it will use the active runtime snapshot when valid, otherwise fall back to source.
+- For web-only activation, the runtime-backed server serves from `runtime/current/ui`, so a browser reload is enough after `hstack stack runtime <name> activate --web`.
+- For server-only or daemon-only activation, restart the stack process or stack service so it re-resolves the updated runtime.
+- Runtime snapshots and component artifacts are pruned automatically after successful activation/builds.
+  - Default retention is the active build plus the previous one (`2` total).
+  - Override with `HAPPIER_STACK_RUNTIME_SNAPSHOT_KEEP_COUNT=<n>` and `HAPPIER_STACK_RUNTIME_ARTIFACT_KEEP_COUNT=<n>`.
+  - Set either value to `1` if you want to keep only the current runtime/artifact generation.
 
 Doctor:
 
@@ -211,6 +325,7 @@ These commands run with the stack env file applied:
 - `hstack stack dev <name>`
 - `hstack stack start <name>`
 - `hstack stack build <name>`
+- `hstack stack runtime <name> activate ...`
 - `hstack stack doctor <name>`
 - `hstack stack mobile <name>`
 - `hstack stack eas <name> [subcommand...]`
@@ -250,16 +365,39 @@ hstack stack service exp1 enable --auth-now -- --method=mobile --no-open
 Notes:
 
 - Services keep the server/UI up even if the daemon is not authenticated yet, and will start the daemon automatically once credentials exist.
+- Named-stack services follow the same runtime mode as `hstack stack start <name>`.
+  - `HAPPIER_STACK_RUNTIME_MODE=source`: always run from the live checkout.
+  - `HAPPIER_STACK_RUNTIME_MODE=prefer`: use the active runtime snapshot when present, otherwise fall back to source.
+  - `HAPPIER_STACK_RUNTIME_MODE=require`: fail unless a valid active runtime snapshot exists.
 - `--method=mobile` requires a public-reachable URL for your phone (e.g. Tailscale Serve HTTPS, or a reverse proxy). If the stack’s public URL resolves to `localhost` / `127.0.0.1`, mobile auth won’t work until you configure remote access.
 
 Implementation notes:
 
 - Service name/label is stack-scoped:
-  - `main` → `com.happier.stack`
-  - `exp1` → `com.happier.stack.exp1`
+  - `main` → `dev.happier.stack`
+  - `exp1` → `dev.happier.stack.exp1`
 - macOS: implemented via **launchd LaunchAgents**
 - Linux: implemented via **systemd user services** (if available)
 - The service persists `HAPPIER_STACK_ENV_FILE`, so you can edit the stack env file without reinstalling.
+- Activating server or daemon runtime changes does **not** hot-swap a running service process. After `hstack stack build <name> --activate-runtime` or `hstack stack runtime <name> activate --server|--daemon|--all`, run `hstack stack service <name> restart` so the service restarts against the new active snapshot.
+- Web-only activation is the exception: after `hstack stack runtime <name> activate --web`, the service keeps serving the updated `runtime/current/ui` bundle and a browser reload is enough.
+
+## Tailscale Serve for a named stack
+
+If you want phone/remote access and secure browser features, expose the named stack over HTTPS:
+
+```bash
+hstack stack tailscale:enable dev-built
+hstack stack tailscale:url dev-built
+```
+
+Then persist the shareable URL in the stack env so auth flows and clients prefer it:
+
+```bash
+hstack stack env dev-built set HAPPIER_STACK_SERVER_URL=https://your-machine.your-tailnet.ts.net
+```
+
+Named-stack services and runtime-backed auth flows will then use that public URL where appropriate.
 
 ## Repo/worktree selection per stack
 

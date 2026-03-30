@@ -77,6 +77,33 @@ describe('computeVisibleSessionListViewData', () => {
         expect(sessions.map((s) => s.session.id)).toEqual(['p']);
     });
 
+    it('keeps sessions marked visible until archived visible when hideInactiveSessions is enabled', () => {
+        const g = 'server:s1:day:2026-02-17';
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: g },
+            {
+                type: 'session',
+                session: makeSession('keep', { keepVisibleWhenInactive: true }),
+                serverId: 's1',
+                section: 'inactive',
+                groupKey: g,
+                groupKind: 'date',
+            },
+            { type: 'session', session: makeSession('drop'), serverId: 's1', section: 'inactive', groupKey: g, groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: true,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+        })!;
+
+        const sessions = result.filter((i) => i.type === 'session') as any[];
+        expect(sessions.map((s) => s.session.id)).toEqual(['keep']);
+    });
+
     it('hides archived sessions even when they are pinned', () => {
         const g = 'server:s1:day:2026-02-17';
         const source: SessionListViewItem[] = [

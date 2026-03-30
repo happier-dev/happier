@@ -3,10 +3,10 @@ import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
 
-import { SessionRepositoryTreeBrowserView } from '@/components/sessions/files/views/SessionRepositoryTreeBrowserView';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { LinkFilePickerPopoverContent } from './LinkFilePickerPopoverContent';
 
 export type ProjectFileLinkPickerModalProps = Readonly<{
     sessionId: string;
@@ -68,17 +68,10 @@ export const ProjectFileLinkPickerModal = React.memo((props: ProjectFileLinkPick
                 </Pressable>
             </View>
             <View style={styles.body}>
-                <SessionRepositoryTreeBrowserView
+                <LinkFilePickerPopoverContent
                     sessionId={props.sessionId}
-                    density="modal"
-                    onOpenFile={(fullPath) => {
-                        props.onPickPath(fullPath);
-                        props.onClose();
-                    }}
-                    onOpenFilePinned={(fullPath) => {
-                        props.onPickPath(fullPath);
-                        props.onClose();
-                    }}
+                    onPickPath={props.onPickPath}
+                    onRequestClose={props.onClose}
                 />
             </View>
         </View>

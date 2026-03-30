@@ -10,6 +10,7 @@ import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { Text } from '@/components/ui/text/Text';
 import { PermissionFooter } from '@/components/tools/shell/permissions/PermissionFooter';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
+import { buildPermissionToolCallRoute, canOpenPermissionToolCallRoute } from '@/utils/sessions/permissions/buildPermissionToolCallRoute';
 import { t } from '@/text';
 import { buildPermissionPromptModel } from '@/components/tools/shell/permissions/presentation/buildPermissionPromptModel';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -19,6 +20,7 @@ import {
     resolveToolViewDetailLevelDefaultForChromeMode,
     type ToolViewDetailLevelSetting,
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 
 export const PermissionPromptCard = React.memo(function PermissionPromptCard(props: {
     request: PendingPermissionRequest;
@@ -27,6 +29,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     metadata: Metadata | null;
     canApprovePermissions: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
+    chrome?: 'card' | 'inline';
 }) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -41,21 +44,9 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     const headerText = model.headerText;
 
     const onViewTool = React.useCallback(() => {
-        const loc = props.location;
-        if (loc?.kind === 'top' && typeof loc.seq === 'number') {
-            router.push(`/session/${props.sessionId}?jumpSeq=${loc.seq}`);
-            return;
-        }
-        if (loc?.kind === 'top') {
-            router.push(`/session/${props.sessionId}/message/${loc.messageId}`);
-            return;
-        }
-        if (loc?.kind === 'nested') {
-            router.push(`/session/${props.sessionId}/message/${loc.parentMessageId}?jumpChildId=${loc.messageId}`);
-            return;
-        }
-        router.push(`/session/${props.sessionId}`);
+        router.push(buildPermissionToolCallRoute({ sessionId: props.sessionId, location: props.location }));
     }, [props.location, props.sessionId, router]);
+    const canOpenToolRoute = canOpenPermissionToolCallRoute(props.location);
 
     const previewDetailLevel = React.useMemo(() => {
         const normalizedToolViewDetailLevelDefaultSetting: ToolViewDetailLevelSetting =
@@ -85,7 +76,10 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
         toolViewDetailLevelDefault,
         toolViewDetailLevelDefaultLocalControl,
     ]);
-    const inlineDetailLevel = headerText.normalizedToolName === 'Task' && previewDetailLevel === 'full' ? 'summary' : previewDetailLevel;
+    const inlineDetailLevel =
+        isGenericSubAgentToolName(headerText.normalizedToolName) && previewDetailLevel === 'full'
+            ? 'summary'
+            : previewDetailLevel;
     const isPreviewVisible = inlineDetailLevel !== 'title' && inlineDetailLevel !== 'compact';
 
     const effectiveSubtitle = React.useMemo(() => {
@@ -98,9 +92,14 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     }, [headerText.normalizedToolName, headerText.subtitle, isPreviewVisible]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
+    const chrome = props.chrome ?? 'card';
+
+    if (props.disabledReason === 'inactive') {
+        return null;
+    }
 
     return (
-        <View testID="permission-prompt-card" style={styles.container}>
+        <View testID="permission-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
             <View style={styles.header}>
                 <View style={styles.icon}>
                     <Ionicons name="lock-closed-outline" size={16} color={theme.colors.warning} />
@@ -116,15 +115,17 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
                     ) : null}
                 </View>
                 {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
-                <Pressable
-                    testID="permission-prompt-view-tool"
-                    onPress={onViewTool}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('toolView.open')}
-                    style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
-                >
-                    <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
-                </Pressable>
+                {canOpenToolRoute ? (
+                    <Pressable
+                        testID="permission-prompt-view-tool"
+                        onPress={onViewTool}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('toolView.open')}
+                        style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
+                    >
+                        <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
+                    </Pressable>
+                ) : null}
             </View>
 
             {isPreviewVisible ? (
@@ -176,6 +177,12 @@ const styles = StyleSheet.create((theme) => ({
         borderColor: theme.colors.divider,
         backgroundColor: theme.colors.surfaceHighest,
         overflow: 'hidden',
+    },
+    containerInline: {
+        borderRadius: 0,
+        borderWidth: 0,
+        borderColor: 'transparent',
+        backgroundColor: 'transparent',
     },
     header: {
         flexDirection: 'row',

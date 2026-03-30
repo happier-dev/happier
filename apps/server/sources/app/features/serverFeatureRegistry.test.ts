@@ -10,7 +10,7 @@ describe('features/serverFeatureRegistry', () => {
     });
 
     it('returns a schema-valid /v1/features payload', () => {
-        const res = resolveServerFeaturePayload({} as NodeJS.ProcessEnv);
+        const res = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, serverFeatureRegistry);
         const parsed = featuresSchema.safeParse(res);
         expect(parsed.success).toBe(true);
     });

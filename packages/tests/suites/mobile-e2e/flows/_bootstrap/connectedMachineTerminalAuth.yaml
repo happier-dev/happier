@@ -1,0 +1,36 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: true
+
+- runFlow:
+    file: ../_shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: ../_shared/configureServerIfNeeded.yaml
+
+- runFlow:
+    file: ../_shared/loginCreateAccount.yaml
+
+- openLink: ${HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK}
+
+- extendedWaitUntil:
+    visible:
+      id: terminal-connect-approve
+    timeout: 120000
+
+- tapOn:
+    id: terminal-connect-approve
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+- extendedWaitUntil:
+    visible: "Success"
+    timeout: 120000
+
+- tapOn: "OK"
+
+- extendedWaitUntil:
+    visible:
+      id: main-header-start-new-session
+    timeout: 120000

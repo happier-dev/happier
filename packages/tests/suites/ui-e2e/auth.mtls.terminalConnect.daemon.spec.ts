@@ -1,12 +1,14 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
@@ -26,14 +28,27 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
   let proxyStop: (() => Promise<void>) | null = null;
   let daemon: StartedDaemon | null = null;
 
-  async function waitForWelcomeAuthenticated(page: Page, baseUrl: string): Promise<void> {
+  async function waitForWelcomeAuthenticated(page: Page, baseUrl: string, authResponse: Promise<unknown>): Promise<void> {
     await gotoDomContentLoadedWithRetries(page, baseUrl);
+    await waitForInitialAppUi({ page, timeoutMs: 120_000 });
+    await authResponse;
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 120_000 }).toBe('/');
     await expect(page.getByTestId('welcome-create-account')).toHaveCount(0, { timeout: 120_000 });
-    await expect(page.getByTestId('session-getting-started-kind-connect_machine')).toHaveCount(1, { timeout: 120_000 });
+    await expect.poll(async () => await page.getByTestId('session-getting-started-kind-connect_machine').count(), { timeout: 120_000 }).toBeGreaterThan(0);
   }
 
   test.beforeAll(async () => {
-    test.setTimeout(600_000);
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_SERVER_URL: proxyBaseUrl ?? '',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+      HAPPIER_E2E_UI_WEB_MODE: 'export',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '900000',
+      HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
+      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+    };
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
 
     server = await startServerLight({
@@ -57,6 +72,9 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
         HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE: 'san_email',
         HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS: 'example.com',
         HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_ISSUERS: 'CN=Example Root CA',
+        HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_EMAIL_HEADER: 'x-happier-client-cert-email',
+        HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER: 'x-happier-client-cert-issuer',
+        HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_FINGERPRINT_HEADER: 'x-happier-client-cert-sha256',
 
         HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_ENABLED: '1',
         HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_PROVIDER_ID: 'mtls',
@@ -81,10 +99,8 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
+        ...uiWebEnv,
         EXPO_PUBLIC_HAPPY_SERVER_URL: proxy.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
       },
     });
     uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
@@ -109,8 +125,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
       { timeout: 120_000 },
     );
 
-    await waitForWelcomeAuthenticated(page, uiBaseUrl);
-    await mtlsOk;
+    await waitForWelcomeAuthenticated(page, uiBaseUrl, mtlsOk);
 
     const testDir = resolve(join(suiteDir, 't1-mtls-terminal-connect'));
     await mkdir(testDir, { recursive: true });
@@ -128,6 +143,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
           ...process.env,
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
         },
       });
@@ -136,6 +152,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
       await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
       await page.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
+      await acknowledgeTerminalConnectSuccessIfPresent(page);
 
       const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
       const fakeClaudePath = fakeClaudeFixturePath();
@@ -152,6 +169,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
           HAPPIER_SERVER_URL: proxyBaseUrl,
           HAPPIER_WEBAPP_URL: uiBaseUrl,
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
           HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
@@ -160,9 +178,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
         },
       });
 
-      await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('session-getting-started-kind-start_daemon')).toHaveCount(0, { timeout: 180_000 });
-
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/`);
       await expect
         .poll(
           async () => {

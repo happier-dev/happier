@@ -1,0 +1,15 @@
+# Best-effort dismissal of Expo's in-app developer menu onboarding sheet.
+#
+# The sheet may appear with a delay after launching a dev build. This flow waits
+# briefly for it and dismisses it if present.
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    # Avoid failing/warning when the onboarding sheet isn't present; only
+    # dismiss when we can see its stable body copy (the dev menu itself also
+    # contains "Runtime version:", so the header is not a reliable discriminator).
+    when:
+      visible: "This is the developer menu\\..*"
+    commands:
+      - tapOn: "Continue"

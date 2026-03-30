@@ -1,8 +1,10 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { useActiveSelectionMachineGroups } from './useActiveSelectionMachineGroups';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,10 +46,7 @@ describe('useActiveSelectionMachineGroups', () => {
             { id: 'm-revoked', revokedAt: 123 },
         ];
 
-        await act(async () => {
-            renderer.create(<Probe allMachines={allMachines} onValue={(value) => captured.push(value)} />);
-            await Promise.resolve();
-        });
+        await renderScreen(<Probe allMachines={allMachines} onValue={(value) => captured.push(value)} />);
 
         const latest = captured.at(-1);
         expect(latest.visibleMachineGroups).toHaveLength(1);
@@ -61,10 +60,7 @@ describe('useActiveSelectionMachineGroups', () => {
             { id: 'm-revoked', revokedAt: 123 },
         ];
 
-        await act(async () => {
-            renderer.create(<Probe allMachines={allMachines} onValue={(value) => captured.push(value)} />);
-            await Promise.resolve();
-        });
+        await renderScreen(<Probe allMachines={allMachines} onValue={(value) => captured.push(value)} />);
 
         const latest = captured.at(-1);
         expect(latest.visibleMachineGroups[0].machines).toEqual([]);

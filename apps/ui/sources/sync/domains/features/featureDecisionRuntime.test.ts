@@ -1,9 +1,11 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,6 +48,20 @@ function emitActiveServerChanged(next: { serverId: string; serverUrl: string; ge
     for (const listener of activeServerListeners.listeners) {
         listener(next);
     }
+}
+
+function isFeaturesFetchUrl(url: unknown): boolean {
+    const raw = String(url ?? '');
+    return raw.includes('/v1/features');
+}
+
+function isHealthFetchUrl(url: unknown): boolean {
+    const raw = String(url ?? '');
+    return raw.endsWith('/health');
+}
+
+function countFeaturesFetchCalls(fetchMock: { mock: { calls: Array<readonly unknown[]> } }): number {
+    return fetchMock.mock.calls.filter((call) => isFeaturesFetchUrl(call[0])).length;
 }
 
 describe('featureDecisionRuntime', () => {
@@ -114,6 +130,13 @@ describe('featureDecisionRuntime', () => {
 
         const fetchMock = vi.fn(async (url: any) => {
             const raw = String(url ?? '');
+            if (isHealthFetchUrl(raw)) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ ok: true }),
+                } as Response;
+            }
             const voiceEnabled = raw.includes('server-a.example.test');
             return {
                 ok: true,
@@ -138,12 +161,14 @@ describe('featureDecisionRuntime', () => {
             return React.createElement('View');
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-            await flushHookEffects(6);
-        });
+        await renderScreen(React.createElement(Test));
+        await flushHookEffects(6);
 
-        expect(fetchMock.mock.calls.some((call) => String(call[0] ?? '').includes('server-a.example.test'))).toBe(true);
+        expect(
+            fetchMock.mock.calls.some(
+                (call) => isFeaturesFetchUrl(call[0]) && String(call[0] ?? '').includes('server-a.example.test'),
+            ),
+        ).toBe(true);
         expect(seen.some((entry) => entry?.status === 'ready')).toBe(true);
         const firstReady = seen.find((entry) => entry?.status === 'ready') as any;
         expect(firstReady.features.features.voice.enabled).toBe(true);
@@ -157,7 +182,11 @@ describe('featureDecisionRuntime', () => {
             await flushHookEffects(6);
         });
 
-        expect(fetchMock.mock.calls.some((call) => String(call[0] ?? '').includes('server-b.example.test'))).toBe(true);
+        expect(
+            fetchMock.mock.calls.some(
+                (call) => isFeaturesFetchUrl(call[0]) && String(call[0] ?? '').includes('server-b.example.test'),
+            ),
+        ).toBe(true);
         const last = seen.at(-1) as any;
         expect(last?.status).toBe('ready');
         expect(last.features.features.voice.enabled).toBe(false);
@@ -170,7 +199,14 @@ describe('featureDecisionRuntime', () => {
         const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
 
         let fetchCallIndex = 0;
-        const fetchMock = vi.fn(async () => {
+        const fetchMock = vi.fn(async (url: any) => {
+            if (isHealthFetchUrl(url)) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ ok: true }),
+                } as Response;
+            }
             const voiceEnabled = fetchCallIndex === 0;
             fetchCallIndex += 1;
             return {
@@ -196,13 +232,10 @@ describe('featureDecisionRuntime', () => {
             return React.createElement('View');
         }
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test));
-            await flushHookEffects(6);
-        });
+        let screen = await renderScreen(React.createElement(Test));
+        await flushHookEffects(6);
 
-        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(countFeaturesFetchCalls(fetchMock)).toBe(1);
         expect(seen.some((entry) => entry?.status === 'ready')).toBe(true);
         const firstReady = seen.find((entry) => entry?.status === 'ready') as any;
         expect(firstReady.features.features.voice.enabled).toBe(true);
@@ -211,12 +244,12 @@ describe('featureDecisionRuntime', () => {
         now = 10 * 60 * 1000 + 1;
 
         await act(async () => {
-            tree?.unmount();
-            tree = renderer.create(React.createElement(Test));
+            screen.tree.unmount();
+            screen = await renderScreen(React.createElement(Test));
             await flushHookEffects(6);
         });
 
-        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(countFeaturesFetchCalls(fetchMock)).toBe(2);
         const last = seen.at(-1) as any;
         expect(last?.status).toBe('ready');
         expect(last.features.features.voice.enabled).toBe(false);
@@ -263,25 +296,22 @@ describe('featureDecisionRuntime', () => {
             return React.createElement('View');
         }
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test));
-            await flushHookEffects(20);
-        });
-        expect(fetchMock).toHaveBeenCalledTimes(1);
+        let screen = await renderScreen(React.createElement(Test));
+        await flushHookEffects(20);
+        expect(countFeaturesFetchCalls(fetchMock)).toBe(1);
 
         // Remount within TTL_READY_MS.
         now = 1;
         await act(async () => {
-            tree?.unmount();
-            tree = renderer.create(React.createElement(Test));
+            screen.tree.unmount();
+            screen = await renderScreen(React.createElement(Test));
             await flushHookEffects(20);
         });
 
-        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(countFeaturesFetchCalls(fetchMock)).toBe(1);
 
         await act(async () => {
-            tree?.unmount();
+            screen.tree.unmount();
             await flushHookEffects(4);
         });
 

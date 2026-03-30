@@ -3,11 +3,12 @@ import type { Encryption } from '@/sync/encryption/encryption';
 import { nowServerMs } from '@/sync/runtime/time';
 import { RawRecordSchema, type RawRecord } from '@/sync/typesRaw';
 import { randomUUID } from '@/platform/randomUUID';
-import { buildSessionAppendSystemPrompt } from '@/agents/prompt/buildSessionAppendSystemPrompt';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
 import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
 import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 type PendingStatus = 'queued' | 'discarded';
 
@@ -22,6 +23,10 @@ type PendingRow = {
     discardedReason: string | null;
     authorAccountId: string | null;
 };
+
+type PendingDecryptFailure = Readonly<{
+    kind: 'decrypt_failed';
+}>;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -89,6 +94,89 @@ function coercePendingUserTextRecord(decrypted: unknown): { rawRecord: RawRecord
     return { rawRecord: record, text, displayText };
 }
 
+const enqueueCommitTailsBySessionId = new Map<string, Promise<void>>();
+
+function runPendingEnqueueCommitInOrder(sessionId: string, op: () => Promise<void>): Promise<void> {
+    const prev = enqueueCommitTailsBySessionId.get(sessionId) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(op);
+    const settled = next.then(
+        () => undefined,
+        () => undefined,
+    );
+    const tail = settled.finally(() => {
+        if (enqueueCommitTailsBySessionId.get(sessionId) === tail) {
+            enqueueCommitTailsBySessionId.delete(sessionId);
+        }
+    });
+    enqueueCommitTailsBySessionId.set(sessionId, tail);
+    return next;
+}
+
+function buildPendingDecryptFailureMessage(params: {
+    row: Pick<PendingRow, 'localId' | 'createdAt' | 'updatedAt'>;
+}): {
+    id: string;
+    localId: string;
+    createdAt: number;
+    updatedAt: number;
+    text: string;
+    displayText: string;
+    rawRecord: { pendingDecryptFailure: PendingDecryptFailure };
+    pendingDecryptFailure: PendingDecryptFailure;
+} {
+    const pendingDecryptFailure: PendingDecryptFailure = { kind: 'decrypt_failed' };
+
+    return {
+        id: params.row.localId,
+        localId: params.row.localId,
+        createdAt: params.row.createdAt,
+        updatedAt: params.row.updatedAt,
+        text: '',
+        displayText: t('session.pendingMessages.decryptFailed'),
+        rawRecord: { pendingDecryptFailure },
+        pendingDecryptFailure,
+    };
+}
+
+async function readPendingRowDecryptedContent(params: {
+    row: Pick<PendingRow, 'content' | 'localId' | 'createdAt' | 'updatedAt'>;
+    sessionEncryption: ReturnType<Encryption['getSessionEncryption']>;
+}): Promise<
+    | { kind: 'ok'; value: unknown }
+    | { kind: 'decrypt_failed'; message: ReturnType<typeof buildPendingDecryptFailureMessage> }
+> {
+    if (params.row.content.t !== 'encrypted') {
+        return { kind: 'ok', value: params.row.content.v };
+    }
+
+    if (!params.sessionEncryption) {
+        return {
+            kind: 'decrypt_failed',
+            message: buildPendingDecryptFailureMessage({ row: params.row }),
+        };
+    }
+
+    try {
+        const decrypted = await params.sessionEncryption.decryptRaw(params.row.content.c);
+        if (decrypted == null) {
+            return {
+                kind: 'decrypt_failed',
+                message: buildPendingDecryptFailureMessage({ row: params.row }),
+            };
+        }
+
+        return {
+            kind: 'ok',
+            value: decrypted,
+        };
+    } catch {
+        return {
+            kind: 'decrypt_failed',
+            message: buildPendingDecryptFailureMessage({ row: params.row }),
+        };
+    }
+}
+
 export async function fetchAndApplyPendingMessagesV2(params: {
     sessionId: string;
     encryption: Encryption;
@@ -99,11 +187,6 @@ export async function fetchAndApplyPendingMessagesV2(params: {
     const session = storage.getState().sessions[sessionId] ?? null;
     const sessionEncryptionMode: 'e2ee' | 'plain' = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
     const sessionEncryption = sessionEncryptionMode === 'plain' ? null : encryption.getSessionEncryption(sessionId);
-    if (sessionEncryptionMode === 'e2ee' && !sessionEncryption) {
-        storage.getState().applyPendingLoaded(sessionId);
-        storage.getState().applyDiscardedPendingMessages(sessionId, []);
-        return;
-    }
 
     const response = await request(`/v2/sessions/${sessionId}/pending?includeDiscarded=1`, { method: 'GET' });
     if (!response.ok) {
@@ -120,19 +203,25 @@ export async function fetchAndApplyPendingMessagesV2(params: {
         return;
     }
 
-    const queued = rows.filter((r) => r.status === 'queued').sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
+    const queued = rows.filter((r) => r.status === 'queued').sort((a, b) => a.position - b.position || a.createdAt - b.createdAt || a.localId.localeCompare(b.localId));
     const discarded = rows.filter((r) => r.status === 'discarded').sort((a, b) => (a.discardedAt ?? a.updatedAt) - (b.discardedAt ?? b.updatedAt));
 
     const pendingMessages = [];
     for (const r of queued) {
-        const decrypted =
-            r.content.t === 'encrypted'
-                ? sessionEncryption
-                    ? await sessionEncryption.decryptRaw(r.content.c).catch(() => null)
-                    : null
-                : r.content.v;
-        const coerced = coercePendingUserTextRecord(decrypted);
-        if (!coerced) continue;
+        const decrypted = await readPendingRowDecryptedContent({
+            row: r,
+            sessionEncryption,
+        });
+        if (decrypted.kind === 'decrypt_failed') {
+            pendingMessages.push(decrypted.message);
+            continue;
+        }
+
+        const coerced = coercePendingUserTextRecord(decrypted.value);
+        if (!coerced) {
+            pendingMessages.push(buildPendingDecryptFailureMessage({ row: r }));
+            continue;
+        }
         pendingMessages.push({
             id: r.localId,
             localId: r.localId,
@@ -146,14 +235,28 @@ export async function fetchAndApplyPendingMessagesV2(params: {
 
     const discardedMessages = [];
     for (const r of discarded) {
-        const decrypted =
-            r.content.t === 'encrypted'
-                ? sessionEncryption
-                    ? await sessionEncryption.decryptRaw(r.content.c).catch(() => null)
-                    : null
-                : r.content.v;
-        const coerced = coercePendingUserTextRecord(decrypted);
-        if (!coerced) continue;
+        const decrypted = await readPendingRowDecryptedContent({
+            row: r,
+            sessionEncryption,
+        });
+        if (decrypted.kind === 'decrypt_failed') {
+            discardedMessages.push({
+                ...decrypted.message,
+                discardedAt: r.discardedAt ?? r.updatedAt,
+                discardedReason: coerceDiscardReason(r.discardedReason),
+            });
+            continue;
+        }
+
+        const coerced = coercePendingUserTextRecord(decrypted.value);
+        if (!coerced) {
+            discardedMessages.push({
+                ...buildPendingDecryptFailureMessage({ row: r }),
+                discardedAt: r.discardedAt ?? r.updatedAt,
+                discardedReason: coerceDiscardReason(r.discardedReason),
+            });
+            continue;
+        }
         discardedMessages.push({
             id: r.localId,
             localId: r.localId,
@@ -177,6 +280,8 @@ export async function enqueuePendingMessageV2(params: {
     displayText?: string;
     encryption: Encryption;
     metaOverrides?: Record<string, unknown>;
+    fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
+    updateArtifact?: (artifact: DecryptedArtifact) => void;
     request: (path: string, init?: RequestInit) => Promise<Response>;
 }): Promise<void> {
     const { sessionId, text, displayText, encryption, request, metaOverrides } = params;
@@ -200,8 +305,6 @@ export async function enqueuePendingMessageV2(params: {
     const agentId = resolveAgentIdFromFlavor(flavor);
     const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
     const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
-    const appendSystemPrompt = buildSessionAppendSystemPrompt({ settings: storage.getState().settings });
-
     const localId = randomUUID();
     const rawRecord: RawRecord = {
         role: 'user',
@@ -210,7 +313,6 @@ export async function enqueuePendingMessageV2(params: {
             sentFrom: resolveSentFrom(),
             permissionMode: permissionMode || 'default',
             model,
-            appendSystemPrompt,
             displayText,
             agentId,
             settings: storage.getState().settings,
@@ -221,19 +323,6 @@ export async function enqueuePendingMessageV2(params: {
 
     const createdAt = nowServerMs();
     const updatedAt = createdAt;
-    let writeBody: Record<string, unknown>;
-    if (sessionEncryptionMode === 'plain') {
-        writeBody = { localId, content: { t: 'plain', v: rawRecord } };
-    } else {
-        let ciphertext: string;
-        try {
-            ciphertext = await sessionEncryption!.encryptRawRecord(rawRecord);
-        } catch (e) {
-            storage.getState().clearSessionOptimisticThinking(sessionId);
-            throw e;
-        }
-        writeBody = { localId, ciphertext };
-    }
 
     storage.getState().upsertPendingMessage(sessionId, {
         id: localId,
@@ -246,14 +335,24 @@ export async function enqueuePendingMessageV2(params: {
     });
 
     try {
-        const response = await request(`/v2/sessions/${sessionId}/pending`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(writeBody),
+        await runPendingEnqueueCommitInOrder(sessionId, async () => {
+            let writeBody: Record<string, unknown>;
+            if (sessionEncryptionMode === 'plain') {
+                writeBody = { localId, content: { t: 'plain', v: rawRecord } };
+            } else {
+                const ciphertext = await sessionEncryption!.encryptRawRecord(rawRecord);
+                writeBody = { localId, ciphertext };
+            }
+
+            const response = await request(`/v2/sessions/${sessionId}/pending`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(writeBody),
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to enqueue pending message (${response.status})`);
+            }
         });
-        if (!response.ok) {
-            throw new Error(`Failed to enqueue pending message (${response.status})`);
-        }
         storage.getState().clearSessionOptimisticThinking(sessionId);
     } catch (e) {
         storage.getState().removePendingMessage(sessionId, localId);
@@ -267,6 +366,8 @@ export async function updatePendingMessageV2(params: {
     pendingId: string;
     text: string;
     encryption: Encryption;
+    fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
+    updateArtifact?: (artifact: DecryptedArtifact) => void;
     request: (path: string, init?: RequestInit) => Promise<Response>;
 }): Promise<void> {
     const { sessionId, pendingId, text, encryption, request } = params;
@@ -283,17 +384,19 @@ export async function updatePendingMessageV2(params: {
         throw new Error('Pending message not found');
     }
 
-    const appendSystemPrompt = buildSessionAppendSystemPrompt({ settings: storage.getState().settings });
-
     const rawRecord: RawRecord = (() => {
         if (existing.rawRecord) {
-            const record = existing.rawRecord as any;
-            const existingMeta = isPlainObject(record?.meta) ? record.meta : {};
-            return {
-                ...record,
-                content: { type: 'text', text },
-                meta: { ...existingMeta, appendSystemPrompt },
-            };
+            const parsed = RawRecordSchema.safeParse(existing.rawRecord);
+            if (parsed.success && parsed.data.role === 'user' && parsed.data.content.type === 'text') {
+                const record = parsed.data;
+                const existingMeta = isPlainObject(record.meta) ? record.meta : {};
+                const { appendSystemPrompt: _appendSystemPrompt, ...nextMeta } = existingMeta;
+                return {
+                    ...record,
+                    content: { type: 'text', text },
+                    meta: nextMeta,
+                };
+            }
         }
 
         const session = storage.getState().sessions[sessionId] ?? null;
@@ -303,21 +406,23 @@ export async function updatePendingMessageV2(params: {
         const modelMode = session?.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
         const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
 
-        return {
-            role: 'user',
-            content: { type: 'text', text },
-            meta: buildSendMessageMeta({
-                sentFrom: resolveSentFrom(),
-                permissionMode: permissionMode || 'default',
-                model,
-                appendSystemPrompt,
-                displayText: typeof existing.displayText === 'string' ? existing.displayText : undefined,
-                agentId,
-                settings: storage.getState().settings,
-                session,
-            }),
-        };
-    })();
+	        return {
+	            role: 'user',
+	            content: { type: 'text', text },
+	            meta: buildSendMessageMeta({
+	                sentFrom: resolveSentFrom(),
+	                permissionMode: permissionMode || 'default',
+	                model,
+	                displayText:
+	                    existing.pendingDecryptFailure
+	                        ? undefined
+	                        : (typeof existing.displayText === 'string' ? existing.displayText : undefined),
+	                agentId,
+	                settings: storage.getState().settings,
+	                session,
+	            }),
+	        };
+	    })();
 
     const writeBody =
         sessionEncryptionMode === 'plain'
@@ -334,8 +439,15 @@ export async function updatePendingMessageV2(params: {
         throw new Error(`Failed to update pending message (${response.status})`);
     }
 
-    storage.getState().upsertPendingMessage(sessionId, { ...existing, text, updatedAt, rawRecord });
-}
+	    storage.getState().upsertPendingMessage(sessionId, {
+	        ...existing,
+	        pendingDecryptFailure: undefined,
+	        text,
+	        updatedAt,
+	        rawRecord,
+	        displayText: existing.pendingDecryptFailure ? undefined : existing.displayText,
+	    });
+	}
 
 export async function deletePendingMessageV2(params: {
     sessionId: string;

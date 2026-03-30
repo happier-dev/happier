@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveTranscriptInteraction } from './deriveTranscriptInteraction';
+import { deriveTranscriptInteraction, deriveTranscriptInteractionFromSession } from './deriveTranscriptInteraction';
 
 describe('deriveTranscriptInteraction', () => {
     it('treats missing accessLevel as owner (full interaction)', () => {
@@ -33,6 +33,22 @@ describe('deriveTranscriptInteraction', () => {
             canSendMessages: false,
             canApprovePermissions: false,
             permissionDisabledReason: 'readOnly',
+            disableToolNavigation: undefined,
+        });
+    });
+
+    it('treats inactive sessions as inactive even for view-only access', () => {
+        expect(
+            deriveTranscriptInteraction({
+                kind: 'session',
+                accessLevel: 'view',
+                canApprovePermissions: false,
+                isSessionActive: false,
+            }),
+        ).toEqual({
+            canSendMessages: false,
+            canApprovePermissions: false,
+            permissionDisabledReason: 'inactive',
             disableToolNavigation: undefined,
         });
     });
@@ -77,6 +93,40 @@ describe('deriveTranscriptInteraction', () => {
             canApprovePermissions: false,
             permissionDisabledReason: 'public',
             disableToolNavigation: true,
+        });
+    });
+});
+
+describe('deriveTranscriptInteractionFromSession', () => {
+    it('treats session.active as the source of truth (even if presence is stale)', () => {
+        expect(
+            deriveTranscriptInteractionFromSession({
+                accessLevel: undefined,
+                canApprovePermissions: true,
+                active: false,
+                presence: 'online',
+            }),
+        ).toEqual({
+            canSendMessages: true,
+            canApprovePermissions: false,
+            permissionDisabledReason: 'inactive',
+            disableToolNavigation: undefined,
+        });
+    });
+
+    it('treats missing session.active as inactive for permission approvals (avoids presence drift)', () => {
+        expect(
+            deriveTranscriptInteractionFromSession({
+                accessLevel: undefined,
+                canApprovePermissions: true,
+                active: undefined,
+                presence: 'online',
+            }),
+        ).toEqual({
+            canSendMessages: true,
+            canApprovePermissions: false,
+            permissionDisabledReason: 'inactive',
+            disableToolNavigation: undefined,
         });
     });
 });

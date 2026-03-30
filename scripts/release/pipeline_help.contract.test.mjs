@@ -80,6 +80,84 @@ test('pipeline CLI supports <command> --help', async () => {
   assert.match(out, /--path/);
 });
 
+test('pipeline CLI help reflects expanded Expo environment support', async () => {
+  const mobileReleaseHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'ui-mobile-release'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(mobileReleaseHelp, /internaldev\*, internalpreview\*, dev\*, preview\*, production\*/);
+  assert.match(mobileReleaseHelp, /--profile dev\b/);
+  assert.doesNotMatch(mobileReleaseHelp, /\bpublicdev\b/);
+
+  const downloadHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'expo-download-apk'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(downloadHelp, /internaldev\|internalpreview\|dev\|preview\|production/);
+
+  const publishHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'expo-publish-apk-release'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(publishHelp, /internaldev\|internalpreview\|dev\|preview\|production/);
+
+  const submitHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'expo-submit'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(submitHelp, /--profile dev\b/);
+  assert.doesNotMatch(submitHelp, /\bpublicdev\b/);
+});
+
+test('pipeline CLI help reflects expanded Tauri environment support', async () => {
+  for (const command of ['tauri-prepare-assets', 'tauri-build-updater-artifacts', 'tauri-collect-updater-artifacts']) {
+    const help = execFileSync(process.execPath, [pipelineCli, 'help', command], {
+      cwd: repoRoot,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    });
+    assert.match(help, /dev\|preview\|production/);
+  }
+});
+
+test('pipeline CLI help reflects the public dev release ring for publish/release commands', async () => {
+  for (const command of [
+    'publish-cli-binaries',
+    'publish-hstack-binaries',
+    'publish-server-runtime',
+    'publish-ui-web',
+    'release-build-cli-binaries',
+    'release-build-hstack-binaries',
+    'release-build-server-binaries',
+    'release-publish-manifests',
+    'release-build-ui-web-bundle',
+  ]) {
+    const help = execFileSync(process.execPath, [pipelineCli, 'help', command], {
+      cwd: repoRoot,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    });
+    assert.match(help, /stable\|preview\|dev/);
+    assert.doesNotMatch(help, /\bpublicdev\b/);
+  }
+});
+
 test('pipeline help covers every supported subcommand', async () => {
   const runSource = fs.readFileSync(pipelineCli, 'utf8');
   const allowlist = Array.from(runSource.matchAll(/subcommand\s*!==\s*'([^']+)'/g)).map((m) => String(m[1] ?? '').trim()).filter(Boolean);

@@ -13,9 +13,10 @@ import { resolveMachineEncryptionContext, resolveSessionEncryptionContext } from
 import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
 import { openSessionDataEncryptionKey } from './client/openSessionDataEncryptionKey';
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog';
+import { HttpStatusError } from './client/httpStatusError';
 import {
-  shouldReturnMinimalMachineForGetOrCreateMachineError,
-  shouldReturnNullForGetOrCreateSessionError,
+  shouldTreatGetOrCreateMachineErrorAsOffline,
+  shouldTreatGetOrCreateSessionErrorAsOffline,
 } from './client/offlineErrors';
 import {
   AccountEncryptionModeResponseSchema,
@@ -44,6 +45,30 @@ export class MachineIdConflictError extends Error {
   }
 }
 
+export class MachineRevokedError extends Error {
+  readonly machineId: string;
+  constructor(machineId: string) {
+    super(`Machine revoked: ${machineId} is no longer valid on this server and must be rotated`);
+    this.name = 'MachineRevokedError';
+    this.machineId = machineId;
+  }
+}
+
+export class MachineContentPublicKeyMismatchError extends Error {
+  readonly machineId: string;
+  readonly reason: string;
+  constructor(machineId: string, reason: string) {
+    super(
+      `Machine registration rejected by server (reason=${reason}). ` +
+        'This usually means your local encryption key does not match your current account credentials. ' +
+        'Try `happier auth logout` then `happier auth login`.',
+    );
+    this.name = 'MachineContentPublicKeyMismatchError';
+    this.machineId = machineId;
+    this.reason = reason;
+  }
+}
+
 export class ConnectedServiceCredentialUnsupportedFormatError extends Error {
   readonly serviceId: ConnectedServiceId;
   readonly profileId: string;
@@ -60,6 +85,24 @@ export function isMachineIdConflictError(error: unknown): error is MachineIdConf
   if (!error || typeof error !== 'object') return false;
   const maybe = error as any;
   return maybe.name === 'MachineIdConflictError' && typeof maybe.machineId === 'string' && maybe.machineId.length > 0;
+}
+
+export function isMachineRevokedError(error: unknown): error is MachineRevokedError {
+  if (!error || typeof error !== 'object') return false;
+  const maybe = error as any;
+  return maybe.name === 'MachineRevokedError' && typeof maybe.machineId === 'string' && maybe.machineId.length > 0;
+}
+
+export function isMachineContentPublicKeyMismatchError(error: unknown): error is MachineContentPublicKeyMismatchError {
+  if (!error || typeof error !== 'object') return false;
+  const maybe = error as any;
+  return (
+    maybe.name === 'MachineContentPublicKeyMismatchError'
+    && typeof maybe.machineId === 'string'
+    && maybe.machineId.length > 0
+    && typeof maybe.reason === 'string'
+    && maybe.reason.length > 0
+  );
 }
 
 function resolveServerHttpBaseUrl(): string {
@@ -184,27 +227,41 @@ export class ApiClient {
         sessionEncryptionKey = opened ?? this.credential.encryption.machineKey;
       }
 
-      let session: Session = {
-        id: raw.id,
-        seq: raw.seq,
-        encryptionMode: sessionEncryptionMode,
-        metadata:
-          sessionEncryptionMode === 'plain'
-            ? JSON.parse(String(raw.metadata ?? 'null'))
-            : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.metadata)),
-        metadataVersion: raw.metadataVersion,
-        agentState:
-          !raw.agentState
-            ? null
-            : sessionEncryptionMode === 'plain'
-              ? JSON.parse(String(raw.agentState))
-              : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.agentState)),
-        agentStateVersion: raw.agentStateVersion,
-        encryptionKey: sessionEncryptionKey,
-        encryptionVariant: encryptionVariant
-      }
-      return session;
-      } catch (error) {
+	      const metadata =
+	        sessionEncryptionMode === 'plain'
+	          ? JSON.parse(String(raw.metadata ?? 'null'))
+	          : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.metadata));
+	      const agentState =
+	        !raw.agentState
+	          ? null
+	          : sessionEncryptionMode === 'plain'
+	            ? JSON.parse(String(raw.agentState))
+	            : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.agentState));
+
+	      if (sessionEncryptionMode === 'plain') {
+	        return {
+	          id: raw.id,
+	          seq: raw.seq,
+	          encryptionMode: 'plain' as const,
+	          metadata,
+	          metadataVersion: raw.metadataVersion,
+	          agentState,
+	          agentStateVersion: raw.agentStateVersion,
+	        };
+	      }
+
+	      return {
+	        id: raw.id,
+	        seq: raw.seq,
+	        encryptionMode: 'e2ee' as const,
+	        encryptionKey: sessionEncryptionKey,
+	        encryptionVariant,
+	        metadata,
+	        metadataVersion: raw.metadataVersion,
+	        agentState,
+	        agentStateVersion: raw.agentStateVersion,
+	      };
+	      } catch (error) {
         const status = axios.isAxiosError(error) ? error.response?.status : undefined;
         const isRetryable5xx = typeof status === 'number' && status >= 500 && status < 600;
         if (isRetryable5xx && attempt < retryMaxAttempts) {
@@ -218,7 +275,13 @@ export class ApiClient {
         // Never log raw Axios errors: they can contain bearer tokens or vendor keys.
         logger.debug('[API] [ERROR] Failed to get or create session:', serializeAxiosErrorForLog(error));
 
-        if (shouldReturnNullForGetOrCreateSessionError(error, { url: sessionsUrl })) {
+        const terminalAuthStatus = axios.isAxiosError(error) ? error.response?.status : undefined;
+        if (terminalAuthStatus === 401 || terminalAuthStatus === 403) {
+          // Preserve status for offline reconnection stop conditions without leaking request config.
+          throw new HttpStatusError(terminalAuthStatus, 'Authentication failed');
+        }
+
+        if (shouldTreatGetOrCreateSessionErrorAsOffline(error, { url: sessionsUrl })) {
           return null;
         }
 
@@ -243,17 +306,6 @@ export class ApiClient {
     const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveMachineEncryptionContext(this.credential);
     const machinesUrl = `${resolveServerHttpBaseUrl()}/v1/machines`;
 
-    // Helper to create minimal machine object for offline mode (DRY)
-    const createMinimalMachine = (): Machine => ({
-      id: opts.machineId,
-      encryptionKey: encryptionKey,
-      encryptionVariant: encryptionVariant,
-      metadata: opts.metadata,
-      metadataVersion: 0,
-      daemonState: opts.daemonState || null,
-      daemonStateVersion: 0,
-    });
-
     // Create machine
     try {
       const timeoutMs =
@@ -266,7 +318,11 @@ export class ApiClient {
           id: opts.machineId,
           metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
           daemonState: opts.daemonState ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.daemonState)) : undefined,
-          dataEncryptionKey: dataEncryptionKey ? encodeBase64(dataEncryptionKey) : undefined
+          dataEncryptionKey: dataEncryptionKey ? encodeBase64(dataEncryptionKey) : undefined,
+          contentPublicKey:
+            this.credential.encryption.type === 'dataKey'
+              ? encodeBase64(this.credential.encryption.publicKey)
+              : undefined,
         },
         {
           headers: {
@@ -301,8 +357,26 @@ export class ApiClient {
         throw new MachineIdConflictError(opts.machineId);
       }
 
-      if (shouldReturnMinimalMachineForGetOrCreateMachineError(error, { url: machinesUrl })) {
-        return createMinimalMachine();
+      if (
+        axios.isAxiosError(error)
+        && error.response?.status === 410
+        && (error.response.data as any)?.error === 'machine_revoked'
+      ) {
+        throw new MachineRevokedError(opts.machineId);
+      }
+
+      if (axios.isAxiosError(error) && error.response?.status === 400) {
+        const body = error.response.data as any;
+        const reason = typeof body?.reason === 'string' ? body.reason : '';
+        if (body?.error === 'invalid-params' && reason === 'content_public_key_mismatch') {
+          // Do not retry: this indicates a credentials/key mismatch, not a transient network failure.
+          throw new MachineContentPublicKeyMismatchError(opts.machineId, reason);
+        }
+      }
+
+      if (shouldTreatGetOrCreateMachineErrorAsOffline(error, { url: machinesUrl })) {
+        // Fail closed: callers must not treat a registration failure as a usable machine identity.
+        throw error;
       }
 
       // For other errors, rethrow

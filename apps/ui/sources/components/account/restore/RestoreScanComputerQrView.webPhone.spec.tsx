@@ -1,27 +1,30 @@
 import * as React from 'react';
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import {
+    installRestoreScanComputerQrViewCommonModuleMocks,
+    resetRestoreScanComputerQrViewCommonModuleMockState,
+} from './restoreScanComputerQrViewTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: {
-        OS: 'web',
-        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+installRestoreScanComputerQrViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            ScrollView: 'ScrollView',
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                OS: 'web',
+                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+            },
+        });
     },
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }),
-}));
+});
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({ state: 'enabled' }),
@@ -33,22 +36,6 @@ vi.mock('@/utils/platform/platform', () => ({
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ login: vi.fn(async () => {}), refreshFromActiveServer: vi.fn(async () => {}) }),
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(async () => {}), prompt: vi.fn(async () => null) },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: 'RoundButton',
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -82,20 +69,6 @@ vi.mock('@/auth/pairing/pairingUrl', () => ({
     parsePairingDeepLink: () => null,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-            },
-        },
-    }),
-    StyleSheet: { create: (styles: any) => styles },
-}));
-
 let lastScannerProps: any = null;
 vi.mock('@/components/qr/QrCodeScannerView', () => ({
     QrCodeScannerView: (props: any) => {
@@ -107,23 +80,14 @@ vi.mock('@/components/qr/QrCodeScannerView', () => ({
 describe('RestoreScanComputerQrView (web phone)', () => {
     it('renders the QR scanner in idle state on web', async () => {
         vi.resetModules();
+        resetRestoreScanComputerQrViewCommonModuleMockState();
         lastScannerProps = null;
 
         const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
 
-        let tree: ReactTestRenderer | null = null;
-        act(() => {
-            tree = create(<RestoreScanComputerQrView />);
-        });
+        const screen = await renderScreen(<RestoreScanComputerQrView />);
 
-        try {
-            const nodes = tree!.root.findAllByProps({ 'data-testid': 'QrCodeScannerView' });
-            expect(nodes).toHaveLength(1);
-            expect(lastScannerProps?.testIDPrefix).toBe('restore-scan');
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(screen.findByProps({ 'data-testid': 'QrCodeScannerView' })).toBeTruthy();
+        expect(lastScannerProps?.testIDPrefix).toBe('restore-scan');
     });
 });

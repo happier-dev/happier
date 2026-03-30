@@ -1,31 +1,38 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
+import { ModalCardFrame } from './WebAlertModal';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const baseModalSpy = vi.fn();
+
 vi.mock('./BaseModal', () => ({
-    BaseModal: ({ children }: any) => React.createElement('BaseModal', null, children),
+    BaseModal: (props: any) => {
+        baseModalSpy(props);
+        return React.createElement('BaseModal', props, props.children);
+    },
 }));
 
-vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        AppState: rn.AppState,
-        View: (props: any) => React.createElement('View', props, props.children),
-        Text: (props: any) => React.createElement('Text', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        Platform: { ...rn.Platform, OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
-    };
+installModalComponentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: any) => React.createElement('View', props, props.children),
+            Text: (props: any) => React.createElement('Text', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            Platform: {
+                OS: 'web',
+                select: (v: any) => v.web ?? v.default ?? null,
+            },
+        });
+    },
 });
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
 }));
 
 function getTextContent(node: any): string {
@@ -34,17 +41,19 @@ function getTextContent(node: any): string {
     return Array.isArray(value) ? value.join('') : String(value ?? '');
 }
 
+function getNodeByTestID(screen: { findByTestId: (testID: string) => any }, testID: string) {
+    return screen.findByTestId(testID);
+}
+
 describe('WebAlertModal', () => {
-    it('renders confirm buttons as accessible Pressables on web', async () => {
+    it('wraps the dialog content in the shared card frame and keeps backdrop dismissal disabled', async () => {
         const { WebAlertModal } = await import('./WebAlertModal');
 
+        baseModalSpy.mockClear();
         const onClose = vi.fn();
         const onConfirm = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <WebAlertModal
+        await renderScreen(<WebAlertModal
                     config={{
                         id: 'test-confirm',
                         type: 'confirm',
@@ -55,14 +64,40 @@ describe('WebAlertModal', () => {
                     }}
                     onClose={onClose}
                     onConfirm={onConfirm}
-                />
-            );
-        });
+                />);
 
-        const pressables = tree!.root.findAllByType('Pressable' as any);
-        expect(pressables).toHaveLength(2);
-        expect(pressables[0]?.props?.testID).toBe('web-modal-cancel');
-        expect(pressables[1]?.props?.testID).toBe('web-modal-confirm');
+        const [baseModalProps] = baseModalSpy.mock.calls.at(-1)!;
+        expect(baseModalProps.closeOnBackdrop).toBe(false);
+        expect(baseModalProps.showBackdrop).toBe(true);
+
+        const modalCardFrame = React.Children.toArray(baseModalProps.children).find((child: any) => child.type === ModalCardFrame);
+        expect(modalCardFrame).toBeDefined();
+    });
+
+    it('renders confirm buttons as accessible Pressables on web', async () => {
+        const { WebAlertModal } = await import('./WebAlertModal');
+
+        baseModalSpy.mockClear();
+        const onClose = vi.fn();
+        const onConfirm = vi.fn();
+
+        const screen = await renderScreen(<WebAlertModal
+                    config={{
+                        id: 'test-confirm',
+                        type: 'confirm',
+                        title: 'Push local commits',
+                        message: 'Remote: origin',
+                        cancelText: 'Cancel',
+                        confirmText: 'Push',
+                    }}
+                    onClose={onClose}
+                    onConfirm={onConfirm}
+                />);
+
+        const pressables = [
+            getNodeByTestID(screen, 'web-modal-cancel'),
+            getNodeByTestID(screen, 'web-modal-confirm'),
+        ];
 
         for (const pressable of pressables) {
             const text = getTextContent(pressable);

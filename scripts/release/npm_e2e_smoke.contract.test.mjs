@@ -321,10 +321,53 @@ test('hstack remote server setup supports self-host server binary override flag'
 test('build-server-binaries stages Prisma postgres engine files for packaged server runtime', async () => {
   const buildScriptPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'build-server-binaries.mjs');
   const raw = await readFile(buildScriptPath, 'utf8');
+  const sharedBuilderPath = join(repoRoot, 'packages', 'cli-common', 'src', 'componentArtifacts', 'serverSidecars.ts');
+  const sharedRaw = await readFile(sharedBuilderPath, 'utf8');
   assert.match(
     raw,
+    /buildServerBinaryArtifactPayload/,
+    'expected release server binary script to delegate runtime staging to the shared component artifact builder'
+  );
+  assert.match(
+    sharedRaw,
     /node_modules['"],\s*['"]\.prisma['"],\s*['"]client['"]/,
-    'expected server binary packaging to stage node_modules/.prisma/client for postgres Prisma runtime engines'
+    'expected shared server binary staging to include node_modules/.prisma/client for postgres Prisma runtime engines'
+  );
+  assert.match(
+    sharedRaw,
+    /node_modules['"],\s*['"]@prisma['"],\s*['"]client['"]/,
+    'expected shared server binary staging to include node_modules/@prisma/client for postgres Prisma runtime imports'
+  );
+});
+
+test('release binary scripts load cli-common artifact builders through the lazy dist loader', async () => {
+  const cliBuildPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'build-cli-binaries.mjs');
+  const serverBuildPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'build-server-binaries.mjs');
+  const binaryReleaseLibPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'lib', 'binary-release.mjs');
+
+  const cliBuildRaw = await readFile(cliBuildPath, 'utf8');
+  const serverBuildRaw = await readFile(serverBuildPath, 'utf8');
+  const binaryReleaseLibRaw = await readFile(binaryReleaseLibPath, 'utf8');
+
+  assert.doesNotMatch(
+    cliBuildRaw,
+    /@happier-dev\/cli-common\/componentArtifacts/,
+    'expected build-cli-binaries to avoid direct cli-common dist imports'
+  );
+  assert.doesNotMatch(
+    serverBuildRaw,
+    /@happier-dev\/cli-common\/componentArtifacts/,
+    'expected build-server-binaries to avoid direct cli-common dist imports'
+  );
+  assert.match(
+    binaryReleaseLibRaw,
+    /loadCliCommonDistModule/,
+    'expected binary-release helpers to lazy-load cli-common dist modules on demand'
+  );
+  assert.match(
+    binaryReleaseLibRaw,
+    /buildServerBinaryArtifactPayload/,
+    'expected binary-release helpers to re-export the shared server artifact builder'
   );
 });
 
@@ -346,8 +389,8 @@ test('remote install shims keep npm cache bounded across repeated setup runs', a
   );
   assert.match(
     hostRaw,
-    /npm install -g \/packs\/cli\.tgz --no-audit --no-fund/,
-    'expected remote daemon host shim to install cli tarball through npm so runtime dependencies are present'
+    /npm install -g --force \/packs\/cli\.tgz --no-audit --no-fund/,
+    'expected remote daemon host shim to force-reinstall the cli tarball through npm so repeated setup runs remain idempotent while runtime dependencies are present'
   );
   assert.match(
     hostRaw,

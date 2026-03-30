@@ -1,13 +1,12 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { fetchSessionsPage } from '@/sessionControl/sessionsHttp';
-import { readIntFlagValue, readFlagValue, hasFlag } from '@/sessionControl/argvFlags';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { summarizeSessionRow } from '@/sessionControl/sessionSummary';
-import { buildCliSessionRowModel } from '@/sessionControl/buildCliSessionRowModel';
+import { readIntFlagValue, readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { renderSessionListTable } from '@/ui/renderSessionListTable';
-import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 
 export async function cmdSessionList(
   argv: string[],
@@ -21,7 +20,7 @@ export async function cmdSessionList(
   const resumableOnly = hasFlag(argv, '--resumable');
   const limitRaw = readIntFlagValue(argv, '--limit');
   const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : undefined;
-  const cursor = readFlagValue(argv, '--cursor') ?? '';
+  const cursor = (readFlagValue(argv, '--cursor') ?? '').trim();
 
   if (activeOnly && archivedOnly) {
     throw new Error('Usage: happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
@@ -37,63 +36,75 @@ export async function cmdSessionList(
     process.exit(1);
   }
 
-  const page = await fetchSessionsPage({
-    token: credentials.token,
-    ...(cursor ? { cursor } : {}),
-    ...(limit ? { limit } : {}),
-    activeOnly,
-    archivedOnly,
-  });
-
-  const accountSettingsContext = await bootstrapAccountSettingsContext({ credentials, mode: 'fast' });
-  const rowModels = page.sessions
-    .map((row) => buildCliSessionRowModel({ credentials, rawSession: row, accountSettings: accountSettingsContext.settings }))
-    .filter((row) => includeSystem || row.isSystem !== true);
-
-  const filteredRows = resumableOnly
-    ? rowModels.filter((row) => row.vendorResume.eligible === true && row.archivedAt === null && row.active !== true)
-    : rowModels;
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.list',
+    {
+      ...(activeOnly ? { activeOnly: true } : {}),
+      ...(archivedOnly ? { archivedOnly: true } : {}),
+      ...(includeSystem ? { includeSystem: true } : {}),
+      ...(resumableOnly ? { resumableOnly: true } : {}),
+      ...(limit ? { limit } : {}),
+      ...(cursor ? { cursor } : {}),
+    },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const result = normalizeActionExecuteResult(actionRes);
+  if (!result.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_list',
+        error: {
+          code: result.errorCode,
+          ...(result.errorMessage ? { message: result.errorMessage } : {}),
+          ...(result.candidates ? { candidates: result.candidates } : {}),
+        },
+      });
+      return;
+    }
+    throw new Error(result.errorMessage ?? result.errorCode);
+  }
+  const payload = result.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_list', json, result: payload })) {
+    return;
+  }
+  const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  const nextCursor = typeof payload?.nextCursor === 'string' ? payload.nextCursor : payload?.nextCursor === null ? null : null;
+  const hasNext = payload?.hasNext === true;
 
   if (json) {
-    const allowedSessionIds = resumableOnly ? new Set(filteredRows.map((row) => row.id)) : null;
-    const sessions = page.sessions
-      .map((row) => summarizeSessionRow({ credentials, row }))
-      .filter((session) => includeSystem || session.isSystem !== true)
-      .filter((session) => !allowedSessionIds || allowedSessionIds.has(session.id));
-    const rowById = new Map(filteredRows.map((row) => [row.id, row] as const));
     printJsonEnvelope({
       ok: true,
       kind: 'session_list',
       data: {
-        sessions: sessions.map((session) => {
-          const row = rowById.get(session.id);
-          if (!row) return session;
-          return {
-            ...session,
-            agentId: row.agentId,
-            vendorResumeEligible: row.vendorResume.eligible,
-            ...(row.vendorResume.eligible ? {} : { vendorResumeReasonCode: row.vendorResume.reasonCode }),
-          };
-        }),
-        nextCursor: page.nextCursor,
-        hasNext: page.hasNext,
+        sessions,
+        nextCursor,
+        hasNext,
       },
     });
     return;
   }
 
   if (plain) {
-    for (const row of filteredRows) {
+    for (const row of rows) {
       const systemSuffix =
         includeSystem && row.isSystem
           ? ` ${chalk.yellow(`[system${row.systemPurpose ? `:${row.systemPurpose}` : ''}]`)}`
           : '';
       console.log(`${row.id}${systemSuffix}${row.tag ? ` ${chalk.gray(row.tag)}` : ''}${row.path ? ` ${chalk.gray(row.path)}` : ''}`);
     }
+    if (rows.length === 0) {
+      for (const session of sessions) {
+        const id = typeof session?.id === 'string' ? session.id : '';
+        if (id) console.log(id);
+      }
+    }
     return;
   }
 
-  for (const line of renderSessionListTable({ rows: filteredRows })) {
+  for (const line of renderSessionListTable({ rows })) {
     console.log(line);
   }
 }

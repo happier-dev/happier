@@ -15,6 +15,7 @@ export type ProviderCliInstallItemProps = Readonly<{
     capabilityId: Extract<CapabilityId, `cli.${string}`>;
     providerTitle: string;
     installed: boolean | null;
+    managedInstalled?: boolean;
     installability?: CapabilityInstallability;
 }>;
 
@@ -22,7 +23,7 @@ export function ProviderCliInstallItem(props: ProviderCliInstallItemProps) {
     const { theme } = useUnistyles();
     const { isInvoking: isInstalling, invokeWithAlerts } = useMachineCapabilityInvokeWithAlerts();
 
-    const skipIfInstalled = props.installed !== true;
+    const skipIfInstalled = props.managedInstalled !== true;
     const title = skipIfInstalled
         ? t('settingsProviders.cliInstaller.installTitle', { provider: props.providerTitle })
         : t('settingsProviders.cliInstaller.reinstallTitle', { provider: props.providerTitle });
@@ -51,12 +52,32 @@ export function ProviderCliInstallItem(props: ProviderCliInstallItemProps) {
                     return;
                 }
 
+                const confirmed = await Modal.confirm(
+                    skipIfInstalled
+                        ? t('settingsProviders.cliInstaller.confirmInstallTitle', { provider: props.providerTitle })
+                        : t('settingsProviders.cliInstaller.confirmReinstallTitle', { provider: props.providerTitle }),
+                    t('settingsProviders.cliInstaller.confirmBody', { provider: props.providerTitle }),
+                    {
+                        cancelText: t('common.cancel'),
+                        confirmText: skipIfInstalled
+                            ? t('settingsProviders.cliInstaller.confirmInstallConfirm')
+                            : t('settingsProviders.cliInstaller.confirmReinstallConfirm'),
+                        destructive: !skipIfInstalled,
+                    },
+                );
+                if (!confirmed) {
+                    return;
+                }
+
                 await invokeWithAlerts({
                     machineId: props.machineId,
                     request: {
                         id: props.capabilityId,
                         method: 'install',
-                        params: { skipIfInstalled },
+                        params: {
+                            skipIfInstalled,
+                            allowVendorRecipeExecution: true,
+                        },
                     },
                     timeoutMs: 5 * 60_000,
                     serverId: props.serverId,

@@ -30,6 +30,10 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
         'EXPO_PUBLIC_IOS_BACKGROUND_AUDIO',
         'EXPO_IOS_BACKGROUND_AUDIO',
+        'HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE',
+        'HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH',
+        'HAPPIER_EXPO_USE_NATIVE_DEBUG',
+        'EX_UPDATES_NATIVE_DEBUG',
     ] as const;
 
     const previous: Partial<Record<(typeof keys)[number], string | undefined>> = {};
@@ -58,8 +62,12 @@ describe('app.config.js', () => {
         expect(exp.extra?.eas?.projectId).toBe(DEFAULT_EAS_PROJECT_ID);
         expect(exp.updates?.url).toBe(DEFAULT_UPDATES_URL);
         expect(exp.extra?.app?.variant).toBe('development');
+        expect(exp.extra?.app?.identityVariant).toBe('internaldev');
         expect(exp.owner).toBe('happier-dev');
         expect(exp.slug).toBe('happier');
+        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.internaldev');
+        expect(exp.android?.package).toBe('dev.happier.app.internaldev');
+        expect(exp.scheme).toBe('happier-internaldev');
     });
 
     it('exposes variant under extra.app when APP_ENV is set', () => {
@@ -69,6 +77,47 @@ describe('app.config.js', () => {
         });
 
         expect(exp.extra?.app?.variant).toBe('preview');
+        expect(exp.extra?.app?.identityVariant).toBe('preview');
+    });
+
+    it('maps the publicdev environment to the public dev identity while keeping preview-like public behavior', () => {
+        const { exp, featurePolicyEnv } = withCleanEnv(() => {
+            process.env.APP_ENV = 'publicdev';
+            const exp = getPublicConfig();
+            return {
+                exp,
+                featurePolicyEnv: process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV,
+            };
+        });
+
+        expect(exp.extra?.app?.variant).toBe('preview');
+        expect(exp.extra?.app?.identityVariant).toBe('publicdev');
+        expect(exp.name).toBe('Happier (dev)');
+        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.publicdev');
+        expect(exp.android?.package).toBe('dev.happier.app.publicdev');
+        expect(exp.scheme).toBe('happier-dev');
+        expect(featurePolicyEnv).toBe('preview');
+        expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('dev');
+    });
+
+    it('maps the internalpreview environment to the internal preview identity', () => {
+        const { exp, featurePolicyEnv } = withCleanEnv(() => {
+            process.env.APP_ENV = 'internalpreview';
+            const exp = getPublicConfig();
+            return {
+                exp,
+                featurePolicyEnv: process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV,
+            };
+        });
+
+        expect(exp.extra?.app?.variant).toBe('preview');
+        expect(exp.extra?.app?.identityVariant).toBe('internalpreview');
+        expect(exp.name).toBe('Happier (internal preview)');
+        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.internalpreview');
+        expect(exp.android?.package).toBe('dev.happier.app.internalpreview');
+        expect(exp.scheme).toBe('happier-internalpreview');
+        expect(featurePolicyEnv).toBe('preview');
+        expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('internalpreview');
     });
 
     it('allows overriding extra.app.variant without changing production identity config', () => {
@@ -102,6 +151,11 @@ describe('app.config.js', () => {
         });
 
         expect(envValue).toBe('production');
+    });
+
+    it('uses Expo fingerprint runtime policy so OTA compatibility follows native-compatible changes', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        expect(exp.runtimeVersion).toEqual({ policy: 'fingerprint' });
     });
 
     it('uses EXPO_PUBLIC_EAS_PROJECT_ID with highest precedence for updates linkage', () => {
@@ -179,6 +233,33 @@ describe('app.config.js', () => {
 
         const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'react-native-audio-api');
         expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: false })]);
+    });
+
+    it('does not enable OTA-native debug development-client launch overrides by default', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'development';
+            return getPublicConfig();
+        });
+
+        const devClientPlugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-dev-client');
+        expect(devClientPlugin).toBeUndefined();
+        expect(exp.developmentClient?.silentLaunch).toBeUndefined();
+        expect(exp.updates?.useNativeDebug).toBeUndefined();
+    });
+
+    it('enables OTA-native debug development-client behavior only when explicitly requested by env', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'development';
+            process.env.HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE = 'most-recent';
+            process.env.HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH = 'true';
+            process.env.HAPPIER_EXPO_USE_NATIVE_DEBUG = 'true';
+            return getPublicConfig();
+        });
+
+        const devClientPlugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-dev-client');
+        expect(devClientPlugin).toEqual(['expo-dev-client', expect.objectContaining({ launchMode: 'most-recent' })]);
+        expect(exp.developmentClient?.silentLaunch).toBe(true);
+        expect(exp.updates?.useNativeDebug).toBe(true);
     });
 
     it('does not include unused optional native plugins in the default config', () => {

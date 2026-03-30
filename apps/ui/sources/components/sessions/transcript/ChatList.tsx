@@ -11,15 +11,17 @@ import {
     useSessionPendingMessages,
     useSessionTranscriptIds,
     useSetting,
-} from "@/sync/domains/state/storage";
-import { ActivityIndicator, FlatList, Platform, View } from 'react-native';
-import { FlashList } from '@shopify/flash-list';
+} from '@/sync/domains/state/storage';
+import { ActivityIndicator, FlatList, Platform, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { useCallback } from 'react';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MessageView } from './MessageView';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 import { Metadata, Session } from '@/sync/domains/state/storageTypes';
-import { ChatFooter } from './ChatFooter';
+import { ChatFooter, type ChatFooterDirectControlState } from './ChatFooter';
+import { getSessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
 import { buildChatListItems, buildChatListItemsCached, type ChatListItem, type ChatListItemsBuildCache } from '@/components/sessions/chatListItems';
 import { injectForkContextRows } from '@/components/sessions/transcript/forkContext/injectForkContextRows';
 import { ForkDividerRow } from '@/components/sessions/transcript/forkContext/ForkDividerRow';
@@ -37,11 +39,39 @@ import { resolveTranscriptMotionConfig } from '@/components/sessions/transcript/
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
 import { JumpToBottomButton } from '@/components/sessions/transcript/scroll/JumpToBottomButton';
 import { reduceTranscriptScrollPinState, type TranscriptScrollPinState } from '@/components/sessions/transcript/scroll/transcriptScrollPinController';
+import { shouldPrefetchOlderFromTop } from '@/components/sessions/transcript/scroll/shouldPrefetchOlderFromTop';
+import { resolveTranscriptInitialFillTuning } from '@/components/sessions/transcript/scroll/resolveTranscriptInitialFillTuning';
+import { resolveWebPinRetryTimeoutMs } from '@/components/sessions/transcript/scroll/resolveWebPinRetryTimeoutMs';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { resolveActiveThinkingMessageId } from '@/components/sessions/transcript/thinking/resolveActiveThinkingMessageId';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { deriveTranscriptInteraction, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { deriveTranscriptInteractionFromSession, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { buildChatListNativeId } from './chatListNativeId';
+import { useWebFlashListCrashFallback } from '@/components/ui/lists/useWebFlashListCrashFallback';
+import { buildTranscriptHotColdSegments } from '@/components/sessions/transcript/segments/buildTranscriptHotColdSegments';
+import { resolveWebHotColdScrollDecision } from '@/components/sessions/transcript/segments/resolveWebHotColdScrollDecision';
+import {
+    isMessageRolledBack,
+    readSessionRollbackRangesV1,
+    resolveTranscriptRollbackActions,
+    type TranscriptRollbackAction,
+    type SessionRollbackRangeV1,
+} from '@/sync/domains/sessionRollback/rollbackUiSupport';
+import {
+    getWebTranscriptDistanceFromBottom,
+    isWebTranscriptScrollable,
+    resolveWebTranscriptScrollMetrics,
+} from '@/components/sessions/transcript/webTranscriptScrollMetrics';
+import { WebTranscriptSplitFooter } from '@/components/sessions/transcript/web/WebTranscriptSplitFooter';
+import {
+    captureWebTranscriptPrependAnchor,
+    refreshWebTranscriptPrependAnchor,
+    restoreWebTranscriptPrependAnchor,
+    TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX,
+    TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX,
+    TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX,
+    type WebTranscriptPrependAnchor,
+} from '@/components/sessions/transcript/webTranscriptPrependAnchor';
 
 type ScrollableChatListRef = Readonly<{
     scrollToIndex: (params: { index: number; animated?: boolean; viewPosition?: number }) => void;
@@ -64,7 +94,11 @@ export type ChatListBottomNotice = {
 export const ChatList = React.memo((props: {
     session: Session;
     bottomNotice?: ChatListBottomNotice | null;
+    controlledByUserOverride?: boolean;
+    controlSwitchTo?: 'remote' | null;
     onRequestSwitchToRemote?: () => void;
+    onRequestSwitchToLocal?: () => void;
+    directControlFooter?: ChatFooterDirectControlState;
     jumpToSeq?: number | null;
     onViewportChange?: (state: { isPinned: boolean; offsetY: number }) => void;
 }) => {
@@ -97,8 +131,18 @@ export const ChatList = React.memo((props: {
         fireAndForget(sync.prefetchForkedTranscriptContext(props.session.id), { tag: 'ChatList.prefetchForkedTranscriptContext' });
     }, [forkContextNeedsPrefetch, props.session.id]);
 
-    const messageIdsOldestFirst = forkedTranscriptEnabled ? (fork!.combinedMessageIdsOldestFirst as any as string[]) : childMessageIdsOldestFirst;
-    const messagesById = forkedTranscriptEnabled ? (fork!.combinedMessagesById as any) : childMessagesById;
+    const messageIdsOldestFirst = React.useMemo(() => {
+        if (forkedTranscriptEnabled) {
+            return fork!.combinedMessageIdsOldestFirst as any as string[];
+        }
+        return childMessageIdsOldestFirst;
+    }, [childMessageIdsOldestFirst, fork, forkedTranscriptEnabled]);
+    const messagesById = React.useMemo(() => {
+        if (forkedTranscriptEnabled) {
+            return fork!.combinedMessagesById as any;
+        }
+        return childMessagesById;
+    }, [childMessagesById, fork, forkedTranscriptEnabled]);
 
     const groupingMode = forkedTranscriptEnabled ? 'linear' : (transcriptGroupingMode === 'turns' ? 'turns' : 'linear');
     const groupToolCalls =
@@ -169,6 +213,19 @@ export const ChatList = React.memo((props: {
 
     const latestCommittedActivityKey =
         messageIdsOldestFirst.length > 0 ? messageIdsOldestFirst[messageIdsOldestFirst.length - 1]! : null;
+    const rollbackRanges = React.useMemo(
+        () => readSessionRollbackRangesV1((props.session.metadata as Record<string, unknown> | null | undefined) ?? null),
+        [props.session.metadata],
+    );
+    const rollbackActionsByMessageId = React.useMemo(
+        () => resolveTranscriptRollbackActions({
+            session: props.session,
+            messageIdsOldestFirst,
+            messagesById,
+            rollbackRanges,
+        }),
+        [messageIdsOldestFirst, messagesById, props.session, rollbackRanges],
+    );
 
     const latestThinkingMessageId = useSessionLatestThinkingMessageId(props.session.id);
     const latestThinkingMessageActivityAtMs = useSessionLatestThinkingMessageActivityAtMs(props.session.id);
@@ -203,13 +260,13 @@ export const ChatList = React.memo((props: {
     }, [latestCommittedActivityKey, latestThinkingMessageActivityAtMs, latestThinkingMessageId, props.session.thinking, staleMs, thinkingPulseNow]);
 
     const interaction = React.useMemo(() => {
-        return deriveTranscriptInteraction({
-            kind: 'session',
+        return deriveTranscriptInteractionFromSession({
             accessLevel: props.session.accessLevel,
             canApprovePermissions: props.session.canApprovePermissions,
-            isSessionActive: props.session.presence === 'online',
+            active: props.session.active,
+            presence: props.session.presence,
         });
-    }, [props.session.accessLevel, props.session.canApprovePermissions, props.session.presence]);
+    }, [props.session.accessLevel, props.session.canApprovePermissions, props.session.active, props.session.presence]);
 
         return (
             <ChatListInternal
@@ -218,12 +275,19 @@ export const ChatList = React.memo((props: {
             sessionSeq={props.session.seq ?? 0}
             forkedTranscriptEnabled={forkedTranscriptEnabled}
             items={groupedItems}
+            messagesById={messagesById}
             committedMessagesCount={messageIdsOldestFirst.length}
             latestCommittedActivityKey={latestCommittedActivityKey}
             activeThinkingMessageId={activeThinkingMessageId}
+            rollbackRanges={rollbackRanges}
+            rollbackActionsByMessageId={rollbackActionsByMessageId}
             isLoaded={isLoaded}
             bottomNotice={props.bottomNotice}
+            controlledByUserOverride={props.controlledByUserOverride}
+            controlSwitchTo={props.controlSwitchTo ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
+            onRequestSwitchToLocal={props.onRequestSwitchToLocal}
+            directControlFooter={props.directControlFooter}
             interaction={interaction}
             jumpToSeq={props.jumpToSeq ?? null}
             onViewportChange={props.onViewportChange}
@@ -249,7 +313,11 @@ const ListHeader = React.memo((props: { isLoadingOlder: boolean }) => {
 const ListFooter = React.memo((props: {
     sessionId: string;
     bottomNotice?: ChatListBottomNotice | null;
+    controlledByUserOverride?: boolean;
+    controlSwitchTo?: 'remote' | null;
     onRequestSwitchToRemote?: () => void;
+    onRequestSwitchToLocal?: () => void;
+    directControl?: ChatFooterDirectControlState;
 }) => {
     const session = useSession(props.sessionId);
     if (!session) {
@@ -258,10 +326,14 @@ const ListFooter = React.memo((props: {
     const permissionsInUiWhileLocal = getPermissionsInUiWhileLocal(session.agentState?.capabilities);
     return (
         <ChatFooter
-            controlledByUser={session.agentState?.controlledByUser || false}
+            controlledByUser={(props.controlledByUserOverride ?? session.agentState?.controlledByUser) || false}
+            localControl={getSessionLocalControlState(session)}
             permissionsInUiWhileLocal={permissionsInUiWhileLocal}
             notice={props.bottomNotice ?? null}
+            controlSwitchTo={props.controlSwitchTo ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
+            onRequestSwitchToLocal={props.onRequestSwitchToLocal}
+            directControl={props.directControl ?? null}
         />
     )
 });
@@ -269,6 +341,7 @@ const ListFooter = React.memo((props: {
 const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
     sessionId: string;
     messageId: string;
+    messageOverride?: Message | null;
     originSessionId?: string;
     isReadOnlyContext?: boolean;
     metadata: Metadata | null;
@@ -276,9 +349,12 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
     resolveThinkingExpanded: (messageId: string) => boolean;
     setThinkingExpanded: (messageId: string, expanded: boolean) => void;
     interaction: TranscriptInteraction;
+    rollbackAction?: TranscriptRollbackAction | null;
+    historical?: boolean;
 }) {
     const originSessionId = props.originSessionId ?? props.sessionId;
-    const message = useMessage(originSessionId, props.messageId);
+    const committedMessage = useMessage(originSessionId, props.messageId);
+    const message = props.messageOverride ?? committedMessage;
     if (!message) return null;
 
     const isThinking = message.kind === 'agent-text' && message.isThinking === true;
@@ -292,16 +368,20 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
         }
         : props.interaction;
     return (
-        <View testID={`transcript-message-${props.messageId}`}>
-            <MessageView
-                message={message}
-                metadata={props.metadata}
-                sessionId={originSessionId}
-                activeThinkingMessageId={props.activeThinkingMessageId}
-                thinkingExpanded={isThinking ? props.resolveThinkingExpanded(message.id) : undefined}
-                onThinkingExpandedChange={isThinking ? (next) => props.setThinkingExpanded(message.id, next) : undefined}
-                interaction={readOnlyInteraction}
-            />
+        <View testID={`${TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX}${props.messageId}`}>
+            <View testID={`transcript-message-${props.messageId}`}>
+                <MessageView
+                    message={message}
+                    metadata={props.metadata}
+                    sessionId={originSessionId}
+                    activeThinkingMessageId={props.activeThinkingMessageId}
+                    thinkingExpanded={isThinking ? props.resolveThinkingExpanded(message.id) : undefined}
+                    onThinkingExpandedChange={isThinking ? (next) => props.setThinkingExpanded(message.id, next) : undefined}
+                    interaction={readOnlyInteraction}
+                    rollbackAction={props.rollbackAction ?? null}
+                    historical={props.historical}
+                />
+            </View>
         </View>
     );
 });
@@ -312,12 +392,19 @@ const ChatListInternal = React.memo((props: {
     sessionSeq: number,
     forkedTranscriptEnabled: boolean,
     items: ChatTranscriptListItem[],
+    messagesById: Readonly<Record<string, Message>>,
     committedMessagesCount: number,
     latestCommittedActivityKey: string | null,
     activeThinkingMessageId: string | null,
+    rollbackRanges: readonly SessionRollbackRangeV1[],
+    rollbackActionsByMessageId: Readonly<Record<string, TranscriptRollbackAction>>,
     isLoaded: boolean,
     bottomNotice?: ChatListBottomNotice | null,
+    controlledByUserOverride?: boolean;
+    controlSwitchTo?: 'remote' | null;
     onRequestSwitchToRemote?: () => void,
+    onRequestSwitchToLocal?: () => void,
+    directControlFooter?: ChatFooterDirectControlState;
     interaction: TranscriptInteraction;
     jumpToSeq?: number | null;
     onViewportChange?: (state: { isPinned: boolean; offsetY: number }) => void;
@@ -340,10 +427,15 @@ const ChatListInternal = React.memo((props: {
     const chatListNativeId = React.useMemo(() => buildChatListNativeId(props.sessionId, chatListReactId), [props.sessionId, chatListReactId]);
     const loadNewerInFlight = React.useRef(false);
     const webScrollContainerRef = React.useRef<HTMLElement | null>(null);
+    const pendingWebPrependAnchorRef = React.useRef<ReturnType<typeof captureWebTranscriptPrependAnchor> | null>(null);
+    const inFlightWebPrependAnchorRef = React.useRef<ReturnType<typeof captureWebTranscriptPrependAnchor> | null>(null);
+    const pendingWebPrependIndexRecoveryRef = React.useRef(false);
+    const scheduledWebPrependIndexRecoveryRef = React.useRef<{ kind: 'raf' | 'timeout'; ids: any[] } | null>(null);
       const wantsPinnedRef = React.useRef(true);
       const lastUserScrollIntentAtMsRef = React.useRef(0);
       const lastAutoRepinAtMsRef = React.useRef(0);
       const lastPinOffsetForIntentRef = React.useRef<number | null>(null);
+    const initialWebPinStabilizingRef = React.useRef(false);
 
     const transcriptMotionPreset = useSetting('transcriptMotionPreset');
     const transcriptMotionFreshnessMs = useSetting('transcriptMotionFreshnessMs');
@@ -377,6 +469,43 @@ const ChatListInternal = React.memo((props: {
             if (Platform.OS !== 'web') return;
             lastUserScrollIntentAtMsRef.current = Date.now();
         }, []);
+
+    const resolveWebScrollMetrics = React.useCallback(() => {
+        if (Platform.OS !== 'web') return null;
+        if (typeof document === 'undefined') return null;
+        if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return null;
+
+        const root = (document as any)?.getElementById?.(chatListNativeId) as HTMLElement | null | undefined;
+        const metrics = resolveWebTranscriptScrollMetrics({
+            root,
+            cachedElement: webScrollContainerRef.current,
+            win: window,
+            minOverflowPx: 50,
+            maxDescendants: 1800,
+            maxAncestors: 30,
+            pick: 'best',
+            allowRootFallback: true,
+            score: (el) => {
+                const sh = (el as any).scrollHeight;
+                return typeof sh === 'number' && Number.isFinite(sh) ? sh : 0;
+            },
+        });
+        if (metrics) {
+            webScrollContainerRef.current = metrics.element;
+        }
+        return metrics;
+    }, [chatListNativeId]);
+
+    const waitForNextVisualUpdate = React.useCallback(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        const raf = (globalThis as any)?.requestAnimationFrame as undefined | ((cb: () => void) => any);
+        if (typeof raf === 'function') {
+            await new Promise<void>((resolve) => {
+                raf(() => resolve());
+            });
+        }
+    }, []);
 
   const motionConfig = React.useMemo(() => {
     return resolveTranscriptMotionConfig({
@@ -475,6 +604,22 @@ const ChatListInternal = React.memo((props: {
         initialFillAbortRef.current = null;
         initialFillStatusRef.current = 'idle';
         didAutoExpandToolCallsGroupsForSessionRef.current = null;
+        inFlightWebPrependAnchorRef.current = null;
+        pendingWebPrependAnchorRef.current = null;
+        pendingWebPrependIndexRecoveryRef.current = false;
+        const scheduledRecovery = scheduledWebPrependIndexRecoveryRef.current;
+        if (scheduledRecovery) {
+            scheduledWebPrependIndexRecoveryRef.current = null;
+            if (scheduledRecovery.kind === 'raf') {
+                for (const id of scheduledRecovery.ids) {
+                    cancelAnimationFrame(id);
+                }
+            } else {
+                for (const id of scheduledRecovery.ids) {
+                    clearTimeout(id);
+                }
+            }
+        }
         setExpandedToolCallsAnchorMessageIds(new Set());
     }, [props.sessionId]);
 
@@ -492,61 +637,40 @@ const ChatListInternal = React.memo((props: {
     const jumpAnimateScroll = transcriptScrollJumpToBottomAnimateScroll !== false;
 
     const preferredListImplementation = transcriptListImplementation === 'flatlist_legacy' ? 'flatlist_legacy' : 'flash_v2';
-    const [webFlashListCrashed, setWebFlashListCrashed] = React.useState(false);
+    const webFlashListCrashed = useWebFlashListCrashFallback({
+        enabled: Platform.OS === 'web' && preferredListImplementation === 'flash_v2',
+    });
     const listImplementation =
         Platform.OS === 'web' && preferredListImplementation === 'flash_v2' && webFlashListCrashed
             ? 'flatlist_legacy'
             : preferredListImplementation;
 
-    React.useEffect(() => {
-        if (Platform.OS !== 'web') return;
-        if (preferredListImplementation !== 'flash_v2') return;
-        if (webFlashListCrashed) return;
-        const win = (globalThis as any)?.window as undefined | { addEventListener?: any; removeEventListener?: any };
-        if (!win || typeof win.addEventListener !== 'function' || typeof win.removeEventListener !== 'function') return;
-
-        const shouldFallback = (message: string): boolean => {
-            const text = (message ?? '').toLowerCase();
-            if (!text) return false;
-            return text.includes('not enough layouts') || text.includes('index out of bounds');
-        };
-
-        const onError = (event: any) => {
-            const message = String(event?.error?.message ?? event?.message ?? '');
-            if (!shouldFallback(message)) return;
-            try {
-                event?.preventDefault?.();
-            } catch {
-                // ignore
-            }
-            try {
-                event?.stopImmediatePropagation?.();
-            } catch {
-                // ignore
-            }
-            setWebFlashListCrashed(true);
-        };
-
-        win.addEventListener('error', onError, true);
-        return () => {
-            try {
-                win.removeEventListener('error', onError, true);
-            } catch {
-                // ignore
-            }
-        };
-    }, [preferredListImplementation, webFlashListCrashed]);
-    const listData = React.useMemo(() => {
+    const displayItems = React.useMemo(() => {
         if (listImplementation === 'flatlist_legacy') {
             // Legacy: inverted lists expect newest-first input.
             return [...props.items].reverse();
         }
         return props.items;
     }, [listImplementation, props.items]);
+    const transcriptHotColdSegments = React.useMemo(() => {
+        const tuning = sync.getSyncTuning();
+        return buildTranscriptHotColdSegments({
+            enabled: listImplementation === 'flash_v2',
+            hotTailItemCount: tuning.transcriptWebHotTailItemCount,
+            items: displayItems,
+            activeThinkingMessageId: props.activeThinkingMessageId,
+            expandedToolCallsAnchorMessageIds,
+        });
+    }, [displayItems, expandedToolCallsAnchorMessageIds, listImplementation, props.activeThinkingMessageId]);
+    const shouldUseWebHotColdSplit =
+        Platform.OS === 'web' &&
+        listImplementation === 'flash_v2' &&
+        transcriptHotColdSegments.hotItems.length > 0;
+    const listData = shouldUseWebHotColdSplit ? transcriptHotColdSegments.coldItems : displayItems;
 
     // Keep a synchronous view of the current list items for effects that run between renders
     // (e.g. initial viewport fill and jump-to-seq resolution).
-    itemsRef.current = listData;
+    itemsRef.current = displayItems;
 
     const flashListMaintainVisibleContentPosition = React.useMemo(() => {
         // FlashList/web can throw "index out of bounds, not enough layouts" under heavy append + scroll
@@ -586,15 +710,185 @@ const ChatListInternal = React.memo((props: {
         return typeof kind === 'string' ? kind : null;
     }, [props.sessionId]);
 
+    const resolveTurnMessageById = React.useCallback((messageId: string): Message | null => {
+        return props.messagesById[messageId] ?? null;
+    }, [props.messagesById]);
+
     const toolTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
     const keyExtractor = useCallback((item: ChatTranscriptListItem) => item.id, []);
     const getItemType = useCallback((item: ChatTranscriptListItem): string => item.kind, []);
+    const wrapTranscriptItemForAnchor = React.useCallback((itemId: string, node: React.ReactNode) => {
+        return (
+            <View testID={`${TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX}${itemId}`}>
+                {node}
+            </View>
+        );
+    }, []);
+
+    const captureCurrentWebPrependAnchor = React.useCallback(() => {
+        if (Platform.OS !== 'web' || listImplementation !== 'flash_v2') return null;
+        const metrics = resolveWebScrollMetrics();
+        if (!metrics) return null;
+        if (!isWebTranscriptScrollable(metrics, 1)) return null;
+        if (getWebTranscriptDistanceFromBottom(metrics) <= pinThresholdPx) return null;
+        const tuning = sync.getSyncTuning();
+        const anchor = captureWebTranscriptPrependAnchor({
+            metrics,
+            userIntentAtMs: lastUserScrollIntentAtMsRef.current,
+            stabilizeForMs: tuning.transcriptWebInitialPinStabilizeMs,
+        });
+        return anchor;
+    }, [listImplementation, pinThresholdPx, resolveWebScrollMetrics]);
+
+    const refreshInFlightWebPrependAnchor = React.useCallback(() => {
+        if (Platform.OS !== 'web' || listImplementation !== 'flash_v2') return;
+        const currentAnchor = inFlightWebPrependAnchorRef.current;
+        if (!currentAnchor) return;
+        const metrics = resolveWebScrollMetrics();
+        if (!metrics) return;
+        if (!isWebTranscriptScrollable(metrics, 1)) return;
+        inFlightWebPrependAnchorRef.current = refreshWebTranscriptPrependAnchor(currentAnchor, {
+            ...metrics,
+            scrollHeight: currentAnchor.metrics.scrollHeight,
+        }, {
+            recaptureAnchor: true,
+            userIntentAtMs: lastUserScrollIntentAtMsRef.current,
+        });
+    }, [listImplementation, resolveWebScrollMetrics]);
+
+    const resolvePendingWebPrependRefreshOptions = React.useCallback((strategy: 'anchor' | 'item' | 'growth' | 'none') => {
+        if (strategy === 'anchor') {
+            return { recaptureAnchor: true, recaptureItem: true } as const;
+        }
+        if (strategy === 'item') {
+            return { recaptureItem: true } as const;
+        }
+        return { preserveBaselineMetrics: true } as const;
+    }, []);
+
+    const resolvePendingWebPrependItemIndex = React.useCallback((itemTestId: string | null): number | null => {
+        if (!itemTestId?.startsWith(TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX)) return null;
+        const itemId = itemTestId.slice(TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX.length);
+        const index = itemsRef.current.findIndex((item) => item.id === itemId);
+        return index >= 0 ? index : null;
+    }, []);
+
+    const resolvePendingWebPrependAnchorIndex = React.useCallback((anchorTestId: string | null): number | null => {
+        let anchorMessageId: string | null = null;
+        if (anchorTestId?.startsWith(TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX)) {
+            anchorMessageId = anchorTestId.slice(TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX.length);
+        } else if (anchorTestId?.startsWith(TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX)) {
+            anchorMessageId = anchorTestId.slice(TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX.length);
+        }
+        if (!anchorMessageId) return null;
+
+        const index = itemsRef.current.findIndex((item) => {
+            if (item.kind === 'message') {
+                return item.messageId === anchorMessageId;
+            }
+            if (item.kind === 'tool-calls-group') {
+                return item.toolMessageIds.includes(anchorMessageId);
+            }
+            if (item.kind === 'turn') {
+                if (item.turn.userMessageId === anchorMessageId) return true;
+                return item.turn.content.some((content) => {
+                    if (content.kind === 'message') {
+                        return content.messageId === anchorMessageId;
+                    }
+                    if (content.kind === 'tool_calls') {
+                        return content.toolMessageIds.includes(anchorMessageId);
+                    }
+                    return false;
+                });
+            }
+            return false;
+        });
+
+        return index >= 0 ? index : null;
+    }, []);
+
+    const resolvePendingWebPrependRecoveryIndex = React.useCallback((pendingAnchor: WebTranscriptPrependAnchor | null): number | null => {
+        if (!pendingAnchor) return null;
+        return resolvePendingWebPrependAnchorIndex(pendingAnchor.anchorTestId) ?? resolvePendingWebPrependItemIndex(pendingAnchor.itemTestId);
+    }, [resolvePendingWebPrependAnchorIndex, resolvePendingWebPrependItemIndex]);
+
+    const tryScrollPendingWebPrependItemIntoView = React.useCallback((pendingAnchor: WebTranscriptPrependAnchor | null): boolean => {
+        if (Platform.OS !== 'web' || listImplementation !== 'flash_v2') return false;
+        const index = resolvePendingWebPrependRecoveryIndex(pendingAnchor);
+        if (index == null) return false;
+        const node = listRef.current;
+        if (!node || typeof node.scrollToIndex !== 'function') return false;
+        try {
+            node.scrollToIndex({ index, animated: false, viewPosition: 0 });
+            return true;
+        } catch {
+            return false;
+        }
+    }, [listImplementation, resolvePendingWebPrependRecoveryIndex]);
+
+    const attemptPendingWebPrependIndexRecovery = React.useCallback((): boolean => {
+        if (Platform.OS !== 'web' || listImplementation !== 'flash_v2') return false;
+        if (!pendingWebPrependIndexRecoveryRef.current || !pendingWebPrependAnchorRef.current) return false;
+        const didRecoverIndex = tryScrollPendingWebPrependItemIntoView(pendingWebPrependAnchorRef.current);
+        if (!didRecoverIndex) return false;
+
+        pendingWebPrependIndexRecoveryRef.current = false;
+        const retryAnchor = pendingWebPrependAnchorRef.current;
+        const retryRestoreResult = restoreWebTranscriptPrependAnchor(retryAnchor);
+        const retryMetrics = resolveWebScrollMetrics();
+        if (!retryMetrics) {
+            pendingWebPrependAnchorRef.current = null;
+            return true;
+        }
+        pendingWebPrependAnchorRef.current = refreshWebTranscriptPrependAnchor(
+            retryAnchor,
+            retryMetrics,
+            resolvePendingWebPrependRefreshOptions(retryRestoreResult.strategy),
+        );
+        return true;
+    }, [
+        listImplementation,
+        resolvePendingWebPrependRefreshOptions,
+        resolveWebScrollMetrics,
+        tryScrollPendingWebPrependItemIntoView,
+    ]);
+
+    const schedulePendingWebPrependIndexRecovery = React.useCallback(() => {
+        if (Platform.OS !== 'web' || listImplementation !== 'flash_v2') return;
+        const scheduledRecovery = scheduledWebPrependIndexRecoveryRef.current;
+        if (scheduledRecovery) return;
+
+        if (typeof requestAnimationFrame === 'function') {
+            const handle: { kind: 'raf'; ids: any[] } = { kind: 'raf', ids: [] };
+            scheduledWebPrependIndexRecoveryRef.current = handle;
+            const first = requestAnimationFrame(() => {
+                const second = requestAnimationFrame(() => {
+                    if (scheduledWebPrependIndexRecoveryRef.current !== handle) return;
+                    scheduledWebPrependIndexRecoveryRef.current = null;
+                    attemptPendingWebPrependIndexRecovery();
+                });
+                handle.ids.push(second);
+            });
+            handle.ids.push(first);
+            return;
+        }
+
+        const handle: { kind: 'timeout'; ids: any[] } = { kind: 'timeout', ids: [] };
+        scheduledWebPrependIndexRecoveryRef.current = handle;
+        const timeoutId = setTimeout(() => {
+            if (scheduledWebPrependIndexRecoveryRef.current !== handle) return;
+            scheduledWebPrependIndexRecoveryRef.current = null;
+            attemptPendingWebPrependIndexRecovery();
+        }, 0);
+        handle.ids.push(timeoutId);
+    }, [attemptPendingWebPrependIndexRecovery, listImplementation]);
+
       const renderItem = useCallback(({ item, index }: { item: ChatTranscriptListItem; index: number }) => {
           if (item.kind === 'action-draft') {
-              return <SessionActionDraftCard sessionId={props.sessionId} draft={item.draft} />;
+              return wrapTranscriptItemForAnchor(item.id, <SessionActionDraftCard sessionId={props.sessionId} draft={item.draft} />);
           }
         if (item.kind === 'fork-divider') {
-            return (
+            return wrapTranscriptItemForAnchor(item.id, (
                 <TranscriptEnterWrapper id={item.id} createdAt={0}>
                     <ForkDividerRow
                         parentSessionId={item.parentSessionId}
@@ -602,11 +896,11 @@ const ChatListInternal = React.memo((props: {
                         parentCutoffSeqInclusive={item.parentCutoffSeqInclusive}
                     />
                 </TranscriptEnterWrapper>
-            );
+            ));
         }
         if (item.kind === 'pending-queue') {
             const createdAt = item.pendingMessages[0]?.createdAt ?? item.discardedMessages[0]?.createdAt ?? 0;
-            return (
+            return wrapTranscriptItemForAnchor(item.id, (
                 <TranscriptEnterWrapper id={item.id} createdAt={createdAt}>
                     <PendingMessagesTranscriptBlock
                         sessionId={props.sessionId}
@@ -614,10 +908,10 @@ const ChatListInternal = React.memo((props: {
                         discardedMessages={item.discardedMessages}
                     />
                 </TranscriptEnterWrapper>
-            );
+            ));
         }
         if (item.kind === 'tool-calls-group') {
-            return (
+            return wrapTranscriptItemForAnchor(item.id, (
                 <ToolCallsGroupRow
                     sessionId={props.sessionId}
                     toolCallsGroupId={item.id}
@@ -627,7 +921,7 @@ const ChatListInternal = React.memo((props: {
                     onSetExpanded={setToolCallsGroupExpanded}
                     interaction={props.interaction}
                 />
-            );
+            ));
         }
         if (item.kind === 'turn') {
             const turnCreatedAt =
@@ -640,21 +934,24 @@ const ChatListInternal = React.memo((props: {
                             : null)
                         : null) ??
                 0;
-            return (
+            return wrapTranscriptItemForAnchor(item.id, (
                 <TranscriptEnterWrapper id={item.id} createdAt={turnCreatedAt}>
-                      <TurnView
-                          turn={item.turn}
-                          metadata={props.metadata}
-                          sessionId={props.sessionId}
-                          interaction={props.interaction}
-                          activeThinkingMessageId={props.activeThinkingMessageId}
-                            resolveThinkingExpanded={resolveThinkingExpanded}
-                            setThinkingExpanded={setThinkingExpanded}
-                          expandedToolCallsAnchorMessageIds={expandedToolCallsAnchorMessageIds}
+                          <TurnView
+                           turn={item.turn}
+                           metadata={props.metadata}
+                           sessionId={props.sessionId}
+                           interaction={props.interaction}
+                           activeThinkingMessageId={props.activeThinkingMessageId}
+                           getMessageById={resolveTurnMessageById}
+                           isMessageHistorical={(messageId) => isMessageRolledBack({ message: props.messagesById[messageId] ?? null, rollbackRanges: props.rollbackRanges })}
+                           resolveRollbackAction={(messageId) => props.rollbackActionsByMessageId[messageId] ?? null}
+                             resolveThinkingExpanded={resolveThinkingExpanded}
+                             setThinkingExpanded={setThinkingExpanded}
+                           expandedToolCallsAnchorMessageIds={expandedToolCallsAnchorMessageIds}
                           setToolCallsGroupExpanded={setToolCallsGroupExpanded}
                       />
                   </TranscriptEnterWrapper>
-              );
+              ));
           }
         if (item.kind === 'message') {
             const toolChromeMode = toolTimelineChromeMode === 'activity_feed' ? 'activity_feed' : 'cards';
@@ -667,12 +964,13 @@ const ChatListInternal = React.memo((props: {
                 resolveKindForMessageId(prev.messageId) === 'tool-call';
             const wrapperStyle = shouldTightenToolStack ? { marginTop: -12 } : undefined;
 
-            return (
+            return wrapTranscriptItemForAnchor(item.id, (
                 <TranscriptEnterWrapper id={item.id} createdAt={item.createdAt}>
                     <View style={wrapperStyle}>
                         <ChatListMessageRow
                             sessionId={props.sessionId}
                             messageId={item.messageId}
+                            messageOverride={props.messagesById[item.messageId] ?? null}
                             originSessionId={item.originSessionId}
                             isReadOnlyContext={item.isReadOnlyContext}
                             metadata={props.metadata}
@@ -680,29 +978,102 @@ const ChatListInternal = React.memo((props: {
                             resolveThinkingExpanded={resolveThinkingExpanded}
                             setThinkingExpanded={setThinkingExpanded}
                             interaction={props.interaction}
+                            rollbackAction={props.rollbackActionsByMessageId[item.messageId] ?? null}
+                            historical={isMessageRolledBack({ message: props.messagesById[item.messageId] ?? null, rollbackRanges: props.rollbackRanges })}
                         />
                     </View>
                 </TranscriptEnterWrapper>
-            );
+            ));
         }
         return null;
-      }, [expandedToolCallsAnchorMessageIds, listImplementation, props.activeThinkingMessageId, props.interaction, props.metadata, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveThinkingExpanded, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode]);
+      }, [expandedToolCallsAnchorMessageIds, listImplementation, props.activeThinkingMessageId, props.interaction, props.messagesById, props.metadata, props.rollbackActionsByMessageId, props.rollbackRanges, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveThinkingExpanded, resolveTurnMessageById, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode, wrapTranscriptItemForAnchor]);
+    const renderTranscriptItemAtIndex = React.useCallback((item: ChatTranscriptListItem, index: number) => {
+        return renderItem({ item, index });
+    }, [renderItem]);
+    const listFooterNode = React.useMemo(() => (
+        <ListFooter
+            sessionId={props.sessionId}
+            bottomNotice={props.bottomNotice}
+            controlledByUserOverride={props.controlledByUserOverride}
+            controlSwitchTo={props.controlSwitchTo ?? null}
+            onRequestSwitchToRemote={props.onRequestSwitchToRemote}
+            onRequestSwitchToLocal={props.onRequestSwitchToLocal}
+            directControl={props.directControlFooter}
+        />
+    ), [
+        props.bottomNotice,
+        props.controlSwitchTo,
+        props.controlledByUserOverride,
+        props.directControlFooter,
+        props.onRequestSwitchToLocal,
+        props.onRequestSwitchToRemote,
+        props.sessionId,
+    ]);
+    const flashListFooterNode = React.useMemo(() => {
+        if (!shouldUseWebHotColdSplit) {
+            return listFooterNode;
+        }
+        return (
+            <WebTranscriptSplitFooter
+                hotItems={transcriptHotColdSegments.hotItems}
+                startIndex={transcriptHotColdSegments.coldItems.length}
+                renderItemAtIndex={renderTranscriptItemAtIndex}
+                footer={listFooterNode}
+            />
+        );
+    }, [
+        listFooterNode,
+        renderTranscriptItemAtIndex,
+        shouldUseWebHotColdSplit,
+        transcriptHotColdSegments.coldItems.length,
+        transcriptHotColdSegments.hotItems,
+    ]);
 
     const loadOlder = useCallback(async (): Promise<{
         loaded: number;
         hasMore: boolean;
         status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
     } | null> => {
-        if (!props.isLoaded) return null;
+        if (!props.isLoaded && props.forkedTranscriptEnabled !== true) return null;
         if (loadOlderInFlight.current || hasMoreOlder === false) {
             return null;
         }
         loadOlderInFlight.current = true;
         setIsLoadingOlder(true);
         try {
+            inFlightWebPrependAnchorRef.current = captureCurrentWebPrependAnchor();
+
             const result = props.forkedTranscriptEnabled
                 ? await sync.loadOlderMessagesForkAware(props.sessionId)
                 : await sync.loadOlderMessages(props.sessionId);
+
+            const webPrependAnchor = inFlightWebPrependAnchorRef.current;
+            inFlightWebPrependAnchorRef.current = null;
+
+            if (webPrependAnchor && result.loaded > 0) {
+                pendingWebPrependAnchorRef.current = refreshWebTranscriptPrependAnchor(
+                    webPrependAnchor,
+                    webPrependAnchor.metrics,
+                    {
+                        resetExpiry: true,
+                        userIntentAtMs: lastUserScrollIntentAtMsRef.current,
+                    },
+                );
+                const restoreResult = restoreWebTranscriptPrependAnchor(pendingWebPrependAnchorRef.current);
+                const metrics = resolveWebScrollMetrics();
+                if (metrics && pendingWebPrependAnchorRef.current) {
+                    pendingWebPrependAnchorRef.current = refreshWebTranscriptPrependAnchor(
+                        pendingWebPrependAnchorRef.current,
+                        metrics,
+                        resolvePendingWebPrependRefreshOptions(restoreResult.strategy),
+                    );
+                }
+                pendingWebPrependIndexRecoveryRef.current = restoreResult.strategy === 'growth';
+                if (restoreResult.strategy === 'growth') {
+                    schedulePendingWebPrependIndexRecovery();
+                }
+            }
+
             if (result.status === 'no_more') {
                 setHasMoreOlder(false);
             } else if (result.status === 'loaded' || result.status === 'not_ready' || result.status === 'in_flight') {
@@ -714,115 +1085,75 @@ const ChatListInternal = React.memo((props: {
                 status: result.status,
             };
         } finally {
+            inFlightWebPrependAnchorRef.current = null;
             setIsLoadingOlder(false);
             loadOlderInFlight.current = false;
         }
-    }, [props.forkedTranscriptEnabled, props.isLoaded, props.committedMessagesCount, props.sessionId, hasMoreOlder]);
+    }, [
+        captureCurrentWebPrependAnchor,
+        hasMoreOlder,
+        listImplementation,
+        pinThresholdPx,
+        props.committedMessagesCount,
+        props.forkedTranscriptEnabled,
+        props.isLoaded,
+        props.sessionId,
+        resolveWebScrollMetrics,
+    ]);
+
+    React.useLayoutEffect(() => {
+        if (Platform.OS !== 'web' || listImplementation !== 'flash_v2') return;
+
+        const pendingAnchor = pendingWebPrependAnchorRef.current;
+        if (!pendingAnchor) return;
+        if (pendingAnchor.userIntentAtMs !== lastUserScrollIntentAtMsRef.current) {
+            pendingWebPrependAnchorRef.current = null;
+            pendingWebPrependIndexRecoveryRef.current = false;
+            return;
+        }
+        if (Date.now() > pendingAnchor.expiresAtMs) {
+            pendingWebPrependAnchorRef.current = null;
+            pendingWebPrependIndexRecoveryRef.current = false;
+            return;
+        }
+
+        const restoreResult = restoreWebTranscriptPrependAnchor(pendingAnchor);
+        const metrics = resolveWebScrollMetrics();
+        if (!metrics) {
+            pendingWebPrependAnchorRef.current = null;
+            pendingWebPrependIndexRecoveryRef.current = false;
+            return;
+        }
+        pendingWebPrependAnchorRef.current = refreshWebTranscriptPrependAnchor(
+            pendingAnchor,
+            metrics,
+            resolvePendingWebPrependRefreshOptions(restoreResult.strategy),
+        );
+        pendingWebPrependIndexRecoveryRef.current =
+            pendingWebPrependIndexRecoveryRef.current || restoreResult.strategy === 'growth';
+        if (pendingWebPrependIndexRecoveryRef.current && pendingWebPrependAnchorRef.current) {
+            attemptPendingWebPrependIndexRecovery();
+        }
+    }, [attemptPendingWebPrependIndexRecovery, listContentHeight, listData.length, listImplementation, props.sessionId, resolvePendingWebPrependRefreshOptions, resolveWebScrollMetrics]);
 
     const tryPinToBottomDom = React.useCallback((): boolean => {
         if (Platform.OS !== 'web') return false;
-        if (typeof document === 'undefined') return false;
-        if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return false;
-
-        const isScrollable = (el: HTMLElement): boolean => {
-            try {
-                const cs = window.getComputedStyle(el);
-                const overflowY = cs?.overflowY;
-                if (!(overflowY === 'auto' || overflowY === 'scroll')) return false;
-                const sh = (el as any).scrollHeight;
-                const ch = (el as any).clientHeight;
-                if (typeof sh !== 'number' || typeof ch !== 'number') return false;
-                return sh > ch + 50;
-            } catch {
-                return false;
-            }
-        };
-
-        const root = (document as any)?.getElementById?.(chatListNativeId) as HTMLElement | null | undefined;
-        if (!root) return false;
-
-        // NOTE: Multiple transcript screens can temporarily exist in the DOM on web (router transitions,
-        // cached screens). Always scope pinning to the current session's `nativeID` subtree so we never
-        // accidentally pin a stale/hidden list.
-        if (isScrollable(root)) {
-            webScrollContainerRef.current = root;
-            const scrollToVisualBottom = listImplementation !== 'flatlist_legacy';
-            try {
-                (root as any).scrollTop = scrollToVisualBottom ? (root as any).scrollHeight : 0;
-                return true;
-            } catch {
-                // Fall through to discovery.
-            }
-        }
-
-        const cached = webScrollContainerRef.current;
-        if (
-            cached &&
-            (cached as any).isConnected !== false &&
-            typeof (root as any).contains === 'function' &&
-            (root as any).contains(cached) &&
-            isScrollable(cached)
-        ) {
-            const scrollToVisualBottom = listImplementation !== 'flatlist_legacy';
-            try {
-                // Prefer direct `scrollTop` writes: on RNW, ScrollView can override `scrollTo` with an
-                // RN-style signature ({ x, y, animated }) which does NOT accept DOM-style { top } args.
-                (cached as any).scrollTop = scrollToVisualBottom ? (cached as any).scrollHeight : 0;
-                return true;
-            } catch {
-                // Fall through to re-discovery.
-            }
-        }
-
-        const candidates: HTMLElement[] = [root];
-        try {
-            const desc = root.querySelectorAll?.('*') as NodeListOf<HTMLElement> | undefined;
-            if (desc) candidates.push(...Array.from(desc));
-        } catch {
-            // ignore
-        }
-
-        let best: HTMLElement | null = null;
-        let bestScrollHeight = 0;
-        for (const el of candidates) {
-            if (!isScrollable(el)) continue;
-            const sh = (el as any).scrollHeight as number;
-            if (!best || sh > bestScrollHeight) {
-                best = el;
-                bestScrollHeight = sh;
-            }
-        }
-
-        // If we couldn't find a scroll container inside the root, fall back to ancestors.
-        if (!best) {
-            let el: HTMLElement | null = root.parentElement;
-            let steps = 0;
-            while (el && steps < 30) {
-                if (isScrollable(el)) {
-                    best = el;
-                    break;
-                }
-                el = el.parentElement;
-                steps++;
-            }
-        }
-
-        if (!best) return false;
-        webScrollContainerRef.current = best;
+        const metrics = resolveWebScrollMetrics();
+        if (!metrics) return false;
 
         const scrollToVisualBottom = listImplementation !== 'flatlist_legacy';
         try {
-            (best as any).scrollTop = scrollToVisualBottom ? (best as any).scrollHeight : 0;
+            (metrics.element as any).scrollTop = scrollToVisualBottom ? (metrics.element as any).scrollHeight : 0;
         } catch {
             try {
-                (best as any).scrollTop = scrollToVisualBottom ? (best as any).scrollHeight : 0;
+                (metrics.element as any).scrollTop = scrollToVisualBottom ? (metrics.element as any).scrollHeight : 0;
             } catch {
                 return false;
             }
         }
 
         return true;
-    }, [chatListNativeId, listImplementation]);
+    }, [listImplementation, resolveWebScrollMetrics]);
 
     const pinToBottom = React.useCallback(() => {
         if (Platform.OS === 'web') {
@@ -874,14 +1205,17 @@ const ChatListInternal = React.memo((props: {
         }
     }, [jumpAnimateScroll, listImplementation, pinToBottom, tryPinToBottomDom]);
 
+    const shouldAutoPinToBottomNow = React.useCallback((): boolean => {
+        if (!pinEnabled || !autoFollowWhenPinned) return false;
+        if (props.jumpToSeq != null) return false;
+        if (!wantsPinnedRef.current) return false;
+        return Date.now() - lastUserScrollIntentAtMsRef.current >= 250;
+    }, [autoFollowWhenPinned, pinEnabled, props.jumpToSeq]);
+
     const scheduledPinRef = React.useRef<{ kind: 'raf' | 'timeout'; id: any } | null>(null);
     const schedulePinToBottom = React.useCallback(() => {
         if (listImplementation !== 'flash_v2') return;
-        if (!pinEnabled || !autoFollowWhenPinned) return;
-        if (props.jumpToSeq != null) return;
-        if (!wantsPinnedRef.current) return;
-        // Avoid fighting recent user scroll intent.
-        if (Date.now() - lastUserScrollIntentAtMsRef.current < 250) return;
+        if (!shouldAutoPinToBottomNow()) return;
         if (scheduledPinRef.current) return;
 
         const raf = (globalThis as any)?.requestAnimationFrame as undefined | ((cb: () => void) => any);
@@ -891,6 +1225,7 @@ const ChatListInternal = React.memo((props: {
             handle.id = raf(() => {
                 if (scheduledPinRef.current !== handle) return;
                 scheduledPinRef.current = null;
+                if (!shouldAutoPinToBottomNow()) return;
                 pinToBottom();
             });
             return;
@@ -901,9 +1236,10 @@ const ChatListInternal = React.memo((props: {
         handle.id = setTimeout(() => {
             if (scheduledPinRef.current !== handle) return;
             scheduledPinRef.current = null;
+            if (!shouldAutoPinToBottomNow()) return;
             pinToBottom();
         }, 0);
-    }, [autoFollowWhenPinned, listImplementation, pinEnabled, pinToBottom, props.jumpToSeq]);
+    }, [listImplementation, pinToBottom, shouldAutoPinToBottomNow]);
 
     React.useEffect(() => {
         return () => {
@@ -950,28 +1286,33 @@ const ChatListInternal = React.memo((props: {
         initialPinSessionIdRef.current = props.sessionId;
         let cancelled = false;
 
-        const attempt = () => {
-            if (cancelled) return;
+        const isSettledAtVisualBottom = () => {
+            if (Platform.OS !== 'web') return false;
+            const metrics = resolveWebScrollMetrics();
+            if (!metrics) return false;
+            return getWebTranscriptDistanceFromBottom(metrics) === 0;
+        };
+
+        const attempt = (): boolean => {
+            if (cancelled) return true;
             // If the user is actively scrolling (or scroll inertia is still firing wheel events),
             // avoid fighting their intent with initial pin retries.
             if (Platform.OS === 'web') {
-                if (wantsPinnedRef.current === false) return;
-                if (Date.now() - lastUserScrollIntentAtMsRef.current < 250) return;
+                if (wantsPinnedRef.current === false) {
+                    initialWebPinStabilizingRef.current = false;
+                    return true;
+                }
+                if (Date.now() - lastUserScrollIntentAtMsRef.current < 250) return false;
             }
             pinToBottom();
+            if (Platform.OS === 'web' && isSettledAtVisualBottom()) {
+                initialWebPinStabilizingRef.current = false;
+                return true;
+            }
+            return false;
         };
 
-        // Pin immediately and then re-pin during the first few ticks. This is defensive against
-        // web scroll anchoring / restoration that can happen after the initial paint.
-        attempt();
-        void Promise.resolve().then(attempt);
-        void Promise.resolve().then(() => Promise.resolve()).then(attempt);
         if (Platform.OS === 'web') {
-            const timeouts: any[] = [];
-            if (typeof requestAnimationFrame === 'function') {
-                requestAnimationFrame(attempt);
-                requestAnimationFrame(() => requestAnimationFrame(attempt));
-            }
             const tuning = sync.getSyncTuning();
             const stabilizeMaxMsRaw = tuning.transcriptWebInitialPinStabilizeMs;
             const retryIntervalMsRaw = tuning.transcriptWebInitialPinRetryIntervalMs;
@@ -984,47 +1325,83 @@ const ChatListInternal = React.memo((props: {
                     ? Math.max(16, Math.trunc(retryIntervalMsRaw))
                     : 250;
 
-            for (const ms of [0, 16, 50, 100, 200, 400, 800]) {
-                timeouts.push(setTimeout(attempt, ms));
+            const startedAtMs = Date.now();
+
+            if (attempt()) {
+                return () => {
+                    cancelled = true;
+                    initialWebPinStabilizingRef.current = false;
+                };
             }
+
+            const delays = [0, 16, 50, 100, 200, 400, 800].filter((ms) => ms <= stabilizeMaxMs);
             if (stabilizeMaxMs >= 1000) {
                 for (let ms = 1000; ms <= stabilizeMaxMs; ms += retryIntervalMs) {
-                    timeouts.push(setTimeout(attempt, ms));
+                    delays.push(ms);
                 }
             }
+
+            if (delays.length === 0) {
+                initialWebPinStabilizingRef.current = false;
+                return () => {
+                    cancelled = true;
+                };
+            }
+
+            initialWebPinStabilizingRef.current = true;
+            let timeoutId: ReturnType<typeof setTimeout> | null = null;
+            let delayIndex = 0;
+
+            const scheduleNext = () => {
+                if (cancelled) return;
+                if (delayIndex >= delays.length) {
+                    initialWebPinStabilizingRef.current = false;
+                    return;
+                }
+                const delayMs = delays[delayIndex];
+                delayIndex += 1;
+                const timeoutMs = resolveWebPinRetryTimeoutMs({
+                    startedAtMs,
+                    nowMs: Date.now(),
+                    milestoneMs: delayMs,
+                });
+                timeoutId = setTimeout(() => {
+                    timeoutId = null;
+                    if (attempt()) return;
+                    scheduleNext();
+                }, timeoutMs);
+            };
+
+            scheduleNext();
             return () => {
                 cancelled = true;
-                for (const t of timeouts) clearTimeout(t);
+                initialWebPinStabilizingRef.current = false;
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
             };
         }
 
+        // Pin immediately and then re-pin during the first few ticks on native. This is defensive
+        // against layout settling after the initial paint.
+        attempt();
+        void Promise.resolve().then(() => {
+            void attempt();
+        });
+        void Promise.resolve().then(() => Promise.resolve()).then(() => {
+            void attempt();
+        });
         return () => { cancelled = true; };
-    }, [pinToBottom, props.isLoaded, props.jumpToSeq, props.sessionId]);
+    }, [pinToBottom, props.isLoaded, props.jumpToSeq, props.sessionId, resolveWebScrollMetrics]);
 
     const isScrollable = React.useCallback((): boolean => {
         // On web, list content height can include collapsed/offscreen subtrees (e.g. tool-call group bodies),
         // which can cause false positives. Prefer DOM scroll metrics when available.
         if (Platform.OS === 'web') {
             try {
-                if (typeof document !== 'undefined' && typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
-                    const root = (document as any)?.getElementById?.(chatListNativeId) as HTMLElement | null | undefined;
-                    const isScrollableEl = (el: HTMLElement): boolean => {
-                        const cs = window.getComputedStyle(el);
-                        const overflowY = cs?.overflowY;
-                        if (!(overflowY === 'auto' || overflowY === 'scroll')) return false;
-                        const sh = (el as any).scrollHeight;
-                        const ch = (el as any).clientHeight;
-                        if (typeof sh !== 'number' || typeof ch !== 'number') return false;
-                        return sh > ch + 1;
-                    };
-
-                    const cached = webScrollContainerRef.current;
-                    if (root && cached && (cached as any).isConnected !== false && typeof (root as any).contains === 'function' && (root as any).contains(cached)) {
-                        return isScrollableEl(cached);
-                    }
-                    if (root) {
-                        return isScrollableEl(root);
-                    }
+                const metrics = resolveWebScrollMetrics();
+                if (metrics) {
+                    return isWebTranscriptScrollable(metrics, 1);
                 }
             } catch {
                 // fall through to measurement-based heuristic
@@ -1036,7 +1413,27 @@ const ChatListInternal = React.memo((props: {
         if (!Number.isFinite(layout) || layout <= 0) return false;
         if (!Number.isFinite(content) || content <= 0) return false;
         return content > layout + 16;
-    }, [chatListNativeId, listContentHeight, listLayoutHeight]);
+    }, [listContentHeight, listLayoutHeight, resolveWebScrollMetrics]);
+
+    const shouldLoadOlderFromStartReached = React.useCallback((): boolean => {
+        if (initialFillStatusRef.current !== 'done') return false;
+        if (listImplementation !== 'flash_v2' || Platform.OS !== 'web') return true;
+
+        const prefetchThresholdPx = Math.max(1, listLayoutHeightRef.current * 0.2);
+        const metrics = resolveWebScrollMetrics();
+        if (metrics) {
+            return shouldPrefetchOlderFromTop({
+                scrollable: isWebTranscriptScrollable(metrics, 1),
+                offsetY: metrics.scrollTop,
+                prefetchThresholdPx,
+                distanceFromBottom: getWebTranscriptDistanceFromBottom(metrics),
+                pinThresholdPx,
+                wantsPinned: wantsPinnedRef.current,
+            });
+        }
+
+        return wantsPinnedRef.current !== true;
+    }, [listImplementation, pinThresholdPx, resolveWebScrollMetrics]);
 
     const resolveToolCallsCollapsedPreviewCount = React.useCallback((): number => {
         const raw = typeof transcriptToolCallsCollapsedPreviewCountSetting === 'number'
@@ -1184,12 +1581,24 @@ const ChatListInternal = React.memo((props: {
                     await Promise.resolve();
                 },
                 scrollToIndex: (index) => {
+                    if (shouldUseWebHotColdSplit) {
+                        const decision = resolveWebHotColdScrollDecision({
+                            fullIndex: index,
+                            coldCount: transcriptHotColdSegments.coldItems.length,
+                        });
+                        if (decision.kind === 'pin_to_bottom') {
+                            pinToBottom();
+                            return;
+                        }
+                        listRef.current?.scrollToIndex({ index: decision.index, animated: true, viewPosition: 0.5 });
+                        return;
+                    }
                     listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
                 },
                 maxLoads: 25,
             });
         })(), { tag: 'ChatList.jumpToTranscriptSeq' });
-    }, [props.isLoaded, props.jumpToSeq, props.sessionId, resolveJumpIndex]);
+    }, [pinToBottom, props.isLoaded, props.jumpToSeq, props.sessionId, resolveJumpIndex, shouldUseWebHotColdSplit, transcriptHotColdSegments.coldItems.length]);
 
     React.useEffect(() => {
         if (!props.isLoaded) return;
@@ -1208,27 +1617,53 @@ const ChatListInternal = React.memo((props: {
         fireAndForget((async () => {
             // Always pin once up front; this protects against initial layout anchoring quirks on web.
             pinToBottom();
+            if (Platform.OS === 'web') {
+                await waitForNextVisualUpdate();
+            }
 
-            const maxLoads = 10;
-            for (let i = 0; i < maxLoads; i++) {
+            const tuning = sync.getSyncTuning();
+            const startedAtMs = Date.now();
+            const { budgetMs, maxNoProgressLoads } = resolveTranscriptInitialFillTuning({
+                transcriptInitialFillBudgetMs: tuning.transcriptInitialFillBudgetMs,
+                transcriptInitialFillMaxNoProgressLoads: tuning.transcriptInitialFillMaxNoProgressLoads,
+            });
+            let consecutiveNoProgressLoads = 0;
+
+            while (true) {
                 if (signal.aborted) return;
                 // If the transcript is scrollable and we have at least one visible committed message,
                 // stop prefetching older pages.
                 if (isScrollable() && props.committedMessagesCount > 0) break;
+                if (Date.now() - startedAtMs >= budgetMs) break;
 
                 const result = await loadOlder();
                 if (!result) break;
                 if (result.status === 'no_more') break;
 
+                const madeProgress = result.status === 'loaded' && result.loaded > 0;
+                consecutiveNoProgressLoads = madeProgress ? 0 : consecutiveNoProgressLoads + 1;
+
                 // Yield to allow store updates + list re-render + content size update.
                 await Promise.resolve();
                 await Promise.resolve();
                 pinToBottom();
+                if (consecutiveNoProgressLoads >= maxNoProgressLoads) break;
             }
             if (signal.aborted) return;
             initialFillStatusRef.current = 'done';
         })(), { tag: 'ChatList.initialFillOlderMessages' });
-    }, [isScrollable, listContentHeight, listLayoutHeight, loadOlder, pinToBottom, props.committedMessagesCount, props.isLoaded, props.jumpToSeq, props.sessionId]);
+    }, [
+        isScrollable,
+        listContentHeight,
+        listLayoutHeight,
+        loadOlder,
+        pinToBottom,
+        props.committedMessagesCount,
+        props.isLoaded,
+        props.jumpToSeq,
+        props.sessionId,
+        waitForNextVisualUpdate,
+    ]);
 
     return (
         <TranscriptMotionProvider sessionKey={props.sessionId} config={motionConfig}>
@@ -1311,6 +1746,7 @@ const ChatListInternal = React.memo((props: {
                             pinEnabled &&
                             autoFollowWhenPinned &&
                             props.jumpToSeq == null &&
+                            Platform.OS !== 'web' &&
                             nowMs - lastAutoRepinAtMsRef.current > 200 &&
                             nowMs - lastUserScrollIntentAtMsRef.current >= 250
                         ) {
@@ -1364,16 +1800,12 @@ const ChatListInternal = React.memo((props: {
                         <ListHeader isLoadingOlder={isLoadingOlder} />
                   }
                   ListFooterComponent={
-                        <ListFooter
-                            sessionId={props.sessionId}
-                            bottomNotice={props.bottomNotice}
-                            onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-                        />
+                        listFooterNode
                     }
               />
               ) : (
-                  <FlashList<ChatTranscriptListItem>
-                      ref={(node) => {
+                  <FlashList
+                      ref={(node: ScrollableChatListRef | null) => {
                           listRef.current = node as unknown as ScrollableChatListRef | null;
                       }}
                         {...(Platform.OS === 'web'
@@ -1384,16 +1816,15 @@ const ChatListInternal = React.memo((props: {
                                         onMouseDown: markUserScrollIntentOnWeb,
                                   } as any)
                             : {})}
-                      testID="transcript-chat-list"
+                        testID="transcript-chat-list"
                       data={listData}
                       nativeID={chatListNativeId}
                       keyExtractor={keyExtractor}
                         getItemType={getItemType}
-                        estimatedItemSize={sync.getSyncTuning().transcriptFlashListEstimatedItemSize}
                       maintainVisibleContentPosition={
                           flashListMaintainVisibleContentPosition
                       }
-                      onLayout={(e) => {
+                      onLayout={(e: LayoutChangeEvent) => {
                           const h = e?.nativeEvent?.layout?.height;
                           if (typeof h === 'number' && Number.isFinite(h)) {
                               listLayoutHeightRef.current = h;
@@ -1403,7 +1834,7 @@ const ChatListInternal = React.memo((props: {
                                 }
                           }
                       }}
-                      onContentSizeChange={(_, h) => {
+                      onContentSizeChange={(_: number, h: number) => {
                           if (typeof h === 'number' && Number.isFinite(h)) {
                               listContentHeightRef.current = h;
                               setListContentHeight(h);
@@ -1412,7 +1843,7 @@ const ChatListInternal = React.memo((props: {
                                 }
                           }
                       }}
-                        onScroll={(e) => {
+                        onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
                             const y = e?.nativeEvent?.contentOffset?.y;
                             if (typeof y !== 'number' || !Number.isFinite(y)) return;
                                 const nowMs = Date.now();
@@ -1422,20 +1853,25 @@ const ChatListInternal = React.memo((props: {
                                 }
                               const layoutH = listLayoutHeightRef.current;
                               const contentH = listContentHeightRef.current;
-                                const backwardPrefetchThresholdPx = sync.getSyncTuning().transcriptBackwardPrefetchThresholdPx;
-                                const scrollable = layoutH > 0 && contentH > layoutH + 16;
-                                if (
-                                    initialFillStatusRef.current === 'done' &&
-                                    scrollable &&
-                                    backwardPrefetchThresholdPx > 0 &&
-                                    y <= backwardPrefetchThresholdPx
-                                ) {
-                                    void loadOlder();
-                                }
                               const distanceFromBottom =
                                   layoutH > 0 && contentH >= layoutH
                                       ? Math.max(0, Math.trunc(contentH - layoutH - y))
                                       : 0;
+                                const backwardPrefetchThresholdPx = sync.getSyncTuning().transcriptBackwardPrefetchThresholdPx;
+                                const scrollable = layoutH > 0 && contentH > layoutH + 16;
+                                if (shouldPrefetchOlderFromTop({
+                                    scrollable: initialFillStatusRef.current === 'done' && scrollable,
+                                    offsetY: y,
+                                    prefetchThresholdPx: backwardPrefetchThresholdPx,
+                                    distanceFromBottom,
+                                    pinThresholdPx,
+                                    wantsPinned: wantsPinnedRef.current,
+                                })) {
+                                    void loadOlder();
+                                }
+                                if (loadOlderInFlight.current) {
+                                    refreshInFlightWebPrependAnchor();
+                                }
                                 const prev = lastPinOffsetForIntentRef.current;
                                 const movedAwayFromBottom = typeof prev === 'number' ? distanceFromBottom > prev : false;
                                 lastPinOffsetForIntentRef.current = distanceFromBottom;
@@ -1458,6 +1894,7 @@ const ChatListInternal = React.memo((props: {
                                   pinEnabled &&
                                   autoFollowWhenPinned &&
                                   props.jumpToSeq == null &&
+                                  Platform.OS !== 'web' &&
                                   nowMs - lastAutoRepinAtMsRef.current > 200 &&
                                   nowMs - lastUserScrollIntentAtMsRef.current >= 250
                               ) {
@@ -1497,7 +1934,7 @@ const ChatListInternal = React.memo((props: {
                       renderItem={renderItem}
                       onStartReachedThreshold={0.2}
                       onStartReached={() => {
-                          if (initialFillStatusRef.current !== 'done') return;
+                          if (!shouldLoadOlderFromStartReached()) return;
                           void loadOlder();
                       }}
                       onScrollToIndexFailed={(info: { index: number; averageItemLength: number }) => {
@@ -1508,11 +1945,7 @@ const ChatListInternal = React.memo((props: {
                             <ListHeader isLoadingOlder={isLoadingOlder} />
                       }
                       ListFooterComponent={
-                            <ListFooter
-                                sessionId={props.sessionId}
-                                bottomNotice={props.bottomNotice}
-                                onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-                            />
+                            flashListFooterNode
                         }
                   />
               )}

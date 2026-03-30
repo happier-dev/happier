@@ -17,17 +17,55 @@ So these tests intentionally run **real components** (server-light, DB, sockets,
 - real permission approval lifecycle (RPC + agentState)
 - provider “contract drift” detection via tool-trace fixtures + baselines
 
+## Shared testkit boundaries
+
+`packages/tests/src/testkit` is the cross-repo shared testing platform for reusable primitives only.
+
+Canonical shared homes:
+- env scope / snapshot / restore: `src/testkit/env.ts`
+- tempdir / path-bin lifecycle: `src/testkit/fs/*`
+- process cleanup / heartbeat / launcher helpers: `src/testkit/process/*`
+- timing / wait / poll helpers: `src/testkit/timing/*`
+- shared socket event capture: `src/testkit/socketEventCollector.ts` and `src/testkit/socketClient.ts`
+- provider harness orchestration: `src/testkit/providers/**`
+
+Out of scope for this package:
+- UI-local render/store/router helpers
+- CLI-only runtime/provider adapters
+- server route/db harnesses
+- stack-native `node --test` helpers
+
 ## Commands
 
 - Core deterministic e2e: `yarn workspace @happier-dev/tests test`
 - Core deterministic e2e (fast lane): `yarn workspace @happier-dev/tests test:core:fast`
 - Core deterministic e2e (slow lane): `yarn workspace @happier-dev/tests test:core:slow`
 - UI E2E (Playwright, web UI): `yarn workspace @happier-dev/tests test:ui:e2e`
+- WSREPL Lima matrix (macOS/Linux host opt-in): `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa`
 - Stress (seeded chaos): `yarn workspace @happier-dev/tests test:stress`
 - Providers (real provider CLIs, opt-in): `yarn workspace @happier-dev/tests test:providers`
 - Typecheck: `yarn workspace @happier-dev/tests typecheck`
 
 Root aliases may exist (e.g. `yarn test:e2e`), but the workspace commands above are the source of truth.
+
+## Shared platform homes
+
+`packages/tests/src/testkit` is the shared cross-repo testing platform. Keep app-local helpers in their owning app packages; only genuinely shared primitives belong here.
+
+- Env overrides/snapshots: `src/testkit/env.ts`
+- Temp dirs and PATH-bin helpers: `src/testkit/fs/tempDir.ts`, `src/testkit/fs/tempPathBin.ts`
+- Tempdir/path-bin bridge wrappers: `src/testkit/fs/withTempDir.ts`, `src/testkit/fs/withTempPathBin.ts`
+- Process cleanup / heartbeat / launcher convergence: `src/testkit/process/*`, `scripts/run-vitest-with-heartbeat.mjs`, `scripts/run-playwright-with-heartbeat.mjs`
+- Shared socket event capture: `src/testkit/socketEventCollector.ts`
+- Shared provider harness entrypoints: `src/testkit/providers/harness/index.ts`, `src/testkit/providers/scenarios/scenarioCatalog.ts`
+
+FS canonical surface note:
+- Prefer the handle-based APIs from `tempDir.ts` and `tempPathBin.ts` for new shared callsites.
+- `withTempDir.ts` and `withTempPathBin.ts` remain compatibility bridges for older callback signatures during migration.
+
+Socket assertion surface:
+- `SocketCollector#getEvents()` and `attachSocketEventCollector(...)` both produce the same `CapturedEvent[]` contract (`connect`, `disconnect`, `connect_error`, `update`, `ephemeral`).
+- Server-local fake sockets should align to that event shape instead of introducing a parallel assertion format.
 
 ## Providers convenience commands
 
@@ -82,6 +120,8 @@ Artifacts are written on failure by default. You can force keeping artifacts eve
 UI E2E (Playwright) notes:
 - Expo web is started via `expo start --web`; if you suspect stale Metro transforms, you can opt into cache clearing with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
 - UI E2E artifacts live under `.project/logs/e2e/ui-playwright/...` and include screenshots + videos on failure.
+- WSREPL Lima matrix artifacts live under `apps/stack/output/wsrepl-lima-matrix/...`; the lane entrypoint, raw harness, and Lima bootstrap helper now live in `packages/tests` (`packages/tests/scripts/run-wsrepl-lima-matrix.mjs`, `packages/tests/scripts/wsrepl-lima-matrix.sh`, `packages/tests/scripts/lima-vm.sh`). The stack copies are compatibility shims only and are excluded from the published stack package.
+- Harness self-tests run via `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima:self`.
 
 ## Core e2e suite: what each test ensures
 
@@ -179,6 +219,10 @@ The entrypoint is `suites/providers/provider.matrix.test.ts`, backed by:
 - `src/testkit/providers/scenarios/scenarios.claude.ts`
 - `src/testkit/providers/scenarios/scenarios.codex.ts`
 - `src/testkit/providers/scenarios/scenarios.opencode.ts`
+
+Current Codex scope note:
+- `HAPPIER_E2E_PROVIDER_CODEX=1` exercises the Codex ACP provider lane only.
+- Codex app-server behavior is covered outside the provider lane in targeted CLI/backend tests (for example `apps/cli/src/capabilities/probes/agentModesProbe.codexAppServer.test.ts`, `apps/cli/src/capabilities/probes/agentModelsProbe.codexAppServer.test.ts`, and `apps/cli/src/backends/codex/runCodex.acpResumePreflight.integration.test.ts`).
 
 ### Environment flags
 

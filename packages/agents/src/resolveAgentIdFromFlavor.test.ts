@@ -9,6 +9,8 @@ describe('resolveAgentIdFromFlavor', () => {
   it('resolves canonical agent ids', () => {
     expect(resolveAgentIdFromFlavor('claude')).toBe('claude');
     expect(resolveAgentIdFromFlavor('codex')).toBe('codex');
+    expect(resolveAgentIdFromFlavor('kiro')).toBe('kiro');
+    expect(resolveAgentIdFromFlavor('customAcp')).toBe('customAcp');
   });
 
   it('resolves legacy flavor aliases', () => {
@@ -19,6 +21,11 @@ describe('resolveAgentIdFromFlavor', () => {
 
   it('resolves manifest flavor aliases', () => {
     expect(resolveAgentIdFromFlavor('codex-acp')).toBe('codex');
+    expect(resolveAgentIdFromFlavor('custom-acp')).toBe('customAcp');
+  });
+
+  it('maps configured ACP flavor ids to generic ACP semantics', () => {
+    expect(resolveAgentIdFromFlavor('acp:custom-kiro')).toBe('customAcp');
   });
 
   it('returns null for unknown flavors', () => {
@@ -38,9 +45,18 @@ describe('inferAgentIdFromSessionMetadata', () => {
     expect(inferAgentIdFromSessionMetadata({ claudeSessionId: 'c1' })).toBe('claude');
   });
 
+  it('prefers agentRuntimeDescriptorV1 provider ids when flavor and legacy fields are missing', () => {
+    expect(inferAgentIdFromSessionMetadata({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'opencode',
+        provider: { backendMode: 'server', vendorSessionId: 'oc_1' },
+      },
+    })).toBe('opencode');
+  });
+
   it('falls back to DEFAULT_AGENT_ID when no inference matches', () => {
     expect(inferAgentIdFromSessionMetadata({})).toBe(DEFAULT_AGENT_ID);
     expect(inferAgentIdFromSessionMetadata(null)).toBe(DEFAULT_AGENT_ID);
   });
 });
-

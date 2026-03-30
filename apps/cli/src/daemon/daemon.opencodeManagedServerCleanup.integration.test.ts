@@ -1,70 +1,24 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile, copyFile, readFile, readdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, rm, writeFile, readFile, readdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { createServer } from 'node:net';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { readCredentials } from '@/persistence';
+import { isPidAlive, spawnDetachedInlineNodeTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
+import { prepareIsolatedDaemonTestHome, type PreparedDaemonTestHome } from './testkit/realIntegration.testkit';
 
-type EnvSnapshot = {
-  homeDir: string | undefined;
-  activeServerId: string | undefined;
-  serverUrl: string | undefined;
-  webappUrl: string | undefined;
-  publicServerUrl: string | undefined;
-  opencodeServerStatePath: string | undefined;
-};
-
-const originalEnv: EnvSnapshot = {
-  homeDir: process.env.HAPPIER_HOME_DIR,
-  activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID,
-  serverUrl: process.env.HAPPIER_SERVER_URL,
-  webappUrl: process.env.HAPPIER_WEBAPP_URL,
-  publicServerUrl: process.env.HAPPIER_PUBLIC_SERVER_URL,
-  opencodeServerStatePath: process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH,
-};
-
-let isolatedHomeDir: string | null = null;
-let sourceHomeDir: string | null = null;
-
-async function copyIfExists(from: string, to: string): Promise<void> {
-  if (!existsSync(from)) return;
-  await mkdir(dirname(to), { recursive: true });
-  await copyFile(from, to);
-}
+let preparedDaemonHome: PreparedDaemonTestHome | null = null;
 
 async function prepareIsolatedHome(): Promise<void> {
-  const sourceHome = configuration.happyHomeDir;
-  sourceHomeDir = sourceHome;
-  const sourceSettingsFile = configuration.settingsFile;
-  const sourceLegacyKeyFile = configuration.legacyPrivateKeyFile;
-  const sourceServerKeyFile = configuration.privateKeyFile;
-
-  const sourceServerId = configuration.activeServerId;
-  const sourceServerUrl = configuration.serverUrl;
-  const sourceWebappUrl = configuration.webappUrl;
-  const sourcePublicServerUrl = configuration.publicServerUrl;
-
-  const parentDir = join(sourceHome, 'tmp');
-  await mkdir(parentDir, { recursive: true });
-  isolatedHomeDir = await mkdtemp(join(parentDir, 'happier-daemon-opencode-cleanup-'));
-
-  process.env.HAPPIER_HOME_DIR = isolatedHomeDir;
-  process.env.HAPPIER_ACTIVE_SERVER_ID = sourceServerId;
-  process.env.HAPPIER_SERVER_URL = sourceServerUrl;
-  process.env.HAPPIER_WEBAPP_URL = sourceWebappUrl;
-  process.env.HAPPIER_PUBLIC_SERVER_URL = sourcePublicServerUrl;
-  process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH = join(isolatedHomeDir, 'opencode', `managed-server-${process.pid}.json`);
-  reloadConfiguration();
-
-  await copyIfExists(sourceSettingsFile, configuration.settingsFile);
-  await copyIfExists(sourceLegacyKeyFile, configuration.legacyPrivateKeyFile);
-  await copyIfExists(sourceServerKeyFile, configuration.privateKeyFile);
+  preparedDaemonHome = await prepareIsolatedDaemonTestHome({
+    prefix: 'happier-daemon-opencode-cleanup-',
+    extraEnv: ({ homeDir }) => ({
+      HAPPIER_OPENCODE_SERVER_STATE_PATH: join(homeDir, 'opencode', `managed-server-${process.pid}.json`),
+    }),
+  });
 
   // Integration test env may not have real credentials; daemon refuses to start non-interactively without them.
   // Provide a minimal dummy credential so the daemon can bring up its control server.
@@ -79,28 +33,8 @@ async function prepareIsolatedHome(): Promise<void> {
 }
 
 async function restoreEnvAndCleanup(): Promise<void> {
-  if (isolatedHomeDir) {
-    const expectedPrefix = sourceHomeDir ? join(sourceHomeDir, 'tmp', 'happier-daemon-opencode-cleanup-') : null;
-    const safeToDelete = expectedPrefix ? isolatedHomeDir.startsWith(expectedPrefix) : false;
-    if (safeToDelete) {
-      await rm(isolatedHomeDir, { recursive: true, force: true }).catch(() => {});
-    }
-    isolatedHomeDir = null;
-  }
-
-  if (originalEnv.homeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-  else process.env.HAPPIER_HOME_DIR = originalEnv.homeDir;
-  if (originalEnv.activeServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-  else process.env.HAPPIER_ACTIVE_SERVER_ID = originalEnv.activeServerId;
-  if (originalEnv.serverUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-  else process.env.HAPPIER_SERVER_URL = originalEnv.serverUrl;
-  if (originalEnv.webappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-  else process.env.HAPPIER_WEBAPP_URL = originalEnv.webappUrl;
-  if (originalEnv.publicServerUrl === undefined) delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-  else process.env.HAPPIER_PUBLIC_SERVER_URL = originalEnv.publicServerUrl;
-  if (originalEnv.opencodeServerStatePath === undefined) delete process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH;
-  else process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH = originalEnv.opencodeServerStatePath;
-  reloadConfiguration();
+  await preparedDaemonHome?.restore();
+  preparedDaemonHome = null;
 }
 
 async function findDaemonLogPathBestEffort(pid: number): Promise<string | null> {
@@ -146,25 +80,6 @@ async function resolveEphemeralPort(hostname: string): Promise<number> {
   });
 }
 
-function isPidAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function waitForPidDeath(pid: number, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isPidAlive(pid)) return;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error(`PID ${pid} did not exit within ${timeoutMs}ms`);
-}
-
 async function startFakeOpenCodeHealthServer(): Promise<{ pid: number; baseUrl: string; close: () => Promise<void> }> {
   const hostname = '127.0.0.1';
   const port = await resolveEphemeralPort(hostname);
@@ -186,12 +101,10 @@ async function startFakeOpenCodeHealthServer(): Promise<{ pid: number; baseUrl: 
     setInterval(() => {}, 1 << 30);
   `;
 
-  const child = spawn(process.execPath, ['-e', script], {
+  const child = spawnDetachedInlineNodeTestProcess(script, {
     env: { ...process.env, PORT: String(port) },
     stdio: ['ignore', 'ignore', 'ignore'],
-    detached: true,
   });
-  child.unref?.();
 
   const pid = child.pid ?? -1;
   if (pid <= 0) throw new Error('Failed to spawn fake OpenCode health server process');
@@ -221,7 +134,7 @@ async function startFakeOpenCodeHealthServer(): Promise<{ pid: number; baseUrl: 
           // ignore
         }
       }
-      await waitForPidDeath(pid, 5_000).catch(() => {});
+      await waitForProcessExit(pid, { timeoutMs: 5_000 }).catch(() => false);
     },
   };
 }
@@ -278,7 +191,7 @@ describe('daemon OpenCode managed server cleanup', { timeout: 120_000 }, () => {
 
       process.kill(daemonPid, 'SIGTERM');
 
-      await waitForPidDeath(fake.pid, 10_000);
+      await expect(waitForProcessExit(fake.pid, { timeoutMs: 10_000 })).resolves.toBe(true);
       expect(isPidAlive(fake.pid)).toBe(false);
 
       const daemonExitCode: number | null =
@@ -304,7 +217,7 @@ describe('daemon OpenCode managed server cleanup', { timeout: 120_000 }, () => {
           } catch {
             // ignore
           }
-          await waitForPidDeath(pid, 5_000).catch(() => {});
+          await waitForProcessExit(pid, { timeoutMs: 5_000 }).catch(() => false);
         }
       }
       await fake.close().catch(() => {});

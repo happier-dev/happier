@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWriteStream } from 'node:fs';
 import { PassThrough } from 'node:stream';
 
+import { createAcpSubprocessEnvScope } from '../testkit/subprocessHarness';
+
 const createdCaptureStreams: PassThrough[] = [];
 
 vi.mock('node:fs', async () => {
@@ -23,27 +25,23 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 describe('nodeToWebStreams (capture stream errors)', () => {
-  let prevCapture: string | undefined;
-  let prevTraceFile: string | undefined;
+  const envScope = createAcpSubprocessEnvScope();
 
   beforeEach(() => {
-    prevCapture = process.env.HAPPIER_ACP_CAPTURE_IO;
-    prevTraceFile = process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
     createdCaptureStreams.length = 0;
     vi.mocked(createWriteStream).mockImplementation((_path: any, _opts?: any) => {
       const stream = new PassThrough();
       createdCaptureStreams.push(stream);
       return stream as any;
     });
-    process.env.HAPPIER_ACP_CAPTURE_IO = '1';
-    process.env.HAPPIER_STACK_TOOL_TRACE_FILE = '/tmp/happier-nodeToWebStreams-capture-errors.trace';
+    envScope.patch({
+      HAPPIER_ACP_CAPTURE_IO: '1',
+      HAPPIER_STACK_TOOL_TRACE_FILE: '/tmp/happier-nodeToWebStreams-capture-errors.trace',
+    });
   });
 
   afterEach(() => {
-    if (prevCapture === undefined) delete (process.env as any).HAPPIER_ACP_CAPTURE_IO;
-    else process.env.HAPPIER_ACP_CAPTURE_IO = prevCapture;
-    if (prevTraceFile === undefined) delete (process.env as any).HAPPIER_STACK_TOOL_TRACE_FILE;
-    else process.env.HAPPIER_STACK_TOOL_TRACE_FILE = prevTraceFile;
+    envScope.restore();
   });
 
   it('attaches error listeners to capture streams', async () => {

@@ -1,26 +1,43 @@
+import type { AgentModelDescriptor } from '@happier-dev/agents';
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 
 type ResumeSupportKind =
     | 'supported'
     | 'supportedExperimental'
-    | 'runtimeGatedAcpLoadSession'
     | 'notSupported';
 
 type SessionModeKind = AgentCoreConfig['sessionModes']['kind'];
+
+type SessionModeDescriptor = Readonly<{
+    source: 'none' | 'acp' | 'provider-native';
+    semantics: 'none' | 'policy-presets' | 'agent-modes';
+    runtimeSwitch: 'none' | 'metadata-gating' | 'acp-setSessionMode' | 'provider-native';
+}>;
 
 type RuntimeSwitchInput = 'none' | 'metadata-gating' | 'acp-setSessionMode' | 'provider-native';
 
 type RuntimeSwitchKind = 'none' | 'metadataGating' | 'acpSetSessionMode' | 'providerNative';
 
-export function buildCatalogModelList(input: Readonly<{ defaultMode: string; allowedModes: readonly string[] }>): string[] {
+export function buildCatalogModelList(input: Readonly<{
+    defaultMode: string;
+    allowedModes: readonly string[];
+    staticModels?: readonly AgentModelDescriptor[];
+}>): string[] {
     const out: string[] = [];
+    const staticNamesById = new Map(
+        (input.staticModels ?? [])
+            .filter((model) => typeof model.id === 'string' && model.id.trim().length > 0 && typeof model.name === 'string' && model.name.trim().length > 0)
+            .map((model) => [model.id.trim(), model.name] as const),
+    );
     if (input.defaultMode.trim().length > 0) {
-        out.push(input.defaultMode);
+        out.push(staticNamesById.get(input.defaultMode) ?? input.defaultMode);
     }
     for (const mode of input.allowedModes) {
         if (typeof mode !== 'string' || mode.trim().length === 0) continue;
-        if (out.includes(mode)) continue;
-        out.push(mode);
+        const normalized = mode.trim();
+        const label = staticNamesById.get(normalized) ?? normalized;
+        if (out.includes(label)) continue;
+        out.push(label);
     }
     return out;
 }
@@ -28,19 +45,34 @@ export function buildCatalogModelList(input: Readonly<{ defaultMode: string; all
 export function describeResumeSupportKind(input: Readonly<{
     supportsVendorResume: boolean;
     experimental: boolean;
-    runtimeGate: AgentCoreConfig['resume']['runtimeGate'];
 }>): ResumeSupportKind {
     if (input.supportsVendorResume) {
         return input.experimental ? 'supportedExperimental' : 'supported';
-    }
-    if (input.runtimeGate === 'acpLoadSession') {
-        return 'runtimeGatedAcpLoadSession';
     }
     return 'notSupported';
 }
 
 export function classifySessionModeKind(kind: SessionModeKind): SessionModeKind {
     return kind;
+}
+
+export function classifySessionModeDescriptor(descriptor: SessionModeDescriptor): Readonly<{
+    sessionModeKind: SessionModeKind;
+    runtimeSwitchKind: RuntimeSwitchKind;
+}> {
+    const sessionModeKind: SessionModeKind =
+        descriptor.source === 'provider-native' && descriptor.semantics === 'agent-modes'
+            ? 'staticAgentModes'
+            : descriptor.source === 'acp' && descriptor.semantics === 'agent-modes'
+                ? 'acpAgentModes'
+                : descriptor.source === 'acp' && descriptor.semantics === 'policy-presets'
+                    ? 'acpPolicyPresets'
+                    : 'none';
+
+    return {
+        sessionModeKind,
+        runtimeSwitchKind: classifyRuntimeSwitchKind(descriptor.runtimeSwitch),
+    };
 }
 
 export function classifyRuntimeSwitchKind(kind: RuntimeSwitchInput): RuntimeSwitchKind {

@@ -49,5 +49,34 @@ describe('pruneSecretBindings', () => {
             },
         });
     });
-});
 
+    it('treats non-array envVarRequirements as empty (does not throw)', () => {
+        const base = settingsParse({});
+
+        const settings = {
+            ...base,
+            profiles: [
+                {
+                    id: 'custom-1',
+                    name: 'Custom',
+                    environmentVariables: [],
+                    compatibility: { claude: true, codex: true, gemini: true },
+                    envVarRequirements: {},
+                    isBuiltIn: false,
+                    createdAt: 0,
+                    updatedAt: 0,
+                    version: '1.0.0',
+                },
+            ],
+            secrets: [{ id: 's1', name: 'S1', kind: 'apiKey', encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'Zm9v' } }, createdAt: 0, updatedAt: 0 }],
+            secretBindingsByProfileId: {
+                'custom-1': {
+                    OPENAI_API_KEY: 's1',
+                },
+            },
+        };
+
+        const pruned = pruneSecretBindings(settings as any);
+        expect(pruned.secretBindingsByProfileId).toEqual({});
+    });
+});

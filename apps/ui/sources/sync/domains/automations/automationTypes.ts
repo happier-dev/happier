@@ -1,3 +1,8 @@
+import type { BackendTargetRefV1, SessionMcpSelectionV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { CodexBackendMode } from '@happier-dev/agents';
+
+import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
+
 export type AutomationSchedule = Readonly<{
     kind: 'cron' | 'interval';
     scheduleExpr: string | null;
@@ -61,9 +66,13 @@ export type AutomationRun = Readonly<{
 
 export type AutomationTemplate = Readonly<{
     directory: string;
+    checkoutCreationDraft?: NewSessionCheckoutCreationDraft;
     prompt?: string;
     displayText?: string;
     agent?: string;
+    backendTarget?: BackendTargetRefV1;
+    connectedServices?: unknown;
+    transcriptStorage?: 'persisted' | 'direct';
     profileId?: string;
     environmentVariables?: Record<string, string>;
     resume?: string;
@@ -71,11 +80,15 @@ export type AutomationTemplate = Readonly<{
     permissionModeUpdatedAt?: number;
     modelId?: string;
     modelUpdatedAt?: number;
+    mcpSelection?: SessionMcpSelectionV1;
     terminal?: unknown;
+    windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode;
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
-    experimentalCodexResume?: boolean;
     experimentalCodexAcp?: boolean;
+    codexBackendMode?: CodexBackendMode;
+    agentModeId?: string;
     existingSessionId?: string;
+    sessionEncryptionMode?: 'e2ee' | 'plain';
     sessionEncryptionKeyBase64?: string;
     sessionEncryptionVariant?: 'dataKey';
 }>;

@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isPidAlive } from '../proc/pids.mjs';
-import { isTcpPortFree } from '../net/ports.mjs';
+import { isTcpPortFree, listListenPids } from '../net/ports.mjs';
+import { runCapture } from '../proc/proc.mjs';
 
 export { isPidAlive };
 
@@ -33,6 +34,61 @@ export async function looksLikeExpoMetro({ port, timeoutMs = null } = {}) {
   } catch {
     return false;
   }
+}
+
+function resolveMetroWaitTimeoutMsFromEnv(env = process.env) {
+  const raw = (env.HAPPIER_STACK_EXPO_METRO_WAIT_TIMEOUT_MS ?? '').toString().trim();
+  const n = raw ? Number(raw) : null;
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  return 120_000;
+}
+
+function resolveMetroWaitIntervalMsFromEnv(env = process.env) {
+  const raw = (env.HAPPIER_STACK_EXPO_METRO_WAIT_INTERVAL_MS ?? '').toString().trim();
+  const n = raw ? Number(raw) : null;
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  return 500;
+}
+
+export async function waitForExpoMetroRunning(
+  {
+    port,
+    timeoutMs = null,
+    intervalMs = null,
+    env = process.env,
+  } = {},
+  {
+    looksLikeExpoMetroImpl = looksLikeExpoMetro,
+    delayImpl = delay,
+    nowMsImpl = () => Date.now(),
+  } = {},
+) {
+  const p = Number(port);
+  if (!Number.isFinite(p) || p <= 0) {
+    return { ok: false, reason: 'invalid_port', probes: 0 };
+  }
+  const resolvedTimeoutMs =
+    Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+      ? Number(timeoutMs)
+      : resolveMetroWaitTimeoutMsFromEnv(env);
+  const resolvedIntervalMs =
+    Number.isFinite(Number(intervalMs)) && Number(intervalMs) > 0
+      ? Number(intervalMs)
+      : resolveMetroWaitIntervalMsFromEnv(env);
+
+  const startMs = nowMsImpl();
+  let probes = 0;
+  while (nowMsImpl() - startMs <= resolvedTimeoutMs) {
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await looksLikeExpoMetroImpl({ port: p });
+    probes += 1;
+    if (ok) {
+      return { ok: true, probes };
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await delayImpl(resolvedIntervalMs);
+  }
+  return { ok: false, reason: 'timeout', probes };
 }
 
 function hashDir(dir) {
@@ -109,6 +165,23 @@ export async function isStateProcessRunning(statePath) {
     return { running: true, state, reason: 'pid' };
   }
 
+  async function looksOwnedByProjectDir(port, projectDir) {
+    const p = Number(port);
+    const raw = String(projectDir ?? '').trim();
+    if (!Number.isFinite(p) || p <= 0) return false;
+    if (!raw) return false;
+    const needle = resolve(raw);
+    const pids = await listListenPids(p, { host: '127.0.0.1' }).catch(() => []);
+    for (const listenPid of pids) {
+      // eslint-disable-next-line no-await-in-loop
+      const line = await runCapture('ps', ['-o', 'command=', '-p', String(listenPid)]).catch(() => '');
+      if (line && String(line).includes(needle)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Expo/Metro can sometimes be “up” even if the original wrapper pid exited (pm/yarn layers).
   // If we have a port and something is listening on it, treat it as running only if it looks like Metro.
   const port = Number(state?.port);
@@ -118,6 +191,13 @@ export async function isStateProcessRunning(statePath) {
       if (!free) {
         const ok = await looksLikeExpoMetro({ port });
         if (ok) {
+          const projectDir = String(state?.projectDir ?? '').trim() || String(state?.uiDir ?? '').trim();
+          if (projectDir) {
+            const owned = await looksOwnedByProjectDir(port, projectDir);
+            if (!owned) {
+              return { running: false, state, reason: 'port_project_mismatch' };
+            }
+          }
           return { running: true, state, reason: 'port' };
         }
         return { running: false, state };
@@ -133,6 +213,36 @@ export async function isStateProcessRunning(statePath) {
 export async function writePidState(statePath, state) {
   await mkdir(dirname(statePath), { recursive: true }).catch(() => {});
   await writeFile(statePath, JSON.stringify(state, null, 2) + '\n', 'utf-8');
+}
+
+export async function findRunningExpoStateInRoot({ expoDevRoot, requireWeb = false, expectedProjectDir = '' } = {}) {
+  const root = String(expoDevRoot ?? '').trim();
+  if (!root) return null;
+  if (!existsSync(root)) return null;
+  const expected = String(expectedProjectDir ?? '').trim();
+  const expectedResolved = expected ? resolve(expected) : '';
+  let entries = [];
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const statePath = join(root, ent.name, 'expo.state.json');
+    if (!existsSync(statePath)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const res = await isStateProcessRunning(statePath);
+    if (!res?.running) continue;
+    if (requireWeb && res?.state?.webEnabled === false) continue;
+    if (expectedResolved) {
+      const projectDirRaw = String(res?.state?.projectDir ?? res?.state?.uiDir ?? '').trim();
+      if (!projectDirRaw) continue;
+      if (resolve(projectDirRaw) !== expectedResolved) continue;
+    }
+    return { statePath, state: res.state };
+  }
+  return null;
 }
 
 export async function killPid(pid) {

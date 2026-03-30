@@ -9,7 +9,16 @@ afterEach(() => {
 describe('buildGoogleApiKeyRestrictionHeaders', () => {
   it('returns empty headers when applicationId is missing', async () => {
     vi.doMock('expo-application', () => ({ applicationId: null }));
-    vi.doMock('react-native', () => ({ Platform: { OS: 'ios' } }));
+    vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+            },
+        }
+    );
+});
 
     const { buildGoogleApiKeyRestrictionHeaders } = await import('./googleApiKeyHeaders');
     expect(buildGoogleApiKeyRestrictionHeaders()).toEqual({});
@@ -17,7 +26,16 @@ describe('buildGoogleApiKeyRestrictionHeaders', () => {
 
   it('includes X-Ios-Bundle-Identifier on iOS', async () => {
     vi.doMock('expo-application', () => ({ applicationId: 'com.example.app' }));
-    vi.doMock('react-native', () => ({ Platform: { OS: 'ios' } }));
+    vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+            },
+        }
+    );
+});
 
     const { buildGoogleApiKeyRestrictionHeaders } = await import('./googleApiKeyHeaders');
     expect(buildGoogleApiKeyRestrictionHeaders()).toEqual({ 'X-Ios-Bundle-Identifier': 'com.example.app' });
@@ -25,7 +43,16 @@ describe('buildGoogleApiKeyRestrictionHeaders', () => {
 
   it('includes Android restriction headers when configured', async () => {
     vi.doMock('expo-application', () => ({ applicationId: 'com.example.app' }));
-    vi.doMock('react-native', () => ({ Platform: { OS: 'android' } }));
+    vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'android',
+            },
+        }
+    );
+});
 
     const { buildGoogleApiKeyRestrictionHeaders } = await import('./googleApiKeyHeaders');
     expect(buildGoogleApiKeyRestrictionHeaders({ androidCertSha1: 'aa:bb cc' })).toEqual({

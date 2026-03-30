@@ -1,8 +1,9 @@
+import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { findVoiceCarrierSessionId } from '@/voice/agent/voiceCarrierSession';
+import { findVoiceConversationSessionId } from '@/voice/sessionBinding/voiceConversationSession';
 
 type VoiceAgentTurnPayloadV1 = Readonly<{
   v: 1;
@@ -75,38 +76,51 @@ function buildEventsFromCarrierMessages(params: Readonly<{
   return out;
 }
 
-async function waitForCarrierMessagesLoaded(carrierSessionId: string, timeoutMs: number): Promise<void> {
+function isConversationMessagesLoaded(state: any, conversationSessionId: string): boolean {
+  return state?.sessionMessages?.[conversationSessionId]?.isLoaded === true;
+}
+
+async function waitForConversationMessagesLoaded(conversationSessionId: string, timeoutMs: number): Promise<boolean> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const s: any = storage.getState();
-    if (s?.sessionMessages?.[carrierSessionId]?.isLoaded === true) return;
+    if (isConversationMessagesLoaded(s, conversationSessionId)) return true;
     await new Promise((r) => setTimeout(r, 25));
   }
+  return false;
 }
 
 /**
  * Hydrate the global voice agent activity feed from the persisted transcript messages
- * inside the hidden voice carrier session (if present + transcript persistence enabled).
+ * inside the hidden voice conversation session (if present + transcript persistence enabled).
  */
 export async function hydrateVoiceAgentActivityFromCarrierSession(): Promise<void> {
   const state: any = storage.getState();
   const transcript = resolveTranscriptConfig(state);
   if (transcript.persistenceMode !== 'persistent') return;
 
-  const carrierSessionId = findVoiceCarrierSessionId(state);
-  if (!carrierSessionId) return;
+  const conversationSessionId = findVoiceConversationSessionId(state);
+  if (!conversationSessionId) return;
 
-  if (state?.sessionMessages?.[carrierSessionId]?.isLoaded !== true) {
+  let didConfirmCarrierLoad = isConversationMessagesLoaded(state, conversationSessionId);
+  if (!didConfirmCarrierLoad) {
     try {
-      sync.onSessionVisible(carrierSessionId);
+      sync.onSessionVisible(conversationSessionId);
     } catch {
       // Best-effort only; hydration should never crash the UI if sync isn't ready yet.
     }
-    await waitForCarrierMessagesLoaded(carrierSessionId, resolveNetworkTimeoutMs(storage.getState() as any));
+    didConfirmCarrierLoad = await waitForConversationMessagesLoaded(
+      conversationSessionId,
+      resolveNetworkTimeoutMs(storage.getState() as any),
+    );
+  }
+
+  if (!didConfirmCarrierLoad) {
+    return;
   }
 
   const nextState: any = storage.getState();
-  const carrierMessages = nextState?.sessionMessages?.[carrierSessionId]?.messages ?? [];
+  const carrierMessages = readStoredSessionMessages(nextState, conversationSessionId);
   const events = buildEventsFromCarrierMessages({ carrierMessages, epoch: transcript.epoch });
   useVoiceActivityStore.getState().replaceSessionEvents(VOICE_AGENT_GLOBAL_SESSION_ID, events as any);
 }

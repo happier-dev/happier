@@ -1,101 +1,139 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const emitEphemeral = vi.fn();
-vi.mock("@/app/events/eventRouter", () => ({
-    eventRouter: { emitUpdate: vi.fn(), emitEphemeral },
-    buildUpdateAccountUpdate: vi.fn(),
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
+import { accountRoutes } from "./accountRoutes";
+
+const { emitEphemeral, buildUsageEphemeral } = vi.hoisted(() => ({
+    emitEphemeral: vi.fn(),
     buildUsageEphemeral: vi.fn(() => ({ type: "usage" })),
 }));
 
-vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "upd-id") }));
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
-vi.mock("@/storage/blob/files", () => ({ getPublicUrl: vi.fn((p: string) => p) }));
-
-const dbSessionFindFirst = vi.fn();
-const dbUsageUpsert = vi.fn();
-vi.mock("@/storage/db", () => ({
-    db: {
-        account: { findUniqueOrThrow: vi.fn(async () => ({ firstName: "", lastName: "", username: "", avatar: null })) },
-        serviceAccountToken: { findMany: vi.fn(async () => []) },
-        session: { findFirst: (...args: any[]) => dbSessionFindFirst(...args) },
-        usageReport: { upsert: (...args: any[]) => dbUsageUpsert(...args) },
-    },
+vi.mock("@/app/events/eventRouter", () => ({
+    eventRouter: { emitUpdate: vi.fn(), emitEphemeral },
+    buildUpdateAccountUpdate: vi.fn(),
+    buildUsageEphemeral,
 }));
 
-vi.mock("@/storage/inTx", () => ({ inTx: vi.fn(async (fn: any) => await fn({})), afterTx: vi.fn() }));
-vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
-vi.mock("@/types", () => ({ AccountProfile: {} }));
-
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get() {}
-    patch(path: string, _opts: any, handler: any) {
-        this.routes.set(`PATCH ${path}`, handler);
-    }
-    post(path: string, _opts: any, handler: any) {
-        this.routes.set(`POST ${path}`, handler);
-    }
-}
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 describe("accountRoutes v2 usage", () => {
+    let harness: LightSqliteHarness;
+
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-account-usage-", initAuth: false });
+    }, 120_000);
+
+    afterAll(async () => {
+        await harness.close();
+    });
+
     beforeEach(() => {
+        vi.resetModules();
         vi.clearAllMocks();
-        dbSessionFindFirst.mockResolvedValue({ id: "s1" });
-        dbUsageUpsert.mockResolvedValue({ id: "r1", createdAt: new Date(1), updatedAt: new Date(2) });
+        harness.resetEnv();
+    });
+
+    afterEach(async () => {
+        harness.resetEnv();
+        await harness.resetDbTables([
+            () => db.usageReport.deleteMany(),
+            () => db.session.deleteMany(),
+            () => db.repeatKey.deleteMany(),
+            () => db.account.deleteMany(),
+        ]);
     });
 
     it("upserts usage report and emits ephemeral when sessionId is provided", async () => {
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = new FakeApp();
-        accountRoutes(app as any);
+        const account = await db.account.create({
+            data: { publicKey: "pk-account-usage-upsert" },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                accountId: account.id,
+                tag: "usage-session",
+                encryptionMode: "e2ee",
+                metadata: "ciphertext",
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                seq: 0,
+                pendingVersion: 0,
+                pendingCount: 0,
+                active: true,
+            },
+            select: { id: true },
+        });
 
-        const handler = app.routes.get("POST /v2/usage-reports");
-        expect(typeof handler).toBe("function");
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: "/v2/usage-reports",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: {
+                        key: "k1",
+                        sessionId: session.id,
+                        tokens: { total: 10, prompt: 5 },
+                        cost: { total: 0.1 },
+                    },
+                });
 
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-        const res = await handler(
-            {
-                userId: "u1",
-                body: {
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toMatchObject({
+                    success: true,
+                    reportId: expect.any(String),
+                    createdAt: expect.any(Number),
+                    updatedAt: expect.any(Number),
+                });
+            },
+        );
+
+        const stored = await db.usageReport.findUnique({
+            where: {
+                accountId_sessionId_key: {
+                    accountId: account.id,
+                    sessionId: session.id,
                     key: "k1",
-                    sessionId: "s1",
-                    tokens: { total: 10, prompt: 5 },
-                    cost: { total: 0.1 },
                 },
             },
-            reply,
-        );
-
-        expect(dbUsageUpsert).toHaveBeenCalledWith(
+            select: { id: true, data: true },
+        });
+        expect(stored).toEqual(
             expect.objectContaining({
-                where: { accountId_sessionId_key: { accountId: "u1", sessionId: "s1", key: "k1" } },
+                id: expect.any(String),
+                data: { tokens: { total: 10, prompt: 5 }, cost: { total: 0.1 } },
             }),
         );
+        expect(buildUsageEphemeral).toHaveBeenCalledWith(session.id, "k1", { total: 10, prompt: 5 }, { total: 0.1 });
         expect(emitEphemeral).toHaveBeenCalledTimes(1);
-        expect(res).toEqual({ success: true, reportId: "r1", createdAt: 1, updatedAt: 2 });
     });
 
     it("returns 404 when sessionId does not belong to user", async () => {
-        dbSessionFindFirst.mockResolvedValueOnce(null);
+        const account = await db.account.create({
+            data: { publicKey: "pk-account-usage-missing-session" },
+            select: { id: true },
+        });
 
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = new FakeApp();
-        accountRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: "/v2/usage-reports",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: { key: "k1", sessionId: "missing-session", tokens: { total: 1 }, cost: { total: 1 } },
+                });
 
-        const handler = app.routes.get("POST /v2/usage-reports");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-
-        await handler(
-            {
-                userId: "u1",
-                body: { key: "k1", sessionId: "s1", tokens: { total: 1 }, cost: { total: 1 } },
+                expect(res.statusCode).toBe(404);
+                expect(res.json()).toEqual({ error: "Session not found" });
             },
-            reply,
         );
 
-        expect(reply.code).toHaveBeenCalledWith(404);
         expect(emitEphemeral).not.toHaveBeenCalled();
+        expect(await db.usageReport.count()).toBe(0);
     });
 });

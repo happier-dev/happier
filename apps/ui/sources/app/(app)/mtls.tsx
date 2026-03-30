@@ -5,9 +5,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
+import { serverFetch } from '@/sync/http/client';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperationFailedDebugMessage';
+import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 
 export default function MtlsCallbackScreen() {
     const auth = useAuth();
@@ -32,7 +34,7 @@ export default function MtlsCallbackScreen() {
 
                 const snapshot = getActiveServerSnapshot();
                 const rawServerUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
-                const serverUrl = rawServerUrl.replace(/\/+$/, '');
+                const serverUrl = rawServerUrl.replace(/\/+$/, '') || readConfiguredServerUrlEnv().replace(/\/+$/, '');
                 if (!serverUrl) {
                     await Modal.alert(t('common.error'), t('errors.operationFailed'));
                     router.replace('/');
@@ -43,12 +45,16 @@ export default function MtlsCallbackScreen() {
                 const timeoutMs = 15000;
                 const timer = setTimeout(() => controller.abort(), timeoutMs);
                 try {
-                    const res = await fetch(`${serverUrl}/v1/auth/mtls/claim`, {
-                        method: 'POST',
-                        headers: { 'content-type': 'application/json' },
-                        body: JSON.stringify({ code }),
-                        signal: controller.signal,
-                    });
+                    const res = await serverFetch(
+                        `${serverUrl}/v1/auth/mtls/claim`,
+                        {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json' },
+                            body: JSON.stringify({ code }),
+                            signal: controller.signal,
+                        },
+                        { includeAuth: false },
+                    );
                     const json = await res.json().catch(() => null);
                     if (!res.ok || !json || typeof json.token !== 'string') {
                         await Modal.alert(t('common.error'), t('errors.operationFailed'));

@@ -1,25 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { restoreProcessEnv, snapshotProcessEnv } from '@/testkit/env.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 describe('configuration socket transports', () => {
-  const envBackup = snapshotProcessEnv();
+  const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SOCKET_FORCE_WEBSOCKET', 'HAPPIER_SOCKET_TRANSPORTS'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   const tempDirs: string[] = [];
 
   afterEach(() => {
-    restoreProcessEnv(envBackup);
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
     vi.resetModules();
     for (const tempDir of tempDirs) {
-      rmSync(tempDir, { recursive: true, force: true });
+      removeTempDirSync(tempDir);
     }
     tempDirs.length = 0;
   });
 
   it('defaults to websocket-first transports', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-'));
+    const homeDir = createTempDirSync('happier-cli-config-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
     delete process.env.HAPPIER_SOCKET_FORCE_WEBSOCKET;
@@ -31,7 +30,7 @@ describe('configuration socket transports', () => {
   });
 
   it('forces websocket-only when HAPPIER_SOCKET_FORCE_WEBSOCKET is enabled', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-'));
+    const homeDir = createTempDirSync('happier-cli-config-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SOCKET_FORCE_WEBSOCKET = '1';
@@ -43,7 +42,7 @@ describe('configuration socket transports', () => {
   });
 
   it('respects explicit HAPPIER_SOCKET_TRANSPORTS ordering and filters invalid values', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-'));
+    const homeDir = createTempDirSync('happier-cli-config-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SOCKET_TRANSPORTS = 'polling, websocket, nope, polling';
@@ -54,4 +53,3 @@ describe('configuration socket transports', () => {
     expect(configMod.configuration.socketIoTransports).toEqual(['polling', 'websocket']);
   });
 });
-

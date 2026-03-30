@@ -20,12 +20,15 @@ import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { config } from '@/config';
 import { resolveAppVariant, type AppVariant } from '@/sync/runtime/appVariant';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import type { SessionGettingStartedDecisionKind } from './gettingStartedModel';
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
 import { buildSessionGettingStartedViewModel } from './gettingStartedModel';
 import { Text } from '@/components/ui/text/Text';
-import { resolveHappierCliNpmPackageSpecifier } from './happierCliInstallCommand';
+import { buildHappierCliInstallCommand } from './happierCliInstallCommand';
+import { listSessionGettingStartedCliCommands } from './listSessionGettingStartedCliCommands';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
@@ -38,6 +41,7 @@ export type SessionGettingStartedGuidanceViewModel = Readonly<{
     serverUrl: string;
     serverName: string;
     showServerSetup: boolean;
+    onOpenSetup?: () => void;
     onStartNewSession?: () => void;
     onConnectTerminal?: () => void;
     onEnterUrlManually?: () => void;
@@ -67,22 +71,41 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: 720,
         gap: 28,
         marginTop: 10,
-        fontSize: 22,
+        fontSize: 20,
         color: theme.colors.text,
         ...Typography.default('semiBold'),
     },
     subtitle: {
         width: '100%',
         maxWidth: 720,
-        gap: 28,
         marginBottom: 16,
-        fontSize: 16,
+        fontSize: 14,
         color: theme.colors.textSecondary,
         ...Typography.default(),
     },
+    primaryCard: {
+        width: '100%',
+        maxWidth: 720,
+        gap: 16,
+        marginBottom: 20,
+        paddingHorizontal: 18,
+        paddingVertical: 18,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surfaceHigh,
+    },
+    sectionTitle: {
+        width: '100%',
+        maxWidth: 720,
+        marginBottom: 14,
+        fontSize: 13,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
+    },
     terminalText: {
         ...Typography.mono(),
-        fontSize: 15,
+        fontSize: 12,
         color: theme.colors.status.connected,
     },
     stepsContainer: {
@@ -98,13 +121,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginBottom: 10,
     },
     stepTitle: {
-        fontSize: 16,
+        fontSize: 14,
         color: theme.colors.text,
         ...Typography.default('semiBold'),
     },
     stepDescription: {
         marginTop: 2,
-        fontSize: 14,
+        fontSize: 12,
         color: theme.colors.textSecondary,
         ...Typography.default(),
         maxWidth: 560,
@@ -147,32 +170,32 @@ const stylesheet = StyleSheet.create((theme) => ({
 function titleForKind(kind: SessionGettingStartedDecisionKind): string {
     switch (kind) {
         case 'connect_machine':
-            return 'Connect a machine';
+            return t('sessionGettingStarted.title.connectMachine');
         case 'start_daemon':
-            return 'Start the daemon';
+            return t('sessionGettingStarted.title.startDaemon');
         case 'create_session':
-            return 'Create a session';
+            return t('sessionGettingStarted.title.createSession');
         case 'select_session':
-            return 'Select a session';
+            return t('sessionGettingStarted.title.selectSession');
         case 'loading':
         default:
-            return 'Loading…';
+            return t('sessionGettingStarted.title.loading');
     }
 }
 
 function subtitleForKind(kind: SessionGettingStartedDecisionKind, targetLabel: string): string {
     switch (kind) {
         case 'connect_machine':
-            return `To start sessions on ${targetLabel}, connect the Happier daemon on your computer (install it once to keep it always-on).`;
+            return t('sessionGettingStarted.subtitle.connectMachine', { targetLabel });
         case 'start_daemon':
-            return `Your machines for ${targetLabel} look offline. Start the daemon on your computer, then try again.`;
+            return t('sessionGettingStarted.subtitle.startDaemon', { targetLabel });
         case 'create_session':
-            return `Start a new session with the + button, or from your terminal.`;
+            return t('sessionGettingStarted.subtitle.createSession');
         case 'select_session':
-            return `Pick a session from the sidebar to view it here.`;
+            return t('sessionGettingStarted.subtitle.selectSession');
         case 'loading':
         default:
-            return `Fetching your machines and sessions…`;
+            return t('sessionGettingStarted.subtitle.loading');
     }
 }
 
@@ -191,11 +214,10 @@ function resolveAppVariantForCliInstall(): AppVariant {
 }
 
 function buildCliInstallCommand(): string {
-    const packageSpecifier = resolveHappierCliNpmPackageSpecifier({
+    return buildHappierCliInstallCommand({
         appVariant: resolveAppVariantForCliInstall(),
         distTagOverride: config.cliNpmDistTag,
     });
-    return `npm i -g ${packageSpecifier}`;
 }
 
 type SessionGettingStartedGuidanceStep = Readonly<{
@@ -212,40 +234,40 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
             const steps: SessionGettingStartedGuidanceStep[] = [];
             steps.push({
                 id: 'install_cli',
-                title: 'Install the CLI',
-                description: 'Run this once on the machine you want to connect.',
+                title: t('sessionGettingStarted.steps.installCli.title'),
+                description: t('sessionGettingStarted.steps.installCli.description'),
                 command: buildCliInstallCommand(),
-                copyLabel: 'Install command',
+                copyLabel: t('sessionGettingStarted.steps.installCli.copyLabel'),
             });
             if (model.showServerSetup) {
                 steps.push({
                     id: 'server_setup',
-                    title: 'Set the default server',
-                    description: 'One-time, so the next commands target the right server.',
+                    title: t('sessionGettingStarted.steps.serverSetup.title'),
+                    description: t('sessionGettingStarted.steps.serverSetup.description'),
                     command: `happier server add --name \"${model.serverName}\" --server-url \"${model.serverUrl}\" --use`,
-                    copyLabel: 'Server setup',
+                    copyLabel: t('sessionGettingStarted.steps.serverSetup.copyLabel'),
                 });
             }
             steps.push({
                 id: 'auth_login',
-                title: 'Sign in',
-                description: 'This prints a QR / link to connect your terminal to your account.',
+                title: t('sessionGettingStarted.steps.authLogin.title'),
+                description: t('sessionGettingStarted.steps.authLogin.description'),
                 command: 'happier auth login',
-                copyLabel: 'Auth login',
+                copyLabel: t('sessionGettingStarted.steps.authLogin.copyLabel'),
             });
             steps.push({
                 id: 'daemon_install',
-                title: 'Install the daemon (recommended)',
-                description: 'Keeps Happier always-on in the background for remote starts.',
+                title: t('sessionGettingStarted.steps.daemonInstall.title'),
+                description: t('sessionGettingStarted.steps.daemonInstall.description'),
                 command: 'happier daemon install',
-                copyLabel: 'Daemon install',
+                copyLabel: t('sessionGettingStarted.steps.daemonInstall.copyLabel'),
             });
             steps.push({
                 id: 'create_session',
-                title: 'Create a session',
-                description: 'Use the + button in the app, or run one of these from your terminal.',
-                command: ['happier', 'happier codex', 'happier opencode'].join('\n'),
-                copyLabel: 'Create session',
+                title: t('sessionGettingStarted.steps.createSession.title'),
+                description: t('sessionGettingStarted.steps.createSession.description'),
+                command: listSessionGettingStartedCliCommands().join('\n'),
+                copyLabel: t('sessionGettingStarted.steps.createSession.copyLabel'),
             });
             return steps;
         }
@@ -253,17 +275,17 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
             return [
                 {
                     id: 'daemon_install',
-                    title: 'Install the daemon (recommended)',
-                    description: 'Installs an always-on user service and starts it.',
+                    title: t('sessionGettingStarted.steps.daemonInstall.title'),
+                    description: t('sessionGettingStarted.steps.startDaemonInstall.description'),
                     command: 'happier daemon install',
-                    copyLabel: 'Daemon install',
+                    copyLabel: t('sessionGettingStarted.steps.daemonInstall.copyLabel'),
                 },
                 {
                     id: 'daemon_start',
-                    title: 'Start once (without installing)',
-                    description: 'Use this if you only need it running right now.',
+                    title: t('sessionGettingStarted.steps.daemonStart.title'),
+                    description: t('sessionGettingStarted.steps.daemonStart.description'),
                     command: 'happier daemon start',
-                    copyLabel: 'Daemon start',
+                    copyLabel: t('sessionGettingStarted.steps.daemonStart.copyLabel'),
                 },
             ];
         }
@@ -271,10 +293,10 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
             return [
                 {
                     id: 'start_session',
-                    title: 'Start a session from your computer',
-                    description: 'Or use the + button in the app.',
+                    title: t('sessionGettingStarted.steps.startSession.title'),
+                    description: t('sessionGettingStarted.steps.startSession.description'),
                     command: 'happier',
-                    copyLabel: 'Start session',
+                    copyLabel: t('sessionGettingStarted.steps.startSession.copyLabel'),
                 },
             ];
         }
@@ -307,6 +329,15 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
     const subtitle = subtitleForKind(model.kind, model.targetLabel);
     const steps = buildSteps(model);
     const showLogo = props.variant === 'primaryPane' || props.variant === 'newSessionBlocking';
+    const showSetupPrimaryCard = (model.kind === 'connect_machine' || model.kind === 'start_daemon') && Boolean(model.onOpenSetup);
+    const [showManualSteps, setShowManualSteps] = React.useState(!showSetupPrimaryCard);
+
+    React.useEffect(() => {
+        setShowManualSteps(!showSetupPrimaryCard);
+    }, [model.kind, model.serverUrl, model.targetLabel, showSetupPrimaryCard]);
+
+    const showCliFollowUp = steps.length > 0 && (!showSetupPrimaryCard || showManualSteps);
+    const showCliFollowUpTitle = showSetupPrimaryCard && showCliFollowUp;
 
     return (
         <ScrollView
@@ -326,8 +357,46 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                 />
             ) : null}
 
-            {steps.length > 0 ? (
-                <View style={styles.stepsContainer}>
+            {showSetupPrimaryCard ? (
+                <View testID="session-getting-started-setup-primary-card" style={styles.primaryCard}>
+                    <Text style={styles.title}>{title}</Text>
+                    <Text style={styles.subtitle}>{subtitle}</Text>
+                    <View style={styles.buttonWrapper}>
+                        <RoundButton
+                            testID="session-getting-started-open-setup"
+                            title={t('setupOnboarding.openSetupAction')}
+                            onPress={model.onOpenSetup}
+                            size="normal"
+                        />
+                    </View>
+                    {steps.length > 0 ? (
+                        <View style={styles.buttonWrapper}>
+                            <RoundButton
+                                testID="session-getting-started-show-manual"
+                                title={showManualSteps
+                                    ? t('sessionGettingStarted.manualDisclosure.hide')
+                                    : t('sessionGettingStarted.manualDisclosure.show')}
+                                onPress={() => {
+                                    setShowManualSteps((current) => !current);
+                                }}
+                                size="normal"
+                                display="inverted"
+                            />
+                        </View>
+                    ) : null}
+                </View>
+            ) : (
+                <>
+                    <Text style={styles.title}>{title}</Text>
+                    <Text style={styles.subtitle}>{subtitle}</Text>
+                </>
+            )}
+
+            {showCliFollowUp ? (
+                <View testID="session-getting-started-cli-follow-up" style={styles.stepsContainer}>
+                    {showCliFollowUpTitle ? (
+                        <Text style={styles.sectionTitle}>{t('sessionGettingStarted.cliFollowUpTitle')}</Text>
+                    ) : null}
                     {steps.map((step) => (
                         <View key={step.id} testID={`session-getting-started-step-${step.id}`}>
                             <View style={styles.stepHeader}>
@@ -346,7 +415,9 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                                           style={styles.codeCopyButton}
                                           onPress={() => copyTextToClipboard({ label: step.copyLabel ?? t('common.command'), text: step.command ?? '' })}
                                       >
-                                          <Ionicons name="copy-outline" size={16} color={theme.colors.textSecondary} />
+                                          {normalizeNodeForView(
+                                              <Ionicons name="copy-outline" size={16} color={theme.colors.textSecondary} />,
+                                          )}
                                       </Pressable>
                                 </View>
                             ) : null}
@@ -416,6 +487,10 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
 function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: SessionGettingStartedGuidanceVariant }>): React.ReactElement {
     const router = useRouter();
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
+    const canOpenSetup = isTauriDesktop();
+    const onOpenSetup = React.useCallback(() => {
+        router.push('/setup' as any);
+    }, [router]);
 
     const onStartNewSession = React.useCallback(() => {
         router.push('/new' as any);
@@ -444,6 +519,7 @@ function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: Session
         serverUrl: baseModel.serverUrl,
         serverName: baseModel.serverName,
         showServerSetup: baseModel.showServerSetup,
+        ...((baseModel.kind === 'connect_machine' || baseModel.kind === 'start_daemon') && canOpenSetup ? { onOpenSetup } : {}),
         ...(baseModel.kind === 'create_session' || baseModel.kind === 'select_session' ? { onStartNewSession } : {}),
         ...(props.variant === 'phone'
             ? {

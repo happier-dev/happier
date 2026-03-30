@@ -19,7 +19,7 @@ describe("changesRoutes automation changes (integration)", () => {
     });
 
     afterEach(async () => {
-        harness.restoreEnv();
+        harness.resetEnv();
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),
             () => db.account.deleteMany(),

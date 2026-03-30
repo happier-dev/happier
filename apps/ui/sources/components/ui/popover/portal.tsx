@@ -49,7 +49,11 @@ export function tryRenderWebPortal(params: Readonly<{
                     ? boundaryEl
                     : (typeof document !== 'undefined' ? document.body : null);
 
-        const target = targetRequested ?? (typeof document !== 'undefined' ? document.body : null);
+        const target =
+            targetRequested
+            ?? (params.portalTargetOnWeb === 'body' && typeof document !== 'undefined'
+                ? document.body
+                : null);
         if (target && ReactDOM?.createPortal) {
             return ReactDOM.createPortal(params.content, target);
         }
@@ -59,4 +63,3 @@ export function tryRenderWebPortal(params: Readonly<{
 
     return null;
 }
-
