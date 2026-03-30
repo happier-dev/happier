@@ -204,7 +204,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         backgroundColor: theme.colors.divider,
     },
     pressablePressed: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surfacePressed,
     },
 }));
 
@@ -218,9 +218,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const isIOS = Platform.OS === 'ios';
     const isAndroid = Platform.OS === 'android';
     const isWeb = Platform.OS === 'web';
-    const hoverBackgroundColor = isWeb
-        ? (theme.dark ? theme.colors.surfaceHighest : theme.colors.surfaceHigh)
-        : theme.colors.surfacePressedOverlay;
+    const hoverBackgroundColor = theme.colors.surfacePressed;
     
     // Timer ref for long press copy functionality
     const longPressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -419,14 +417,6 @@ export const Item = React.memo<ItemProps>((props) => {
         );
     }, [chevronSize, showAccessory, theme.colors.groupped.chevron]);
 
-    const isSelectableRow = React.useMemo(() => {
-        // Only show hover for "selection lists" (where rows participate in a selected-state group).
-        // This avoids making all navigation rows hoverable.
-        // NOTE: we intentionally do NOT gate on `selectableItemCount > 1` because single-item
-        // selection lists should still have hover affordances.
-        return typeof selected === 'boolean' && Boolean(selectionContext);
-    }, [selected, selectionContext]);
-
     const [isHovered, setIsHovered] = React.useState(false);
     React.useEffect(() => {
         // Keep hover state coherent with disabled/loading changes.
@@ -596,8 +586,8 @@ export const Item = React.memo<ItemProps>((props) => {
         const backgroundColor = (() => {
             if (pressed && isIOS && !isWeb) return theme.colors.surfacePressedOverlay;
             if (showSelectedBackground) return theme.colors.surfaceSelected;
-            // Web-only hover affordance for selectable rows (no hover when disabled).
-            if (isWeb && isSelectableRow && isHovered && !disabled && !loading) return hoverBackgroundColor;
+            // Web-only hover affordance for interactive rows (no hover when disabled).
+            if (isWeb && isHovered && !disabled && !loading) return hoverBackgroundColor;
             return 'transparent';
         })();
 
@@ -619,7 +609,6 @@ export const Item = React.memo<ItemProps>((props) => {
         hoverBackgroundColor,
         isHovered,
         isIOS,
-        isSelectableRow,
         isWeb,
         loading,
         pressableStyle,
@@ -649,7 +638,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 } : undefined}
                 onPressIn={handlePressIn}
                 onPressOut={handlePressOut}
-                onHoverIn={isWeb && isSelectableRow && !disabled && !loading ? () => setIsHovered(true) : undefined}
+                onHoverIn={isWeb && !disabled && !loading ? () => setIsHovered(true) : undefined}
                 onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}

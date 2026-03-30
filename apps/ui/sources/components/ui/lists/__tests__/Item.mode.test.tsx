@@ -1,8 +1,10 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import type { ReactTestInstance, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from '../uiListsTestHelpers';
+import { lightTheme } from '@/theme';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -168,5 +170,35 @@ describe('Item mode prop', () => {
         const chevronIcon = screen.findAllByProps({ name: 'chevron-forward' })[0];
         expect(chevronIcon?.props?.size).toBe(15);
         uiItemDensitySetting = 'comfortable';
+    });
+
+    it('applies a hover background on web for interactive items', async () => {
+        const { Item } = await import('../Item');
+        const screen = await renderScreen(<Item title="Hover Row" testID="item-hover" onPress={() => {}} />);
+
+        const beforeHover = findHostNodeByTestID(screen, 'item-hover');
+        if (!beforeHover) {
+            throw new Error('Expected hover item host node to render');
+        }
+
+        expect(typeof beforeHover.props.onHoverIn).toBe('function');
+        expect(typeof beforeHover.props.onHoverOut).toBe('function');
+
+        const beforeStyleFn = beforeHover.props.style as (state: { pressed: boolean }) => unknown;
+        const beforeFlattened = flattenTestStyle(beforeStyleFn({ pressed: false }));
+        expect(beforeFlattened.backgroundColor).toBe('transparent');
+
+        await act(async () => {
+            beforeHover.props.onHoverIn();
+        });
+
+        const afterHover = findHostNodeByTestID(screen, 'item-hover');
+        if (!afterHover) {
+            throw new Error('Expected hover item host node to render after hover');
+        }
+
+        const afterStyleFn = afterHover.props.style as (state: { pressed: boolean }) => unknown;
+        const afterFlattened = flattenTestStyle(afterStyleFn({ pressed: false }));
+        expect(afterFlattened.backgroundColor).toBe(lightTheme.colors.surfacePressed);
     });
 });
