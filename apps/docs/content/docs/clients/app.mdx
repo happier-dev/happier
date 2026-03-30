@@ -5,24 +5,39 @@ description: Desktop, web, and mobile UI client.
 
 The Happier app is the interactive client for people using Happier on desktop, web, and mobile.
 
-## Server URL
+## Relay selection
 
-The app can use Happier Cloud, or you can add one or more custom servers for self-hosting.
+The app can use Happier Cloud, or you can add one or more custom self-hosted Relays.
 
-### Saved servers + switching
+### Saved Relays + switching
 
-- You can save multiple servers and switch between them.
-- Credentials are stored **per server**, so a hosted account and a self-hosted account won’t overwrite each other.
-- On different servers, accounts are independent even if you use the same login provider.
-- On web, you can switch the server **for this tab** or **make it the device default**.
+- You can save multiple Relay profiles and switch between them.
+- Credentials are stored **per Relay**, so a hosted account and a self-hosted account won’t overwrite each other.
+- On different Relays, accounts are independent even if you use the same login provider.
+- On web, you can switch the Relay **for this tab** or **make it the device default**.
 
 ### Configure-server links (1-click)
 
-Some installers (for example `hstack setup-from-source` and Proxmox) print “configure server” links/QRs that open the app/web UI directly on your server configuration screen, prefilled with the correct URL.
+Some installers (for example `hstack setup-from-source` and Proxmox) print one-click links/QRs that open the app/web UI with the correct Relay URL prefilled.
+
+## Desktop control panel
+
+On desktop, the app is intended to be the main control panel for your Happier setup:
+
+- start from the in-app `/setup` flow (desktop-only)
+- choose your Relay before signing in
+- sign in on that Relay
+- set up **this computer**
+- add a **remote machine over SSH**
+- repair Relay drift when the daemon is pointed at a different Relay
+- manage the local self-hosted Relay runtime
+- enable private access for a local/self-hosted Relay
+
+This keeps Relay choice, account context, daemon state, and machine setup visible in one place instead of spreading the flow across separate CLI steps.
 
 ## Multi-server workflows
 
-For detailed server profile, switching, and multi-daemon guidance, see [Features → Multi-server](/docs/features/multi-server).
+For detailed Relay profile, switching, and multi-daemon guidance, see [Features → Multi-server](/docs/features/multi-server).
 
 ## Notifications
 
@@ -43,6 +58,8 @@ The app can show a live session terminal directly inside the session UI.
 - On larger layouts, you can place it in the **bottom panel**, **sidebar**, or **details panel**.
 - On phone-sized layouts, Happier uses a more focused terminal presentation instead of trying to keep multiple desktop-style panels open at once.
 - The terminal depends on a connected daemon for the current machine/session.
+
+If the daemon is connected to the wrong Relay, the app surfaces that mismatch and offers a repair action instead of silently failing later in the flow.
 
 Full guide: [Embedded terminal](/docs/features/embedded-terminal).
 

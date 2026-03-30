@@ -107,6 +107,21 @@ hdev self update
 
 There is no separate public daemon installer endpoint today; the daemon rides with the matching CLI lane on that machine.
 
+### Side-by-side installs (stable vs preview vs dev)
+
+You can install all three public lanes side-by-side (`happier`, `hprev`, `hdev`) without them overwriting each other.
+
+Daemon runtime state is lane-scoped, and daemon services (LaunchAgent/systemd/Scheduled Task) use lane-scoped service identifiers.
+To inspect the exact service name/label/unit on your platform, run:
+
+```bash
+happier daemon service paths
+hprev daemon service paths
+hdev daemon service paths
+```
+
+Recommendation: keep only one lane’s daemon service enabled for a given server profile unless you have a specific reason to run multiple daemons concurrently.
+
 ## Always-on: install as a user service
 
 Install for your current default server profile:

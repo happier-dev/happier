@@ -96,6 +96,7 @@ Then try the session-control tools first:
 
 - `session_list`
 - `session_message_send`
+- `change_title`
 - `session_title_set`
 - `session_permission_mode_set`
 
@@ -106,6 +107,101 @@ If those work, try the generic path next:
 - `action_execute`
 
 That gives you a quick end-to-end check that the server, account auth, action catalog, and approval routing are all connected.
+
+## Tool call examples
+
+The exact JSON shape depends on your MCP host, but tool calls generally pass an **args** object that matches the tool’s input schema.
+
+If you’re unsure about a tool’s fields, use the discovery tools first:
+
+- `action_spec_get` (to see `inputSchema`, `inputHints`, and examples)
+- `action_options_resolve` (to resolve valid options for a field)
+
+### List sessions
+
+Call `session_list` with no args:
+
+```json
+{}
+```
+
+### Send a message (and wait for idle)
+
+Call `session_message_send`:
+
+```json
+{
+  "sessionId": "sess_123",
+  "message": "ping",
+  "wait": true,
+  "timeoutSeconds": 60
+}
+```
+
+Optional overrides (when supported by the backend):
+
+- `permissionModeOverride`
+- `modelOverride` (use `null` to clear an override when applicable)
+
+### Wait for a session to become idle (no message send)
+
+Call `session_wait_idle`:
+
+```json
+{
+  "sessionId": "sess_123",
+  "timeoutSeconds": 60
+}
+```
+
+### Rename a session
+
+Rename the current/default session context:
+
+Call `change_title`:
+
+```json
+{
+  "title": "Fix flaky tests"
+}
+```
+
+Rename a specific session by id/prefix:
+
+Call `session_title_set`:
+
+```json
+{
+  "sessionId": "sess_123",
+  "title": "Fix flaky tests"
+}
+```
+
+### Change the permission mode for a session
+
+Call `session_permission_mode_set`:
+
+```json
+{
+  "sessionId": "sess_123",
+  "permissionMode": "read_only"
+}
+```
+
+### Start an execution run (plan/review/delegate/voice agent)
+
+Call `execution_run_start` to start a structured run in a session. It requires an `intent` plus a backend target.
+
+Example:
+
+```json
+{
+  "sessionId": "sess_123",
+  "intent": "plan",
+  "backendTarget": { "kind": "builtInAgent", "agentId": "claude" },
+  "instructions": "Plan a safe refactor and list risks."
+}
+```
 
 ## What tools you get
 
@@ -121,6 +217,7 @@ Common session control tool examples:
 - `session_message_send`
 - `session_stop`
 - `session_archive` / `session_unarchive`
+- `change_title` (rename the current/default session)
 - `session_title_set`
 - `session_permission_mode_set`
 - `session_model_set`
@@ -141,6 +238,38 @@ Execution run tool:
 - `execution_run_start`
 
 The exact set depends on what your account has enabled (and on which surfaces). See “Approvals and enablement”.
+
+## Session context and tool variants
+
+Some tools operate on a **specific session**, and some operate on the **current/default session**.
+
+### Default session (`--session`) vs explicit `sessionId`
+
+- Many session control tools accept an explicit `sessionId` argument.
+- If a tool supports inferring the session and you do not pass `sessionId`, Happier uses:
+  1) the `--session <session-id>` value passed at `happier mcp serve` startup (if any), otherwise
+  2) a global “no session selected” context (some tools will fail with `session_not_selected` in that case).
+
+For deterministic automations, prefer passing an explicit `sessionId`.
+
+### Session ids and prefixes
+
+When a tool accepts `sessionId`, it generally accepts either:
+
+- a full session id, or
+- an **unambiguous prefix**.
+
+If the prefix matches multiple sessions, the tool call fails and includes candidates.
+For saved MCP host configs (long-lived), prefer full ids.
+
+### Changing titles: `change_title` vs `session_title_set`
+
+There are two common ways to rename a session:
+
+- `change_title`: a convenience tool that takes only `{ "title": "..." }` and renames the current/default session context.
+- `session_title_set`: the action-backed tool for `session.title.set` that supports passing a `sessionId` when you want to rename a specific session.
+
+Both routes go through the same action catalog and the same per-surface policy (enablement + approvals).
 
 ## Generic action execution
 
@@ -165,6 +294,11 @@ Shape:
   }
 }
 ```
+
+Notes:
+
+- `actionId` is the canonical dotted id (example: `session.title.set`).
+- Tool names are typically `snake_case` (example: `session_title_set`) and map to the same underlying action.
 
 This is also the path to advanced approval actions such as:
 
@@ -192,7 +326,8 @@ For each action + surface, you can:
 - optionally require approval (approval-gated execution)
 
 If a tool is approval-gated, the MCP tool call returns an `approval_request_created` payload (with an `artifactId`).
-Use the app’s **Inbox** to approve/deny and view the final result:
+This applies both to generic `action_execute` calls and to built-in aliases such as `session_title_set`, because they share the same action + surface policy.
+Use the app's **Inbox** to approve/deny and view the final result:
 
 - [Inbox and approvals](/docs/features/inbox-and-approvals)
 - [Happier tools & actions](/docs/features/happier-tools)
@@ -226,6 +361,22 @@ happier auth login
 ```
 
 If you’re targeting a self-hosted server, ensure the MCP host launches Happier with the right server profile (or server URL flags). See [CLI → Server profiles](/docs/clients/cli#server-profiles).
+
+### `No daemon running` / session create fails
+
+Starting and managing local provider processes (creating sessions, sending messages, attaching, etc.) generally requires a running Happier daemon on that machine.
+
+If a tool call fails with an error like `No daemon running` (or similar), run:
+
+```bash
+happier daemon start
+```
+
+For a smoother always-on setup (recommended), install it as a user service:
+
+```bash
+happier daemon install
+```
 
 ### A tool is missing
 

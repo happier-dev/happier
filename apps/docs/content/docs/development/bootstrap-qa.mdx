@@ -1,0 +1,276 @@
+---
+title: "Bootstrap / Setup QA (Desktop + Web)"
+description: "Living QA tracker for the desktop setup/control panel, remote bootstrap, and Tauri dev tooling."
+---
+
+This page is the **living QA tracker** for the bootstrap/setup/control-panel workstream.
+
+Rules:
+- Keep this document current as QA progresses.
+- When a bug is found, add: **symptom → root cause → fix → validation**.
+- Use status markers:
+  - `[done]` = exercised in the intended interactive surface (native Tauri window and/or real stack web flow).
+  - `[partial]` = implemented and covered by unit/integration tests, but not yet exercised in the intended interactive surface.
+  - `[blocked]` = cannot proceed until the blocker is removed (state the blocker explicitly).
+- Before marking any lane `[done]`, record concrete evidence in the doc itself: stack name, command used, and at least one screenshot/log/trace reference.
+
+## Quick start (web QA stack)
+
+1. Create a fresh stack:
+   - `hstack stack new codex-bootstrap-qa-<port> --repo=/Users/leeroy/Documents/Development/happier/dev --port=<uniquePort>`
+2. Build + activate runtime:
+   - `hstack stack build codex-bootstrap-qa-<port> --activate-runtime`
+3. Prefer runtime snapshots:
+   - `hstack stack env codex-bootstrap-qa-<port> set HAPPIER_STACK_RUNTIME_MODE=prefer`
+4. Start stack (runtime):
+   - `hstack stack start codex-bootstrap-qa-<port> --runtime`
+5. Auth:
+   - `hstack stack auth codex-bootstrap-qa-<port> login --force`
+
+## Quick start (native desktop QA via Tauri)
+
+Recommended (stack-owned dev + TUI):
+- `yarn tui:with-tauri`
+
+Notes:
+- The stack launcher points the desktop app at the **existing** Expo dev server.
+- The launcher uses a `--config` file inside `apps/ui/src-tauri` plus a `-c` config override (avoids stack-dir relative-path issues).
+- If you need the resolved launch plan (devUrl/config path/identifier): `node ./apps/stack/scripts/tauri_dev.mjs --json`.
+- `yarn ui:tauri` and `yarn --cwd apps/ui tauri:qa` do **not** start Expo; run `yarn ui` (or `yarn --cwd apps/ui start`) in another terminal first, or use `yarn tui:with-tauri`.
+
+## Using `@hypothesi/tauri-mcp-server` for native manual QA
+
+We use `@hypothesi/tauri-mcp-server` to drive an actual native Tauri window (screenshot/click/type/DOM snapshot/logs).
+
+### Prereqs
+
+- The app must be running via `tauri dev` (debug assertions); the MCP bridge plugin is registered in `apps/ui/src-tauri/src/lib.rs`.
+- The public dev config enables the MCP capability:
+  - `apps/ui/src-tauri/tauri.publicdev.conf.json` includes `app.security.capabilities = ["default","mcp-dev"]`.
+  - `apps/ui/src-tauri/capabilities/mcp-dev.json` grants `mcp-bridge:default`.
+
+### Install the MCP server into Codex
+
+From the repo root:
+- `npx -y install-mcp @hypothesi/tauri-mcp-server --client codex --yes --oauth no`
+
+Restart Codex after installing (client config is loaded at startup).
+
+### Start the native app
+
+Either:
+- `yarn ui:tauri` (standalone; requires Expo dev server already running)
+- `yarn tui:with-tauri` (preferred; unified with the stack/TUI)
+- `yarn --cwd apps/ui tauri:qa` (starts the Tauri app + MCP server together for QA; requires Expo dev server already running)
+
+Optional launch-plan preview:
+- `yarn --cwd apps/ui tauri:qa --json`
+
+Raw MCP CLI helpers:
+- `yarn --cwd apps/ui tauri:mcp:cli --help`
+- `yarn --cwd apps/ui tauri:mcp:session:start`
+
+Notes:
+- By default, `yarn ui:tauri` / `yarn --cwd apps/ui tauri:qa` wait for Metro to report `packager-status:running` before launching Tauri; disable with `HAPPIER_STACK_TAURI_WAIT_FOR_EXPO=0`.
+
+### Start a driver session
+
+In the MCP client (Codex), start a session with the `driver_session` tool:
+- `driver_session` → `{ "action": "start" }`
+
+CLI fallback (if you want to run commands without an MCP client):
+- `yarn --cwd apps/ui tauri:mcp:session:start`
+
+Implementation details (for debugging connectivity):
+- The MCP bridge plugin runs a WebSocket server on **port 9223** (or next available in 9223–9322), default bind `0.0.0.0`.
+- If needed, you can target a host explicitly:
+  - `driver_session` → `{ "action": "start", "host": "127.0.0.1" }`
+
+### Useful tools during QA
+
+- `webview_screenshot` (attach evidence to issues)
+- `webview_dom_snapshot` (confirm what’s actually rendered)
+- `webview_find_element` + `webview_interact` (click buttons / toggle switches)
+- `webview_keyboard` (type into fields)
+- `read_logs` (webview + system logs)
+- `ipc_monitor` + `ipc_get_captured` (confirm `invoke(...)` calls and payloads)
+
+## QA lanes (living checklist)
+
+## Plan-to-code audit #1 (2026-03-30)
+
+Source plan: `.project/plans/todo/bootstrap/happier-desktop-setup-control-panel-and-remote-bootstrap-unification-2026-03-27.md`
+
+### 0.0.1 Worktree audit bullets → code map
+
+- `[partial]` `systemTasks` protocol + `hsetup` sidecar + allowlisted Tauri bridge
+  - Protocol wire contract: `packages/protocol/src/systemTasks/spec.ts`
+  - Kind registry + runner contract: `packages/cli-common/src/systemTasks/kinds/index.ts`, `packages/cli-common/src/systemTasks/runSystemTask.ts`
+  - `hsetup` executor + allowlist registry: `apps/bootstrap/src/bin/hsetup.ts`, `apps/bootstrap/src/systemTasks/registry.ts`
+  - Tauri bridge: `apps/ui/src-tauri/src/system_tasks/mod.rs`, `apps/ui/src-tauri/src/lib.rs`
+  - UI runner/bridge: `apps/ui/sources/components/systemTasks/systemTasksRuntime.ts`, `apps/ui/sources/components/systemTasks/createTauriSystemTaskBridge.ts`
+  - Evidence: unit/integration tests exist; native interactive coverage still needs dedicated “all flows” reruns under `tauri-mcp` (see “Latest executed lane” sections).
+
+- `[partial]` Desktop `/setup` + post-auth continuation + relay drift repair + provider setup reuse
+  - `/setup` route: `apps/ui/sources/app/(app)/setup/index.tsx`
+  - Setup intent persistence/resume: `apps/ui/sources/sync/domains/pending/pendingSetupIntent.ts`, `apps/ui/sources/app/(app)/index.tsx`
+  - Relay drift banner + action surface: `apps/ui/sources/components/settings/server/useRelayDriftBanner.ts`, `apps/ui/sources/components/settings/server/RelayDriftActionCard.tsx`
+  - Drift repair task spec: `apps/ui/sources/sync/domains/server/relayDrift/relayDriftSystemTask.ts`
+  - Provider setup (canonical flow): `apps/ui/sources/components/settings/providers/setup/ProviderSetupFlow.tsx`
+  - Evidence: unit tests exist; native interactive reruns still required for the Tauri-only parts (provider auth terminal pane, identity-file picker, systemTasks bridge).
+
+- `[partial]` Local machine control panel includes daemon service + relay runtime + Tailscale surfaces
+  - Local daemon service control: `apps/ui/sources/components/settings/machines/localControl/LocalDaemonControlSection.tsx`
+  - Local relay runtime: `apps/ui/sources/components/settings/server/localControl/LocalRelayRuntimeControlSection.tsx`
+  - Tailscale secure access: `apps/ui/sources/components/settings/server/localControl/LocalTailscaleSecureAccessSection.tsx`
+  - Backing tasks: `apps/bootstrap/src/systemTasks/registry.ts` (`daemon.service.*.v1`, `relay.runtime.*.v1`, `secureAccess.tailscale.v1`)
+  - Evidence: unit tests exist; interactive Tauri runs for Tailscale + service lifecycle still pending.
+
+- `[partial]` Remote SSH bootstrap desktop UX + CLI parity
+  - Desktop UI: `apps/ui/sources/components/settings/machines/RemoteSshMachineSetupSection.tsx`, `apps/ui/sources/components/settings/machines/useRemoteSshBootstrapTask.ts`
+  - Executor kind: `apps/bootstrap/src/systemTasks/registry.ts` (`remote.ssh.bootstrapMachine.v1`)
+  - CLI entry: `apps/cli/src/cli/commands/machine/*` (help shows `happier machine bootstrap --ssh ...`)
+  - Evidence: unit tests exist; interactive Tauri run still required for the native identity-file picker (`desktop_pick_ssh_identity_file`) and prompt flows.
+
+- `[partial]` Tailscale secure access follow-through to canonical URL selection
+  - Task kind: `apps/bootstrap/src/systemTasks/kinds/secureAccessTailscale.ts` (invoked via `secureAccess.tailscale.v1` in `apps/bootstrap/src/systemTasks/registry.ts`)
+  - Shared parsing/runner: `packages/cli-common/src/tailscale/*`
+  - UI surface: `apps/ui/sources/components/settings/server/localControl/LocalTailscaleSecureAccessSection.tsx`
+  - Evidence: unit tests exist; interactive tailnet login/serve approval in a real environment still pending.
+
+- `[blocked]` Repo-local TUI launching stack-owned Tauri dev pane reliably
+  - Owning scripts: `apps/stack/scripts/repo_local.mjs`, `apps/stack/scripts/tauri_dev.mjs`
+  - Current symptom: `cargo metadata ... (os error 2)` still reported under `yarn tui:with-tauri` in some environments → must re-run after the latest fixes and capture evidence logs/screens.
+  - Evidence requirement: rerun `yarn tui:with-tauri` green and attach `.project/logs/...` for the resolved launch plan + any cargo PATH preflight output.
+
+- `[missing]` Tray/start-on-login polish + docs/release cleanup
+  - Current code exists but UX + QA are not complete:
+    - Tauri tray + commands: `apps/ui/src-tauri/src/tray.rs`, `apps/ui/src-tauri/src/lib.rs`
+    - Tauri autostart: `apps/ui/src-tauri/src/autostart.rs`, `apps/ui/src-tauri/src/lib.rs`
+  - Missing: UI settings surface, i18n, and “done” QA evidence under native Tauri runs.
+
+- `[partial]` Setup-focused Playwright coverage exists but CI harness unstable
+  - Spec: `packages/tests/suites/ui-e2e/setup.controlPanel.relayFirst.spec.ts`
+  - Missing: stabilize Metro/stack startup harness so the spec runs reliably in CI-style runs; capture evidence under `.project/logs/e2e/ui-playwright/`.
+
+### Plan contract mismatches (needs explicit decision)
+
+- `[partial]` Plan names the drift repair kind as `setup.repairThisComputer.v1`, but current implementation uses `relay.connectBackgroundService.v1`
+  - UI spec builder calls `relay.connectBackgroundService.v1`: `apps/ui/sources/sync/domains/server/relayDrift/relayDriftSystemTask.ts`
+  - Executor handler: `apps/bootstrap/src/systemTasks/registry.ts`
+  - Decision needed: alias/rename to match the plan, or update the plan language to the shipped kind id (do not add multiple “competing” kinds without a clear contract).
+
+### Plan item fixes applied during audit
+
+- `[done]` Remove stale “Linux only” gate for server runtime in the website installer
+  - Source-of-truth installer: `scripts/release/installers/install.sh`
+  - Website published copies (kept in sync via `node scripts/pipeline/release/sync-installers.mjs`): `apps/website/public/install.sh`, `apps/website/public/install`, `apps/website/public/install-preview.sh`, `apps/website/public/install-preview`, `apps/website/public/install-dev.sh`, `apps/website/public/install-dev`
+  - Test coverage: `scripts/release/installers_server_platforms.test.mjs`
+
+## Latest executed lane (2026-03-29)
+
+- Stack: `codex-bootstrap-webcli-24502`
+- Port: `24502`
+- Repo-local fallback used in this shell: `node ./apps/stack/bin/hstack.mjs ...`
+
+Concrete evidence:
+- Stack creation log: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/01-stack-new.log`
+- Build + activate runtime log: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/03-stack-build-activate-rerun.log`
+- Runtime start probe: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/04-stack-start-runtime.log`
+- Running stack info: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/05-stack-info.json`
+- Web screenshot: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/08-setup-web-desktop-only-notice.png`
+- Web DOM capture: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/09-setup-web-desktop-only-notice.html`
+- Web capture metadata: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/10-setup-web-desktop-only-notice.json`
+- CLI auth status: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/11-cli-auth-status.json`
+- CLI daemon status: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/12-cli-daemon-status-all.json`
+- CLI relay upsert-by-url: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/13-cli-relay-upsert-by-url.json`
+
+### Lane A — Web onboarding (`/(app)/setup`)
+
+- [partial] web shows a desktop-only notice (no local setup actions on web)
+  - Evidence exists for `2026-03-29` (see artifacts above), but this lane must be **re-run** after recent `/setup` route edits.
+  - Current implementation check (code): web gating now happens in `apps/ui/sources/app/(app)/setup/index.tsx#SetupRoute` and returns a desktop-only notice on browser web.
+
+## Latest executed lane (2026-03-30)
+
+- Commands:
+  - `yarn --cwd apps/ui tauri:qa` (with Metro already running on port `8081`)
+  - `yarn --cwd apps/ui tauri:mcp:cli driver_session start --json --port 9227`
+- Concrete evidence:
+  - Native webview screenshot: `.project/logs/bootstrap-qa/native-tauri-20260330/01-webview.png`
+  - Native accessibility snapshot: `.project/logs/bootstrap-qa/native-tauri-20260330/02-a11y.json`
+  - Post-click screenshot: `.project/logs/bootstrap-qa/native-tauri-20260330/03-after-click.png`
+  - Post-back screenshot: `.project/logs/bootstrap-qa/native-tauri-20260330/04-after-back.png`
+
+### Lane B — Native desktop smoke (`yarn --cwd apps/ui tauri:qa`)
+
+- [partial] MCP driver session can connect to a real running Tauri window and capture screenshots/DOM
+
+### Lane B1 — Stack-owned TUI Tauri pane (`yarn tui:with-tauri`)
+
+- [blocked] `yarn tui:with-tauri` currently fails on some hosts with `failed to run 'cargo metadata' ... No such file or directory (os error 2)`.
+  - Track the fix + validation evidence here once re-run is green (capture the TUI pane output as a log and at least one native screenshot).
+
+Evidence to capture:
+- stack name + `hstack stack info <name> --json`
+- at least one screenshot from the browser after each major step
+
+Latest evidence:
+- `stack info` confirms the stack is healthy on `http://127.0.0.1:24502`.
+- The browser screenshot confirms `/setup` renders only the desktop-only notice on web:
+  - `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/08-setup-web-desktop-only-notice.png`
+  - `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/10-setup-web-desktop-only-notice.json`
+
+### Tauri-only validation checklist
+
+Use this checklist only in the native desktop surface launched from `yarn tui:with-tauri` or `yarn ui:tauri`:
+
+- [ ] Start a driver session through `mcp-server-tauri`.
+- [ ] Confirm the native window renders the desktop setup/control-panel surface, not the web fallback notice.
+- [ ] Exercise desktop-only flows that must not appear on web:
+  - local machine setup
+  - SSH identity-file picker
+  - native retry/cancel/trust affordances
+  - daemon/relay control actions that depend on Tauri bridging
+- [ ] Capture at least one screenshot and one DOM snapshot for each flow.
+- [ ] Record any mismatch between the UI and the CLI/daemon state in the findings log below.
+
+### Lane B — Desktop-only local control panel
+
+- [partial] set up **this computer** (`setup.thisComputer.v1`) end-to-end
+- [partial] daemon states surfaced and recoverable (not installed / not running / needs auth / running)
+- [partial] relay runtime install/start/stop
+- [partial] Tailscale secure access (install needed / login / approval required / success URL)
+
+### Lane C — Remote SSH bootstrap
+
+- [partial] remote SSH bootstrap end-to-end against a real target (Lima/VM/remote host)
+- [partial] native identity-file picker works (`desktop_pick_ssh_identity_file`)
+- [partial] retry/cancel/mismatch/trust flows
+
+### Lane D — CLI status contracts (supporting diagnostics)
+
+- [done] `happier daemon status --all --json` fields are sufficient for UI surfaces (root `active` + per-entry auth + drift + service + daemon)
+- [partial] relay profile reconciliation via comparable-key behavior
+
+Latest evidence:
+- `HAPPIER_STACK_STACK=codex-bootstrap-webcli-24502 node ./apps/stack/bin/hstack.mjs happier auth status --json`
+- `HAPPIER_STACK_STACK=codex-bootstrap-webcli-24502 node ./apps/stack/bin/hstack.mjs happier daemon status --all --json`
+- `HAPPIER_STACK_STACK=codex-bootstrap-webcli-24502 node ./apps/stack/bin/hstack.mjs happier relay upsert-by-url http://127.0.0.1:24502 --use --json`
+
+## Findings / fixes (append-only)
+
+Add new entries as you discover issues:
+
+- 2026-03-30: stack-owned Tauri dev/TUI pane helpers are present in this worktree but some are still untracked (`git status --porcelain` shows `?? apps/stack/scripts/utils/dev/tauri_dev.mjs`, `?? apps/stack/scripts/utils/dev/tauri_dev.test.mjs`, `?? apps/stack/scripts/utils/tui/tauri_mode.mjs`, `?? apps/stack/scripts/utils/tui/pane_routing.mjs`, `?? apps/stack/scripts/utils/tauri/dev_runtime.mjs`) → until these are added, the “fix” is not reproducible in other worktrees/CI → mark Lane B1 as `[blocked]` until both (a) files are tracked and (b) `yarn tui:with-tauri` is re-run green with artifacts captured.
+- 2026-03-29: `hstack stack new <name> --copy-auth-from=<source>` copied credentials into the new stack, but the new stack env did not persist `HAPPIER_STACK_AUTH_SEED_FROM` / `HAPPIER_STACK_AUTO_AUTH_SEED=1` → the first `stack start --runtime` hit daemon auth `401`, auto-reseed was disabled, and the runtime start failed → `apps/stack/scripts/stack.mjs` now persists the explicit copy-auth source as the stack’s auth seed when `--copy-auth-from` is used → validated by RED/GREEN in `node --test apps/stack/scripts/stack_copy_auth_server_scoped.test.mjs` and a broader reseed lane in `node --test --test-name-pattern='invalid-auth auto-reseed uses resolved stack name instead of null placeholder' apps/stack/scripts/daemon_invalid_auth_reseed_stack_name.integration.test.mjs`.
+- 2026-03-29: real web QA run on `codex-bootstrap-webcli-24502` confirmed `/setup` shows only the desktop-only notice in browser-web, with no local setup actions rendered → validation artifacts: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/08-setup-web-desktop-only-notice.png`, `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/09-setup-web-desktop-only-notice.html`, `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/10-setup-web-desktop-only-notice.json`.
+- 2026-03-29: `yarn tui:with-tauri` failed with `cargo metadata ... (os error 2)` when stack tooling isolated `HOME` → cargo bin dir resolution incorrectly depended on `HOME` → `apps/stack/scripts/utils/dev/tauri_dev.mjs` now prefers `os.userInfo().homedir` when `CARGO_HOME` is unset → validated via `node --test apps/stack/scripts/utils/dev/tauri_dev.test.mjs`.
+- 2026-03-29: The same Tauri lane still spent time booting `tauri:prepare:sidecar` before failing on missing cargo → `apps/stack/scripts/tauri_dev.mjs` now preflights cargo availability before any heavy Tauri work and surfaces a direct install/PATH hint → validated with a cargo-less smoke run of `apps/stack/scripts/tauri_dev.mjs --json`.
+- 2026-03-29: Metro warned about `@happier-dev/cli-common` exports missing `dist/**` during Tauri dev → `expo start` ran without ensuring internal workspaces were built → `apps/ui` now runs `ensure:workspace:built` before dev entrypoints → validated via `node --test apps/ui/scripts/ensureWorkspacePackagesBuilt.test.mjs`.
+- 2026-03-29: `happier daemon status --all --json` lacked auth/drift/service details needed for setup/control-panel diagnostics → CLI emitted a minimal `{ entries: [...] }` shape → enriched output (additive fields only) + tests in `apps/cli/src/cli/commands/daemon.statusJson.test.ts` and `apps/cli/src/daemon/multiDaemon.integration.test.ts`.
+- 2026-03-29: stack runtime web build failed resolving `@/components/settings/machines/DesktopOnlySetupNotice` from the `/setup` route → missing file in worktree at build time → added `apps/ui/sources/components/settings/machines/DesktopOnlySetupNotice.tsx` and rebuilt.
+- 2026-03-29: `mcp-server-tauri` tools (`webview_find_element`, `webview_interact`) failed because `window.__MCP__` only contained the indexed ref maps (`refs` + `reverseRefs`) but not the helper functions (`resolveRef` / `resolveAll` / `countAll`) expected by the driver scripts → added a dev-only installer in `apps/ui/sources/desktop/mcp/installTauriMcpWebviewDriverScripts.ts` and wired it into `apps/ui/index.ts` for Tauri debug builds → validated by taking screenshots via `tauri-mcp` under `.project/logs/bootstrap-qa/tauri-mcp-smoke/01-webview.png` and `.project/logs/bootstrap-qa/tauri-mcp-smoke/03-after-click.png`.
+- 2026-03-30: `yarn ui:tauri` / `yarn --cwd apps/ui tauri:qa` could fail or exit immediately when Metro was not yet running (or if one child process exited cleanly) → both launchers now wait for Metro readiness by default (configurable via `HAPPIER_STACK_TAURI_WAIT_FOR_EXPO=0`), and `tauri:qa` now only terminates on failures or when *both* child processes exit cleanly → validated via `node --test apps/stack/scripts/tauri_dev.test.mjs`, `node --test apps/stack/scripts/utils/expo/expo_wait_for_metro.test.mjs`, and `node --test apps/ui/scripts/tauriMcpQa_exitTracker.test.mjs`.
+- 2026-03-30: some repo-local stacks resolved `HAPPIER_STACK_REPO_DIR` to a non-checkout path (or users ran `tauri` tooling from a stack artifact dir), producing confusing downstream failures like `cargo metadata ... (os error 2)` → `apps/stack/scripts/tauri_dev.mjs` now fails fast with a clear error if `apps/ui/src-tauri/{tauri.conf.json,tauri.publicdev.conf.json,Cargo.toml}` are missing under the resolved repo dir → validated via `node --test apps/stack/scripts/tauri_dev.test.mjs`.
+- 2026-03-30: native Relay settings “Connect background service” action failed in dev with `[github] failed to resolve release tag cli-stable (404)` (private GitHub releases) → bootstrap system tasks fell back to downloading a managed CLI when no local path override was present → `apps/bootstrap/src/systemTasks/happierCli.ts` now prefers a repo-local CLI binary when `HAPPIER_STACK_REPO_DIR`/`HAPPIER_STACK_CLI_ROOT_DIR` points at a monorepo checkout (avoids GitHub fetch during from-source QA) → validated via RED/GREEN in `apps/bootstrap/src/systemTasks/happierCli.test.ts` plus native evidence in `.project/logs/bootstrap-qa/tauri-mcp-smoke-20260330/05-after-connect-background-click.png` (restart `yarn --cwd apps/ui tauri:qa` to pick up the new embedded hsetup sidecar).

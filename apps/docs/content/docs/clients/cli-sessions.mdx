@@ -168,7 +168,31 @@ happier session set-model <session-id-or-prefix> <model-id>
 happier session set-permission-mode <session-id-or-prefix> <mode>
 ```
 
-`set-permission-mode` accepts common aliases (for example `ask`, `default`, `yolo`). Use `--json` to see the normalized `permissionMode`.
+### Permission intent (`set-permission-mode` and `--permission-mode`)
+
+Happier stores a provider-agnostic **permission intent** string for each session.
+
+Common intents and aliases:
+
+- `default`
+- `read_only` (also accepts `read-only`, `readonly`, `ro`)
+- `safe-yolo` (also accepts legacy `acceptEdits`)
+- `yolo` (also accepts legacy `bypassPermissions`)
+- `plan`
+
+Use it in either place:
+
+```bash
+happier session set-permission-mode <session-id-or-prefix> read_only
+happier session send <session-id-or-prefix> "ping" --permission-mode safe-yolo
+```
+
+Notes:
+
+- `set-permission-mode` updates the session’s persisted intent.
+- `session send --permission-mode ...` is a one-message override.
+- The exact allowed operations still depend on the backend/provider and your account policy.
+- Use `--json` to see the normalized intent stored/used.
 
 These session control commands map to canonical actions such as:
 

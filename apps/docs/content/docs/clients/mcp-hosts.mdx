@@ -41,6 +41,24 @@ Example shape:
 
 If your host does not run in the same shell environment as your terminal, use an absolute command path.
 
+### CLI lanes (`happier` vs `hprev` vs `hdev`)
+
+If you installed a preview or dev lane, your command may be:
+
+- `happier` (stable)
+- `hprev` (preview)
+- `hdev` (dev)
+
+Prefer configuring your MCP host to run the same lane you use in the terminal.
+
+If you want a fully explicit config, use an absolute path:
+
+```bash
+which happier
+```
+
+Then paste that path as the `command` in your host config.
+
 ## Server selection
 
 For security, `happier mcp serve` does **not** honor server-selection environment variables (like `HAPPIER_SERVER_URL`).
@@ -87,6 +105,30 @@ You can set a default session context at server start:
 ```
 
 Many tools also accept an explicit `sessionId` argument; prefer passing `sessionId` when building deterministic automations.
+
+Notes:
+
+- Prefer a full session id in `--session` for saved host configs.
+- Unambiguous prefixes are often accepted, but an ambiguous prefix will fail and return candidates.
+
+### Renaming the current session
+
+If your MCP host wants to rename the current/default session without tracking ids, use:
+
+- `change_title` (input: `{ "title": "..." }`)
+
+Use `session_title_set` when you want to rename a specific session by id/prefix.
+
+## Daemon requirement (local session control)
+
+Most “control plane” reads (like `session_list`) only require valid CLI authentication.
+But anything that needs to start/drive a local provider process (create sessions, send messages, attach, etc.) generally requires the Happier daemon to be running on that machine.
+
+If your MCP host gets an error like `No daemon running`, start it:
+
+```bash
+happier daemon start
+```
 
 ## Recommended workflow for “any action”
 

@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "app",
+    "control-panel",
     "cli",
     "cli-sessions",
     "daemon",

@@ -1,0 +1,123 @@
+---
+title: Desktop control panel
+description: Use the desktop app as the control panel for Relay, machine, daemon, and secure-access setup.
+---
+
+The desktop app is the main control panel for Happier setup and machine management.
+
+Use it to keep four things aligned:
+
+1. **Relay selection**
+2. **Account sign-in**
+3. **Daemon/machine setup**
+4. **Optional secure access for self-hosted Relays**
+
+## Recommended flow
+
+### 1. Choose your Relay first
+
+Open the desktop app and choose the Relay you want to use before creating or signing into an account.
+
+This avoids the common mistake where:
+
+- the app signs into one Relay
+- the CLI or daemon points at another Relay
+- terminal/daemon setup later looks “broken” even though the account is valid
+
+### 2. Sign in on that Relay
+
+After selecting the Relay, sign in or create an account there.
+
+The app keeps account state scoped to the selected Relay, so switching to another Relay later does not overwrite the first one.
+
+### 3. Set up a machine
+
+From the desktop app, you can choose between:
+
+- **Set up this computer** — configure the local daemon/background service against the active Relay
+- **Add machine over SSH** — bootstrap a remote machine from the desktop app
+
+The primary entrypoint for these flows is the in-app `/setup` screen.
+
+The local flow is best when the daemon should run on your laptop or desktop. The SSH flow is best when the daemon should run on a remote box but you still want to manage it from your laptop.
+
+## What the control panel can manage
+
+### Relay settings
+
+Use the Relay settings screen to:
+
+- add and save multiple Relay profiles
+- switch the active Relay
+- see when the daemon is connected to a different Relay
+- repair Relay drift from the app instead of redoing setup manually
+
+### Machines
+
+Use the Machines screen to:
+
+- bootstrap the current computer
+- bootstrap a remote machine over SSH
+- continue provider setup for the specific machine that was just prepared
+
+### Local self-hosted Relay runtime
+
+If you are running a self-hosted Relay locally, the app can also manage the local Relay runtime:
+
+- inspect status
+- install or update it
+- start or stop it
+- surface the local Relay URL
+
+### Private access for other devices
+
+For local or self-hosted Relays, the app can guide secure private access setup so phones or other computers can still reach the Relay without exposing it publicly.
+
+Today this is surfaced as a local secure-access task from the desktop app.
+
+## Relay drift
+
+Relay drift means the app is using one Relay while the daemon/background service is configured against another one.
+
+The desktop app surfaces this explicitly and offers a repair action.
+
+This is important because many “why can’t I connect my daemon / terminal / machine?” issues are really Relay mismatches, not auth failures.
+
+## Common setups
+
+### Hosted Relay + local daemon
+
+- Choose Happier Cloud in the app
+- Sign in
+- Use **Set up this computer**
+
+### Self-hosted Relay + local daemon
+
+- Add/select your self-hosted Relay in the app
+- Sign in there
+- Use **Set up this computer**
+- Optionally enable private access for phones and other devices
+
+### Self-hosted Relay + remote daemon
+
+- Add/select your self-hosted Relay in the app
+- Sign in there
+- Use **Add machine over SSH**
+- Continue provider setup for the returned machine
+
+### Mixed setup (remote Relay + remote daemon + laptop control panel)
+
+- Keep the desktop app on your laptop as the control surface
+- Run the Relay on one machine
+- Run the daemon/providers on another machine
+- Manage both from the desktop app
+
+## CLI fallback
+
+The CLI still exposes the underlying commands (`server`, `auth`, `daemon`, and related subcommands), but the recommended user flow is:
+
+- pick the Relay in the app
+- sign in there
+- let the desktop app drive machine/bootstrap actions
+
+That keeps Relay/account/machine state visible and reduces mismatches.

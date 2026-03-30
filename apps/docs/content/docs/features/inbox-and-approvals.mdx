@@ -69,6 +69,7 @@ Examples:
 - allow `session.title.set` directly in the app, but require approval from the CLI
 - allow `session.stop` for session agents, but require approval from external MCP hosts
 - disable an action entirely on one surface while keeping it available on another
+- require approval for built-in surface aliases too, such as CLI `set-title` / MCP `session_title_set`, because they resolve to the same underlying action policy
 
 In **Settings → Actions**, Happier stores this as per-action, per-surface policy.
 

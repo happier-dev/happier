@@ -46,6 +46,7 @@ Important:
 How you update depends on how you installed the CLI:
 
 - **Installer install**: run the lane-specific command (`happier`, `hprev`, or `hdev`) with `self check` / `self update` (or rerun the matching installer endpoint). Installer installs keep the full CLI payload under `~/.happier/cli/current` and refresh the selected lane shim for you.
+- Stable is `~/.happier/cli/current`; preview/dev use `~/.happier/cli-preview/current` and `~/.happier/cli-dev/current`.
 - **npm install**: `npm install -g @happier-dev/cli@latest` (or `@next` for preview). npm does not currently expose a separate public `dev` dist-tag.
 
 The CLI can also show periodic update notices in TTY sessions; disable with:
