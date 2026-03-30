@@ -32,6 +32,16 @@ async function main() {
   const skipBuild = flags.has('--skip-build');
 
   if (!skipBuild) {
+    // Metro resolves internal workspace packages via `package.json#exports` which points to `dist/**`.
+    // Ensure all `@happier-dev/*` workspace deps used by the UI have been built before `expo export`.
+    execOrThrow(process.execPath, ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        CI: process.env.CI ?? '1',
+      },
+    });
+
     const yarn = resolveYarnCommand({});
     execOrThrow(
       yarn.cmd,
