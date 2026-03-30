@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import process from 'node:process';
 import url from 'node:url';
 import { resolveUiPostinstallTasks } from './resolveUiPostinstallTasks.mjs';
@@ -63,22 +64,76 @@ if (!patchPackageCliPath) {
 const tasks = resolveUiPostinstallTasks({ env: process.env });
 const wants = (id) => tasks.includes(id);
 
+function listPatchFiles(dir) {
+    try {
+        return fs.readdirSync(dir, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name.endsWith('.patch'))
+            .map((entry) => entry.name);
+    } catch {
+        return [];
+    }
+}
+
+function resolvePatchTargetPackageName(patchFileName) {
+    const raw = patchFileName.endsWith('.patch') ? patchFileName.slice(0, -'.patch'.length) : patchFileName;
+    const parts = raw.split('+').filter(Boolean);
+    if (parts.length < 2) return '';
+    if (parts[0].startsWith('@')) {
+        if (parts.length < 3) return '';
+        return `${parts[0]}/${parts[1]}`;
+    }
+    return parts[0];
+}
+
+function packageExists(nodeModulesDir, packageName) {
+    if (!nodeModulesDir || !packageName) return false;
+    return fs.existsSync(path.resolve(nodeModulesDir, packageName));
+}
+
+function createFilteredPatchDir({ patchDir: inputPatchDir, nodeModulesDir, label }) {
+    const patchFiles = listPatchFiles(inputPatchDir);
+    if (patchFiles.length === 0) return '';
+
+    const selected = patchFiles.filter((fileName) => {
+        const pkgName = resolvePatchTargetPackageName(fileName);
+        return packageExists(nodeModulesDir, pkgName);
+    });
+
+    if (selected.length === 0) return '';
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `happier-ui-patches-${label}-`));
+    for (const fileName of selected) {
+        fs.copyFileSync(path.resolve(inputPatchDir, fileName), path.resolve(tmpDir, fileName));
+    }
+    return tmpDir;
+}
+
 if (wants('patch-package')) {
     // Note: this repo uses Yarn workspaces, so some dependencies are hoisted to the repo root.
     // patch-package only patches packages present in the current working directory's
     // node_modules, so we run it from the repo root but keep patch files in expo-app/patches.
     if (fs.existsSync(repoRootNodeModulesDir)) {
-        runCommandOrExit({ command: process.execPath, args: [patchPackageCliPath, '--patch-dir', patchDirFromRepoRoot], options: {
-            cwd: repoRootDir,
-        } });
+        const filteredPatchDir = createFilteredPatchDir({ patchDir, nodeModulesDir: repoRootNodeModulesDir, label: 'root' });
+        if (filteredPatchDir) {
+            runCommandOrExit({
+                command: process.execPath,
+                args: [patchPackageCliPath, '--patch-dir', path.relative(repoRootDir, filteredPatchDir)],
+                options: { cwd: repoRootDir },
+            });
+        }
     }
 
     // Some dependencies are not hoisted (e.g. expo-router) and are installed under expo-app/node_modules.
     // Run patch-package again scoped to expo-app to apply those patches.
     if (fs.existsSync(expoAppNodeModulesDir)) {
-        runCommandOrExit({ command: process.execPath, args: [patchPackageCliPath, '--patch-dir', patchDirFromExpoApp], options: {
-            cwd: expoAppDir,
-        } });
+        const filteredPatchDir = createFilteredPatchDir({ patchDir, nodeModulesDir: expoAppNodeModulesDir, label: 'ui' });
+        if (filteredPatchDir) {
+            runCommandOrExit({
+                command: process.execPath,
+                args: [patchPackageCliPath, '--patch-dir', path.relative(expoAppDir, filteredPatchDir)],
+                options: { cwd: expoAppDir },
+            });
+        }
     }
 }
 
