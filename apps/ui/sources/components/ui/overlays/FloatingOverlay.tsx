@@ -184,41 +184,72 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const arrowSize = arrowCfg.size;
     const protrusion = arrowSize / 2;
 
-    const arrowStyle = (() => {
-        const base: ViewStyle & { boxShadow?: string } = {
-            position: 'absolute' as const,
-            width: arrowSize,
-            height: arrowSize,
-            backgroundColor: theme.colors.surface,
-            borderWidth: Platform.OS === 'web' ? 0 : 0.5,
-            borderColor: theme.colors.modal.border,
-            transform: [{ rotate: '45deg' as const }],
-            pointerEvents: 'none' as const,
-        };
+    const arrowBoxStyle: ViewStyle & { boxShadow?: string } = {
+        width: arrowSize,
+        height: arrowSize,
+        backgroundColor: theme.colors.surface,
+        borderWidth: Platform.OS === 'web' ? 0 : 0.5,
+        borderColor: theme.colors.modal.border,
+        transform: [{ rotate: '45deg' as const }],
+    };
 
-        if (Platform.OS === 'web') {
-            // RN-web can be inconsistent with shadow props on transformed views.
-            // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
-            base.boxShadow = theme.colors.shadowPopoverArrowBoxShadow;
-        } else {
-            Object.assign(base, shadowLevelStyle(theme.colors.shadowLevels[4]));
-        }
+    if (Platform.OS === 'web') {
+        // RN-web can be inconsistent with shadow props on transformed views.
+        // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
+        arrowBoxStyle.boxShadow = theme.colors.shadowPopoverArrowBoxShadow;
+    } else {
+        Object.assign(arrowBoxStyle, shadowLevelStyle(theme.colors.shadowLevels[4]));
+    }
 
-        switch (arrowSide) {
-            case 'top':
-                return [base, { top: -protrusion, left: '50%', marginLeft: -protrusion }];
-            case 'bottom':
-                return [base, { bottom: -protrusion, left: '50%', marginLeft: -protrusion }];
-            case 'left':
-                return [base, { left: -protrusion, top: '50%', marginTop: -protrusion }];
-            case 'right':
-                return [base, { right: -protrusion, top: '50%', marginTop: -protrusion }];
-        }
-    })();
+    const arrowWrapperStyle: ViewStyle = {
+        position: 'absolute',
+        pointerEvents: 'none',
+    };
+
+    switch (arrowSide) {
+        case 'top':
+            Object.assign(arrowWrapperStyle, {
+                top: -protrusion,
+                left: 0,
+                right: 0,
+                height: arrowSize,
+                alignItems: 'center',
+            });
+            break;
+        case 'bottom':
+            Object.assign(arrowWrapperStyle, {
+                bottom: -protrusion,
+                left: 0,
+                right: 0,
+                height: arrowSize,
+                alignItems: 'center',
+            });
+            break;
+        case 'left':
+            Object.assign(arrowWrapperStyle, {
+                left: -protrusion,
+                top: 0,
+                bottom: 0,
+                width: arrowSize,
+                justifyContent: 'center',
+            });
+            break;
+        case 'right':
+            Object.assign(arrowWrapperStyle, {
+                right: -protrusion,
+                top: 0,
+                bottom: 0,
+                width: arrowSize,
+                justifyContent: 'center',
+            });
+            break;
+    }
 
     return (
         <Animated.View style={{ position: 'relative' }}>
-            <View testID="floating-overlay-arrow" style={arrowStyle} />
+            <View testID="floating-overlay-arrow" style={arrowWrapperStyle}>
+                <View style={arrowBoxStyle} />
+            </View>
             {overlay}
         </Animated.View>
     );
