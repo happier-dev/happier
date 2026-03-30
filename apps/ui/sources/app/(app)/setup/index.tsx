@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { HomeHeaderNotAuth } from '@/components/navigation/shell/HomeHeader';
+import { DesktopOnlySetupNotice } from '@/components/settings/machines/DesktopOnlySetupNotice';
 import { MachineSetupFlowScreen } from '@/components/settings/machines/MachineSetupFlowScreen';
 import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
@@ -50,14 +51,13 @@ function BrowserWebSetupRoute() {
 
     return (
         <ItemList>
-            <ItemGroup title={t('setupOnboarding.controlPanelTitle')}>
-                <Item
-                    testID="setup.desktopOnlyNotice"
-                    title={t('setupOnboarding.webDesktopOnlyTitle')}
-                    subtitle={t('setupOnboarding.webDesktopOnlyBody')}
-                    showChevron={false}
-                    mode="info"
-                />
+            <DesktopOnlySetupNotice
+                testID="setup.desktopOnlyNotice"
+                groupTitle={t('setupOnboarding.controlPanelTitle')}
+                title={t('setupOnboarding.webDesktopOnlyTitle')}
+                subtitle={t('setupOnboarding.webDesktopOnlyBody')}
+            />
+            <ItemGroup title={t('setupOnboarding.currentRelayTitle')}>
                 <Item
                     testID="setup.web.activeRelay"
                     title={t('setupOnboarding.activeRelaySummaryTitle')}

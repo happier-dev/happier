@@ -102,6 +102,17 @@ function defaultTypography(
 function defaultTypography(
     weight: 'regular' | 'italic' | 'semiBold' = 'regular',
 ): Pick<TextStyle, 'fontFamily' | 'fontStyle' | 'fontWeight'> {
+    // Native iOS: prefer the system font (SF). We omit `fontFamily` so RN uses the platform default.
+    if (Platform.OS === 'ios') {
+        if (weight === 'italic') {
+            return { fontStyle: 'italic' };
+        }
+        if (weight === 'semiBold') {
+            return { fontWeight: FontWeights.semiBold };
+        }
+        return {};
+    }
+
     const fontFamily = getDefaultFont(weight);
 
     // Keep existing Inter behavior (family encodes weight/style).

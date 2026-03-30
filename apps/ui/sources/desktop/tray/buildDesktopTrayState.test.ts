@@ -73,4 +73,21 @@ describe('buildDesktopTrayState', () => {
             detail: 'status.unknown',
         });
     });
+
+    it('maps machine_not_ready health to an attention-required tray state (Rust tray enum does not accept machine_not_ready)', () => {
+        expect(buildDesktopTrayState({
+            health: {
+                kind: 'machine_not_ready',
+                machineCount: 2,
+                onlineCount: 2,
+                statusLabelKey: 'status.actionRequired',
+                machineLabelKey: 'status.online',
+            },
+            t: translate,
+        })).toEqual({
+            status: 'attention_required',
+            label: 'status.actionRequired',
+            detail: 'status.online · 2/2',
+        });
+    });
 });

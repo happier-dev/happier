@@ -98,7 +98,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sessionTitleSelected: {
         color: theme.colors.text,
-        fontWeight: '600',
+        ...Typography.default('semiBold'),
     },
     avatarContainer: {
         position: 'relative',
@@ -185,7 +185,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sessionTitle: {
         fontSize: 14,
-        fontWeight: '500',
         flex: 1,
         ...Typography.default(),
         color: theme.colors.textSecondary,
@@ -198,7 +197,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 16,
     },
     sessionTitleEmphasized: {
-        fontWeight: '600',
         ...Typography.default('semiBold'),
     },
     sessionTitleConnected: {
@@ -338,7 +336,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     statusText: {
         fontSize: 12,
-        fontWeight: '500',
         lineHeight: 16,
         ...Typography.default(),
     },

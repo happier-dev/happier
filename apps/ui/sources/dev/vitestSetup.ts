@@ -597,6 +597,15 @@ vi.mock('react-native-unistyles', () => {
             surfaceHighest: '#f0f0f0',
             divider: '#eaeaea',
             shadow: { color: '#000000', opacity: 0.1 },
+            shadowLevels: Array.from({ length: 6 }, (_value, idx) => ({
+                boxShadow: '0 0 0 rgba(0, 0, 0, 0)',
+                shadowColor: '#000000',
+                shadowOffset: { width: 0, height: idx },
+                shadowOpacity: 0.1,
+                shadowRadius: idx,
+                elevation: idx,
+            })),
+            shadowPopoverArrowBoxShadow: '0 0 0 rgba(0, 0, 0, 0)',
             overlay: {
                 scrim: 'rgba(0, 0, 0, 0.45)',
                 scrimStrong: 'rgba(0, 0, 0, 0.6)',

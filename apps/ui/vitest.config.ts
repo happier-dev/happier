@@ -103,6 +103,9 @@ export default defineConfig({
         // Our UI test suite is occasionally CPU-bound on developer machines / CI runners.
         // Increase the default timeout so unrelated load doesn't cause spurious failures.
         testTimeout: 60_000,
+        // Global setup/teardown can import and reset large module graphs. Ensure hooks have
+        // enough time even when running a single focused test file in isolation.
+        hookTimeout: 60_000,
         globals: false,
         environment: 'node',
         env: {

@@ -361,7 +361,6 @@ const styles = StyleSheet.create((theme) => ({
     subtitle: {
         color: theme.colors.agentEventText,
         fontSize: 13,
-        fontWeight: '500',
     },
     headerRight: {
         flexDirection: 'row',

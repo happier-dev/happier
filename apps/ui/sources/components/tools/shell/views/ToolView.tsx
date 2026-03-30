@@ -29,6 +29,7 @@ import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForReq
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
+import { Typography } from '@/constants/Typography';
 import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 
@@ -437,9 +438,9 @@ const styles = StyleSheet.create((theme) => ({
         maxWidth: 240,
     },
     headerErrorText: {
-        fontSize: 12,
+        fontSize: 13,
         color: theme.colors.textDestructive,
-        fontWeight: '600',
+        ...Typography.default('semiBold'),
     },
     headerActionsContainer: {
         flexDirection: 'row',
@@ -474,17 +475,18 @@ const styles = StyleSheet.create((theme) => ({
         fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
     },
     toolName: {
-        fontSize: 14,
-        fontWeight: '500',
+        fontSize: 13,
+        ...Typography.default('semiBold'),
         color: theme.colors.text,
     },
     status: {
         fontWeight: '400',
         opacity: 0.3,
-        fontSize: 15,
+        fontSize: 13,
     },
     toolDescription: {
         fontSize: 13,
+        ...Typography.default('regular'),
         color: theme.colors.textSecondary,
         marginTop: 2,
     },

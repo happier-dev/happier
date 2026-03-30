@@ -9,6 +9,8 @@ const setClipboardStringSafeSpy = vi.hoisted(() => vi.fn(async (_value: string) 
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const setPendingSetupIntentSpy = vi.hoisted(() => vi.fn());
+const upsertAndActivateServerSpy = vi.hoisted(() => vi.fn());
+const switchConnectionToActiveServerSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 let activeServerSnapshotState: {
     serverId: string;
@@ -167,6 +169,18 @@ vi.mock('@/sync/domains/server/serverProfiles', async () => {
         getActiveServerSnapshot: () => activeServerSnapshotState,
     };
 });
+
+vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
+    return {
+        ...actual,
+        upsertAndActivateServer: upsertAndActivateServerSpy,
+    };
+});
+
+vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
+    switchConnectionToActiveServer: () => switchConnectionToActiveServerSpy(),
+}));
 
 function findTextNodeByTestId(scope: renderer.ReactTestInstance, testID: string) {
     return scope.findAllByType('Text' as never).find((node) => node.props?.testID === testID);
@@ -367,6 +381,64 @@ describe('MachineSetupFlowScreen', () => {
 
         expect(screen.findByTestId('settings.machineSetup.startError')).toBeTruthy();
         expect(screen.findByTestId('settings.machineSetup.startError')?.props.subtitle).toBe('settings.systemTaskBridgeUnavailable');
+    });
+
+    it('can adopt an existing local installation by reading daemon status and continuing with provider setup', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+
+        let nextTaskId = 1;
+        const taskIdByKind = new Map<string, string>();
+        const listeners = new Map<string, {
+            onEvent: (payload: unknown) => void;
+            onResult: (payload: unknown) => void;
+        }>();
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    const parsed = SystemTaskSpecSchema.parse(spec);
+                    const taskId = `task_${nextTaskId++}`;
+                    taskIdByKind.set(parsed.kind, taskId);
+                    return taskId;
+                },
+                async subscribe(taskId, listenerSet) {
+                    listeners.set(taskId, listenerSet);
+                    return () => {
+                        listeners.delete(taskId);
+                    };
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { MachineSetupFlowScreen } = await import('./MachineSetupFlowScreen');
+        const screen = await renderScreen(React.createElement(MachineSetupFlowScreen, { runner }));
+
+        expect(screen.findAllByType('ProviderSetupFlow' as any)).toHaveLength(0);
+
+        await screen.pressByTestIdAsync('settings.machineSetup.adoptExisting');
+        const statusTaskId = taskIdByKind.get('daemon.service.status.v1');
+        expect(statusTaskId).toBeTruthy();
+
+        await renderer.act(async () => {
+            listeners.get(statusTaskId!)?.onResult({
+                protocolVersion: 1,
+                taskId: statusTaskId!,
+                ok: true,
+                data: {
+                    serviceInstalled: true,
+                    daemonRunning: true,
+                    needsAuth: false,
+                    machineId: 'machine-local-1',
+                },
+            });
+        });
+
+        const providerFlows = screen.findAllByType('ProviderSetupFlow' as any);
+        expect(providerFlows).toHaveLength(1);
+        expect(providerFlows[0]?.props.machineId).toBe('machine-local-1');
     });
 
     it('shows a generic start failure when the local setup task fails for an unknown reason', async () => {
@@ -943,6 +1015,10 @@ describe('MachineSetupFlowScreen', () => {
 
         await screen.pressByTestIdAsync('settings.machineSetup.remoteRelaySwitch');
         expect(modalConfirmSpy).toHaveBeenCalled();
+        expect(upsertAndActivateServerSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://relay.remote.example.test',
+        }));
+        expect(switchConnectionToActiveServerSpy).toHaveBeenCalled();
         expect(setPendingSetupIntentSpy).toHaveBeenCalledWith({
             branch: 'remoteMachine',
             phase: 'awaiting_auth',

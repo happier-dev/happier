@@ -3,10 +3,11 @@ import { Platform } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
+import type { SystemTaskResult } from '@happier-dev/protocol';
 
-import { SystemTaskProgressCard } from '@/components/systemTasks';
+import { SystemTaskProgressCard, useSystemTaskSnapshot } from '@/components/systemTasks';
 import { resolveThisComputerSetupFollowUp, useThisComputerSetupTask } from '@/components/systemTasks/useThisComputerSetupTask';
-import { isSystemTaskBridgeUnavailableError } from '@/components/systemTasks/systemTaskStartError';
+import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { ProviderSetupFlow } from '@/components/settings/providers/setup/ProviderSetupFlow';
 import { LocalRelayRuntimeControlSection } from '@/components/settings/server/localControl/LocalRelayRuntimeControlSection';
 import { LocalTailscaleSecureAccessSection } from '@/components/settings/server/localControl/LocalTailscaleSecureAccessSection';
@@ -24,7 +25,9 @@ import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import { DesktopOnlySetupNotice } from './DesktopOnlySetupNotice';
 import { LocalDaemonControlSection } from './localControl/LocalDaemonControlSection';
+import { buildLocalDaemonServiceSystemTaskSpec } from './localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { RemoteSshMachineSetupSection } from './RemoteSshMachineSetupSection';
+import { upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 
 type MachineSetupFlowScreenProps = Readonly<{
     autoStartLocalTask?: boolean;
@@ -43,6 +46,31 @@ function resolveLocalSetupStartErrorSubtitle(startError: string): string {
         return t('settings.systemTaskBridgeUnavailable');
     }
     return t('settings.systemTaskStartFailed');
+}
+
+type LocalDaemonStatusData = Readonly<{
+    serviceInstalled: boolean;
+    daemonRunning: boolean;
+    needsAuth: boolean;
+    machineId: string | null;
+}>;
+
+function readLocalDaemonStatusData(result: SystemTaskResult | null): LocalDaemonStatusData | null {
+    if (!result?.ok) {
+        return null;
+    }
+
+    const data = result.data as Record<string, unknown> | undefined;
+    if (!data) {
+        return null;
+    }
+
+    return {
+        serviceInstalled: data.serviceInstalled === true,
+        daemonRunning: data.daemonRunning === true,
+        needsAuth: data.needsAuth === true,
+        machineId: typeof data.machineId === 'string' && data.machineId.trim().length > 0 ? data.machineId.trim() : null,
+    };
 }
 
 export const MachineSetupFlowScreen = React.memo(function MachineSetupFlowScreen(props: MachineSetupFlowScreenProps) {
@@ -95,6 +123,10 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
         },
         ...(props.runner ? { runner: props.runner } : {}),
     });
+    const [adoptTaskId, setAdoptTaskId] = React.useState<string | null>(null);
+    const adoptTaskSnapshot = useSystemTaskSnapshot(runner, adoptTaskId);
+    const [adoptedMachineId, setAdoptedMachineId] = React.useState<string | null>(null);
+    const handledAdoptResultTaskIdRef = React.useRef<string | null>(null);
 
     const localSetupFollowUp = React.useMemo(() => {
         return resolveThisComputerSetupFollowUp(activeTaskSnapshot?.result ?? null);
@@ -136,7 +168,7 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
         setLocalRelayUrl((current) => current === nextRelayUrl ? current : nextRelayUrl);
     }, []);
     const remoteRelayRuntimeUrl = remoteCompletedMachine?.relayRuntimeUrl ?? null;
-    const providerMachineId = remoteCompletedMachine?.machineId ?? completedMachineId ?? props.initialProviderMachineId ?? null;
+    const providerMachineId = remoteCompletedMachine?.machineId ?? completedMachineId ?? adoptedMachineId ?? props.initialProviderMachineId ?? null;
     const providerServerId = remoteCompletedMachine?.machineId
         ? remoteCompletedMachine.serverId ?? undefined
         : undefined;
@@ -200,6 +232,74 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
         router.push('/inbox');
     }, []);
 
+    React.useEffect(() => {
+        if (!adoptTaskSnapshot?.result || handledAdoptResultTaskIdRef.current === adoptTaskSnapshot.taskId) {
+            return;
+        }
+
+        handledAdoptResultTaskIdRef.current = adoptTaskSnapshot.taskId;
+        const status = readLocalDaemonStatusData(adoptTaskSnapshot.result);
+        if (!status) {
+            return;
+        }
+
+        if (!status.serviceInstalled || !status.daemonRunning || status.needsAuth || !status.machineId) {
+            Modal.alert(t('common.error'), t('settings.machineSetupAdoptExistingNotReady'));
+            return;
+        }
+
+        setAdoptedMachineId(status.machineId);
+        props.onLocalSetupSucceeded?.(status.machineId);
+    }, [adoptTaskSnapshot, props]);
+
+    const handleAdoptExistingInstallation = React.useCallback(async () => {
+        try {
+            const taskId = await runner.start(buildLocalDaemonServiceSystemTaskSpec('daemon.service.status.v1'));
+            setAdoptTaskId(taskId);
+        } catch (error) {
+            const message = readSystemTaskStartErrorMessage(error);
+            Modal.alert(t('common.error'), message ?? t('settings.systemTaskStartFailed'));
+        }
+    }, [runner]);
+
+    const handleSwitchToRemoteRelay = React.useCallback(async () => {
+        if (!remoteRelayRuntimeUrl) {
+            return;
+        }
+
+        const confirmed = await Modal.confirm(
+            t('settings.machineSetupRemoteRelaySwitchConfirmTitle'),
+            t('settings.machineSetupRemoteRelaySwitchConfirmBody', { relayUrl: remoteRelayRuntimeUrl }),
+            {
+                confirmText: t('common.continue'),
+                cancelText: t('common.cancel'),
+            },
+        );
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            await upsertActivateAndSwitchServer({
+                serverUrl: remoteRelayRuntimeUrl,
+                source: 'url',
+                scope: 'device',
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message.trim() : '';
+            Modal.alert(t('common.error'), message || t('server.failedToConnectToServer'));
+            return;
+        }
+
+        setPendingSetupIntent({
+            branch: 'remoteMachine',
+            phase: 'awaiting_auth',
+            relayUrl: remoteRelayRuntimeUrl,
+            machineId: remoteCompletedMachine?.machineId ?? null,
+        });
+        router.push(`/server?url=${encodeURIComponent(remoteRelayRuntimeUrl)}&auto=1`);
+    }, [remoteCompletedMachine?.machineId, remoteRelayRuntimeUrl]);
+
     const content = (
         <>
             {(isRemoteOnly || isLocalOnly) ? null : (
@@ -211,6 +311,15 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
                         icon={<Ionicons name="laptop-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={() => {
                             void handleStartLocalTask();
+                        }}
+                    />
+                    <Item
+                        testID="settings.machineSetup.adoptExisting"
+                        title={t('settings.machineSetupAdoptExistingTitle')}
+                        subtitle={t('settings.machineSetupAdoptExistingSubtitle')}
+                        icon={<Ionicons name="checkmark-done-outline" size={29} color={theme.colors.accent.indigo} />}
+                        onPress={() => {
+                            void handleAdoptExistingInstallation();
                         }}
                     />
                     <Item
@@ -251,6 +360,19 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
                     title={t('settings.machineSetupCurrentMachineTitle')}
                     snapshot={localSetupSnapshotForCard ?? activeTaskSnapshot}
                     onCancel={activeTaskSnapshot.result ? undefined : cancel}
+                />
+            ) : null}
+
+            {!isBrowserWeb && !isRemoteOnly && adoptTaskSnapshot ? (
+                <SystemTaskProgressCard
+                    title={t('settings.machineSetupAdoptExistingProgressTitle')}
+                    snapshot={adoptTaskSnapshot}
+                    onCancel={adoptTaskSnapshot.result ? undefined : () => {
+                        if (!adoptTaskSnapshot.taskId) {
+                            return;
+                        }
+                        void runner.cancel(adoptTaskSnapshot.taskId);
+                    }}
                 />
             ) : null}
 
@@ -316,28 +438,7 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
                         testID="settings.machineSetup.remoteRelaySwitch"
                         title={t('settings.machineSetupRemoteRelaySwitchTitle')}
                         subtitle={t('settings.machineSetupRemoteRelaySwitchSubtitle')}
-                        onPress={() => {
-                            void (async () => {
-                                const confirmed = await Modal.confirm(
-                                    t('settings.machineSetupRemoteRelaySwitchConfirmTitle'),
-                                    t('settings.machineSetupRemoteRelaySwitchConfirmBody', { relayUrl: remoteRelayRuntimeUrl }),
-                                    {
-                                        confirmText: t('common.continue'),
-                                        cancelText: t('common.cancel'),
-                                    },
-                                );
-                                if (!confirmed) {
-                                    return;
-                                }
-                                setPendingSetupIntent({
-                                    branch: 'remoteMachine',
-                                    phase: 'awaiting_auth',
-                                    relayUrl: remoteRelayRuntimeUrl,
-                                    machineId: remoteCompletedMachine?.machineId ?? null,
-                                });
-                                router.push(`/server?url=${encodeURIComponent(remoteRelayRuntimeUrl)}&auto=1`);
-                            })();
-                        }}
+                        onPress={handleSwitchToRemoteRelay}
                     />
                 </ItemGroup>
             ) : null}

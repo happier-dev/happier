@@ -83,8 +83,10 @@ vi.mock('@/components/settings/machines/RemoteSshMachineSetupSection', () => ({
 vi.mock('@/components/systemTasks', () => ({
     SystemTaskProgressCard: (props: Record<string, unknown>) => React.createElement('SystemTaskProgressCard', props),
     getDefaultSystemTaskRunner: () => ({ mode: 'unavailable', start: async () => '', cancel: async () => {}, subscribe: async () => () => {} }),
+    useSystemTaskSnapshot: () => null,
 }));
 vi.mock('@/components/systemTasks/useThisComputerSetupTask', () => ({
+    resolveThisComputerSetupFollowUp: () => null,
     useThisComputerSetupTask: () => ({
         activeTaskSnapshot: null,
         cancel: async () => {},

@@ -50,13 +50,46 @@ function resolvePromptPrimaryActionLabel(prompt: RemoteSshBootstrapPrompt): stri
     return t('settings.machineSetupRemotePromptTrustAction');
 }
 
+function normalizeFileUriToPath(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('file://')) {
+        return trimmed;
+    }
+
+    let pathname = trimmed.slice('file://'.length);
+    if (pathname.startsWith('localhost')) {
+        pathname = pathname.slice('localhost'.length);
+    }
+
+    try {
+        pathname = decodeURIComponent(pathname);
+    } catch {
+        // keep raw pathname
+    }
+
+    if (/^\/[a-zA-Z]:\//.test(pathname)) {
+        return pathname.slice(1);
+    }
+
+    return pathname;
+}
+
 function resolvePickedIdentityFilePath(picked: PickedAttachment): string | null {
     if (picked.kind !== 'native') {
         return null;
     }
 
     const uri = typeof picked.uri === 'string' ? picked.uri.trim() : '';
-    return uri.length > 0 ? uri : null;
+    if (!uri) {
+        return null;
+    }
+    if (uri.startsWith('file://')) {
+        return normalizeFileUriToPath(uri);
+    }
+    if (uri.includes('://')) {
+        return null;
+    }
+    return uri;
 }
 
 function readCompletedRelayRuntime(snapshot: ReturnType<typeof useRemoteSshBootstrapTask>['activeTaskSnapshot']): Readonly<{
@@ -183,7 +216,7 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
             if (!nextPath) {
                 return;
             }
-            updateIdentityFilePath(nextPath);
+            updateIdentityFilePath(nextPath.startsWith('file://') ? normalizeFileUriToPath(nextPath) : nextPath);
         } catch (error) {
             Modal.alert(t('common.error'), resolveStartFailureMessage(error));
         }

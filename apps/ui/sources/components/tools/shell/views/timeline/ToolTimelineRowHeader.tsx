@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Typography } from '@/constants/Typography';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -206,11 +207,9 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         lineHeight: 18,
     },
     subtitleInline: {
-        fontWeight: '500',
         color: theme.colors.textSecondary,
     },
     statusInline: {
-        fontWeight: '500',
         opacity: 0.4,
     },
     actions: {

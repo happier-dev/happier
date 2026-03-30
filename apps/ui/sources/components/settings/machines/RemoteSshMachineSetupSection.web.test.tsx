@@ -141,7 +141,7 @@ describe('RemoteSshMachineSetupSection web fallback', () => {
 
     it('lets the user pick a key-file path in Tauri on web', async () => {
         tauriDesktopState.desktop = true;
-        tauriDesktopState.pickedPath = '/Users/leeroy/.ssh/id_ed25519';
+        tauriDesktopState.pickedPath = 'file:///Users/leeroy/.ssh/id_ed25519';
 
         const { RemoteSshMachineSetupSection } = await import('./RemoteSshMachineSetupSection');
         const screen = await renderScreen(React.createElement(RemoteSshMachineSetupSection, {

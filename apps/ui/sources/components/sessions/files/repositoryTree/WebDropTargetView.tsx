@@ -19,6 +19,10 @@ export function WebDropTargetView(props: WebDropTargetViewProps): React.ReactEle
         onDrop,
     });
     const [hostElement, setHostElement] = React.useState<HTMLElement | null>(null);
+    const setHostRef = React.useCallback((node: unknown) => {
+        const next = (node as HTMLElement | null) ?? null;
+        setHostElement((prev) => (prev === next ? prev : next));
+    }, []);
 
     handlersRef.current = {
         onDragEnter,
@@ -52,9 +56,7 @@ export function WebDropTargetView(props: WebDropTargetViewProps): React.ReactEle
     return (
         <View
             {...rest}
-            ref={(node) => {
-                setHostElement((node as HTMLElement | null) ?? null);
-            }}
+            ref={setHostRef}
         />
     );
 }

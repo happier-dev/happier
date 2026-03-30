@@ -153,7 +153,7 @@ describe('RemoteSshMachineSetupSection', () => {
         await screen.pressByTestIdAsync('settings.machineSetup.remoteChooseIdentityFile');
 
         expect(openIdentityFilePickerSpy).toHaveBeenCalled();
-        expect(screen.findByTestId('settings.machineSetup.remoteIdentityFileInput')?.props.value).toBe('file:///Users/leeroy/.ssh/id_ed25519');
+        expect(screen.findByTestId('settings.machineSetup.remoteIdentityFileInput')?.props.value).toBe('/Users/leeroy/.ssh/id_ed25519');
     });
 
     it('surfaces the underlying start error instead of misclassifying it as a bridge failure', async () => {

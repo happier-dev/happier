@@ -64,7 +64,7 @@ const styles = StyleSheet.create((theme) => ({
         textAlign: 'center',
     },
     subtitle: {
-        fontSize: 11,
+        fontSize: 12,
         color: theme.colors.textSecondary,
         textAlign: 'center',
         marginTop: 2,
