@@ -129,7 +129,7 @@ Source plan: `.project/plans/todo/bootstrap/happier-desktop-setup-control-panel-
 - `[partial]` Remote SSH bootstrap desktop UX + CLI parity
   - Desktop UI: `apps/ui/sources/components/settings/machines/RemoteSshMachineSetupSection.tsx`, `apps/ui/sources/components/settings/machines/useRemoteSshBootstrapTask.ts`
   - Executor kind: `apps/bootstrap/src/systemTasks/registry.ts` (`remote.ssh.bootstrapMachine.v1`)
-  - CLI entry: `apps/cli/src/cli/commands/machine/*` (help shows `happier machine bootstrap --ssh ...`)
+  - CLI entry: `apps/cli/src/cli/commands/machine/*` (help shows `happier machine setup --ssh ...`)
   - Evidence: unit tests exist; interactive Tauri run still required for the native identity-file picker (`desktop_pick_ssh_identity_file`) and prompt flows.
 
 - `[partial]` Tailscale secure access follow-through to canonical URL selection
@@ -183,7 +183,7 @@ Concrete evidence:
 - Web capture metadata: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/10-setup-web-desktop-only-notice.json`
 - CLI auth status: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/11-cli-auth-status.json`
 - CLI daemon status: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/12-cli-daemon-status-all.json`
-- CLI relay upsert-by-url: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/13-cli-relay-upsert-by-url.json`
+- CLI relay set: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/13-cli-relay-upsert-by-url.json`
 
 ### Lane A — Web onboarding (`/(app)/setup`)
 
@@ -256,13 +256,15 @@ Use this checklist only in the native desktop surface launched from `yarn tui:wi
 Latest evidence:
 - `HAPPIER_STACK_STACK=codex-bootstrap-webcli-24502 node ./apps/stack/bin/hstack.mjs happier auth status --json`
 - `HAPPIER_STACK_STACK=codex-bootstrap-webcli-24502 node ./apps/stack/bin/hstack.mjs happier daemon status --all --json`
-- `HAPPIER_STACK_STACK=codex-bootstrap-webcli-24502 node ./apps/stack/bin/hstack.mjs happier relay upsert-by-url http://127.0.0.1:24502 --use --json`
+- `HAPPIER_STACK_STACK=codex-bootstrap-webcli-24502 node ./apps/stack/bin/hstack.mjs happier relay set http://127.0.0.1:24502 --use --json`
 
 ## Findings / fixes (append-only)
 
 Add new entries as you discover issues:
 
 - 2026-03-30: stack-owned Tauri dev/TUI pane helpers are present in this worktree but some are still untracked (`git status --porcelain` shows `?? apps/stack/scripts/utils/dev/tauri_dev.mjs`, `?? apps/stack/scripts/utils/dev/tauri_dev.test.mjs`, `?? apps/stack/scripts/utils/tui/tauri_mode.mjs`, `?? apps/stack/scripts/utils/tui/pane_routing.mjs`, `?? apps/stack/scripts/utils/tauri/dev_runtime.mjs`) → until these are added, the “fix” is not reproducible in other worktrees/CI → mark Lane B1 as `[blocked]` until both (a) files are tracked and (b) `yarn tui:with-tauri` is re-run green with artifacts captured.
+- 2026-03-30: correction — the stack-owned Tauri pane helper modules are now tracked in this worktree; Lane B1 should be treated as blocked only on runtime/toolchain issues + missing evidence (rerun `yarn tui:with-tauri` and capture pane logs + one native screenshot under `.project/logs/bootstrap-qa/**`).
+- 2026-03-30: `yarn tui:with-tauri` failures with `failed to run 'cargo metadata' ... (os error 2)` were traced to Tauri invoking `cargo metadata` via PATH (it does not consistently honor `--runner` for metadata) + some stacks having stale `tauri.dev.stack.json` referencing `binaries/hboots`. Fixes: `apps/stack/scripts/tauri_dev.mjs` now passes the resolved Tauri runtime env into the invocation (so PATH includes cargo) and refreshes the stack-scoped `tauri.dev.stack.json` (so `externalBin` matches `apps/ui/src-tauri` and points at `binaries/hsetup`).
 - 2026-03-29: `hstack stack new <name> --copy-auth-from=<source>` copied credentials into the new stack, but the new stack env did not persist `HAPPIER_STACK_AUTH_SEED_FROM` / `HAPPIER_STACK_AUTO_AUTH_SEED=1` → the first `stack start --runtime` hit daemon auth `401`, auto-reseed was disabled, and the runtime start failed → `apps/stack/scripts/stack.mjs` now persists the explicit copy-auth source as the stack’s auth seed when `--copy-auth-from` is used → validated by RED/GREEN in `node --test apps/stack/scripts/stack_copy_auth_server_scoped.test.mjs` and a broader reseed lane in `node --test --test-name-pattern='invalid-auth auto-reseed uses resolved stack name instead of null placeholder' apps/stack/scripts/daemon_invalid_auth_reseed_stack_name.integration.test.mjs`.
 - 2026-03-29: real web QA run on `codex-bootstrap-webcli-24502` confirmed `/setup` shows only the desktop-only notice in browser-web, with no local setup actions rendered → validation artifacts: `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/08-setup-web-desktop-only-notice.png`, `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/09-setup-web-desktop-only-notice.html`, `.project/logs/bootstrap-qa/codex-bootstrap-webcli-24502/10-setup-web-desktop-only-notice.json`.
 - 2026-03-29: `yarn tui:with-tauri` failed with `cargo metadata ... (os error 2)` when stack tooling isolated `HOME` → cargo bin dir resolution incorrectly depended on `HOME` → `apps/stack/scripts/utils/dev/tauri_dev.mjs` now prefers `os.userInfo().homedir` when `CARGO_HOME` is unset → validated via `node --test apps/stack/scripts/utils/dev/tauri_dev.test.mjs`.

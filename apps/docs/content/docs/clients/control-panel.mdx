@@ -35,7 +35,7 @@ The app keeps account state scoped to the selected Relay, so switching to anothe
 From the desktop app, you can choose between:
 
 - **Set up this computer** — configure the local daemon/background service against the active Relay
-- **Add machine over SSH** — bootstrap a remote machine from the desktop app
+- **Add machine over SSH** — set up a remote machine from the desktop app
 
 The primary entrypoint for these flows is the in-app `/setup` screen.
 
@@ -56,8 +56,8 @@ Use the Relay settings screen to:
 
 Use the Machines screen to:
 
-- bootstrap the current computer
-- bootstrap a remote machine over SSH
+- set up the current computer
+- set up a remote machine over SSH
 - continue provider setup for the specific machine that was just prepared
 
 ### Local self-hosted Relay runtime
@@ -118,6 +118,6 @@ The CLI still exposes the underlying commands (`server`, `auth`, `daemon`, and r
 
 - pick the Relay in the app
 - sign in there
-- let the desktop app drive machine/bootstrap actions
+- let the desktop app drive machine setup actions
 
 That keeps Relay/account/machine state visible and reduces mismatches.

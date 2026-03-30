@@ -60,8 +60,8 @@ You run your own Relay (remote machine, LAN box, or even your own computer), but
 If you need an advanced CLI fallback for the daemon host:
 
 ```bash
-# Recommended remote-machine bootstrap:
-happier machine bootstrap --ssh user@host --install-relay-runtime
+# Recommended remote-machine setup:
+happier machine setup --ssh user@host --install-relay-runtime
 ```
 
 Troubleshooting-only (manual daemon setup on the remote host):
@@ -80,7 +80,7 @@ You install both the Relay and the background service on one box.
 1. Install the stack (for example via `hstack setup-from-source --profile=selfhost` or the Proxmox “devbox” option).
 2. Open the desktop app (recommended) or web UI (status/management only) and choose that Relay (use the printed configure-server link/QR if available).
 3. Sign in / create an account.
-4. In the app, use `/setup` → **Set up this computer** if you are on that machine, or bootstrap the box over SSH if you are operating it remotely.
+4. In the app, use `/setup` → **Set up this computer** if you are on that machine, or set up the box over SSH if you are operating it remotely.
 5. If the Relay is local/self-hosted, optionally enable private access so phones and other devices can reach it without exposing it publicly.
 
 Recommended for first setup:
