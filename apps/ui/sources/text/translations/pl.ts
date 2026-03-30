@@ -7080,7 +7080,7 @@ settingsSession: {
           webDesktopOnlyTitle: 'Wymagana aplikacja desktopowa',
           webDesktopOnlyBody: 'Otwórz aplikację desktopową, aby skonfigurować ten komputer. Aplikacja webowa może pokazywać status, ale nie może zainstalować ani skonfigurować usługi w tle.',
 	          preAuthTitle: 'Gdzie działa Twój relay?',
-	          preAuthBody: 'Telefon wysyła wiadomości przez Relay do Twoich komputerów. Wybierz, gdzie Relay ma działać — możesz to później zmienić.',
+	          preAuthBody: 'Twój relay przekazuje wiadomości między telefonem a komputerami. Wybierz, gdzie działa — możesz to później zmienić.',
           preAuthContinueHint: 'Po kontynuowaniu Happier cofnie Cię do logowania na wybranym Relay, a potem wróci tutaj, aby dokończyć konfigurację.',
 	    currentRelayTitle: 'Wybrany Relay',
 	    selectedRelayFooterLabel: 'Relay',

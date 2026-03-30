@@ -7195,7 +7195,7 @@ settingsSession: {
           webDesktopOnlyTitle: 'É necessário o app de desktop',
           webDesktopOnlyBody: 'Abra o app de desktop para configurar este computador. O app web pode mostrar o status, mas não pode instalar ou configurar o serviço em segundo plano.',
 	          preAuthTitle: 'Onde está o seu relay?',
-	          preAuthBody: 'Seu telefone envia mensagens por um Relay até os seus computadores. Escolha onde o Relay fica — você pode mudar isso depois.',
+	          preAuthBody: 'Seu relay encaminha mensagens entre seu telefone e seus computadores. Escolha onde fica — você pode mudar isso depois.',
           preAuthContinueHint: 'Quando você continuar, o Happier o levará de volta para entrar no Relay selecionado e depois retornará aqui para concluir a configuração.',
 	    currentRelayTitle: 'Relay selecionado',
 	    selectedRelayFooterLabel: 'Relay',

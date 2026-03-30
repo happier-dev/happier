@@ -7290,7 +7290,7 @@ settingsSession: {
 	          scanQrCode: 'QRコードをスキャン',
           relayDiagramPhoneLabel: '電話',
           relayDiagramRelayLabel: 'Relay',
-          relayDiagramThisComputerLabel: 'このコンピュータ',
+          relayDiagramThisComputerLabel: 'このコンピューター',
           recommendedBadge: 'おすすめ',
           relayCloudTitle: 'Happier Cloud',
           relayCloudSubtitle: '最も簡単に始められるホスト型Relay',

@@ -23,12 +23,18 @@ test('tauri onboarding wizard QA exposes a deterministic capture plan', async ()
   assert.equal(Array.isArray(payload.plan.steps), true);
   assert.deepEqual(
     payload.plan.steps.map((step) => step.id),
-    ['welcome', 'relay', 'auth', 'restore', 'lost_access'],
+    ['welcome', 'auth_skip', 'relay', 'welcome_back', 'auth', 'restore', 'lost_access'],
   );
   assert.deepEqual(
     payload.plan.steps.find((step) => step.id === 'welcome')?.selectors,
-    ['[data-testid="onboarding-wizard"]', '[data-testid="onboarding-wizard-primary"]', '[data-testid="onboarding-wizard-scan"]'],
+    [
+      '[data-testid="onboarding-wizard"]',
+      '[data-testid="onboarding-wizard-primary"]',
+      '[data-testid="onboarding-wizard-scan"]',
+      '[data-testid="onboarding-wizard-skip"]',
+    ],
   );
+  assert.equal(payload.plan.steps.find((step) => step.id === 'auth_skip')?.screenshot, '02-auth-skip.png');
   assert.deepEqual(
     payload.plan.steps.find((step) => step.id === 'relay')?.selectors,
     [
@@ -37,8 +43,12 @@ test('tauri onboarding wizard QA exposes a deterministic capture plan', async ()
       '[data-testid="onboarding-wizard-relay:thisMac"]',
       '[data-testid="onboarding-wizard-relay:customUrl"]',
       '[data-testid="onboarding-wizard-relay-url-input"]',
+      '[data-testid="onboarding-wizard-back"]',
+      '[data-testid="onboarding-wizard-skip"]',
+      '[data-testid="onboarding-wizard-primary"]',
     ],
   );
+  assert.equal(payload.plan.steps.find((step) => step.id === 'welcome_back')?.screenshot, '04-welcome-back.png');
   assert.equal(payload.plan.commandRunner.command, 'yarn');
   assert.deepEqual(payload.plan.commandRunner.baseArgs, ['-s', 'tauri:mcp:cli']);
   assert.equal(payload.plan.driverSession.command, 'yarn');
