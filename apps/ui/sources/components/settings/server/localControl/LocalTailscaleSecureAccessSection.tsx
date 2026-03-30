@@ -64,7 +64,19 @@ function readLatestPromptUrl(snapshot: SystemTaskRunState | null, wantedKind: st
     return typeof url === 'string' && url.trim().length > 0 ? url.trim() : null;
 }
 
+function readLatestPromptAnyUrl(snapshot: SystemTaskRunState | null, wantedKinds: readonly string[]): string | null {
+    for (const kind of wantedKinds) {
+        const url = readLatestPromptUrl(snapshot, kind);
+        if (url) {
+            return url;
+        }
+    }
+    return null;
+}
+
 function resolveStatusSubtitle(params: Readonly<{
+    installUrl: string | null;
+    loginActionUrl: string | null;
     approvalUrl: string | null;
     hasUpstreamUrl: boolean;
     resultData: TailscaleResultData | null;
@@ -75,6 +87,12 @@ function resolveStatusSubtitle(params: Readonly<{
     }
     if (params.resultData?.shareableHttpsUrl) {
         return t('settings.localTailscale.statusReady');
+    }
+    if (params.installUrl) {
+        return t('settings.localTailscale.statusInstallRequired');
+    }
+    if (params.loginActionUrl) {
+        return t('settings.localTailscale.statusLoginRequired');
     }
     if (params.approvalUrl) {
         return t('settings.localTailscale.statusNeedsApproval');
@@ -132,6 +150,8 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
     }, [normalizedUpstreamUrl]);
 
     const decoratedSnapshot = React.useMemo(() => snapshot ? decorateLocalControlSnapshot(snapshot) : null, [snapshot]);
+    const installUrl = readLatestPromptUrl(snapshot, 'tailscaleInstall');
+    const loginActionUrl = readLatestPromptAnyUrl(snapshot, ['needsUserAction.openUrl', 'needsUserAction.scanQr']);
     const approvalUrl = lastResult?.requiresApproval?.url ?? readLatestPromptUrl(snapshot, 'tailscaleServeApproval');
     const hasUpstreamUrl = normalizedUpstreamUrl != null;
     const shareableHttpsUrl = hasUpstreamUrl
@@ -178,6 +198,18 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
         }
         void openExternalUrl(approvalUrl);
     }, [approvalUrl]);
+    const openInstallDocs = React.useCallback(() => {
+        if (!installUrl) {
+            return;
+        }
+        void openExternalUrl(installUrl);
+    }, [installUrl]);
+    const openLoginAction = React.useCallback(() => {
+        if (!loginActionUrl) {
+            return;
+        }
+        void openExternalUrl(loginActionUrl);
+    }, [loginActionUrl]);
     const copyShareableUrl = React.useCallback(() => {
         if (!shareableHttpsUrl) {
             return;
@@ -208,6 +240,8 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
                     testID="settings.localTailscale.status"
                     title={t('settings.localTailscale.statusTitle')}
                     subtitle={isUnavailable ? t('settings.systemTaskBridgeUnavailable') : resolveStatusSubtitle({
+                        installUrl,
+                        loginActionUrl,
                         approvalUrl,
                         hasUpstreamUrl,
                         resultData: lastResult,
@@ -248,6 +282,24 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
                         mode="info"
                     />
                 ) : null}
+                {installUrl ? (
+                    <Item
+                        testID="settings.localTailscale.install"
+                        title={t('settings.localTailscale.installTitle')}
+                        subtitle={t('settings.localTailscale.installSubtitle')}
+                        showChevron={false}
+                        mode="info"
+                    />
+                ) : null}
+                {loginActionUrl ? (
+                    <Item
+                        testID="settings.localTailscale.login"
+                        title={t('settings.localTailscale.loginTitle')}
+                        subtitle={t('settings.localTailscale.loginSubtitle')}
+                        showChevron={false}
+                        mode="info"
+                    />
+                ) : null}
                 <Item
                     testID="settings.localTailscale.enable"
                     title={(shareableHttpsUrl || isAwaitingPrompt) ? t('settings.localTailscale.refreshAction') : t('settings.localTailscale.enableAction')}
@@ -261,6 +313,20 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
                         testID="settings.localTailscale.openApproval"
                         title={t('settings.localTailscale.openApprovalAction')}
                         onPress={openApproval}
+                    />
+                ) : null}
+                {installUrl ? (
+                    <Item
+                        testID="settings.localTailscale.openInstall"
+                        title={t('settings.localTailscale.openInstallAction')}
+                        onPress={openInstallDocs}
+                    />
+                ) : null}
+                {loginActionUrl ? (
+                    <Item
+                        testID="settings.localTailscale.openLogin"
+                        title={t('settings.localTailscale.openLoginAction')}
+                        onPress={openLoginAction}
                     />
                 ) : null}
                 {lastErrorMessage ? (

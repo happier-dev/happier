@@ -77,4 +77,40 @@ describe('installRemoteFirstPartyComponent', () => {
       ),
     ).rejects.toThrow(/remote home dir/i);
   });
+
+  it('shell-escapes versionId values when embedding them in the remote install command', async () => {
+    const remoteTextCommands: string[] = [];
+
+    await installRemoteFirstPartyComponent(
+      {
+        componentId: 'happier-cli',
+        channel: 'preview',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+      {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async ({ remoteCommand }) => {
+          remoteTextCommands.push(remoteCommand);
+          return { status: 0, stdout: '', stderr: '' };
+        },
+        copyLocalDirectoryToRemote: async () => undefined,
+        preparePayload: async () => ({
+          componentId: 'happier-cli',
+          channel: 'preview',
+          versionId: "preview-1'break-quote",
+          payloadRoot: '/tmp/payload-root',
+          source: 'https://example.test/payload.tar.gz',
+          cleanup: async () => undefined,
+        }),
+        now: () => 123,
+      },
+    );
+
+    const combined = remoteTextCommands.join('\n');
+    expect(combined).toContain(`--version 'preview-1'"'"'break-quote'`);
+    expect(combined).not.toContain(`--version 'preview-1'break-quote'`);
+  });
 });

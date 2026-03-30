@@ -34,6 +34,8 @@ type SecureAccessTailscaleDeps = Readonly<{
   ensureInstalled: (params: Readonly<{ signal?: AbortSignal }>) => Promise<EnsureTailscaleInstalledResult>;
   loginInteractive: () => Promise<RunTailscaleLoginResult>;
   enableServe: (params: Readonly<{ upstreamUrl: string; servePath: string }>) => Promise<RunTailscaleServeEnableResult>;
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  now: () => number;
 }>;
 
 export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAccessTailscaleDeps>) {
@@ -121,16 +123,28 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       }
 
       const login = await deps.loginInteractive();
-      yield {
-        type: 'progress',
-        stepId: 'login',
-        message: 'Started interactive Tailscale sign-in',
-        data: {
-          kind: 'tailscaleLogin',
-          usedQr: login.usedQr,
-          ...(login.actionUrl ? { actionUrl: login.actionUrl } : {}),
-        },
-      };
+      if (login.actionUrl) {
+        yield {
+          type: 'prompt',
+          stepId: 'login',
+          message: 'Complete Tailscale sign-in to continue',
+          data: {
+            kind: login.usedQr ? 'needsUserAction.scanQr' : 'needsUserAction.openUrl',
+            url: login.actionUrl,
+            usedQr: login.usedQr,
+          },
+        };
+      } else {
+        yield {
+          type: 'progress',
+          stepId: 'login',
+          message: 'Started interactive Tailscale sign-in',
+          data: {
+            kind: 'tailscaleLogin',
+            usedQr: login.usedQr,
+          },
+        };
+      }
 
       state = await deps.inspectState(parsed);
       if (!state.loggedIn) {
@@ -180,14 +194,59 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
           url: enable.approvalUrl,
         },
       };
+
+      let approvedUrl: string | null = null;
+      const maxAttempts = Math.max(1, Math.ceil(TAILSCALE_APPROVAL_POLL_TIMEOUT_MS / TAILSCALE_APPROVAL_POLL_INTERVAL_MS));
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (context?.signal?.aborted) {
+          throw new systemTasks.SystemTaskExecutionError('cancelled', 'System task execution was cancelled.');
+        }
+
+        const refreshed = await deps.inspectState(parsed);
+        if (refreshed.shareableHttpsUrl) {
+          approvedUrl = refreshed.shareableHttpsUrl;
+          break;
+        }
+
+        yield {
+          type: 'progress',
+          stepId: 'serve enable',
+          message: attempt === 0 ? 'Waiting for Tailscale Serve approval' : 'Still waiting for Tailscale Serve approval',
+        };
+        if (attempt < maxAttempts - 1) {
+          await deps.sleep(TAILSCALE_APPROVAL_POLL_INTERVAL_MS, context?.signal);
+        }
+      }
+
+      if (!approvedUrl) {
+        return {
+          tailscaleInstalled: true,
+          tailscaleLoggedIn: true,
+          serveEnabled: false,
+          shareableHttpsUrl: null,
+          requiresApproval: {
+            url: enable.approvalUrl,
+          },
+        };
+      }
+
+      yield {
+        type: 'progress',
+        stepId: 'verify url',
+        message: 'Verified Tailscale secure-access URL',
+        data: {
+          kind: 'tailscaleSecureAccessUrl',
+          shareableHttpsUrl: approvedUrl,
+        },
+      };
+
       return {
         tailscaleInstalled: true,
         tailscaleLoggedIn: true,
-        serveEnabled: false,
-        shareableHttpsUrl: null,
-        requiresApproval: {
-          url: enable.approvalUrl,
-        },
+        serveEnabled: true,
+        shareableHttpsUrl: approvedUrl,
+        requiresApproval: null,
       };
     }
 
@@ -226,7 +285,44 @@ function createSecureAccessTailscaleDeps(overrides?: Partial<SecureAccessTailsca
     ensureInstalled: overrides?.ensureInstalled ?? (async (params) => await ensureTailscaleInstalled(params)),
     loginInteractive: overrides?.loginInteractive ?? (async () => await runTailscaleLogin()),
     enableServe: overrides?.enableServe ?? (async (params) => await runTailscaleServeEnable(params)),
+    sleep: overrides?.sleep ?? defaultSleep,
+    now: overrides?.now ?? Date.now,
   };
+}
+
+const TAILSCALE_APPROVAL_POLL_TIMEOUT_MS = 60_000;
+const TAILSCALE_APPROVAL_POLL_INTERVAL_MS = 1_000;
+
+async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  const duration = Number.isFinite(ms) ? Math.max(0, Math.floor(ms)) : 0;
+  if (duration <= 0) {
+    return;
+  }
+
+  if (signal?.aborted) {
+    throw new systemTasks.SystemTaskExecutionError('cancelled', 'System task execution was cancelled.');
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, duration);
+
+    const onAbort = () => {
+      cleanup();
+      reject(new systemTasks.SystemTaskExecutionError('cancelled', 'System task execution was cancelled.'));
+    };
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
+    };
+
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
 }
 
 async function inspectSecureAccessTailscaleState(
@@ -257,8 +353,10 @@ async function inspectSecureAccessTailscaleState(
   }
 
   const serveStatus = await runTailscaleServeStatus().catch(() => '');
-  const httpsBaseUrl = tailscaleServeHttpsUrlForInternalServerUrlFromStatus(serveStatus, params.upstreamUrl)
-    ?? extractTailscaleServeHttpsUrl(serveStatus);
+  const upstream = String(params.upstreamUrl ?? '').trim();
+  const httpsBaseUrl = upstream
+    ? tailscaleServeHttpsUrlForInternalServerUrlFromStatus(serveStatus, upstream)
+    : extractTailscaleServeHttpsUrl(serveStatus);
 
   return {
     installed: true,

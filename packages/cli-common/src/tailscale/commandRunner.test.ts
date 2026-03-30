@@ -100,6 +100,29 @@ describe('runTailscaleLogin', () => {
       expect.objectContaining({ command: '/bin/tailscale', args: ['login'] }),
     );
   });
+
+  it('returns null actionUrl when the login output contains an unexpected https URL host', async () => {
+    const runner = vi.fn<TailscaleCommandRunner>().mockResolvedValueOnce({
+      command: '/bin/tailscale',
+      args: ['login', '--qr'],
+      exitCode: 0,
+      stdout: 'To authenticate, visit https://evil.example.test/a/attack',
+      stderr: '',
+    });
+
+    const result = await runTailscaleLogin(
+      {
+        env: {},
+      },
+      {
+        resolveTailscaleBin: vi.fn(async () => '/bin/tailscale'),
+        runCommand: runner,
+      },
+    );
+
+    expect(result.usedQr).toBe(true);
+    expect(result.actionUrl).toBeNull();
+  });
 });
 
 describe('runTailscaleServeEnable', () => {

@@ -186,10 +186,10 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
     const installPayloadCommand = [
       `env HAPPIER_HOME_DIR=${remoteHomeDir}`,
       `${installerBinaryPath} self __install-payload`,
-      `--component '${params.componentId}'`,
+      `--component ${quoteShellSingleArg(params.componentId)}`,
       `--payload-root ${remotePayloadRoot}`,
-      `--version '${prepared.versionId}'`,
-      `--channel '${channel}'`,
+      `--version ${quoteShellSingleArg(prepared.versionId)}`,
+      `--channel ${quoteShellSingleArg(channel)}`,
     ].join(' ');
 
     await resolvedDeps.runRemoteText({
@@ -201,7 +201,7 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
         'trap cleanup EXIT',
         `mkdir -p ${remoteHomeDir}`,
         `chmod +x ${installerBinaryPath}`,
-        `bash -lc ${quoteShellSingleArg(installPayloadCommand)}`,
+        installPayloadCommand,
       ].join('; '),
     });
 

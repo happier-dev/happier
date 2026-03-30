@@ -226,16 +226,32 @@ function shouldFallbackFromQrLogin(error: unknown): boolean {
   );
 }
 
-function extractFirstHttpsUrl(text: string): string | null {
-  const match = String(text ?? '').match(/https:\/\/\S+/i);
-  if (!match) return null;
+function normalizeHttpsUrlWithNoCredentials(raw: string): string | null {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed) return null;
 
   try {
-    const parsed = new URL(match[0]);
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') return null;
     parsed.username = '';
     parsed.password = '';
     parsed.hash = '';
     return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function extractTailscaleLoginActionUrl(text: string): string | null {
+  const match = String(text ?? '').match(/https:\/\/login\.tailscale\.com\/\S+/i);
+  if (!match) return null;
+
+  try {
+    const parsed = new URL(match[0]);
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'login.tailscale.com') {
+      return null;
+    }
+    return normalizeHttpsUrlWithNoCredentials(parsed.toString());
   } catch {
     return null;
   }
@@ -316,7 +332,7 @@ export async function runTailscaleLogin(params: RunTailscaleParams = {}, deps: R
     });
     return {
       usedQr: true,
-      actionUrl: extractFirstHttpsUrl(collectOutput(result)),
+      actionUrl: extractTailscaleLoginActionUrl(collectOutput(result)),
       result,
     };
   } catch (error) {
@@ -334,7 +350,7 @@ export async function runTailscaleLogin(params: RunTailscaleParams = {}, deps: R
 
   return {
     usedQr: false,
-    actionUrl: extractFirstHttpsUrl(collectOutput(fallbackResult)),
+    actionUrl: extractTailscaleLoginActionUrl(collectOutput(fallbackResult)),
     result: fallbackResult,
   };
 }
