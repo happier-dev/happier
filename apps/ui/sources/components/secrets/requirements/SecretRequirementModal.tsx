@@ -21,6 +21,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 
@@ -397,21 +398,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                 trigger={({ open, toggle }) => (
                                     <View
                                         style={[
-                                            open
-                                                ? (Platform.OS === 'web'
-                                                    ? ({
-                                                        boxShadow: theme.dark
-                                                            ? '0 0px 3.84px rgba(0, 0, 0, 0.30), 0 3px 3.84px rgba(0, 0, 0, 0.30)'
-                                                            : '0 0px 3.84px rgba(0, 0, 0, 0.08), 0 3px 3.84px rgba(0, 0, 0, 0.08)',
-                                                    } as any)
-                                                    : ({
-                                                        shadowColor: theme.colors.shadow.color,
-                                                        shadowOffset: { width: 0, height: 1 },
-                                                        shadowRadius: 3.84,
-                                                        shadowOpacity: theme.colors.shadow.opacity * 0.8,
-                                                        elevation: 5,
-                                                    } as any))
-                                                : null,
+                                            open ? shadowLevelStyle(theme.colors.shadowLevels[4]) : null,
                                             {
                                                 borderRadius: 12,
                                                 borderBottomLeftRadius: open ? 0 : 12,
@@ -481,21 +468,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                         style={[
                                             // When open, use the same shadow "strength" as FloatingOverlay, but bias it
                                             // upward so the trigger is visually separated from the background.
-                                            open
-                                                ? (Platform.OS === 'web'
-                                                    ? ({
-                                                        boxShadow: theme.dark
-                                                            ? '0 0px 3.84px rgba(0, 0, 0, 0.30), 0 3px 3.84px rgba(0, 0, 0, 0.30)'
-                                                            : '0 0px 3.84px rgba(0, 0, 0, 0.08), 0 3px 3.84px rgba(0, 0, 0, 0.08)',
-                                                    } as any)
-                                                    : ({
-                                                        shadowColor: theme.colors.shadow.color,
-                                                        shadowOffset: { width: 0, height: 1 },
-                                                        shadowRadius: 3.84,
-                                                        shadowOpacity: theme.colors.shadow.opacity * 0.8,
-                                                        elevation: 5,
-                                                    } as any))
-                                                : null,
+                                            open ? shadowLevelStyle(theme.colors.shadowLevels[4]) : null,
                                             {
                                                 borderRadius: 12,
                                                 borderBottomLeftRadius: open ? 0 : 12,

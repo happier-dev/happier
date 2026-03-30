@@ -11,6 +11,7 @@ import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { sync } from '@/sync/sync';
 import { FAB } from '@/components/ui/buttons/FAB';
+import { shadowLevelForSheet } from '@/shadowElevation';
 // Date formatting
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -108,11 +109,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.fab.background,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-        elevation: 4,
+        ...shadowLevelForSheet(theme.colors.shadowLevels[4]),
     },
     fabIcon: {
         color: theme.colors.fab.icon,

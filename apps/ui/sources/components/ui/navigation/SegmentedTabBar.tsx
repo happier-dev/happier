@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { shadowLevelForSheet } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
 
 export type SegmentedTab<T extends string = string> = Readonly<{
@@ -44,11 +45,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     tabActive: {
         backgroundColor: theme.colors.surface,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
-        shadowRadius: 2,
-        elevation: 1,
+        ...shadowLevelForSheet(theme.colors.shadowLevels[1]),
     },
     tabLabel: {
         fontSize: 12,

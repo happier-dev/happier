@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades, type ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
+import { shadowLevelForSheet, shadowLevelStyle } from '@/shadowElevation';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -13,11 +14,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         backgroundColor: theme.colors.surface,
         borderWidth: Platform.OS === 'web' ? 0 : 0.5,
         borderColor: theme.colors.modal.border,
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 3.84,
-        shadowOpacity: theme.colors.shadow.opacity,
-        elevation: 5,
+        ...shadowLevelForSheet(theme.colors.shadowLevels[4]),
     },
 }));
 
@@ -199,16 +196,10 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
                 ? ({
                         // RN-web can be inconsistent with shadow props on transformed views.
                         // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
-                        boxShadow: theme.dark
-                            ? '0 4px 14px rgba(0, 0, 0, 0.55)'
-                            : '0 4px 14px rgba(0, 0, 0, 0.24)',
+                        boxShadow: theme.colors.shadowPopoverArrowBoxShadow,
                     } as any)
                 : {
-                        shadowColor: theme.colors.shadow.color,
-                        shadowOffset: { width: 0, height: 2 },
-                        shadowRadius: 3.84,
-                        shadowOpacity: theme.colors.shadow.opacity,
-                        elevation: 5,
+                        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
                     }),
             transform: [{ rotate: '45deg' as const }],
             pointerEvents: 'none' as const,

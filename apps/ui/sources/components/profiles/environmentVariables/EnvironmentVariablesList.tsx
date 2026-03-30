@@ -10,6 +10,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useEnvironmentVariables } from '@/hooks/server/useEnvironmentVariables';
 import { parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
+import { shadowLevelForSheet } from '@/shadowElevation';
 import { Text, TextInput } from '@/components/ui/text/Text';
 
 
@@ -339,11 +340,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginHorizontal: Platform.select({ ios: 16, default: 12 }),
         borderRadius: Platform.select({ ios: 10, default: 16 }),
         overflow: 'hidden',
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 0.33 },
-        shadowOpacity: theme.colors.shadow.opacity,
-        shadowRadius: 0,
-        elevation: 1,
+        ...shadowLevelForSheet(theme.colors.shadowLevels[1]),
     },
     fieldLabel: {
         ...Typography.default('semiBold'),

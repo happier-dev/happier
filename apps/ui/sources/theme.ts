@@ -1,4 +1,9 @@
 import { Platform } from 'react-native';
+import {
+    buildDarkShadowLevels,
+    buildLightShadowLevels,
+    buildShadowPopoverArrowBoxShadow,
+} from './shadowElevation';
 
 // Shared spacing, sizing constants (DRY - used by both themes)
 const sharedSpacing = {
@@ -40,7 +45,7 @@ export const lightTheme = {
 
         text: '#000000',
         textDestructive: '#FF3B30',
-        textSecondary: '#4c4c50',
+        textSecondary: '#606064',
         textTertiary: '#99999d',
         textLink: '#2BACCC',
         accent: {
@@ -62,7 +67,7 @@ export const lightTheme = {
         surfaceSelected: Platform.select({ ios: '#f8f8f8', default: '#f8f8f8' }),
         surfacePressedOverlay: Platform.select({ ios: '#D1D1D6', default: 'transparent' }),
         overlay: {
-            scrim: 'rgba(0, 0, 0, 0.45)',
+            scrim: 'rgba(100, 51, 51, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
@@ -70,10 +75,13 @@ export const lightTheme = {
         surfaceHigh: '#F8F8F8',
         surfaceHighest: '#f0f0f0',
         divider: Platform.select({ ios: '#eaeaea', default: '#eaeaea' }),
+        /** Legacy tint helper (`Color(theme.colors.shadow.color)...`); prefer `shadowLevels` for cast shadows. */
         shadow: {
-            color: Platform.select({ default: '#000000', web: 'rgba(0, 0, 0, 0.1)' }),
+            color: '#000000',
             opacity: 0.1,
         },
+        shadowLevels: buildLightShadowLevels(),
+        shadowPopoverArrowBoxShadow: buildShadowPopoverArrowBoxShadow(false),
 
         //
         // System components
@@ -298,9 +306,11 @@ export const darkTheme = {
         surfaceHighest: Platform.select({ ios: '#38383A', default: '#292929' }),
         divider: Platform.select({ ios: '#38383A', default: '#292929' }),
         shadow: {
-            color: Platform.select({ default: '#000000', web: 'rgba(0, 0, 0, 0.1)' }),
+            color: '#000000',
             opacity: 0.1,
         },
+        shadowLevels: buildDarkShadowLevels(),
+        shadowPopoverArrowBoxShadow: buildShadowPopoverArrowBoxShadow(true),
 
         //
         // System components

@@ -45,6 +45,7 @@ import { applyPermissionModeSelection } from '@/sync/domains/permissions/permiss
 import {
     supportsSessionModeOverrides,
 } from '@/sync/acp/sessionModeControl';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
@@ -414,14 +415,7 @@ export const SessionView = React.memo((props: {
                     height: safeArea.top,
                     backgroundColor: theme.colors.surface,
                     zIndex: 1000,
-                    shadowColor: theme.colors.shadow.color,
-                    shadowOffset: {
-                        width: 0,
-                        height: 2,
-                    },
-                    shadowOpacity: theme.colors.shadow.opacity,
-                    shadowRadius: 3,
-                    elevation: 5,
+                    ...shadowLevelStyle(theme.colors.shadowLevels[3]),
                 }} />
             )}
 
@@ -1888,11 +1882,7 @@ function SessionViewLoaded({
                         flexDirection: 'row',
                         alignItems: 'center',
                         zIndex: 998, // Below voice bar but above content
-                        shadowColor: theme.colors.shadow.color,
-                        shadowOffset: { width: 0, height: 2 },
-                        shadowOpacity: 0.15,
-                        shadowRadius: 4,
-                        elevation: 4,
+                        ...shadowLevelStyle(theme.colors.shadowLevels[3]),
                     }}
                 >
                     <Ionicons name="warning-outline" size={14} color={theme.colors.box.warning.text} style={{ marginRight: 6 }} />
@@ -1933,17 +1923,7 @@ function SessionViewLoaded({
 	                            backgroundColor: Color(theme.colors.header.background).alpha(0.9).rgb().string(),
 	                            alignItems: 'center',
 	                            justifyContent: 'center',
-	                            ...Platform.select({
-	                                ios: {
-	                                    shadowColor: theme.colors.shadow.color,
-	                                    shadowOffset: { width: 0, height: 2 },
-	                                    shadowOpacity: theme.colors.shadow.opacity,
-	                                    shadowRadius: 4,
-	                                },
-	                                android: {
-	                                    elevation: 10,
-                                }
-                            }),
+	                            ...shadowLevelStyle(theme.colors.shadowLevels[4]),
                         }}
                         hitSlop={15}
                     >

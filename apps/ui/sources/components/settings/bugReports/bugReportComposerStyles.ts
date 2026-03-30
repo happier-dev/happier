@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { shadowLevelForSheet } from '@/shadowElevation';
 
 export const bugReportComposerStyles = StyleSheet.create((theme) => ({
     container: {
@@ -20,11 +21,7 @@ export const bugReportComposerStyles = StyleSheet.create((theme) => ({
         borderRadius: Platform.select({ ios: 10, default: 16 }),
         padding: Platform.select({ ios: 18, default: 20 }),
         gap: 14,
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 0.33 },
-        shadowOpacity: theme.colors.shadow.opacity,
-        shadowRadius: 0,
-        elevation: 1,
+        ...shadowLevelForSheet(theme.colors.shadowLevels[1]),
     },
     sectionHeader: {
         gap: 6,

@@ -3,6 +3,7 @@ import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { shadowLevelForSheet } from '@/shadowElevation';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -14,11 +15,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         width: 56,
         height: 56,
         padding: 16,
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 3.84,
-        shadowOpacity: theme.colors.shadow.opacity,
-        elevation: 5,
+        ...shadowLevelForSheet(theme.colors.shadowLevels[4]),
     },
     buttonDefault: {
         backgroundColor: theme.colors.fab.background,

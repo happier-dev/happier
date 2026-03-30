@@ -14,6 +14,7 @@ import {
     resolveBooleanConfigOptionNextValue,
     resolveBooleanConfigOptionValue,
 } from '@/sync/domains/sessionControl/configOptionsControl';
+import { shadowLevelForSheet } from '@/shadowElevation';
 import { t } from '@/text';
 
 
@@ -497,11 +498,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     optionCardSelected: {
         backgroundColor: theme.colors.surfaceSelected,
-        shadowColor: theme.colors.shadow?.color ?? '#000000',
-        shadowOffset: { width: 0, height: 0.33 },
-        shadowOpacity: theme.colors.shadow?.opacity ?? 0.1,
-        shadowRadius: 0,
-        elevation: 1
+        ...shadowLevelForSheet(theme.colors.shadowLevels[1]),
     },
     optionCardPressed: {
         opacity: 0.86,

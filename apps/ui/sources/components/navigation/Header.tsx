@@ -7,6 +7,7 @@ import { layout } from '../ui/layout/layout';
 import { useHeaderHeight, useIsTablet } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
+import { shadowLevelForSheet } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
 
 
@@ -251,12 +252,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('regular'),
     },
     shadow: {
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: theme.colors.shadow.opacity,
-        shadowRadius: 3,
-        elevation: 4,
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.15)',
+        ...shadowLevelForSheet(theme.colors.shadowLevels[3]),
     },
     backButton: {
         color: theme.colors.header.tint,

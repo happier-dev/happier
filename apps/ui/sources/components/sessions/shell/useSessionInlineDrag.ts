@@ -70,7 +70,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         onLongPressActivated,
     } = params;
     const { theme } = useUnistyles();
-    const shadowColor = theme.colors.shadow.color;
+    const dragLiftShadow = theme.colors.shadowLevels[5];
 
     // Use refs for callbacks so the gesture object is never recreated when
     // callbacks change. This keeps the active Pan gesture alive.
@@ -224,10 +224,11 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
             transform: [{ translateY: translateY.value }, { scale: scale.value }],
             zIndex: isDragging.value ? 1000 : 0,
             // Always write shadow props so they reliably clear after the drag ends.
-            shadowColor,
-            shadowOpacity: isDragging.value ? 0.15 : 0,
-            shadowRadius: isDragging.value ? 8 : 0,
-            elevation: isDragging.value ? 8 : 0,
+            shadowColor: dragLiftShadow.shadowColor,
+            shadowOffset: dragLiftShadow.shadowOffset,
+            shadowOpacity: isDragging.value ? dragLiftShadow.shadowOpacity : 0,
+            shadowRadius: isDragging.value ? dragLiftShadow.shadowRadius : 0,
+            elevation: isDragging.value ? dragLiftShadow.elevation : 0,
         };
     });
 
