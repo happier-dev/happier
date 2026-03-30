@@ -41,6 +41,7 @@ vi.mock('@/components/ui/popover', () => ({
             : (props as any).children ?? null;
         return React.createElement('Popover', props, renderedChildren);
     },
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 describe('AgentInputSelectionPopover', () => {
