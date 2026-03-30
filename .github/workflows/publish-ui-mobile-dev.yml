@@ -1,0 +1,167 @@
+name: PUBLISH — UI Mobile (Dev lane)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Source ref — Branch, tag, or SHA to build/publish (default: dev)"
+        required: true
+        default: dev
+        type: string
+      publish_ota:
+        description: "Publish — Expo OTA update to the public dev channel"
+        required: true
+        default: true
+        type: boolean
+      publish_android_apk:
+        description: "Publish — Build Android APK and publish rolling GitHub release ui-mobile-dev"
+        required: true
+        default: true
+        type: boolean
+      submit_ios_testflight:
+        description: "Publish — Build iOS and submit to TestFlight (best-effort)"
+        required: true
+        default: true
+        type: boolean
+      eas_builder:
+        description: "Runner — EAS build runner"
+        required: true
+        default: eas_cloud
+        type: choice
+        options:
+          - eas_cloud
+          - eas_local
+      release_message:
+        description: "Release message — Optional message for OTA + GitHub APK rolling release notes"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-ui-mobile-dev-${{ github.ref }}-${{ inputs.source_ref }}
+  cancel-in-progress: false
+
+env:
+  EAS_CLI_VERSION: "18.0.1"
+
+jobs:
+  release_actor_guard:
+    name: Release actor guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Authorize release actor
+        uses: ./.github/actions/release-actor-guard
+        with:
+          team_slug: release-admins
+          app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+  publish:
+    needs: [release_actor_guard]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    steps:
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          # Dev lane uses preview-like embedded policy and does not need web-asset vendoring.
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Expo OTA update (dev lane)
+        if: inputs.publish_ota
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment dev \
+            --action ota \
+            --platform all \
+            --release-message "${{ inputs.release_message }}" \
+            --eas-cli-version "${EAS_CLI_VERSION}" \
+            --secrets-source env
+
+      - name: Android APK (dev lane) + rolling GitHub release
+        if: inputs.publish_android_apk && inputs.eas_builder == 'eas_cloud'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment dev \
+            --action native \
+            --platform android \
+            --profile dev-apk \
+            --native-build-mode cloud \
+            --build-json "/tmp/eas_build.json" \
+            --out-dir "dist/ui-mobile" \
+            --eas-cli-version "${EAS_CLI_VERSION}" \
+            --release-message "${{ inputs.release_message }}" \
+            --secrets-source env
+
+      - name: iOS TestFlight submit (dev lane) (best-effort)
+        if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_cloud'
+        continue-on-error: true
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment dev \
+            --action native_submit \
+            --platform ios \
+            --profile dev \
+            --native-build-mode cloud \
+            --build-json "/tmp/eas_build.ios.json" \
+            --out-dir "dist/ui-mobile" \
+            --eas-cli-version "${EAS_CLI_VERSION}" \
+            --release-message "${{ inputs.release_message }}" \
+            --secrets-source env
+
+      - name: Note
+        run: |
+          set -euo pipefail
+          echo "Triggered UI mobile dev lane: OTA + Android APK rolling release + optional TestFlight submit." >> "$GITHUB_STEP_SUMMARY"
+

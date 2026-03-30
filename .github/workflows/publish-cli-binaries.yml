@@ -1,0 +1,159 @@
+name: PUBLISH — CLI Binaries (GitHub)
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        type: choice
+        default: dev
+        options:
+          - preview
+          - dev
+          - stable
+      source_ref:
+        description: "Source ref to publish (auto => dev:dev, preview:preview, stable:main)"
+        required: true
+        default: auto
+        type: string
+      allow_stable:
+        description: "Safety — allow publishing stable artifacts (disabled by default)"
+        required: true
+        default: false
+        type: boolean
+      release_message:
+        description: "Release message — Optional note to include at the top of the GitHub rolling release notes"
+        required: false
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      channel:
+        required: true
+        type: string
+      source_ref:
+        required: false
+        default: auto
+        type: string
+      allow_stable:
+        required: false
+        default: false
+        type: boolean
+      release_message:
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-cli-binaries-${{ inputs.channel }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release_actor_guard:
+    name: Release actor guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Authorize release actor
+        uses: ./.github/actions/release-actor-guard
+        with:
+          team_slug: release-admins
+          app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+  publish:
+    needs: [release_actor_guard]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    steps:
+      - name: Enforce stable publishing gate
+        if: ${{ inputs.channel == 'stable' && inputs.allow_stable != true }}
+        run: |
+          echo "Stable CLI binary publishing is disabled. Re-run with allow_stable=true if intentional." >&2
+          exit 1
+
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Resolve channel metadata
+        id: channel_meta
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/resolve-public-release-channel-meta.mjs \
+            --channel "${{ inputs.channel }}" \
+            --source-ref "${{ inputs.source_ref }}" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.channel_meta.outputs.source_ref }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Install minisign (signing + verification)
+        uses: ./.github/actions/bootstrap-minisign
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          # Speed up installs: CLI binary publishing does not require UI web-only vendored assets.
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Publish CLI binaries (pipeline)
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs publish-cli-binaries \
+            --channel "${{ inputs.channel }}" \
+            --allow-stable "${{ inputs.allow_stable }}" \
+            --release-message "${{ inputs.release_message }}" \
+            --run-contracts "true" \
+            --check-installers "true"
+
+    permissions:
+      contents: write
+

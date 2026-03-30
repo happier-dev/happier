@@ -459,6 +459,7 @@ jobs:
           yarn workspace @happier-dev/agents test
           yarn workspace @happier-dev/cli-common test
           yarn workspace @happier-dev/connection-supervisor test
+          yarn workspace @happier-dev/bootstrap test
           yarn --cwd packages/relay-server test
 
   server:

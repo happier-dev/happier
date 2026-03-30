@@ -125,9 +125,10 @@ Happier is designed with privacy as a foundation, not an afterthought.
 
 #### Android APK
 
-Public APK releases are currently published on the `preview` lane:
+Public APK releases are published on the `preview` and `dev` lanes:
 
-[Download the preview APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk) from the releases page.
+- `preview`: [Download the preview APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview-android.apk)
+- `dev`: [Download the dev APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-dev/happier-dev-android.apk)
 
 ### Step 2: Install the CLI on your computer
 
