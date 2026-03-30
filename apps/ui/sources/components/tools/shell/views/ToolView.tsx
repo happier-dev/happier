@@ -486,7 +486,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     toolDescription: {
         fontSize: 13,
-        ...Typography.default('regular'),
+        fontWeight: '400',
         color: theme.colors.textSecondary,
         marginTop: 2,
     },
