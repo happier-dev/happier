@@ -432,8 +432,21 @@ export const Item = React.memo<ItemProps>((props) => {
         // Keep hover state coherent with disabled/loading changes.
         if (disabled || loading) setIsHovered(false);
     }, [disabled, loading]);
+
+    const dividerNode = showDivider ? (
+        <View
+            style={[
+                styles.divider,
+                {
+                    marginLeft: (isAndroid || isWeb)
+                        ? 0
+                        : (dividerInset + (icon || leftElement ? (16 + resolvedIconBoxSize + resolvedIconMarginRight) : 16))
+                }
+            ]}
+        />
+    ) : null;
     
-    const renderRowContent = React.useCallback((includeRightAccessory: boolean) => (
+    const renderRowContent = React.useCallback(() => (
         <>
             {/* Left Section */}
             {leftAccessory ? (
@@ -533,7 +546,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         style={{ marginRight: showAccessory ? 6 : 0 }}
                     />
                 )}
-                {includeRightAccessory ? rightAccessory : null}
+                {rightAccessory}
                 {chevronAccessory}
             </View>
         </>
@@ -561,6 +574,22 @@ export const Item = React.memo<ItemProps>((props) => {
         titleSizeStyle,
         titleStyle,
         theme.colors.textSecondary,
+    ]);
+
+    const content = React.useMemo(() => (
+        <>
+            <View style={[containerCore, containerPadding, style]}>
+                {renderRowContent()}
+            </View>
+
+            {dividerNode}
+        </>
+    ), [
+        containerCore,
+        containerPadding,
+        dividerNode,
+        renderRowContent,
+        style,
     ]);
 
     const resolveInteractiveRowStyle = React.useCallback((pressed: boolean) => {
@@ -600,75 +629,7 @@ export const Item = React.memo<ItemProps>((props) => {
         theme.colors.surfaceSelected,
     ]);
 
-    const dividerNode = showDivider ? (
-        <View
-            style={[
-                styles.divider,
-                {
-                    marginLeft: (isAndroid || isWeb)
-                        ? 0
-                        : (dividerInset + (icon || leftElement ? (16 + resolvedIconBoxSize + resolvedIconMarginRight) : 16))
-                }
-            ]}
-        />
-    ) : null;
-
-    const shouldRenderRightAccessoryOutside = isWeb && Boolean(rightAccessory) && isInteractive;
-
     if (isInteractive) {
-        if (shouldRenderRightAccessoryOutside) {
-            return (
-                <>
-                    <View style={[containerCore, style]}>
-                        <Pressable
-                            testID={testID}
-                            {...webTestIdProps}
-                            onPress={handlePress}
-                            onLongPress={handleLongPress}
-                            // @ts-expect-error - react-native types do not model web-only double click props; RN Web supports onDoubleClick.
-                            onDoubleClick={isWeb && onDoublePress ? (event: any) => {
-                                if (Date.now() - webDoublePressHandledAtMsRef.current < 600) {
-                                    return;
-                                }
-                                webDoublePressHandledAtMsRef.current = Date.now();
-                                webLastPressAtMsRef.current = null;
-                                event?.preventDefault?.();
-                                event?.stopPropagation?.();
-                                onDoublePress();
-                            } : undefined}
-                            onPressIn={handlePressIn}
-                            onPressOut={handlePressOut}
-                            onHoverIn={isWeb && isSelectableRow && !disabled && !loading ? () => setIsHovered(true) : undefined}
-                            onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
-                            onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
-                            onContextMenu={isWeb ? (onContextMenu as any) : undefined}
-                            accessibilityRole={accessibilityRole ?? 'button'}
-                            disabled={disabled || loading}
-                            style={({ pressed }) => [
-                                containerCore,
-                                containerPadding,
-                                { flex: 1, minWidth: 0 },
-                                ...resolveInteractiveRowStyle(pressed),
-                            ]}
-                            android_ripple={(isAndroid || isWeb) ? {
-                                color: theme.colors.surfaceRipple,
-                                borderless: false,
-                                foreground: true
-                            } : undefined}
-                        >
-                            {renderRowContent(false)}
-                        </Pressable>
-                        {rightAccessory ? (
-                            <View style={styles.rightSection}>
-                                {rightAccessory}
-                            </View>
-                        ) : null}
-                    </View>
-                    {dividerNode}
-                </>
-            );
-        }
-
         return (
             <Pressable
                 testID={testID}
@@ -694,19 +655,14 @@ export const Item = React.memo<ItemProps>((props) => {
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
                 accessibilityRole={accessibilityRole ?? 'button'}
                 disabled={disabled || loading}
-                style={({ pressed }) => [
-                    containerCore,
-                    containerPadding,
-                    { minWidth: 0 },
-                    ...resolveInteractiveRowStyle(pressed),
-                ]}
+                style={({ pressed }) => resolveInteractiveRowStyle(pressed)}
                 android_ripple={(isAndroid || isWeb) ? {
                     color: theme.colors.surfaceRipple,
                     borderless: false,
                     foreground: true
                 } : undefined}
             >
-                {renderRowContent(true)}
+                {content}
             </Pressable>
         );
     }
@@ -715,15 +671,9 @@ export const Item = React.memo<ItemProps>((props) => {
         <View
             testID={testID}
             {...webTestIdProps}
-            style={[
-                containerCore,
-                containerPadding,
-                { opacity: disabled ? 0.5 : 1 },
-                pressableStyle,
-            ]}
+            style={[{ opacity: disabled ? 0.5 : 1 }, pressableStyle]}
         >
-            {renderRowContent(true)}
-            {dividerNode}
+            {content}
         </View>
     );
 });
