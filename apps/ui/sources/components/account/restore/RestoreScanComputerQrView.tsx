@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, Platform, ScrollView, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -94,7 +95,12 @@ function resolveDeviceLabel(): string | null {
     return null;
 }
 
-export const RestoreScanComputerQrView = React.memo(function RestoreScanComputerQrView() {
+export type RestoreScanComputerQrViewProps = Readonly<{
+    embedded?: boolean;
+    onBack?: () => void;
+}>;
+
+export const RestoreScanComputerQrView = React.memo(function RestoreScanComputerQrView(props: RestoreScanComputerQrViewProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
@@ -106,6 +112,18 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     const [confirmCode, setConfirmCode] = React.useState<string | null>(null);
     const [waitingDots, setWaitingDots] = React.useState(0);
     const isCancelledRef = React.useRef(false);
+
+    const handleBack = React.useCallback(() => {
+        if (props.onBack) {
+            props.onBack();
+            return;
+        }
+        router.back();
+    }, [props.onBack, router]);
+
+    const scrollViewStyle: StyleProp<ViewStyle> = props.embedded
+        ? [styles.scrollView, { backgroundColor: 'transparent' }]
+        : styles.scrollView;
 
     const processPairingLink = React.useCallback(
         async (rawUrl: string) => {
@@ -218,7 +236,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
     if (pairingState === 'unknown') {
         return (
-            <ScrollView style={styles.scrollView} contentContainerStyle={{ flexGrow: 1 }}>
+            <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
                 <View style={styles.container}>
                     <View style={styles.contentWrapper}>
                         <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
@@ -257,9 +275,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                                     size="small"
                                     title={t('common.back')}
                                     display="inverted"
-                                    action={async () => {
-                                        router.back();
-                                    }}
+                                    onPress={handleBack}
                                 />
                             </View>
                         </View>
@@ -271,7 +287,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
     if (pairingState !== 'enabled') {
         return (
-            <ScrollView style={styles.scrollView} contentContainerStyle={{ flexGrow: 1 }}>
+            <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
                 <View style={styles.container}>
                     <View style={styles.contentWrapper}>
                         <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
@@ -310,9 +326,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                                     size="small"
                                     title={t('common.back')}
                                     display="inverted"
-                                    action={async () => {
-                                        router.back();
-                                    }}
+                                    onPress={handleBack}
                                 />
                             </View>
                         </View>
@@ -329,7 +343,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 title={t('connect.restoreAccount')}
                 subtitle={t('connect.scanComputerQrInstructions')}
                 permissionRequiredMessage={t('modals.cameraPermissionsRequiredToScanQr')}
-                onCancel={() => router.back()}
+                onCancel={handleBack}
                 onScan={async (data) => {
                     if (typeof data === 'string' && data.trim()) {
                         await processPairingLink(data.trim());
@@ -391,7 +405,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     }
 
     return (
-        <ScrollView style={styles.scrollView} contentContainerStyle={{ flexGrow: 1 }}>
+        <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
             <View style={styles.container}>
                 <View style={styles.contentWrapper}>
                     <Text style={styles.title}>{t('connect.restoreAccount')}</Text>

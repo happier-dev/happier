@@ -166,6 +166,23 @@ describe('serverProfiles', () => {
         expect(profiles.getActiveServerId()).toBeTruthy();
     });
 
+    it('avoids seeding Metro/local UI origins as a relay server in stack context', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
+        stubWebRuntime('http://localhost:8081');
+
+        const profiles = await importFresh();
+
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'http://localhost:8081')).toBe(false);
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(true);
+        expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
+    });
+
     it('dedupes loopback-equivalent servers and prefers same-origin on web', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;

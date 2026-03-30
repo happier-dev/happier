@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, ScrollView, ActivityIndicator } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -94,7 +95,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 function paramString(params: Record<string, unknown>, key: string): string | null {
-    const value = (params as any)[key];
+    const value = params[key];
     if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : null;
     return typeof value === 'string' ? value : null;
 }
@@ -105,15 +106,31 @@ function parseRestoreRedirectReason(value: unknown): RestoreRedirectReason | nul
     return null;
 }
 
-export const RestoreQrView = React.memo(function RestoreQrView() {
+export type RestoreQrViewProps = Readonly<{
+    embedded?: boolean;
+    onBack?: () => void;
+}>;
+
+export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrViewProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const auth = useAuth();
     const router = useRouter();
-    const params = useLocalSearchParams() as any;
+    const params = useLocalSearchParams() as Readonly<Record<string, string | string[] | undefined>>;
     const [authReady, setAuthReady] = useState(false);
     const [providerResetEnabled, setProviderResetEnabled] = useState(false);
     const isCancelledRef = useRef(false);
+    const handleBack = React.useCallback(() => {
+        if (props.onBack) {
+            props.onBack();
+            return;
+        }
+        router.back();
+    }, [props.onBack, router]);
+
+    const scrollViewStyle: StyleProp<ViewStyle> = props.embedded
+        ? [styles.scrollView, { backgroundColor: 'transparent' }]
+        : styles.scrollView;
 
     const restoreRedirectNotice: RestoreRedirectNotice | null = React.useMemo(() => {
         const providerId = (paramString(params, 'provider') ?? '').trim().toLowerCase();
@@ -159,7 +176,7 @@ export const RestoreQrView = React.memo(function RestoreQrView() {
                     const secretString = encodeBase64(credentials.secret, 'base64url');
                     await auth.login(credentials.token, secretString);
                     if (!isCancelledRef.current) {
-                        router.back();
+                        handleBack();
                     }
                 } else if (!isCancelledRef.current) {
                     Modal.alert(t('common.error'), t('errors.authenticationFailed'));
@@ -184,7 +201,7 @@ export const RestoreQrView = React.memo(function RestoreQrView() {
     }, [keypair]);
 
     return (
-        <ScrollView style={styles.scrollView} contentContainerStyle={{ flexGrow: 1 }}>
+        <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
             <View style={styles.container}>
                 <View style={styles.contentWrapper}>
                     {restoreRedirectNotice ? (

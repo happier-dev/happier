@@ -9,7 +9,14 @@ export default function SetupLayout() {
             <Stack.Screen
                 name="index"
                 options={{
+                    headerShown: false,
                     title: t('setupOnboarding.screenTitle'),
+                }}
+            />
+            <Stack.Screen
+                name="wizard"
+                options={{
+                    headerShown: false,
                 }}
             />
         </Stack>

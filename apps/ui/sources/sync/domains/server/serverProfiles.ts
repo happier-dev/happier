@@ -215,8 +215,8 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
         }
     }
 
-    // On native builds, never start "serverless": seed Happier Cloud when no preconfigured server exists.
-    if (entries.length === 0 && !isWebRuntime()) {
+    // In stack context, and on native builds, never start "serverless": seed Happier Cloud when no preconfigured server exists.
+    if (entries.length === 0 && (isStackContext() || !isWebRuntime())) {
         append('https://api.happier.dev', 'Happier Cloud', 'preconfigured');
     }
 
@@ -531,6 +531,16 @@ function getWebSameOriginServerUrl(): string | null {
         // from incorrectly pointing at the web host.
         if (parsed.hostname.toLowerCase() === 'app.happier.dev') {
             return 'https://api.happier.dev';
+        }
+        // In stack context, the UI can be served by an Expo/Metro dev server (e.g. http://localhost:8081).
+        // Do not treat the UI origin as a relay server. Only allow same-origin fallback for stack-served
+        // hosts (happier-<stack>.localhost).
+        if (isStackContext()) {
+            const host = parsed.hostname.toLowerCase();
+            const isStackServedOrigin = host.startsWith('happier-') && host.endsWith('.localhost');
+            if (!isStackServedOrigin) {
+                return null;
+            }
         }
         return origin;
     } catch {

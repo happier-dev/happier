@@ -23,6 +23,7 @@ const sharedSpacing = {
         md: 8,   // Buttons, items (most common - 31 uses)
         lg: 10,  // Input fields (matches "new session panel input fields")
         xl: 12,  // Cards, containers (20 uses)
+        modalCard: 14, // Modal card surfaces (Command Palette, wizard shells)
         xxl: 16, // Main containers
     },
 
@@ -67,8 +68,11 @@ export const lightTheme = {
         surfaceSelected: '#f8f8f8',
         surfacePressedOverlay: '#fafafa',
         overlay: {
+            scrimSoft: 'rgba(0, 0, 0, 0.18)',
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
+            // Used by the onboarding/setup wizard shell; intentionally much subtler on light theme.
+            scrimWizard: 'rgba(0, 0, 0, 0.03)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
         },
@@ -296,8 +300,11 @@ export const darkTheme = {
         surfaceSelected: '#2C2C2E',
         surfacePressedOverlay: Platform.select({ ios: '#2C2C2E', default: 'transparent' }),
         overlay: {
+            scrimSoft: 'rgba(0, 0, 0, 0.45)',
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
+            // Used by the onboarding/setup wizard shell; slightly subtler than the regular scrim.
+            scrimWizard: 'rgba(0, 0, 0, 0.22)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
         },

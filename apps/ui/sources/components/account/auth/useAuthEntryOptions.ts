@@ -1,0 +1,342 @@
+import * as React from 'react';
+
+import { getAuthProvider } from '@/auth/providers/registry';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { t } from '@/text';
+
+type AuthEntryServerAvailability = 'loading' | 'ready' | 'legacy' | 'unavailable' | 'incompatible';
+
+type AuthMethodActionMode = 'keyed' | 'keyless' | 'either';
+
+type AuthMethodAction = Readonly<{
+    id: 'login' | 'provision';
+    enabled: boolean;
+    mode: AuthMethodActionMode;
+}>;
+
+type AuthMethod = Readonly<{
+    id: string;
+    actions?: readonly AuthMethodAction[];
+}>;
+
+export type AuthEntryOptions = Readonly<{
+    serverAvailability: AuthEntryServerAvailability;
+    serverUrlForCopy: string;
+    showAuthActions: boolean;
+    showProviderSignup: boolean;
+    showAnonymousSignup: boolean;
+    showMtlsLogin: boolean;
+    showKeylessProviderLogin: boolean;
+    providerId: string | null;
+    keylessProviderId: string | null;
+    providerSignupTitle: string;
+    providerKeylessTitle: string;
+    anonymousSignupTitle: string;
+    mtlsTitle: string;
+    primarySignupTitle: string;
+    mtlsPrimary: boolean;
+    keylessPrimary: boolean;
+    autoRedirect: Readonly<{
+        enabled: boolean;
+        providerId: string | null;
+        toKeyedProvision: boolean;
+        toKeylessLogin: boolean;
+        toMtls: boolean;
+        toLegacySignupProvider: boolean;
+    }>;
+    retryServerCheck: () => void;
+}>;
+
+const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
+const DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = 1_000;
+
+function readWelcomeServerCheckTimeoutMs(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_TIMEOUT_MS ?? '').trim();
+    if (!raw) return DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS;
+    return Math.max(1_000, Math.min(30_000, parsed));
+}
+
+function readWelcomeServerCheckRetryDelayMs(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS ?? '').trim();
+    if (!raw) return DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;
+    return Math.max(1, Math.min(10_000, parsed));
+}
+
+function normalizeProviderId(value: unknown): string {
+    return String(value ?? '').trim().toLowerCase();
+}
+
+function hasEnabledAction(
+    method: AuthMethod | null,
+    actionId: 'login' | 'provision',
+    modes: readonly AuthMethodActionMode[],
+): boolean {
+    const actions = Array.isArray(method?.actions) ? method.actions : [];
+    return actions.some((action) => action?.enabled === true && action.id === actionId && modes.includes(action.mode));
+}
+
+function resolveMethodById(methods: readonly AuthMethod[], providerId: string): AuthMethod | null {
+    const normalized = normalizeProviderId(providerId);
+    if (!normalized) return null;
+    return methods.find((method) => normalizeProviderId(method.id) === normalized) ?? null;
+}
+
+function resolveServerUrlForCopy(): string {
+    const snapshot = getActiveServerSnapshot();
+    const raw = snapshot?.serverUrl ? String(snapshot.serverUrl).trim() : '';
+    return raw || t('status.unknown');
+}
+
+export function useAuthEntryOptions(): AuthEntryOptions {
+    const [serverAvailability, setServerAvailability] = React.useState<AuthEntryServerAvailability>('loading');
+    const [serverCheckNonce, setServerCheckNonce] = React.useState(0);
+    const [options, setOptions] = React.useState<Pick<
+        AuthEntryOptions,
+        | 'showAuthActions'
+        | 'showProviderSignup'
+        | 'showAnonymousSignup'
+        | 'showMtlsLogin'
+        | 'showKeylessProviderLogin'
+        | 'providerId'
+        | 'keylessProviderId'
+        | 'providerSignupTitle'
+        | 'providerKeylessTitle'
+        | 'anonymousSignupTitle'
+        | 'mtlsTitle'
+        | 'primarySignupTitle'
+        | 'mtlsPrimary'
+        | 'keylessPrimary'
+        | 'autoRedirect'
+    >>({
+        showAuthActions: false,
+        showProviderSignup: false,
+        showAnonymousSignup: false,
+        showMtlsLogin: false,
+        showKeylessProviderLogin: false,
+        providerId: null,
+        keylessProviderId: null,
+        providerSignupTitle: '',
+        providerKeylessTitle: '',
+        anonymousSignupTitle: t('welcome.createAccount'),
+        mtlsTitle: t('welcome.signInWithCertificate'),
+        primarySignupTitle: '',
+        mtlsPrimary: false,
+        keylessPrimary: false,
+        autoRedirect: {
+            enabled: false,
+            providerId: null,
+            toKeyedProvision: false,
+            toKeylessLogin: false,
+            toMtls: false,
+            toLegacySignupProvider: false,
+        },
+    });
+
+    const serverUrlForCopy = resolveServerUrlForCopy();
+
+    React.useEffect(() => {
+        let mounted = true;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const scheduleInitialServerCheckRetry = (): boolean => {
+            if (serverCheckNonce > 0) return false;
+            if (mounted) {
+                setServerAvailability('loading');
+            }
+            retryTimer = setTimeout(() => {
+                if (mounted) {
+                    setServerCheckNonce((value) => value + 1);
+                }
+            }, readWelcomeServerCheckRetryDelayMs());
+            return true;
+        };
+
+        void (async () => {
+            try {
+                if (mounted) setServerAvailability('loading');
+
+                const featuresSnapshot = await getServerFeaturesSnapshot({
+                    timeoutMs: readWelcomeServerCheckTimeoutMs(),
+                    force: serverCheckNonce > 0,
+                });
+
+                if (featuresSnapshot.status === 'error') {
+                    if (scheduleInitialServerCheckRetry()) return;
+                    if (mounted) setServerAvailability('unavailable');
+                    return;
+                }
+
+                if (featuresSnapshot.status === 'unsupported' && featuresSnapshot.reason === 'invalid_payload') {
+                    if (mounted) setServerAvailability('incompatible');
+                    return;
+                }
+
+                const features = featuresSnapshot.status === 'ready' ? featuresSnapshot.features : null;
+                const authMethodsRaw = features?.capabilities?.auth?.methods ?? [];
+                const authMethods = Array.isArray(authMethodsRaw) ? (authMethodsRaw as readonly AuthMethod[]) : [];
+
+                const legacySignupMethods = features?.capabilities?.auth?.signup?.methods ?? [];
+                const legacyEnabledSignupIds = legacySignupMethods
+                    .filter((method) => method.enabled === true)
+                    .map((method) => normalizeProviderId(method.id))
+                    .filter(Boolean);
+
+                const legacyLoginMethods = features?.capabilities?.auth?.login?.methods ?? [];
+                const legacyEnabledLoginIds = legacyLoginMethods
+                    .filter((method) => method.enabled === true)
+                    .map((method) => normalizeProviderId(method.id))
+                    .filter(Boolean);
+
+                const anonymousEnabled = authMethods.length > 0
+                    ? hasEnabledAction(resolveMethodById(authMethods, 'key_challenge'), 'provision', ['keyed', 'either'])
+                    : legacyEnabledSignupIds.includes('anonymous');
+
+                const keyedProvisionProviderIds = authMethods.length > 0
+                    ? authMethods
+                        .map((method) => normalizeProviderId(method.id))
+                        .filter(Boolean)
+                        .filter((id) => id !== 'key_challenge' && id !== 'mtls')
+                        .filter((id) => hasEnabledAction(resolveMethodById(authMethods, id), 'provision', ['keyed', 'either']))
+                    : legacyEnabledSignupIds.filter((id) => id !== 'anonymous');
+
+                const keylessLoginMethodIds = authMethods.length > 0
+                    ? authMethods
+                        .map((method) => normalizeProviderId(method.id))
+                        .filter(Boolean)
+                        .filter((id) => id !== 'key_challenge')
+                        .filter((id) => hasEnabledAction(resolveMethodById(authMethods, id), 'login', ['keyless', 'either']))
+                    : legacyEnabledLoginIds.filter((id) => id !== 'key_challenge');
+
+                const mtlsEnabled = keylessLoginMethodIds.includes('mtls');
+                const keylessProviderIds = keylessLoginMethodIds.filter((id) => id !== 'mtls');
+
+                if (!authMethods.length && legacyEnabledSignupIds.length === 0 && legacyEnabledLoginIds.length === 0) {
+                    if (mounted) {
+                        setOptions({
+                            showAuthActions: true,
+                            showProviderSignup: false,
+                            showAnonymousSignup: true,
+                            showMtlsLogin: false,
+                            showKeylessProviderLogin: false,
+                            providerId: null,
+                            keylessProviderId: null,
+                            providerSignupTitle: '',
+                            providerKeylessTitle: '',
+                            anonymousSignupTitle: t('welcome.createAccount'),
+                            mtlsTitle: t('welcome.signInWithCertificate'),
+                            primarySignupTitle: t('welcome.createAccount'),
+                            mtlsPrimary: false,
+                            keylessPrimary: false,
+                            autoRedirect: {
+                                enabled: false,
+                                providerId: null,
+                                toKeyedProvision: false,
+                                toKeylessLogin: false,
+                                toMtls: false,
+                                toLegacySignupProvider: false,
+                            },
+                        });
+                        setServerAvailability('legacy');
+                    }
+                    return;
+                }
+
+                const configuredProviderId =
+                    keyedProvisionProviderIds.find((id) => features?.capabilities?.oauth?.providers?.[id]?.configured === true) ?? null;
+                const preferredProviderId = configuredProviderId ?? keyedProvisionProviderIds[0] ?? null;
+
+                const configuredKeylessProviderId =
+                    keylessProviderIds.find((id) => features?.capabilities?.oauth?.providers?.[id]?.configured === true) ?? null;
+                const preferredKeylessProviderId = configuredKeylessProviderId ?? keylessProviderIds[0] ?? null;
+
+                const providerSignupTitle = preferredProviderId
+                    ? t('welcome.signUpWithProvider', {
+                        provider: getAuthProvider(preferredProviderId)?.displayName ?? preferredProviderId,
+                    })
+                    : '';
+                const providerKeylessTitle = preferredKeylessProviderId
+                    ? t('welcome.signUpWithProvider', {
+                        provider: getAuthProvider(preferredKeylessProviderId)?.displayName ?? preferredKeylessProviderId,
+                    })
+                    : '';
+                const anonymousSignupTitle = t('welcome.createAccount');
+                const mtlsTitle = t('welcome.signInWithCertificate');
+
+                const mtlsPrimary = mtlsEnabled && !preferredProviderId && !anonymousEnabled;
+                const keylessPrimary = Boolean(preferredKeylessProviderId) && preferredKeylessProviderId !== preferredProviderId && !anonymousEnabled && !mtlsEnabled;
+                const primarySignupTitle = mtlsPrimary
+                    ? mtlsTitle
+                    : keylessPrimary
+                        ? providerKeylessTitle
+                        : preferredProviderId
+                            ? providerSignupTitle
+                            : anonymousSignupTitle;
+
+                const autoRedirect = features?.capabilities?.auth?.ui?.autoRedirect ?? null;
+                const autoRedirectProviderId = normalizeProviderId(autoRedirect?.providerId);
+                const methodForAutoRedirect = autoRedirectProviderId && authMethods.length > 0
+                    ? resolveMethodById(authMethods, autoRedirectProviderId)
+                    : null;
+                const autoRedirectToKeyedProvision = authMethods.length > 0 && hasEnabledAction(methodForAutoRedirect, 'provision', ['keyed', 'either']);
+                const autoRedirectToKeylessLogin = authMethods.length > 0 && hasEnabledAction(methodForAutoRedirect, 'login', ['keyless', 'either']);
+                const autoRedirectToMtls = autoRedirectProviderId === 'mtls' && mtlsEnabled;
+                const autoRedirectToLegacySignupProvider =
+                    authMethods.length === 0 && autoRedirectProviderId.length > 0 && legacyEnabledSignupIds.includes(autoRedirectProviderId);
+
+                if (mounted) {
+                    setOptions({
+                        showAuthActions: true,
+                        showProviderSignup: Boolean(preferredProviderId),
+                        showAnonymousSignup: anonymousEnabled,
+                        showMtlsLogin: mtlsEnabled,
+                        showKeylessProviderLogin: Boolean(preferredKeylessProviderId) && preferredKeylessProviderId !== preferredProviderId,
+                        providerId: preferredProviderId,
+                        keylessProviderId: preferredKeylessProviderId,
+                        providerSignupTitle,
+                        providerKeylessTitle,
+                        anonymousSignupTitle,
+                        mtlsTitle,
+                        primarySignupTitle,
+                        mtlsPrimary,
+                        keylessPrimary,
+                        autoRedirect: {
+                            enabled: autoRedirect?.enabled === true && Boolean(autoRedirectProviderId),
+                            providerId: autoRedirectProviderId || null,
+                            toKeyedProvision: autoRedirectToKeyedProvision,
+                            toKeylessLogin: autoRedirectToKeylessLogin,
+                            toMtls: autoRedirectToMtls,
+                            toLegacySignupProvider: autoRedirectToLegacySignupProvider,
+                        },
+                    });
+                    setServerAvailability('ready');
+                }
+            } catch {
+                if (scheduleInitialServerCheckRetry()) return;
+                if (mounted) {
+                    setServerAvailability('unavailable');
+                }
+            }
+        })();
+
+        return () => {
+            mounted = false;
+            if (retryTimer) {
+                clearTimeout(retryTimer);
+            }
+        };
+    }, [serverCheckNonce]);
+
+    return {
+        serverAvailability,
+        serverUrlForCopy,
+        ...options,
+        retryServerCheck: React.useCallback(() => {
+            setServerCheckNonce((value) => value + 1);
+        }, []),
+    };
+}

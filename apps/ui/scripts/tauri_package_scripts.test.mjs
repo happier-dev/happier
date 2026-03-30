@@ -12,9 +12,10 @@ test('apps/ui package.json exposes shared stack-owned Tauri dev entrypoints', as
   const pkg = JSON.parse(raw);
   const scripts = pkg?.scripts ?? {};
 
-  assert.equal(scripts['tauri:dev'], 'node ../stack/scripts/tauri_dev.mjs');
-  assert.equal(scripts['ui:tauri'], 'node ../stack/scripts/tauri_dev.mjs');
-  assert.equal(scripts['tauri:qa'], 'node ./scripts/tauriMcpQa.mjs');
+  assert.equal(scripts['tauri:dev'], 'yarn -s ensure:workspace:built && node ../stack/scripts/tauri_dev.mjs');
+  assert.equal(scripts['ui:tauri'], 'yarn -s ensure:workspace:built && node ../stack/scripts/tauri_dev.mjs');
+  assert.equal(scripts['tauri:qa'], 'yarn -s ensure:workspace:built && node ./scripts/tauriMcpQa.mjs');
+  assert.equal(scripts['tauri:mcp:wizard:qa'], 'node ./scripts/qa/tauriOnboardingWizardMcpQa.mjs');
   assert.equal(scripts['tauri:mcp:server'], 'npx -y @hypothesi/tauri-mcp-server');
   assert.equal(scripts['tauri:mcp:cli'], 'npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp');
   assert.equal(scripts['tauri:mcp:session:start'], 'npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9223');

@@ -8,6 +8,11 @@ import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupInte
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
 
+vi.mock('expo-camera', () => ({
+    CameraView: (props: any) => React.createElement('CameraView', props),
+    useCameraPermissions: () => [{ granted: true }, vi.fn(async () => ({ granted: true }))],
+}));
+
 const expoRouterMock = createExpoRouterMock({
     router: { push: vi.fn(), replace: vi.fn() },
 });
@@ -24,7 +29,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    getServerFeaturesSnapshot: (...args: any[]) => getServerFeaturesSnapshotMock(...args),
+    getServerFeaturesSnapshot: (...args: any[]) => (getServerFeaturesSnapshotMock as any)(...args),
 }));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
@@ -79,6 +84,27 @@ vi.mock('@/auth/providers/registry', () => ({
     getAuthProvider: (id: string) => getAuthProviderMock(id),
 }));
 
+const activeServerSwitchMocks = vi.hoisted(() => ({
+    setActiveServerAndSwitch: vi.fn(async (_params: unknown) => true),
+    upsertActivateAndSwitchServer: vi.fn(async (_params: unknown) => true),
+}));
+vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
+    normalizeServerUrl: (value: string) => value,
+    isSameServerUrl: (left: string, right: string) => left === right,
+    setActiveServerAndSwitch: (params: unknown) => activeServerSwitchMocks.setActiveServerAndSwitch(params),
+    upsertActivateAndSwitchServer: (params: unknown) => activeServerSwitchMocks.upsertActivateAndSwitchServer(params),
+}));
+
+const CLOUD_SERVER_URL = 'https://api.happier.dev';
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getResetToDefaultServerId: () => 'cloud-profile',
+    getServerProfileById: (serverId: string) => (
+        serverId === 'cloud-profile'
+            ? { id: 'cloud-profile', serverUrl: CLOUD_SERVER_URL }
+            : null
+    ),
+}));
+
 const tokenStorageMock = vi.hoisted(() => ({
     setPendingExternalAuth: vi.fn(async () => true),
     clearPendingExternalAuth: vi.fn(async () => undefined),
@@ -109,6 +135,52 @@ vi.mock('@/components/navigation/shell/MainView', () => ({
     MainView: () => null,
 }));
 
+vi.mock('@/components/onboardingWizard/WelcomeProvidersShowcase', () => ({
+    WelcomeProvidersShowcase: () => null,
+}));
+
+vi.mock('@/components/account/auth/AuthEntryView', () => ({
+    AuthEntryView: (props: any) => {
+        const availability = String(props?.options?.serverAvailability ?? '');
+        const providerId = String(props?.options?.providerId ?? '').trim() || null;
+        const keylessProviderId = String(props?.options?.keylessProviderId ?? '').trim() || null;
+        const configureRelay = React.createElement('AuthAction', {
+            testID: 'welcome-configure-server',
+            onPress: props.onChangeRelay,
+        });
+
+        if (availability === 'incompatible' || availability === 'unavailable') {
+            return React.createElement(React.Fragment, null, configureRelay);
+        }
+
+        return React.createElement(
+            React.Fragment,
+            null,
+            React.createElement('AuthAction', { testID: 'welcome-restore', onPress: props.onRestore }),
+            React.createElement('AuthAction', {
+                testID: 'welcome-signup-provider',
+                action: () => {
+                    const target = providerId ?? 'github';
+                    return props.onCreateAccountViaProvider?.(target);
+                },
+            }),
+            React.createElement('AuthAction', {
+                testID: 'welcome-create-account',
+                action: () => {
+                    if (keylessProviderId) {
+                        return props.onLoginWithKeylessProvider?.(keylessProviderId);
+                    }
+                    return props.onCreateAccount?.();
+                },
+            }),
+            React.createElement('AuthAction', {
+                testID: 'welcome-mtls-login',
+                action: () => props.onLoginWithMtls?.(),
+            }),
+        );
+    },
+}));
+
 const modalMock = createModalModuleMock({
     spies: {
         alert: vi.fn(),
@@ -137,6 +209,24 @@ vi.mock('@/platform/cryptoRandom', () => ({
 async function loadHome() {
     const mod = await import('@/app/(app)/index');
     return mod.default;
+}
+
+async function advanceWizardToAuth(screen: RenderScreenResult) {
+    const primary = screen.findByTestId('onboarding-wizard-primary');
+    if (!primary) {
+        throw new Error('Unable to find onboarding wizard primary action');
+    }
+    await act(async () => {
+        await (primary.props.onPress ?? primary.props.action)?.();
+    });
+
+    const relayContinue = screen.findByTestId('onboarding-wizard-primary');
+    if (!relayContinue) {
+        throw new Error('Unable to find onboarding wizard continue action');
+    }
+    await act(async () => {
+        await (relayContinue.props.onPress ?? relayContinue.props.action)?.();
+    });
 }
 
 function findActionButton(screen: RenderScreenResult, testID: string) {
@@ -179,7 +269,7 @@ afterEach(() => {
 });
 
 describe('Home external auth start', () => {
-    it('redirects first-launch Tauri desktop users into /setup before showing auth actions', async () => {
+    it('records a pending setup intent on first launch for Tauri desktop users', async () => {
         tauriDesktopState.value = true;
 
         const Home = await loadHome();
@@ -194,7 +284,7 @@ describe('Home external auth start', () => {
             phase: 'pre_auth',
             relayUrl: 'http://api.example.test',
         });
-        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/setup');
+        expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
     });
 
     it('does not redirect browser-web users into /setup by default', async () => {
@@ -222,7 +312,7 @@ describe('Home external auth start', () => {
         expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
     });
 
-    it('opens the setup route from the welcome setup CTA on Tauri desktop', async () => {
+    it('lets users skip directly to auth from the wizard header', async () => {
         tauriDesktopState.value = true;
 
         const Home = await loadHome();
@@ -231,15 +321,20 @@ describe('Home external auth start', () => {
         const screen = await renderScreen(<Home />);
         await flushHookEffects({ cycles: 1, turns: 2 });
 
-        const button = screen.findByTestId('welcome-open-setup');
-        expect(button).not.toBeNull();
+        const skip = screen.findByTestId('onboarding-wizard-skip');
+        expect(skip).not.toBeNull();
 
         await act(async () => {
-            const handler = button?.props.onPress ?? button?.props.action;
+            const handler = skip?.props.onPress ?? skip?.props.action;
             await handler?.();
         });
 
-        expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/setup');
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        expect(setPendingSetupIntentMock).toHaveBeenLastCalledWith({
+            branch: 'thisComputer',
+            phase: 'pre_auth',
+            relayUrl: 'http://api.example.test',
+        });
     });
 
     it('keeps the server configuration screen reachable when the selected relay is incompatible', async () => {
@@ -257,7 +352,10 @@ describe('Home external auth start', () => {
         const screen = await renderScreen(<Home />);
         await flushHookEffects({ cycles: 1, turns: 2 });
 
-        const button = screen.findByTestId('welcome-change-relay');
+        await advanceWizardToAuth(screen);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        const button = screen.findByTestId('welcome-configure-server');
         expect(button).not.toBeNull();
 
         await act(async () => {
@@ -287,6 +385,9 @@ describe('Home external auth start', () => {
         const screen = await renderScreen(<Home />);
         await flushHookEffects({ cycles: 1, turns: 2 });
 
+        await advanceWizardToAuth(screen);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
         const signupButton = findActionButton(screen, 'welcome-signup-provider');
         await act(async () => {
             await signupButton.props.action();
@@ -311,6 +412,9 @@ describe('Home external auth start', () => {
         mockGithubAuthFeatures('provision', 'keyed');
 
         const screen = await renderScreen(<Home />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        await advanceWizardToAuth(screen);
         await flushHookEffects({ cycles: 1, turns: 2 });
 
         const signupButton = findActionButton(screen, 'welcome-signup-provider');
@@ -346,6 +450,9 @@ describe('Home external auth start', () => {
         mockGithubAuthFeatures('login', 'keyless');
 
         const screen = await renderScreen(<Home />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        await advanceWizardToAuth(screen);
         await flushHookEffects({ cycles: 1, turns: 2 });
 
         const loginButton = findActionButton(screen, 'welcome-create-account');

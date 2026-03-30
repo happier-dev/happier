@@ -98,7 +98,7 @@ vi.mock('@/text', async () => {
     });
 });
 
-describe('/setup route pre-auth relay chooser', () => {
+describe('/setup route pre-auth access gate', () => {
     beforeEach(() => {
         expoRouterMock.spies.push.mockReset();
         expoRouterMock.spies.replace.mockReset();
@@ -110,11 +110,13 @@ describe('/setup route pre-auth relay chooser', () => {
         standardCleanup();
     });
 
-    it('does not offer a local relay continue action before auth (setup stays relay-choice only)', async () => {
+    it('does not offer local relay setup controls before auth', async () => {
         tauriDesktopState.value = true;
         const Screen = (await import('@/app/(app)/setup/index')).default;
         const screen = await renderScreen(React.createElement(Screen));
 
+        expect(screen.findByTestId('setup.preAuthNotice')).toBeTruthy();
+        expect(screen.findByTestId('setup.preAuthGoHome')).toBeTruthy();
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
         expect(screen.findByTestId('setup.continueWithLocalRelay')).toBeNull();
         expect(setPendingSetupIntentMock).not.toHaveBeenCalled();

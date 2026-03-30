@@ -16,4 +16,3 @@ describe('shouldAutoRedirectToSetupOnFirstLaunch', () => {
         expect(shouldAutoRedirectToSetupOnFirstLaunch({ platformOs: 'web', isDesktopTauri: true })).toBe(true);
     });
 });
-

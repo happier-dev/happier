@@ -267,6 +267,37 @@ installVitestRnShim({ traceFile: process.env.VITEST_TRACE_LOAD ?? null });
 // resolve it via Node's CJS loader, so we mock it explicitly here as well.
 vi.mock('react-native', async () => await import('./reactNativeStub'));
 
+// `react-native-svg` relies on React Native touchable internals that aren't available in our
+// Node + react-test-renderer environment. Provide a lightweight host-component stub so SVG-backed
+// icons can render in tests without crashing.
+vi.mock('react-native-svg', async () => {
+    const React = await import('react');
+    const createHost = (tag: string) => (props: any) => React.createElement(tag, props, props.children);
+
+    const Svg = createHost('Svg');
+
+    return {
+        __esModule: true,
+        default: Svg,
+        Svg,
+        SvgXml: createHost('SvgXml'),
+        Path: createHost('Path'),
+        Circle: createHost('Circle'),
+        Rect: createHost('Rect'),
+        G: createHost('G'),
+        Defs: createHost('Defs'),
+        ClipPath: createHost('ClipPath'),
+        LinearGradient: createHost('LinearGradient'),
+        RadialGradient: createHost('RadialGradient'),
+        Stop: createHost('Stop'),
+        Polygon: createHost('Polygon'),
+        Polyline: createHost('Polyline'),
+        Line: createHost('Line'),
+        Text: createHost('SvgText'),
+        TSpan: createHost('TSpan'),
+    };
+});
+
 // Vitest runs in Node; `react-native-mmkv` depends on React Native internals and can fail to parse.
 // Provide a minimal in-memory implementation for tests.
 const store = new Map<string, unknown>();

@@ -5,6 +5,9 @@ import { createExpoRouterMock, flushHookEffects, renderScreen, standardCleanup }
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
+vi.mock('@/components/onboardingWizard', () => ({
+    OnboardingWizardSurface: () => null,
+}));
 
 const expoRouterMock = createExpoRouterMock({
     router: { push: vi.fn(), replace: vi.fn() },
@@ -39,12 +42,13 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: vi.fn(async () => ({ status: 'ready', features: { capabilities: { auth: { methods: [] } } } })),
 }));
 
+const getPendingSetupIntentMock = vi.hoisted(() => vi.fn(() => ({
+    branch: 'thisComputer',
+    phase: 'awaiting_auth',
+    relayUrl: 'https://relay.example.test',
+})));
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
-    getPendingSetupIntent: () => ({
-        branch: 'thisComputer',
-        phase: 'awaiting_auth',
-        relayUrl: 'https://relay.example.test',
-    }),
+    getPendingSetupIntent: () => getPendingSetupIntentMock(),
 }));
 
 describe('/ (welcome) setup continuation', () => {
@@ -69,6 +73,20 @@ describe('/ (welcome) setup continuation', () => {
 
     it('does not redirect browser web users back to /setup when a setup auth continuation is pending', async () => {
         tauriDesktopState.value = false;
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
+    });
+
+    it('does not redirect desktop users to /setup when the setup wizard was skipped', async () => {
+        getPendingSetupIntentMock.mockReturnValue({
+            branch: 'thisComputer',
+            phase: 'pre_auth',
+            relayUrl: 'https://relay.example.test',
+        });
 
         const Screen = (await import('@/app/(app)/index')).default;
         await renderScreen(React.createElement(Screen));

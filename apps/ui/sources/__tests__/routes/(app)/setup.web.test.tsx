@@ -143,14 +143,14 @@ describe('/setup route web gating', () => {
         standardCleanup();
     });
 
-    it('shows a desktop-only notice on browser web instead of the setup flow', async () => {
+    it('shows an access gate notice on browser web before auth', async () => {
         const Screen = (await import('@/app/(app)/setup/index')).default;
         const screen = await renderScreen(React.createElement(Screen));
 
-        expect(screen.findByTestId('setup.desktopOnlyNotice')).toBeTruthy();
-        expect(screen.findByTestId('setup.web.activeRelay')).toBeTruthy();
-        expect(screen.findByTestId('setup.preAuth.intro')).toBeNull();
-        expect(screen.findByTestId('setup.currentRelay')).toBeNull();
+        expect(screen.findByTestId('setup.preAuthNotice')).toBeTruthy();
+        expect(screen.findByTestId('setup.preAuthGoHome')).toBeTruthy();
+        expect(screen.findByTestId('setup.desktopOnlyNotice')).toBeNull();
+        expect(screen.findByTestId('setup.web.activeRelay')).toBeNull();
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
         expect(screen.findByTestId('setup.continueToAuth')).toBeNull();
         expect(screen.findByTestId('setup.discard')).toBeNull();
@@ -179,6 +179,7 @@ describe('/setup route web gating', () => {
 
         expect(screen.findByTestId('setup.desktopOnlyNotice')).toBeTruthy();
         expect(screen.findByTestId('setup.web.activeRelay')).toBeTruthy();
+        expect(screen.findByTestId('setup.launchWizard')).toBeTruthy();
         expect(screen.findByTestId('setup.postAuth')).toBeNull();
         expect(screen.findByTestId('setup.summary.activeRelay')).toBeNull();
         expect(screen.findByTestId('setup.summary.thisComputer')).toBeNull();
