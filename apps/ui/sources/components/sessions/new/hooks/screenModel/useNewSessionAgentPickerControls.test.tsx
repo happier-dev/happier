@@ -161,6 +161,7 @@ describe('useNewSessionAgentPickerControls', () => {
         const setModelMode = vi.fn();
         const setAcpSessionModeId = vi.fn();
         const setSessionConfigOptionOverrides = vi.fn();
+        const refreshProbe = { phase: 'idle' as const, onRefresh: vi.fn() };
 
         const hook = await renderHook(() => useNewSessionAgentPickerControls({
             useProfiles: false,
@@ -200,6 +201,7 @@ describe('useNewSessionAgentPickerControls', () => {
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
             settings: {} as any,
+            refreshProbe,
         }));
 
         const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === 'agent:codex');
@@ -212,6 +214,7 @@ describe('useNewSessionAgentPickerControls', () => {
         }> | undefined;
 
         expect(detailElement?.props?.onSelectionChange).toBeTypeOf('function');
+        expect((detailElement?.props as any)?.refreshProbe).toEqual(refreshProbe);
 
         detailElement?.props?.onSelectionChange?.({
             modelId: 'gpt-5.4',

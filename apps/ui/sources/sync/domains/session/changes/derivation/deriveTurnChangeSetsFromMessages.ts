@@ -3,14 +3,14 @@ import type { TurnChangeSet } from '@happier-dev/protocol';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
 import { extractCanonicalDiffFiles } from '../parsing/extractCanonicalDiffFiles';
-import { readTurnChangeToolMetadata } from '../parsing/readTurnChangeToolMetadata';
+import { readTurnChangeToolMetadataFromToolCall } from '../parsing/readTurnChangeToolMetadata';
 
 export function deriveTurnChangeSetsFromMessages(messages: readonly Message[]): TurnChangeSet[] {
     return messages
         .filter((message): message is Extract<Message, { kind: 'tool-call' }> => message.kind === 'tool-call')
         .filter((message) => message.tool?.name === 'Diff')
         .flatMap((message) => {
-            const metadata = readTurnChangeToolMetadata(message.tool.input);
+            const metadata = readTurnChangeToolMetadataFromToolCall(message.tool);
             if (!metadata) return [];
             return [{
                 sessionId: metadata.sessionId,

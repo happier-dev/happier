@@ -12,6 +12,7 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 import { t } from '@/text';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 
 type EngineSelection = Readonly<{
     modelId: string;
@@ -39,6 +40,11 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     capabilityServerId: string;
     selectedPath: string | null;
     settings: Settings;
+    /**
+     * Optional probe surface to merge into the engine detail pane's refresh affordance.
+     * This is used to make the model refresh button also refresh CLI detection.
+     */
+    refreshProbe?: OptionPickerProbeState | null;
 }>): Readonly<{
     agentPickerOptions?: ReadonlyArray<AgentInputChipPickerOption>;
     handleAgentPickerSelect: (selectedId: string) => void;
@@ -170,6 +176,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
                             capabilityServerId={params.capabilityServerId}
                             cwd={params.selectedPath}
                             capabilityProbeContext={capabilityProbeContext}
+                            refreshProbe={params.refreshProbe}
                             selectedModelId={selection.modelId}
                             selectedSessionModeId={selection.sessionModeId}
                             selectedConfigOverrides={selection.configOverrides}

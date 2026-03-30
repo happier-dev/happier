@@ -69,6 +69,7 @@ describe('AgentInputChipPickerPanel', () => {
 
         expect(screen.findByTestId('agent-input-chip-picker')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.title')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.close')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option:one')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
     });
@@ -89,8 +90,46 @@ describe('AgentInputChipPickerPanel', () => {
 
         expect(screen.findByTestId('agent-input-chip-picker')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.title')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.close')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.detail-pane')).toBeTruthy();
+    });
+
+    it('omits the title row when the title is empty', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title=""
+            showCloseButton={false}
+            options={[
+                { id: 'one', label: 'One' } as any,
+            ]}
+            selectedOptionId="one"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker')).toBeTruthy();
+        expect(screen.findAllByTestId('agent-input-chip-picker.title')).toHaveLength(0);
+        expect(screen.findAllByTestId('agent-input-chip-picker.close')).toHaveLength(0);
+    });
+
+    it('dismisses the picker when the close button is pressed', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+        const onRequestClose = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[
+                { id: 'one', label: 'One' } as any,
+            ]}
+            selectedOptionId="one"
+            onSelect={() => {}}
+            onRequestClose={onRequestClose}
+        />);
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.close');
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
     });
 
     it('closes by default when selecting an immediate option in detailed mode', async () => {
@@ -118,6 +157,9 @@ describe('AgentInputChipPickerPanel', () => {
         await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
         expect(onSelectImmediate).toHaveBeenCalledTimes(1);
         expect(onSelect).not.toHaveBeenCalled();
+
+        // `deferAgentInputPopoverClose` uses `setTimeout(0)` on web to avoid click fall-through.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
         expect(onRequestClose).toHaveBeenCalledTimes(1);
     });
 
@@ -145,6 +187,9 @@ describe('AgentInputChipPickerPanel', () => {
 
         await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
         expect(onSelectImmediate).toHaveBeenCalledTimes(1);
+
+        // Allow any deferred close to run (it should not be scheduled for this option).
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
         expect(onRequestClose).not.toHaveBeenCalled();
     });
 });

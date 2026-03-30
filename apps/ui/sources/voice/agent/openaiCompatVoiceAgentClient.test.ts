@@ -21,16 +21,13 @@ const settingsState: any = {
 const resolveUiVoicePromptStackBlocks = vi.fn(async (_args?: { profileId?: string | null }) => []);
 
 installVoiceAgentCommonModuleMocks({
-  storage: async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-      storage: {
-        getState: () => ({
-          settings: settingsState,
-        }),
-      },
-    });
-  },
+  storage: async () => ({
+    storage: {
+      getState: () => ({
+        settings: settingsState,
+      }),
+    },
+  }),
 });
 
 vi.mock('@/sync/sync', () => ({
@@ -41,6 +38,10 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/voice/agent/resolveUiVoicePromptStackBlocks', () => ({
   resolveUiVoicePromptStackBlocks: (args: { profileId?: string | null }) => resolveUiVoicePromptStackBlocks(args),
+}));
+
+vi.mock('@/sync/domains/memory/resolveUiMemoryRecallGuidanceEnabled', () => ({
+  resolveUiMemoryRecallGuidanceEnabled: async () => false,
 }));
 
 describe('OpenAiCompatVoiceAgentClient', () => {

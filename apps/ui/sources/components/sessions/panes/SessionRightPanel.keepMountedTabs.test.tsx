@@ -85,14 +85,18 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
         expect(screen.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
         expect(screen.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
         expect(screen.findByType('SessionRepositoryTreeBrowserView')).toBeTruthy();
-        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'visibility')).toBe('hidden');
-        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-files')!, 'visibility')).toBe('visible');
+        expect(screen.findByTestId('session-rightpanel-surface-git')!.props.pointerEvents).toBe('none');
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'opacity')).toBe(0);
+        expect(screen.findByTestId('session-rightpanel-surface-files')!.props.pointerEvents).toBe('auto');
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-files')!, 'opacity')).toBe(1);
 
         // Switching back keeps both mounted.
         await screen.pressByTestIdAsync('session-rightpanel-tab:git');
         expect(screen.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
         expect(screen.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
-        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'visibility')).toBe('visible');
-        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-files')!, 'visibility')).toBe('hidden');
+        expect(screen.findByTestId('session-rightpanel-surface-git')!.props.pointerEvents).toBe('auto');
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'opacity')).toBe(1);
+        expect(screen.findByTestId('session-rightpanel-surface-files')!.props.pointerEvents).toBe('none');
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-files')!, 'opacity')).toBe(0);
     });
 });

@@ -163,6 +163,7 @@ vi.mock('@/components/ui/popover', () => ({
         if (!props.open) return null;
         return React.createElement('Popover', props, props.children({ maxHeight: 400, maxWidth: 520, placement: 'bottom' }));
     },
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/modal', () => createModalModuleMock({

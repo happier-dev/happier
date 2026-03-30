@@ -75,6 +75,52 @@ describe('serverProfiles', () => {
         expect(profiles.getActiveServerUrl()).toBe('https://tab.example.test');
     });
 
+    it('returns a stable active server snapshot reference until the store changes', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('https://origin.example.test');
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({
+            serverUrl: 'https://device.example.test',
+            name: 'Device',
+        });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+
+        const first = profiles.getActiveServerSnapshot();
+        const second = profiles.getActiveServerSnapshot();
+
+        expect(second).toBe(first);
+
+        const next = profiles.upsertServerProfile({
+            serverUrl: 'https://next.example.test',
+            name: 'Next',
+        });
+        profiles.setActiveServerId(next.id, { scope: 'device' });
+
+        const third = profiles.getActiveServerSnapshot();
+        expect(third).not.toBe(first);
+        expect(third.serverUrl).toBe('https://next.example.test');
+    });
+
+    it('persists a shareable relay URL on the active server snapshot', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('https://origin.example.test');
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({
+            serverUrl: 'https://relay.example.test',
+            name: 'Relay',
+        });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+        profiles.setServerProfileShareableUrl(created.id, 'https://relay.example.ts.net/path?token=abc#frag');
+
+        const snapshot = profiles.getActiveServerSnapshot();
+        expect(snapshot.activeShareableServerUrl).toBe('https://relay.example.ts.net/path');
+        expect(profiles.getActiveServerUrl()).toBe('https://relay.example.test');
+    });
+
     it('exposes device default and tab override server ids separately on web', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;

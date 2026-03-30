@@ -28,13 +28,13 @@ export default function TerminalConnectScreen() {
     const auth = useAuth();
     const authRedirectTriggeredRef = React.useRef(false);
 
-    const navigateBackOrToTerminal = React.useCallback(() => {
-        safeRouterBack({ router, fallbackHref: '/terminal' });
+    const navigateBackOrToHome = React.useCallback(() => {
+        safeRouterBack({ router, fallbackHref: '/' });
     }, [router]);
 
     const { processAuthUrl, isLoading } = useConnectTerminal({
         onSuccess: () => {
-            navigateBackOrToTerminal();
+            navigateBackOrToHome();
         }
     });
 
@@ -110,7 +110,7 @@ export default function TerminalConnectScreen() {
 
     const handleReject = () => {
         clearPendingTerminalConnect();
-        navigateBackOrToTerminal();
+        navigateBackOrToHome();
     };
 
     // Show placeholder for mobile platforms

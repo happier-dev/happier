@@ -178,11 +178,16 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
                             onPress={onToggleExpanded}
                             onFocus={() => setFocusedFileKey(file.key)}
                             onBlur={() => setFocusedFileKey((prev) => (prev === file.key ? null : prev))}
-                            style={({ hovered, pressed }) => ([
-                                styles.fileRowInteractive,
-                                hovered ? styles.fileRowHovered : null,
-                                pressed ? styles.fileRowPressed : null,
-                            ])}
+                            style={(state) => {
+                                const { pressed } = state;
+                                // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
+                                const hovered = (state as { hovered?: boolean }).hovered === true;
+                                return [
+                                    styles.fileRowInteractive,
+                                    hovered ? styles.fileRowHovered : null,
+                                    pressed ? styles.fileRowPressed : null,
+                                ];
+                            }}
                             accessibilityRole="button"
                         >
                             <View style={styles.fileRowMain}>
@@ -241,11 +246,16 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
                                         }
                                         : undefined
                                 }
-                                style={({ pressed, hovered }) => ([
-                                    styles.openFileButton,
-                                    hovered ? styles.openFileButtonHovered : null,
-                                    pressed ? styles.openFileButtonPressed : null,
-                                ])}
+                                style={(state) => {
+                                    const { pressed } = state;
+                                    // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
+                                    const hovered = (state as { hovered?: boolean }).hovered === true;
+                                    return [
+                                        styles.openFileButton,
+                                        hovered ? styles.openFileButtonHovered : null,
+                                        pressed ? styles.openFileButtonPressed : null,
+                                    ];
+                                }}
                             >
                                 <Octicons name="file" size={14} color={styles.openFileIcon.color as any} />
                             </Pressable>

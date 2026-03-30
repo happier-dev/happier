@@ -44,6 +44,7 @@ import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/s
 import { ContextBar } from '@/components/contextBar/ContextBar';
 import { useContextBarSelection } from '@/components/contextBar/useContextBarSelection';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 
 function resolveProviderSettingsText(input: TranslatableText | undefined): string | undefined {
     if (input === undefined) return undefined;
@@ -226,6 +227,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
     authPlugin: ReturnType<typeof getProviderLocalAuthPlugin>;
 }>) {
     const { theme } = useUnistyles();
+    const supportsDesktopControls = isTauriDesktop();
     const { providerId, core, plugin, authPlugin } = props;
     const settings = useSettings();
     const paneScopeId = React.useMemo(
@@ -592,12 +594,13 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                     <ProviderAuthenticationCard
                         providerId={providerId}
                         state={providerAuthentication}
+                        showActions={supportsDesktopControls}
                         onCheckNow={() => cliAvailability.refresh({ bypassCache: true, includeLoginStatusForAgentIds: [providerId] })}
                         onLaunchLogin={() => {
-                            if (!providerAuthentication.canLaunchLogin) return;
+                            if (!providerAuthentication.canLaunchLogin || !supportsDesktopControls) return;
                             pane.openBottom({ tabId: PROVIDER_AUTH_TERMINAL_TAB_ID });
-                    }}
-                />
+                        }}
+                    />
 
                 {(plugin?.uiSections ?? []).map((section) => (
                     <ItemGroup
@@ -875,16 +878,18 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                         icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
                         mode="info"
                     />
-                    <ProviderCliInstallItem
-                        machineId={primaryMachine?.id ?? null}
-                        serverId={capabilityServerId}
-                        capabilityId={`cli.${core.cli.detectKey}` as any}
-                        providerTitle={t(core.displayNameKey)}
-                        installed={providerCliAvailable}
-                        managedInstalled={providerCliManagedInstalled}
-                        installability={cliInstallability}
-                    />
-                    {providerCliRuntimeSpec.managedInstall ? (
+                    {supportsDesktopControls ? (
+                        <ProviderCliInstallItem
+                            machineId={primaryMachine?.id ?? null}
+                            serverId={capabilityServerId}
+                            capabilityId={`cli.${core.cli.detectKey}` as any}
+                            providerTitle={t(core.displayNameKey)}
+                            installed={providerCliAvailable}
+                            managedInstalled={providerCliManagedInstalled}
+                            installability={cliInstallability}
+                        />
+                    ) : null}
+                    {supportsDesktopControls && providerCliRuntimeSpec.managedInstall ? (
                         <DropdownMenu
                             open={openMenu === 'cliSourcePreference'}
                             onOpenChange={(next) => setOpenMenu(next ? 'cliSourcePreference' : null)}
@@ -1007,7 +1012,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                     </ItemList>
                 )}
                 bottomPane={
-                    authTerminalOpen ? (
+                    supportsDesktopControls && authTerminalOpen ? (
                         <ProviderAuthenticationTerminalPane
                             providerId={providerId}
                             machineId={providerAuthentication.machineId}

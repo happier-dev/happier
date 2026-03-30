@@ -1,9 +1,9 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
-import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
+import { installNewSessionComponentsCommonModuleMocks, resetNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -101,6 +101,295 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 describe('NewSessionWizard', () => {
+    beforeEach(() => {
+        vi.useRealTimers();
+        vi.resetModules();
+        // Other suites in the same shard can update the shared mock override state in
+        // `newSessionComponentsTestHelpers`. Re-apply the overrides here so this suite
+        // stays deterministic regardless of file execution order.
+        installNewSessionComponentsCommonModuleMocks({
+            reactNative: async () => {
+                const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+                return createReactNativeWebMock({
+                    useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
+                    Dimensions: { get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }) },
+                });
+            },
+        });
+        mockEnv.windowWidth = 800;
+        pathSelectorPropsRef.current = null;
+    });
+
+    afterAll(() => {
+        resetNewSessionComponentsCommonModuleMocks();
+    });
+
+    function flattenStyle(style: any): Record<string, any> {
+        if (!style) return {};
+        if (Array.isArray(style)) {
+            return style.reduce((acc, entry) => ({ ...acc, ...flattenStyle(entry) }), {});
+        }
+        if (typeof style === 'number') return {};
+        if (typeof style === 'object') return style as Record<string, any>;
+        return {};
+    }
+
+    it('does not force the wizard shell to full-height on wide web layouts', async () => {
+        mockEnv.windowWidth = 900;
+        try {
+            const { NewSessionWizard } = await import('./NewSessionWizard');
+
+            const screen = await renderScreen(<NewSessionWizard
+                popoverBoundaryRef={{ current: null } as any}
+                layout={{
+                    theme: {
+                        colors: {
+                            divider: '#ddd',
+                            shadow: { color: '#000' },
+                            groupped: { background: '#fff' },
+                            text: '#000',
+                            textSecondary: '#666',
+                            input: { background: '#fff' },
+                            button: { secondary: { tint: '#000' } },
+                            warning: '#d97706',
+                            box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                        },
+                    } as any,
+                    styles: {
+                        container: { flex: 0 },
+                    } as any,
+                    safeAreaBottom: 0,
+                    headerHeight: 44,
+                    newSessionSidePadding: 0,
+                    newSessionBottomPadding: 0,
+                }}
+                profiles={{
+                    useProfiles: false,
+                    profiles: [],
+                    favoriteProfileIds: [],
+                    setFavoriteProfileIds: () => {},
+                    selectedProfileId: null,
+                    onPressDefaultEnvironment: () => {},
+                    onPressProfile: () => {},
+                    selectedMachineId: 'machine-1',
+                    getProfileDisabled: () => false,
+                    getProfileSubtitleExtra: () => null,
+                    handleAddProfile: () => {},
+                    openProfileEdit: () => {},
+                    handleDuplicateProfile: () => {},
+                    handleDeleteProfile: () => {},
+                    openProfileEnvVarsPreview: () => {},
+                    suppressNextSecretAutoPromptKeyRef: { current: null },
+                    openSecretRequirementModal: () => {},
+                    profilesGroupTitles: { favorites: 'Favorites', custom: 'Custom', builtIn: 'Built in' },
+                    getSecretOverrideReady: () => true,
+                    getSecretSatisfactionForProfile: () => ({ isSatisfied: true }),
+                } as any}
+                agent={{
+                    cliAvailability: { available: {}, isLoaded: true } as any,
+                    tmuxRequested: false,
+                    enabledAgentIds: ['codex'] as any,
+                    isAgentSelectable: () => true,
+                    isCliBannerDismissed: () => true,
+                    dismissCliBanner: () => {},
+                    agentType: 'codex' as any,
+                    setAgentType: () => {},
+                    modelOptions: [{ value: 'default', label: 'Default', description: '' }] as any,
+                    setModelMode: () => {},
+                    selectedIndicatorColor: '#000',
+                    profileMap: new Map(),
+                    permissionMode: 'default',
+                    handlePermissionModeChange: () => {},
+                } as any}
+                machine={{
+                    machines: [{
+                        id: 'machine-1',
+                        active: true,
+                        activeAt: 0,
+                        revokedAt: null,
+                        metadata: {
+                            host: 'box.local',
+                            platform: 'test',
+                            happyCliVersion: '0.0.0-test',
+                            happyHomeDir: '/tmp/happy-home',
+                            homeDir: '/tmp',
+                            displayName: 'Box',
+                        },
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    }],
+                    serverId: 'server-1',
+                    selectedMachine: null,
+                    recentMachines: [],
+                    favoriteMachineItems: [],
+                    useMachinePickerSearch: false,
+                    onRefreshMachines: () => {},
+                    setSelectedMachineId: () => {},
+                    getBestPathForMachine: () => '/tmp',
+                    setSelectedPath: () => {},
+                    favoriteMachines: [],
+                    setFavoriteMachines: () => {},
+                    selectedPath: '/tmp',
+                    recentPaths: [],
+                    usePathPickerSearch: false,
+                    favoriteDirectories: [],
+                    setFavoriteDirectories: () => {},
+                } as any}
+                footer={{
+                    sessionPrompt: '',
+                    setSessionPrompt: () => {},
+                    handleCreateSession: () => {},
+                    canCreate: true,
+                    isCreating: false,
+                    emptyAutocompletePrefixes: [],
+                    emptyAutocompleteSuggestions: async () => [],
+                    sessionPromptInputMaxHeight: 200,
+                    isResumeSupportChecking: false,
+                    resumeSessionId: null,
+                    connectionStatus: undefined,
+                    showResumePicker: false,
+                } as any}
+            />);
+
+            const keyboardView = screen.findByType('KeyboardAvoidingView');
+            expect(keyboardView.props.style).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    flex: 0,
+                }),
+            ]));
+        } finally {
+            mockEnv.windowWidth = 800;
+        }
+    });
+
+    it('stretches the footer padding wrapper to full width on web (avoids shrink-to-fit collapse)', async () => {
+        mockEnv.windowWidth = 1200;
+        try {
+            const { NewSessionWizard } = await import('./NewSessionWizard');
+
+            const screen = await renderScreen(<NewSessionWizard
+                popoverBoundaryRef={{ current: null } as any}
+                layout={{
+                    theme: {
+                        colors: {
+                            divider: '#ddd',
+                            shadow: { color: '#000' },
+                            groupped: { background: '#fff' },
+                            text: '#000',
+                            textSecondary: '#666',
+                            input: { background: '#fff' },
+                            button: { secondary: { tint: '#000' } },
+                            warning: '#d97706',
+                            box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                        },
+                    } as any,
+                    styles: {} as any,
+                    safeAreaBottom: 0,
+                    headerHeight: 44,
+                    newSessionSidePadding: 123,
+                    newSessionBottomPadding: 0,
+                }}
+                profiles={{
+                    useProfiles: false,
+                    profiles: [],
+                    favoriteProfileIds: [],
+                    setFavoriteProfileIds: () => {},
+                    selectedProfileId: null,
+                    onPressDefaultEnvironment: () => {},
+                    onPressProfile: () => {},
+                    selectedMachineId: 'machine-1',
+                    getProfileDisabled: () => false,
+                    getProfileSubtitleExtra: () => null,
+                    handleAddProfile: () => {},
+                    openProfileEdit: () => {},
+                    handleDuplicateProfile: () => {},
+                    handleDeleteProfile: () => {},
+                    openProfileEnvVarsPreview: () => {},
+                    suppressNextSecretAutoPromptKeyRef: { current: null },
+                    openSecretRequirementModal: () => {},
+                    profilesGroupTitles: { favorites: 'Favorites', custom: 'Custom', builtIn: 'Built in' },
+                    getSecretOverrideReady: () => true,
+                    getSecretSatisfactionForProfile: () => ({ isSatisfied: true }),
+                } as any}
+                agent={{
+                    cliAvailability: { available: {}, isLoaded: true } as any,
+                    tmuxRequested: false,
+                    enabledAgentIds: ['codex'] as any,
+                    isAgentSelectable: () => true,
+                    isCliBannerDismissed: () => true,
+                    dismissCliBanner: () => {},
+                    agentType: 'codex' as any,
+                    setAgentType: () => {},
+                    modelOptions: [{ value: 'default', label: 'Default', description: '' }] as any,
+                    setModelMode: () => {},
+                    selectedIndicatorColor: '#000',
+                    profileMap: new Map(),
+                    permissionMode: 'default',
+                    handlePermissionModeChange: () => {},
+                } as any}
+                machine={{
+                    machines: [{
+                        id: 'machine-1',
+                        active: true,
+                        activeAt: 0,
+                        revokedAt: null,
+                        metadata: {
+                            host: 'box.local',
+                            platform: 'test',
+                            happyCliVersion: '0.0.0-test',
+                            happyHomeDir: '/tmp/happy-home',
+                            homeDir: '/tmp',
+                            displayName: 'Box',
+                        },
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    }],
+                    serverId: 'server-1',
+                    selectedMachine: null,
+                    recentMachines: [],
+                    favoriteMachineItems: [],
+                    useMachinePickerSearch: false,
+                    onRefreshMachines: () => {},
+                    setSelectedMachineId: () => {},
+                    getBestPathForMachine: () => '/tmp',
+                    setSelectedPath: () => {},
+                    favoriteMachines: [],
+                    setFavoriteMachines: () => {},
+                    selectedPath: '/tmp',
+                    recentPaths: [],
+                    usePathPickerSearch: false,
+                    favoriteDirectories: [],
+                    setFavoriteDirectories: () => {},
+                } as any}
+                footer={{
+                    sessionPrompt: '',
+                    setSessionPrompt: () => {},
+                    handleCreateSession: () => {},
+                    canCreate: true,
+                    isCreating: false,
+                    emptyAutocompletePrefixes: [],
+                    emptyAutocompleteSuggestions: async () => [],
+                    sessionPromptInputMaxHeight: 200,
+                    isResumeSupportChecking: false,
+                    resumeSessionId: null,
+                    connectionStatus: undefined,
+                    showResumePicker: false,
+                } as any}
+            />);
+
+            const paddedViews = screen
+                .findAllByType('View')
+                .filter((node) => flattenStyle(node.props.style).paddingHorizontal === 123);
+            expect(paddedViews).toHaveLength(1);
+            expect(flattenStyle(paddedViews[0].props.style).width).toBe('100%');
+            expect(flattenStyle(paddedViews[0].props.style).alignSelf).toBe('stretch');
+        } finally {
+            mockEnv.windowWidth = 800;
+        }
+    });
+
     it('anchors the wizard shell to the bottom on narrow mobile web layouts', async () => {
         mockEnv.windowWidth = 390;
         try {

@@ -60,8 +60,9 @@ vi.mock('@/config', () => ({
 }));
 
 describe('SessionGettingStartedGuidanceView', () => {
-  it('includes server profile setup when serverUrl is not cloud', async () => {
+  it('keeps manual terminal follow-up focused on auth and daemon setup when setup is available', async () => {
     const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
+    const onOpenSetup = vi.fn();
     const screen = await renderScreen(
       <SessionGettingStartedGuidanceView
         variant="primaryPane"
@@ -71,26 +72,44 @@ describe('SessionGettingStartedGuidanceView', () => {
           serverUrl: 'https://api.company.example',
           serverName: 'company',
           showServerSetup: true,
+          onOpenSetup,
         }}
       />,
     );
 
     const content = screen.getTextContent();
-    expect(content).toContain('happier server add');
-    expect(content).toContain('https://api.company.example');
-    expect(content).not.toContain('$ npm i -g @happier-dev/cli');
-    expect(content).toContain('curl -fsSL https://happier.dev/install | bash');
-    expect(content).not.toContain('npm i -g @happier-dev/cli');
-    expect(content).toContain('happier daemon install');
-    expect(content).not.toContain('daemon service install');
-    expect(content).toContain('happier codex');
-    expect(content).toContain('happier opencode');
+    expect(screen.findByTestId('session-getting-started-setup-primary-card')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-cli-follow-up')).toBeNull();
+    expect(screen.findByTestId('session-getting-started-show-manual')).not.toBeNull();
+    expect(content).not.toContain('happier server add');
+    expect(content).not.toContain('happier daemon install');
 
     expect(screen.findByTestId('session-getting-started-copy-all')).toBeNull();
     expect(screen.findByTestId('session-getting-started-scroll')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-logo')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-kind-connect_machine')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
+
+    await screen.pressByTestIdAsync('session-getting-started-open-setup');
+    expect(onOpenSetup).toHaveBeenCalledTimes(1);
+
+    await screen.pressByTestIdAsync('session-getting-started-show-manual');
+
+    const expandedContent = screen.getTextContent();
+    expect(screen.findByTestId('session-getting-started-cli-follow-up')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-step-server_setup')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-step-auth_login')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-step-daemon_install')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-step-create_session')).not.toBeNull();
+    expect(expandedContent).toContain('happier server add');
+    expect(expandedContent).toContain('https://api.company.example');
+    expect(expandedContent).not.toContain('$ npm i -g @happier-dev/cli');
+    expect(expandedContent).toContain('curl -fsSL https://happier.dev/install | bash');
+    expect(expandedContent).not.toContain('npm i -g @happier-dev/cli');
+    expect(expandedContent).toContain('happier daemon install');
+    expect(expandedContent).not.toContain('daemon service install');
+    expect(expandedContent).toContain('happier codex');
+    expect(expandedContent).toContain('happier opencode');
 
     clipboardMocks.setStringAsync.mockClear();
     await screen.pressByTestIdAsync('session-getting-started-copy-auth_login');
@@ -122,5 +141,28 @@ describe('SessionGettingStartedGuidanceView', () => {
         screen?.tree.unmount();
       });
     }
+  });
+
+  it('offers the desktop setup CTA when machines exist but the daemon still needs attention', async () => {
+    const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
+    const onOpenSetup = vi.fn();
+    const screen = await renderScreen(
+      <SessionGettingStartedGuidanceView
+        variant="primaryPane"
+        model={{
+          kind: 'start_daemon',
+          targetLabel: 'Company',
+          serverUrl: 'https://api.company.example',
+          serverName: 'company',
+          showServerSetup: true,
+          onOpenSetup,
+        }}
+      />,
+    );
+
+    expect(screen.findByTestId('session-getting-started-setup-primary-card')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
+    await screen.pressByTestIdAsync('session-getting-started-open-setup');
+    expect(onOpenSetup).toHaveBeenCalledTimes(1);
   });
 });

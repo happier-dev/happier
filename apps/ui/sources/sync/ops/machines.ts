@@ -10,6 +10,7 @@ import { apiSocket } from '../api/session/apiSocket';
 import type { MachineMetadata } from '../domains/state/storageTypes';
 import { buildSpawnHappySessionRpcParams, type SpawnHappySessionRpcParams, type SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
+import { storage } from '../domains/state/storage';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
@@ -410,6 +411,14 @@ export async function machineUpdateMetadata(
         });
 
         if (result.result === 'success') {
+            const currentMachine = storage.getState().machines[machineId] ?? null;
+            if (currentMachine) {
+                storage.getState().applyMachines([{
+                    ...currentMachine,
+                    metadata: currentMetadata,
+                    metadataVersion: result.version!,
+                }]);
+            }
             return {
                 version: result.version!,
                 metadata: result.metadata!

@@ -7,7 +7,7 @@ import Color from 'color';
 import { Typography } from '@/constants/Typography';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
-import { PopoverBoundaryProvider, PopoverPortalTargetProvider } from '@/components/ui/popover';
+import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
@@ -348,20 +348,25 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                 },
             ]}
         >
-            <View ref={props.popoverBoundaryRef} style={{ flex: 1 }}>
-                <PopoverPortalTargetProvider>
-                    <PopoverBoundaryProvider boundaryRef={props.popoverBoundaryRef}>
-                        <ScrollView
-                            ref={scrollViewRef}
-                            style={styles.scrollContainer}
-                            contentContainerStyle={styles.contentContainer}
-                            keyboardShouldPersistTaps="handled"
-                        >
-                            <View style={{ paddingHorizontal: 0 }}>
-                                <View style={[
-                                    { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
-                                ]}>
-                                    <View onLayout={registerWizardSectionOffset('profile')} style={styles.wizardContainer}>
+            <View
+                ref={props.popoverBoundaryRef}
+                style={{
+                    flex: 1,
+                    width: '100%',
+                }}
+            >
+                <PopoverBoundaryProvider boundaryRef={props.popoverBoundaryRef}>
+                    <ScrollView
+                        ref={scrollViewRef}
+                        style={styles.scrollContainer}
+                        contentContainerStyle={styles.contentContainer}
+                        keyboardShouldPersistTaps="handled"
+                    >
+                                <View style={{ paddingHorizontal: 0 }}>
+                                    <View style={[
+                                        { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
+                                    ]}>
+                                        <View onLayout={registerWizardSectionOffset('profile')} style={styles.wizardContainer}>
                                 {useProfiles && (
                                     <>
                                         <View style={styles.wizardSectionHeaderRow}>
@@ -742,7 +747,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                             }}
                         />
                     ) : null}
-                    <View style={{ paddingHorizontal: newSessionSidePadding }}>
+                    <View style={{ paddingHorizontal: newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
                           <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
                               <AgentInput
                                   value={sessionPrompt}
@@ -762,7 +767,6 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                   agentType={agentType}
                                   agentLabel={props.agent.agentLabel}
                                   onAgentClick={props.agent.agentPickerOptions ? undefined : handleAgentInputAgentClick}
-                                  agentPickerTitle={props.agent.agentPickerTitle}
                                   agentPickerOptions={props.agent.agentPickerOptions}
                                   agentPickerSelectedOptionId={props.agent.agentPickerSelectedOptionId}
                                   onAgentPickerSelect={props.agent.onAgentPickerSelect}
@@ -812,8 +816,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                           </View>
                       </View>
                 </View>
-                    </PopoverBoundaryProvider>
-                </PopoverPortalTargetProvider>
+                </PopoverBoundaryProvider>
             </View>
         </KeyboardAvoidingView>
     );

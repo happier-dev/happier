@@ -438,6 +438,30 @@ describe('AgentInput (send button accessibility)', () => {
         await screen.unmount();
     });
 
+    it('clears the session composer value immediately when sending', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const onChangeText = vi.fn();
+        const onSend = vi.fn();
+
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value="Hello world"
+            placeholder="Type"
+            onChangeText={onChangeText}
+            onSend={onSend}
+            autocompletePrefixes={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        screen.pressByTestId('session-composer-send');
+
+        expect(onSend).toHaveBeenCalledTimes(1);
+        expect(onChangeText).toHaveBeenCalledWith('');
+
+        await screen.unmount();
+    });
+
     it('does not leave raw string children under non-Text host views on web', async () => {
         const { AgentInput } = await import('./AgentInput');
 

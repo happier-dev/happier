@@ -13,6 +13,7 @@ import { getAuthProvider } from '@/auth/providers/registry';
 import { Modal } from '@/modal';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
@@ -119,17 +120,22 @@ export default function LostAccess() {
         return (
             <ScrollView style={styles.scrollView} contentContainerStyle={{ flexGrow: 1 }}>
                 <View style={styles.container}>
-                    <View style={styles.contentWrapper}>
-                        <View style={styles.noticeCard}>
-                            <Text style={styles.noticeBody}>{t('connect.lostAccessBody')}</Text>
-                        </View>
-                        <View style={styles.footer}>
-                            <View style={styles.footerButton}>
-                                <RoundButton size="normal" title={t('common.back')} display="inverted" onPress={() => router.back()} />
-                            </View>
-                        </View>
-                    </View>
-                </View>
+	                    <View style={styles.contentWrapper}>
+	                        <View style={styles.noticeCard}>
+	                            <Text style={styles.noticeBody}>{t('connect.lostAccessBody')}</Text>
+	                        </View>
+	                        <View style={styles.footer}>
+	                            <View style={styles.footerButton}>
+	                                <RoundButton
+	                                    size="normal"
+	                                    title={t('common.back')}
+	                                    display="inverted"
+	                                    onPress={() => safeRouterBack({ router, fallbackHref: '/' })}
+	                                />
+	                            </View>
+	                        </View>
+	                    </View>
+	                </View>
             </ScrollView>
         );
     }
@@ -157,13 +163,18 @@ export default function LostAccess() {
                         ))}
                     </View>
 
-                    <View style={styles.footer}>
-                        <View style={styles.footerButton}>
-                            <RoundButton size="normal" title={t('common.back')} display="inverted" onPress={() => router.back()} />
-                        </View>
-                    </View>
-                </View>
-            </View>
+	                    <View style={styles.footer}>
+	                        <View style={styles.footerButton}>
+	                            <RoundButton
+	                                size="normal"
+	                                title={t('common.back')}
+	                                display="inverted"
+	                                onPress={() => safeRouterBack({ router, fallbackHref: '/' })}
+	                            />
+	                        </View>
+	                    </View>
+	                </View>
+	            </View>
         </ScrollView>
     );
 }

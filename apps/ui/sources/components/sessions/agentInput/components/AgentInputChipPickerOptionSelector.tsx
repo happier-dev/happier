@@ -129,8 +129,8 @@ function AgentInputChipPickerOptionButton(
 const stylesheet = StyleSheet.create((theme) => ({
   railContainer: {
     width: "100%",
-    paddingHorizontal: 6,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     backgroundColor: theme.colors.groupped.background,
   },
   sectionBlock: {

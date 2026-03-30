@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createExpoRouterMock, createModalModuleMock, flushHookEffects, renderScreen, type RenderScreenResult } from '@/dev/testkit';
+import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
@@ -30,11 +31,44 @@ vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => null,
 }));
 
+const getPendingSetupIntentMock = vi.hoisted(() => vi.fn<() => PendingSetupIntent | null>());
+const setPendingSetupIntentMock = vi.hoisted(() => vi.fn<(value: PendingSetupIntent) => void>());
+vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
+    getPendingSetupIntent: () => getPendingSetupIntentMock(),
+    setPendingSetupIntent: (value: PendingSetupIntent) => setPendingSetupIntentMock(value),
+    clearPendingSetupIntent: vi.fn(),
+}));
+
 vi.mock('@/utils/platform/responsive', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/utils/platform/responsive')>();
     return {
         ...actual,
         useIsLandscape: () => false,
+    };
+});
+
+const platformState = vi.hoisted(() => ({
+    os: 'web' as 'web' | 'ios' | 'android',
+}));
+
+const tauriDesktopState = vi.hoisted(() => ({
+    value: false,
+}));
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => tauriDesktopState.value,
+}));
+
+vi.mock('react-native', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('react-native')>();
+    return {
+        ...actual,
+        Platform: {
+            ...actual.Platform,
+            get OS() {
+                return platformState.os;
+            },
+            select: (options: Record<string, unknown>) => options?.[platformState.os] ?? options?.default,
+        },
     };
 });
 
@@ -140,9 +174,135 @@ function mockGithubAuthFeatures(action: 'provision' | 'login', mode: 'keyed' | '
 
 afterEach(() => {
     vi.clearAllMocks();
+    platformState.os = 'web';
+    tauriDesktopState.value = false;
+    getPendingSetupIntentMock.mockReturnValue(null);
+    setPendingSetupIntentMock.mockReset();
 });
 
 describe('Home external auth start', () => {
+    it('redirects first-launch Tauri desktop users into /setup before showing auth actions', async () => {
+        tauriDesktopState.value = true;
+
+        const Home = await loadHome();
+        mockGithubAuthFeatures('provision', 'keyed');
+        getPendingSetupIntentMock.mockReturnValue(null);
+
+        await renderScreen(<Home />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(setPendingSetupIntentMock).toHaveBeenCalledWith({
+            branch: 'thisComputer',
+            phase: 'pre_auth',
+            relayUrl: 'http://api.example.test',
+        });
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/setup');
+    });
+
+    it('does not redirect browser-web users into /setup by default', async () => {
+        const Home = await loadHome();
+        mockGithubAuthFeatures('provision', 'keyed');
+        getPendingSetupIntentMock.mockReturnValue(null);
+
+        await renderScreen(<Home />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(setPendingSetupIntentMock).not.toHaveBeenCalled();
+        expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
+    });
+
+    it('does not force mobile-native first launch through the desktop setup route', async () => {
+        platformState.os = 'ios';
+        const Home = await loadHome();
+        mockGithubAuthFeatures('provision', 'keyed');
+        getPendingSetupIntentMock.mockReturnValue(null);
+
+        await renderScreen(<Home />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(setPendingSetupIntentMock).not.toHaveBeenCalled();
+        expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
+    });
+
+    it('opens the setup route from the welcome setup CTA on Tauri desktop', async () => {
+        tauriDesktopState.value = true;
+
+        const Home = await loadHome();
+        mockGithubAuthFeatures('provision', 'keyed');
+
+        const screen = await renderScreen(<Home />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        const button = screen.findByTestId('welcome-open-setup');
+        expect(button).not.toBeNull();
+
+        await act(async () => {
+            const handler = button?.props.onPress ?? button?.props.action;
+            await handler?.();
+        });
+
+        expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/setup');
+    });
+
+    it('keeps the server configuration screen reachable when the selected relay is incompatible', async () => {
+        const Home = await loadHome();
+        getPendingSetupIntentMock.mockReturnValue({
+            branch: 'thisComputer',
+            phase: 'dismissed',
+            relayUrl: 'http://api.example.test',
+        });
+        getServerFeaturesSnapshotMock.mockResolvedValue({
+            status: 'unsupported',
+            reason: 'invalid_payload',
+        });
+
+        const screen = await renderScreen(<Home />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        const button = screen.findByTestId('welcome-change-relay');
+        expect(button).not.toBeNull();
+
+        await act(async () => {
+            const handler = button?.props.onPress ?? button?.props.action;
+            await handler?.();
+        });
+
+        expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/server');
+    });
+
+    it('uses /setup as the auth returnTo when a setup continuation is pending', async () => {
+        tauriDesktopState.value = true;
+
+        const Home = await loadHome();
+        const provider = {
+            id: 'github',
+            getExternalAuthUrl: vi.fn(async () => 'https://oauth.example.test/auth'),
+        };
+        getAuthProviderMock.mockReturnValue(provider);
+        getPendingSetupIntentMock.mockReturnValue({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.example.test',
+        });
+        mockGithubAuthFeatures('provision', 'keyed');
+
+        const screen = await renderScreen(<Home />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        const signupButton = findActionButton(screen, 'welcome-signup-provider');
+        await act(async () => {
+            await signupButton.props.action();
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+
+        expect(tokenStorageMock.setPendingExternalAuth).toHaveBeenCalledWith(
+            expect.objectContaining({
+                provider: 'github',
+                returnTo: '/setup',
+            }),
+        );
+    });
+
     it('starts keyed external provider signup with publicKey', async () => {
         const Home = await loadHome();
         const provider = {

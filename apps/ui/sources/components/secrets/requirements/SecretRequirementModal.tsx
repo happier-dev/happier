@@ -90,9 +90,8 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
     // IMPORTANT:
     // The secret requirement modal can be intentionally small (content-sized). If we use the modal's
     // internal scroll container as the Popover boundary, dropdown menus get their maxHeight clipped
-    // to the modal instead of the screen. Use a "null boundary" ref so Popover falls back to the
-    // full window bounds while still anchoring to the trigger.
-    const screenPopoverBoundaryRef = React.useMemo(() => ({ current: null } as React.RefObject<any>), []);
+    // to the modal instead of the screen. Explicitly disable boundary clamping so Popover falls back
+    // to the full window bounds while still anchoring to the trigger.
 
     const modalTitle = props.titleOverride ?? t('profiles.requirements.modalTitle');
     const modalSubtitle = props.profile?.name ?? '';
@@ -393,7 +392,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                 matchTriggerWidth={true}
                                 connectToTrigger={true}
                                 rowKind="item"
-                                popoverBoundaryRef={screenPopoverBoundaryRef}
+                                popoverBoundaryRef={null}
                                 popoverPortalWebTarget="body"
                                 trigger={({ open, toggle }) => (
                                     <View
@@ -475,7 +474,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                 matchTriggerWidth={true}
                                 connectToTrigger={true}
                                 rowKind="item"
-                                popoverBoundaryRef={screenPopoverBoundaryRef}
+                                popoverBoundaryRef={null}
                                 popoverPortalWebTarget="body"
                                 trigger={({ open, toggle }) => (
                                     <View

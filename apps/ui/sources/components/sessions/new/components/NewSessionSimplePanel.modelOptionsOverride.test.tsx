@@ -483,7 +483,6 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
                         emptyAutocompleteSuggestions: async () => [],
                         sessionPromptInputMaxHeight: 200,
                         agentType: 'claude',
-                        agentPickerTitle: 'Select engine',
                         agentPickerOptions: [
                             { id: 'agent:claude', label: 'Claude' },
                             { id: 'agent:codex', label: 'Codex' },
@@ -508,7 +507,7 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
 
             expect(AgentInputMock).toHaveBeenCalled();
             const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
-            expect(props.agentPickerTitle).toBe('Select engine');
+            expect(props.agentPickerTitle).toBeUndefined();
             expect(props.agentPickerSelectedOptionId).toBe('agent:claude');
             expect(props.agentPickerOptions).toEqual([
                 { id: 'agent:claude', label: 'Claude' },

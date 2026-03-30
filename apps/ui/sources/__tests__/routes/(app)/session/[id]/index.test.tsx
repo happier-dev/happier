@@ -2,23 +2,28 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 const runAfterInteractionsSpy = vi.hoisted(() => vi.fn(() => () => {}));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'ios' },
-        View: 'View',
-        ActivityIndicator: 'ActivityIndicator',
-    });
+installSessionRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'ios' },
+            View: 'View',
+            ActivityIndicator: 'ActivityIndicator',
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            params: {
+                id: 'session-1',
+            },
+        }).module;
+    },
 });
-
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({
-        id: 'session-1',
-    }),
-}));
 
 vi.mock('@/components/sessions/shell/SessionView', () => ({
     SessionView: (props: any) => React.createElement('SessionView', props),
@@ -56,7 +61,7 @@ describe('session route index', () => {
     });
 
     it('mounts the session view immediately on native instead of waiting for interaction deferral', async () => {
-        const Route = await import('./index');
+        const Route = await import('@/app/(app)/session/[id]');
 
         const screen = await renderScreen(React.createElement(Route.default));
 

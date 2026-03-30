@@ -154,6 +154,7 @@ describe('useNewSessionAvailabilityState', () => {
         }), { initialProps: { refreshSalt: 0 } });
 
         expect(cliRefreshA).toHaveBeenCalledTimes(1);
+        expect(cliRefreshA.mock.calls[0]?.[0]).toEqual({ bypassCache: true });
         expect(capabilitiesRefreshA).toHaveBeenCalledTimes(1);
 
         cliRefreshCurrent = cliRefreshB;
@@ -161,6 +162,7 @@ describe('useNewSessionAvailabilityState', () => {
         await hook.rerender({ refreshSalt: 1 });
 
         expect(cliRefreshA).toHaveBeenCalledTimes(1);
+        expect(cliRefreshA.mock.calls[0]?.[0]).toEqual({ bypassCache: true });
         expect(capabilitiesRefreshA).toHaveBeenCalledTimes(1);
         expect(cliRefreshB).toHaveBeenCalledTimes(0);
         expect(capabilitiesRefreshB).toHaveBeenCalledTimes(0);
@@ -209,11 +211,13 @@ describe('useNewSessionAvailabilityState', () => {
 
         await hook.rerender({ machine: { ...baseMachine, active: true, activeAt: Date.now() } });
         expect(cliRefreshA).toHaveBeenCalledTimes(1);
+        expect(cliRefreshA.mock.calls[0]?.[0]).toEqual({ bypassCache: true });
         expect(capabilitiesRefreshA).toHaveBeenCalledTimes(1);
 
         await hook.rerender({ machine: { ...baseMachine, active: false } });
         await hook.rerender({ machine: { ...baseMachine, active: true, activeAt: Date.now() } });
         expect(cliRefreshA).toHaveBeenCalledTimes(2);
+        expect(cliRefreshA.mock.calls[1]?.[0]).toEqual({ bypassCache: true });
         expect(capabilitiesRefreshA).toHaveBeenCalledTimes(2);
     });
 

@@ -1,6 +1,7 @@
 import {
     getActiveServerSnapshot as getSnapshotFromProfiles,
     setActiveServerId,
+    setServerProfileShareableUrl,
     subscribeActiveServer as subscribeFromProfiles,
     upsertServerProfile,
     type ActiveServerSnapshot,
@@ -38,4 +39,11 @@ export function upsertAndActivateServer(
     });
     setActiveServerId(profile.id, { scope: params.scope ?? 'device' });
     return profile;
+}
+
+export function setActiveShareableServerUrl(serverUrl: string | null | undefined): void {
+    const snapshot = getSnapshotFromProfiles();
+    const serverId = String(snapshot.serverId ?? '').trim();
+    if (!serverId) return;
+    setServerProfileShareableUrl(serverId, serverUrl);
 }

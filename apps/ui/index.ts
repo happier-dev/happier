@@ -18,6 +18,20 @@ if (typeof window !== 'undefined') {
     } catch {
         // ignore
     }
+
+    try {
+        if (typeof (window as unknown as { __TAURI__?: unknown }).__TAURI__ !== 'undefined' && (globalThis as unknown as { __DEV__?: boolean }).__DEV__) {
+            const mod = require('./sources/desktop/mcp/installTauriMcpWebviewDriverScripts');
+            if (typeof mod === 'object' && mod !== null && 'installTauriMcpWebviewDriverScripts' in mod) {
+                const install = (mod as { installTauriMcpWebviewDriverScripts?: unknown }).installTauriMcpWebviewDriverScripts;
+                if (typeof install === 'function') {
+                    install();
+                }
+            }
+        }
+    } catch {
+        // ignore
+    }
 }
 
 require('./sources/unistyles');

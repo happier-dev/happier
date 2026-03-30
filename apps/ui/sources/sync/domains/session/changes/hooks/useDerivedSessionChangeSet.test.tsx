@@ -56,6 +56,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
 
 describe('useDerivedSessionChangeSet', () => {
     it('derives a session change set and provider diffs from canonical Diff messages', async () => {
+        vi.resetModules();
         const { useDerivedSessionChangeSet } = await import('./useDerivedSessionChangeSet');
         const { getCurrent } = await renderHook(() => useDerivedSessionChangeSet('session_1'));
         const current = getCurrent();

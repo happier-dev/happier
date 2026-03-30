@@ -9,6 +9,7 @@ import {
 
 export type AgentInputChipPickerSurfaceProps = Readonly<{
     title: string;
+    showCloseButton?: boolean;
     options: ReadonlyArray<AgentInputChipPickerOption>;
     selectedOptionId?: string | null;
     onSelect: (id: string) => void;
@@ -25,6 +26,7 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
     const panel = (
         <AgentInputChipPickerPanel
             title={props.title}
+            showCloseButton={props.showCloseButton}
             options={props.options}
             selectedOptionId={props.selectedOptionId}
             onSelect={props.onSelect}

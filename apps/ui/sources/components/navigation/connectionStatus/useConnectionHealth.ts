@@ -17,6 +17,18 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { resolveConnectionHealthPresentation } from './connectionHealthPresentation';
 import { resolveConnectionHealth } from './resolveConnectionHealth';
 
+function isMachineReadyForConnectionHealth(machine: Readonly<{ daemonState?: unknown }>): boolean {
+    const daemonState = machine.daemonState;
+    if (!daemonState || typeof daemonState !== 'object') {
+        return true;
+    }
+    const status = (daemonState as { status?: unknown }).status;
+    if (typeof status !== 'string') {
+        return true;
+    }
+    return status === 'running';
+}
+
 export function useConnectionHealth() {
     const { theme } = useUnistyles();
     const socketStatus = useSocketStatus();
@@ -66,9 +78,11 @@ export function useConnectionHealth() {
                 }
 
                 const visibleMachines = group.machines.filter((machine) => !machine.revokedAt);
+                const onlineMachines = visibleMachines.filter((machine) => isMachineOnline(machine));
                 return {
                     machineCount: visibleMachines.length,
-                    onlineCount: visibleMachines.filter((machine) => isMachineOnline(machine)).length,
+                    onlineCount: onlineMachines.length,
+                    readyCount: onlineMachines.filter((machine) => isMachineReadyForConnectionHealth(machine)).length,
                     status: group.status,
                 };
             }),

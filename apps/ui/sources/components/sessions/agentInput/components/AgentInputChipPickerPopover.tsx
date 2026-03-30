@@ -9,6 +9,7 @@ export type AgentInputChipPickerPopoverProps = Readonly<{
     open: boolean;
     anchorRef: React.RefObject<any>;
     title: string;
+    showCloseButton?: boolean;
     options: ReadonlyArray<AgentInputChipPickerOption>;
     selectedOptionId?: string | null;
     onSelect: (id: string) => void;
@@ -33,7 +34,11 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
             {({ maxHeight }) => (
                 <AgentInputChipPickerSurface
                     testID="agent-input-chip-picker-popover"
-                    title={props.title}
+                    // Agent-input popovers shouldn't render their own header chrome; the model section
+                    // already provides the relevant header (e.g. MODEL) and refresh affordance.
+                    title=""
+                    // Align with other AgentInput popovers (close by outside press / selecting options).
+                    showCloseButton={props.showCloseButton ?? false}
                     options={props.options}
                     selectedOptionId={props.selectedOptionId}
                     onSelect={props.onSelect}

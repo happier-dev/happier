@@ -287,6 +287,113 @@ vi.mock('@/utils/platform/deferOnWeb', async () => {
 });
 
 describe('NewSessionSimplePanel', () => {
+    function flattenStyle(style: any): Record<string, any> {
+        if (!style) return {};
+        if (Array.isArray(style)) {
+            return style.reduce((acc, entry) => ({ ...acc, ...flattenStyle(entry) }), {});
+        }
+        if (typeof style === 'number') return {};
+        if (typeof style === 'object') return style as Record<string, any>;
+        return {};
+    }
+
+    it('does not force the composer shell to full-height on wide web layouts', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+
+        const screen = await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={20}
+                newSessionSidePadding={16}
+                newSessionBottomPadding={8}
+                sessionPrompt="hello"
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={true}
+                isCreating={false}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+                containerStyle={{ flex: 0 }}
+            />,
+        );
+
+        const keyboardView = screen.findByType('KeyboardAvoidingView');
+        expect(keyboardView.props.style).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                flex: 0,
+            }),
+        ]));
+    });
+
+    it('stretches the side-padding wrapper to full width on web (avoids shrink-to-fit collapse)', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        mockEnv.windowWidth = 1200;
+
+        const screen = await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={20}
+                newSessionSidePadding={123}
+                newSessionBottomPadding={8}
+                containerStyle={{ flex: 1 }}
+                sessionPrompt="hello"
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={true}
+                isCreating={false}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+            />,
+        );
+
+        const paddedViews = screen
+            .findAllByType('View')
+            .filter((node) => flattenStyle(node.props.style).paddingHorizontal === 123);
+        expect(paddedViews).toHaveLength(1);
+        expect(flattenStyle(paddedViews[0].props.style).width).toBe('100%');
+        expect(flattenStyle(paddedViews[0].props.style).alignSelf).toBe('stretch');
+    });
+
     it('anchors the composer to the bottom on narrow mobile web layouts', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         mockEnv.windowWidth = 390;

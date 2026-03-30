@@ -12,9 +12,10 @@ export const MachineSetupEntryItem = React.memo(function MachineSetupEntryItem()
 
     return (
         <Item
-            title={t('settings.addMachine')}
-            icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.accent.orange} />}
-            onPress={() => router.push('/(app)/settings/machines/add')}
+            title={t('settings.machineSetupCurrentMachineTitle')}
+            subtitle={t('settings.machineSetupCurrentMachineSubtitle')}
+            icon={<Ionicons name="laptop-outline" size={29} color={theme.colors.accent.blue} />}
+            onPress={() => router.push('/(app)/settings/machines/this-computer')}
         />
     );
 });

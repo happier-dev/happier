@@ -387,12 +387,27 @@ export function getActionTargetApprovalRequired(params: Readonly<{
         return false;
     }
 
-    const target = getActionSettingsTargetDefinition(params.actionId, params.targetId);
-    if (target.kind !== 'surface') {
+    const surface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId);
+    if (!surface) {
         return false;
     }
 
-    return entry.approvalRequiredSurfaces?.includes(target.surface) === true;
+    return entry.approvalRequiredSurfaces?.includes(surface) === true;
+}
+
+export function resolveActionSettingsApprovalSurface(actionId: ActionId, targetId: ActionSettingsTargetId): keyof ActionSurfaces | null {
+    const target = getActionSettingsTargetDefinition(actionId, targetId);
+    if (target.kind === 'surface') {
+        return target.surface;
+    }
+
+    // `slash_command` is modeled as a placement for UI surfacing, but approvals are surface-scoped.
+    // Treat the slash command tile as configuring the `ui_slash_command` surface approvals gate.
+    if (target.kind === 'placement' && target.placement === 'slash_command') {
+        return 'ui_slash_command';
+    }
+
+    return null;
 }
 
 export function setActionTargetApprovalRequired(params: Readonly<{
@@ -403,15 +418,14 @@ export function setActionTargetApprovalRequired(params: Readonly<{
 }>): ActionsSettingsV1 {
     const normalizedSettings = normalizeActionsSettings(params.settings);
     const entry = getMutableEntry(normalizedSettings, params.actionId);
-    const target = getActionSettingsTargetDefinition(params.actionId, params.targetId);
-
-    if (target.kind !== 'surface') {
+    const surface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId);
+    if (!surface) {
         return normalizedSettings;
     }
 
     entry.approvalRequiredSurfaces = params.approvalRequired
-        ? sortUnique([...entry.approvalRequiredSurfaces, target.surface])
-        : entry.approvalRequiredSurfaces.filter((surface) => surface !== target.surface);
+        ? sortUnique([...entry.approvalRequiredSurfaces, surface])
+        : entry.approvalRequiredSurfaces.filter((value) => value !== surface);
 
     return writeEntry(normalizedSettings, params.actionId, entry);
 }

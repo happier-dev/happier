@@ -4,7 +4,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { ToolSectionView } from '@/components/tools/shell/presentation/ToolSectionView';
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -165,72 +164,70 @@ export const SubAgentSummarySection = React.memo<{
     });
 
     return (
-        <ToolSectionView>
-            <View style={styles.container}>
-                {summary ? (
-                    <View style={styles.summaryItem}>
-                        <Text style={styles.summaryText} numberOfLines={isFullView ? undefined : 3}>
-                            {summary}
+        <View style={styles.container}>
+            {summary ? (
+                <View style={styles.summaryItem}>
+                    <Text style={styles.summaryText} numberOfLines={isFullView ? undefined : 3}>
+                        {summary}
+                    </Text>
+                </View>
+            ) : null}
+            {taskResultContent ? (
+                <View style={styles.summaryItem}>
+                    <Text style={styles.summaryText} numberOfLines={isFullView ? undefined : 3}>
+                        {taskResultContent}
+                    </Text>
+                </View>
+            ) : null}
+            {remainingCount > 0 ? (
+                canOpenDetails ? (
+                    <Pressable
+                        testID="task-like-summary-more-tools"
+                        accessibilityRole="button"
+                        onPress={handleOpenDetails}
+                        style={({ pressed }) => [styles.moreToolsItem, pressed && { opacity: 0.8 }]}
+                    >
+                        <Text style={styles.moreToolsText}>
+                            {t('tools.taskView.moreTools', { count: remainingCount })}
+                        </Text>
+                    </Pressable>
+                ) : (
+                    <View testID="task-like-summary-more-tools" style={styles.moreToolsItem}>
+                        <Text style={styles.moreToolsText}>
+                            {t('tools.taskView.moreTools', { count: remainingCount })}
                         </Text>
                     </View>
-                ) : null}
-                {taskResultContent ? (
-                    <View style={styles.summaryItem}>
-                        <Text style={styles.summaryText} numberOfLines={isFullView ? undefined : 3}>
-                            {taskResultContent}
-                        </Text>
+                )
+            ) : null}
+            {visibleTools.map((item, index) => (
+                <View key={`${item.tool.name}-${index}`} testID="task-like-summary-tool-item" style={styles.toolItem}>
+                    <Text style={styles.toolTitle}>{item.title}</Text>
+                    <View style={styles.statusContainer}>
+                        {item.state === 'running' && (
+                            <ActivityIndicator size={Platform.OS === 'ios' ? 'small' : (14 as any)} color={theme.colors.warning} />
+                        )}
+                        {item.state === 'completed' && (
+                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.success} />
+                        )}
+                        {item.state === 'error' && (
+                            <Ionicons name="close-circle" size={16} color={theme.colors.textDestructive} />
+                        )}
                     </View>
-                ) : null}
-                {remainingCount > 0 ? (
-                    canOpenDetails ? (
-                        <Pressable
-                            testID="task-like-summary-more-tools"
-                            accessibilityRole="button"
-                            onPress={handleOpenDetails}
-                            style={({ pressed }) => [styles.moreToolsItem, pressed && { opacity: 0.8 }]}
+                </View>
+            ))}
+            {threadTextMessages.length > 0 && (
+                <View style={styles.summaryItem}>
+                    {threadTextMessages.map((m, idx) => (
+                        <Text
+                            key={`thread-text-${idx}`}
+                            style={styles.summaryText}
+                            numberOfLines={isFullView ? undefined : 3}
                         >
-                            <Text style={styles.moreToolsText}>
-                                {t('tools.taskView.moreTools', { count: remainingCount })}
-                            </Text>
-                        </Pressable>
-                    ) : (
-                        <View testID="task-like-summary-more-tools" style={styles.moreToolsItem}>
-                            <Text style={styles.moreToolsText}>
-                                {t('tools.taskView.moreTools', { count: remainingCount })}
-                            </Text>
-                        </View>
-                    )
-                ) : null}
-                {visibleTools.map((item, index) => (
-                    <View key={`${item.tool.name}-${index}`} testID="task-like-summary-tool-item" style={styles.toolItem}>
-                        <Text style={styles.toolTitle}>{item.title}</Text>
-                        <View style={styles.statusContainer}>
-                            {item.state === 'running' && (
-                                <ActivityIndicator size={Platform.OS === 'ios' ? 'small' : (14 as any)} color={theme.colors.warning} />
-                            )}
-                            {item.state === 'completed' && (
-                                <Ionicons name="checkmark-circle" size={16} color={theme.colors.success} />
-                            )}
-                            {item.state === 'error' && (
-                                <Ionicons name="close-circle" size={16} color={theme.colors.textDestructive} />
-                            )}
-                        </View>
-                    </View>
-                ))}
-                {threadTextMessages.length > 0 && (
-                    <View style={styles.summaryItem}>
-                        {threadTextMessages.map((m, idx) => (
-                            <Text
-                                key={`thread-text-${idx}`}
-                                style={styles.summaryText}
-                                numberOfLines={isFullView ? undefined : 3}
-                            >
-                                {m.text}
-                            </Text>
-                        ))}
-                    </View>
-                )}
-            </View>
-        </ToolSectionView>
+                            {m.text}
+                        </Text>
+                    ))}
+                </View>
+            )}
+        </View>
     );
 });

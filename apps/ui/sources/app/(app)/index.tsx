@@ -30,6 +30,10 @@ import { digest } from "@/platform/digest";
 import { encodeHex } from "@/encryption/hex";
 import { resolveAppUrlScheme } from "@/utils/url/appScheme";
 import { readConfiguredServerUrlEnv } from "@/sync/domains/server/readConfiguredServerUrlEnv";
+import { getPendingSetupIntent, setPendingSetupIntent } from "@/sync/domains/pending/pendingSetupIntent";
+import { isTauriDesktop } from "@/utils/platform/tauri";
+
+import { shouldAutoRedirectToSetupOnFirstLaunch } from "./_firstLaunchSetupRedirectPolicy";
 
 const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
 const DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = 1_000;
@@ -90,7 +94,27 @@ function Authenticated() {
         router.replace(`/session/${encodeURIComponent(sid)}`);
     }, [jumpChildId, messageId, router, sessionId]);
 
+    React.useEffect(() => {
+        const sid = String(sessionId ?? '').trim();
+        if (sid) return;
+        if (!isAuthenticatedRootDeepLinkRedirectAllowed()) return;
+
+        const pendingSetupIntent = getPendingSetupIntent();
+        if (pendingSetupIntent?.phase !== 'awaiting_auth') {
+            return;
+        }
+        if (!isTauriDesktop()) {
+            return;
+        }
+        router.replace('/setup');
+    }, [router, sessionId]);
+
     return <MainView variant="phone" />;
+}
+
+function resolveAuthReturnToRoute(): string {
+    const pendingSetupIntent = getPendingSetupIntent();
+    return pendingSetupIntent?.phase === 'awaiting_auth' && isTauriDesktop() ? '/setup' : '/';
 }
 
 function NotAuthenticated() {
@@ -99,6 +123,7 @@ function NotAuthenticated() {
     const router = useRouter();
     const isLandscape = useIsLandscape();
     const insets = useSafeAreaInsets();
+    const isDesktopShell = React.useMemo(() => isTauriDesktop(), []);
 
     const [serverAvailability, setServerAvailability] = React.useState<'loading' | 'ready' | 'legacy' | 'unavailable' | 'incompatible'>('loading');
     const [serverCheckNonce, setServerCheckNonce] = React.useState(0);
@@ -114,6 +139,30 @@ function NotAuthenticated() {
     }>({ mtlsEnabled: false, keylessProviderIds: Object.freeze([]), preferredKeylessProviderId: null });
     const autoRedirectAttemptedRef = React.useRef(false);
     const hasPendingTerminalConnect = Boolean(getPendingTerminalConnect());
+    const firstLaunchSetupRedirectedRef = React.useRef(false);
+
+    React.useEffect(() => {
+        if (firstLaunchSetupRedirectedRef.current) {
+            return;
+        }
+        if (!shouldAutoRedirectToSetupOnFirstLaunch({ platformOs: Platform.OS, isDesktopTauri: isTauriDesktop() })) {
+            return;
+        }
+        const pendingSetupIntent = getPendingSetupIntent();
+        if (pendingSetupIntent) {
+            return;
+        }
+
+        firstLaunchSetupRedirectedRef.current = true;
+        const snapshot = getActiveServerSnapshot();
+        const relayUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim().replace(/\/+$/, '') : null;
+        setPendingSetupIntent({
+            branch: 'thisComputer',
+            phase: 'pre_auth',
+            relayUrl: relayUrl || null,
+        });
+        router.replace('/setup');
+    }, [router]);
 
     React.useEffect(() => {
         let mounted = true;
@@ -310,7 +359,7 @@ function NotAuthenticated() {
                 provider: providerId,
                 proof,
                 secret,
-                returnTo: '/',
+                returnTo: resolveAuthReturnToRoute(),
                 ...(serverUrl ? { serverUrl } : {}),
             });
 
@@ -357,7 +406,7 @@ function NotAuthenticated() {
             await TokenStorage.setPendingExternalAuth({
                 provider: providerId,
                 proof,
-                returnTo: '/',
+                returnTo: resolveAuthReturnToRoute(),
                 ...(serverUrl ? { serverUrl } : {}),
             });
 
@@ -475,6 +524,12 @@ function NotAuthenticated() {
             <Text style={styles.intentBody}>{t('modals.pleaseSignInFirst')}</Text>
         </View>
     ) : null;
+    const setupIntentBlock = isDesktopShell && getPendingSetupIntent()?.phase === 'awaiting_auth' ? (
+        <View testID="welcome-setup-intent" style={styles.intentBlock}>
+            <Text style={styles.intentTitle}>{t('setupOnboarding.resumeIntentTitle')}</Text>
+            <Text style={styles.intentBody}>{t('setupOnboarding.resumeIntentBody')}</Text>
+        </View>
+    ) : null;
 
     const showAuthActions = serverAvailability === 'ready' || serverAvailability === 'legacy';
 
@@ -498,17 +553,17 @@ function NotAuthenticated() {
             </View>
             <View style={styles.buttonContainer}>
                 <RoundButton
-                    testID="welcome-retry-server"
-                    title={t('common.retry')}
-                    onPress={() => setServerCheckNonce((v) => v + 1)}
+                    testID="welcome-change-relay"
+                    size="normal"
+                    title={t('setupOnboarding.changeRelayAction')}
+                    onPress={() => router.push('/server')}
                 />
             </View>
             <View style={styles.buttonContainerSecondary}>
                 <RoundButton
-                    testID="welcome-configure-server"
-                    size="normal"
-                    title={t('server.changeServer')}
-                    onPress={() => router.push('/server')}
+                    testID="welcome-retry-server"
+                    title={t('common.retry')}
+                    onPress={() => setServerCheckNonce((v) => v + 1)}
                     display="inverted"
                 />
             </View>
@@ -536,6 +591,7 @@ function NotAuthenticated() {
                 {t('welcome.subtitle')}
             </Text>
             {terminalConnectIntentBlock}
+            {setupIntentBlock}
             {serverAvailability === 'unavailable' || serverAvailability === 'incompatible'
                 ? serverBlockedActions
                 : serverAvailability === 'loading'
@@ -543,6 +599,19 @@ function NotAuthenticated() {
                     : null}
             {Platform.OS !== 'android' && Platform.OS !== 'ios' ? (
                 <>
+                    {showAuthActions && isDesktopShell && (
+                        <View style={styles.buttonContainer}>
+                            <RoundButton
+                                testID="welcome-open-setup"
+                                size="normal"
+                                title={t('setupOnboarding.openSetupAction')}
+                                onPress={() => {
+                                    router.push('/setup');
+                                }}
+                                display="inverted"
+                            />
+                        </View>
+                    )}
                     {showAuthActions && (
                         <View style={styles.buttonContainer}>
                             <RoundButton
@@ -670,6 +739,7 @@ function NotAuthenticated() {
                         {t('welcome.subtitle')}
                     </Text>
                     {terminalConnectIntentBlock}
+                    {setupIntentBlock}
                     {serverAvailability === 'unavailable' || serverAvailability === 'incompatible'
                         ? serverBlockedActions
                         : serverAvailability === 'loading'
@@ -677,6 +747,19 @@ function NotAuthenticated() {
                             : null}
                     {Platform.OS !== 'android' && Platform.OS !== 'ios'
                         ? (<>
+                            {showAuthActions && isDesktopShell && (
+                                <View style={styles.landscapeButtonContainer}>
+                                    <RoundButton
+                                        testID="welcome-open-setup"
+                                        size="normal"
+                                        title={t('setupOnboarding.openSetupAction')}
+                                        onPress={() => {
+                                            router.push('/setup');
+                                        }}
+                                        display="inverted"
+                                    />
+                                </View>
+                            )}
                             {showAuthActions && (
                                 <View style={styles.landscapeButtonContainer}>
                                     <RoundButton

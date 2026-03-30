@@ -213,6 +213,7 @@ vi.mock('@/components/voice/surface/VoiceSurface', () => ({
 
 vi.mock('@/components/ui/popover', () => ({
     PopoverBoundaryProvider: ({ children }: any) => React.createElement('PopoverBoundaryProvider', null, children),
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/navigation/ConnectionStatusControl', () => ({

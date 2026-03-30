@@ -114,20 +114,40 @@ vi.mock('./buildActionSettingsEntries', () => ({
                 id: capture.targetId,
                 titleKey: capture.targetId === 'cli'
                     ? 'settingsActions.targets.cli.title'
-                    : 'settingsActions.targets.mcp.title',
+                    : capture.targetId === 'slash_command'
+                        ? 'settingsActions.targets.slash_command.title'
+                        : 'settingsActions.targets.mcp.title',
                 subtitleKey: capture.targetId === 'cli'
                     ? 'settingsActions.targets.cli.subtitle'
-                    : 'settingsActions.targets.mcp.subtitle',
+                    : capture.targetId === 'slash_command'
+                        ? 'settingsActions.targets.slash_command.subtitle'
+                        : 'settingsActions.targets.mcp.subtitle',
                 icon: 'cube-outline',
-                category: 'integrations',
+                category: capture.targetId === 'slash_command' ? 'app' : 'integrations',
                 state: 'on',
                 selected: capture.targetSelected,
             },
         ],
     }],
     resolveActionSettingsTargetSelections: (targets: Array<{ id: string; category: string; selected: boolean }>) => {
-        const selected = (targets ?? []).filter((target) => target.selected).map((target) => target.id);
-        return { app: [], voice: [], integrations: selected };
+        return (targets ?? []).reduce(
+            (accumulator, target) => {
+                if (!target.selected) {
+                    return accumulator;
+                }
+                if (target.category === 'app') {
+                    accumulator.app.push(target.id);
+                    return accumulator;
+                }
+                if (target.category === 'voice') {
+                    accumulator.voice.push(target.id);
+                    return accumulator;
+                }
+                accumulator.integrations.push(target.id);
+                return accumulator;
+            },
+            { app: [], voice: [], integrations: [] } as { app: string[]; voice: string[]; integrations: string[] },
+        );
     },
 }));
 
@@ -166,14 +186,40 @@ describe('ActionsSettingsView approvals required surfaces', () => {
         });
     });
 
-    it('does not show approvalRequiredSurfaces toggle for session.title.set', async () => {
+    it('shows approvalRequiredSurfaces toggle for session.title.set', async () => {
         capture.reset();
         capture.actionId = 'session.title.set';
         const { ActionsSettingsView } = await import('./ActionsSettingsView');
 
         await renderScreen(<ActionsSettingsView />);
 
-        expect(capture.switchProps).toHaveLength(0);
+        expect(capture.switchProps).toHaveLength(1);
+        expect(capture.switchProps[0]?.testID).toBe('settings-actions:action:session.title.set:target:mcp:require-approval');
+
+        const onValueChange = capture.switchProps[0]?.onValueChange as undefined | ((next: boolean) => void);
+        expect(typeof onValueChange).toBe('function');
+
+        await act(async () => {
+            onValueChange?.(true);
+        });
+
+        expect(capture.setRawSettings).toHaveBeenCalledWith({
+            v: 1,
+            actions: {
+                'review.start': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: [],
+                },
+                'session.title.set': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: ['mcp'],
+                },
+            },
+        });
     });
 
     it('shows approvalRequiredSurfaces toggle for actions without explicit approval metadata', async () => {
@@ -212,6 +258,43 @@ describe('ActionsSettingsView approvals required surfaces', () => {
                     disabledSurfaces: [],
                     disabledPlacements: [],
                     approvalRequiredSurfaces: ['cli'],
+                },
+                'session.title.set': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: [],
+                },
+            },
+        });
+    });
+
+    it('shows approvalRequiredSurfaces toggle for slash_command targets and stores ui_slash_command', async () => {
+        capture.reset();
+        capture.actionId = 'review.start';
+        capture.targetId = 'slash_command';
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+
+        expect(capture.switchProps).toHaveLength(1);
+        expect(capture.switchProps[0]?.testID).toBe('settings-actions:action:review.start:target:slash_command:require-approval');
+
+        const onValueChange = capture.switchProps[0]?.onValueChange as undefined | ((next: boolean) => void);
+        expect(typeof onValueChange).toBe('function');
+
+        await act(async () => {
+            onValueChange?.(true);
+        });
+
+        expect(capture.setRawSettings).toHaveBeenCalledWith({
+            v: 1,
+            actions: {
+                'review.start': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: ['ui_slash_command'],
                 },
                 'session.title.set': {
                     enabledPlacements: [],

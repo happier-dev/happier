@@ -20,6 +20,8 @@ export function resolveConnectionHealth(params: Readonly<{
     hasSyncError?: boolean;
     machineGroups: ReadonlyArray<ConnectionHealthMachineGroup>;
 }>): ConnectionHealth {
+    let hasUnknownReadyCount = false;
+    let readyCount = 0;
     const machines = computeMachinesSummary(
         params.machineGroups.map((group) => ({
             machineCount: group.machineCount,
@@ -27,12 +29,24 @@ export function resolveConnectionHealth(params: Readonly<{
         })),
     );
 
+    for (const group of params.machineGroups) {
+        const onlineCount = group.onlineCount;
+        const groupReadyCount = group.readyCount === undefined ? onlineCount : group.readyCount;
+        if (onlineCount === null || groupReadyCount === null) {
+            hasUnknownReadyCount = true;
+            continue;
+        }
+        readyCount += groupReadyCount;
+    }
+
+    const hasUnknownMachines = machines.hasUnknownServers || hasUnknownReadyCount;
+
     if (params.endpointStatus === 'connecting' && params.socketStatus !== 'connected') {
         return {
             kind: 'connecting',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
-            hasUnknownMachines: machines.hasUnknownServers,
+            hasUnknownMachines,
             socketStatus: params.socketStatus,
         };
     }
@@ -42,7 +56,7 @@ export function resolveConnectionHealth(params: Readonly<{
             kind: 'auth_required',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
-            hasUnknownMachines: machines.hasUnknownServers,
+            hasUnknownMachines,
             socketStatus: params.socketStatus,
         };
     }
@@ -52,7 +66,7 @@ export function resolveConnectionHealth(params: Readonly<{
             kind: 'server_unreachable',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
-            hasUnknownMachines: machines.hasUnknownServers,
+            hasUnknownMachines,
             socketStatus: params.socketStatus,
         };
     }
@@ -62,7 +76,7 @@ export function resolveConnectionHealth(params: Readonly<{
             kind: 'server_error',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
-            hasUnknownMachines: machines.hasUnknownServers,
+            hasUnknownMachines,
             socketStatus: params.socketStatus,
         };
     }
@@ -72,7 +86,7 @@ export function resolveConnectionHealth(params: Readonly<{
             kind: 'connecting',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
-            hasUnknownMachines: machines.hasUnknownServers,
+            hasUnknownMachines,
             socketStatus: params.socketStatus,
         };
     }
@@ -82,7 +96,7 @@ export function resolveConnectionHealth(params: Readonly<{
             kind: 'server_unreachable',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
-            hasUnknownMachines: machines.hasUnknownServers,
+            hasUnknownMachines,
             socketStatus: params.socketStatus,
         };
     }
@@ -92,7 +106,7 @@ export function resolveConnectionHealth(params: Readonly<{
             kind: 'connecting',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
-            hasUnknownMachines: machines.hasUnknownServers,
+            hasUnknownMachines,
             socketStatus: params.socketStatus,
         };
     }
@@ -102,7 +116,7 @@ export function resolveConnectionHealth(params: Readonly<{
             kind: 'no_machine',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
-            hasUnknownMachines: machines.hasUnknownServers,
+            hasUnknownMachines,
             socketStatus: params.socketStatus,
         };
     }
@@ -112,7 +126,17 @@ export function resolveConnectionHealth(params: Readonly<{
             kind: 'machine_offline',
             machineCount: machines.machineCount,
             onlineCount: machines.onlineCount,
-            hasUnknownMachines: machines.hasUnknownServers,
+            hasUnknownMachines,
+            socketStatus: params.socketStatus,
+        };
+    }
+
+    if (!hasUnknownMachines && readyCount < machines.onlineCount) {
+        return {
+            kind: 'machine_not_ready',
+            machineCount: machines.machineCount,
+            onlineCount: machines.onlineCount,
+            hasUnknownMachines,
             socketStatus: params.socketStatus,
         };
     }
@@ -121,7 +145,7 @@ export function resolveConnectionHealth(params: Readonly<{
         kind: 'healthy',
         machineCount: machines.machineCount,
         onlineCount: machines.onlineCount,
-        hasUnknownMachines: machines.hasUnknownServers,
+        hasUnknownMachines,
         socketStatus: params.socketStatus,
     };
 }

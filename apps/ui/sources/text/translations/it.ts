@@ -1856,6 +1856,77 @@ export const it: TranslationStructure = {
     machineSetupStageInstall: "Installa Happier e associa la macchina",
     machineSetupStageFinish: "Completa la configurazione nel terminale integrato",
     machineSetupComingSoon: "L’avvio della macchina arriverà presto.",
+    machineSetupTaskWaitingForInput: "In attesa di input",
+    machineSetupRemoteSshTargetLabel: "Destinazione SSH",
+    machineSetupRemoteSshAgentAuthLabel: "Usa l’agente SSH",
+    machineSetupRemoteSshKeyFileAuthLabel: "Usa il file di identità",
+    machineSetupRemoteSshIdentityFileLabel: "Percorso del file di identità",
+    machineSetupRemoteRelayRuntimeLabel: "Installa anche il runtime Relay sulla macchina remota",
+    machineSetupRemoteRelayRuntimeTitle: "Runtime Relay remoto",
+    machineSetupRemoteRelayRuntimeReadyTitle: "Pronto sulla macchina remota",
+    machineSetupRemoteRelayRuntimeReadySubtitle: "Il runtime Relay è stato installato durante la configurazione SSH. Usa l’URL del Relay remoto per i passaggi di rete successivi su quella macchina.",
+    machineSetupRemoteRelayRuntimeUrlTitle: "URL del Relay remoto",
+    machineSetupRemoteRelayKeepCurrentTitle: "Mantieni il Relay attuale",
+    machineSetupRemoteRelayKeepCurrentSubtitle: "Salva questo URL del Relay senza cambiare.",
+    machineSetupRemoteRelaySwitchTitle: "Passa a questo Relay",
+    machineSetupRemoteRelaySwitchSubtitle: "Passa ora e continua la configurazione con il nuovo Relay.",
+    machineSetupRemoteRelaySwitchConfirmTitle: "Passare a questo Relay?",
+    machineSetupRemoteRelaySwitchConfirmBody: ({ relayUrl }: { relayUrl: string }) =>
+      `Passare Happier a ${relayUrl} e continuare la configurazione?`,
+    machineSetupRemotePromptTrustAction: "Considera affidabile la chiave host",
+    machineSetupRemotePromptReplaceAction: "Sostituisci la chiave salvata",
+    machineSetupRemotePromptApproveAction: "Approva associazione",
+    localRelayRuntime: {
+      title: 'Runtime locale del Relay',
+      statusTitle: 'Stato',
+      statusChecking: 'Verifica del runtime locale del Relay in corso',
+      statusNotInstalled: 'Non ancora installato su questo computer',
+      statusStopped: 'Installato, ma al momento non è in esecuzione',
+      statusRunningHealthy: 'In esecuzione e risponde normalmente',
+      statusRunningNeedsAttention: 'In esecuzione, ma i controlli di salute richiedono attenzione',
+      versionTitle: 'Versione installata',
+      relayUrlTitle: 'URL locale del Relay',
+      installOrUpdateAction: 'Installa o aggiorna il runtime del Relay',
+      startAction: 'Avvia il runtime del Relay',
+      stopAction: 'Arresta il runtime del Relay',
+      refreshAction: 'Aggiorna lo stato del Relay',
+      footer: 'Gestisci il Relay self-hosted che gira su questo computer prima di connettere altri dispositivi.',
+      progressTitle: 'Aggiornamento del runtime locale del Relay',
+      progressStepInspect: 'Esamina il runtime locale del Relay',
+      progressStepHealth: 'Controlla lo stato del Relay',
+      progressStepInstall: 'Installa il runtime del Relay',
+      progressStepStart: 'Avvia il runtime del Relay',
+      progressStepStop: 'Arresta il runtime del Relay',
+    },
+    localTailscale: {
+      title: 'Accesso privato con Tailscale',
+      statusTitle: 'Stato',
+      statusUnavailable: 'Prima avvia il runtime locale del Relay',
+      statusIdle: 'Non ancora attivato',
+      statusWorking: 'Configurazione dell’accesso privato sicuro in corso',
+      statusReady: 'Pronto per essere usato dagli altri dispositivi del tailnet',
+      statusNeedsApproval: 'In attesa dell’approvazione di Tailscale',
+      shareableUrlTitle: 'URL privato condivisibile',
+      approvalTitle: 'Approvazione richiesta',
+      approvalSubtitle: 'Completa il flusso di approvazione di Tailscale, poi torna qui.',
+      enableAction: 'Abilita l’accesso privato con Tailscale',
+      refreshAction: 'Ricontrolla l’accesso privato',
+      openApprovalAction: 'Apri l’approvazione di Tailscale',
+      footer: 'Questo mantiene l’accesso privato all’interno del tailnet. Anche il tuo telefono o un altro computer devono unirsi allo stesso tailnet.',
+      progressTitle: 'Configurazione dell’accesso sicuro con Tailscale in corso',
+      progressStepDetect: 'Controlla la disponibilità di Tailscale',
+      progressStepInstall: 'Installa Tailscale',
+      progressStepLogin: 'Accedi a Tailscale',
+      progressStepServeEnable: 'Abilita l’accesso privato al Relay',
+      progressStepVerifyUrl: 'Verifica l’URL condivisibile',
+    },
+    systemTaskStepPrepare: "Prepara l'attività",
+    systemTaskStepInstallRuntime: "Installa il runtime",
+    systemTaskStepFinish: "Completa la configurazione",
+    systemTaskCurrentStepLabel: "Passaggio corrente",
+    systemTaskLatestUpdateLabel: "Ultimo aggiornamento",
+    systemTaskBridgeUnavailable: "Le attività di sistema non sono ancora disponibili in questa build.",
+    systemTaskStartFailed: "Impossibile avviare l’attività di sistema.",
     appearance: "Aspetto",
     appearanceSubtitle: "Personalizza l'aspetto dell'app",
       voiceAssistant: "Assistente vocale",
@@ -1916,10 +1987,10 @@ export const it: TranslationStructure = {
         actionsSubtitle: "Scegli dove compare ogni azione nell’app, nella voce e nelle integrazioni.",
     prompts: "Prompt e skill",
     promptsSubtitle: "Libreria prompt, template e stack",
-    servers: "Server",
-	    serversSubtitle: "Server salvati, gruppi e impostazioni predefinite",
+    servers: "Relay",
+    serversSubtitle: "Relay salvati, gruppi e impostazioni predefinite",
 		    systemStatus: "Stato del sistema",
-		    systemStatusSubtitle: "Server, account, macchine, daemon",
+		    systemStatusSubtitle: "Relay, account, macchine, daemon",
 		    mcpServers: "Server MCP",
 		    mcpServersSubtitle: "Gestisci server MCP e associazioni",
 		    mcpServersComingSoon: "Le impostazioni dei server MCP arriveranno presto.",
@@ -2100,10 +2171,10 @@ export const it: TranslationStructure = {
   systemStatus: {
     sections: {
       appHealth: "Salute app e sincronizzazione",
-      currentServer: "Server attuale",
+      currentServer: "Relay attuale",
       identity: "Identità autenticata",
-      configuredServers: "Server configurati",
-      machinesActiveServer: "Macchine (server attivo)",
+      configuredServers: "Relay configurati",
+      machinesActiveServer: "Macchine (relay attivo)",
       machinesOtherServer: ({ server }: { server: string }) => `Macchine (${server})`,
       actions: "Azioni",
     },
@@ -2115,14 +2186,14 @@ export const it: TranslationStructure = {
       lastSync: "Ultima sincronizzazione",
     },
     server: {
-      activeServer: "Server attivo",
+      activeServer: "Relay attivo",
     },
     identity: {
       accountId: "ID account",
       username: "Nome utente",
     },
     servers: {
-      noneConfigured: "Nessun server configurato",
+      noneConfigured: "Nessun relay configurato",
       active: "Attivo",
     },
     machines: {
@@ -2134,10 +2205,10 @@ export const it: TranslationStructure = {
       online: "In linea",
       offline: "Non in linea",
       fetchDoctorSnapshot: {
-        loading: "Recupero server/account del daemon…",
+        loading: "Recupero relay/account del daemon…",
         invalid: "Impossibile leggere lo snapshot doctor dalla macchina",
       },
-      daemonAttributionUnknown: "Server/account del daemon: sconosciuto",
+      daemonAttributionUnknown: "Relay/account del daemon: sconosciuto",
       daemonAttribution: ({ serverUrl, accountId }: { serverUrl: string; accountId: string }) =>
         `Demone: ${serverUrl} • ${accountId}`,
       daemonAttributionAge: ({ age }: { age: string }) => `Ultimo controllo: ${age}`,
@@ -2152,9 +2223,9 @@ export const it: TranslationStructure = {
     },
     actions: {
       runDiagnosis: "Esegui diagnosi",
-      runDiagnosisSubtitle: "Rileva mismatch di server/account/daemon",
+      runDiagnosisSubtitle: "Rileva mismatch di relay/account/daemon",
       refreshMachineAttribution: "Aggiorna attribuzione daemon",
-      refreshMachineAttributionSubtitle: "Recupera server/account del daemon per alcune macchine online",
+      refreshMachineAttributionSubtitle: "Recupera relay/account del daemon per alcune macchine online",
       copyJson: "Copia JSON Stato del sistema",
       copyJsonSubtitle: "Condividi uno snapshot redatto per il supporto",
     },
@@ -2171,7 +2242,7 @@ export const it: TranslationStructure = {
       findings: "Risultati",
     },
     overview: {
-      activeServer: "Server attivo",
+      activeServer: "Relay attivo",
       account: "Account utente",
       onlineMachines: "Macchine online (server attivo)",
       cachedAttribution: ({ count }: { count: number }) => `${count} snapshot doctor in cache disponibili`,
@@ -2734,6 +2805,13 @@ export const it: TranslationStructure = {
     },
   },
 
+  settingsDesktop: {
+    title: 'Desktop',
+    footer: 'Controls Tauri desktop integrations on this computer.',
+    startOnLoginTitle: 'Launch at login',
+    startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',
+  },
+
   settingsNotifications: {
     badges: {
       title: "Badge su questo dispositivo",
@@ -2984,9 +3062,23 @@ export const it: TranslationStructure = {
         cliConnectionTitle: "CLI e connessione",
         targetMachineTitle: "Macchina di destinazione",
         detectedCliTitle: "CLI rilevato",
-        installSetupTitle: "Installazione / configurazione",
-        installInfoSeeSetupGuide: "Vedi guida configurazione",
+      installSetupTitle: "Installazione / configurazione",
+      installInfoSeeSetupGuide: "Vedi guida configurazione",
       installInfoUseProviderCliInstaller: "Usa l'installer CLI del provider",
+      setup: {
+          selectionFooter: "Scegli uno o più provider, poi completali uno alla volta sulla macchina selezionata.",
+          startTitle: "Configura i provider",
+          startDescription: "Metti in coda i provider selezionati e completa installazione e accesso in un unico flusso canonico.",
+          queueTitle: "Coda configurazione provider",
+          queueDescription: ({ provider }: { provider: string }) => `Completa ${provider}, poi continua con il provider successivo nella coda.`,
+          activeDescription: "Provider attuale nella coda",
+          activeStatus: "In corso",
+          completedStatus: "Completato",
+          skippedStatus: "Saltato",
+          skipAction: "Salta questo provider",
+          completedTitle: "Configurazione provider completata",
+          completedDescription: "Hai raggiunto la fine della coda di provider selezionata.",
+      },
       cliSourcePreference: {
         title: "Preferenza origine CLI",
         subtitle:
@@ -4321,81 +4413,105 @@ export const it: TranslationStructure = {
 
   server: {
     // Used by Server Configuration screen (app/(app)/server.tsx)
-    serverConfiguration: "Configurazione server",
-    enterServerUrl: "Inserisci un URL del server",
-    notValidHappyServer: "Non è un Happier Server valido",
-    changeServer: "Cambia server",
-    continueWithServer: "Continuare con questo server?",
+    serverConfiguration: "Impostazioni Relay",
+    enterServerUrl: "Inserisci un URL del Relay",
+    notValidHappyServer: "Non è un Happier Relay valido",
+    changeServer: "Cambia Relay",
+    continueWithServer: "Continuare con questo Relay?",
     resetToDefault: "Ripristina predefinito",
-    resetServerDefault: "Ripristinare il server predefinito?",
+    resetServerDefault: "Ripristinare il Relay predefinito?",
     validating: "Verifica...",
-    validatingServer: "Verifica del server...",
-    serverReturnedError: "Il server ha restituito un errore",
-    failedToConnectToServer: "Impossibile connettersi al server",
-    currentlyUsingCustomServer: "Attualmente si usa un server personalizzato",
-    customServerUrlLabel: "URL server personalizzato",
+    validatingServer: "Verifica del Relay...",
+    serverReturnedError: "Il Relay ha restituito un errore",
+    failedToConnectToServer: "Impossibile connettersi al Relay",
+    currentlyUsingCustomServer: "Attualmente si usa un Relay personalizzato",
+    customServerUrlLabel: "URL Relay personalizzato",
     advancedFeatureFooter:
-      "Questa è una funzionalità avanzata. Cambia il server solo se sai cosa stai facendo. Dovrai disconnetterti e accedere di nuovo dopo aver cambiato server.",
-    useThisServer: "Usa questo server",
+      "Questa è una funzionalità avanzata. Cambia il Relay solo se sai cosa stai facendo. Dovrai disconnetterti e accedere di nuovo dopo aver cambiato Relay.",
+    useThisServer: "Usa questo Relay",
     autoConfigHint:
-      "Se fai self-hosting: configura prima il server, poi accedi (o crea un account) e infine collega il tuo terminale.",
-    renameServer: "Rinomina server",
-    renameServerPrompt: "Inserisci un nuovo nome per questo server.",
-    renameServerGroup: "Rinomina gruppo di server",
-    renameServerGroupPrompt: "Inserisci un nuovo nome per questo gruppo di server.",
-    serverNamePlaceholder: "Nome del server",
-    cannotRenameCloud: "Non puoi rinominare il server cloud.",
-    removeServer: "Rimuovi server",
+      "Se fai self-hosting: configura prima il Relay, poi accedi (o crea un account) e infine collega il tuo terminale.",
+    renameServer: "Rinomina Relay",
+    renameServerPrompt: "Inserisci un nuovo nome per questo Relay.",
+    renameServerGroup: "Rinomina gruppo di Relay",
+    renameServerGroupPrompt: "Inserisci un nuovo nome per questo gruppo di Relay.",
+    serverNamePlaceholder: "Nome del Relay",
+    cannotRenameCloud: "Non puoi rinominare il Relay cloud.",
+    removeServer: "Rimuovi Relay",
     removeServerConfirm: ({ name }: { name: string }) =>
-      `Rimuovere "${name}" dai server salvati?`,
-    removeServerGroup: "Rimuovi gruppo di server",
+      `Rimuovere "${name}" dai Relay salvati?`,
+    removeServerGroup: "Rimuovi gruppo di Relay",
     removeServerGroupConfirm: ({ name }: { name: string }) =>
-      `Rimuovere "${name}" dai gruppi di server salvati?`,
-    cannotRemoveCloud: "Non puoi rimuovere il server cloud.",
-    signOutThisServer: "Vuoi disconnetterti anche da questo server?",
+      `Rimuovere "${name}" dai gruppi di Relay salvati?`,
+    cannotRemoveCloud: "Non puoi rimuovere il Relay cloud.",
+    signOutThisServer: "Vuoi disconnetterti anche da questo Relay?",
     signOutThisServerPrompt:
-      "Sono state trovate credenziali salvate per questo server su questo dispositivo.",
-    savedServersTitle: "Server salvati",
+      "Sono state trovate credenziali salvate per questo Relay su questo dispositivo.",
+    savedServersTitle: "Relay salvati",
     signedIn: "Connesso",
     signedOut: "Disconnesso",
     authStatusUnknown: "Stato di autenticazione sconosciuto",
-    switchToServer: "Passa a questo server",
+    switchToServer: "Passa a questo Relay",
     active: "Attivo",
     default: "Predefinito",
-    addServerTitle: "Aggiungi server",
+    addServerTitle: "Aggiungi Relay",
     switchForThisTab: "Passa per questa scheda",
     makeDefaultOnDevice: "Imposta come predefinito su questo dispositivo",
-    serverNameLabel: "Nome del server",
+    serverNameLabel: "Nome del Relay",
     addAndUse: "Aggiungi e usa",
       addTargetsTitle: "Aggiungi",
-      addServerSubtitle: "Aggiungi un nuovo server e passa ad esso",
-      notificationAddServerHint: "Questo server non è ancora salvato su questo dispositivo. Aggiungilo qui sotto per continuare.",
+      addServerSubtitle: "Aggiungi un nuovo Relay e passa ad esso",
+      notificationAddServerHint: "Questo Relay non è ancora salvato su questo dispositivo. Aggiungilo qui sotto per continuare.",
       serverCount: ({ count }: { count: number }) =>
-        `${count} ${plural({ count, singular: "server", plural: "server" })}`,
-      useCanonicalServerUrlTitle: "Usare l'URL canonico del server?",
+        `${count} ${plural({ count, singular: "Relay", plural: "Relay" })}`,
+      useCanonicalServerUrlTitle: "Usare l'URL canonico del Relay?",
     useCanonicalServerUrlBody:
-      "Questo server annuncia un URL canonico che dovrebbe funzionare da altri dispositivi. Vuoi usarlo invece di quello inserito?",
-    insecureHttpUrlTitle: "URL del server non sicuro",
+      "Questo Relay annuncia un URL canonico che dovrebbe funzionare da altri dispositivi. Vuoi usarlo invece di quello inserito?",
+    insecureHttpUrlTitle: "URL del Relay non sicuro",
     insecureHttpUrlBody:
       "Questo URL usa http:// e potrebbe non funzionare dal telefono o fuori dalla LAN. Usa HTTPS se possibile. Continuare comunque?",
     signedOutSwitchConfirmTitle: "Non sei connesso",
     signedOutSwitchConfirmBody:
-      "Vuoi passare a questo server e tornare alla schermata iniziale per accedere o creare un account?",
-    addServerGroupTitle: "Aggiungi gruppo di server",
-    addServerGroupSubtitle: "Crea un gruppo di server riutilizzabile",
+      "Vuoi passare a questo Relay e tornare alla schermata iniziale per accedere o creare un account?",
+    addServerGroupTitle: "Aggiungi gruppo di Relay",
+    addServerGroupSubtitle: "Crea un gruppo di Relay riutilizzabile",
     serverGroupNameLabel: "Nome gruppo",
-    serverGroupNamePlaceholder: "Il mio gruppo di server",
-    serverGroupServersLabel: "Server",
+    serverGroupNamePlaceholder: "Il mio gruppo di Relay",
+    serverGroupServersLabel: "Relay",
     saveServerGroup: "Salva gruppo",
     serverGroupMustHaveServer:
-      "Un gruppo di server deve includere almeno un server.",
+      "Un gruppo di Relay deve includere almeno un Relay.",
+    relayDrift: {
+        bannerDifferentRelayTitle: 'Il tuo servizio in background è connesso a un altro Relay',
+        bannerDifferentRelayDescription: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
+            `App: ${activeRelayUrl} · Servizio in background: ${daemonRelayUrl}`,
+        bannerNeedsAuthTitle: 'Il tuo servizio in background deve accedere a questo Relay',
+        bannerNeedsAuthDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `L’app sta usando ${activeRelayUrl}, ma il servizio in background ha ancora bisogno di approvazione o accesso.`,
+        bannerNotConfiguredTitle: 'Il tuo servizio in background non è ancora connesso a questo Relay',
+        bannerNotConfiguredDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `L’app sta usando ${activeRelayUrl}, ma questo computer non ha ancora terminato la connessione del servizio in background.`,
+        bannerNotInstalledTitle: 'Il tuo servizio in background non è installato per questo Relay',
+        bannerNotInstalledDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `L’app sta usando ${activeRelayUrl}, ma questo computer deve ancora installare il servizio in background per usarlo.`,
+        bannerNotRunningTitle: 'Il tuo servizio in background è installato ma non è in esecuzione',
+        bannerNotRunningDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `L’app sta usando ${activeRelayUrl}, ma il servizio in background è fermo e deve essere riavviato.`,
+        repairAction: 'Connetti il servizio in background a questo Relay',
+        progressTitle: 'Connessione del servizio in background a questo Relay in corso',
+        progressStepPrepare: 'Prepara il servizio in background',
+        progressStepConfigureRelay: 'Aggiorna la connessione al Relay',
+        progressStepAuthenticate: 'Completa accesso e approvazione',
+        progressStepFinish: 'Completa la riparazione',
+        statusUnknown: 'Sconosciuto',
+    },
     retention: {
       title: "Criterio di conservazione",
       summary: "Riepilogo",
       keepForever: "Nessuna eliminazione automatica",
       deleteInactiveSessionsDays: ({ count }: { count: number }) => `Elimina le sessioni inattive dopo ${count} ${plural({ count, singular: "giorno", plural: "giorni" })}.`,
       deleteOlderThanDays: ({ count }: { count: number }) => `Elimina i dati dopo ${count} ${plural({ count, singular: "giorno", plural: "giorni" })}.`,
-      sessionNotice: ({ count }: { count: number }) => `Questo server elimina le sessioni inattive dopo ${count} ${plural({ count, singular: "giorno", plural: "giorni" })} di inattività.`,
+      sessionNotice: ({ count }: { count: number }) => `Questo Relay elimina le sessioni inattive dopo ${count} ${plural({ count, singular: "giorno", plural: "giorni" })} di inattività.`,
       sessions: "Sessioni",
       accountChanges: "Modifiche account",
       voiceSessionLeases: "Lease delle sessioni vocali",
@@ -4411,14 +4527,14 @@ export const it: TranslationStructure = {
       automationRunEvents: "Eventi di esecuzione automazioni",
     },
     multiServerView: {
-      title: "Vista concorrente multi-server",
-      footer: "Scegli se combinare più server in un’unica lista di sessioni.",
+      title: "Vista concorrente multi-Relay",
+      footer: "Scegli se combinare più Relay in un’unica lista di sessioni.",
       enableTitle: "Abilita vista concorrente",
-      enableSubtitle: "Mostra insieme le sessioni dei server selezionati",
+      enableSubtitle: "Mostra insieme le sessioni dei Relay selezionati",
       presentationTitle: "Modalità di presentazione",
       presentation: {
-        flatWithBadges: "Elenco piatto con badge del server",
-        groupedByServer: "Raggruppato per server",
+        flatWithBadges: "Elenco piatto con badge del Relay",
+        groupedByServer: "Raggruppato per Relay",
       },
     },
   },
@@ -7068,13 +7184,178 @@ settingsSession: {
     signInWithCertificate: "Accedi con certificato",
     linkOrRestoreAccount: "Collega o ripristina account",
     loginWithMobileApp: "Accedi con l'app mobile",
-    serverUnavailableTitle: "Impossibile raggiungere il server",
+    serverUnavailableTitle: "Impossibile raggiungere il Relay",
     serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
-      `Non riusciamo a connetterci a ${serverUrl}. Riprova o cambia server per continuare.`,
-    serverIncompatibleTitle: "Server non supportato",
+      `Non riusciamo a connetterci a ${serverUrl}. Riprova o scegli un altro Relay per continuare.`,
+    serverIncompatibleTitle: "Relay non supportato",
     serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
-      `Il server su ${serverUrl} ha restituito una risposta inattesa. Aggiorna il server o cambia server per continuare.`,
+      `Il Relay su ${serverUrl} ha restituito una risposta inattesa. Aggiorna quel Relay o scegli un altro Relay per continuare.`,
   },
+
+      sessionGettingStarted: {
+
+          title: {
+
+              connectMachine: 'Configura questo computer',
+
+              startDaemon: 'Riconnetti questo computer',
+
+              createSession: 'Crea una sessione',
+
+              selectSession: 'Seleziona una sessione',
+
+              loading: 'Caricamento…',
+
+          },
+        cliFollowUpTitle: 'Alternativa dal terminale (facoltativa)',
+        manualDisclosure: {
+            show: 'Mostra i passaggi manuali del terminale',
+            hide: 'Nascondi i passaggi manuali del terminale',
+        },
+
+          subtitle: {
+
+              connectMachine: ({ targetLabel }: { targetLabel: string }) =>
+
+                  `Usa il flusso di configurazione desktop per connettere questo computer a ${targetLabel}. Apri i passaggi manuali solo se preferisci la via del terminale.`,
+
+              startDaemon: ({ targetLabel }: { targetLabel: string }) =>
+
+                  `Usa il flusso di configurazione desktop per riconnettere il servizio in background di ${targetLabel}. Apri i passaggi manuali solo se sei già su quel computer.`,
+
+              createSession: 'Avvia una nuova sessione con il pulsante + o dal tuo terminale.',
+
+              selectSession: 'Scegli una sessione dalla barra laterale per vederla qui.',
+
+              loading: 'Recupero di macchine e sessioni in corso…',
+
+          },
+
+          steps: {
+
+              openSetup: {
+
+                  title: 'Usa il flusso di configurazione desktop',
+
+                  description: 'È il percorso consigliato. Configura il Relay, installa il servizio in background e mantiene il resto della configurazione nell’app.',
+
+              },
+
+              startDaemonOpenSetup: {
+
+                  description: 'Usa il flusso di configurazione desktop per riconnettere o riparare il servizio in background su questo computer prima di passare ai comandi del terminale.',
+
+              },
+
+              installCli: {
+
+                  title: 'Installa la CLI',
+
+                  description: 'Esegui questo una sola volta sulla macchina che vuoi connettere.',
+
+                  copyLabel: 'Comando di installazione',
+
+              },
+
+              serverSetup: {
+
+                  title: 'Imposta il Relay attivo',
+
+                  description: 'È un’operazione una tantum, così i comandi successivi useranno il Relay corretto.',
+
+                  copyLabel: 'Configurazione Relay',
+
+              },
+
+              authLogin: {
+
+                  title: 'Accedi',
+
+                  description: 'Mostra un QR / link per collegare il tuo terminale al tuo account.',
+
+                  copyLabel: 'Accesso autenticazione',
+
+              },
+
+              daemonInstall: {
+
+                  title: 'Installa il servizio in background (consigliato)',
+
+                  description: 'Mantiene Happier pronto in background per avvii remoti.',
+
+                  copyLabel: 'Installazione daemon',
+
+              },
+
+              startDaemonInstall: {
+
+                  description: 'Installa un servizio utente sempre attivo e lo avvia.',
+
+              },
+
+              daemonStart: {
+
+                  title: 'Avvia il servizio in background una volta',
+
+                  description: 'Usalo se ti serve solo in esecuzione adesso.',
+
+                  copyLabel: 'Avvio daemon',
+
+              },
+
+              createSession: {
+
+                  title: 'Crea una sessione',
+
+                  description: 'Usa il pulsante + nell’app oppure esegui una di queste opzioni dal terminale.',
+
+                  copyLabel: 'Crea sessione',
+
+              },
+
+              startSession: {
+
+                  title: 'Avvia una sessione dal tuo computer',
+
+                  description: 'Oppure usa il pulsante + nell’app.',
+
+                  copyLabel: 'Avvia sessione',
+
+              },
+
+          },
+
+      },
+
+
+  setupOnboarding: {
+          screenTitle: 'Configura questo computer',
+          webDesktopOnlyTitle: 'È richiesta l’app desktop',
+          webDesktopOnlyBody: 'Apri l’app desktop per configurare questo computer. L’app web può mostrare lo stato, ma non può installare o configurare il servizio in background.',
+          preAuthTitle: 'Scegli il tuo Relay prima di accedere',
+          preAuthBody: 'Scegli il Relay che vuoi usare su questo computer prima di creare, ripristinare o accedere a un account.',
+          preAuthContinueHint: 'Quando continui, Happier ti riporterà all’accesso sul Relay selezionato e poi tornerà qui per completare la configurazione.',
+    currentRelayTitle: 'Relay selezionato',
+    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Relay selezionato: ${relayUrl}`,
+    savedRelaysTitle: 'Relay salvati',
+    customRelayUrlLabel: 'URL del Relay',
+    relayNameLabel: 'Nome del Relay',
+    addAndUseRelay: 'Aggiungi Relay',
+    changeRelayAction: 'Usa un URL Relay diverso',
+          continueToAuth: 'Continua con il Relay selezionato',
+          continueWithLocalRelayAction: 'Usa questo Relay locale e continua',
+    postAuthTitle: 'Termina la configurazione di questo computer',
+    postAuthBody: 'Hai effettuato l’accesso. Continua con il flusso di configurazione locale per rendere questo computer pronto per il Relay selezionato.',
+    controlPanelTitle: 'Riepilogo della prontezza',
+    activeRelaySummaryTitle: 'Relay attivo',
+    thisComputerSummaryTitle: 'Questo computer',
+    nextActionSummaryTitle: 'Prossima azione',
+    thisComputerReady: 'Pronto per questo Relay',
+    nextActionReady: 'Crea la tua prima sessione o aggiungi un altro computer qui sotto.',
+    resumeIntentTitle: 'Continua la configurazione su questo computer',
+          resumeIntentBody: 'Accedi o crea un account per continuare a configurare questo computer per il Relay selezionato.',
+    openSetupAction: 'Configura questo computer',
+      },
 
   review: {
     // Used by utils/requestReview.ts

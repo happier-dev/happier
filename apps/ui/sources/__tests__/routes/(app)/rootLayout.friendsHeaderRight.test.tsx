@@ -139,4 +139,18 @@ describe('RootLayout', () => {
             await tree?.unmount();
         }
     });
+
+    it('registers the dedicated this-computer setup route under machines settings', async () => {
+        vi.resetModules();
+        stubRootLayoutFeaturesFetch();
+
+        const tree = await renderRootLayout();
+        try {
+            const screenNames = getScreenNames(tree);
+
+            expect(screenNames).toContain('settings/machines/this-computer');
+        } finally {
+            await tree?.unmount();
+        }
+    });
 });

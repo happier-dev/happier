@@ -17,6 +17,7 @@ import { ToolInlineBody } from './ToolInlineBody';
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
+import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
 import {
     resolveToolViewDetailLevelDefaultForChromeMode,
     resolveToolViewExpandedDetailLevelDefaultForChromeMode,
@@ -226,19 +227,18 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         hideDefaultError = true;
         minimal = true;
     } else {
-        switch (toolForRendering.state) {
+        switch (statusKind) {
             case 'running':
                 if (!noStatus) {
                     statusIcon = <ActivityIndicator size="small" color={theme.colors.text} style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }} />;
                 }
                 break;
-            case 'completed':
-                // if (!noStatus) {
-                //     statusIcon = <Ionicons name="checkmark-circle" size={20} color="#34C759" />;
-                // }
-                break;
             case 'error':
-                statusIcon = <Ionicons name="alert-circle-outline" size={20} color={theme.colors.warning} />;
+                statusIcon = <Ionicons name="alert-circle" size={20} color={theme.colors.textDestructive} />;
+                break;
+            case 'completed':
+            case 'none':
+            default:
                 break;
         }
     }
@@ -282,6 +282,8 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     const headerDescription = effectiveDetailLevel === 'title' ? null : description;
     const headerStatusText = effectiveDetailLevel === 'title' ? null : status;
     const showSubtitleInline = timelineDensity === 'compact' || effectiveDetailLevel === 'compact';
+    const errorSummary =
+        statusKind === 'error' ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error')) : null;
 
     return (
         <View style={styles.container}>
@@ -320,6 +322,14 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 </TouchableOpacity>
 
                 <View style={styles.headerRight}>
+                    {errorSummary ? (
+                        <View style={styles.headerError}>
+                            <Ionicons name="alert-circle" size={18} color={theme.colors.textDestructive} />
+                            <Text style={styles.headerErrorText} numberOfLines={1}>
+                                {errorSummary}
+                            </Text>
+                        </View>
+                    ) : null}
                     {headerActions ? (
                         <View style={styles.headerActionsContainer}>
                             {headerActions}
@@ -419,6 +429,17 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
+    },
+    headerError: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        maxWidth: 240,
+    },
+    headerErrorText: {
+        fontSize: 12,
+        color: theme.colors.textDestructive,
+        fontWeight: '600',
     },
     headerActionsContainer: {
         flexDirection: 'row',

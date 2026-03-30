@@ -42,6 +42,7 @@ import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/
 import { normalizeSpawnSessionResult } from './_shared';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { canUseSessionRpc, readMachineTargetForSession, resolveMachinePathFromSessionBase, shouldFallbackToSessionRpc } from './sessionMachineTarget';
+import type { Metadata } from '../domains/state/storageTypes';
 export {
     sessionScmBranchCheckout,
     sessionScmBranchCreate,
@@ -999,68 +1000,31 @@ interface SessionRenameResponse {
  * Rename a session by updating its metadata summary
  * This updates the session title displayed in the UI
  */
-export async function sessionRename(sessionId: string, title: string): Promise<SessionRenameResponse> {
+export async function sessionRename(
+    sessionId: string,
+    title: string,
+    options?: Readonly<{ serverId?: string | null }>,
+): Promise<SessionRenameResponse> {
     try {
+        const sid = String(sessionId ?? '').trim();
+        const normalizedTitle = String(title ?? '').trim();
+        if (!sid || !normalizedTitle) {
+            return { success: false, message: 'invalid_parameters' };
+        }
+
         const { sync } = await import('../sync');
-        const sessionEncryption = sync.encryption.getSessionEncryption(sessionId);
-        if (!sessionEncryption) {
-            return {
-                success: false,
-                message: 'Session encryption not found'
-            };
-        }
+        const updatedAt = Date.now();
 
-        // Get the current session from storage
-        const { storage } = await import('../domains/state/storage');
-        const currentSession = storage.getState().sessions[sessionId];
-        if (!currentSession) {
-            return {
-                success: false,
-                message: 'Session not found in storage'
-            };
-        }
+        await sync.patchSessionMetadataWithRetry(
+            sid,
+            (metadata: Metadata) => ({
+                ...(metadata ?? {}),
+                summary: { text: normalizedTitle, updatedAt },
+            }),
+            { serverId: options?.serverId ?? null },
+        );
 
-        // Ensure we have valid metadata to update
-        if (!currentSession.metadata) {
-            return {
-                success: false,
-                message: 'Session metadata not available'
-            };
-        }
-
-        // Update metadata with new summary
-        const updatedMetadata = {
-            ...currentSession.metadata,
-            summary: {
-                text: title,
-                updatedAt: Date.now()
-            }
-        };
-
-        // Encrypt the updated metadata
-        const encryptedMetadata = await sessionEncryption.encryptMetadata(updatedMetadata);
-
-        // Send update to server
-        const result = await emitSessionMetadataUpdateWithServerScope({
-            sessionId,
-            expectedVersion: currentSession.metadataVersion,
-            metadata: encryptedMetadata,
-        });
-
-        if (result.result === 'success') {
-            return { success: true };
-        } else if (result.result === 'version-mismatch') {
-            // Retry with updated version
-            return {
-                success: false,
-                message: 'Version conflict, please try again'
-            };
-        } else {
-            return {
-                success: false,
-                message: result.message || 'Failed to rename session'
-            };
-        }
+        return { success: true };
     } catch (error) {
         return {
             success: false,

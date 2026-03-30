@@ -7,7 +7,7 @@ import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
-import { PopoverPortalTargetProvider } from '@/components/ui/popover';
+import { PopoverScope } from '@/components/ui/popover';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
@@ -126,7 +126,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const defaultBindingsForProfile = secretBindingsByProfileId?.[profile.id] ?? null;
 
     return (
-        <PopoverPortalTargetProvider>
+        <PopoverScope>
             <>
                 <Stack.Screen
                     options={screenOptions}
@@ -163,6 +163,6 @@ export default React.memo(function SecretRequirementPickerScreen() {
                     onClose={handleCancel}
                 />
             </>
-        </PopoverPortalTargetProvider>
+        </PopoverScope>
     );
 });

@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { Platform } from 'react-native';
 import { Popover } from '@/components/ui/popover';
-import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 
 export type AgentInputSelectionPopoverProps = Readonly<{
     open: boolean;
@@ -15,6 +15,24 @@ export type AgentInputSelectionPopoverProps = Readonly<{
 }>;
 
 export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) {
+    const keyboardHeight = useKeyboardHeight();
+    // On web, agent-input popovers should be constrained to the viewport (not to an in-modal boundary
+    // provider), so they can extend outside sheet-like modal cards.
+    const boundaryRef =
+        Platform.OS === 'web' && props.boundaryRef === undefined
+            ? null
+            : props.boundaryRef;
+
+    // AgentInput popovers default to appearing above the chips. When the keyboard is visible on native,
+    // forcing `top` can push the popover off-screen (especially in sheet/drawer presentations). Let
+    // Popover resolve the best placement within the reduced keyboard-safe boundary.
+    const placement =
+        Platform.OS === 'web'
+            ? 'top'
+            : keyboardHeight > 0
+                ? 'auto'
+                : 'top';
+
     return (
         <Popover
             open={props.open}
@@ -23,8 +41,8 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
             // Forward `undefined` so Popover can fall back to PopoverBoundaryProvider context.
             // Passing `null` explicitly disables boundary clamping/measurement, which breaks
             // new-session popover anchoring on native where we rely on a scroll boundary.
-            boundaryRef={props.boundaryRef}
-            placement="top"
+            boundaryRef={boundaryRef}
+            placement={placement}
             gap={8}
             maxHeightCap={props.maxHeightCap}
             maxWidthCap={props.maxWidthCap}
@@ -41,6 +59,7 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
                 anchorAlign: 'start',
             }}
             onRequestClose={props.onRequestClose}
+            consumeOutsidePointerDown={false}
             // On web, agent input popovers must NOT block outside pointer events: users should be
             // able to switch between chips in one click (no "click outside to close first").
             // Click-through prevention is handled at the selection layer by deferring popover
@@ -49,42 +68,8 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
             containerStyle={{ paddingHorizontal: 0 }}
         >
             {({ maxHeight }) => (
-                <AgentInputNestedPortalScope>
-                    {props.children({ maxHeight })}
-                </AgentInputNestedPortalScope>
+                props.children({ maxHeight })
             )}
         </Popover>
-    );
-}
-
-function AgentInputNestedPortalScope(props: { children: React.ReactNode }) {
-    const [target, setTarget] = React.useState<HTMLElement | null>(null);
-    const setTargetRef = React.useCallback((node: HTMLElement | null) => {
-        setTarget((prev) => (prev === node ? prev : node));
-    }, []);
-
-    if (Platform.OS !== 'web') {
-        return props.children;
-    }
-
-    return (
-        <ModalPortalTargetProvider target={target}>
-            <>
-                {props.children}
-                <div
-                    data-happy-agent-input-popover-portal-target=""
-                    ref={setTargetRef}
-                    style={{
-                        position: 'absolute',
-                        top: '0px',
-                        left: '0px',
-                        width: '0px',
-                        height: '0px',
-                        overflow: 'visible',
-                        pointerEvents: 'auto',
-                    }}
-                />
-            </>
-        </ModalPortalTargetProvider>
     );
 }

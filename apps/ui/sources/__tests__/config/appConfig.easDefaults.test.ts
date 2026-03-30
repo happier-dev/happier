@@ -95,7 +95,7 @@ describe('app.config.js', () => {
         expect(exp.name).toBe('Happier (dev)');
         expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.publicdev');
         expect(exp.android?.package).toBe('dev.happier.app.publicdev');
-        expect(exp.scheme).toBe('happier-publicdev');
+        expect(exp.scheme).toBe('happier-dev');
         expect(featurePolicyEnv).toBe('preview');
         expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('publicdev');
     });

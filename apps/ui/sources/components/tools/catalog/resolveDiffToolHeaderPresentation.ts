@@ -1,5 +1,5 @@
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { readTurnChangeToolMetadata } from '@/sync/domains/session/changes/parsing/readTurnChangeToolMetadata';
+import { readTurnChangeToolMetadataFromToolCall } from '@/sync/domains/session/changes/parsing/readTurnChangeToolMetadata';
 import { t } from '@/text';
 
 import { parseUnifiedDiffFilePaths } from './parseUnifiedDiffFilePaths';
@@ -16,7 +16,7 @@ export function resolveDiffToolHeaderPresentation(opts: {
     subtitle: string | null;
     description: string;
 }> {
-    if (readTurnChangeToolMetadata(opts.tool.input) != null) {
+    if (readTurnChangeToolMetadataFromToolCall(opts.tool) != null) {
         const recap = t('tools.desc.turnDiffRecap');
         return {
             title: t('tools.names.turnDiff'),

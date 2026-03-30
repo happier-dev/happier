@@ -205,6 +205,35 @@ describe('PathSelector', () => {
         }));
     });
 
+    it('falls back to the machine home directory when the draft path is empty', async () => {
+        openMachinePathBrowserModalMock.mockReset();
+        openMachinePathBrowserModalMock.mockResolvedValueOnce('/Users/leeroy/from-browser');
+        const { PathSelector } = await import('./PathSelector');
+
+        const screen = await renderScreen(<PathSelector
+                    machineHomeDir="/Users/leeroy"
+                    selectedPath=""
+                    onChangeSelectedPath={vi.fn()}
+                    recentPaths={[]}
+                    usePickerSearch={false}
+                    favoriteDirectories={[]}
+                    onChangeFavoriteDirectories={() => {}}
+                    machineBrowse={{
+                        enabled: true,
+                        machineId: 'machine-1',
+                    }}
+                />);
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('path-browser-trigger');
+        });
+
+        expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            initialPath: '/Users/leeroy',
+        }));
+    });
+
     it('keeps typed path edits local until submit so the parent screen does not rerender on every keystroke', async () => {
         const onChangeSelectedPath = vi.fn();
         const onSubmitSelectedPath = vi.fn();

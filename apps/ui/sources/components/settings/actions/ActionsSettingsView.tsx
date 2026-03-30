@@ -3,7 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { View, Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { getActionSpec, isActionAlwaysAutoApproved, type ActionId } from '@happier-dev/protocol';
+import { getActionSpec, type ActionId } from '@happier-dev/protocol';
 
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
@@ -23,8 +23,8 @@ import {
 } from './buildActionSettingsEntries';
 import { buildActionSettingsDisplayModel } from './buildActionSettingsDisplayModel';
 import {
-    getActionSettingsTargetDefinition,
     getActionTargetApprovalRequired,
+    resolveActionSettingsApprovalSurface,
     setActionEnabled,
     setActionTargetApprovalRequired,
     setActionTargetSelected,
@@ -244,12 +244,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                                                     return null;
                                                 }
 
-                                                const definition = getActionSettingsTargetDefinition(entry.actionId, option.id);
-                                                if (definition.kind !== 'surface') {
-                                                    return null;
-                                                }
-
-                                                if (isActionAlwaysAutoApproved(entry.actionId)) {
+                                                if (!resolveActionSettingsApprovalSurface(entry.actionId, option.id)) {
                                                     return null;
                                                 }
 

@@ -35,6 +35,7 @@ import { clearSessionVisibleWhenInactive, stopSessionAndMaybeArchive } from '../
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
+const CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS = 600;
 
 const stylesheet = StyleSheet.create((theme) => ({
     sessionItemContainer: {
@@ -474,10 +475,34 @@ export const SessionItem = React.memo(
         const contextMenuOpen = nativeContextMenuOpen ?? uncontrolledContextMenuOpen;
         const setContextMenuOpen = onNativeContextMenuOpenChange ?? setUncontrolledContextMenuOpen;
         const suppressNextPressRef = React.useRef(false);
+        const contextMenuWasOpenRef = React.useRef(false);
+        const clearSuppressionTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
         React.useEffect(() => {
             // When a context menu is opened by an external gesture (e.g. session list long-press),
-            // Pressable may still fire `onPress` on touch-up. Suppress that navigation.
-            suppressNextPressRef.current = contextMenuOpen;
+            // Pressable may still fire `onPress` on touch-up. Suppress that navigation *once*,
+            // but don't keep suppressing while the menu stays open (that would require extra taps).
+            const wasOpen = contextMenuWasOpenRef.current;
+            contextMenuWasOpenRef.current = contextMenuOpen;
+
+            if (!contextMenuOpen || wasOpen) {
+                return;
+            }
+
+            suppressNextPressRef.current = true;
+            if (clearSuppressionTimeoutRef.current) {
+                clearTimeout(clearSuppressionTimeoutRef.current);
+            }
+            clearSuppressionTimeoutRef.current = setTimeout(() => {
+                suppressNextPressRef.current = false;
+                clearSuppressionTimeoutRef.current = null;
+            }, CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS);
+
+            return () => {
+                if (clearSuppressionTimeoutRef.current) {
+                    clearTimeout(clearSuppressionTimeoutRef.current);
+                    clearSuppressionTimeoutRef.current = null;
+                }
+            };
         }, [contextMenuOpen]);
         const isBeingDraggedRef = React.useRef<boolean>(false);
         React.useEffect(() => {
@@ -586,12 +611,12 @@ export const SessionItem = React.memo(
                 },
             );
             if (newName?.trim()) {
-                const result = await sessionRename(resolvedSession.id, newName.trim());
+                const result = await sessionRename(resolvedSession.id, newName.trim(), { serverId: serverId ?? null });
                 if (!result.success) {
                     Modal.alert(t('common.error'), result.message || t('sessionInfo.failedToRenameSession'));
                 }
             }
-        }, [resolvedSession.id, sessionNameResolved]);
+        }, [resolvedSession.id, serverId, sessionNameResolved]);
 
         const moreMenuItems = React.useMemo((): DropdownMenuItem[] => {
             const items: DropdownMenuItem[] = [];
@@ -737,6 +762,9 @@ export const SessionItem = React.memo(
                     if (suppressNextPressRef.current) {
                         suppressNextPressRef.current = false;
                         return;
+                    }
+                    if (contextMenuOpen) {
+                        setContextMenuOpen(false);
                     }
                     navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
                 }}

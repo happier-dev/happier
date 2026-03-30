@@ -20,7 +20,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('ItemList + ItemGroup popover boundary', () => {
-    it('prefers the screen/list boundary (ItemList) over the group boundary (ItemGroup)', async () => {
+    it('does not provide a popover boundary by default (popover should clamp to the screen/window, not the list/group)', async () => {
         const { ItemList } = await import('./ItemList');
         const { ItemGroup } = await import('./ItemGroup');
         const { usePopoverBoundaryRef } = await import('@/components/ui/popover/PopoverBoundary');
@@ -41,10 +41,10 @@ describe('ItemList + ItemGroup popover boundary', () => {
             </ItemList>,
         );
 
-        expect(seenBoundaryRef).toBe(listBoundaryRef);
+        expect(seenBoundaryRef).toBe(null);
     });
 
-    it('still provides a fallback boundary when ItemGroup is rendered outside an ItemList', async () => {
+    it('does not provide a popover boundary when ItemGroup is rendered outside an ItemList', async () => {
         const { ItemGroup } = await import('./ItemGroup');
         const { usePopoverBoundaryRef } = await import('@/components/ui/popover/PopoverBoundary');
 
@@ -60,7 +60,6 @@ describe('ItemList + ItemGroup popover boundary', () => {
             </ItemGroup>,
         );
 
-        expect(seenBoundaryRef).not.toBe(null);
-        expect(seenBoundaryRef).not.toBe(undefined);
+        expect(seenBoundaryRef).toBe(null);
     });
 });

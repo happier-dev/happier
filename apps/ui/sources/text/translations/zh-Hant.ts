@@ -1307,6 +1307,77 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         machineSetupStageInstall: '安裝 Happier 並配對此機器',
         machineSetupStageFinish: '在內建終端中完成設定',
         machineSetupComingSoon: '機器啟用功能即將推出。',
+        machineSetupTaskWaitingForInput: '等待輸入',
+        machineSetupRemoteSshTargetLabel: 'SSH 目標',
+        machineSetupRemoteSshAgentAuthLabel: '使用 SSH 代理程式',
+        machineSetupRemoteSshKeyFileAuthLabel: '使用身分金鑰檔',
+        machineSetupRemoteSshIdentityFileLabel: '身分金鑰檔路徑',
+        machineSetupRemoteRelayRuntimeLabel: '也在遠端機器上安裝 Relay 執行階段',
+        machineSetupRemoteRelayRuntimeTitle: '遠端 Relay 執行階段',
+        machineSetupRemoteRelayRuntimeReadyTitle: '已在遠端機器上就緒',
+        machineSetupRemoteRelayRuntimeReadySubtitle: 'Relay 執行階段已在 SSH 設定期間安裝完成。之後在該機器上進行網路設定時，請使用遠端 Relay URL。',
+        machineSetupRemoteRelayRuntimeUrlTitle: '遠端 Relay URL',
+        machineSetupRemoteRelayKeepCurrentTitle: '保留目前的 Relay',
+        machineSetupRemoteRelayKeepCurrentSubtitle: '儲存此 Relay URL，但不切換。',
+        machineSetupRemoteRelaySwitchTitle: '切換到此 Relay',
+        machineSetupRemoteRelaySwitchSubtitle: '立即切換並在新的 Relay 上繼續設定。',
+        machineSetupRemoteRelaySwitchConfirmTitle: '切換 Relay？',
+        machineSetupRemoteRelaySwitchConfirmBody: ({ relayUrl }: { relayUrl: string }) =>
+            `切換 Happier 到 ${relayUrl} 並繼續設定？`,
+        machineSetupRemotePromptTrustAction: '信任主機金鑰',
+        machineSetupRemotePromptReplaceAction: '替換已儲存的金鑰',
+        machineSetupRemotePromptApproveAction: '核准配對',
+        localRelayRuntime: {
+            title: 'Local Relay runtime',
+            statusTitle: 'Status',
+            statusChecking: 'Checking local Relay runtime',
+            statusNotInstalled: 'Not installed on this computer yet',
+            statusStopped: 'Installed, but not currently running',
+            statusRunningHealthy: 'Running and responding normally',
+            statusRunningNeedsAttention: 'Running, but health checks need attention',
+            versionTitle: 'Installed version',
+            relayUrlTitle: 'Local Relay URL',
+            installOrUpdateAction: 'Install or update Relay runtime',
+            startAction: 'Start Relay runtime',
+            stopAction: 'Stop Relay runtime',
+            refreshAction: 'Refresh Relay status',
+            footer: 'Manage the self-hosted Relay running on this computer before you connect other devices.',
+            progressTitle: 'Updating local Relay runtime',
+            progressStepInspect: 'Inspect local Relay runtime',
+            progressStepHealth: 'Check Relay health',
+            progressStepInstall: 'Install Relay runtime',
+            progressStepStart: 'Start Relay runtime',
+            progressStepStop: 'Stop Relay runtime',
+        },
+        localTailscale: {
+            title: 'Private access with Tailscale',
+            statusTitle: 'Status',
+            statusUnavailable: 'Start the local Relay runtime first',
+            statusIdle: 'Not enabled yet',
+            statusWorking: 'Configuring secure private access',
+            statusReady: 'Ready to use from other tailnet devices',
+            statusNeedsApproval: 'Waiting for Tailscale approval',
+            shareableUrlTitle: 'Shareable private URL',
+            approvalTitle: 'Approval required',
+            approvalSubtitle: 'Finish the Tailscale approval flow, then come back here.',
+            enableAction: 'Enable private access with Tailscale',
+            refreshAction: 'Re-check private access',
+            openApprovalAction: 'Open Tailscale approval',
+            footer: 'This keeps access tailnet-private. Your phone or other computer must also join the same tailnet.',
+            progressTitle: 'Configuring Tailscale secure access',
+            progressStepDetect: 'Check Tailscale availability',
+            progressStepInstall: 'Install Tailscale',
+            progressStepLogin: 'Sign in to Tailscale',
+            progressStepServeEnable: 'Enable private Relay access',
+            progressStepVerifyUrl: 'Verify the shareable URL',
+        },
+        systemTaskStepPrepare: '準備任務',
+        systemTaskStepInstallRuntime: '安裝執行環境',
+        systemTaskStepFinish: '完成設定',
+        systemTaskCurrentStepLabel: '目前步驟',
+        systemTaskLatestUpdateLabel: '最新進度',
+        systemTaskBridgeUnavailable: '此版本目前尚未提供系統任務。',
+        systemTaskStartFailed: '無法啟動系統任務。',
         appearance: '外觀',
         appearanceSubtitle: '自訂應用程式外觀',
         voiceAssistant: '語音助理',
@@ -1343,10 +1414,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         profiles: '設定檔',
         profilesSubtitle: '管理工作階段的環境變數設定檔',
         actionsSubtitle: '選擇每個操作在 app、語音與整合中的顯示位置。',
-        servers: '伺服器',
-	        serversSubtitle: '已儲存的伺服器、群組與預設值',
+        servers: 'Relays',
+	        serversSubtitle: '已儲存的 Relay、群組與預設值',
 		        systemStatus: '系統狀態',
-		        systemStatusSubtitle: '伺服器、帳戶、機器、守護程式',
+        systemStatusSubtitle: 'Relay、帳戶、機器、守護程式',
 		        mcpServers: 'MCP 伺服器',
 		        mcpServersSubtitle: '管理 MCP 伺服器與綁定',
 		        mcpServersComingSoon: 'MCP 伺服器設定即將推出。',
@@ -1701,10 +1772,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     systemStatus: {
         sections: {
             appHealth: '應用程式與同步狀態',
-            currentServer: '目前伺服器',
+            currentServer: '目前 Relay',
             identity: '已登入身份',
-            configuredServers: '已設定伺服器',
-            machinesActiveServer: '機器（目前伺服器）',
+            configuredServers: '已設定 Relay',
+            machinesActiveServer: '機器（目前 Relay）',
             machinesOtherServer: ({ server }: { server: string }) => `機器（${server}）`,
             actions: '操作',
         },
@@ -1716,14 +1787,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             lastSync: '最近同步',
         },
         server: {
-            activeServer: '目前伺服器',
+            activeServer: '目前 Relay',
         },
         identity: {
             accountId: '帳戶 ID',
             username: '使用者名稱',
         },
         servers: {
-            noneConfigured: '未設定伺服器',
+            noneConfigured: '未設定 Relay',
             active: '目前',
         },
         machines: {
@@ -1735,10 +1806,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             online: '線上',
             offline: '離線',
             fetchDoctorSnapshot: {
-                loading: '正在取得守護程式的伺服器/帳戶…',
+                loading: '正在取得守護程式的 Relay/帳戶…',
                 invalid: '無法從機器讀取 doctor snapshot',
             },
-            daemonAttributionUnknown: '守護程式伺服器/帳戶：未知',
+            daemonAttributionUnknown: '守護程式 Relay/帳戶：未知',
             daemonAttribution: ({ serverUrl, accountId }: { serverUrl: string; accountId: string }) =>
                 `守護程式：${serverUrl} • ${accountId}`,
             daemonAttributionAge: ({ age }: { age: string }) => `最近檢查：${age}`,
@@ -1753,9 +1824,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         actions: {
             runDiagnosis: '執行診斷',
-            runDiagnosisSubtitle: '偵測伺服器/帳戶/守護程式不一致',
+            runDiagnosisSubtitle: '偵測 Relay/帳戶/守護程式不一致',
             refreshMachineAttribution: '更新守護程式歸屬資訊',
-            refreshMachineAttributionSubtitle: '為部分線上機器取得守護程式的伺服器/帳戶',
+            refreshMachineAttributionSubtitle: '為部分線上機器取得守護程式的 Relay/帳戶',
             copyJson: '複製系統狀態 JSON',
             copyJsonSubtitle: '複製已去識別的快照供支援使用',
         },
@@ -1772,7 +1843,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             findings: '發現的問題',
         },
         overview: {
-            activeServer: '目前伺服器',
+            activeServer: '目前 Relay',
             account: '帳戶',
             onlineMachines: '線上機器（目前伺服器）',
             cachedAttribution: ({ count }: { count: number }) => `可用快取 doctor snapshot：${count} 個`,
@@ -2103,6 +2174,13 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
     },
 
+		    settingsDesktop: {
+		        title: 'Desktop',
+		        footer: 'Controls Tauri desktop integrations on this computer.',
+		        startOnLoginTitle: 'Launch at login',
+		        startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',
+		    },
+
 		    settingsNotifications: {
 		        badges: {
 		            title: '此裝置的徽章',
@@ -2345,6 +2423,20 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         installSetupTitle: '安裝 / 設定',
         installInfoSeeSetupGuide: '查看設定指南',
         installInfoUseProviderCliInstaller: '使用供應商的 CLI 安裝器',
+        setup: {
+            selectionFooter: 'Choose one or more providers, then complete them one at a time on the selected machine.',
+            startTitle: 'Set up providers',
+            startDescription: 'Queue the selected providers and walk through install and sign-in in a single canonical flow.',
+            queueTitle: 'Provider setup queue',
+            queueDescription: ({ provider }: { provider: string }) => `Finish ${provider}, then continue to the next provider in the queue.`,
+            activeDescription: 'Current provider in the setup queue',
+            activeStatus: 'In progress',
+            completedStatus: 'Completed',
+            skippedStatus: 'Skipped',
+            skipAction: 'Skip this provider',
+            completedTitle: 'Provider setup complete',
+            completedDescription: 'You have reached the end of the selected provider queue.',
+        },
         cliSourcePreference: {
             title: 'CLI 來源偏好',
             subtitle: '當系統 CLI 與 Happier 管理安裝同時存在時，選擇優先使用哪一個。',
@@ -3117,68 +3209,89 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     server: {
         // Used by Server Configuration screen (app/(app)/server.tsx)
-        serverConfiguration: '伺服器設定',
-        enterServerUrl: '請輸入伺服器 URL',
-        notValidHappyServer: '不是有效的 Happier 伺服器',
-        changeServer: '更改伺服器',
-        continueWithServer: '繼續使用此伺服器？',
+        serverConfiguration: 'Relay 設定',
+        enterServerUrl: '請輸入 Relay URL',
+        notValidHappyServer: '不是有效的 Happier Relay',
+        changeServer: '更改 Relay',
+        continueWithServer: '繼續使用此 Relay？',
         resetToDefault: '重設為預設',
-        resetServerDefault: '重設伺服器為預設值？',
+        resetServerDefault: '重設 Relay 為預設值？',
         validating: '驗證中...',
-        validatingServer: '正在驗證伺服器...',
-        serverReturnedError: '伺服器返回錯誤',
-        failedToConnectToServer: '連線伺服器失敗',
-        currentlyUsingCustomServer: '目前使用自訂伺服器',
-        customServerUrlLabel: '自訂伺服器 URL',
-        advancedFeatureFooter: "這是一個進階功能。只有在您知道自己在做什麼時才更改伺服器。更改伺服器後您需要重新登入。",
-        useThisServer: '使用此伺服器',
-        autoConfigHint: '如果你是自架：先設定伺服器，接著登入（或建立帳號），最後連接你的終端。',
-        renameServer: '重新命名伺服器',
-        renameServerPrompt: '輸入此伺服器的新名稱。',
-        renameServerGroup: '重新命名伺服器群組',
-        renameServerGroupPrompt: '輸入此伺服器群組的新名稱。',
-        serverNamePlaceholder: '伺服器名稱',
-        cannotRenameCloud: '無法重新命名雲端伺服器。',
-        removeServer: '移除伺服器',
-        removeServerConfirm: ({ name }: { name: string }) => `從已儲存的伺服器中移除「${name}」？`,
-        removeServerGroup: '移除伺服器群組',
-        removeServerGroupConfirm: ({ name }: { name: string }) => `從已儲存的伺服器群組中移除「${name}」？`,
-        cannotRemoveCloud: '無法移除雲端伺服器。',
-        signOutThisServer: '也要從此伺服器登出嗎？',
-        signOutThisServerPrompt: '此裝置上找到此伺服器的已儲存憑證。',
-        savedServersTitle: '已儲存的伺服器',
+        validatingServer: '正在驗證 Relay...',
+        serverReturnedError: 'Relay 返回錯誤',
+        failedToConnectToServer: '連線 Relay 失敗',
+        currentlyUsingCustomServer: '目前使用自訂 Relay',
+        customServerUrlLabel: '自訂 Relay URL',
+        advancedFeatureFooter: "這是一個進階功能。只有在您知道自己在做什麼時才更改 Relay。更改 Relay 後您需要重新登入。",
+        useThisServer: '使用此 Relay',
+        autoConfigHint: '如果你是自架：先設定 Relay，接著登入（或建立帳號），最後連接你的終端。',
+        renameServer: '重新命名 Relay',
+        renameServerPrompt: '輸入此 Relay 的新名稱。',
+        renameServerGroup: '重新命名 Relay 群組',
+        renameServerGroupPrompt: '輸入此 Relay 群組的新名稱。',
+        serverNamePlaceholder: 'Relay 名稱',
+        cannotRenameCloud: '無法重新命名雲端 Relay。',
+        removeServer: '移除 Relay',
+        removeServerConfirm: ({ name }: { name: string }) => `從已儲存的 Relay 中移除「${name}」？`,
+        removeServerGroup: '移除 Relay 群組',
+        removeServerGroupConfirm: ({ name }: { name: string }) => `從已儲存的 Relay 群組中移除「${name}」？`,
+        cannotRemoveCloud: '無法移除雲端 Relay。',
+        signOutThisServer: '也要從此 Relay 登出嗎？',
+        signOutThisServerPrompt: '此裝置上找到此 Relay 的已儲存憑證。',
+        savedServersTitle: '已儲存的 Relay',
         signedIn: '已登入',
         signedOut: '未登入',
         authStatusUnknown: '驗證狀態未知',
-        switchToServer: '切換到此伺服器',
+        switchToServer: '切換到此 Relay',
         active: '目前',
         default: '預設',
-        addServerTitle: '新增伺服器',
+        addServerTitle: '新增 Relay',
         switchForThisTab: '僅為此分頁切換',
         makeDefaultOnDevice: '設為此裝置預設',
-        serverNameLabel: '伺服器名稱',
+        serverNameLabel: 'Relay 名稱',
         addAndUse: '新增並使用',
         addTargetsTitle: '新增',
-        addServerSubtitle: '新增伺服器並切換',
-        notificationAddServerHint: '此伺服器尚未在此裝置上儲存。請在下方新增以繼續。',
-        useCanonicalServerUrlTitle: '使用伺服器的標準 URL？',
-        useCanonicalServerUrlBody: '此伺服器提供了一個可在其他裝置上使用的標準 URL。要改用它取代你輸入的 URL 嗎？',
-        insecureHttpUrlTitle: '不安全的伺服器 URL',
+        addServerSubtitle: '新增 Relay 並切換',
+        notificationAddServerHint: '此 Relay 尚未在此裝置上儲存。請在下方新增以繼續。',
+        useCanonicalServerUrlTitle: '使用 Relay 的標準 URL？',
+        useCanonicalServerUrlBody: '此 Relay 提供了一個可在其他裝置上使用的標準 URL。要改用它取代你輸入的 URL 嗎？',
+        insecureHttpUrlTitle: '不安全的 Relay URL',
         insecureHttpUrlBody: '此 URL 使用 http://，可能無法在手機或區域網路外正常運作。建議盡量使用 HTTPS。仍要繼續嗎？',
-        addServerGroupTitle: '新增伺服器群組',
-        addServerGroupSubtitle: '建立可重複使用的伺服器群組',
+        addServerGroupTitle: '新增 Relay 群組',
+        addServerGroupSubtitle: '建立可重複使用的 Relay 群組',
         serverGroupNameLabel: '群組名稱',
-        serverGroupNamePlaceholder: '我的伺服器群組',
-        serverGroupServersLabel: '伺服器',
+        serverGroupNamePlaceholder: '我的 Relay 群組',
+        serverGroupServersLabel: 'Relay',
         saveServerGroup: '儲存群組',
-        serverGroupMustHaveServer: '伺服器群組至少需要包含一個伺服器。',
+        serverGroupMustHaveServer: 'Relay 群組至少需要包含一個 Relay。',
+        relayDrift: {
+            bannerDifferentRelayTitle: 'Your background service is connected to a different Relay',
+            bannerDifferentRelayDescription: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) => `App: ${activeRelayUrl} · Background service: ${daemonRelayUrl}`,
+            bannerNeedsAuthTitle: 'Your background service needs to sign in to this Relay',
+            bannerNeedsAuthDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) => `The app is using ${activeRelayUrl}, but the background service still needs approval or sign-in.`,
+            bannerNotConfiguredTitle: 'Your background service is not connected to this Relay yet',
+            bannerNotConfiguredDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) => `The app is using ${activeRelayUrl}, but this computer has not finished connecting the background service.`,
+            bannerNotInstalledTitle: 'Your background service is not installed for this Relay',
+            bannerNotInstalledDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+                `The app is using ${activeRelayUrl}, but this computer still needs to install the background service for it.`,
+            bannerNotRunningTitle: 'Your background service is installed but not running',
+            bannerNotRunningDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+                `The app is using ${activeRelayUrl}, but the background service is stopped and needs to be started again.`,
+            repairAction: 'Connect background service to this Relay',
+            progressTitle: '正在將背景服務連線到此 Relay',
+            progressStepPrepare: '準備背景服務',
+            progressStepConfigureRelay: '更新 Relay 連線',
+            progressStepAuthenticate: '完成登入與授權',
+            progressStepFinish: '完成修復',
+            statusUnknown: 'Unknown',
+        },
         retention: {
             title: '資料保留政策',
             summary: '摘要',
             keepForever: '不自動刪除',
             deleteInactiveSessionsDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}後刪除非活躍工作階段。`,
             deleteOlderThanDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}後刪除資料。`,
-            sessionNotice: ({ count }: { count: number }) => `此伺服器會在工作階段非活躍 ${count} ${plural({ count, singular: '天', plural: '天' })}後自動刪除。`,
+            sessionNotice: ({ count }: { count: number }) => `此 Relay 會在工作階段非活躍 ${count} ${plural({ count, singular: '天', plural: '天' })}後自動刪除。`,
             sessions: '工作階段',
             accountChanges: '帳戶變更',
             voiceSessionLeases: '語音工作階段租約',
@@ -3194,14 +3307,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             automationRunEvents: '自動化執行事件',
         },
         multiServerView: {
-            title: '多伺服器並行檢視',
-            footer: '選擇是否將多個伺服器合併在同一個工作階段清單中顯示。',
+            title: '多 Relay 並行檢視',
+            footer: '選擇是否將多個 Relay 合併在同一個工作階段清單中顯示。',
             enableTitle: '啟用並行檢視',
-            enableSubtitle: '將所選伺服器的工作階段合併顯示',
+            enableSubtitle: '將所選 Relay 的工作階段合併顯示',
             presentationTitle: '呈現模式',
             presentation: {
-                flatWithBadges: '扁平清單（含伺服器徽章）',
-                groupedByServer: '依伺服器分組',
+                flatWithBadges: '扁平清單（含 Relay 徽章）',
+                groupedByServer: '依 Relay 分組',
             },
         },
     },
@@ -4933,12 +5046,177 @@ settingsSession: {
         signInWithCertificate: '使用憑證登入',
         linkOrRestoreAccount: '連結或恢復帳戶',
         loginWithMobileApp: '使用行動應用程式登入',
-        serverUnavailableTitle: '無法連線到伺服器',
+        serverUnavailableTitle: '無法連線到 Relay',
         serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
-            `無法連線到 ${serverUrl}。請重試或更改伺服器以繼續。`,
-        serverIncompatibleTitle: '伺服器不受支援',
+            `無法連線到 ${serverUrl}。請重試或選擇其他 Relay 以繼續。`,
+        serverIncompatibleTitle: 'Relay 不受支援',
         serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
-            `${serverUrl} 回傳了意外的回應。請更新伺服器或更改伺服器以繼續。`,
+            `${serverUrl} 回傳了意外的回應。請更新該 Relay 或選擇其他 Relay 以繼續。`,
+    },
+
+        sessionGettingStarted: {
+
+            title: {
+
+                connectMachine: 'Set up this computer',
+
+                startDaemon: 'Reconnect this computer',
+
+                createSession: 'Create a session',
+
+                selectSession: 'Select a session',
+
+                loading: 'Loading…',
+
+            },
+        cliFollowUpTitle: '終端備用路徑（可選）',
+        manualDisclosure: {
+            show: 'Show manual terminal steps',
+            hide: 'Hide manual terminal steps',
+        },
+
+            subtitle: {
+
+                connectMachine: ({ targetLabel }: { targetLabel: string }) =>
+
+                    `Use the desktop setup flow to connect this computer to ${targetLabel}. Open the manual steps only if you prefer the terminal path.`,
+
+                startDaemon: ({ targetLabel }: { targetLabel: string }) =>
+
+                    `Use the desktop setup flow to reconnect the background service for ${targetLabel}. Open the manual steps only if you are already on that computer.`,
+
+                createSession: 'Start a new session with the + button, or from your terminal.',
+
+                selectSession: 'Pick a session from the sidebar to view it here.',
+
+                loading: 'Fetching your machines and sessions…',
+
+            },
+
+            steps: {
+
+                openSetup: {
+
+                    title: 'Use the desktop setup flow',
+
+                    description: 'This is the recommended path. It configures the relay, installs the background service, and keeps the rest of setup in the app.',
+
+                },
+
+                startDaemonOpenSetup: {
+
+                    description: 'Use the desktop setup flow to reconnect or repair the background service on this computer before you fall back to terminal commands.',
+
+                },
+
+                installCli: {
+
+                    title: 'Install the CLI',
+
+                    description: 'Run this once on the machine you want to connect.',
+
+                    copyLabel: 'Install command',
+
+                },
+
+                serverSetup: {
+
+                    title: 'Set the active Relay',
+
+                    description: 'One-time, so the next commands target the right Relay.',
+
+                    copyLabel: 'Relay setup',
+
+                },
+
+                authLogin: {
+
+                    title: 'Sign in',
+
+                    description: 'This prints a QR / link to connect your terminal to your account.',
+
+                    copyLabel: 'Auth login',
+
+                },
+
+                daemonInstall: {
+
+                    title: 'Install the background service (recommended)',
+
+                    description: 'Keeps Happier ready in the background for remote starts.',
+
+                    copyLabel: 'Daemon install',
+
+                },
+
+                startDaemonInstall: {
+
+                    description: 'Installs an always-on user service and starts it.',
+
+                },
+
+                daemonStart: {
+
+                    title: 'Start the background service once',
+
+                    description: 'Use this if you only need it running right now.',
+
+                    copyLabel: 'Daemon start',
+
+                },
+
+                createSession: {
+
+                    title: 'Create a session',
+
+                    description: 'Use the + button in the app, or run one of these from your terminal.',
+
+                    copyLabel: 'Create session',
+
+                },
+
+                startSession: {
+
+                    title: 'Start a session from your computer',
+
+                    description: 'Or use the + button in the app.',
+
+                    copyLabel: 'Start session',
+
+                },
+
+            },
+
+        },
+
+
+    setupOnboarding: {
+        screenTitle: 'Set up this computer',
+        webDesktopOnlyTitle: '需要桌面應用程式',
+        webDesktopOnlyBody: '請在桌面應用程式中設定此電腦。網頁版可以顯示狀態，但無法安裝或設定背景服務。',
+        preAuthTitle: 'Choose your Relay before you sign in',
+        preAuthBody: 'Pick the Relay you want to use on this computer before you create, restore, or sign in to an account.',
+        preAuthContinueHint: 'When you continue, Happier will take you back to sign in against the selected Relay and then return here to finish setup.',
+        currentRelayTitle: '已選擇的 Relay',
+        currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Selected Relay: ${relayUrl}`,
+        savedRelaysTitle: 'Saved Relays',
+        customRelayUrlLabel: 'Relay URL',
+        relayNameLabel: 'Relay name',
+        addAndUseRelay: '新增 Relay',
+        changeRelayAction: '使用其他 Relay URL',
+        continueToAuth: '使用已選擇的 Relay 繼續',
+        continueWithLocalRelayAction: 'Continue with this local Relay',
+        postAuthTitle: 'Finish setting up this computer',
+        postAuthBody: 'You are signed in. Continue with the local setup flow to make this computer ready for the selected Relay.',
+        controlPanelTitle: 'Readiness summary',
+        activeRelaySummaryTitle: 'Active Relay',
+        thisComputerSummaryTitle: 'This computer',
+        nextActionSummaryTitle: 'Next action',
+        thisComputerReady: 'Ready for this Relay',
+        nextActionReady: 'Create your first session or add another computer below.',
+        resumeIntentTitle: 'Continue setup on this computer',
+        resumeIntentBody: 'Sign in or create an account to continue setting up this computer for the selected Relay.',
+        openSetupAction: 'Set up this computer',
     },
 
     review: {

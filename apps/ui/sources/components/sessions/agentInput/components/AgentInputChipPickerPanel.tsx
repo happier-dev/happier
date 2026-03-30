@@ -7,6 +7,7 @@ import { ItemGroup } from "@/components/ui/lists/ItemGroup";
 import { ItemListStatic } from "@/components/ui/lists/ItemList";
 import { Text } from "@/components/ui/text/Text";
 import { t } from "@/text";
+import { ModalCloseButton } from '@/modal/components/card';
 
 import { AgentInputChipPickerDetailPane } from "./AgentInputChipPickerDetailPane";
 import { shouldShowAgentInputChipPickerRail } from "./AgentInputChipPickerLayout";
@@ -102,13 +103,22 @@ export function AgentInputChipPickerPanel(
   const railWidth = props.railWidth ?? styles.railScroll.width;
   const railMaxWidth = props.railMaxWidth ?? styles.railScroll.maxWidth;
 
-  const headerRow = (
+  const showCloseButton = props.showCloseButton !== false;
+  const shouldRenderTitle = typeof props.title === "string" && props.title.trim().length > 0;
+  const headerRow = shouldRenderTitle || showCloseButton ? (
     <View style={styles.headerRow}>
-      <Text testID="agent-input-chip-picker.title" style={styles.title}>
-        {props.title}
-      </Text>
+      <View style={styles.headerTitleWrap}>
+        {shouldRenderTitle ? (
+          <Text testID="agent-input-chip-picker.title" style={styles.title}>
+            {props.title}
+          </Text>
+        ) : null}
+      </View>
+      {showCloseButton ? (
+        <ModalCloseButton testID="agent-input-chip-picker.close" onPress={props.onRequestClose} />
+      ) : null}
     </View>
-  );
+  ) : null;
 
   return (
     <View testID="agent-input-chip-picker" style={styles.container}>
@@ -142,7 +152,7 @@ export function AgentInputChipPickerPanel(
         </View>
       ) : (
         <View style={styles.bodyDetailedShell}>
-          <View style={styles.headerDetailed}>{headerRow}</View>
+          {headerRow ? <View style={styles.headerDetailed}>{headerRow}</View> : null}
           <View
             style={[
               styles.bodyDetailed,
@@ -224,8 +234,11 @@ const stylesheet = StyleSheet.create((theme) => ({
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: 10,
+  },
+  headerTitleWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   headerDetailed: {
     paddingHorizontal: 12,

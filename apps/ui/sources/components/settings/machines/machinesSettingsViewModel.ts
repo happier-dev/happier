@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import { useActiveSelectionMachineGroups } from '@/components/settings/server/hooks/useActiveSelectionMachineGroups';
 import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import {
@@ -10,6 +11,7 @@ import {
 } from '@/sync/domains/state/storage';
 
 export function useMachinesSettingsViewModel() {
+    const relayDriftBanner = useRelayDriftBanner();
     const allMachines = useAllMachines();
     const machineListByServerId = useMachineListByServerId();
     const machineListStatusByServerId = useMachineListStatusByServerId();
@@ -61,6 +63,7 @@ export function useMachinesSettingsViewModel() {
         hasMachines: activeSelectionMachineGroups.hasAnyVisibleMachines,
         isLoadingMachines,
         machineRows,
+        relayDriftBanner,
         showMachinesGroupedByServer: activeSelectionMachineGroups.showMachinesGroupedByServer,
         visibleMachineGroups: activeSelectionMachineGroups.visibleMachineGroups,
     };

@@ -8,9 +8,9 @@ import {
     ScrollViewProps
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { PopoverBoundaryProvider } from '@/components/ui/popover/PopoverBoundary';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
+import { PopoverScrollSourceProvider } from '@/components/ui/popover';
 
 export interface ItemListProps extends ScrollViewProps {
     children: React.ReactNode;
@@ -50,7 +50,6 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const internalRef = React.useRef<ScrollView>(null);
-    const boundaryRef = isRefObject(ref) ? ref : internalRef;
     const isInsideModalBoundary = useIsInsideModalBoundary();
 
     const {
@@ -84,7 +83,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
     }, [ref]);
 
     return (
-        <PopoverBoundaryProvider boundaryRef={boundaryRef}>
+        <PopoverScrollSourceProvider scrollSourceRef={internalRef}>
             <ScrollView
                 ref={setRefs}
                 style={[
@@ -108,7 +107,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
             >
                 {children}
             </ScrollView>
-        </PopoverBoundaryProvider>
+        </PopoverScrollSourceProvider>
     );
 }));
 

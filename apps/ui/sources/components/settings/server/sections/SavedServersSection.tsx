@@ -33,6 +33,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
     const { theme } = useUnistyles();
     const groups = Array.isArray(props.serverGroups) ? props.serverGroups : [];
     const retentionPoliciesByServerId = useServerRetentionPolicies(props.servers.map((profile) => profile.id));
+    const supportsWholeRowPress = Platform.OS !== 'web';
     return (
         <ItemGroup title={t('server.savedServersTitle')}>
             {groups.map((group) => {
@@ -68,8 +69,8 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                           selected={isSelected}
                           showChevron={false}
                           detail={isSelected ? t('server.active') : undefined}
-                          onPress={() => props.onSwitchGroup?.(group)}
-                        rightElement={(
+                          onPress={supportsWholeRowPress ? () => props.onSwitchGroup?.(group) : undefined}
+                          rightElement={(
                             <ItemRowActions
                                 title={group.name}
                                 actions={actions}
@@ -157,7 +158,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                         selected={isActive}
                         showChevron={false}
                         detail={isActive ? t('server.active') : isDeviceDefault ? t('server.default') : undefined}
-                        onPress={() => props.onSwitch(profile, 'device')}
+                        onPress={supportsWholeRowPress ? () => props.onSwitch(profile, 'device') : undefined}
                         rightElement={(
                             <ItemRowActions
                                 title={profile.name}

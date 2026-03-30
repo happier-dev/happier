@@ -262,7 +262,7 @@ function RenderTableBlock(props: {
               <ScrollView
                   testID="markdown-table-scroll"
                   horizontal
-                  showsHorizontalScrollIndicator={false}
+                  showsHorizontalScrollIndicator={Platform.OS === 'web'}
                   nestedScrollEnabled={true}
                   style={style.tableScrollView}
               >
@@ -547,7 +547,7 @@ const style = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: theme.colors.divider,
         borderRadius: 8,
-        overflow: 'hidden',
+        overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
     },
     tableScrollView: {
         flexGrow: 0,

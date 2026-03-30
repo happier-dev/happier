@@ -5,6 +5,7 @@ import { SessionGettingStartedGuidance, useSessionGettingStartedGuidanceBaseMode
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
 import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNewSessionScreenModel';
+import { PopoverScope } from '@/components/ui/popover';
 import { parseNewSessionCheckoutDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
@@ -62,9 +63,17 @@ function NewSessionScreen() {
     }, [machineId, directory]);
 
     if (baseModel.kind === 'connect_machine' && !hasSeededDraftIntent && !hasSeededRouteIntent) {
-        return <SessionGettingStartedGuidance variant="newSessionBlocking" />;
+        return (
+            <PopoverScope>
+                <SessionGettingStartedGuidance variant="newSessionBlocking" />
+            </PopoverScope>
+        );
     }
-    return <NewSessionScreenInner />;
+    return (
+        <PopoverScope>
+            <NewSessionScreenInner />
+        </PopoverScope>
+    );
 }
 
 export default React.memo(NewSessionScreen);

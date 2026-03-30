@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { ModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -20,6 +21,7 @@ type CapturedPopoverProps = Record<string, unknown> & {
     anchorRef: React.RefObject<any>;
     maxHeightCap?: number;
     maxWidthCap?: number;
+    placement?: string;
     boundaryRef?: React.RefObject<any> | null;
     portal?: {
         web?: { target?: string };
@@ -62,8 +64,9 @@ describe('AgentInputSelectionPopover', () => {
 
         expect(capturedPopoverProps.current?.open).toBe(true);
         expect(capturedPopoverProps.current?.anchorRef).toBe(anchorRef);
-        // boundaryRef should be omitted so Popover can fall back to PopoverBoundaryProvider context.
-        expect(capturedPopoverProps.current?.boundaryRef).toBeUndefined();
+        // On web, AgentInput popovers should default to the viewport boundary (ignore any boundary provider).
+        expect(capturedPopoverProps.current?.boundaryRef).toBeNull();
+        expect(capturedPopoverProps.current?.placement).toBe('top');
         expect(capturedPopoverProps.current?.maxHeightCap).toBe(480);
         expect(capturedPopoverProps.current?.maxWidthCap).toBe(512);
         expect(capturedPopoverProps.current?.edgePadding).toEqual({ horizontal: 16 });
@@ -74,6 +77,7 @@ describe('AgentInputSelectionPopover', () => {
             anchorAlign: 'start',
         });
         expect(capturedPopoverProps.current?.closeOnAnchorPress).toBe(false);
+        expect(capturedPopoverProps.current?.consumeOutsidePointerDown).toBe(false);
         expect(capturedPopoverProps.current?.containerStyle).toEqual({ paddingHorizontal: 0 });
         expect(capturedPopoverProps.current?.backdrop).toEqual({
             style: { backgroundColor: 'transparent' },
@@ -81,8 +85,29 @@ describe('AgentInputSelectionPopover', () => {
         });
         expect(renderContent).toHaveBeenCalledWith({ maxHeight: 312 });
         expect(screen.findByTestId('content:312')).toBeTruthy();
+    });
 
-        const divs = screen.findAllByType('div');
-        expect(divs.some((node) => node.props['data-happy-agent-input-popover-portal-target'] === '')).toBe(true);
+    it('does not override an existing modal portal target on web', async () => {
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const externalTarget = { tag: 'external-modal-portal-target' } as any;
+        const anchorRef = { current: { nodeType: 'View' } } as any;
+
+        const seenTargets: Array<Element | DocumentFragment | null> = [];
+        function RecordTarget() {
+            const target = useModalPortalTarget();
+            seenTargets.push(target);
+            return React.createElement('View', { testID: 'record-target' });
+        }
+
+        await renderScreen(
+            <ModalPortalTargetProvider target={externalTarget}>
+                <AgentInputSelectionPopover open anchorRef={anchorRef} onRequestClose={() => {}}>
+                    {() => <RecordTarget />}
+                </AgentInputSelectionPopover>
+            </ModalPortalTargetProvider>,
+        );
+
+        expect(seenTargets.length).toBeGreaterThan(0);
+        expect(seenTargets[seenTargets.length - 1]).toBe(externalTarget);
     });
 });

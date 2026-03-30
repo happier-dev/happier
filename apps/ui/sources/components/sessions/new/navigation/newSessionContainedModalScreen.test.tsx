@@ -14,8 +14,8 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@/components/ui/popover', () => ({
-    PopoverPortalTargetProvider: ({ children }: React.PropsWithChildren<Record<string, never>>) =>
-        React.createElement('PopoverPortalTargetProvider', null, children),
+    PopoverScope: ({ children }: React.PropsWithChildren<Record<string, never>>) =>
+        React.createElement('PopoverScope', null, children),
 }));
 
 afterEach(() => {
@@ -46,6 +46,6 @@ describe('newSessionContainedModalScreen helpers', () => {
             </NewSessionScreenPortalScope>,
         );
 
-        expect(screen.findAllByType('PopoverPortalTargetProvider' as any)).toHaveLength(1);
+        expect(screen.findAllByType('PopoverScope' as any)).toHaveLength(1);
     });
 });

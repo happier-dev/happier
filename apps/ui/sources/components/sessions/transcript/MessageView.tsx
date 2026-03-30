@@ -10,6 +10,8 @@ import { Metadata } from "@/sync/domains/state/storageTypes";
 import { layout } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
+import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
+import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { resolveMessageRouteIdForDisplay } from '@/sync/domains/messages/messageRouteIds';
 import { sync } from '@/sync/sync';
 import { Option } from '@/components/markdown/MarkdownView';
@@ -1222,7 +1224,17 @@ function ToolCallBlock(props: {
       }));
     },
   });
-  const shouldRenderToolChrome = !(toolViewTimelineChromeMode === 'activity_feed' && structuredNode != null);
+  const toolForSession = resolveInactiveSessionToolCallFailure({
+    tool: props.message.tool,
+    permissionDisabledReason: props.interaction?.permissionDisabledReason,
+  });
+  const statusKind = resolveToolStatusIndicatorKind(toolForSession);
+  const shouldForceToolChromeForStatus = statusKind === 'error' || statusKind === 'permission_blocked';
+  const shouldRenderToolChrome = !(
+    toolViewTimelineChromeMode === 'activity_feed' &&
+    structuredNode != null &&
+    !shouldForceToolChromeForStatus
+  );
   const toolRouteMessageId = props.interaction?.disableToolNavigation
     ? undefined
     : resolveMessageRouteIdForDisplay({

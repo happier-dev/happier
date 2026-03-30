@@ -1,6 +1,6 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
 
@@ -127,9 +127,13 @@ describe('useConnectTerminal (scanner lifecycle)', () => {
     routerPushSpy.mockClear();
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    afterAll(() => {
+        vi.unmock('@/utils/path/terminalConnectUrl');
+    });
 
   it('navigates to the in-app QR scanner when starting terminal connect', async () => {
     const { useConnectTerminal } = await import('./useConnectTerminal');

@@ -1821,6 +1821,77 @@ export const ja: TranslationStructure = {
     machineSetupStageInstall: "Happier をインストールしてマシンをペアリング",
     machineSetupStageFinish: "内蔵ターミナルでセットアップを完了",
     machineSetupComingSoon: "マシンのセットアップは近日対応予定です。",
+    machineSetupTaskWaitingForInput: "入力待ち",
+    machineSetupRemoteSshTargetLabel: "SSH 接続先",
+    machineSetupRemoteSshAgentAuthLabel: "SSH エージェントを使う",
+    machineSetupRemoteSshKeyFileAuthLabel: "秘密鍵ファイルを使う",
+    machineSetupRemoteSshIdentityFileLabel: "秘密鍵ファイルのパス",
+    machineSetupRemoteRelayRuntimeLabel: "リモートマシンにも Relay ランタイムをインストールする",
+    machineSetupRemoteRelayRuntimeTitle: "リモート Relay ランタイム",
+    machineSetupRemoteRelayRuntimeReadyTitle: "リモートマシンで利用可能",
+    machineSetupRemoteRelayRuntimeReadySubtitle: "SSH セットアップ中に Relay ランタイムをインストールしました。次のネットワーク設定では、そのマシンのリモート Relay URL を使ってください。",
+    machineSetupRemoteRelayRuntimeUrlTitle: "リモート Relay URL",
+    machineSetupRemoteRelayKeepCurrentTitle: "現在の Relay を維持",
+    machineSetupRemoteRelayKeepCurrentSubtitle: "切り替えずにこの Relay URL を保存します。",
+    machineSetupRemoteRelaySwitchTitle: "この Relay に切り替える",
+    machineSetupRemoteRelaySwitchSubtitle: "今すぐ切り替えて、新しい Relay でセットアップを続行します。",
+    machineSetupRemoteRelaySwitchConfirmTitle: "Relay を切り替えますか？",
+    machineSetupRemoteRelaySwitchConfirmBody: ({ relayUrl }: { relayUrl: string }) =>
+      `Happier を ${relayUrl} に切り替えてセットアップを続行しますか？`,
+    machineSetupRemotePromptTrustAction: "ホストキーを信頼する",
+    machineSetupRemotePromptReplaceAction: "保存済みキーを置き換える",
+    machineSetupRemotePromptApproveAction: "ペアリングを承認",
+    localRelayRuntime: {
+      title: 'ローカル Relay ランタイム',
+      statusTitle: 'ステータス',
+      statusChecking: 'ローカル Relay ランタイムを確認しています',
+      statusNotInstalled: 'このコンピューターにはまだインストールされていません',
+      statusStopped: 'インストール済みですが、現在は実行されていません',
+      statusRunningHealthy: '正常に実行・応答しています',
+      statusRunningNeedsAttention: '実行中ですが、ヘルスチェックで注意が必要です',
+      versionTitle: 'インストール済みバージョン',
+      relayUrlTitle: 'ローカル Relay URL',
+      installOrUpdateAction: 'Relay ランタイムをインストールまたは更新',
+      startAction: 'Relay ランタイムを開始',
+      stopAction: 'Relay ランタイムを停止',
+      refreshAction: 'Relay の状態を更新',
+      footer: '他のデバイスを接続する前に、このコンピューターで動作するセルフホスト Relay を管理します。',
+      progressTitle: 'ローカル Relay ランタイムを更新しています',
+      progressStepInspect: 'ローカル Relay ランタイムを確認',
+      progressStepHealth: 'Relay のヘルスを確認',
+      progressStepInstall: 'Relay ランタイムをインストール',
+      progressStepStart: 'Relay ランタイムを開始',
+      progressStepStop: 'Relay ランタイムを停止',
+    },
+    localTailscale: {
+      title: 'Tailscale によるプライベートアクセス',
+      statusTitle: 'ステータス',
+      statusUnavailable: '先にローカル Relay ランタイムを起動してください',
+      statusIdle: 'まだ有効化されていません',
+      statusWorking: '安全なプライベートアクセスを設定しています',
+      statusReady: '他の tailnet デバイスから使用できます',
+      statusNeedsApproval: 'Tailscale の承認を待っています',
+      shareableUrlTitle: '共有可能なプライベート URL',
+      approvalTitle: '承認が必要です',
+      approvalSubtitle: 'Tailscale の承認フローを完了してから、ここに戻ってください。',
+      enableAction: 'Tailscale でプライベートアクセスを有効化',
+      refreshAction: 'プライベートアクセスを再確認',
+      openApprovalAction: 'Tailscale の承認を開く',
+      footer: 'これによりアクセスは tailnet 内に限定されます。スマホや別のコンピューターも同じ tailnet に参加している必要があります。',
+      progressTitle: 'Tailscale の安全なアクセスを設定しています',
+      progressStepDetect: 'Tailscale の利用可否を確認',
+      progressStepInstall: 'Tailscale をインストール',
+      progressStepLogin: 'Tailscale にサインイン',
+      progressStepServeEnable: 'Relay のプライベートアクセスを有効化',
+      progressStepVerifyUrl: '共有可能 URL を確認',
+    },
+    systemTaskStepPrepare: "タスクを準備",
+    systemTaskStepInstallRuntime: "ランタイムをインストール",
+    systemTaskStepFinish: "セットアップを完了",
+    systemTaskCurrentStepLabel: "現在の手順",
+    systemTaskLatestUpdateLabel: "最新の更新",
+    systemTaskBridgeUnavailable: "このビルドではシステムタスクをまだ利用できません。",
+    systemTaskStartFailed: "システムタスクを開始できませんでした。",
     appearance: "外観",
     appearanceSubtitle: "アプリの見た目をカスタマイズ",
     voiceAssistant: "音声アシスタント",
@@ -1878,10 +1949,10 @@ export const ja: TranslationStructure = {
     actionsSubtitle: "各アクションをアプリ、音声、統合のどこに表示するかを選択します。",
     prompts: "プロンプトとスキル",
     promptsSubtitle: "プロンプトライブラリ、テンプレート、スタック",
-    servers: "サーバー",
-	    serversSubtitle: "保存済みサーバー、グループ、既定値",
-		    systemStatus: "システム状態",
-		    systemStatusSubtitle: "サーバー、アカウント、マシン、デーモン",
+    servers: "Relay",
+    serversSubtitle: "保存済み Relay、グループ、既定値",
+			    systemStatus: "システム状態",
+			    systemStatusSubtitle: "Relay、アカウント、マシン、デーモン",
 		    mcpServers: "MCP サーバー",
 		    mcpServersSubtitle: "MCP サーバーとバインディングを管理します",
 		    mcpServersComingSoon: "MCP サーバー設定は近日対応予定です。",
@@ -2062,10 +2133,10 @@ export const ja: TranslationStructure = {
 	  systemStatus: {
 	    sections: {
 	      appHealth: "アプリ + 同期の状態",
-	      currentServer: "現在のサーバー",
+	      currentServer: "現在の Relay",
       identity: "サインイン情報",
-      configuredServers: "設定済みサーバー",
-      machinesActiveServer: "マシン（アクティブサーバー）",
+      configuredServers: "設定済み Relay",
+      machinesActiveServer: "マシン（アクティブ Relay）",
       machinesOtherServer: ({ server }: { server: string }) => `マシン（${server}）`,
       actions: "アクション",
     },
@@ -2077,14 +2148,14 @@ export const ja: TranslationStructure = {
       lastSync: "最終同期",
     },
     server: {
-      activeServer: "アクティブサーバー",
+      activeServer: "アクティブ Relay",
     },
     identity: {
       accountId: "アカウントID",
       username: "ユーザー名",
     },
     servers: {
-      noneConfigured: "サーバーが設定されていません",
+      noneConfigured: "Relayが設定されていません",
       active: "アクティブ",
     },
     machines: {
@@ -2096,10 +2167,10 @@ export const ja: TranslationStructure = {
       online: "オンライン",
       offline: "オフライン",
       fetchDoctorSnapshot: {
-        loading: "デーモンのサーバー/アカウントを取得中…",
+        loading: "デーモンのRelay/アカウントを取得中…",
         invalid: "マシンから doctor スナップショットを取得できませんでした",
       },
-      daemonAttributionUnknown: "デーモンのサーバー/アカウント: 不明",
+      daemonAttributionUnknown: "デーモンのRelay/アカウント: 不明",
       daemonAttribution: ({ serverUrl, accountId }: { serverUrl: string; accountId: string }) =>
         `デーモン: ${serverUrl} • ${accountId}`,
       daemonAttributionAge: ({ age }: { age: string }) => `最終確認: ${age}`,
@@ -2114,9 +2185,9 @@ export const ja: TranslationStructure = {
     },
     actions: {
       runDiagnosis: "診断を実行",
-      runDiagnosisSubtitle: "サーバー/アカウント/デーモンの不一致を検出",
+      runDiagnosisSubtitle: "Relay/アカウント/デーモンの不一致を検出",
       refreshMachineAttribution: "マシンのデーモン情報を更新",
-      refreshMachineAttributionSubtitle: "オンラインのマシンからデーモンのサーバー/アカウントを取得",
+      refreshMachineAttributionSubtitle: "オンラインのマシンからデーモンのRelay/アカウントを取得",
       copyJson: "System Status JSON をコピー",
       copyJsonSubtitle: "サポート向けに安全なスナップショットを共有",
     },
@@ -2133,7 +2204,7 @@ export const ja: TranslationStructure = {
       findings: "検出結果",
     },
     overview: {
-      activeServer: "アクティブサーバー",
+      activeServer: "アクティブ Relay",
       account: "アカウント",
       onlineMachines: "オンラインのマシン（アクティブサーバー）",
       cachedAttribution: ({ count }: { count: number }) => `キャッシュされた doctor スナップショット: ${count} 件`,
@@ -2683,6 +2754,13 @@ export const ja: TranslationStructure = {
     },
   },
 
+  settingsDesktop: {
+    title: 'Desktop',
+    footer: 'Controls Tauri desktop integrations on this computer.',
+    startOnLoginTitle: 'Launch at login',
+    startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',
+  },
+
   settingsNotifications: {
     badges: {
       title: "このデバイスのバッジ",
@@ -2936,6 +3014,20 @@ export const ja: TranslationStructure = {
       installSetupTitle: "インストール / セットアップ",
       installInfoSeeSetupGuide: "セットアップガイドを表示",
       installInfoUseProviderCliInstaller: "プロバイダーの CLI インストーラーを使用",
+      setup: {
+        selectionFooter: "1 つ以上のプロバイダーを選び、選択したマシンで 1 つずつ完了してください。",
+        startTitle: "プロバイダーをセットアップ",
+        startDescription: "選択したプロバイダーをキューに入れ、インストールとサインインを 1 つの標準フローで完了します。",
+        queueTitle: "プロバイダー設定キュー",
+        queueDescription: ({ provider }: { provider: string }) => `${provider} を完了してから、キュー内の次のプロバイダーに進みます。`,
+        activeDescription: "設定キュー内の現在のプロバイダー",
+        activeStatus: "進行中",
+        completedStatus: "完了",
+        skippedStatus: "スキップ",
+        skipAction: "このプロバイダーをスキップ",
+        completedTitle: "プロバイダー設定が完了しました",
+        completedDescription: "選択したプロバイダーのキューの最後まで完了しました。",
+      },
       cliSourcePreference: {
         title: "CLI ソースの優先順位",
         subtitle:
@@ -4245,74 +4337,95 @@ export const ja: TranslationStructure = {
 
   server: {
     // Used by Server Configuration screen (app/(app)/server.tsx)
-    serverConfiguration: "サーバー設定",
-    enterServerUrl: "サーバーURLを入力してください",
-    notValidHappyServer: "有効なHappier Serverではありません",
-    changeServer: "サーバーを変更",
-    continueWithServer: "このサーバーで続行しますか？",
+    serverConfiguration: "Relay 設定",
+    enterServerUrl: "Relay URLを入力してください",
+    notValidHappyServer: "有効なHappier Relayではありません",
+    changeServer: "Relayを変更",
+    continueWithServer: "このRelayで続行しますか？",
     resetToDefault: "デフォルトにリセット",
-    resetServerDefault: "サーバーをデフォルトにリセットしますか？",
+    resetServerDefault: "Relayをデフォルトにリセットしますか？",
     validating: "検証中...",
-    validatingServer: "サーバーを検証中...",
-    serverReturnedError: "サーバーがエラーを返しました",
-    failedToConnectToServer: "サーバーへの接続に失敗しました",
-    currentlyUsingCustomServer: "現在カスタムサーバーを使用中",
-    customServerUrlLabel: "カスタムサーバーURL",
+    validatingServer: "Relayを検証中...",
+    serverReturnedError: "Relayがエラーを返しました",
+    failedToConnectToServer: "Relayへの接続に失敗しました",
+    currentlyUsingCustomServer: "現在カスタムRelayを使用中",
+    customServerUrlLabel: "カスタムRelay URL",
     advancedFeatureFooter:
-      "これは高度な機能です。何をしているか理解している場合のみサーバーを変更してください。サーバー変更後は再度ログインが必要です。",
-    useThisServer: "このサーバーを使用",
+      "これは高度な機能です。何をしているか理解している場合のみRelayを変更してください。Relay変更後は再度ログインが必要です。",
+    useThisServer: "このRelayを使用",
     autoConfigHint:
-      "セルフホストの場合: まずサーバーを設定し、サインイン（またはアカウント作成）してから、ターミナルを接続してください。",
-    renameServer: "サーバー名を変更",
-    renameServerPrompt: "このサーバーの新しい名前を入力してください。",
-    renameServerGroup: "サーバーグループ名を変更",
+      "セルフホストの場合: まずRelayを設定し、サインイン（またはアカウント作成）してから、ターミナルを接続してください。",
+    renameServer: "Relay名を変更",
+    renameServerPrompt: "このRelayの新しい名前を入力してください。",
+    renameServerGroup: "Relayグループ名を変更",
     renameServerGroupPrompt:
-      "このサーバーグループの新しい名前を入力してください。",
-    serverNamePlaceholder: "サーバー名",
-    cannotRenameCloud: "クラウドサーバーの名前は変更できません。",
-    removeServer: "サーバーを削除",
+      "このRelayグループの新しい名前を入力してください。",
+    serverNamePlaceholder: "Relay名",
+    cannotRenameCloud: "クラウドRelayの名前は変更できません。",
+    removeServer: "Relayを削除",
     removeServerConfirm: ({ name }: { name: string }) =>
-      `保存済みサーバーから「${name}」を削除しますか？`,
-    removeServerGroup: "サーバーグループを削除",
+      `保存済みRelayから「${name}」を削除しますか？`,
+    removeServerGroup: "Relayグループを削除",
     removeServerGroupConfirm: ({ name }: { name: string }) =>
-      `保存済みサーバーグループから「${name}」を削除しますか？`,
-    cannotRemoveCloud: "クラウドサーバーは削除できません。",
-    signOutThisServer: "このサーバーからもサインアウトしますか？",
+      `保存済みRelayグループから「${name}」を削除しますか？`,
+    cannotRemoveCloud: "クラウドRelayは削除できません。",
+    signOutThisServer: "このRelayからもサインアウトしますか？",
     signOutThisServerPrompt:
-      "この端末に、このサーバーの保存済み認証情報が見つかりました。",
-    savedServersTitle: "保存済みサーバー",
+      "この端末に、このRelayの保存済み認証情報が見つかりました。",
+    savedServersTitle: "保存済み Relay",
     signedIn: "サインイン済み",
     signedOut: "サインアウト済み",
     authStatusUnknown: "認証状態が不明",
-    switchToServer: "このサーバーに切り替え",
+    switchToServer: "この Relay に切り替え",
     active: "アクティブ",
     default: "デフォルト",
-    addServerTitle: "サーバーを追加",
+    addServerTitle: "Relayを追加",
     switchForThisTab: "このタブのみ切り替え",
     makeDefaultOnDevice: "この端末のデフォルトにする",
-    serverNameLabel: "サーバー名",
+    serverNameLabel: "Relay名",
     addAndUse: "追加して使用",
       addTargetsTitle: "追加",
-      addServerSubtitle: "新しいサーバーを追加して切り替え",
-      notificationAddServerHint: "このサーバーはまだこの端末に保存されていません。続行するには下で追加してください。",
-      serverCount: ({ count }: { count: number }) => `${count} サーバー`,
-      useCanonicalServerUrlTitle: "正規のサーバーURLを使用しますか？",
+      addServerSubtitle: "新しいRelayを追加して切り替え",
+      notificationAddServerHint: "このRelayはまだこの端末に保存されていません。続行するには下で追加してください。",
+      serverCount: ({ count }: { count: number }) => `${count} Relay`,
+      useCanonicalServerUrlTitle: "正規のRelay URLを使用しますか？",
     useCanonicalServerUrlBody:
-      "このサーバーは他の端末からも使える正規のURLを案内しています。入力したURLの代わりにこちらを使用しますか？",
-    insecureHttpUrlTitle: "安全でないサーバーURL",
+      "このRelayは他の端末からも使える正規のURLを案内しています。入力したURLの代わりにこちらを使用しますか？",
+    insecureHttpUrlTitle: "安全でないRelay URL",
     insecureHttpUrlBody:
       "このURLは http:// を使用しており、スマホやLAN外からは動作しない可能性があります。可能であればHTTPSを使用してください。それでも続行しますか？",
     signedOutSwitchConfirmTitle: "接続されていません",
     signedOutSwitchConfirmBody:
-      "このサーバーに切り替えてホーム画面へ進み、サインインまたはアカウント作成を行いますか？",
-    addServerGroupTitle: "サーバーグループを追加",
-    addServerGroupSubtitle: "再利用可能なサーバーのグループを作成",
+      "このRelayに切り替えてホーム画面へ進み、サインインまたはアカウント作成を行いますか？",
+    addServerGroupTitle: "Relayグループを追加",
+    addServerGroupSubtitle: "再利用可能なRelayのグループを作成",
     serverGroupNameLabel: "グループ名",
-    serverGroupNamePlaceholder: "自分のサーバーグループ",
-    serverGroupServersLabel: "サーバー",
+    serverGroupNamePlaceholder: "自分のRelayグループ",
+    serverGroupServersLabel: "Relay",
     saveServerGroup: "グループを保存",
     serverGroupMustHaveServer:
-      "サーバーグループには少なくとも1つのサーバーが必要です。",
+      "Relayグループには少なくとも1つのRelayが必要です。",
+    relayDrift: {
+        bannerDifferentRelayTitle: 'バックグラウンドサービスが別の Relay に接続されています',
+        bannerDifferentRelayDescription: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) => `アプリ: ${activeRelayUrl} · バックグラウンドサービス: ${daemonRelayUrl}`,
+        bannerNeedsAuthTitle: 'バックグラウンドサービスがこの Relay にサインインする必要があります',
+        bannerNeedsAuthDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) => `アプリは ${activeRelayUrl} を使用していますが、バックグラウンドサービスにはまだ承認またはサインインが必要です。`,
+        bannerNotConfiguredTitle: 'バックグラウンドサービスはまだこの Relay に接続されていません',
+        bannerNotConfiguredDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) => `アプリは ${activeRelayUrl} を使用していますが、このコンピューターではまだバックグラウンドサービスの接続が完了していません。`,
+        bannerNotInstalledTitle: 'この Relay 用のバックグラウンドサービスがインストールされていません',
+        bannerNotInstalledDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `アプリは ${activeRelayUrl} を使用していますが、このコンピューターにはまだバックグラウンドサービスのインストールが必要です。`,
+        bannerNotRunningTitle: 'バックグラウンドサービスはインストール済みですが実行されていません',
+        bannerNotRunningDescription: ({ activeRelayUrl }: { activeRelayUrl: string }) =>
+            `アプリは ${activeRelayUrl} を使用していますが、バックグラウンドサービスは停止しており、再起動が必要です。`,
+        repairAction: 'バックグラウンドサービスをこの Relay に接続',
+        progressTitle: 'バックグラウンドサービスをこのRelayに接続しています',
+        progressStepPrepare: 'バックグラウンドサービスを準備',
+        progressStepConfigureRelay: 'Relay 接続を更新',
+        progressStepAuthenticate: 'サインインと承認を完了',
+        progressStepFinish: '修復を完了',
+        statusUnknown: '不明',
+    },
     retention: {
       title: "保持ポリシー",
       summary: "概要",
@@ -4335,14 +4448,14 @@ export const ja: TranslationStructure = {
       automationRunEvents: "自動化実行イベント",
     },
     multiServerView: {
-      title: "複数サーバー同時表示",
-      footer: "複数のサーバーを 1 つのセッション一覧にまとめるか選択します。",
+      title: "複数Relay同時表示",
+      footer: "複数のRelayを 1 つのセッション一覧にまとめるか選択します。",
       enableTitle: "同時表示を有効化",
-      enableSubtitle: "選択したサーバーのセッションをまとめて表示します",
+      enableSubtitle: "選択したRelayのセッションをまとめて表示します",
       presentationTitle: "表示モード",
       presentation: {
-        flatWithBadges: "サーバーバッジ付きのフラット一覧",
-        groupedByServer: "サーバーごとにグループ化",
+        flatWithBadges: "Relayバッジ付きのフラット一覧",
+        groupedByServer: "Relayごとにグループ化",
       },
     },
   },
@@ -6977,13 +7090,178 @@ settingsSession: {
     signInWithCertificate: "証明書でサインイン",
     linkOrRestoreAccount: "アカウントをリンクまたは復元",
     loginWithMobileApp: "モバイルアプリでログイン",
-    serverUnavailableTitle: "サーバーに接続できません",
+    serverUnavailableTitle: "Relay に接続できません",
     serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
-      `${serverUrl} に接続できません。再試行するか、サーバーを変更して続行してください。`,
-    serverIncompatibleTitle: "サーバーが未対応です",
+      `${serverUrl} に接続できません。再試行するか、別の Relay を選んで続行してください。`,
+    serverIncompatibleTitle: "Relay が未対応です",
     serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
-      `${serverUrl} のサーバーから想定外の応答が返されました。サーバーを更新するか、サーバーを変更して続行してください。`,
+      `${serverUrl} の Relay から想定外の応答が返されました。その Relay を更新するか、別の Relay を選んで続行してください。`,
   },
+
+      sessionGettingStarted: {
+
+          title: {
+
+              connectMachine: 'このコンピューターをセットアップ',
+
+              startDaemon: 'このコンピューターを再接続',
+
+              createSession: 'セッションを作成',
+
+              selectSession: 'セッションを選択',
+
+              loading: '読み込み中…',
+
+          },
+        cliFollowUpTitle: 'ターミナルでの代替手順（任意）',
+        manualDisclosure: {
+            show: '手動のターミナル手順を表示',
+            hide: '手動のターミナル手順を非表示',
+        },
+
+          subtitle: {
+
+              connectMachine: ({ targetLabel }: { targetLabel: string }) =>
+
+                  `デスクトップのセットアップフローを使って、このコンピューターを ${targetLabel} に接続します。ターミナル経由を使いたい場合のみ、手動手順を開いてください。`,
+
+              startDaemon: ({ targetLabel }: { targetLabel: string }) =>
+
+                  `デスクトップのセットアップフローを使って、${targetLabel} のバックグラウンドサービスを再接続します。すでにそのコンピューターにいる場合のみ、手動手順を開いてください。`,
+
+              createSession: '+ ボタン、またはターミナルから新しいセッションを開始します。',
+
+              selectSession: 'サイドバーからセッションを選ぶとここに表示されます。',
+
+              loading: 'マシンとセッションを取得しています…',
+
+          },
+
+          steps: {
+
+              openSetup: {
+
+                  title: 'デスクトップのセットアップフローを使う',
+
+                  description: 'これが推奨手順です。Relay を設定し、バックグラウンドサービスをインストールし、残りのセットアップもアプリ内で完了できます。',
+
+              },
+
+              startDaemonOpenSetup: {
+
+                  description: 'ターミナルのコマンドに切り替える前に、デスクトップのセットアップフローでこのコンピューターのバックグラウンドサービスを再接続または修復します。',
+
+              },
+
+              installCli: {
+
+                  title: 'CLI をインストール',
+
+                  description: '接続したいマシンで一度だけ実行してください。',
+
+                  copyLabel: 'インストールコマンド',
+
+              },
+
+              serverSetup: {
+
+                  title: 'アクティブな Relay を設定',
+
+                  description: '次のコマンドが正しい Relay を対象にするための一度きりの設定です。',
+
+                  copyLabel: 'Relay 設定',
+
+              },
+
+              authLogin: {
+
+                  title: 'サインイン',
+
+                  description: 'ターミナルをアカウントに接続するための QR / リンクを表示します。',
+
+                  copyLabel: '認証ログイン',
+
+              },
+
+              daemonInstall: {
+
+                  title: 'バックグラウンドサービスをインストール（推奨）',
+
+                  description: 'Happier をバックグラウンドで待機させ、リモート起動できるようにします。',
+
+                  copyLabel: 'デーモンのインストール',
+
+              },
+
+              startDaemonInstall: {
+
+                  description: '常駐するユーザーサービスをインストールして開始します。',
+
+              },
+
+              daemonStart: {
+
+                  title: 'バックグラウンドサービスを一度開始',
+
+                  description: '今すぐ動かしたいだけならこれを使います。',
+
+                  copyLabel: 'デーモンの開始',
+
+              },
+
+              createSession: {
+
+                  title: 'セッションを作成',
+
+                  description: 'アプリの + ボタンか、ターミナルからこれらのいずれかを実行します。',
+
+                  copyLabel: 'セッション作成',
+
+              },
+
+              startSession: {
+
+                  title: 'コンピューターからセッションを開始',
+
+                  description: 'またはアプリの + ボタンを使います。',
+
+                  copyLabel: 'セッション開始',
+
+              },
+
+          },
+
+      },
+
+
+  setupOnboarding: {
+          screenTitle: 'このコンピューターをセットアップ',
+          webDesktopOnlyTitle: 'デスクトップアプリが必要です',
+          webDesktopOnlyBody: 'このコンピューターをセットアップするにはデスクトップアプリを開いてください。Webアプリは状態を表示できますが、バックグラウンドサービスのインストールや設定はできません。',
+          preAuthTitle: 'サインイン前に Relay を選択',
+          preAuthBody: 'アカウントを作成・復元・サインインする前に、このコンピューターで使う Relay を選んでください。',
+          preAuthContinueHint: '続行すると、選択した Relay でサインインする画面に戻り、その後この画面に戻ってセットアップを完了します。',
+    currentRelayTitle: '選択中の Relay',
+    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `選択中の Relay: ${relayUrl}`,
+    savedRelaysTitle: '保存済みの Relay',
+    customRelayUrlLabel: 'Relay の URL',
+    relayNameLabel: 'Relay 名',
+    addAndUseRelay: 'Relay を追加',
+    changeRelayAction: '別の Relay URL を使う',
+          continueToAuth: '選択した Relay で続行',
+          continueWithLocalRelayAction: 'このローカル Relay で続行',
+    postAuthTitle: 'このコンピューターの設定を完了',
+    postAuthBody: 'サインインしました。ローカルのセットアップフローを続けて、このコンピューターを選択した Relay で使えるようにします。',
+    controlPanelTitle: '準備状況の概要',
+    activeRelaySummaryTitle: 'アクティブな Relay',
+    thisComputerSummaryTitle: 'このコンピューター',
+    nextActionSummaryTitle: '次のアクション',
+    thisComputerReady: 'この Relay で準備完了',
+    nextActionReady: '最初のセッションを作るか、下に別のコンピューターを追加してください。',
+    resumeIntentTitle: 'このコンピューターでセットアップを続ける',
+          resumeIntentBody: 'サインインまたはアカウント作成を行って、このコンピューターのセットアップを選択した Relay 向けに続けます。',
+          openSetupAction: 'このコンピューターをセットアップ',
+      },
 
   review: {
     // Used by utils/requestReview.ts

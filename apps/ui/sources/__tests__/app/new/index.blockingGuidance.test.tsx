@@ -141,6 +141,7 @@ vi.mock('@/components/sessions/new/components/NewSessionWizard', () => ({
 vi.mock('@/components/ui/popover', () => ({
     PopoverBoundaryProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
     PopoverPortalTargetProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 afterEach(() => {

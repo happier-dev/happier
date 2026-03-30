@@ -39,6 +39,8 @@ import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { isTauriDesktop } from '@/utils/platform/tauri';
+import { DesktopSettingsSection } from '@/components/settings/desktop/DesktopSettingsSection';
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -82,6 +84,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const anthropicAgentCore = getAgentCore(anthropicAgentId);
 
     const showHiddenSettingsButtons = devModeEnabled;
+    const showDesktopSettings = isTauriDesktop();
 
     const { connectTerminal, connectWithUrl, isLoading } = useConnectTerminal();
 
@@ -245,6 +248,8 @@ export const SettingsView = React.memo(function SettingsView() {
                     />
                 </ItemGroup>
             ) : null}
+
+            {showDesktopSettings ? <DesktopSettingsSection /> : null}
 
             {/* Connect Terminal */}
             {!isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb) && (

@@ -174,7 +174,7 @@ describe('ToolCallsGroupView (structured tool-call rendering)', () => {
         expect(renderedMessageViews[0]?.message?.meta?.happier?.kind).toBe('review_findings.v1');
     });
 
-    it('renders collapsed SubAgentRun previews through MessageView in activity feed mode', async () => {
+    it('renders collapsed SubAgentRun previews through ToolTimelineRow in activity feed mode so expansion does not reset as child items stream', async () => {
         renderedMessageViews.length = 0;
         renderedToolTimelineRows.length = 0;
         toolChromeMode = 'activity_feed';
@@ -206,9 +206,9 @@ describe('ToolCallsGroupView (structured tool-call rendering)', () => {
             expanded: false,
         });
 
-        expect(renderedMessageViews).toHaveLength(1);
-        expect(renderedToolTimelineRows).toHaveLength(0);
-        expect(renderedMessageViews[0]?.message?.tool?.name).toBe('SubAgentRun');
+        expect(renderedMessageViews).toHaveLength(0);
+        expect(renderedToolTimelineRows).toHaveLength(1);
+        expect(renderedToolTimelineRows[0]?.tool?.name).toBe('SubAgentRun');
     });
 
     it('keeps expanded childless SubAgentRun rows on MessageView in activity feed mode before child transcript items arrive', async () => {

@@ -235,7 +235,7 @@ function buildProps() {
 }
 
 describe('NewSessionWizard agent input chips', () => {
-    it('provides a screen-local popover portal + boundary for chip popovers', async () => {
+    it('provides a screen-local popover boundary for chip popovers (portal scope comes from the /new screen)', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         const popoverBoundaryRef = { current: null } as any;
 
@@ -245,7 +245,7 @@ describe('NewSessionWizard agent input chips', () => {
         } as any));
 
         const portalProviders = screen.tree.findAll((node: any) => node?.type === 'PopoverPortalTargetProvider');
-        expect(portalProviders.length).toBe(1);
+        expect(portalProviders.length).toBe(0);
 
         const boundaryProviders = screen.tree.findAll((node: any) => node?.type === 'PopoverBoundaryProvider');
         expect(boundaryProviders.length).toBe(1);
@@ -262,7 +262,6 @@ describe('NewSessionWizard agent input chips', () => {
                 ...buildProps(),
                 agent: {
                     ...buildProps().agent,
-                    agentPickerTitle: 'Select engine',
                     agentPickerOptions: [
                         { id: 'agent:claude', label: 'Claude' },
                         { id: 'agent:codex', label: 'Codex' },
@@ -275,7 +274,7 @@ describe('NewSessionWizard agent input chips', () => {
         expect(AgentInputMock).toHaveBeenCalled();
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
 
-        expect(props.agentPickerTitle).toBe('Select engine');
+        expect(props.agentPickerTitle).toBeUndefined();
         expect(props.agentPickerSelectedOptionId).toBe('agent:claude');
         expect(props.agentPickerOptions).toEqual([
             { id: 'agent:claude', label: 'Claude' },

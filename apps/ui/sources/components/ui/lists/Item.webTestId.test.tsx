@@ -1,7 +1,9 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
+import { Pressable } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { Text } from '@/components/ui/text/Text';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 
@@ -30,6 +32,17 @@ vi.mock('@/components/ui/lists/itemGroupRowCorners', () => ({
 }));
 
 describe('Item web testID forwarding', () => {
+    function findClosestPressableAncestor(node: renderer.ReactTestInstance): renderer.ReactTestInstance | null {
+        let current = node.parent;
+        while (current) {
+            if (String(current.type) === 'Pressable') {
+                return current;
+            }
+            current = current.parent;
+        }
+        return null;
+    }
+
     it('forwards testID as data-testid on interactive web rows', async () => {
         const { Item } = await import('./Item');
         const screen = await renderScreen(<Item
@@ -44,6 +57,27 @@ describe('Item web testID forwarding', () => {
         expect(row?.props.testID).toBe('settings-appearance-themePreference-cycle');
         expect(row?.props['data-testid']).toBe('settings-appearance-themePreference-cycle');
         expect(row?.props.accessibilityRole).toBe('button');
+    });
+
+    it('keeps right-side actions outside the row pressable on web', async () => {
+        const { Item } = await import('./Item');
+        const screen = await renderScreen(
+            <Item
+                testID="item-with-actions"
+                title="Relay"
+                onPress={() => {}}
+                rightElement={(
+                    <Pressable testID="item-right-action" onPress={() => {}}>
+                        <Text>Action</Text>
+                    </Pressable>
+                )}
+            />,
+        );
+
+        const row = screen.findByTestId('item-with-actions');
+        const action = screen.findByTestId('item-right-action');
+
+        expect(findClosestPressableAncestor(action as renderer.ReactTestInstance)).not.toBe(row);
     });
 
     it('forwards testID as data-testid on non-interactive web rows', async () => {

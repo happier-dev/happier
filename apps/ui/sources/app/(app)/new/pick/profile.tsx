@@ -18,7 +18,7 @@ import { SecretRequirementModal, type SecretRequirementModalResult } from '@/com
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
-import { PopoverPortalTargetProvider } from '@/components/ui/popover';
+import { PopoverScope } from '@/components/ui/popover';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
@@ -380,7 +380,7 @@ export default React.memo(function ProfilePickerScreen() {
     }, [headerLeft]);
 
     return (
-        <PopoverPortalTargetProvider>
+        <PopoverScope>
             <>
                 <Stack.Screen
                     options={screenOptions}
@@ -445,7 +445,7 @@ export default React.memo(function ProfilePickerScreen() {
                     />
                 )}
             </>
-        </PopoverPortalTargetProvider>
+        </PopoverScope>
     );
 });
 

@@ -5,7 +5,6 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
-import { PopoverPortalTargetProvider } from '@/components/ui/popover';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
@@ -124,8 +123,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                     justifyContent: shouldBottomAnchor ? 'flex-end' : 'center',
                 }}
             >
-                <PopoverPortalTargetProvider>
-                    <PopoverBoundaryProvider boundaryRef={props.popoverBoundaryRef}>
+                <PopoverBoundaryProvider boundaryRef={props.popoverBoundaryRef}>
                         <View
                             style={{
                                 width: '100%',
@@ -140,7 +138,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                                     paddingBottom: props.newSessionBottomPadding,
                                 }}
                             >
-                                <View style={{ paddingHorizontal: props.newSessionSidePadding }}>
+                                <View style={{ paddingHorizontal: props.newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
                                     <View style={{ width: '100%', alignSelf: 'center' }}>
                                         <AgentInput
                                             value={props.sessionPrompt}
@@ -157,7 +155,6 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                                             agentType={props.agentType}
                                             agentLabel={props.agentLabel}
                                             onAgentClick={props.handleAgentClick}
-                                            agentPickerTitle={props.agentPickerTitle}
                                             agentPickerOptions={props.agentPickerOptions}
                                             agentPickerSelectedOptionId={props.agentPickerSelectedOptionId}
                                             onAgentPickerSelect={props.onAgentPickerSelect}
@@ -216,7 +213,6 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                             </View>
                         </View>
                     </PopoverBoundaryProvider>
-                </PopoverPortalTargetProvider>
             </View>
         </KeyboardAvoidingView>
     );

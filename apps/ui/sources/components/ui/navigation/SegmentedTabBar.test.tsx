@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SegmentedTab } from './SegmentedTabBar';
 import { installNavigationCommonModuleMocks } from './navigationTestHelpers';
 import { renderScreen } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,14 +19,7 @@ installNavigationCommonModuleMocks({
     },
 });
 
-const theme = {
-    colors: {
-        surface: '#ffffff',
-        surfaceHigh: '#F8F8F8',
-        text: '#000000',
-        textSecondary: '#49454F',
-    },
-};
+const theme = lightTheme;
 
 const TABS: ReadonlyArray<SegmentedTab<'alpha' | 'beta' | 'gamma'>> = [
     { id: 'alpha', label: 'Alpha' },

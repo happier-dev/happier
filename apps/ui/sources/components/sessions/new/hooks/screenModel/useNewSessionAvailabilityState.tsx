@@ -209,7 +209,8 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         initialRefreshHandledKeyRef.current = initialRefreshKey;
 
         return runAfterInteractionsWithFallback(() => {
-            cliAvailability.refresh();
+            // Bypass daemon-side probe caches so newly installed CLIs become selectable immediately.
+            cliAvailability.refresh({ bypassCache: true });
             refreshSelectedMachineCapabilities();
         });
     }, [cliAvailability.refresh, initialRefreshKey, refreshSelectedMachineCapabilities, selectedMachineOnline]);

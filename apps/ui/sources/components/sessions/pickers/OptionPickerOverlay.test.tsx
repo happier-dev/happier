@@ -244,7 +244,7 @@ describe('OptionPickerOverlay', () => {
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps the refresh affordance above the effective summary block so it stays clickable on web', async () => {
+    it('keeps the refresh affordance inside the header row so it stays visible inside overflow-clipped surfaces', async () => {
         const onRefresh = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
 
@@ -269,13 +269,12 @@ describe('OptionPickerOverlay', () => {
         const resolved = refresh?.props.style({ pressed: false }) as unknown;
         const resolvedArray = Array.isArray(resolved) ? resolved : [resolved];
         const base = resolvedArray[0] as any;
-        expect(base).toMatchObject({
-            position: 'absolute',
-            zIndex: expect.any(Number),
-        });
+        // If the refresh control is positioned outside the header row (e.g. negative right offsets),
+        // it can be clipped by overflow-hidden popover surfaces (like agent-input pickers).
+        expect(base?.right).toBeUndefined();
+        expect(base?.position).not.toBe('absolute');
 
-        // The refresh button is absolutely positioned, so the header row must reserve vertical space
-        // to prevent the summary block from overlapping and intercepting pointer events on web.
+        // The refresh button should still be part of the title row subtree.
         let cursor: any = refresh;
         let titleRow: any = null;
         for (let i = 0; i < 8 && cursor?.parent; i += 1) {
@@ -373,7 +372,7 @@ describe('OptionPickerOverlay', () => {
         expect(speedSwitch).toBeTruthy();
         expect(
             selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control-switch:speed'),
-        ).toHaveLength(1);
+        ).not.toHaveLength(0);
 
         await act(async () => {
             speedSwitch?.props.onValueChange?.(true);

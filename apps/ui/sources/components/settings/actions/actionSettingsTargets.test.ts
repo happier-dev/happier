@@ -37,6 +37,22 @@ describe('actionSettingsTargets', () => {
         });
     });
 
+    it('stores approval required surfaces for slash_command targets as ui_slash_command', () => {
+        const next = setActionTargetApprovalRequired({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId: 'review.start',
+            targetId: 'slash_command',
+            approvalRequired: true,
+        });
+
+        expect(next.actions['review.start']).toEqual({
+            enabledPlacements: [],
+            disabledSurfaces: [],
+            disabledPlacements: [],
+            approvalRequiredSurfaces: ['ui_slash_command'],
+        });
+    });
+
     it('preserves approvalRequiredSurfaces when mutating other target settings', () => {
         const seeded = setActionTargetApprovalRequired({
             settings: DEFAULT_ACTIONS_SETTINGS_V1,

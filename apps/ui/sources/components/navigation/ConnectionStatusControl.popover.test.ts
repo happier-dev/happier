@@ -167,6 +167,7 @@ vi.mock('@/components/ui/popover', () => ({
             typeof props.children === 'function' ? props.children({ maxHeight: 520 }) : props.children,
         );
     },
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({

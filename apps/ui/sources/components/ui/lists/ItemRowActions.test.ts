@@ -20,6 +20,7 @@ vi.mock('@/components/ui/popover', () => {
     const React = require('react');
     return {
         usePopoverBoundaryRef: () => null,
+        PopoverScope: (props: any) => React.createElement(React.Fragment, null, props.children),
         Popover: (props: any) => {
             if (!props.open) return null;
             return React.createElement(

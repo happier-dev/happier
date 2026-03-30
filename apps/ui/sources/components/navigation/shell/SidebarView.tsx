@@ -14,7 +14,7 @@ import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { sync } from '@/sync/sync';
-import { PopoverBoundaryProvider } from '@/components/ui/popover';
+import { PopoverScope } from '@/components/ui/popover';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -419,7 +419,7 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     return (
         <>
             <View ref={popoverBoundaryRef} style={[styles.container, { paddingTop: safeArea.top }]}>
-                <PopoverBoundaryProvider boundaryRef={popoverBoundaryRef}>
+                <PopoverScope boundaryRef={popoverBoundaryRef}>
                 <View style={[styles.header, { height: headerHeight }]}>
                     {/* Logo - always first */}
                     <Pressable
@@ -517,7 +517,7 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                 )}
                 {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
                 <MainView variant="sidebar" />
-                </PopoverBoundaryProvider>
+                </PopoverScope>
             </View>
         </>
     )

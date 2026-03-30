@@ -95,6 +95,7 @@ vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
 
 describe('ChainTranscriptList presentation parity', () => {
     beforeEach(() => {
+        vi.resetModules();
         resetTranscriptCommonModuleMockState();
         settings.transcriptGroupingMode = 'linear';
         settings.transcriptGroupToolCalls = true;

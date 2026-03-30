@@ -52,6 +52,7 @@ import {
     useSessionHandoffSourceReachability,
     type SessionHandoffRuntimeAvailability,
 } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 
 // Animated status dot component
@@ -241,6 +242,17 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         }
     }, [sessionLogPath]);
 
+    const handleExitAfterSessionMutation = useCallback(() => {
+        safeRouterBack({
+            router,
+            fallbackHref: `/session/${session.id}`,
+        });
+        safeRouterBack({
+            router,
+            fallbackHref: '/',
+        });
+    }, [router, session.id]);
+
     const canStopSession = !session.accessLevel;
     const isArchivedSession = session.archivedAt != null;
     const canArchiveSession = canManageSharing && !session.active && !isArchivedSession;
@@ -251,7 +263,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         pinnedSessionKeysV1.includes(`${resolvedServerId}:${session.id}`),
     );
 
-    const [stoppingSession, performStop] = useHappyAction(async () => {
+    const handleStopAndMaybeArchive = useCallback(async () => {
         await stopSessionAndMaybeArchive({
             sessionId: session.id,
             hideInactiveSessions,
@@ -261,9 +273,9 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             stopErrorMessage: t('sessionInfo.failedToStopSession'),
             archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
         });
-        router.back();
-        router.back();
-    });
+        handleExitAfterSessionMutation();
+    }, [handleExitAfterSessionMutation, hideInactiveSessions, isPinnedSession, session.id]);
+    const [stoppingSession, performStop] = useHappyAction(handleStopAndMaybeArchive);
 
     const handleStopSession = useCallback(() => {
         Modal.alert(
@@ -280,15 +292,15 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         );
     }, [performStop]);
 
-    const [archivingSession, performArchive] = useHappyAction(async () => {
+    const handleArchive = useCallback(async () => {
         const result = await sessionArchiveWithServerScope(session.id, { serverId: null });
         if (!result.success) {
             throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
         }
         clearSessionVisibleWhenInactive(session.id);
-        router.back();
-        router.back();
-    });
+        handleExitAfterSessionMutation();
+    }, [handleExitAfterSessionMutation, session.id]);
+    const [archivingSession, performArchive] = useHappyAction(handleArchive);
 
     const handleForkAction = useCallback(async () => {
         const res = await executeSessionForkAction({
@@ -368,12 +380,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         );
 
         if (newName?.trim()) {
-            const result = await sessionRename(session.id, newName.trim());
+            const result = await sessionRename(session.id, newName.trim(), { serverId: sessionServerId });
             if (!result.success) {
                 Modal.alert(t('common.error'), result.message || t('sessionInfo.failedToRenameSession'));
             }
         }
-    }, [sessionName, session.id]);
+    }, [sessionName, session.id, sessionServerId]);
 
     const formatDate = useCallback((timestamp: number) => {
         return new Date(timestamp).toLocaleString();

@@ -28,6 +28,62 @@ installPopoverCommonModuleMocks({
 });
 
 describe('Popover (native keyboard)', () => {
+    it('treats measureInWindow coordinates as portal-relative when measureLayout is unavailable (prevents double offset in iOS drawers)', async () => {
+        vi.useFakeTimers();
+
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            // Portal root is offset in the window (e.g. contained modal / drawer).
+            measureInWindow: (cb: any) => cb(0, 200, 1000, 600),
+        } as any;
+
+        // iOS/react-native-screens quirk: some contained presentations can report anchor coordinates
+        // that are already portal-relative via measureInWindow.
+        const anchorNode = {
+            measureInWindow: (cb: any) => cb(0, 80, 100, 40),
+            // No measureLayout available (common for some native wrappers / refs).
+        } as any;
+
+        const anchorRef = { current: anchorNode } as any;
+        const portalTarget = {
+            rootRef: { current: portalRootNode },
+            layout: { width: 1000, height: 600 },
+        } as const;
+
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover
+                        open
+                        anchorRef={anchorRef}
+                        portal={{ native: true }}
+                        placement="bottom"
+                        gap={0}
+                        maxHeightCap={320}
+                        onRequestClose={() => {}}
+                    >
+                        {() => React.createElement('PopoverChild')}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+
+        await flushHookEffects({ cycles: 4, turns: 10, frames: 6, advanceTimersMs: 120 });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const style = flattenStyle(contentView?.props?.style);
+        // With portal-relative anchor coords (y=80), bottom placement should be y + height = 120.
+        expect(style.top).toBe(120);
+
+        vi.useRealTimers();
+    });
+
     it('recomputes position when the keyboard shows/hides so popovers remain visible', async () => {
         vi.useFakeTimers();
 

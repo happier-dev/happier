@@ -57,6 +57,7 @@ vi.mock('@/components/ui/lists/ItemGroupColumns', () => createPassThroughModule(
 vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
 vi.mock('@/components/ui/popover', () => ({
     usePopoverBoundaryRef: () => popoverBoundaryRefState.value,
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 describe('AutomationSettingsForm', () => {
     it('uses automation-state toggle copy for automation-only flows', async () => {

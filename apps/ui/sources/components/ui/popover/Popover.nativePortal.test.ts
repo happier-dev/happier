@@ -116,6 +116,61 @@ describe('Popover (native portal)', () => {
         expect(style.width).toBe(30);
     });
 
+    it('anchors top-placed portals using the portal root height (not the window height) so contained sheets/drawers do not offset', async () => {
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = { _id: 'portal-root' };
+
+        const anchorRef = {
+            current: {
+                measureLayout: (relativeTo: any, onSuccess: any) => {
+                    if (relativeTo !== portalRootNode) throw new Error('expected measureLayout relativeTo portal root');
+                    // Simulate a trigger near the bottom of a contained sheet/drawer.
+                    queueMicrotask(() => onSuccess(10, 450, 30, 40));
+                },
+                // If Popover mistakenly uses window coords here, it will position incorrectly.
+                measureInWindow: (cb: any) => queueMicrotask(() => cb(999, 999, 30, 40)),
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(
+                PopoverPortalTargetContextProvider,
+                {
+                    // Simulate a contained modal/sheet that's shorter than the device window.
+                    value: { rootRef: { current: portalRootNode } as any, layout: { width: 390, height: 794 } },
+                    children: React.createElement(Popover, {
+                        open: true,
+                        anchorRef,
+                        placement: 'top',
+                        portal: { native: true },
+                        backdrop: false,
+                        children: () => React.createElement(PopoverChild),
+                    } as any),
+                } as any,
+            ),
+            React.createElement(OverlayPortalHost),
+        ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const container = tree ? findPopoverContentView(tree) : null;
+        const style = flattenTestStyle(container?.props?.style);
+
+        // placement=top uses `bottom` positioning pinned to (anchorTop - gap).
+        // Expected bottom = portalHeight - (anchorTop - gap) = 794 - (450 - 8) = 352.
+        expect(style.bottom).toBe(352);
+        expect(style.left).toBe(10);
+        expect(style.width).toBe(30);
+    });
+
     it('falls back to deriving portal-root-relative anchor coordinates from window measurements when measureLayout is unavailable', async () => {
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');

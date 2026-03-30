@@ -9,11 +9,12 @@ import { installConnectionStatusCommonModuleMocks } from './connectionStatusTest
 let endpointStatus: import('@happier-dev/connection-supervisor').ManagedConnectionPhase = 'online';
 let socketStatus: import('./connectionHealthTypes').ConnectionSocketStatus = 'connected';
 let hasSyncError: boolean = false;
+let machines: Array<Record<string, unknown>> = [];
 
 installConnectionStatusCommonModuleMocks({
     activeSelectionMachineGroups: () => ({
         useActiveSelectionMachineGroups: () => ({
-            visibleMachineGroups: [{ status: 'idle', machines: [] }],
+            visibleMachineGroups: [{ status: 'idle', machines }],
         }),
     }),
     serverProfiles: () => ({
@@ -47,6 +48,7 @@ describe('useConnectionHealth (endpoint connectivity integration)', () => {
         endpointStatus = 'offline';
         socketStatus = 'connected';
         hasSyncError = true;
+        machines = [];
 
         const { useConnectionHealth } = await import('./useConnectionHealth');
         const hook = await renderHook(() => useConnectionHealth());
@@ -58,11 +60,29 @@ describe('useConnectionHealth (endpoint connectivity integration)', () => {
         endpointStatus = 'auth_failed';
         socketStatus = 'connected';
         hasSyncError = false;
+        machines = [];
 
         const { useConnectionHealth } = await import('./useConnectionHealth');
         const hook = await renderHook(() => useConnectionHealth());
 
         expect(hook.getCurrent().kind).toBe('auth_required');
         expect(hook.getCurrent().statusLabelKey).toBe('status.actionRequired');
+    });
+
+    it('surfaces machine_not_ready when machines are online but none are ready', async () => {
+        endpointStatus = 'online';
+        socketStatus = 'connected';
+        hasSyncError = false;
+        machines = [
+            { id: 'm1', active: true, activeAt: Date.now(), revokedAt: null, daemonState: { status: 'offline' } },
+            { id: 'm2', active: true, activeAt: Date.now(), revokedAt: null, daemonState: { status: 'offline' } },
+        ];
+
+        const { useConnectionHealth } = await import('./useConnectionHealth');
+        const hook = await renderHook(() => useConnectionHealth());
+
+        expect(hook.getCurrent().kind).toBe('machine_not_ready');
+        expect(hook.getCurrent().statusLabelKey).toBe('status.actionRequired');
+        expect(hook.getCurrent().machineLabelKey).toBe('status.online');
     });
 });

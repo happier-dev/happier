@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
@@ -50,7 +50,9 @@ function makeDiffMessage(): Message {
 }
 
 describe('deriveTurnChangeSetsFromMessages', () => {
-    it('reads canonical turn-scoped Diff tool messages into turn change sets', () => {
+    it('reads canonical turn-scoped Diff tool messages into turn change sets', async () => {
+        vi.resetModules();
+        const { deriveTurnChangeSetsFromMessages } = await import('../derivation/deriveTurnChangeSetsFromMessages');
         const result = deriveTurnChangeSetsFromMessages([makeDiffMessage()]);
 
         expect(result).toEqual([

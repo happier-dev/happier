@@ -9,7 +9,8 @@ export type ConnectionHealthKind =
     | 'auth_required'
     | 'server_error'
     | 'no_machine'
-    | 'machine_offline';
+    | 'machine_offline'
+    | 'machine_not_ready';
 
 export type ConnectionHealthStatusLabelKey =
     | 'status.connected'
@@ -28,6 +29,7 @@ export type ConnectionHealthMachineLabelKey =
 export type ConnectionHealthMachineGroup = Readonly<{
     machineCount: number | null;
     onlineCount: number | null;
+    readyCount?: number | null;
     status: MachineListStatus;
 }>;
 

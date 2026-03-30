@@ -24,4 +24,16 @@ describe('metro.config.js (web)', () => {
             filePath: join(uiDir, 'sources/platform/shims/reactNativeWebShim.ts'),
         });
     });
+
+    it('throws unresolved package errors instead of returning null from the custom resolver', () => {
+        const uiDir = getUiDir();
+        const require = createRequire(import.meta.url);
+        const config = require(join(uiDir, 'metro.config.js'));
+
+        expect(() => config.resolver.resolveRequest(
+            { originModulePath: join(uiDir, 'index.ts') },
+            '@happier-dev/definitely-missing-package',
+            'web',
+        )).toThrow();
+    });
 });

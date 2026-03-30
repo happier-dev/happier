@@ -13,6 +13,7 @@ import { ToolInlineBody } from '@/components/tools/shell/views/ToolInlineBody';
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
 import { deriveToolTimelineDensity } from '@/components/tools/normalization/policy/deriveToolTimelineDensity';
+import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import {
     isPendingUserActionRequest,
     resolvePermissionPromptSurface,
@@ -32,6 +33,8 @@ import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happie
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { PermissionFooter } from '../permissions/PermissionFooter';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
+import { Text } from '@/components/ui/text/Text';
+import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
 
 export const ToolTimelineRow = React.memo((props: {
     tool: ToolCall;
@@ -207,9 +210,18 @@ export const ToolTimelineRow = React.memo((props: {
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const showTaskRunningIndicator = isSubAgentTranscriptToolName(normalizedToolName);
+    const statusKind = resolveToolStatusIndicatorKind(toolForRendering);
+    const errorSummary = statusKind === 'error' ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error')) : null;
     const headerStatusIndicator =
-        toolForRendering.state === 'error'
-            ? <Ionicons testID="tool-timeline-row-error" name="alert-circle" size={18} color={theme.colors.textDestructive} />
+        statusKind === 'error'
+            ? (
+                <View style={styles.headerError}>
+                    <Ionicons testID="tool-timeline-row-error" name="alert-circle" size={18} color={theme.colors.textDestructive} />
+                    <Text style={styles.headerErrorText} numberOfLines={1}>
+                        {errorSummary}
+                    </Text>
+                </View>
+            )
             : showTaskRunningIndicator && toolForRendering.state === 'running'
                 ? <ActivityIndicator size="small" />
                 : null;
@@ -326,5 +338,17 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
+    },
+    headerError: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        minWidth: 0,
+    },
+    headerErrorText: {
+        color: theme.colors.textDestructive,
+        fontSize: 12,
+        fontWeight: '600',
+        maxWidth: 220,
     },
 }));

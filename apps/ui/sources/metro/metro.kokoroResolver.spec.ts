@@ -49,6 +49,16 @@ describe('metro.config.js (kokoro)', () => {
     );
     expect(resFs?.type).toBe('sourceFile');
     expect(String(resFs?.filePath)).toBe(resolve(process.cwd(), 'sources/platform/nodeShims/nodeFsShim.ts'));
+
+    const resFsPromises = config.resolver.resolveRequest(
+      { resolveRequest: () => ({ type: 'empty' }) },
+      'node:fs/promises',
+      'ios',
+    );
+    expect(resFsPromises?.type).toBe('sourceFile');
+    expect(String(resFsPromises?.filePath)).toBe(
+      resolve(process.cwd(), 'sources/platform/nodeShims/nodeFsPromisesShim.ts'),
+    );
   });
 
   it('normalizes the monorepo web entry request back to the UI workspace entry file', () => {

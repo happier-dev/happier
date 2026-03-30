@@ -177,6 +177,7 @@ type CapturedActionMenuContentProps = Readonly<{
 const capturedActionMenuContent: { last: CapturedActionMenuContentProps | null } = { last: null };
 const capturedSimpleOptionsPopover: { last: Record<string, unknown> | null } = { last: null };
 const capturedChipPickerPopover: { last: Record<string, unknown> | null } = { last: null };
+const capturedPermissionPicker: { last: Record<string, unknown> | null } = { last: null };
 
 function renderPopoverChildren(
     props: Readonly<{
@@ -249,7 +250,10 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
 }));
 
 vi.mock('./components/PermissionModePicker', () => ({
-    PermissionModePicker: () => null,
+    PermissionModePicker: (props: Record<string, unknown>) => {
+        capturedPermissionPicker.last = props;
+        return null;
+    },
 }));
 
 vi.mock('./components/AgentInputActionMenuPopoverContent', () => ({
@@ -296,6 +300,7 @@ describe('AgentInput (action menu popover props)', () => {
 
     it('anchors the permission popover to the permission chip and uses the shared popover sizing', async () => {
         vi.resetModules();
+        capturedPermissionPicker.last = null;
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -322,6 +327,42 @@ describe('AgentInput (action menu popover props)', () => {
         expect(popoverProps?.maxHeightCap).toBe(420);
         expect(popoverProps?.maxWidthCap).toBe(420);
         expect(popoverProps?.portal?.matchAnchorWidth).toBe(false);
+    });
+
+    it('closes the permission popover after selecting a mode', async () => {
+        vi.resetModules();
+        captured.last = null;
+        capturedPermissionPicker.last = null;
+        const { AgentInput } = await import('./AgentInput');
+
+        const onPermissionModeChange = vi.fn();
+        const screen = await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionModeChange={onPermissionModeChange}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const basePopoverCount = screen.findAllByType('Popover').length;
+        const permissionPressable = screen.findByTestId('agent-input-permission-chip');
+
+        await screen.pressByTestIdAsync('agent-input-permission-chip');
+
+        expect(screen.findAllByType('Popover')).toHaveLength(basePopoverCount + 1);
+        expect(typeof (capturedPermissionPicker.last as any)?.onSelect).toBe('function');
+
+        act(() => {
+            (capturedPermissionPicker.last as any).onSelect('default');
+        });
+
+        expect(onPermissionModeChange).toHaveBeenCalledWith('default');
+        expect(screen.findAllByType('Popover')).toHaveLength(basePopoverCount);
+        expect(
+            screen.findAllByType('Popover').some((node) => (node.props as any).anchorRef === (permissionPressable as any).props.ref),
+        ).toBe(false);
     });
 
     it('routes collapsed delivery actions through the shared chip-picker popover anchored to the action menu button', async () => {

@@ -5,6 +5,8 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { AgentInputEngineDetail } from '@/components/sessions/agentInput/components/AgentInputEngineDetail';
+import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
+import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
 import {
     useNewSessionPreflightModelsState,
@@ -19,6 +21,11 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     capabilityServerId: string;
     cwd?: string | null;
     capabilityProbeContext?: NewSessionCapabilityProbeContext | null;
+    /**
+     * Optional additional probe surface to merge into the model section's refresh affordance.
+     * New-session wants one refresh button that can also refresh CLI detection.
+     */
+    refreshProbe?: OptionPickerProbeState | null;
     selectedModelId?: string | null;
     selectedSessionModeId?: string | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
@@ -155,6 +162,14 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         }) ?? null;
     }, [modelOptions, props.backendTarget, selectedConfigOverrides, selectedModelId]);
 
+    const unifiedProbe = React.useMemo(() => {
+        return mergeOptionPickerProbes([
+            props.refreshProbe ?? null,
+            modelProbe ?? null,
+            configProbe ?? null,
+        ]);
+    }, [configProbe, modelProbe, props.refreshProbe]);
+
     return (
         <AgentInputEngineDetail
             modelOptions={modelOptions}
@@ -163,7 +178,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             modelNotes={[]}
             modelEmptyText={t('agentInput.model.configureInCli')}
             canEnterCustomModel={canEnterCustomModel}
-            modelProbe={modelProbe}
+            modelProbe={unifiedProbe}
             onSelectModel={(modelId) => {
                 publishSelection({
                     ...selectionRef.current,
@@ -196,8 +211,6 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                     },
                 });
             }}
-            configProbe={configProbe}
-            configRefreshTestID="agent-input-config-options-refresh"
             sectionOrder={['model', 'config']}
         />
     );

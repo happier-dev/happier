@@ -12,18 +12,22 @@ export const ProviderAuthenticationCard = React.memo(function ProviderAuthentica
     state: ProviderAuthenticationState;
     onCheckNow: () => void;
     onLaunchLogin: () => void;
+    showActions?: boolean;
 }>) {
+    const showActions = props.showActions !== false;
     return (
         <ItemGroup title={t('settingsProviders.authentication.title')} footer={t('settingsProviders.authentication.footer')}>
             <ProviderAuthenticationStatusRows authStatus={props.state.authStatus} />
-            <ProviderAuthenticationActions
-                canCheckNow={props.state.canCheckNow}
-                canLaunchLogin={props.state.canLaunchLogin}
-                loginActionKind={props.state.loginActionKind}
-                docsUrl={props.state.docsUrl}
-                onCheckNow={props.onCheckNow}
-                onLaunchLogin={props.onLaunchLogin}
-            />
+            {showActions ? (
+                <ProviderAuthenticationActions
+                    canCheckNow={props.state.canCheckNow}
+                    canLaunchLogin={props.state.canLaunchLogin}
+                    loginActionKind={props.state.loginActionKind}
+                    docsUrl={props.state.docsUrl}
+                    onCheckNow={props.onCheckNow}
+                    onLaunchLogin={props.onLaunchLogin}
+                />
+            ) : null}
         </ItemGroup>
     );
 });

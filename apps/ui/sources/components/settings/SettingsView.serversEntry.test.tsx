@@ -255,7 +255,7 @@ afterEach(() => {
 });
 
 describe('SettingsView', () => {
-    it('includes a first-class Servers entry that routes to /server', async () => {
+    it('includes a first-class Relays entry that routes to /server', async () => {
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(React.createElement(SettingsView));
 

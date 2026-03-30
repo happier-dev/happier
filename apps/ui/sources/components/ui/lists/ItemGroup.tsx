@@ -5,7 +5,6 @@ import { layout } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { withItemGroupDividers } from './ItemGroup.dividers';
 import { countSelectableItems } from './ItemGroup.selectableCount';
-import { PopoverBoundaryProvider, usePopoverBoundaryRef } from '@/components/ui/popover/PopoverBoundary';
 import { Text } from '@/components/ui/text/Text';
 
 
@@ -88,8 +87,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const popoverBoundaryRef = React.useRef<View>(null);
-    const inheritedPopoverBoundaryRef = usePopoverBoundaryRef();
 
     const {
         title,
@@ -135,22 +132,12 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                 )}
 
                 {/* Content Container */}
-                <View ref={popoverBoundaryRef} style={[styles.contentContainerOuter, containerStyle]}>
-                    {inheritedPopoverBoundaryRef ? (
-                        <View style={styles.contentContainerInner}>
-                            <ItemGroupSelectionContext.Provider value={selectionContextValue}>
-                                {withItemGroupDividers(children)}
-                            </ItemGroupSelectionContext.Provider>
-                        </View>
-                    ) : (
-                        <PopoverBoundaryProvider boundaryRef={popoverBoundaryRef}>
-                            <View style={styles.contentContainerInner}>
-                                <ItemGroupSelectionContext.Provider value={selectionContextValue}>
-                                    {withItemGroupDividers(children)}
-                                </ItemGroupSelectionContext.Provider>
-                            </View>
-                        </PopoverBoundaryProvider>
-                    )}
+                <View style={[styles.contentContainerOuter, containerStyle]}>
+                    <View style={styles.contentContainerInner}>
+                        <ItemGroupSelectionContext.Provider value={selectionContextValue}>
+                            {withItemGroupDividers(children)}
+                        </ItemGroupSelectionContext.Provider>
+                    </View>
                 </View>
 
                 {/* Footer */}

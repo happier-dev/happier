@@ -1,7 +1,6 @@
 import * as React from "react";
-import { ActivityIndicator, Pressable, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Ionicons } from "@expo/vector-icons";
+import { View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 
 import {
   OptionPickerOverlay,
@@ -41,7 +40,6 @@ type AgentInputEngineDetailProps = Readonly<{
 
   configControls?: ReadonlyArray<SessionConfigOptionControl> | null;
   configProbe?: OptionPickerProbeState;
-  configRefreshTestID?: string;
   onSelectConfigValue?: (
     configId: string,
     valueId: SessionConfigOptionValueId,
@@ -68,14 +66,11 @@ function wrapSection(
 }
 
 export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
-  const { theme } = useUnistyles();
   const sectionOrder = props.sectionOrder ?? ["model", "config"];
   const surfaceVariant = props.surfaceVariant ?? "carded";
   const hasModelSection =
     (props.modelOptions?.length ?? 0) > 0 || props.canEnterCustomModel === true;
-  const hasConfigSection =
-    (props.configControls?.length ?? 0) > 0 ||
-    typeof props.configProbe?.onRefresh === "function";
+  const hasConfigSection = (props.configControls?.length ?? 0) > 0;
 
   if (!hasModelSection && !hasConfigSection) {
     return null;
@@ -136,29 +131,6 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
             surfaceVariant,
             "config",
             <View style={styles.configSection}>
-              {typeof props.configProbe?.onRefresh === "function" ? (
-                <Pressable
-                  testID={props.configRefreshTestID ?? "agent-input-config-options-refresh"}
-                  accessibilityRole="button"
-                  accessibilityLabel={props.configProbe.refreshAccessibilityLabel ?? t("common.refresh")}
-                  onPress={props.configProbe.onRefresh}
-                  style={({ pressed }) => [
-                    styles.configRefreshButton,
-                    pressed ? styles.configRefreshButtonPressed : null,
-                  ]}
-                >
-                  {props.configProbe.phase === "loading" ||
-                  props.configProbe.phase === "refreshing" ? (
-                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                  ) : (
-                    <Ionicons
-                      name="refresh"
-                      size={16}
-                      color={theme.colors.textSecondary}
-                    />
-                  )}
-                </Pressable>
-              ) : null}
               <AgentInputSessionConfigOptionsSection
                 controls={props.configControls ?? []}
                 onSelectValue={props.onSelectConfigValue}
@@ -184,17 +156,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   configSection: {
     gap: 8,
-  },
-  configRefreshButton: {
-    alignSelf: "flex-end",
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: theme.colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.colors.divider,
-  },
-  configRefreshButtonPressed: {
-    opacity: 0.85,
   },
 }));

@@ -177,10 +177,6 @@ beforeEach(() => {
 });
 
 async function loadLocalConversationSection() {
-  // Ensure per-file mocks apply even when another test file imported the module earlier in the same worker.
-  vi.resetModules();
-  vi.unmock('@/components/settings/pickers/agentDropdownItems');
-  vi.unmock('@/components/settings/pickers/modelDropdownItems');
   const mod = await import('@/voice/settings/panels/LocalConversationSection');
   return mod.LocalConversationSection;
 }

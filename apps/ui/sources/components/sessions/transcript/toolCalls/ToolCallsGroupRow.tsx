@@ -12,6 +12,7 @@ import { TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/compo
 import { layout } from '@/components/ui/layout/layout';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
+import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 
 export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
     sessionId: string;
@@ -61,11 +62,12 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
     let status: 'running' | 'completed' | 'error' = 'completed';
     let sawError = false;
     for (const m of toolMessagesForSession) {
-        if (m.tool.state === 'running') {
+        const kind = resolveToolStatusIndicatorKind(m.tool);
+        if (kind === 'running' || kind === 'permission_pending') {
             status = 'running';
             break;
         }
-        if (m.tool.state === 'error') sawError = true;
+        if (kind === 'error') sawError = true;
     }
     if (status !== 'running' && sawError) status = 'error';
 

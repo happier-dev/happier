@@ -6,6 +6,14 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
+import {
+    ITEM_CHEVRON_SIZE,
+    ITEM_ICON_BOX_SIZE,
+    ITEM_ICON_MARGIN_RIGHT,
+    ITEM_SUBTITLE_TEXT_METRICS,
+    ITEM_TITLE_TEXT_METRICS,
+} from '@/components/ui/lists/itemDensityMetrics';
+
 export interface SelectionTile<T extends string> {
     id: T;
     title: string;
@@ -270,15 +278,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
     },
     iconSlot: {
-        width: 29,
-        height: 29,
+        width: ITEM_ICON_BOX_SIZE.comfortable,
+        height: ITEM_ICON_BOX_SIZE.comfortable,
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: 1,
     },
     iconSlotCompact: {
-        width: 16,
-        height: 16,
+        width: ITEM_ICON_BOX_SIZE.compact,
+        height: ITEM_ICON_BOX_SIZE.compact,
         marginTop: 0,
     },
     textContainer: {
@@ -290,27 +298,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         ...Typography.default('regular'),
-        fontSize: Platform.select({ ios: 17, default: 16 }),
-        lineHeight: Platform.select({ ios: 22, default: 24 }),
-        letterSpacing: Platform.select({ ios: -0.41, default: 0.15 }),
+        fontSize: ITEM_TITLE_TEXT_METRICS.comfortable.fontSize,
         color: theme.colors.text,
     },
     titleCompact: {
-        fontSize: 14,
-        lineHeight: 16,
-        letterSpacing: Platform.select({ ios: -0.2, default: 0.1 }),
+        fontSize: ITEM_TITLE_TEXT_METRICS.compact.fontSize,
     },
     subtitle: {
         ...Typography.default(),
-        fontSize: Platform.select({ ios: 14, default: 14 }),
-        lineHeight: 20,
-        letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
+        fontSize: ITEM_SUBTITLE_TEXT_METRICS.comfortable.fontSize,
         color: theme.colors.textSecondary,
     },
     subtitleCompact: {
-        fontSize: 12,
-        lineHeight: 16,
-        letterSpacing: Platform.select({ ios: -0.12, default: 0.05 }),
+        fontSize: ITEM_SUBTITLE_TEXT_METRICS.compact.fontSize,
         marginTop: 2,
     },
     badge: {

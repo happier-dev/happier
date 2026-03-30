@@ -58,6 +58,7 @@ const upsertServerProfileMock = vi.fn((..._args: unknown[]) => ({
     lastUsedAt: 0,
 }));
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 }),
     listServerProfiles: () => [],
     getActiveServerId: () => '',
     getDeviceDefaultServerId: () => '',

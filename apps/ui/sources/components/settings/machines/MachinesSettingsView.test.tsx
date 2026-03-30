@@ -24,9 +24,16 @@ type MachinesSettingsViewModel = {
         status: 'idle';
         machines: Array<{ id: string; metadata?: { displayName?: string; host?: string } }>;
     }>;
+    relayDriftBanner: null | {
+        kind: 'warning';
+        title: string;
+        description: string;
+        actionLabel: string;
+    };
 };
 
 const routerPushSpy = vi.fn();
+const tauriDesktopState = vi.hoisted(() => ({ value: false }));
 
 const viewModelState = vi.hoisted(() => ({
     value: null as unknown as MachinesSettingsViewModel,
@@ -73,6 +80,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => tauriDesktopState.value,
+}));
+
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemList', null, children),
 }));
@@ -84,6 +95,10 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown>) => React.createElement('Item', props),
+}));
+
+vi.mock('@/components/settings/server/RelayDriftActionCard', () => ({
+    RelayDriftActionCard: (props: any) => React.createElement('RelayDriftActionCard', props),
 }));
 
 vi.mock('@/components/settings/server/sections/ActiveSelectionMachinesSection', () => ({
@@ -121,6 +136,7 @@ vi.mock('./machinesSettingsViewModel', () => ({
 describe('MachinesSettingsView', () => {
     beforeEach(() => {
         routerPushSpy.mockClear();
+        tauriDesktopState.value = false;
         viewModelState.value = {
             activeServerId: 'srv-a',
             allMachines: [
@@ -153,10 +169,11 @@ describe('MachinesSettingsView', () => {
                     ],
                 },
             ],
+            relayDriftBanner: null,
         };
     });
 
-    it('renders existing machines in a separate section from setup actions', async () => {
+    it('keeps the Machines settings screen web-safe by hiding desktop-only setup actions', async () => {
         const { MachinesSettingsView } = await import('./MachinesSettingsView');
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(React.createElement(MachinesSettingsView))).tree;
@@ -164,21 +181,58 @@ describe('MachinesSettingsView', () => {
         const groups = tree.findAllByType('Group' as any);
         expect(groups).toHaveLength(2);
         expect(groups[0]?.props.title).toBe('settings.machines');
+        expect(groups[1]?.props.title).toBe('settings.addMachine');
 
         const firstGroupItems = groups[0]!.findAllByType('Item' as any);
-        const secondGroupItems = groups[1]!.findAllByType('Item' as any);
-
         expect(firstGroupItems.map((node: any) => node.props.title)).toContain('Machine A1');
+        expect(firstGroupItems.map((node: any) => node.props.title)).not.toContain('settings.machineSetupCurrentMachineTitle');
+        expect(firstGroupItems.map((node: any) => node.props.title)).not.toContain('settings.addMachine');
+
+        const setupNoticeItems = groups[1]!.findAllByType('Item' as any);
+        expect(setupNoticeItems.map((node: any) => node.props.title)).toContain('setupOnboarding.webDesktopOnlyTitle');
+        expect(setupNoticeItems.map((node: any) => node.props.subtitle)).toContain('setupOnboarding.webDesktopOnlyBody');
+    });
+
+    it('shows desktop-only setup actions when running inside the Tauri desktop shell', async () => {
+        tauriDesktopState.value = true;
+
+        const { MachinesSettingsView } = await import('./MachinesSettingsView');
+        const tree = (await renderScreen(React.createElement(MachinesSettingsView))).tree;
+
+        const groups = tree.findAllByType('Group' as any);
+        expect(groups).toHaveLength(2);
+
+        const secondGroupItems = groups[1]!.findAllByType('Item' as any);
+        expect(secondGroupItems.map((node: any) => node.props.title)).toContain('settings.machineSetupCurrentMachineTitle');
         expect(secondGroupItems.map((node: any) => node.props.title)).toContain('settings.addMachine');
 
-        const addMachineItem = secondGroupItems.find((node: any) => node.props.title === 'settings.addMachine');
-        expect(addMachineItem).toBeTruthy();
-
+        const setupThisComputerItem = secondGroupItems.find((node: any) => node.props.title === 'settings.machineSetupCurrentMachineTitle');
+        expect(setupThisComputerItem).toBeTruthy();
         await act(async () => {
-            await pressTestInstanceAsync(addMachineItem!);
+            await pressTestInstanceAsync(setupThisComputerItem!);
         });
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/machines/this-computer');
+    });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/machines/add');
+    it('renders relay drift on web as a read-only notice instead of a repair action card', async () => {
+        viewModelState.value = {
+            ...viewModelState.value,
+            relayDriftBanner: {
+                kind: 'warning',
+                title: 'relay.banner.title',
+                description: 'relay.banner.description',
+                actionLabel: 'relay.banner.action',
+            },
+        };
+
+        const { MachinesSettingsView } = await import('./MachinesSettingsView');
+        const tree = (await renderScreen(React.createElement(MachinesSettingsView))).tree;
+
+        const banners = tree.findAllByType('RelayDriftActionCard' as any);
+        expect(banners).toHaveLength(0);
+
+        const items = tree.findAllByType('Item' as any);
+        expect(items.find((node: any) => node.props.testID === 'settings.machines.relayDrift.webNotice')).toBeTruthy();
     });
 
     it('shows an empty-state row when the user has no machines yet', async () => {
@@ -190,6 +244,7 @@ describe('MachinesSettingsView', () => {
             machineRows: [],
             showMachinesGroupedByServer: false,
             visibleMachineGroups: [],
+            relayDriftBanner: null,
         };
 
         const { MachinesSettingsView } = await import('./MachinesSettingsView');
@@ -212,6 +267,7 @@ describe('MachinesSettingsView', () => {
             machineRows: [],
             showMachinesGroupedByServer: false,
             visibleMachineGroups: [],
+            relayDriftBanner: null,
         };
 
         const { MachinesSettingsView } = await import('./MachinesSettingsView');

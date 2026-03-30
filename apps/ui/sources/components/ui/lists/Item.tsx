@@ -34,6 +34,7 @@ export interface ItemProps {
     testID?: string;
     title: string;
     subtitle?: React.ReactNode;
+    subtitleTestID?: string;
     subtitleAccessory?: React.ReactNode;
     subtitleLines?: number; // set 0 or undefined for auto/multiline
     detail?: string;
@@ -228,6 +229,7 @@ export const Item = React.memo<ItemProps>((props) => {
         testID,
         title,
         subtitle,
+        subtitleTestID,
         subtitleAccessory,
         subtitleLines,
         detail,
@@ -431,128 +433,242 @@ export const Item = React.memo<ItemProps>((props) => {
         if (disabled || loading) setIsHovered(false);
     }, [disabled, loading]);
     
-    const content = (
+    const renderRowContent = React.useCallback((includeRightAccessory: boolean) => (
         <>
-            <View style={[containerCore, containerPadding, style]}>
-                {/* Left Section */}
-                {leftAccessory ? (
-                    <View style={iconContainerStyle}>
-                        {leftAccessory}
-                    </View>
-                ) : null}
+            {/* Left Section */}
+            {leftAccessory ? (
+                <View style={iconContainerStyle}>
+                    {leftAccessory}
+                </View>
+            ) : null}
 
-                {/* Center Section */}
-                <View style={styles.centerContent}>
-                    <Text 
-                        style={[styles.title, titleSizeStyle, titleColor, titleStyle]}
-                        numberOfLines={subtitle ? 1 : 2}
-                    >
-                        {title}
-                    </Text>
-                    {subtitle && (() => {
-                        // If subtitle is a ReactNode (not string), render as-is.
-                        // This enables richer subtitle layouts (e.g. inline glyphs).
-                        if (typeof subtitle !== 'string') {
-                            const wrapPrimitive = (value: string | number) => {
-                                const asText = String(value);
-                                const effectiveLines = subtitleLines !== undefined
-                                    ? (subtitleLines <= 0 ? undefined : subtitleLines)
-                                    : (asText.indexOf('\n') !== -1 ? undefined : 1);
-
-                                return (
-                                    <Text
-                                        style={[styles.subtitle, subtitleSizeStyle, subtitleStyle]}
-                                        numberOfLines={effectiveLines}
-                                    >
-                                        {asText}
-                                    </Text>
-                                );
-                            };
-
-                            const normalizeNode = (node: any): any => {
-                                if (node == null || typeof node === 'boolean') return null;
-                                if (typeof node === 'string' || typeof node === 'number') return wrapPrimitive(node);
-                                if (Array.isArray(node)) return node.map(normalizeNode);
-                                if (React.isValidElement(node) && node.type === React.Fragment) {
-                                    return <>{React.Children.map((node as any).props?.children, normalizeNode)}</>;
-                                }
-                                return node;
-                            };
-
-                            const normalized = normalizeNode(subtitle);
+            {/* Center Section */}
+            <View style={styles.centerContent}>
+                <Text
+                    style={[styles.title, titleSizeStyle, titleColor, titleStyle]}
+                    numberOfLines={subtitle ? 1 : 2}
+                >
+                    {title}
+                </Text>
+                {subtitle && (() => {
+                    // If subtitle is a ReactNode (not string), render as-is.
+                    // This enables richer subtitle layouts (e.g. inline glyphs).
+                    if (typeof subtitle !== 'string') {
+                        const wrapPrimitive = (value: string | number) => {
+                            const asText = String(value);
+                            const effectiveLines = subtitleLines !== undefined
+                                ? (subtitleLines <= 0 ? undefined : subtitleLines)
+                                : (asText.indexOf('\n') !== -1 ? undefined : 1);
 
                             return (
-                                <View style={{ marginTop: Platform.select({ ios: 2, default: 0 }) }}>
-                                    {normalized}
-                                </View>
+                                <Text
+                                    style={[styles.subtitle, subtitleSizeStyle, subtitleStyle]}
+                                    numberOfLines={effectiveLines}
+                                >
+                                    {asText}
+                                </Text>
                             );
-                        }
+                        };
 
-                        // Allow multiline when requested or when content contains line breaks
-                        const effectiveLines = subtitleLines !== undefined
-                            ? (subtitleLines <= 0 ? undefined : subtitleLines)
-                            : (subtitle.indexOf('\n') !== -1 ? undefined : 1);
+                        const normalizeNode = (node: any): any => {
+                            if (node == null || typeof node === 'boolean') return null;
+                            if (typeof node === 'string' || typeof node === 'number') return wrapPrimitive(node);
+                            if (Array.isArray(node)) return node.map(normalizeNode);
+                            if (React.isValidElement(node) && node.type === React.Fragment) {
+                                return <>{React.Children.map((node as any).props?.children, normalizeNode)}</>;
+                            }
+                            return node;
+                        };
+
+                        const normalized = normalizeNode(subtitle);
 
                         return (
-                            <Text
-                                style={[styles.subtitle, subtitleSizeStyle, subtitleStyle]}
-                                numberOfLines={effectiveLines}
-                            >
-                                {subtitle}
-                            </Text>
+                            <View style={{ marginTop: Platform.select({ ios: 2, default: 0 }) }}>
+                                {normalized}
+                            </View>
                         );
-                    })()}
-                    {subtitleAccessoryNode ? (
-                        <View style={{ marginTop: 0 }}>
-                            {subtitleAccessoryNode}
-                        </View>
-                    ) : null}
-                </View>
+                    }
 
-                {/* Right Section */}
-                <View style={styles.rightSection}>
-                    {detail && (
-                        <Text 
-                            style={[
-                                styles.detail, 
-                                detailSizeStyle,
-                                { marginRight: rightElement || showAccessory ? 8 : 0 },
-                                detailStyle
-                            ]}
-                            numberOfLines={1}
+                    // Allow multiline when requested or when content contains line breaks
+                    const effectiveLines = subtitleLines !== undefined
+                        ? (subtitleLines <= 0 ? undefined : subtitleLines)
+                        : (subtitle.indexOf('\n') !== -1 ? undefined : 1);
+
+                    return (
+                        <Text
+                            testID={subtitleTestID}
+                            style={[styles.subtitle, subtitleSizeStyle, subtitleStyle]}
+                            numberOfLines={effectiveLines}
                         >
-                            {detail}
+                            {subtitle}
                         </Text>
-                    )}
-                    {loading && (
-                        <ActivityIndicator 
-                            size="small" 
-                            color={theme.colors.textSecondary}
-                            style={{ marginRight: showAccessory ? 6 : 0 }}
-                        />
-                    )}
-                    {rightAccessory}
-                    {chevronAccessory}
-                </View>
+                    );
+                })()}
+                {subtitleAccessoryNode ? (
+                    <View style={{ marginTop: 0 }}>
+                        {subtitleAccessoryNode}
+                    </View>
+                ) : null}
             </View>
 
-            {/* Divider */}
-            {showDivider && (
-                <View 
-                    style={[
-                        styles.divider,
-                        { 
-                            marginLeft: (isAndroid || isWeb)
-                                ? 0
-                                : (dividerInset + (icon || leftElement ? (16 + resolvedIconBoxSize + resolvedIconMarginRight) : 16))
-                        }
-                    ]}
-                />
-            )}
+            {/* Right Section */}
+            <View style={styles.rightSection}>
+                {detail && (
+                    <Text
+                        style={[
+                            styles.detail,
+                            detailSizeStyle,
+                            { marginRight: rightElement || showAccessory ? 8 : 0 },
+                            detailStyle
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {detail}
+                    </Text>
+                )}
+                {loading && (
+                    <ActivityIndicator
+                        size="small"
+                        color={theme.colors.textSecondary}
+                        style={{ marginRight: showAccessory ? 6 : 0 }}
+                    />
+                )}
+                {includeRightAccessory ? rightAccessory : null}
+                {chevronAccessory}
+            </View>
         </>
-    );
+    ), [
+        chevronAccessory,
+        detail,
+        detailSizeStyle,
+        detailStyle,
+        iconContainerStyle,
+        leftAccessory,
+        loading,
+        rightAccessory,
+        showAccessory,
+        subtitle,
+        subtitleAccessoryNode,
+        subtitleLines,
+        subtitleSizeStyle,
+        styles.centerContent,
+        styles.detail,
+        styles.rightSection,
+        styles.subtitle,
+        style,
+        title,
+        titleColor,
+        titleSizeStyle,
+        titleStyle,
+        theme.colors.textSecondary,
+    ]);
+
+    const resolveInteractiveRowStyle = React.useCallback((pressed: boolean) => {
+        const backgroundColor = (() => {
+            if (pressed && isIOS && !isWeb) return theme.colors.surfacePressedOverlay;
+            if (showSelectedBackground) return theme.colors.surfaceSelected;
+            // Web-only hover affordance for selectable rows (no hover when disabled).
+            if (isWeb && isSelectableRow && isHovered && !disabled && !loading) return hoverBackgroundColor;
+            return 'transparent';
+        })();
+
+        const roundedCornersStyle = getItemGroupRowCornerRadii({
+            hasBackground: backgroundColor !== 'transparent',
+            position: rowPosition,
+            radius: groupCornerRadius,
+        });
+
+        return [
+            { backgroundColor, opacity: disabled ? 0.5 : 1 },
+            isWeb && (disabled || loading) ? ({ cursor: 'not-allowed' } as any) : null,
+            roundedCornersStyle,
+            pressableStyle,
+        ];
+    }, [
+        disabled,
+        groupCornerRadius,
+        hoverBackgroundColor,
+        isHovered,
+        isIOS,
+        isSelectableRow,
+        isWeb,
+        loading,
+        pressableStyle,
+        rowPosition,
+        showSelectedBackground,
+        theme.colors.surfacePressedOverlay,
+        theme.colors.surfaceSelected,
+    ]);
+
+    const dividerNode = showDivider ? (
+        <View
+            style={[
+                styles.divider,
+                {
+                    marginLeft: (isAndroid || isWeb)
+                        ? 0
+                        : (dividerInset + (icon || leftElement ? (16 + resolvedIconBoxSize + resolvedIconMarginRight) : 16))
+                }
+            ]}
+        />
+    ) : null;
+
+    const shouldRenderRightAccessoryOutside = isWeb && Boolean(rightAccessory) && isInteractive;
 
     if (isInteractive) {
+        if (shouldRenderRightAccessoryOutside) {
+            return (
+                <>
+                    <View style={[containerCore, style]}>
+                        <Pressable
+                            testID={testID}
+                            {...webTestIdProps}
+                            onPress={handlePress}
+                            onLongPress={handleLongPress}
+                            // @ts-expect-error - react-native types do not model web-only double click props; RN Web supports onDoubleClick.
+                            onDoubleClick={isWeb && onDoublePress ? (event: any) => {
+                                if (Date.now() - webDoublePressHandledAtMsRef.current < 600) {
+                                    return;
+                                }
+                                webDoublePressHandledAtMsRef.current = Date.now();
+                                webLastPressAtMsRef.current = null;
+                                event?.preventDefault?.();
+                                event?.stopPropagation?.();
+                                onDoublePress();
+                            } : undefined}
+                            onPressIn={handlePressIn}
+                            onPressOut={handlePressOut}
+                            onHoverIn={isWeb && isSelectableRow && !disabled && !loading ? () => setIsHovered(true) : undefined}
+                            onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
+                            onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
+                            onContextMenu={isWeb ? (onContextMenu as any) : undefined}
+                            accessibilityRole={accessibilityRole ?? 'button'}
+                            disabled={disabled || loading}
+                            style={({ pressed }) => [
+                                containerCore,
+                                containerPadding,
+                                { flex: 1, minWidth: 0 },
+                                ...resolveInteractiveRowStyle(pressed),
+                            ]}
+                            android_ripple={(isAndroid || isWeb) ? {
+                                color: theme.colors.surfaceRipple,
+                                borderless: false,
+                                foreground: true
+                            } : undefined}
+                        >
+                            {renderRowContent(false)}
+                        </Pressable>
+                        {rightAccessory ? (
+                            <View style={styles.rightSection}>
+                                {rightAccessory}
+                            </View>
+                        ) : null}
+                    </View>
+                    {dividerNode}
+                </>
+            );
+        }
+
         return (
             <Pressable
                 testID={testID}
@@ -578,42 +694,36 @@ export const Item = React.memo<ItemProps>((props) => {
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
                 accessibilityRole={accessibilityRole ?? 'button'}
                 disabled={disabled || loading}
-                style={({ pressed }) => {
-                    const backgroundColor = (() => {
-                        if (pressed && isIOS && !isWeb) return theme.colors.surfacePressedOverlay;
-                        if (showSelectedBackground) return theme.colors.surfaceSelected;
-                        // Web-only hover affordance for selectable rows (no hover when disabled).
-                        if (isWeb && isSelectableRow && isHovered && !disabled && !loading) return hoverBackgroundColor;
-                        return 'transparent';
-                    })();
-
-                    const roundedCornersStyle = getItemGroupRowCornerRadii({
-                        hasBackground: backgroundColor !== 'transparent',
-                        position: rowPosition,
-                        radius: groupCornerRadius,
-                    });
-
-                    return [
-                        { backgroundColor, opacity: disabled ? 0.5 : 1 },
-                        isWeb && (disabled || loading) ? ({ cursor: 'not-allowed' } as any) : null,
-                        roundedCornersStyle,
-                        pressableStyle,
-                    ];
-                }}
+                style={({ pressed }) => [
+                    containerCore,
+                    containerPadding,
+                    { minWidth: 0 },
+                    ...resolveInteractiveRowStyle(pressed),
+                ]}
                 android_ripple={(isAndroid || isWeb) ? {
                     color: theme.colors.surfaceRipple,
                     borderless: false,
                     foreground: true
                 } : undefined}
             >
-                {content}
+                {renderRowContent(true)}
             </Pressable>
         );
     }
 
     return (
-        <View testID={testID} {...webTestIdProps} style={[{ opacity: disabled ? 0.5 : 1 }, pressableStyle]}>
-            {content}
+        <View
+            testID={testID}
+            {...webTestIdProps}
+            style={[
+                containerCore,
+                containerPadding,
+                { opacity: disabled ? 0.5 : 1 },
+                pressableStyle,
+            ]}
+        >
+            {renderRowContent(true)}
+            {dividerNode}
         </View>
     );
 });

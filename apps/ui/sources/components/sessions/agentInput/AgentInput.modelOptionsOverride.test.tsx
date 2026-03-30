@@ -257,12 +257,22 @@ vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
             lastModelPickerOverlayProps = props;
         }
         const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
+        const refreshTestID = props.refreshTestID ?? 'model-picker-overlay-refresh';
+        const probe = props.probe;
         return React.createElement(
             'OptionPickerOverlay',
             props,
             props.title,
             props.summary ?? null,
             props.headerAccessory ?? null,
+            typeof probe?.onRefresh === 'function' ? React.createElement(
+                'Pressable',
+                {
+                    testID: refreshTestID,
+                    onPress: probe.phase === 'idle' ? probe.onRefresh : undefined,
+                },
+                null,
+            ) : null,
             props.options?.map((option: { value: string; label: string }) => React.createElement(
                 'Pressable',
                 {
@@ -393,7 +403,12 @@ describe('AgentInput (modelOptionsOverride)', () => {
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(lastModelPickerOverlayProps?.probe?.phase).toBe('loading');
-        expect(lastModelPickerOverlayProps?.probe?.onRefresh).toBe(onRefresh);
+        expect(typeof lastModelPickerOverlayProps?.probe?.onRefresh).toBe('function');
+        lastModelPickerOverlayProps?.probe?.onRefresh?.();
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+        const refresh = screen.findByTestId('model-picker-overlay-refresh');
+        expect(refresh).toBeTruthy();
+        expect(refresh?.props?.onPress).toBeUndefined();
     });
 
     it('submits inline custom models through ModelPickerOverlay without opening a modal prompt', async () => {
@@ -1013,9 +1028,8 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(onAgentPickerSelect).toHaveBeenCalledWith('agent:codex');
     });
 
-    it('disables the agent picker refresh control while the probe is busy', async () => {
+    it('renders a single refresh control in the model section that refreshes the engine popover probes', async () => {
         const { AgentInput } = await import('./AgentInput');
-        const onAgentPickerSelect = vi.fn();
         const onRefresh = vi.fn();
 
         const screen = await renderScreen(React.createElement(AgentInput, {
@@ -1030,29 +1044,23 @@ describe('AgentInput (modelOptionsOverride)', () => {
             onPermissionModeChange: () => {},
             modelMode: 'default',
             onModelModeChange: () => {},
-            agentPickerTitle: 'Select engine',
-            agentPickerOptions: [
-                { id: 'agent:claude', label: 'Claude', detailDescription: 'Claude engine' },
-                { id: 'agent:codex', label: 'Codex', detailDescription: 'Codex engine' },
+            modelOptionsOverride: [
+                { value: 'default', label: 'Use CLI settings', description: '' },
+                { value: 'claude-3.7', label: 'Claude 3.7', description: 'Latest' },
             ],
-            agentPickerSelectedOptionId: 'agent:claude',
-            onAgentPickerSelect,
-            agentPickerProbe: {
+            modelOptionsOverrideProbe: {
                 phase: 'loading',
                 onRefresh,
             },
         } as any));
 
         await screen.pressByTestIdAsync('agent-input-agent-chip');
-        const refresh = screen.findByTestId('agent-input-agent-picker-refresh');
-        expect(refresh).toBeTruthy();
-        expect(refresh?.props?.disabled).toBe(true);
-        expect(refresh?.props?.accessibilityState).toEqual(expect.objectContaining({ disabled: true }));
+        expect(screen.findByTestId('agent-input-agent-picker-refresh')).toBeNull();
+        expect(screen.findByTestId('model-picker-overlay-refresh')).toBeTruthy();
     });
 
-    it('invokes agent picker probe refresh when idle', async () => {
+    it('disables the model refresh control while the probe is busy', async () => {
         const { AgentInput } = await import('./AgentInput');
-        const onAgentPickerSelect = vi.fn();
         const onRefresh = vi.fn();
 
         const screen = await renderScreen(React.createElement(AgentInput, {
@@ -1067,21 +1075,52 @@ describe('AgentInput (modelOptionsOverride)', () => {
             onPermissionModeChange: () => {},
             modelMode: 'default',
             onModelModeChange: () => {},
-            agentPickerTitle: 'Select engine',
-            agentPickerOptions: [
-                { id: 'agent:claude', label: 'Claude', detailDescription: 'Claude engine' },
-                { id: 'agent:codex', label: 'Codex', detailDescription: 'Codex engine' },
+            modelOptionsOverride: [
+                { value: 'default', label: 'Use CLI settings', description: '' },
+                { value: 'claude-3.7', label: 'Claude 3.7', description: 'Latest' },
             ],
-            agentPickerSelectedOptionId: 'agent:claude',
-            onAgentPickerSelect,
-            agentPickerProbe: {
+            modelOptionsOverrideProbe: {
+                phase: 'refreshing',
+                onRefresh,
+            },
+        } as any));
+
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
+        expect(screen.findByTestId('agent-input-agent-picker-refresh')).toBeNull();
+        const refresh = screen.findByTestId('model-picker-overlay-refresh');
+        expect(refresh).toBeTruthy();
+        expect(refresh?.props?.onPress).toBeUndefined();
+    });
+
+    it('invokes the model refresh control when idle', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onRefresh = vi.fn();
+
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: 'hello',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'claude',
+            permissionMode: 'default',
+            onPermissionModeChange: () => {},
+            modelMode: 'default',
+            onModelModeChange: () => {},
+            modelOptionsOverride: [
+                { value: 'default', label: 'Use CLI settings', description: '' },
+                { value: 'claude-3.7', label: 'Claude 3.7', description: 'Latest' },
+            ],
+            modelOptionsOverrideProbe: {
                 phase: 'idle',
                 onRefresh,
             },
         } as any));
 
         await screen.pressByTestIdAsync('agent-input-agent-chip');
-        await screen.pressByTestIdAsync('agent-input-agent-picker-refresh');
+        expect(screen.findByTestId('agent-input-agent-picker-refresh')).toBeNull();
+        await screen.pressByTestIdAsync('model-picker-overlay-refresh');
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 
@@ -1375,6 +1414,10 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
                     onModelModeChange: () => {},
+                    modelOptionsOverride: [
+                        { value: 'default', label: 'Use CLI settings', description: '' },
+                        { value: 'claude-3.7', label: 'Claude 3.7', description: 'Latest' },
+                    ],
                     acpSessionModeOptionsOverride: [
                         { id: 'default', name: 'Build' },
                         { id: 'plan', name: 'Plan' },
@@ -1388,7 +1431,8 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(modeChip?.props.accessibilityLabel).toContain('Plan');
 
         await screen.pressByTestIdAsync('agent-input-agent-chip');
-        expect(screen.findByTestId('agent-input-agent-picker-refresh')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-agent-picker-refresh')).toBeNull();
+        expect(screen.findByTestId('model-picker-overlay-refresh')).toBeTruthy();
 
         mockSessionModePickerControl = null;
     });
@@ -1409,6 +1453,10 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
                     onModelModeChange: () => {},
+                    modelOptionsOverride: [
+                        { value: 'default', label: 'Use CLI settings', description: '' },
+                        { value: 'open-code', label: 'OpenCode', description: 'Fast' },
+                    ],
                     acpSessionModeOptionsOverride: [
                         { id: 'default', name: 'Default' },
                         { id: 'plan', name: 'Plan' },
@@ -1420,9 +1468,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        const refresh = screen.findByTestId('agent-input-agent-picker-refresh');
+        const refresh = screen.findByTestId('model-picker-overlay-refresh');
         expect(refresh).toBeTruthy();
-        await screen.pressByTestIdAsync('agent-input-agent-picker-refresh');
+        await screen.pressByTestIdAsync('model-picker-overlay-refresh');
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });
@@ -1491,15 +1539,19 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
                     onModelModeChange: () => {},
+                    modelOptionsOverride: [
+                        { value: 'default', label: 'Use CLI settings', description: '' },
+                        { value: 'gpt-5.4', label: 'GPT 5.4', description: 'Latest' },
+                    ],
                     acpConfigOptionsOverrideProbe: { phase: 'loading', onRefresh: () => {} },
                     onAcpConfigOptionChange: () => {},
                 } as any));
         expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        const refresh = screen.findByTestId('agent-input-agent-picker-refresh');
+        const refresh = screen.findByTestId('model-picker-overlay-refresh');
         expect(refresh).toBeTruthy();
-        expect(Boolean((refresh as any)?.props?.disabled)).toBe(true);
+        expect(refresh?.props?.onPress).toBeUndefined();
     });
 
     it('calls refresh handler for preflight ACP config options when no options are loaded yet', async () => {
@@ -1518,15 +1570,19 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
                     onModelModeChange: () => {},
+                    modelOptionsOverride: [
+                        { value: 'default', label: 'Use CLI settings', description: '' },
+                        { value: 'gpt-5.4', label: 'GPT 5.4', description: 'Latest' },
+                    ],
                     acpConfigOptionsOverrideProbe: { phase: 'idle', onRefresh },
                     onAcpConfigOptionChange: () => {},
                 } as any));
         expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        const refresh = screen.findByTestId('agent-input-agent-picker-refresh');
+        const refresh = screen.findByTestId('model-picker-overlay-refresh');
         expect(refresh).toBeTruthy();
-        await pressTestInstanceAsync(refresh, 'agent-input-agent-picker-refresh');
+        await pressTestInstanceAsync(refresh, 'model-picker-overlay-refresh');
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });

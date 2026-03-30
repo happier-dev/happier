@@ -331,11 +331,12 @@ export function PathSelector({
 
     const handleBrowseMachinePath = React.useCallback(async () => {
         if (!machineBrowse?.enabled || !machineBrowse.machineId) return;
+        const browseStartPath = draftSelectedPath.trim() || machineHomeDir;
         const selected = await openMachinePathBrowserModal({
             machineId: machineBrowse.machineId,
             serverId: machineBrowse.serverId,
             title: machineBrowse.title,
-            initialPath: resolveAbsolutePath(draftSelectedPath.trim(), machineHomeDir),
+            initialPath: resolveAbsolutePath(browseStartPath, machineHomeDir),
         });
         if (selected) {
             setDraftSelectedPath(selected);

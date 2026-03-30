@@ -83,6 +83,7 @@ export function usePairingSession(params: Readonly<{ enabled: boolean; isAuthent
                     : null;
             const canonical = typeof canonicalRaw === 'string' ? canonicalRaw.trim() : '';
             const serverUrl = resolvePreferredShareableServerUrl({
+                preferredShareableServerUrl: active.activeShareableServerUrl,
                 canonicalServerUrl: canonical || null,
                 activeServerUrl: active.serverUrl,
             });

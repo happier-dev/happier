@@ -63,6 +63,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 vi.mock('@/components/ui/popover', () => ({
     Popover: ({ children }: any) => (typeof children === 'function' ? children({ maxHeight: 320, maxWidth: 320 }) : children),
+    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({

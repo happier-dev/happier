@@ -26,6 +26,7 @@ import {
 } from '@/utils/navigation/createSocialStackScreenOptions';
 import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
 import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
+import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
@@ -226,6 +227,7 @@ export default function RootLayout() {
         <>
             <ActivityBadgeRuntime />
             <ActivityLocalNotificationRuntime />
+            <DesktopTrayRuntime />
             {debugRouterEnabled && Platform.OS === 'web' ? (
                 <View
                     testID="debug-router-pathname"
@@ -396,6 +398,12 @@ export default function RootLayout() {
                 name="settings/machines/add"
                 options={{
                     headerTitle: t('settings.addMachine'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/machines/this-computer"
+                options={{
+                    headerTitle: t('settings.machineSetupCurrentMachineTitle'),
                 }}
             />
             <Stack.Screen

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Keyboard, Platform, View, type StyleProp, type ViewProps, type ViewStyle, useWindowDimensions } from 'react-native';
 import { usePopoverBoundaryRef } from './PopoverBoundary';
+import { usePopoverScrollSourceRef } from './PopoverScrollSource';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { useOverlayPortal } from './OverlayPortal';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
@@ -37,6 +38,16 @@ type PopoverCommonProps = Readonly<{
     open: boolean;
     anchorRef: React.RefObject<any>;
     boundaryRef?: React.RefObject<any> | null;
+    /**
+     * Web-only: scroll container to subscribe to for anchor-tracking recomputes.
+     *
+     * This is intentionally separate from `boundaryRef` so we can keep popovers clamped to the
+     * viewport while still following internal ScrollViews/lists.
+     *
+     * If omitted, Popover will fall back to any `PopoverScrollSourceProvider` in context.
+     * Passing `null` explicitly disables internal scroll subscriptions.
+     */
+    followScrollRef?: React.RefObject<any> | null;
     placement?: PopoverPlacement;
     gap?: number;
     maxHeightCap?: number;
@@ -56,6 +67,13 @@ type PopoverCommonProps = Readonly<{
      * close handlers run before the anchor's press handler.
      */
     closeOnAnchorPress?: boolean;
+    /**
+     * When closing on an outside pointer-down on web, whether to consume the event by stopping
+     * propagation. Defaults to true (safer for nested Radix/Vaul layers), but may be disabled
+     * for popovers where outside clicks should still "go through" (for example, switching between
+     * agent-input chips without needing a second click).
+     */
+    consumeOutsidePointerDown?: boolean;
     children: (render: PopoverRenderProps) => React.ReactNode;
 }>;
 
@@ -74,6 +92,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         open,
         anchorRef,
         boundaryRef: boundaryRefProp,
+        followScrollRef: followScrollRefProp,
         placement = 'auto',
         gap = 8,
         maxHeightCap = 400,
@@ -86,10 +105,12 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     } = props;
 
     const boundaryFromContext = usePopoverBoundaryRef();
+    const scrollSourceFromContext = usePopoverScrollSourceRef();
     // `boundaryRef` can be provided explicitly (including `null`) to override any boundary from context.
     // This is useful when a PopoverBoundaryProvider is present (e.g. inside an Expo Router modal) but a
     // particular popover should instead be constrained to the viewport.
     const boundaryRef = boundaryRefProp === undefined ? boundaryFromContext : boundaryRefProp;
+    const followScrollRef = followScrollRefProp === undefined ? scrollSourceFromContext : followScrollRefProp;
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
     const overlayPortal = useOverlayPortal();
     const modalPortalTarget = useModalPortalTarget();
@@ -97,11 +118,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const portalWeb = props.portal?.web;
     const portalNative = props.portal?.native;
     const defaultPortalTargetOnWeb: 'body' | 'boundary' | 'modal' =
-        modalPortalTarget
-            ? 'modal'
-            : boundaryRef
-                ? 'boundary'
-                : 'body';
+        modalPortalTarget ? 'modal' : 'body';
     const portalTargetOnWeb =
         typeof portalWeb === 'object' && portalWeb
             ? (portalWeb.target ?? defaultPortalTargetOnWeb)
@@ -221,6 +238,29 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
 
         return null;
     }, [boundaryRef, getDomElementFromNode]);
+
+    const getScrollSourceDomElement = React.useCallback((): HTMLElement | null => {
+        const scrollSourceNode = followScrollRef?.current as any;
+        if (!scrollSourceNode) return null;
+
+        const isDomScrollSource = (candidate: any): candidate is HTMLElement => {
+            return Boolean(
+                candidate
+                && typeof candidate.addEventListener === 'function'
+                && typeof candidate.removeEventListener === 'function',
+            );
+        };
+
+        if (isDomScrollSource(scrollSourceNode)) return scrollSourceNode;
+
+        const scrollable = scrollSourceNode.getScrollableNode?.();
+        if (isDomScrollSource(scrollable)) return scrollable;
+
+        const unwrapped = getDomElementFromNode(scrollSourceNode);
+        if (isDomScrollSource(unwrapped)) return unwrapped;
+
+        return null;
+    }, [followScrollRef, getDomElementFromNode]);
 
     const getWebPortalTarget = React.useCallback((): HTMLElement | null => {
         if (Platform.OS !== 'web') return null;
@@ -358,6 +398,18 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 // When `measureLayout` is available (portal-relative by definition), use it as an
                 // arbiter: whichever candidate better matches the layout-based measurement wins.
                 const chosen = (() => {
+                    // If we don't have a layout-based measurement to arbitrate, but we do have a known
+                    // portal layout, detect the "double offset" case by looking for negative deltas.
+                    // In contained iOS presentations, `measureInWindow` can sometimes return portal-
+                    // relative coords already; subtracting the portal root origin yields negatives and
+                    // clamps the popover to the top of the portal.
+                    if (!layoutRect && hasPortalLayout && deltaRect && anchorWindowRect) {
+                        const tolerance = 16;
+                        const deltaLooksDoubleOffset = deltaRect.x < -tolerance || deltaRect.y < -tolerance;
+                        if (deltaLooksDoubleOffset && withinPortalLayout(anchorWindowRect)) {
+                            return anchorWindowRect;
+                        }
+                    }
                     if (deltaRect && withinPortalLayout(deltaRect)) {
                         if (layoutRect && withinPortalLayout(layoutRect) && anchorWindowRect && withinPortalLayout(anchorWindowRect)) {
                             const errDelta = Math.abs(deltaRect.x - layoutRect.x) + Math.abs(deltaRect.y - layoutRect.y);
@@ -584,31 +636,44 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
 
         window.addEventListener('resize', schedule);
 
-        // Only subscribe to scroll events when we portal to `document.body` (fixed positioning).
-        // For portals mounted inside the modal/boundary target (absolute positioning), the popover
-        // is positioned in the same scroll coordinate space as its anchor, so it stays aligned
-        // without recomputing on every scroll (avoids scroll jank on mobile web).
-        const shouldSubscribeToScroll = shouldPortalWeb && portalTargetOnWeb === 'body';
-        const boundaryEl = shouldSubscribeToScroll ? getBoundaryDomElement() : null;
-        if (shouldSubscribeToScroll) {
-            // Window scroll covers page-level scrolling, but RN-web ScrollViews scroll their own
-            // internal div. Subscribe to both so fixed-position popovers track their anchor.
+        const scrollSourceEl = shouldPortalWeb ? getScrollSourceDomElement() : null;
+        // Only subscribe to window scroll when we portal to `document.body` (fixed positioning).
+        // For portals mounted inside modal/boundary targets (absolute positioning), recomputing on
+        // every scroll can cause jank on mobile web; use `followScrollRef` to opt-in to tracking an
+        // internal scroll container when needed.
+        const shouldSubscribeToWindowScroll = shouldPortalWeb && portalTargetOnWeb === 'body';
+
+        if (shouldSubscribeToWindowScroll) {
             window.addEventListener('scroll', schedule, { passive: true } as any);
-            if (boundaryEl) {
-                boundaryEl.addEventListener('scroll', schedule, { passive: true } as any);
-            }
+        }
+
+        // Prefer an explicit scroll source over boundary-derived heuristics.
+        // (Boundary refs are primarily for clamping; scroll tracking should be independent.)
+        const legacyBoundaryScrollEl =
+            !scrollSourceEl && shouldSubscribeToWindowScroll
+                ? getBoundaryDomElement()
+                : null;
+
+        if (scrollSourceEl) {
+            scrollSourceEl.addEventListener('scroll', schedule, { passive: true } as any);
+        } else if (legacyBoundaryScrollEl) {
+            // Back-compat: if no explicit scroll source is provided, keep subscribing to the boundary
+            // scroll container for fixed-position portals (RN-web ScrollViews).
+            legacyBoundaryScrollEl.addEventListener('scroll', schedule, { passive: true } as any);
         }
         return () => {
             if (timer !== null) window.clearTimeout(timer);
             window.removeEventListener('resize', schedule);
-            if (shouldSubscribeToScroll) {
+            if (shouldSubscribeToWindowScroll) {
                 window.removeEventListener('scroll', schedule as any);
-                if (boundaryEl) {
-                    boundaryEl.removeEventListener('scroll', schedule as any);
-                }
+            }
+            if (scrollSourceEl) {
+                scrollSourceEl.removeEventListener('scroll', schedule as any);
+            } else if (legacyBoundaryScrollEl) {
+                legacyBoundaryScrollEl.removeEventListener('scroll', schedule as any);
             }
         };
-    }, [getBoundaryDomElement, open, portalTargetOnWeb, recompute, shouldPortalWeb]);
+    }, [getBoundaryDomElement, getScrollSourceDomElement, open, portalTargetOnWeb, recompute, shouldPortalWeb]);
 
     React.useEffect(() => {
         if (!open) return;
@@ -778,10 +843,18 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                         position === 'absolute'
                             ? (anchorRectState.y - webPortalOffsetY)
                             : anchorRectState.y;
-                    const portalHeight =
-                        position === 'absolute'
+                    const portalHeight = (() => {
+                        if (Platform.OS !== 'web') {
+                            const nativePortalHeight = portalTarget?.layout?.height;
+                            return (typeof nativePortalHeight === 'number' && nativePortalHeight > 0)
+                                ? nativePortalHeight
+                                : windowHeight;
+                        }
+
+                        return position === 'absolute'
                             ? (webPortalTargetRect?.height ?? windowHeight)
                             : windowHeight;
+                    })();
                     return {
                         bottom: Math.floor(portalHeight - (anchorTopInPortalSpace - gap)),
                     } as any;
@@ -979,10 +1052,18 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 return;
             }
 
-            // Prevent nested Radix/Vaul "outside click" logic from also dismissing the underlying modal.
-            event.stopPropagation();
-            event.stopImmediatePropagation();
-            onRequestClose();
+            const shouldConsumeOutsidePointerDown = props.consumeOutsidePointerDown ?? true;
+            if (shouldConsumeOutsidePointerDown) {
+                // Prevent nested Radix/Vaul "outside click" logic from also dismissing the underlying modal.
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                onRequestClose();
+                return;
+            }
+
+            // On web, allow the outside click to be handled by its actual target (for example: another
+            // chip trigger). Close the popover in the next task to avoid interfering with the click.
+            setTimeout(() => onRequestClose(), 0);
         };
 
         if (shouldAttachPointerDownCapture) {

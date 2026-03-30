@@ -454,6 +454,10 @@ describe('SessionView (right pane auto-open)', () => {
             },
         );
 
+        // `SessionView` fetches pending messages via `runAfterInteractionsWithFallback`, which schedules
+        // a `setTimeout(0)` on web. Wait a tick so the side-effect can run deterministically.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
         expect(fetchPendingMessagesSpy).toHaveBeenCalledTimes(1);
         expect(fetchPendingMessagesSpy).toHaveBeenCalledWith('s1');
 

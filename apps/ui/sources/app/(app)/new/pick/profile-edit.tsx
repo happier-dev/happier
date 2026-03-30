@@ -15,7 +15,7 @@ import { convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfi
 import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { Ionicons } from '@expo/vector-icons';
-import { PopoverPortalTargetProvider } from '@/components/ui/popover';
+import { PopoverScope } from '@/components/ui/popover';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
@@ -276,7 +276,7 @@ export default React.memo(function ProfileEditScreen() {
     }, [headerBackTitle, headerLeft, headerRight, headerTitle]);
 
     return (
-        <PopoverPortalTargetProvider>
+        <PopoverScope>
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 keyboardVerticalOffset={Platform.OS === 'ios' ? Constants.statusBarHeight + headerHeight : 0}
@@ -302,7 +302,7 @@ export default React.memo(function ProfileEditScreen() {
                     </View>
                 </View>
             </KeyboardAvoidingView>
-        </PopoverPortalTargetProvider>
+        </PopoverScope>
     );
 });
 

@@ -2,6 +2,7 @@ import { MMKV } from 'react-native-mmkv';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { isStackContext } from './serverContext';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
+import { sanitizeServerUrlForShareableLink } from './url/shareableServerUrl';
 import { readConfiguredServerUrlEnv, readConfiguredServerUrlEnvRaw } from './readConfiguredServerUrlEnv';
 
 export type ServerProfileSource = 'manual' | 'url' | 'stack-env' | 'notification' | 'preconfigured';
@@ -10,6 +11,7 @@ export type ServerProfile = Readonly<{
     id: string;
     name: string;
     serverUrl: string;
+    shareableServerUrl?: string | null;
     createdAt: number;
     updatedAt: number;
     lastUsedAt: number;
@@ -19,6 +21,8 @@ export type ServerProfile = Readonly<{
 export type ActiveServerSnapshot = Readonly<{
     serverId: string;
     serverUrl: string;
+    activeShareableServerUrl?: string | null;
+    activeLocalRelayUrl?: string | null;
     generation: number;
 }>;
 
@@ -40,6 +44,7 @@ const STATE_KEY = 'server-state-v1';
 
 let activeServerGeneration = 0;
 const activeServerListeners = new Set<(snapshot: ActiveServerSnapshot) => void>();
+let activeServerSnapshotCache: ActiveServerSnapshot | null = null;
 
 function isWebRuntime(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -319,6 +324,9 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
         id: sid,
         name,
         serverUrl,
+        ...(typeof record.shareableServerUrl === 'string'
+            ? { shareableServerUrl: sanitizeServerUrlForShareableLink(record.shareableServerUrl) }
+            : {}),
         createdAt: Number(record.createdAt ?? 0) || 0,
         updatedAt: Number(record.updatedAt ?? 0) || 0,
         lastUsedAt: Number(record.lastUsedAt ?? 0) || 0,
@@ -411,6 +419,9 @@ function dedupeEquivalentProfiles(params: Readonly<{
                 createdAt: Math.min(acc.createdAt, current.createdAt),
                 updatedAt: Math.max(acc.updatedAt, current.updatedAt),
                 lastUsedAt: Math.max(acc.lastUsedAt, current.lastUsedAt),
+                ...(acc.shareableServerUrl ?? current.shareableServerUrl
+                    ? { shareableServerUrl: acc.shareableServerUrl ?? current.shareableServerUrl ?? null }
+                    : {}),
             };
         }, preferred);
 
@@ -533,27 +544,56 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
         ? tabId
         : resolvePrimaryActiveServerId(state.servers, state.activeServerId);
     const selected = selectedId ? state.servers[selectedId] : null;
+    const sameOriginUrl = getWebSameOriginServerUrl();
 
     if (selected) {
         return {
             serverId: selected.id,
             serverUrl: selected.serverUrl,
+            activeShareableServerUrl: selected.shareableServerUrl ?? null,
+            activeLocalRelayUrl: sameOriginUrl && comparableUrlKey(sameOriginUrl) !== comparableUrlKey(selected.serverUrl)
+                ? sameOriginUrl
+                : null,
             generation: activeServerGeneration,
         };
     }
 
     return {
         serverId: selectedId || '',
-        serverUrl: getWebSameOriginServerUrl() ?? '',
+        serverUrl: sameOriginUrl ?? '',
+        activeShareableServerUrl: null,
+        activeLocalRelayUrl: sameOriginUrl,
         generation: activeServerGeneration,
     };
 }
 
+function getStableActiveServerSnapshot(next: ActiveServerSnapshot): ActiveServerSnapshot {
+    const cached = activeServerSnapshotCache;
+    if (
+        cached
+        && cached.serverId === next.serverId
+        && cached.serverUrl === next.serverUrl
+        && (cached.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
+        && (cached.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
+        && cached.generation === next.generation
+    ) {
+        return cached;
+    }
+    activeServerSnapshotCache = next;
+    return next;
+}
+
 function emitActiveServerChanged(previous: ActiveServerSnapshot | null): void {
     const next = getActiveServerSnapshot();
-    if (previous && previous.serverId === next.serverId && previous.serverUrl === next.serverUrl) return;
+    if (
+        previous
+        && previous.serverId === next.serverId
+        && previous.serverUrl === next.serverUrl
+        && (previous.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
+        && (previous.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
+    ) return;
     activeServerGeneration += 1;
-    const emitted: ActiveServerSnapshot = { ...next, generation: activeServerGeneration };
+    const emitted: ActiveServerSnapshot = getStableActiveServerSnapshot({ ...next, generation: activeServerGeneration });
     for (const listener of activeServerListeners) listener(emitted);
 }
 
@@ -598,6 +638,11 @@ export function upsertServerProfile(
             existingEquivalent && params.replaceEquivalentStoredUrl !== true
                 ? existingEquivalent.serverUrl
                 : url,
+        ...(existingEquivalent?.shareableServerUrl
+            ? { shareableServerUrl: existingEquivalent.shareableServerUrl }
+            : existing?.shareableServerUrl
+                ? { shareableServerUrl: existing.shareableServerUrl }
+                : {}),
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
         lastUsedAt: existing?.lastUsedAt ?? 0,
@@ -697,7 +742,7 @@ export function getActiveServerUrl(): string {
 
 export function getActiveServerSnapshot(): ActiveServerSnapshot {
     const state = readPersistedState();
-    return buildActiveSnapshotFromState(state);
+    return getStableActiveServerSnapshot(buildActiveSnapshotFromState(state));
 }
 
 export function subscribeActiveServer(listener: (snapshot: ActiveServerSnapshot) => void): () => void {
@@ -753,6 +798,31 @@ export function renameServerProfile(idRaw: string, nameRaw: string): void {
         servers: {
             ...state.servers,
             [id]: updated,
+        },
+    });
+    emitActiveServerChanged(previousSnapshot);
+}
+
+export function setServerProfileShareableUrl(idRaw: string, shareableServerUrl: string | null | undefined): void {
+    const id = normalizeServerId(idRaw);
+    if (!id) return;
+
+    const normalized = sanitizeServerUrlForShareableLink(shareableServerUrl ?? null);
+    const state = readPersistedState();
+    const existing = state.servers[id];
+    if (!existing) return;
+    if ((existing.shareableServerUrl ?? null) === normalized) return;
+
+    const previousSnapshot = getActiveServerSnapshot();
+    writePersistedState({
+        ...state,
+        servers: {
+            ...state.servers,
+            [id]: {
+                ...existing,
+                shareableServerUrl: normalized,
+                updatedAt: nowMs(),
+            },
         },
     });
     emitActiveServerChanged(previousSnapshot);

@@ -29,7 +29,8 @@ function toolMessage(opts: {
     createdAt: number;
     state: 'running' | 'completed' | 'error';
     name?: string;
-    input?: Record<string, unknown>;
+    input?: unknown;
+    result?: unknown;
     requestKind?: 'permission' | 'user_action';
 }): ToolCallMessage {
     return {
@@ -46,7 +47,7 @@ function toolMessage(opts: {
             startedAt: opts.createdAt,
             completedAt: opts.state === 'running' ? null : opts.createdAt + 1,
             description: null,
-            result: opts.state === 'completed' ? {} : undefined,
+            result: opts.state === 'completed' ? (opts.result ?? {}) : undefined,
             permission: opts.requestKind
                 ? {
                     id: `perm:${opts.id}`,
@@ -265,6 +266,117 @@ describe('buildTranscriptTurns', () => {
             expect(turns[0]!.content[1].messageId).toBe('diff-1');
         }
     });
+
+    it('keeps canonical turn-diff recap tools outside grouped tool-call sections when tool input is a JSON string', () => {
+        const diffInput = {
+            unified_diff: [
+                'diff --git a/apps/ui/a.ts b/apps/ui/a.ts',
+                '--- a/apps/ui/a.ts',
+                '+++ b/apps/ui/a.ts',
+                '@@ -1,1 +1,1 @@',
+                '-old',
+                '+new',
+            ].join('\n'),
+            _happier: {
+                sessionChangeScope: 'turn',
+                turnId: 'turn-1',
+                sessionId: 'session-1',
+                provider: 'codex',
+                source: 'canonical_diff_tool',
+                confidence: 'exact',
+                turnStatus: 'completed',
+                seqRange: {
+                    startSeqInclusive: 1,
+                    endSeqInclusive: 3,
+                },
+            },
+        };
+        const chronological: Message[] = [
+            userMessage('u1', 1),
+            toolMessage({ id: 't1', createdAt: 2, state: 'completed' }),
+            toolMessage({
+                id: 'diff-1',
+                createdAt: 3,
+                state: 'completed',
+                name: 'Diff',
+                input: JSON.stringify(diffInput),
+            }),
+        ];
+        const messagesById = Object.fromEntries(chronological.map((m) => [m.id, m]));
+        const messageIdsOldestFirst = chronological.map((m) => m.id);
+
+        const turns = buildTranscriptTurns({
+            messageIdsOldestFirst,
+            messagesById,
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'all_tools_in_turn',
+        });
+
+        expect(turns).toHaveLength(1);
+        expect(turns[0]!.content.map((c) => c.kind)).toEqual(['tool_calls', 'message']);
+        if (turns[0]!.content[0]?.kind === 'tool_calls') {
+            expect(turns[0]!.content[0].toolMessageIds).toEqual(['t1']);
+        }
+        if (turns[0]!.content[1]?.kind === 'message') {
+            expect(turns[0]!.content[1].messageId).toBe('diff-1');
+        }
+    });
+
+    it('keeps turn-diff recap tools outside grouped tool-call sections when metadata is attached to tool results', () => {
+        const chronological: Message[] = [
+            userMessage('u1', 1),
+            toolMessage({ id: 't1', createdAt: 2, state: 'completed' }),
+            toolMessage({
+                id: 'diff-1',
+                createdAt: 3,
+                state: 'completed',
+                name: 'Diff',
+                input: {
+                    unified_diff: [
+                        'diff --git a/apps/ui/a.ts b/apps/ui/a.ts',
+                        '--- a/apps/ui/a.ts',
+                        '+++ b/apps/ui/a.ts',
+                        '@@ -1,1 +1,1 @@',
+                        '-old',
+                        '+new',
+                    ].join('\n'),
+                },
+                result: {
+                    _happier: {
+                        sessionChangeScope: 'turn',
+                        turnId: 'turn-1',
+                        sessionId: 'session-1',
+                        provider: 'codex',
+                        source: 'canonical_diff_tool',
+                        confidence: 'exact',
+                        turnStatus: 'completed',
+                        seqRange: {
+                            startSeqInclusive: 1,
+                            endSeqInclusive: 3,
+                        },
+                    },
+                },
+            }),
+        ];
+        const messagesById = Object.fromEntries(chronological.map((m) => [m.id, m]));
+        const messageIdsOldestFirst = chronological.map((m) => m.id);
+
+        const turns = buildTranscriptTurns({
+            messageIdsOldestFirst,
+            messagesById,
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'all_tools_in_turn',
+        });
+
+        expect(turns).toHaveLength(1);
+        expect(turns[0]!.content.map((c) => c.kind)).toEqual(['tool_calls', 'message']);
+        if (turns[0]!.content[0]?.kind === 'tool_calls') {
+            expect(turns[0]!.content[0].toolMessageIds).toEqual(['t1']);
+        }
+        if (turns[0]!.content[1]?.kind === 'message') {
+            expect(turns[0]!.content[1].messageId).toBe('diff-1');
+        }
+    });
 });
 
 describe('buildTranscriptTurnsCached', () => {
@@ -327,5 +439,88 @@ describe('buildTranscriptTurnsCached', () => {
 
         expect(cache2.turns.map((t) => t.userMessageId)).toEqual([null, 'u1']);
         expect(cache2.turns[0]?.content[0]?.kind).toBe('message');
+    });
+
+    it('rebuilds cached turns when an existing tool message becomes a turn-diff recap', () => {
+        const diffToolInitial = toolMessage({
+            id: 'diff-1',
+            createdAt: 3,
+            state: 'completed',
+            name: 'Diff',
+            input: {
+                unified_diff: [
+                    'diff --git a/apps/ui/a.ts b/apps/ui/a.ts',
+                    '--- a/apps/ui/a.ts',
+                    '+++ b/apps/ui/a.ts',
+                    '@@ -1,1 +1,1 @@',
+                    '-old',
+                    '+new',
+                ].join('\n'),
+            },
+        });
+        const messagesById = {
+            u1: userMessage('u1', 1),
+            t1: toolMessage({ id: 't1', createdAt: 2, state: 'completed' }),
+            'diff-1': diffToolInitial,
+        } satisfies Record<string, Message>;
+
+        const cache1 = buildTranscriptTurnsCached({
+            cache: null,
+            messageIdsOldestFirst: ['u1', 't1', 'diff-1'],
+            messagesById,
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'all_tools_in_turn',
+        });
+
+        expect(cache1.turns).toHaveLength(1);
+        expect(cache1.turns[0]!.content).toHaveLength(1);
+        expect(cache1.turns[0]!.content[0]?.kind).toBe('tool_calls');
+
+        messagesById['diff-1'] = toolMessage({
+            id: 'diff-1',
+            createdAt: 3,
+            state: 'completed',
+            name: 'Diff',
+            input: {
+                unified_diff: [
+                    'diff --git a/apps/ui/a.ts b/apps/ui/a.ts',
+                    '--- a/apps/ui/a.ts',
+                    '+++ b/apps/ui/a.ts',
+                    '@@ -1,1 +1,1 @@',
+                    '-old',
+                    '+new',
+                ].join('\n'),
+                _happier: {
+                    sessionChangeScope: 'turn',
+                    turnId: 'turn-1',
+                    sessionId: 'session-1',
+                    provider: 'claude',
+                    source: 'canonical_diff_tool',
+                    confidence: 'exact',
+                    turnStatus: 'completed',
+                    seqRange: {
+                        startSeqInclusive: 1,
+                        endSeqInclusive: 3,
+                    },
+                },
+            },
+        });
+
+        const cache2 = buildTranscriptTurnsCached({
+            cache: cache1,
+            messageIdsOldestFirst: ['u1', 't1', 'diff-1'],
+            messagesById,
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'all_tools_in_turn',
+        });
+
+        expect(cache2.turns).toHaveLength(1);
+        expect(cache2.turns[0]!.content.map((c) => c.kind)).toEqual(['tool_calls', 'message']);
+        if (cache2.turns[0]!.content[0]?.kind === 'tool_calls') {
+            expect(cache2.turns[0]!.content[0].toolMessageIds).toEqual(['t1']);
+        }
+        if (cache2.turns[0]!.content[1]?.kind === 'message') {
+            expect(cache2.turns[0]!.content[1].messageId).toBe('diff-1');
+        }
     });
 });

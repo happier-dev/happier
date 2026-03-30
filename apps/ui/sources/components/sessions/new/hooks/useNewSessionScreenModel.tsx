@@ -545,6 +545,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const refreshCliAvailability = React.useCallback(() => {
         void cliAvailability.refresh({ bypassCache: true });
     }, [cliAvailability.refresh]);
+
+    const cliAvailabilityProbe = React.useMemo(() => buildCliAvailabilityProbeState({
+        selectedMachineId,
+        cliAvailability,
+        onRefresh: refreshCliAvailability,
+    }), [cliAvailability, refreshCliAvailability, selectedMachineId]);
     React.useEffect(() => {
         if (!useProfiles) {
             return;
@@ -1123,6 +1129,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         capabilityServerId,
         selectedPath,
         settings,
+        refreshProbe: cliAvailabilityProbe ?? null,
     });
 
     const agentOptionState = agentNewSessionOptionStateByAgentId[selectedBackendTargetKey] ?? null;
@@ -1407,7 +1414,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         agentLabel,
         setAgentType,
-        agentPickerTitle: t('newSession.selectAiBackendTitle'),
         agentPickerOptions,
         agentPickerSelectedOptionId: selectedBackendEntry?.targetKey ?? selectedBackendTargetKey,
         onAgentPickerSelect: handleAgentPickerSelect,
@@ -1512,15 +1518,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         agentLabel,
         handleAgentClick,
-        agentPickerTitle: t('newSession.selectAiBackendTitle'),
         agentPickerOptions,
         agentPickerSelectedOptionId: selectedBackendEntry?.targetKey ?? selectedBackendTargetKey,
         onAgentPickerSelect: handleAgentPickerSelect,
-        agentPickerProbe: buildCliAvailabilityProbeState({
-            selectedMachineId,
-            cliAvailability,
-            onRefresh: refreshCliAvailability,
-        }),
+        agentPickerProbe: cliAvailabilityProbe,
         permissionMode,
         handlePermissionModeChange,
         modelMode,

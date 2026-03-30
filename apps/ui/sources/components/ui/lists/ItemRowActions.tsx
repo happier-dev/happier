@@ -48,7 +48,8 @@ export interface ItemRowActionsProps {
     /**
      * Optional explicit boundary ref for the popover. Useful when the row is rendered
      * inside a scroll container that should bound the popover sizing/placement.
-     * If omitted, the PopoverBoundaryProvider context (e.g. ItemGroup) is used.
+     * If omitted, Popover falls back to PopoverBoundaryProvider context when present,
+     * otherwise it clamps to the window/screen.
      */
     popoverBoundaryRef?: React.RefObject<any> | null;
 }

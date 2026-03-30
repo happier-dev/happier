@@ -97,6 +97,7 @@ describe('Popover (web)', () => {
         restorePopoverWebGlobals = null;
         mockPopoverContentDomRect = null;
         mockPopoverContentRefKind = 'dom';
+        vi.useRealTimers();
         vi.unstubAllGlobals();
     });
 
@@ -350,6 +351,60 @@ describe('Popover (web)', () => {
         expect(pointerHandlers.at(-1)?.options).toBe(true);
     });
 
+    it('does not stop event propagation when consumeOutsidePointerDown is disabled (allows click-through)', async () => {
+        const { Popover } = await import('./Popover');
+
+        vi.useFakeTimers();
+
+        const pointerHandlers: Array<{ handler: any; options: any }> = [];
+        const addEventListener = vi.fn((type: string, handler: any, options?: any) => {
+            if (type === 'pointerdown') pointerHandlers.push({ handler, options });
+        });
+        const removeEventListener = vi.fn();
+
+        vi.stubGlobal('document', {
+            addEventListener,
+            removeEventListener,
+        });
+
+        const onRequestClose = vi.fn();
+        const anchorRef = {
+            current: {
+                contains: () => false,
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 10, height: 10 }),
+            },
+        } as any;
+
+        await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            consumeOutsidePointerDown: false,
+            onRequestClose,
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        await act(async () => {});
+
+        expect(pointerHandlers.length).toBeGreaterThan(0);
+
+        const stopPropagation = vi.fn();
+        const stopImmediatePropagation = vi.fn();
+        pointerHandlers.at(-1)?.handler({
+            target: {} as any,
+            stopPropagation,
+            stopImmediatePropagation,
+        });
+
+        expect(stopPropagation).not.toHaveBeenCalled();
+        expect(stopImmediatePropagation).not.toHaveBeenCalled();
+        expect(onRequestClose).not.toHaveBeenCalled();
+
+        vi.runOnlyPendingTimers();
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
+        expect(pointerHandlers.at(-1)?.options).toBe(true);
+    });
+
     it('portals to a modal portal host when available (prevents Radix Dialog scroll-lock from swallowing wheel/touch scroll)', async () => {
         const { Popover } = await import('./Popover');
         const { ModalPortalTargetProvider } = await import('@/modal/portal/ModalPortalTarget');
@@ -404,7 +459,16 @@ describe('Popover (web)', () => {
         expect(events).not.toContain('scroll');
     });
 
-    it('portals to the PopoverBoundary when in an Expo Router modal (prevents Vaul/Radix scroll-lock from swallowing wheel/touch scroll)', async () => {
+    it('defaults to portaling to document.body even when a PopoverBoundaryProvider is present', async () => {
+        const body = {} as any;
+        const addEventListener = vi.fn();
+        const removeEventListener = vi.fn();
+        vi.stubGlobal('document', {
+            body,
+            addEventListener,
+            removeEventListener,
+        });
+
         const boundaryTarget = {
             addEventListener: vi.fn(),
             removeEventListener: vi.fn(),
@@ -431,7 +495,43 @@ describe('Popover (web)', () => {
 
         const portal = screen.findAllByType('Portal' as any)?.[0];
         expect(portal).toBeTruthy();
-        expect((portal as any)?.props?.target).toBe(boundaryTarget);
+        // Boundary providers should not implicitly change where popovers portal on web; they only
+        // affect clamping/measurement. Default portal target should be viewport-wide (`document.body`)
+        // unless a modal portal target is available.
+        expect((portal as any)?.props?.target).toBe(body);
+    });
+
+    it('subscribes to scroll events on followScrollRef when provided (even when portaling into a modal target)', async () => {
+        const { Popover } = await import('./Popover');
+        const { ModalPortalTargetProvider } = await import('@/modal/portal/ModalPortalTarget');
+
+        const anchorRef = { current: null } as any;
+        const modalTarget = {} as any;
+        const scrollSource = {
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        } as any;
+        const followScrollRef = { current: scrollSource } as any;
+
+        await renderScreen(React.createElement(
+            ModalPortalTargetProvider,
+            {
+                target: modalTarget,
+                children: React.createElement(Popover as any, {
+                    open: true,
+                    anchorRef,
+                    portal: { web: true },
+                    // Cast required for TDD: this prop does not exist yet in the implementation.
+                    followScrollRef,
+                    onRequestClose: () => {},
+                    children: () => React.createElement('PopoverChild'),
+                }),
+            },
+        ));
+
+        expect(scrollSource.addEventListener).toHaveBeenCalled();
+        const events = scrollSource.addEventListener.mock.calls.map((c: any[]) => c?.[0]).filter(Boolean);
+        expect(events).toContain('scroll');
     });
 
     it('accounts for portal-target scroll offset when positioning inside a scrollable boundary (prevents dropdowns from drifting upward)', async () => {

@@ -200,7 +200,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                         </Text>
                     ) : null}
 
-                    <Text style={styles.labelText}>{t('server.customServerUrlLabel').toUpperCase()}</Text>
+                    <Text style={styles.labelText}>{t('server.customServerUrlLabel')}</Text>
                     <TextInput
                         testID="server-settings-add-url-input"
                         style={[
@@ -219,7 +219,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
 
                     {props.autoMode ? null : (
                         <>
-                            <Text style={styles.labelText}>{t('server.serverNameLabel').toUpperCase()}</Text>
+                            <Text style={styles.labelText}>{t('server.serverNameLabel')}</Text>
                             <TextInput
                                 testID="server-settings-add-name-input"
                                 style={[
@@ -292,7 +292,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
             />
             {expanded === 'group' ? (
                 <View style={styles.contentContainer}>
-                    <Text style={styles.labelText}>{t('server.serverGroupNameLabel').toUpperCase()}</Text>
+                    <Text style={styles.labelText}>{t('server.serverGroupNameLabel')}</Text>
                     <TextInput
                         style={[
                             styles.textInput,
@@ -307,7 +307,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                         editable={!isSavingGroup}
                     />
 
-                    <Text style={styles.labelText}>{t('server.serverGroupServersLabel').toUpperCase()}</Text>
+                    <Text style={styles.labelText}>{t('server.serverGroupServersLabel')}</Text>
                     {props.servers.map((server) => {
                         const selected = selectedGroupServerIds.includes(server.id);
                         return (

@@ -17,6 +17,7 @@ type InstallNewSessionComponentsCommonModuleMocksOptions = Readonly<{
 }>;
 
 const newSessionComponentsCommonModuleState = vi.hoisted(() => ({
+    installed: false,
     options: {
         icons: undefined as NewSessionComponentsModuleFactory | undefined,
         modal: undefined as NewSessionComponentsModuleFactory | undefined,
@@ -40,6 +41,13 @@ export function installNewSessionComponentsCommonModuleMocks(
         text: options.text,
         unistyles: options.unistyles,
     };
+
+    // Many suites use this helper with suite-local overrides. The mocks themselves should be
+    // installed exactly once per worker; subsequent calls just update the active override set.
+    if (newSessionComponentsCommonModuleState.installed) {
+        return;
+    }
+    newSessionComponentsCommonModuleState.installed = true;
 
     vi.mock('react-native', async () => {
         const activeOptions = newSessionComponentsCommonModuleState.options;
@@ -110,4 +118,16 @@ export function installNewSessionComponentsCommonModuleMocks(
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({});
     });
+}
+
+export function resetNewSessionComponentsCommonModuleMocks() {
+    newSessionComponentsCommonModuleState.options = {
+        icons: undefined,
+        modal: undefined,
+        reactNative: undefined,
+        router: undefined,
+        storage: undefined,
+        text: undefined,
+        unistyles: undefined,
+    };
 }

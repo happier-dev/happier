@@ -62,6 +62,14 @@ export function resolveConnectionHealthPresentation(
                 statusLabelKey: 'status.actionRequired',
                 machineLabelKey: 'status.offline',
             };
+        case 'machine_not_ready':
+            return {
+                tone: 'attention',
+                color: statusColors.actionRequired,
+                isPulsing: false,
+                statusLabelKey: 'status.actionRequired',
+                machineLabelKey: 'status.online',
+            };
         case 'no_machine':
             return {
                 tone: 'attention',

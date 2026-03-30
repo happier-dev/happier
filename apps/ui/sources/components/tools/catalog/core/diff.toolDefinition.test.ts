@@ -137,4 +137,42 @@ describe('diff tool definition', () => {
         expect(def.extractSubtitle?.({ metadata: null, tool } as any)).toBe('tools.desc.turnDiffRecap');
         expect(def.extractDescription?.({ metadata: null, tool } as any)).toBe('tools.desc.turnDiffRecap');
     });
+
+    it('treats diffs as turn-diff recaps when canonical turn-change metadata is present on the tool result', async () => {
+        const [{ coreDiffTools }] = await Promise.all([import('./diff')]);
+        const def: KnownToolDefinition = coreDiffTools.Diff;
+
+        const tool = {
+            name: 'Diff',
+            input: {
+                unified_diff: [
+                    'diff --git a/apps/ui/a.ts b/apps/ui/a.ts',
+                    '--- a/apps/ui/a.ts',
+                    '+++ b/apps/ui/a.ts',
+                    '@@ -1,1 +1,1 @@',
+                    '-old',
+                    '+new',
+                ].join('\n'),
+            },
+            result: {
+                _happier: {
+                    sessionChangeScope: 'turn',
+                    turnId: 'turn-1',
+                    sessionId: 'session-1',
+                    provider: 'codex',
+                    source: 'canonical_diff_tool',
+                    confidence: 'exact',
+                    turnStatus: 'completed',
+                    seqRange: {
+                        startSeqInclusive: 1,
+                        endSeqInclusive: 4,
+                    },
+                },
+            },
+        };
+
+        expect(getTitle(def as any, tool)).toBe('tools.names.turnDiff');
+        expect(def.extractSubtitle?.({ metadata: null, tool } as any)).toBe('tools.desc.turnDiffRecap');
+        expect(def.extractDescription?.({ metadata: null, tool } as any)).toBe('tools.desc.turnDiffRecap');
+    });
 });

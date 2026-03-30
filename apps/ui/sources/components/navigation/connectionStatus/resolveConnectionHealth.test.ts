@@ -50,6 +50,15 @@ describe('resolveConnectionHealth', () => {
         expect(result.kind).toBe('healthy');
     });
 
+    it('returns machine_not_ready when machines are online but not ready', () => {
+        const result = resolveConnectionHealth({
+            socketStatus: 'connected',
+            machineGroups: [{ machineCount: 2, onlineCount: 2, readyCount: 1, status: 'idle' }],
+        });
+
+        expect(result.kind).toBe('machine_not_ready');
+    });
+
     it('returns server_unreachable when the socket is disconnected even if machines exist', () => {
         const result = resolveConnectionHealth({
             socketStatus: 'disconnected',

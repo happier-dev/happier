@@ -23,6 +23,7 @@ const upsertServerProfileMock = vi.fn((..._args: unknown[]) => ({
 }));
 const removeServerProfileMock = vi.fn((..._args: unknown[]) => undefined);
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 }),
     upsertServerProfile: (...args: unknown[]) => upsertServerProfileMock(...args),
     removeServerProfile: (...args: unknown[]) => removeServerProfileMock(...args),
 }));

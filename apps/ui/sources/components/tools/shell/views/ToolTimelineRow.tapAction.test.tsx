@@ -272,6 +272,20 @@ describe('ToolTimelineRow (tap action)', () => {
         expect(completedScreen.findByTestId('tool-timeline-row-error')).toBeNull();
     });
 
+    it('shows a header error indicator when tool_use_result is an error string even if the tool state is completed', async () => {
+        const screen = await renderToolTimelineRow({
+            tool: {
+                name: 'SearchContent',
+                state: 'completed',
+                result: {
+                    tool_use_result: 'Error: Ripgrep search timed out after 20 seconds.',
+                },
+            },
+        });
+
+        expect(screen.findByTestId('tool-timeline-row-error')).not.toBeNull();
+    });
+
     it('preloads sidechain messages when a Task tool is expanded', async () => {
         const screen = await renderToolTimelineRow({
             tool: {

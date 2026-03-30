@@ -33,9 +33,15 @@ vi.mock('@/sync/api/account/apiPairingAuth', () => ({
 }));
 
 let activeServerUrl = 'http://localhost:53288';
+let activeShareableServerUrl: string | null = null;
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
-    getActiveServerSnapshot: () => ({ serverId: 'srv-a', serverUrl: activeServerUrl, generation: 0 }),
+    getActiveServerSnapshot: () => ({
+        serverId: 'srv-a',
+        serverUrl: activeServerUrl,
+        activeShareableServerUrl,
+        generation: 0,
+    }),
 }));
 
 let cachedCanonicalServerUrl: string | null = null;
@@ -53,6 +59,7 @@ describe('usePairingSession (pairing deep link server URL)', () => {
         pairingStatusMock.mockClear();
         cachedCanonicalServerUrl = null;
         activeServerUrl = 'http://localhost:53288';
+        activeShareableServerUrl = null;
         appState.currentState = 'active';
     });
 
@@ -146,6 +153,38 @@ describe('usePairingSession (pairing deep link server URL)', () => {
             expect(deepLink).toBeTruthy();
             const url = new URL(deepLink!);
             expect(url.searchParams.get('server')).toBe('https://api.example.test');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('prefers an active shareable relay URL over the canonical server URL', async () => {
+        cachedCanonicalServerUrl = 'https://api.example.test';
+        activeServerUrl = 'https://active.example.test';
+        activeShareableServerUrl = 'https://relay.example.ts.net';
+
+        const { usePairingSession } = await import('./usePairingSession');
+
+        let hookApi: ReturnType<typeof usePairingSession> | null = null;
+        function Probe() {
+            hookApi = usePairingSession({ enabled: true, isAuthenticated: true });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<Probe />)).tree;
+        try {
+            await act(async () => {
+                const res = await hookApi!.startPairing();
+                expect(res.ok).toBe(true);
+            });
+
+            const deepLink = hookApi!.deepLink;
+            expect(deepLink).toBeTruthy();
+            const url = new URL(deepLink!);
+            expect(url.searchParams.get('server')).toBe('https://relay.example.ts.net');
         } finally {
             act(() => {
                 tree?.unmount();

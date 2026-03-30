@@ -6,6 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { DetectedClisList } from '@/components/machines/DetectedClisList';
 import { InstallableDepInstaller } from '@/components/machines/InstallableDepInstaller';
+import { ProviderSetupFlow } from '@/components/settings/providers/setup/ProviderSetupFlow';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -116,6 +117,8 @@ export default function MachineInstallablesScreen() {
                 <ItemGroup title={t('machine.detectedClis')}>
                     <DetectedClisList state={detectedCapabilities} layout="stacked" />
                 </ItemGroup>
+
+                <ProviderSetupFlow machineId={machineId ?? null} serverId={serverId} />
 
                 {installables.map(({ entry, enabled, status, policy }) => {
                     if (!enabled) return null;

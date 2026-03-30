@@ -112,7 +112,7 @@ function makeChildlessRunningReviewSubAgentMessage(): ToolCallMessage {
 }
 
 describe('ToolCallsGroupView (subagent preview rendering)', () => {
-    it('renders collapsed running review subagents through MessageView in activity feed mode', async () => {
+    it('renders collapsed running review subagents through ToolTimelineRow in activity feed mode', async () => {
         renderedMessageViews.length = 0;
         collapsedPreviewCount = 1;
         const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
@@ -129,11 +129,12 @@ describe('ToolCallsGroupView (subagent preview rendering)', () => {
                 interaction: { canSendMessages: true, canApprovePermissions: true },
             }))).tree;
 
-        expect(tree!.findAllByType('MessageView' as any)).toHaveLength(1);
-        expect(tree!.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
-        expect(renderedMessageViews[0]?.message?.tool?.name).toBe('SubAgentRun');
-        expect(renderedMessageViews[0]?.message?.children?.[0]?.text).toBe('Inspecting the workspace now.');
-        expect(renderedMessageViews[0]?.layoutContext).toBe('tool_calls_group');
+        expect(tree!.findAllByType('MessageView' as any)).toHaveLength(0);
+        const toolTimelineRows = tree!.findAllByType('ToolTimelineRow' as any);
+        expect(toolTimelineRows).toHaveLength(1);
+        expect(toolTimelineRows[0]?.props.tool?.name).toBe('SubAgentRun');
+        expect(toolTimelineRows[0]?.props.messages?.[0]?.text).toBe('Inspecting the workspace now.');
+        expect(renderedMessageViews).toHaveLength(0);
     });
 
     it('falls back to ToolTimelineRow for collapsed running review subagents before transcript content arrives', async () => {

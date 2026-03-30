@@ -2,20 +2,18 @@
 
 ## Development Workflow: Build Variants
 
-The Happier app supports three build variants across **iOS, Android, and macOS desktop**, each with separate native identifiers so all three can be installed simultaneously:
+The Happier UI app supports multiple build variants across **iOS, Android, and desktop (Tauri)**.
+Each variant has a distinct native identity so they can be installed side-by-side.
 
-| Variant | iOS Bundle ID | Android Package | App Name | Use Case |
-|---------|---------------|-----------------|----------|----------|
-| **Development** | `dev.happier.app.development` | `dev.happier.app.dev` | Happier (dev) | Local development with hot reload |
-| **Preview** | `dev.happier.app.preview` | `dev.happier.app.preview` | Happier (preview) | Beta testing & OTA updates before production |
-| **Production** | `dev.happier.app` | `dev.happier.app` | Happier | Public App Store release |
+Public users should only care about `stable` / `preview` / `dev` (see `https://docs.happier.dev/docs/advanced/updates`).
+In the repo and in CI we also use internal variants for local development.
 
-**Why Preview?**
-- **Development**: Fast iteration, dev server, instant reload
-- **Preview**: Beta testers get OTA updates (`eas update --branch preview`) without app store submission
-- **Production**: Stable App Store builds
-
-This allows you to test production-like builds with real users before releasing to the App Store.
+| Variant | `APP_ENV` | iOS Bundle ID | Android Package | URL scheme | Use case |
+| --- | --- | --- | --- | --- | --- |
+| **Internal dev** | `development` (alias `internaldev`) | `dev.happier.app.internaldev` | `dev.happier.app.internaldev` | `happier-internaldev` | Local development with hot reload |
+| **Public dev** | `publicdev` | `dev.happier.app.publicdev` | `dev.happier.app.publicdev` | `happier-dev` | Nightly public dev builds + OTA updates |
+| **Preview** | `preview` | `dev.happier.app.preview` | `dev.happier.app.preview` | `happier-preview` | Pre-release testing + OTA updates |
+| **Production** | `production` | `dev.happier.app` | `dev.happier.app` | `happier` | App Store / Play Store builds |
 
 ## Quick Start
 
@@ -60,6 +58,40 @@ yarn tauri:build:preview
 # Build production variant
 yarn tauri:build:production
 ```
+
+### Tauri Manual QA Automation (MCP)
+
+This repo ships a **dev-only** Tauri MCP bridge so you can drive the running desktop app for manual QA.
+
+**Already configured in this repo:**
+- Dev plugin: `src-tauri/src/lib.rs` enables `tauri_plugin_mcp_bridge` in `#[cfg(debug_assertions)]` builds.
+- Dev capability: `src-tauri/capabilities/mcp-dev.json` grants `mcp-bridge:default`.
+- Dev config: `src-tauri/tauri.publicdev.conf.json` sets `withGlobalTauri: true` and includes `mcp-dev`.
+
+**Run it locally:**
+```bash
+# Starts the Tauri app and the MCP server together for manual QA.
+yarn tauri:qa
+```
+
+**Sanity check the driver port (optional):**
+```bash
+# Starts a driver session against the default plugin port (9223)
+yarn tauri:mcp:session:start
+```
+
+**Hook it up to Codex (optional):**
+```bash
+# Installs the MCP server into Codex’ MCP config
+npx -y install-mcp @hypothesi/tauri-mcp-server --client codex
+```
+
+**Minimal desktop QA checklist structure (recommended):**
+- Setup: start `yarn tauri:qa`, confirm `yarn tauri:mcp:session:start` connects.
+- Onboarding: create account, terminal-connect/pairing, session list visible.
+- Local setup flows (desktop-only): file pickers, SSH identity selection, daemon/service controls.
+- Error states: bridge disconnected, daemon not running, daemon unauthenticated, relay drift detected + repair task progress.
+- Regression: restart app mid-task, confirm snapshot replay + UI recovery.
 
 **How Tauri Variants Work:**
 - Base config: `src-tauri/tauri.conf.json` (production defaults)
@@ -310,30 +342,23 @@ yarn ios:connected-device
 
 ## Tips
 
-1. **Use development variant for active work** - Fast iteration, debug features enabled
-2. **Use preview for pre-release testing** - Test OTA updates before production
-3. **Use production for final validation** - Exact configuration that ships to users
-4. **Install all three simultaneously** - Compare behaviors side-by-side
-5. **Different CLI instances** - Connect dev app to dev CLI, prod app to stable CLI
-6. **Check app name** - Always visible which variant you're testing
+1. **Use internal dev for active work**: fast iteration and dev-only affordances.
+2. **Use preview/public dev for production-like validation**: runs the preview feature policy and uses OTA.
+3. **Use production for final validation**: exact configuration that ships to users.
+4. **Install variants side-by-side**: compare behavior without uninstalling.
+5. **Match CLI lanes when needed**: `happier` (stable), `hprev` (preview), `hdev` (dev).
+6. **Check app name**: always visible which variant you are testing.
 
 ## How It Works
 
-The `app.config.js` file reads the `APP_ENV` environment variable:
+The `app.config.js` file reads `APP_ENV` and delegates identity mapping to `appVariantConfig.cjs`:
 
 ```javascript
-const variant = process.env.APP_ENV || 'development';
-const iosBundleId = {
-  development: "dev.happier.app.development",
-  preview: "dev.happier.app.preview",
-  production: "dev.happier.app"
-}[variant];
-
-const androidPackage = {
-  development: "dev.happier.app.dev",
-  preview: "dev.happier.app.preview",
-  production: "dev.happier.app"
-}[variant];
+const { getAppEnvironmentConfig } = require("./appVariantConfig.cjs");
+const cfg = getAppEnvironmentConfig(process.env.APP_ENV || "development");
+const iosBundleId = cfg.iosBundleId;
+const androidPackage = cfg.androidPackage;
+const scheme = cfg.scheme;
 ```
 
 The `cross-env` package ensures this works cross-platform:

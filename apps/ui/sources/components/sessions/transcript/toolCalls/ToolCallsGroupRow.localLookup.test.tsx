@@ -197,7 +197,7 @@ describe('ToolCallsGroupRow', () => {
               }),
             }),
           ],
-          status: 'error',
+          status: 'completed',
         }),
       ]),
     );

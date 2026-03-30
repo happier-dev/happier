@@ -212,72 +212,72 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     const selectedTileValue = customEditorVisible ? null : props.selectedValue;
     return (
         <View testID="model-picker-overlay" style={styles.section}>
-            <View style={[styles.row, { marginRight: props.headerAccessory ? 30 : 0 }]}>
+            <View style={[styles.row, styles.titleRowContainer ]}>
                 <View style={styles.titleRow}>
                     <Text style={styles.title}>{props.title}</Text>
-                    {props.headerAccessory ? (
-                        <View style={styles.headerAccessory}>
-                            {props.headerAccessory}
+                    {props.summary ? (
+                        <View
+                            testID={props.summaryTestID ?? 'model-picker-overlay-summary'}
+                            style={styles.effectiveBlock}
+                        >
+                            {typeof props.summary === 'string'
+                                ? <Text style={styles.noteText}>{props.summary}</Text>
+                                : props.summary}
+                        </View>
+                    ) : (props.effectiveLabel || notes.length > 0) ? (
+                        <View testID="model-picker-overlay-summary" style={styles.effectiveBlock}>
+                            {props.effectiveLabel ? (
+                                <Text style={styles.noteText}>{t('modelPickerOverlay.effectiveLabel', { label: props.effectiveLabel })}</Text>
+                            ) : null}
+                            {notes.map((note, idx) => (
+                                <Text key={idx} style={styles.noteText}>{note}</Text>
+                            ))}
+                            {probeHintText ? (
+                                <Text style={styles.noteText}>{probeHintText}</Text>
+                            ) : null}
                         </View>
                     ) : null}
-                    {probe ? (
-                        typeof probe.onRefresh === 'function' ? (
-                            <Pressable
-                                testID={refreshTestID}
-                                onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
+                </View>
+                {props.headerAccessory ? (
+                    <View style={styles.headerAccessory}>
+                        {props.headerAccessory}
+                    </View>
+                ) : null}
+                {probe ? (
+                    typeof probe.onRefresh === 'function' ? (
+                        <Pressable
+                            testID={refreshTestID}
+                            onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
                             style={({ pressed }) => [
                                 styles.refreshIconButton,
                                 pressed && probe.phase === 'idle' ? styles.refreshIconButtonPressed : null,
                                 probe.phase !== 'idle' ? styles.refreshIconButtonDisabled : null,
-                                ]}
-                                accessibilityRole="button"
-                                accessibilityLabel={probe.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y')}
-                                hitSlop={6}
-                            >
-                                {probe.phase === 'idle' ? (
-                                    <Ionicons name="refresh-outline" size={18} style={styles.refreshIcon as any} />
-                                ) : (
-                                    <ActivityIndicator
-                                        size="small"
-                                        accessibilityLabel={probe.phase === 'loading'
-                                            ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
-                                            : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
-                                    />
-                                )}
-                            </Pressable>
-                        ) : probe.phase !== 'idle' ? (
-                            <View style={styles.refreshIconButton}>
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel={probe.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y')}
+                            hitSlop={6}
+                        >
+                            {probe.phase === 'idle' ? (
+                                <Ionicons name="refresh-outline" size={18} style={styles.refreshIcon as any} />
+                            ) : (
                                 <ActivityIndicator
                                     size="small"
                                     accessibilityLabel={probe.phase === 'loading'
                                         ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
                                         : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
                                 />
-                            </View>
-                        ) : null
-                    ) : null}
-                </View>
-                {props.summary ? (
-                    <View
-                        testID={props.summaryTestID ?? 'model-picker-overlay-summary'}
-                        style={styles.effectiveBlock}
-                    >
-                        {typeof props.summary === 'string'
-                            ? <Text style={styles.noteText}>{props.summary}</Text>
-                            : props.summary}
-                    </View>
-                ) : (props.effectiveLabel || notes.length > 0) ? (
-                    <View testID="model-picker-overlay-summary" style={styles.effectiveBlock}>
-                        {props.effectiveLabel ? (
-                            <Text style={styles.noteText}>{t('modelPickerOverlay.effectiveLabel', { label: props.effectiveLabel })}</Text>
-                        ) : null}
-                        {notes.map((note, idx) => (
-                            <Text key={idx} style={styles.noteText}>{note}</Text>
-                        ))}
-                        {probeHintText ? (
-                            <Text style={styles.noteText}>{probeHintText}</Text>
-                        ) : null}
-                    </View>
+                            )}
+                        </Pressable>
+                    ) : probe.phase !== 'idle' ? (
+                        <View style={styles.refreshIconButton}>
+                            <ActivityIndicator
+                                size="small"
+                                accessibilityLabel={probe.phase === 'loading'
+                                    ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
+                                    : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
+                            />
+                        </View>
+                    ) : null
                 ) : null}
             </View>
             {(filteredOptions.length > 0 || props.canEnterCustomValue) ? (
@@ -423,17 +423,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 0,
         paddingLeft: 7,
     },
-    titleRow: {
+    titleRowContainer: {
         flexDirection: 'row',
         alignItems: 'flex-start',
         justifyContent: 'space-between',
+    },
+    titleRow: {
         paddingHorizontal: 0,
         paddingBottom: 0,
     },
     headerAccessory: {
         flexShrink: 0,
+        marginLeft: 8,
+        marginRight: 32,
     },
     title: {
+        flex: 1,
         fontSize: 11,
         fontWeight: '600',
         color: theme.colors.textSecondary,
@@ -460,12 +465,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: theme.colors.divider,
         backgroundColor: 'transparent',
         flexShrink: 0,
-        position: 'absolute',
-        top: 0,
-        right: -28,
-        // Keep the refresh affordance above the effective summary block on web.
-        zIndex: 10,
-        elevation: 10,
     },
     refreshIconButtonPressed: {
         backgroundColor: theme.colors.surfacePressed,

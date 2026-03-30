@@ -8,6 +8,8 @@ describe('isPublicRouteForUnauthenticated', () => {
         { name: 'home index', segments: ['index'], expected: true },
         { name: 'grouped home index', segments: ['(app)', 'index'], expected: true },
         { name: 'nested home index', segments: ['(app)', '(group)', 'index'], expected: true },
+        { name: 'setup route', segments: ['setup'], expected: true },
+        { name: 'nested setup route', segments: ['(app)', 'setup'], expected: true },
         { name: 'server route', segments: ['server'], expected: true },
         { name: 'nested server route', segments: ['(app)', 'server', 'saved'], expected: true },
         { name: 'restore route', segments: ['restore'], expected: true },

@@ -53,7 +53,17 @@ const modeOptionsState = vi.hoisted(() => ({
 const configOptionsState = vi.hoisted(() => ({
     value: [] as ReadonlyArray<AgentInputOptionControl>,
 }));
+const probeEnabledState = vi.hoisted(() => ({
+    models: true,
+    config: true,
+}));
 let lastModelPickerOverlayProps: any = null;
+const probeRefreshSpies = {
+    cli: vi.fn(),
+    models: vi.fn(),
+    modes: vi.fn(),
+    config: vi.fn(),
+};
 
 installNewSessionComponentsCommonModuleMocks({
     modal: () => createModalModuleMock({
@@ -115,12 +125,22 @@ vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
             lastModelPickerOverlayProps = props;
         }
         const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
+        const refreshTestID = props.refreshTestID ?? 'model-picker-overlay-refresh';
+        const probe = props.probe;
         return React.createElement(
             'OptionPickerOverlay',
             props,
             props.title,
             props.summary ?? null,
             props.headerAccessory ?? null,
+            typeof probe?.onRefresh === 'function' ? React.createElement(
+                'Pressable',
+                {
+                    testID: refreshTestID,
+                    onPress: probe.phase === 'idle' ? probe.onRefresh : undefined,
+                },
+                null,
+            ) : null,
             props.options?.map((option: { value: string; label: string }) => React.createElement(
                 'Pressable',
                 {
@@ -138,21 +158,27 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
     useNewSessionPreflightModelsState: () => ({
         modelOptions: modelOptionsState.value,
         preflightModels: preflightModelsState.value,
-        probe: { phase: 'idle', onRefresh: () => {} },
+        probe: {
+            phase: 'idle',
+            ...(probeEnabledState.models ? { onRefresh: probeRefreshSpies.models } : {}),
+        },
     }),
 }));
 
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState', () => ({
     useNewSessionPreflightSessionModesState: () => ({
         modeOptions: modeOptionsState.value,
-        probe: { phase: 'idle', onRefresh: () => {} },
+        probe: { phase: 'idle', onRefresh: probeRefreshSpies.modes },
     }),
 }));
 
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState', () => ({
     useNewSessionPreflightConfigOptionsState: () => ({
         configOptions: configOptionsState.value,
-        probe: { phase: 'idle', onRefresh: () => {} },
+        probe: {
+            phase: 'idle',
+            ...(probeEnabledState.config ? { onRefresh: probeRefreshSpies.config } : {}),
+        },
     }),
 }));
 
@@ -175,6 +201,12 @@ describe('NewSessionEngineOptionDetail', () => {
         ];
         configOptionsState.value = [];
         lastModelPickerOverlayProps = null;
+        probeEnabledState.models = true;
+        probeEnabledState.config = true;
+        probeRefreshSpies.cli.mockClear();
+        probeRefreshSpies.models.mockClear();
+        probeRefreshSpies.modes.mockClear();
+        probeRefreshSpies.config.mockClear();
     });
 
     it('does not render session mode selection in the engine popover (mode is controlled by the dedicated chip) and preserves the incoming sessionModeId on model changes', async () => {
@@ -235,8 +267,10 @@ describe('NewSessionEngineOptionDetail', () => {
         expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(true);
     });
 
-    it('surfaces a refresh control for probed config options even when no options are available yet', async () => {
+    it('renders a single refresh control (in the model section) that refreshes CLI detection even when model/config probes have no refresh callback', async () => {
         configOptionsState.value = [];
+        probeEnabledState.models = false;
+        probeEnabledState.config = false;
 
         const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
         const screen = await renderScreen(<NewSessionEngineOptionDetail
@@ -247,9 +281,16 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedModelId="default"
             selectedSessionModeId="default"
             selectedConfigOverrides={{}}
+            refreshProbe={{ phase: 'idle', onRefresh: probeRefreshSpies.cli }}
         />);
 
-        expect(screen.findByTestId('agent-input-config-options-refresh')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-config-options-refresh')).toBeNull();
+        expect(screen.findByTestId('model-picker-overlay-refresh')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('model-picker-overlay-refresh');
+        expect(probeRefreshSpies.cli).toHaveBeenCalledTimes(1);
+        expect(probeRefreshSpies.models).toHaveBeenCalledTimes(0);
+        expect(probeRefreshSpies.config).toHaveBeenCalledTimes(0);
     });
 
     it('adds a description to the CLI settings option when other models include descriptions', async () => {

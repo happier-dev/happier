@@ -32,6 +32,7 @@ const machineCapabilitiesInvokeMock = vi.fn(async () => ({
     response: { ok: true, result: { plan: null } },
 }));
 const applySettingsMock = vi.fn();
+const tauriDesktopState = vi.hoisted(() => ({ value: true }));
 const cliDetectionState = {
     available: { codex: false },
     login: { codex: null } as Record<string, boolean | null>,
@@ -209,6 +210,10 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
+}));
+
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => tauriDesktopState.value,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -420,6 +425,7 @@ describe('ProviderSettingsScreen', () => {
     beforeEach(() => {
         mockProviderId = 'codex';
         shouldThrowOnAppPaneScope = false;
+        tauriDesktopState.value = true;
         applySettingsMock.mockReset();
         cliDetectionState.available = { codex: false };
         cliDetectionState.login = { codex: null };
@@ -494,6 +500,18 @@ describe('ProviderSettingsScreen', () => {
         expect(installer.props.installed).toBe(false);
         expect(installer.props.managedInstalled).toBe(false);
         expect(installer.props.installability).toMatchObject({ kind: 'installable' });
+    });
+
+    it('hides the desktop-only provider install and auth actions on web while keeping status rows', async () => {
+        tauriDesktopState.value = false;
+
+        const screen = await renderProviderSettingsScreen();
+
+        expect(screen.findAllByType('ProviderCliInstallItem' as any)).toHaveLength(0);
+        expect(screen.findAllByType('ProviderAuthenticationTerminalPane' as any)).toHaveLength(0);
+        expect(screen.findByTestId('settings-provider-auth-status')).toBeTruthy();
+        expect(screen.findByTestId('settings-provider-auth-check-now')).toBeNull();
+        expect(screen.findByTestId('settings-provider-auth-login')).toBeNull();
     });
 
     it('renders a machine-only context bar scoped to the active server machines', async () => {
