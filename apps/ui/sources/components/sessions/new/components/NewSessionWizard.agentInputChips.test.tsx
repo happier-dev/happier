@@ -108,6 +108,8 @@ vi.mock('@/components/ui/popover', () => ({
         React.createElement('PopoverPortalTargetProvider', props, props.children),
     PopoverBoundaryProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('PopoverBoundaryProvider', props, props.children),
+    PopoverScope: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement(React.Fragment, null, props.children),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({

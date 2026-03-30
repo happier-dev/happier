@@ -30,6 +30,10 @@ vi.mock('@/components/ui/popover', () => ({
                 : props.children,
         );
     },
+    PopoverScope: (props: any) => {
+        const React = require('react');
+        return React.createElement(React.Fragment, null, props.children);
+    },
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
