@@ -11,7 +11,12 @@ import { join } from 'node:path'
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from '@/server/serverId'
 import { isLocalishServerUrl } from '@/server/serverUrlClassification'
 import { normalizeCliArgv } from '@/cli/parseArgs'
+import {
+  inferPublicReleaseRingIdFromEnvAndArgv,
+  resolveDaemonStateBasenameForRing,
+} from '@/cli/runtime/publicReleaseChannel'
 import packageJson from '../package.json'
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings'
 
 /**
  * Parse an environment variable as an integer and clamp it within optional bounds.
@@ -65,6 +70,7 @@ class Configuration {
   public readonly webappUrl: string
   public readonly activeServerId: string
   public readonly isDaemonProcess: boolean
+  public readonly publicReleaseRing: PublicReleaseRingId;
 
   // Directories and paths (from persistence)
   public readonly happyHomeDir: string
@@ -208,6 +214,7 @@ class Configuration {
     // Check if we're running as daemon based on process args
     const args = normalizeCliArgv(process.argv.slice(2))
     this.isDaemonProcess = isDaemonProcessArgv(args)
+    this.publicReleaseRing = inferPublicReleaseRingIdFromEnvAndArgv({ env: process.env, argv: process.argv })
 
     // Directory configuration - Priority: HAPPIER_HOME_DIR env > default home dir
     if (process.env.HAPPIER_HOME_DIR) {
@@ -249,8 +256,9 @@ class Configuration {
     this.activeServerDir = join(this.serversDir, this.activeServerId)
     this.legacyPrivateKeyFile = join(this.happyHomeDir, 'access.key')
     this.privateKeyFile = join(this.activeServerDir, 'access.key')
-    this.daemonStateFile = join(this.activeServerDir, 'daemon.state.json')
-    this.daemonLockFile = join(this.activeServerDir, 'daemon.state.json.lock')
+    const daemonStateBasename = resolveDaemonStateBasenameForRing(this.publicReleaseRing)
+    this.daemonStateFile = join(this.activeServerDir, daemonStateBasename)
+    this.daemonLockFile = join(this.activeServerDir, `${daemonStateBasename}.lock`)
 
     const attachMaxAgeRaw = String(process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS ?? '').trim();
     const attachMaxAgeMs = Number.parseInt(attachMaxAgeRaw, 10);

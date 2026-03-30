@@ -8,21 +8,13 @@ import {
 } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import type { TrackedSession } from '../types';
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/directSessions/resolveClaudeConfigDir';
+import { resolveClaudeProjectId } from '@/backends/claude/utils/path';
 
 function asMetadataRecord(value: unknown): Metadata | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return null;
     }
     return value as Metadata;
-}
-
-function resolveClaudeProjectId(pathValue: string): string | null {
-    const trimmed = pathValue.trim();
-    if (!trimmed) {
-        return null;
-    }
-    const projectId = trimmed.replace(/[^a-zA-Z0-9-]/g, '-');
-    return projectId || null;
 }
 
 function resolveTrackedSessionFallbackMetadata(params: Readonly<{
@@ -110,8 +102,8 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
                     source: {
                         kind: 'claudeConfig',
                         configDir,
-                        ...(typeof metadata.path === 'string' && resolveClaudeProjectId(metadata.path)
-                            ? { projectId: resolveClaudeProjectId(metadata.path)! }
+                        ...(typeof metadata.path === 'string' && metadata.path.trim()
+                            ? { projectId: resolveClaudeProjectId(metadata.path.trim()) }
                             : {}),
                     },
                     linkedAtMs: Date.now(),

@@ -51,6 +51,32 @@ describe('happier server --json', () => {
     }
   });
 
+  it('does not crash when a stored serverUrl is not a valid URL', async () => {
+    const output = captureConsoleLogAndMuteStdout();
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await addServerProfile({ name: 'A', serverUrl: 'https://a.example.test', webappUrl: 'https://a.example.test', use: true });
+      const invalidUrl = 'not a url';
+      const invalid = await addServerProfile({ name: 'Broken', serverUrl: invalidUrl, webappUrl: 'https://broken.example.test', use: false });
+
+      await handleServerCommand(['list', '--json']);
+
+      const parsed = JSON.parse(output.logs.join('\n').trim());
+      expect(parsed.v).toBe(1);
+      expect(parsed.ok).toBe(true);
+      const list = Array.isArray(parsed.data?.profiles) ? parsed.data.profiles : [];
+      const found = list.find((p: any) => p?.id === invalid.id);
+      expect(found).toBeTruthy();
+      expect(found.serverUrl).toBe(invalidUrl);
+      expect(found.comparableKey).toBe(invalidUrl);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      output.restore();
+      process.exitCode = prevExitCode;
+    }
+  });
+
   it('prints a server_current JSON envelope', async () => {
     const output = captureConsoleLogAndMuteStdout();
     const prevExitCode = process.exitCode;
@@ -65,6 +91,7 @@ describe('happier server --json', () => {
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_current');
       expect(parsed.data?.active?.serverUrl).toBe('https://a.example.test');
+      expect(parsed.data?.active?.comparableKey).toBe('https://a.example.test');
       expect(process.exitCode).toBe(0);
     } finally {
       output.restore();

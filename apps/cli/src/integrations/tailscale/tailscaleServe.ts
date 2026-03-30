@@ -21,15 +21,11 @@ export async function tailscaleServeHttpsUrlForInternalServerUrl(params: Readonl
   const internalServerUrl = String(params.internalServerUrl ?? '').trim();
   if (!internalServerUrl) return null;
 
-  const timeoutRaw = Number(params.timeoutMs);
-  const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? Math.trunc(timeoutRaw) : 750;
-  const tailscaleBin = String(params.tailscaleBin ?? '').trim() || (process.env.HAPPIER_TAILSCALE_BIN ?? '').trim() || 'tailscale';
-
   try {
     const status = await runTailscaleServeStatus({
-      timeoutMs,
+      timeoutMs: params.timeoutMs,
       env: params.env ?? process.env,
-      tailscaleBin,
+      tailscaleBin: params.tailscaleBin,
     });
     return tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, internalServerUrl);
   } catch {

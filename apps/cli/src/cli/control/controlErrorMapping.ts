@@ -23,6 +23,7 @@ export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedE
   if (
     lower.startsWith('usage:') ||
     lower.startsWith('missing ') ||
+    lower.startsWith('invalid ') ||
     lower.includes('missing required') ||
     lower.includes('non-interactive mode') ||
     lower.includes('unknown ')

@@ -20,7 +20,7 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('happier session review start (integration)', () => {
-  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR', 'HAPPIER_ACTIONS_SETTINGS_V1'] as const;
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
@@ -83,6 +83,12 @@ describe('happier session review start (integration)', () => {
     process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
     process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'review.start': { enabled: true, disabledSurfaces: [], disabledPlacements: [] },
+      },
+    });
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();

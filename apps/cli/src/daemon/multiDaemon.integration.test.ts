@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -17,7 +18,17 @@ import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from '
 describe('multi-daemon helpers', () => {
   it('lists daemon status per saved server profile', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-multi-daemon-' }, async ({ homeDir }) => {
-      await writeDaemonSettingsFixture(homeDir);
+      const accountId = 'acct_123';
+      await writeDaemonSettingsFixture(homeDir, {
+        machineIdByServerId: {
+          company: 'machine_123',
+        },
+        machineIdByServerIdByAccountId: {
+          company: {
+            [accountId]: 'machine_abc',
+          },
+        },
+      });
 
       const sleepy = spawnSleepyDetachedProcess();
       try {
@@ -26,10 +37,72 @@ describe('multi-daemon helpers', () => {
           httpPort: 12345,
         });
 
+        const serverDir = join(homeDir, 'servers', 'company');
+        mkdirSync(serverDir, { recursive: true });
+        const token = [
+          Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url'),
+          Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url'),
+          '',
+        ].join('.');
+        writeFileSync(join(serverDir, 'access.key'), JSON.stringify({ token, secret: null }, null, 2), { encoding: 'utf-8' });
+
         const results = await listDaemonStatusesForAllKnownServers();
         const company = results.find((r: { serverId: string }) => r.serverId === 'company');
         expect(company).toBeTruthy();
         expect(company!.daemon.running).toBe(true);
+        expect(company?.auth).toEqual({
+          authenticated: true,
+          needsAuth: false,
+          machineRegistered: true,
+          machineId: 'machine_abc',
+          accountId,
+        });
+        expect(company?.drift?.activeComparableKey).toBeTruthy();
+        expect(company?.drift?.matchesActiveRelay).toBe(false);
+        expect(company?.service?.running).toBe(false);
+      } finally {
+        await sleepy.kill();
+      }
+    });
+  });
+
+  it('fails closed when the access token cannot be scoped to an account even if a server-scoped machine id exists', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-multi-daemon-opaque-token-' }, async ({ homeDir }) => {
+      await writeDaemonSettingsFixture(homeDir, {
+        machineIdByServerId: {
+          company: 'machine-server-scoped',
+        },
+        machineIdByServerIdByAccountId: {
+          company: {
+            'acct_123': 'machine-account-scoped',
+          },
+        },
+      });
+
+      const sleepy = spawnSleepyDetachedProcess();
+      try {
+        await writeDaemonStateFixture(homeDir, 'company', {
+          pid: sleepy.pid,
+          httpPort: 12345,
+        });
+
+        const serverDir = join(homeDir, 'servers', 'company');
+        mkdirSync(serverDir, { recursive: true });
+        writeFileSync(join(serverDir, 'access.key'), JSON.stringify({ token: 'not-a-jwt', secret: null }, null, 2), {
+          encoding: 'utf-8',
+        });
+
+        const results = await listDaemonStatusesForAllKnownServers();
+        const company = results.find((r: { serverId: string }) => r.serverId === 'company');
+        expect(company).toBeTruthy();
+        expect(company!.daemon.running).toBe(true);
+        expect(company?.auth).toEqual({
+          authenticated: true,
+          needsAuth: true,
+          machineRegistered: false,
+          machineId: null,
+          accountId: null,
+        });
       } finally {
         await sleepy.kill();
       }

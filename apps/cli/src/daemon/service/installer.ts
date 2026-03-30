@@ -1,5 +1,4 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
 
@@ -7,6 +6,7 @@ import { applyDaemonServiceInstallPlan, applyDaemonServiceUninstallPlan } from '
 import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
 import type { DaemonServiceMode } from './plan';
 import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 type SupportedPlatform = 'darwin' | 'linux' | 'win32';
 
@@ -24,6 +24,7 @@ export async function installDaemonService(options: Readonly<{
   happierHomeDir?: string;
   mode?: DaemonServiceMode;
   systemUser?: string;
+  channel?: PublicReleaseRingId;
   instanceId?: string;
   serverUrl?: string;
   webappUrl?: string;
@@ -59,6 +60,7 @@ export async function installDaemonService(options: Readonly<{
     platform,
     mode: options.mode,
     systemUser: options.systemUser,
+    channel: options.channel,
     instanceId,
     uid,
     userHomeDir,
@@ -78,6 +80,7 @@ export async function uninstallDaemonService(options: Readonly<{
   userHomeDir?: string;
   happierHomeDir?: string;
   mode?: DaemonServiceMode;
+  channel?: PublicReleaseRingId;
   instanceId?: string;
   runCommands?: boolean;
 }> = {}): Promise<void> {
@@ -95,6 +98,7 @@ export async function uninstallDaemonService(options: Readonly<{
   const plan = planDaemonServiceUninstall({
     platform,
     mode: options.mode,
+    channel: options.channel,
     instanceId,
     uid,
     userHomeDir,

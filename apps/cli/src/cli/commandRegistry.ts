@@ -10,9 +10,11 @@ import { handleDaemonCliCommand } from './commands/daemon';
 import { handleDoctorCliCommand } from './commands/doctor';
 import { handleInstallCliCommand } from './commands/install';
 import { handleLogoutCliCommand } from './commands/logout';
+import { handleMachineCliCommand } from './commands/machine';
 import { handleMcpCliCommand } from './commands/mcp';
 import { handleNotifyCliCommand } from './commands/notify';
 import { handleProfilesCliCommand } from './commands/profiles';
+import { handleRelayCliCommand } from './commands/relay';
 import { handleResumeCliCommand } from './commands/resume';
 import { handleSessionCliCommand } from './commands/session/index';
 import { handleServerCliCommand } from './commands/server';
@@ -56,10 +58,12 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   doctor: handleDoctorCliCommand,
   install: handleInstallCliCommand,
   logout: handleLogoutCliCommand,
+  machine: handleMachineCliCommand,
   mcp: handleMcpCliCommand,
   notify: handleNotifyCliCommand,
   profile: handleProfilesCliCommand,
   profiles: handleProfilesCliCommand,
+  relay: handleRelayCliCommand,
   resume: handleResumeCliCommand,
   session: handleSessionCliCommand,
   server: handleServerCliCommand,

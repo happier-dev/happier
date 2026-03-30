@@ -131,7 +131,7 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
 
     const awaiter = pidToAwaiter.get(pid);
     expect(typeof awaiter).toBe('function');
-    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 90_000);
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5 * 60_000);
 
     awaiter?.({ startedBy: 'daemon', pid, happySessionId: 'session-visible-late' });
 

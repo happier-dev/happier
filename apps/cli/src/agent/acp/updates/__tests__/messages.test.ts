@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/ui/logger', () => {
+  return { logger: { debug: vi.fn() } };
+});
+
+import { logger } from '@/ui/logger';
 
 import type { AgentMessage } from '@/agent/core';
 import type { TransportHandler } from '@/agent/transport';
@@ -46,6 +52,14 @@ function createHandlerContext(options?: Readonly<{
 }
 
 describe('ACP update message handlers', () => {
+  it('does not log message chunk contents', () => {
+    const { ctx } = createHandlerContext();
+
+    handleAgentMessageChunk({ content: { text: 'SUPER_SECRET_VALUE' } }, ctx);
+
+    expect(JSON.stringify((logger as any).debug.mock.calls)).not.toContain('SUPER_SECRET_VALUE');
+  });
+
   it('treats bold-header message chunks as model output (not thinking events)', () => {
     const { ctx, emitted } = createHandlerContext();
     const text = '**Question**\nPlease choose an option to continue.';

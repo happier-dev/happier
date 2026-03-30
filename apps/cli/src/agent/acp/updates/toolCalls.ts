@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger';
+import { summarizeValueShapeForLog } from '@/diagnostics/eventShapeForLog';
 
 import {
   asRecord,
@@ -426,7 +427,8 @@ export function startToolCall(
 
   // Log investigation tool objective.
   if (isInvestigation && args.objective) {
-    logger.debug(`[AcpBackend] 🔍 Investigation tool objective: ${String(args.objective).substring(0, 100)}...`);
+    const objectiveText = String(args.objective);
+    logger.debug('[AcpBackend] 🔍 Investigation tool objective received', { length: objectiveText.length });
   }
 
   ctx.emit({
@@ -577,7 +579,7 @@ export function failToolCall(
   // Extract error detail.
   const errorDetail = extractErrorDetail(extractToolOutput(update));
   if (errorDetail) {
-    logger.debug(`[AcpBackend] ❌ Tool call error details: ${errorDetail.substring(0, 500)}`);
+    logger.debug('[AcpBackend] ❌ Tool call error details received', { length: errorDetail.length });
   } else {
     logger.debug(`[AcpBackend] ❌ Tool call ${status} but no error details in content`);
   }
@@ -619,7 +621,7 @@ export function handleToolCallUpdate(
   const toolCallId = update.toolCallId;
 
   if (!toolCallId) {
-    logger.debug('[AcpBackend] Tool call update without toolCallId:', update);
+    logger.debug('[AcpBackend] Tool call update without toolCallId shape:', summarizeValueShapeForLog(update));
     return { handled: false };
   }
 

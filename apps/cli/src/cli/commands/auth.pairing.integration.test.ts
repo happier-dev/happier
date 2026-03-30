@@ -209,4 +209,76 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
       await app.close().catch(() => {});
     }
   }, 20_000);
+
+  it('ensures a local machine id when auth wait runs on an already authenticated machine', async () => {
+    const requests = new Map<string, RequestRow>();
+    const app = fastify({ logger: false });
+
+    app.post('/v1/auth/request', async (req, reply) => {
+      const body = req.body as { publicKey?: unknown; claimSecretHash?: unknown } | undefined;
+      const publicKey = typeof body?.publicKey === 'string' ? body.publicKey : '';
+      const claimSecretHash = typeof body?.claimSecretHash === 'string' ? body.claimSecretHash : '';
+      if (!publicKey || !claimSecretHash) return reply.code(400).send({ error: 'claim_required' });
+      requests.set(publicKey, { claimSecretHash, response: null, responseAccountId: null });
+      return reply.send({ state: 'requested' });
+    });
+
+    await app.ready();
+    const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
+
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: localHomeDir,
+        HAPPIER_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_PUBLIC_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_WEBAPP_URL: 'http://webapp.test',
+        HAPPIER_NO_BROWSER_OPEN: '1',
+        HAPPIER_AUTH_METHOD: 'web',
+        HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
+        HAPPIER_VARIANT: 'stable',
+      });
+
+      vi.resetModules();
+      const { handleAuthRequest } = await import('./auth/request');
+      const requestOut = captureConsoleLogAndMuteStdout();
+      let requestJson: { publicKey: string };
+      try {
+        await handleAuthRequest(['--json']);
+        requestJson = JSON.parse(requestOut.logs[0] ?? '') as { publicKey: string };
+      } finally {
+        requestOut.restore();
+      }
+
+      vi.resetModules();
+      const { writeCredentialsLegacy, readSettings } = await import('@/persistence');
+      const legacySecret = new Uint8Array(32).fill(4);
+      const tokenPayload = Buffer.from(JSON.stringify({ sub: 'acct_local' })).toString('base64url');
+      await writeCredentialsLegacy({ secret: legacySecret, token: `header.${tokenPayload}.sig` });
+
+      vi.resetModules();
+      const { handleAuthWait } = await import('./auth/wait');
+      const waitOut = captureConsoleLogAndMuteStdout();
+      try {
+        await handleAuthWait(['--public-key', requestJson.publicKey, '--json']);
+        expect(waitOut.logs.length).toBe(1);
+        const parsed = JSON.parse(waitOut.logs[0] ?? '') as {
+          success?: boolean;
+          machineId?: string;
+          encryptionType?: string;
+        };
+        expect(parsed.success).toBe(true);
+        expect(parsed.encryptionType).toBe('legacy');
+        expect(typeof parsed.machineId).toBe('string');
+        expect(parsed.machineId?.length).toBeGreaterThan(0);
+      } finally {
+        waitOut.restore();
+      }
+
+      const settings = await readSettings();
+      expect(settings.machineId).toMatch(/^[-a-z0-9]+$/i);
+    } finally {
+      restoreAxios();
+      await app.close().catch(() => {});
+    }
+  }, 20_000);
 });

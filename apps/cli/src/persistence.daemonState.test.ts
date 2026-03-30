@@ -5,7 +5,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 describe('readDaemonState', () => {
-    const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID'] as const;
+    const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_PUBLIC_RELEASE_CHANNEL'] as const;
     let envScope = createEnvKeyScope(envKeys);
 
     afterEach(() => {
@@ -44,6 +44,21 @@ describe('readDaemonState', () => {
 
             const state = await readDaemonState();
             expect(state?.pid).toBe(123);
+        });
+    });
+
+    it('scopes the daemon state file name by public release channel so lanes do not collide', async () => {
+        await withTempDir('happier-cli-daemon-state-scope-', async (homeDir) => {
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: undefined,
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'dev',
+            });
+
+            const [{ configuration }] = await Promise.all([import('./configuration')]);
+
+            expect(configuration.daemonStateFile).toBe(join(configuration.activeServerDir, 'daemon.dev.state.json'));
         });
     });
 

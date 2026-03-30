@@ -4,6 +4,7 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 import { nextCodexLifecycleAcpMessages } from '../utils/codexAcpLifecycle';
 import { formatCodexEventForUi } from '../utils/formatCodexEventForUi';
@@ -64,9 +65,10 @@ export function createCodexMcpMessageHandler(opts: {
     provider: 'codex',
     session: opts.session,
   });
+  const shapeLogger = createEventShapeLoggerForLog({ logger: opts.logger, scope: 'codex' });
 
   return (msg: unknown): void => {
-    opts.logger.debug('[Codex] MCP message:', msg);
+    shapeLogger.log('mcp', msg);
 
     opts.publishCodexThreadIdToMetadata();
 

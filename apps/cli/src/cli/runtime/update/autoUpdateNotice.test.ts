@@ -41,6 +41,7 @@ describe('maybeAutoUpdateNotice', () => {
           homeDir,
           cliRootDir: '/repo/apps/cli',
           env: {},
+          publicReleaseRing: 'stable',
           nowMs: 100_000,
           spawnDetached,
           notifyIntervalMs: 1000,
@@ -68,6 +69,7 @@ describe('maybeAutoUpdateNotice', () => {
         homeDir: '/tmp/nowhere',
         cliRootDir: '/repo/apps/cli',
         env: { HAPPIER_CLI_UPDATE_CHECK: '0' },
+        publicReleaseRing: 'stable',
         nowMs: 100_000,
         spawnDetached,
         notifyIntervalMs: 1000,
@@ -100,6 +102,7 @@ describe('maybeAutoUpdateNotice', () => {
           homeDir,
           cliRootDir,
           env: {},
+          publicReleaseRing: 'stable',
           nowMs: 100_000,
           spawnDetached,
           notifyIntervalMs: 1000,
@@ -129,6 +132,7 @@ describe('maybeAutoUpdateNotice', () => {
             homeDir,
             cliRootDir: '/repo/apps/cli',
             env: {},
+            publicReleaseRing: 'stable',
             nowMs: 100_000,
             spawnDetached: () => {
               throw new Error('boom');
@@ -155,6 +159,7 @@ describe('maybeAutoUpdateNotice', () => {
           homeDir,
           cliRootDir: '/repo/apps/cli',
           env: {},
+          publicReleaseRing: 'stable',
           nowMs: 100_000,
           spawnDetached,
           notifyIntervalMs: 1000,
@@ -194,6 +199,7 @@ describe('maybeAutoUpdateNotice', () => {
           homeDir,
           cliRootDir: '/repo/apps/cli',
           env: {},
+          publicReleaseRing: 'stable',
           nowMs: 100_000,
           spawnDetached,
           notifyIntervalMs: 1000,
@@ -233,6 +239,7 @@ describe('maybeAutoUpdateNotice', () => {
           homeDir,
           cliRootDir: '/repo/apps/cli',
           env: {},
+          publicReleaseRing: 'stable',
           nowMs: 100_000,
           spawnDetached,
           notifyIntervalMs: 1000,
@@ -272,6 +279,7 @@ describe('maybeAutoUpdateNotice', () => {
           homeDir,
           cliRootDir: '/repo/apps/cli',
           env: {},
+          publicReleaseRing: 'stable',
           nowMs: 100_000,
           spawnDetached,
           notifyIntervalMs: 1000,
@@ -309,6 +317,7 @@ describe('maybeAutoUpdateNotice', () => {
         homeDir,
         cliRootDir: '/repo/apps/cli',
         env: { HAPPIER_CLI_UPDATE_CHECK_LOCK_TTL_MS: '60000' },
+        publicReleaseRing: 'stable',
         nowMs: 100_000,
         spawnDetached,
         notifyIntervalMs: 1000,
@@ -320,6 +329,7 @@ describe('maybeAutoUpdateNotice', () => {
         homeDir,
         cliRootDir: '/repo/apps/cli',
         env: { HAPPIER_CLI_UPDATE_CHECK_LOCK_TTL_MS: '60000' },
+        publicReleaseRing: 'stable',
         nowMs: 100_001,
         spawnDetached,
         notifyIntervalMs: 1000,
@@ -327,6 +337,48 @@ describe('maybeAutoUpdateNotice', () => {
       });
 
       expect(spawnDetached).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('scopes update cache + background checks by public release ring (dev lane)', () => {
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        const cacheDir = join(homeDir, 'cache');
+        mkdirSync(cacheDir, { recursive: true });
+        const cachePath = join(cacheDir, 'update.dev.json');
+        writeJson(cachePath, {
+          checkedAt: 1,
+          latest: '9.9.9-dev.1',
+          current: '1.0.0-dev.0',
+          runtimeVersion: null,
+          invokerVersion: '1.0.0-dev.0',
+          updateAvailable: true,
+          notifiedAt: null,
+        });
+
+        const spawnDetached = vi.fn();
+
+        maybeAutoUpdateNotice({
+          argv: ['start'],
+          isTTY: true,
+          homeDir,
+          cliRootDir: '/repo/apps/cli',
+          env: {},
+          publicReleaseRing: 'publicdev',
+          nowMs: 100_000,
+          spawnDetached,
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 0,
+        });
+
+        expect(output.text()).toContain('update available');
+        expect(spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
+          args: expect.arrayContaining(['self', 'check', '--quiet', '--dev']),
+        }));
+      } finally {
+        output.restore();
+      }
     });
   });
 });

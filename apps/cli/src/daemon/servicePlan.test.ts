@@ -14,6 +14,7 @@ describe('daemon service install plan', () => {
     envScope.patch({ PATH: '/custom/bin' });
     const plan = planDaemonServiceInstall({
       platform: 'darwin',
+      channel: 'stable',
       instanceId: 'cloud',
       uid: 501,
       userHomeDir: '/Users/test',
@@ -50,11 +51,34 @@ describe('daemon service install plan', () => {
     expect(commandsText).toContain('launchctl bootstrap gui/501');
   });
 
+  it('plans channel-scoped LaunchAgent labels for preview (darwin)', () => {
+    envScope.patch({ PATH: '/custom/bin' });
+    const plan = planDaemonServiceInstall({
+      platform: 'darwin',
+      channel: 'preview',
+      instanceId: 'cloud',
+      uid: 501,
+      userHomeDir: '/Users/test',
+      happierHomeDir: '/Users/test/.happier',
+      serverUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+      publicServerUrl: 'https://api.happier.dev',
+      nodePath: '/opt/homebrew/bin/node',
+      entryPath: '/usr/local/lib/node_modules/@happier-dev/cli/dist/index.mjs',
+    });
+
+    expect(plan.files).toHaveLength(1);
+    expect(plan.files[0]?.path).toBe('/Users/test/Library/LaunchAgents/com.happier.cli.daemon.preview.cloud.plist');
+    expect(plan.files[0]?.content).toContain('<key>HAPPIER_PUBLIC_RELEASE_CHANNEL</key>');
+    expect(plan.files[0]?.content).toContain('<string>preview</string>');
+  });
+
   it('plans a systemd --user unit install (linux)', () => {
     envScope.patch({ PATH: '/home/test/.local/bin:/usr/bin' });
     const plan = planDaemonServiceInstall({
       platform: 'linux',
       mode: 'user',
+      channel: 'stable',
       instanceId: 'cloud',
       userHomeDir: '/home/test',
       happierHomeDir: '/home/test/.happier',
@@ -86,11 +110,32 @@ describe('daemon service install plan', () => {
     expect(systemctlArgsText).toContain('--user daemon-reload');
   });
 
+  it('plans channel-scoped unit names for dev (linux)', () => {
+    const plan = planDaemonServiceInstall({
+      platform: 'linux',
+      mode: 'user',
+      channel: 'publicdev',
+      instanceId: 'cloud',
+      userHomeDir: '/home/test',
+      happierHomeDir: '/home/test/.happier',
+      serverUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+      publicServerUrl: 'https://api.happier.dev',
+      nodePath: '/usr/bin/node',
+      entryPath: '/usr/lib/node_modules/@happier-dev/cli/dist/index.mjs',
+    });
+
+    expect(plan.files).toHaveLength(1);
+    expect(plan.files[0]?.path).toBe('/home/test/.config/systemd/user/happier-daemon.dev.cloud.service');
+    expect(plan.files[0]?.content).toContain('Environment=HAPPIER_PUBLIC_RELEASE_CHANNEL=dev');
+  });
+
   it('plans a systemd system unit install (linux)', () => {
     envScope.patch({ PATH: '/root/.cargo/bin:/usr/local/sbin' });
     const plan = planDaemonServiceInstall({
       platform: 'linux',
       mode: 'system',
+      channel: 'stable',
       systemUser: 'happier',
       instanceId: 'cloud',
       userHomeDir: '/home/happier',
@@ -159,6 +204,7 @@ describe('daemon service install plan', () => {
     const plan = planDaemonServiceInstall({
       platform: 'linux',
       mode: 'user',
+      channel: 'stable',
       instanceId: 'company',
       userHomeDir: '/home/test',
       happierHomeDir: '/home/test/.happier',
@@ -176,6 +222,7 @@ describe('daemon service install plan', () => {
   it('plans a Scheduled Task install (win32)', () => {
     const plan = planDaemonServiceInstall({
       platform: 'win32',
+      channel: 'stable',
       instanceId: 'cloud',
       userHomeDir: 'C:\\\\Users\\\\test',
       happierHomeDir: 'C:\\\\Users\\\\test\\\\.happier',
@@ -195,5 +242,24 @@ describe('daemon service install plan', () => {
     const cmdText = plan.commands.map((c) => `${c.cmd} ${c.args.join(' ')}`).join('\n');
     expect(cmdText).toContain('schtasks /Create');
     expect(cmdText).toContain('ONLOGON');
+  });
+
+  it('plans channel-scoped task names for dev (win32)', () => {
+    const plan = planDaemonServiceInstall({
+      platform: 'win32',
+      channel: 'publicdev',
+      instanceId: 'cloud',
+      userHomeDir: 'C:\\\\Users\\\\test',
+      happierHomeDir: 'C:\\\\Users\\\\test\\\\.happier',
+      serverUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+      publicServerUrl: 'https://api.happier.dev',
+      nodePath: 'C:\\\\Users\\\\test\\\\.local\\\\bin\\\\happier.exe',
+      entryPath: '',
+    });
+
+    expect(plan.files).toHaveLength(1);
+    expect(plan.files[0]?.path).toBe('C:\\Users\\test\\.happier\\services\\happier-daemon.dev.cloud.ps1');
+    expect(plan.files[0]?.content).toContain('HAPPIER_PUBLIC_RELEASE_CHANNEL');
   });
 });

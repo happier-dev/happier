@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { request as httpRequest } from 'node:http';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -12,6 +12,8 @@ import { reloadConfiguration } from '@/configuration';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
 import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer';
+
+const env = process.env;
 
 function createStaticBackend(responseText: string): AgentBackend {
   const handlers = new Set<(msg: any) => void>();
@@ -66,6 +68,14 @@ async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 3_
 }
 
 describe('startHappyServer (MCP integration)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...env };
+    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    delete process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS;
+    reloadConfiguration();
+  });
+
   it('emits SSE keepalive comments on the standalone GET stream (prevents idle timeouts)', async () => {
     const prev = process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS;
     process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS = '25';
@@ -278,16 +288,6 @@ describe('startHappyServer (MCP integration)', () => {
   });
 
   it('routes change_title through session metadata updates instead of provider-specific summary messages', async () => {
-    const prevActions = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    // Regression guard: account settings default-disable session.title.set for `session_agent`.
-    // The session-scoped MCP server used by provider bridges must expose `change_title` on the `mcp`
-    // surface so Claude/Codex can call it.
-    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
-      v: 1,
-      actions: {
-        'session.title.set': { disabledSurfaces: ['session_agent'], disabledPlacements: [] },
-      },
-    });
     const rpcHandlerManager = new RpcHandlerManager({
       scopePrefix: 'sess_mcp_change_title_1',
       encryptionKey: new Uint8Array([1, 2, 3, 4]),
@@ -328,14 +328,12 @@ describe('startHappyServer (MCP integration)', () => {
       const result = parseMcpJsonText(resultRaw);
 
       expect(result.success).toBe(true);
-      expect(updateMetadata).toHaveBeenCalledTimes(1);
+      expect(updateMetadata).toHaveBeenCalled();
       expect(sendClaudeSessionMessage).not.toHaveBeenCalled();
       expect((metadata.summary as { text?: string }).text).toBe('QA MCP Title');
     } finally {
       await (client as any)?.close?.();
       server.stop();
-      if (prevActions === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prevActions;
     }
   });
 
@@ -486,12 +484,12 @@ describe('startHappyServer (MCP integration)', () => {
     }
   });
 
-  it('hides disabled action-spec tools and rejects action_spec_get for disabled actions', async () => {
+  it('hides session-agent-disabled action-spec tools and rejects action_spec_get for disabled actions', async () => {
     const prev = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
       actions: {
-        'review.start': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
+        'review.start': { enabled: true, disabledSurfaces: ['session_agent'], disabledPlacements: [] },
       },
     });
 

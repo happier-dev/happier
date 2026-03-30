@@ -1,10 +1,60 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { Update } from '../types';
 import { encrypt } from '../encryption';
 import { handleSessionNewMessageUpdate } from './sessionNewMessageUpdate';
 
 describe('handleSessionNewMessageUpdate', () => {
+  it('logs invalid content envelope shapes without leaking string contents', () => {
+    const pendingMessages: any[] = [];
+    const emitted: any[] = [];
+    const debug = vi.fn();
+
+    const update = {
+      id: 'u1',
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess_1',
+        message: {
+          id: 'm1',
+          seq: 1,
+          content: { foo: 'bar', secret: 'SUPER_SECRET_VALUE' },
+          localId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      },
+    } as unknown as Update;
+
+    handleSessionNewMessageUpdate({
+      update,
+      sessionId: 'sess_1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      receivedMessageIds: new Set<string>(),
+      lastObservedMessageSeq: 0,
+      lastObservedUserMessageSeq: 0,
+      hasSelfEchoSuppressedLocalId: () => false,
+      hasAgentQueueEchoSuppressedLocalId: () => false,
+      markAgentQueueEchoSuppressedLocalId: () => void 0,
+      hasPendingQueueMaterializedLocalId: () => false,
+      deleteMaterializedLocalId: () => void 0,
+      pendingMessageCallback: null,
+      pendingMessages,
+      emit: (event, payload) => emitted.push({ event, payload }),
+      debug,
+      debugLargeJson: () => void 0,
+    });
+
+    expect(debug).toHaveBeenCalled();
+    const calls = JSON.stringify(debug.mock.calls);
+    expect(calls).toContain('secret');
+    expect(calls).not.toContain('SUPER_SECRET_VALUE');
+    expect(pendingMessages).toHaveLength(0);
+    expect(emitted.some((e: any) => e.event === 'user-message')).toBe(false);
+  });
+
   it('delivers legacy string user prompts to the agent queue', () => {
     const pendingMessages: any[] = [];
     const emitted: any[] = [];

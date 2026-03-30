@@ -16,7 +16,7 @@ export function handleAgentMessageChunk(
   // Dropping these avoids spammy blank lines and reduces unnecessary UI churn.
   if (!text.trim()) return { handled: true };
 
-  logger.debug(`[AcpBackend] Received message chunk (length: ${text.length}): ${text.substring(0, 50)}...`);
+  logger.debug(`[AcpBackend] Received message chunk (length: ${text.length})`);
   ctx.emit({
     type: 'model-output',
     textDelta: text,

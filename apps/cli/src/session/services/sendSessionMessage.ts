@@ -113,7 +113,11 @@ export async function sendSessionMessage(params: Readonly<{
     content: { type: 'text', text: params.message },
     meta: {
       sentFrom: 'cli',
-      source: 'cli',
+      // Important: `source: 'cli'` is reserved for CLI-authored transcript traffic that
+      // the running agent runtime should treat as "self-sent" (e.g. local provider echoes).
+      // A `happier session send` prompt is user intent and must be delivered to the runtime
+      // queue even when it is committed by the daemon via session RPC.
+      source: 'ui',
       permissionMode: permissionIntent,
       ...(modelId && modelId !== 'default' ? { model: modelId } : {}),
     },

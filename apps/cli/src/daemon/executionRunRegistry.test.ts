@@ -5,11 +5,13 @@ import { join } from 'node:path';
 
 describe('executionRunRegistry', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+  const originalReleaseRing = process.env.HAPPIER_RELEASE_RING;
   let happyHomeDir: string;
 
   beforeEach(() => {
     happyHomeDir = join(tmpdir(), `happier-cli-exec-run-registry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    delete process.env.HAPPIER_RELEASE_RING;
     vi.resetModules();
   });
 
@@ -21,6 +23,11 @@ describe('executionRunRegistry', () => {
       delete process.env.HAPPIER_HOME_DIR;
     } else {
       process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+    }
+    if (originalReleaseRing === undefined) {
+      delete process.env.HAPPIER_RELEASE_RING;
+    } else {
+      process.env.HAPPIER_RELEASE_RING = originalReleaseRing;
     }
   });
 
@@ -58,6 +65,33 @@ describe('executionRunRegistry', () => {
     const parsed = JSON.parse(raw);
     expect(parsed.happyHomeDir).toBe(configuration.happyHomeDir);
     expect(parsed.runId).toBe('run_1');
+  });
+
+  it('writes markers into a channel-scoped tmp dir for the dev public ring', async () => {
+    process.env.HAPPIER_RELEASE_RING = 'dev';
+    vi.resetModules();
+
+    const { configuration } = await import('@/configuration');
+    const { writeExecutionRunMarker } = await import('./executionRunRegistry');
+
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'sess-1',
+      runId: 'run_dev_scoped',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'review',
+      backendId: 'claude',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'running',
+      startedAtMs: 1,
+      updatedAtMs: 1,
+    });
+
+    const filePath = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs.dev', 'run-run_dev_scoped.json');
+    expect(existsSync(filePath)).toBe(true);
   });
 
   it('uses a unique temp file per marker write to avoid cross-write corruption', async () => {

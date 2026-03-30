@@ -49,7 +49,7 @@ export async function createSessionAttachFile(params: {
   happySessionId: string;
   payload: SessionAttachFilePayload;
 }): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
-  const baseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir);
+  const baseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir, configuration.publicReleaseRing);
   await mkdir(baseDir, { recursive: true, mode: 0o700 });
   // Best-effort: mkdir does not update permissions for existing dirs.
   await chmod(baseDir, 0o700).catch(() => {});

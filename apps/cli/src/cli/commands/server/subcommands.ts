@@ -7,6 +7,7 @@ import {
   getServerProfile,
   listServerProfiles,
   removeServerProfile,
+  upsertServerProfileByUrl,
   useServerProfile,
 } from '@/server/serverProfiles';
 import { probeServerVersion } from '@/server/serverTest';
@@ -29,6 +30,7 @@ import {
   isLocalishServerUrl,
   isLoopbackHttpServerUrl,
 } from '@/server/serverUrlClassification';
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 export async function runServerSubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
@@ -62,16 +64,27 @@ type ServerProfileSummary = Readonly<{
   id: string;
   name: string;
   serverUrl: string;
+  comparableKey: string;
   localServerUrl?: string;
   webappUrl: string;
   lastUsedAt?: number;
 }>;
+
+function safeComparableKey(serverUrlRaw: unknown): string {
+  const serverUrl = String(serverUrlRaw ?? '');
+  try {
+    return createServerUrlComparableKey(serverUrl);
+  } catch {
+    return serverUrl;
+  }
+}
 
 function summarizeProfile(p: any): ServerProfileSummary {
   const out: ServerProfileSummary = {
     id: String(p.id ?? ''),
     name: String(p.name ?? ''),
     serverUrl: String(p.serverUrl ?? ''),
+    comparableKey: safeComparableKey(p.serverUrl),
     ...(typeof (p as any).localServerUrl === 'string' && String((p as any).localServerUrl).trim()
       ? { localServerUrl: String((p as any).localServerUrl).trim() }
       : {}),
@@ -439,7 +452,7 @@ async function cmdSet(args: string[]): Promise<void> {
   const webappUrl = webappUrlRaw
     ? normalizeUrlOrThrow(webappUrlRaw, '--webapp-url')
     : configuration.webappUrl;
-  const created = await addServerProfile({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: true });
+  const created = await upsertServerProfileByUrl({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: true });
   reloadConfiguration();
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });

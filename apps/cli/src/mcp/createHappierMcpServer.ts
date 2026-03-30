@@ -28,8 +28,8 @@ export function createHappierMcpServer(
   opts?: Readonly<{ credentials?: Credentials | null }>,
 ): { mcp: McpServer; toolNames: string[] } {
   // This server is the per-session MCP bridge that a running session agent uses.
-  // It must use the `session_agent` surface so action enablement + approvals are driven by
-  // the same per-surface action settings as the rest of the session agent runtime.
+  // It must use the `session_agent` surface so action enablement + approvals can be
+  // configured separately from the external MCP surface (`mcp`).
   const toolSurface = 'session_agent' as const;
   const credentials = opts?.credentials ?? null;
   const ctx = credentials
@@ -85,6 +85,37 @@ export function createHappierMcpServer(
       rawSession,
     },
     {
+      sessionTitleSet: async ({ sessionId, title }) => {
+        const normalizedSessionId = String(sessionId ?? '').trim();
+        if (!normalizedSessionId) {
+          return { ok: false as const, errorCode: 'invalid_parameters' as const, error: 'invalid_parameters' as const };
+        }
+        const normalizedTitle = String(title ?? '').trim();
+        if (!normalizedTitle) {
+          return { ok: false as const, errorCode: 'invalid_parameters' as const, error: 'invalid_parameters' as const };
+        }
+        if (normalizedSessionId !== client.sessionId) {
+          return { ok: false as const, errorCode: 'not_authenticated' as const, error: 'not_authenticated' as const };
+        }
+
+        try {
+          await Promise.resolve(client.updateMetadata((current) => ({
+            ...current,
+            summary: {
+              text: normalizedTitle,
+              updatedAt: Date.now(),
+            },
+          })));
+        } catch (error) {
+          logger.debug('[mcp] Failed to update title metadata via session-scoped bridge', {
+            sessionId: normalizedSessionId,
+            error,
+          });
+          return { ok: false as const, errorCode: 'metadata_update_failed' as const, error: 'metadata_update_failed' as const };
+        }
+
+        return { ok: true as const, sessionId: normalizedSessionId, title: normalizedTitle };
+      },
       executionRunStart: async (_sessionId, request) => await executionRuns.start(request),
       executionRunList: async (_sessionId, request) => await executionRuns.list(request),
       executionRunGet: async (_sessionId, request) => await executionRuns.get(request),

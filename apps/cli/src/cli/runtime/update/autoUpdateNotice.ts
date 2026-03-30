@@ -9,6 +9,7 @@ import {
   spawnDetachedNode,
   writeUpdateCache,
 } from '@happier-dev/cli-common/update';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CHECK_LOCK_TTL_MS = 2 * 60 * 1000;
@@ -22,6 +23,32 @@ function envNumber(env: NodeJS.ProcessEnv, key: string): number | null {
 
 function updateChecksEnabled(env: NodeJS.ProcessEnv): boolean {
   return String(env.HAPPIER_CLI_UPDATE_CHECK ?? '1').trim() !== '0';
+}
+
+function resolvePublicReleaseRingSuffix(ring: PublicReleaseRingId): 'stable' | 'preview' | 'dev' {
+  return ring === 'publicdev' ? 'dev' : ring;
+}
+
+function resolveUpdateCacheFileName(ring: PublicReleaseRingId): string {
+  const suffix = resolvePublicReleaseRingSuffix(ring);
+  return suffix === 'stable' ? 'update.json' : `update.${suffix}.json`;
+}
+
+function resolveUpdateCheckLockFileName(ring: PublicReleaseRingId): string {
+  const suffix = resolvePublicReleaseRingSuffix(ring);
+  return suffix === 'stable' ? 'update.check.lock.json' : `update.check.${suffix}.lock.json`;
+}
+
+function resolveSelfChannelArgs(ring: PublicReleaseRingId): string[] {
+  if (ring === 'preview') return ['--preview'];
+  if (ring === 'publicdev') return ['--dev'];
+  return [];
+}
+
+function resolveUpdateCommand(ring: PublicReleaseRingId): string {
+  if (ring === 'preview') return 'hprev self update';
+  if (ring === 'publicdev') return 'hdev self update';
+  return 'happier self update';
 }
 
 const LONG_FLAGS_WITH_VALUE = new Set([
@@ -83,6 +110,7 @@ export function maybeAutoUpdateNotice(params: Readonly<{
   homeDir: string;
   cliRootDir: string;
   env: NodeJS.ProcessEnv;
+  publicReleaseRing?: PublicReleaseRingId;
   nowMs?: number;
   notifyIntervalMs?: number;
   checkIntervalMs?: number;
@@ -96,8 +124,9 @@ export function maybeAutoUpdateNotice(params: Readonly<{
 
   const cmd = getCmdFromArgv(params.argv);
   const now = params.nowMs ?? Date.now();
+  const publicReleaseRing = params.publicReleaseRing ?? 'stable';
 
-  const cachePath = join(params.homeDir, 'cache', 'update.json');
+  const cachePath = join(params.homeDir, 'cache', resolveUpdateCacheFileName(publicReleaseRing));
   const cached = readUpdateCache(cachePath);
   const checkedAt = typeof cached?.checkedAt === 'number' ? cached.checkedAt : 0;
 
@@ -129,7 +158,12 @@ export function maybeAutoUpdateNotice(params: Readonly<{
 
   if (shouldNotify && cached) {
     const from = current || cached.runtimeVersion || cached.invokerVersion || 'current';
-    const msg = formatUpdateNotice({ toolName: 'happier', from, to: latest ?? 'latest', updateCommand: 'happier self update' });
+    const msg = formatUpdateNotice({
+      toolName: publicReleaseRing === 'preview' ? 'hprev' : publicReleaseRing === 'publicdev' ? 'hdev' : 'happier',
+      from,
+      to: latest ?? 'latest',
+      updateCommand: resolveUpdateCommand(publicReleaseRing),
+    });
     console.error(msg);
     writeUpdateCache(cachePath, { ...cached, notifiedAt: now });
   }
@@ -139,12 +173,12 @@ export function maybeAutoUpdateNotice(params: Readonly<{
   const entry = resolveUpdateCheckEntrypoint(params.cliRootDir);
   const spawnImpl = params.spawnDetached ?? spawnDetachedNode;
   const lockTtlMs = envNumber(env, 'HAPPIER_CLI_UPDATE_CHECK_LOCK_TTL_MS') ?? DEFAULT_CHECK_LOCK_TTL_MS;
-  const lockPath = join(params.homeDir, 'cache', 'update.check.lock.json');
+  const lockPath = join(params.homeDir, 'cache', resolveUpdateCheckLockFileName(publicReleaseRing));
   if (!acquireSingleFlightLock({ lockPath, nowMs: now, ttlMs: lockTtlMs, pid: process.pid })) return;
   try {
     spawnImpl({
       script: entry,
-      args: ['self', 'check', '--quiet'],
+      args: ['self', 'check', '--quiet', ...resolveSelfChannelArgs(publicReleaseRing)],
       cwd: params.cliRootDir,
       env: { ...env, HAPPIER_CLI_UPDATE_CHECK_SPAWNED: '1' },
     });

@@ -65,6 +65,7 @@ import {
     startExecutionRun,
     stopExecutionRun,
 } from '@/session/services/executionRuns';
+import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 function resolveSessionSocketMachineIdForBootstrap(metadata: Metadata | null): string | undefined {
     if (!metadata || typeof metadata.machineId !== 'string') {
@@ -93,6 +94,7 @@ export class ApiSessionClient extends EventEmitter {
     private metadataLock = new AsyncLock();
     private encryptionKey: Uint8Array;
     private encryptionVariant: 'legacy' | 'dataKey';
+    private readonly outboundShapeLogger = createEventShapeLoggerForLog({ logger, scope: 'session-out' });
     private sessionConnectionSupervisor: ManagedConnectionSupervisor | null = null;
     private currentConnectionState: ManagedConnectionState = {
         phase: 'idle',
@@ -1523,6 +1525,8 @@ export class ApiSessionClient extends EventEmitter {
                 localId,
             });
         }
+
+        this.outboundShapeLogger.log(`acp:${provider}:${normalizedBody.type}`, normalizedBody);
         
         logger.debug(`[SOCKET] Sending ACP message from ${provider}:`, { type: normalizedBody.type, hasMessage: 'message' in normalizedBody });
         this.logSendWhileDisconnected(`${provider} ACP message`, { type: normalizedBody.type });

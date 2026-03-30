@@ -5,11 +5,13 @@ import { join } from 'node:path';
 
 describe('sessionRegistry', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+  const originalReleaseRing = process.env.HAPPIER_RELEASE_RING;
   let happyHomeDir: string;
 
   beforeEach(() => {
     happyHomeDir = join(tmpdir(), `happier-cli-session-registry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    delete process.env.HAPPIER_RELEASE_RING;
     vi.resetModules();
   });
 
@@ -22,6 +24,11 @@ describe('sessionRegistry', () => {
       delete process.env.HAPPIER_HOME_DIR;
     } else {
       process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+    }
+    if (originalReleaseRing === undefined) {
+      delete process.env.HAPPIER_RELEASE_RING;
+    } else {
+      process.env.HAPPIER_RELEASE_RING = originalReleaseRing;
     }
   });
 
@@ -133,6 +140,24 @@ describe('sessionRegistry', () => {
     expect(markers).toHaveLength(1);
     expect(markers[0].pid).toBe(777);
     expect(markers[0].flavor).toBe('opencode');
+  });
+
+  it('writes markers into a channel-scoped tmp dir for the dev public ring', async () => {
+    process.env.HAPPIER_RELEASE_RING = 'dev';
+    vi.resetModules();
+
+    const { configuration } = await import('@/configuration');
+    const { writeSessionMarker } = await import('./sessionRegistry');
+
+    await writeSessionMarker({
+      pid: 9001,
+      happySessionId: 'sess-dev',
+      startedBy: 'terminal',
+      cwd: '/tmp',
+    });
+
+    const markerPath = join(configuration.happyHomeDir, 'tmp', 'daemon-sessions.dev', 'pid-9001.json');
+    expect(existsSync(markerPath)).toBe(true);
   });
 
   it('tolerates older respawn markers with experimentalCodexResume', async () => {

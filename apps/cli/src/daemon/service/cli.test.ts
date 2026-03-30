@@ -12,6 +12,7 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_DAEMON_SERVICE_ENTRY_PATH',
   'HAPPIER_DAEMON_SERVICE_MODE',
   'HAPPIER_DAEMON_SERVICE_SYSTEM_USER',
+  'HAPPIER_DAEMON_SERVICE_CHANNEL',
   'HAPPIER_HOME_DIR',
   'PATH',
 ] as const;
@@ -51,6 +52,29 @@ describe('runDaemonServiceCliCommand', () => {
       stderr.restore();
       stdout.restore();
     }
+  });
+
+  it('resolves the daemon service user home from the real OS user even when HOME is stack-isolated', async () => {
+    vi.doMock('node:os', async () => {
+      const actual = await vi.importActual<typeof import('node:os')>('node:os');
+      return {
+        ...actual,
+        userInfo: vi.fn(() => ({ homedir: '/real-user-home' })),
+        homedir: vi.fn(() => '/isolated-stack-home'),
+      };
+    });
+
+    const { resolveDaemonServiceCliRuntimeFromEnv } = await loadCliModule();
+    const runtime = resolveDaemonServiceCliRuntimeFromEnv({
+      processEnv: {
+        ...process.env,
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'darwin',
+        HOME: '/isolated-stack-home',
+        USERPROFILE: '/isolated-stack-home',
+      },
+    });
+
+    expect(runtime.userHomeDir).toBe('/real-user-home');
   });
 
   it('supports help JSON output', async () => {
@@ -182,6 +206,110 @@ describe('runDaemonServiceCliCommand', () => {
       expect(pathsPayload.paths.stderrPath).toBe('/home/happier/.happier/logs/daemon-service.company.err.log');
     } finally {
       pathsOutput.restore();
+    }
+  });
+
+  it('scopes systemd unit names by release channel so dev services can coexist with stable', async () => {
+    vi.doMock('node:child_process', async () => {
+      const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+      return {
+        ...actual,
+        spawnSync: vi.fn(() => ({
+          pid: 1,
+          output: ['', 'happier:x:1001:1001::/home/happier:/bin/bash\n', ''],
+          stdout: 'happier:x:1001:1001::/home/happier:/bin/bash\n',
+          stderr: '',
+          status: 0,
+          signal: null,
+        })),
+      };
+    });
+    vi.doMock('node:os', async () => {
+      const actual = await vi.importActual<typeof import('node:os')>('node:os');
+      return {
+        ...actual,
+        homedir: vi.fn(() => '/root'),
+      };
+    });
+
+    const { runDaemonServiceCliCommand } = await loadCliModule();
+    envScope.patch({
+      HAPPIER_DAEMON_SERVICE_CHANNEL: 'dev',
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+      HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'company',
+      HAPPIER_DAEMON_SERVICE_NODE_PATH: '/usr/local/bin/happier',
+      HAPPIER_DAEMON_SERVICE_ENTRY_PATH: '',
+      PATH: '/usr/bin',
+    });
+
+    const processWithGetuid = process as typeof process & { getuid: () => number };
+    vi.spyOn(processWithGetuid, 'getuid').mockReturnValue(0);
+
+    const installOutput = captureStdoutJsonOutput<{
+      ok: boolean;
+      plan: { files: Array<{ path: string; content: string }> };
+    }>();
+    try {
+      await runDaemonServiceCliCommand({
+        argv: ['install', '--dry-run', '--json', '--mode', 'system', '--system-user', 'happier'],
+      });
+
+      const installPayload = installOutput.json();
+      expect(installPayload.ok).toBe(true);
+      expect(installPayload.plan.files[0]?.path).toBe('/etc/systemd/system/happier-daemon.dev.company.service');
+      expect(installPayload.plan.files[0]?.content).toContain('Environment=HAPPIER_PUBLIC_RELEASE_CHANNEL=dev');
+    } finally {
+      installOutput.restore();
+    }
+  });
+
+  it('reports daemon service status as not installed when the service file is absent', async () => {
+    const { runDaemonServiceCliCommand } = await loadCliModule();
+    envScope.patch({
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/tmp',
+      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/tmp/happier',
+    });
+
+    const output = captureStdoutJsonOutput<{
+      ok: boolean;
+      installed: boolean;
+      daemon?: { running: boolean };
+    }>();
+    try {
+      await runDaemonServiceCliCommand({ argv: ['status', '--json'] });
+
+      const payload = output.json();
+      expect(payload.ok).toBe(true);
+      expect(payload.installed).toBe(false);
+      expect(payload.daemon?.running).toBe(false);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('fails closed when starting a daemon service that is not installed', async () => {
+    const { runDaemonServiceCliCommand } = await loadCliModule();
+    envScope.patch({
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/tmp',
+      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/tmp/happier',
+    });
+
+    const output = captureStdoutJsonOutput<{
+      ok: boolean;
+      error: string;
+      message: string;
+    }>();
+    try {
+      await runDaemonServiceCliCommand({ argv: ['start', '--json'] });
+
+      const payload = output.json();
+      expect(payload.ok).toBe(false);
+      expect(payload.error).toBe('not_installed');
+      expect(payload.message).toContain('Daemon service is not installed');
+    } finally {
+      output.restore();
     }
   });
 });

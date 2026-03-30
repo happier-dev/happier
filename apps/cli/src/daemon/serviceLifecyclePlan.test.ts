@@ -12,12 +12,26 @@ describe('daemon service lifecycle planning', () => {
     const plan = planDaemonServiceLifecycle({
       platform: 'linux',
       action,
+      channel: 'stable',
       instanceId: 'company',
       userHomeDir: '/home/test',
       uid: 123,
     });
     const lines = plan.commands.map((c) => `${c.cmd} ${c.args.join(' ')}`).join('\n');
     expect(lines).toContain(expectedLine);
+  });
+
+  it('plans channel-scoped linux lifecycle commands for dev', () => {
+    const plan = planDaemonServiceLifecycle({
+      platform: 'linux',
+      action: 'status',
+      channel: 'publicdev',
+      instanceId: 'company',
+      userHomeDir: '/home/test',
+      uid: 123,
+    });
+    const lines = plan.commands.map((c) => `${c.cmd} ${c.args.join(' ')}`).join('\n');
+    expect(lines).toContain('systemctl --user status happier-daemon.dev.company.service --no-pager');
   });
 
   it.each([
@@ -29,6 +43,7 @@ describe('daemon service lifecycle planning', () => {
     const plan = planDaemonServiceLifecycle({
       platform: 'darwin',
       action,
+      channel: 'stable',
       instanceId: 'cloud',
       userHomeDir: '/Users/test',
       uid: 501,
@@ -41,6 +56,7 @@ describe('daemon service lifecycle planning', () => {
     const plan = planDaemonServiceLifecycle({
       platform: 'darwin',
       action: 'start',
+      channel: 'stable',
       instanceId: 'cloud',
       userHomeDir: '/Users/test',
     });

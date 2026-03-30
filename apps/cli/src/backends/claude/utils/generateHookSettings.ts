@@ -20,6 +20,7 @@ import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJ
 import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
 import { isBun } from '@/utils/runtime';
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
 
 export interface GenerateHookSettingsOptions {
     enableLocalPermissionBridge?: boolean;
@@ -40,7 +41,11 @@ type ClaudeHookSettingsOverlay = Readonly<{
  * @returns Path to the generated settings file
  */
 export function generateHookSettingsFile(port: number, options: GenerateHookSettingsOptions = {}): string {
-    const hooksDir = join(configuration.happyHomeDir, 'tmp', 'hooks');
+    const hooksDir = join(
+        configuration.happyHomeDir,
+        'tmp',
+        resolveReleaseRingScopedBasename('hooks', configuration.publicReleaseRing),
+    );
     mkdirSync(hooksDir, { recursive: true });
 
     // Unique filename per process to avoid conflicts

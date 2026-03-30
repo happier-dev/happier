@@ -40,6 +40,7 @@ void (async () => {
     argv: normalizedArgv,
     cliRootDir,
     homeDir: configuration.happyHomeDir,
+    publicReleaseRing: configuration.publicReleaseRing,
     packageName: updatePackageName,
     env: process.env,
   });
@@ -49,6 +50,7 @@ void (async () => {
     homeDir: configuration.happyHomeDir,
     cliRootDir,
     env: process.env,
+    publicReleaseRing: configuration.publicReleaseRing,
   });
   const { args, terminalRuntime } = parseCliArgs(normalizedArgv);
   await dispatchCli({ args, terminalRuntime, rawArgv: process.argv });

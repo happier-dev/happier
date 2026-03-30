@@ -70,7 +70,7 @@ describe('registerCommonHandlers capabilities', () => {
 
         expect(result.protocolVersion).toBe(1);
         expect(result.capabilities.map((c) => c.id)).toEqual(
-            expect.arrayContaining(['cli.codex', 'cli.claude', 'cli.gemini', 'cli.opencode', 'tool.tmux', 'tool.windowsTerminal', CODEX_ACP_DEP_ID]),
+            expect.arrayContaining(['cli.codex', 'cli.claude', 'cli.gemini', 'cli.opencode', 'tool.tmux', 'tool.windowsTerminal', 'tool.systemTasks', CODEX_ACP_DEP_ID]),
         );
         expect(Object.keys(result.checklists)).toEqual(
             expect.arrayContaining([
@@ -366,5 +366,83 @@ describe('registerCommonHandlers capabilities', () => {
         } finally {
             await rm(dir, { recursive: true, force: true });
         }
+    });
+
+    it('exposes systemTasks as a callable daemon capability', async () => {
+        const { call } = createTestRpcManager({ scopePrefix: 'machine-test-system-tasks' });
+
+        const detectResult = await call<CapabilitiesDetectResponse, CapabilitiesDetectRequest>(RPC_METHODS.CAPABILITIES_DETECT, {
+            requests: [{ id: 'tool.systemTasks' }],
+        });
+        const systemTasksData = expectCapabilityData(detectResult, 'tool.systemTasks');
+        expect(systemTasksData).toEqual({
+            available: true,
+            kinds: [
+                'remote.ssh.bootstrapMachine.v1',
+                'relay.runtime.installOrUpdate.v1',
+                'relay.runtime.start.v1',
+                'relay.runtime.status.v1',
+                'relay.runtime.stop.v1',
+            ],
+            methods: ['start', 'poll', 'respond'],
+        });
+
+        const startResult = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
+            id: 'tool.systemTasks',
+            method: 'start',
+            params: {
+                spec: {
+                    protocolVersion: 1,
+                    kind: 'relay.runtime.status.v1',
+                    params: {
+                        target: { kind: 'local' },
+                        mode: 'user',
+                        channel: 'stable',
+                    },
+                },
+            },
+        });
+
+        expect(startResult.ok).toBe(true);
+        if (!startResult.ok) return;
+
+        const startedTaskId = String((startResult.result as { taskId?: unknown }).taskId ?? '');
+        expect(startedTaskId).toMatch(/^system-task:/u);
+
+        let payload: {
+            events: Array<{ stepId?: string }>;
+            pendingPrompt: unknown;
+            result: null | { ok: boolean; data?: Record<string, unknown> };
+        } | null = null;
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+            const pollResult = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
+                id: 'tool.systemTasks',
+                method: 'poll',
+                params: {
+                    taskId: startedTaskId,
+                    cursor: 0,
+                },
+            });
+            expect(pollResult.ok).toBe(true);
+            if (!pollResult.ok) return;
+            payload = pollResult.result as {
+                events: Array<{ stepId?: string }>;
+                pendingPrompt: unknown;
+                result: null | { ok: boolean; data?: Record<string, unknown> };
+            };
+            if (payload.result) {
+                break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+
+        expect(payload).not.toBeNull();
+        if (!payload) return;
+        expect(payload.pendingPrompt).toBeNull();
+        expect(payload.events.map((event) => event.stepId)).toEqual([
+            'relay.status.inspect',
+            'relay.status.health',
+        ]);
+        expect(payload.result?.ok).toBe(true);
     });
 });

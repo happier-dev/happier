@@ -14,7 +14,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { projectPath } from '@/projectPath';
+import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand';
 
 function resolveEnvRecord(): Record<string, string> {
   const out: Record<string, string> = {};
@@ -22,6 +22,17 @@ function resolveEnvRecord(): Record<string, string> {
     if (typeof v === 'string') out[k] = v;
   }
   return out;
+}
+
+async function resolveRemoteBridgeInvocation(): Promise<{
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}> {
+  return resolveNodeBackedMcpServerCommand({
+    distEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.mjs'],
+    sourceEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.ts'],
+  });
 }
 
 async function startTestMcpHttpServer(): Promise<{ url: string; stop: () => void }> {
@@ -133,13 +144,14 @@ describe('remoteMcpStdioBridge', () => {
         { mode: 0o600 },
       );
 
-      const bridgeEntrypoint = join(projectPath(), 'dist', 'mcp', 'bridges', 'remoteMcpStdioBridge.mjs');
+      const bridgeInvocation = await resolveRemoteBridgeInvocation();
 
       const transport = new StdioClientTransport({
-        command: process.execPath,
-        args: [bridgeEntrypoint],
+        command: bridgeInvocation.command,
+        args: bridgeInvocation.args,
         env: {
           ...resolveEnvRecord(),
+          ...(bridgeInvocation.env ?? {}),
           HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath,
         },
       });
@@ -177,13 +189,14 @@ describe('remoteMcpStdioBridge', () => {
         { mode: 0o600 },
       );
 
-      const bridgeEntrypoint = join(projectPath(), 'dist', 'mcp', 'bridges', 'remoteMcpStdioBridge.mjs');
+      const bridgeInvocation = await resolveRemoteBridgeInvocation();
 
       const transport = new StdioClientTransport({
-        command: process.execPath,
-        args: [bridgeEntrypoint],
+        command: bridgeInvocation.command,
+        args: bridgeInvocation.args,
         env: {
           ...resolveEnvRecord(),
+          ...(bridgeInvocation.env ?? {}),
           HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath,
         },
       });
@@ -216,10 +229,11 @@ describe('remoteMcpStdioBridge', () => {
         { mode: 0o600 },
       );
 
-      const bridgeEntrypoint = join(projectPath(), 'dist', 'mcp', 'bridges', 'remoteMcpStdioBridge.mjs');
-      const child = spawn(process.execPath, [bridgeEntrypoint], {
+      const bridgeInvocation = await resolveRemoteBridgeInvocation();
+      const child = spawn(bridgeInvocation.command, bridgeInvocation.args, {
         env: {
           ...resolveEnvRecord(),
+          ...(bridgeInvocation.env ?? {}),
           HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath,
         },
         stdio: ['ignore', 'ignore', 'pipe'],

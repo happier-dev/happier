@@ -1,7 +1,15 @@
 import { join, resolve, sep } from 'node:path';
 
-export function resolveSessionAttachBaseDir(happyHomeDir: string): string {
-  return resolve(join(happyHomeDir, 'tmp', 'session-attach'));
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+
+function resolvePublicReleaseRingSuffix(ring: PublicReleaseRingId): 'stable' | 'preview' | 'dev' {
+  return ring === 'publicdev' ? 'dev' : ring;
+}
+
+export function resolveSessionAttachBaseDir(happyHomeDir: string, publicReleaseRing: PublicReleaseRingId = 'stable'): string {
+  const suffix = resolvePublicReleaseRingSuffix(publicReleaseRing);
+  const dirName = suffix === 'stable' ? 'session-attach' : `session-attach.${suffix}`;
+  return resolve(join(happyHomeDir, 'tmp', dirName));
 }
 
 export function assertSessionAttachFilePathWithinBaseDir(baseDir: string, filePath: string): void {

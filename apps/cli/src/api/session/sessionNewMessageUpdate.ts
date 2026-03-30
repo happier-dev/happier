@@ -5,6 +5,7 @@ import type {
 } from '../types';
 import { SessionMessageContentSchema, UserMessageSchema } from '../types';
 import { coerceSessionUserPromptV1 } from '@happier-dev/protocol';
+import { summarizeValueShapeForLog } from '@/diagnostics/eventShapeForLog';
 
 export function handleSessionNewMessageUpdate(params: {
     update: Update;
@@ -47,7 +48,16 @@ export function handleSessionNewMessageUpdate(params: {
 
     const parsedContent = SessionMessageContentSchema.safeParse((params.update.body as any).message?.content);
     if (!parsedContent.success) {
-        params.debug('[SOCKET] [UPDATE] Ignoring new-message with invalid encrypted content envelope');
+        const rawContent = (params.update.body as any).message?.content;
+        params.debug('[SOCKET] [UPDATE] Ignoring new-message with invalid content envelope', {
+            issues: parsedContent.error.issues.map((i) => ({
+                code: i.code,
+                path: i.path,
+                expected: 'expected' in i ? (i as any).expected : undefined,
+                received: 'received' in i ? (i as any).received : undefined,
+            })),
+            contentShape: summarizeValueShapeForLog(rawContent),
+        });
         return {
             handled: true,
             lastObservedMessageSeq: params.lastObservedMessageSeq,
@@ -192,7 +202,15 @@ export function handleSessionNewMessageUpdate(params: {
 
         const rawRole = (bodyWithTransportFields as any)?.role;
         if (rawRole === 'user') {
-            params.debug('[SOCKET] [UPDATE] Dropping user prompt delivery: unable to coerce into a UserMessage');
+            params.debug('[SOCKET] [UPDATE] Dropping user prompt delivery: unable to coerce into a UserMessage', {
+                issues: userResult.error.issues.map((i) => ({
+                    code: i.code,
+                    path: i.path,
+                    expected: 'expected' in i ? (i as any).expected : undefined,
+                    received: 'received' in i ? (i as any).received : undefined,
+                })),
+                bodyShape: summarizeValueShapeForLog(bodyWithTransportFields),
+            });
         }
         params.emit('message', bodyWithTransportFields);
     }

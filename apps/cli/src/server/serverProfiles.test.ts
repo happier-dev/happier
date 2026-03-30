@@ -152,4 +152,36 @@ describe('server profiles', () => {
       expect(created.id).not.toBe('..');
     });
   });
+
+  it('upserts an existing profile when the comparable relay URL already exists', async () => {
+    await withTempDir('happier-cli-servers-upsert-url-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+      const { addServerProfile, listServerProfiles, upsertServerProfileByUrl } = await import('./serverProfiles');
+
+      const created = await addServerProfile({
+        name: 'selfhost',
+        serverUrl: 'https://stack.example.test/relay',
+        webappUrl: 'https://app.example.test',
+        use: false,
+      });
+
+      const updated = await upsertServerProfileByUrl({
+        name: 'custom',
+        serverUrl: 'https://stack.example.test/api',
+        localServerUrl: 'http://127.0.0.1:3012',
+        webappUrl: 'https://app.example.test',
+        use: true,
+      });
+
+      expect(updated.id).toBe(created.id);
+      expect(updated.localServerUrl).toBe('http://127.0.0.1:3012');
+      expect(await listServerProfiles()).toHaveLength(2);
+    });
+  });
 });

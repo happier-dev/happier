@@ -414,7 +414,7 @@ describe('runClaude fast-start', () => {
     getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_attach', metadataVersion: 1 }));
 
     const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
-    const attachBaseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir);
+    const attachBaseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir, configuration.publicReleaseRing);
     await mkdir(attachBaseDir, { recursive: true });
     const attachPath = join(attachBaseDir, 'fast-start-attach.json');
     await writeFile(

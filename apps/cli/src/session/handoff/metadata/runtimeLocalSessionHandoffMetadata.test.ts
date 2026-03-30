@@ -142,4 +142,58 @@ describe('resolveSessionHandoffExportMetadata', () => {
             },
         });
     });
+
+    it('preserves remote handoffV1 when preferring local export metadata', () => {
+        const remoteHandoffV1 = {
+            v: 1,
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            providerId: 'claude',
+            sessionStorageBefore: 'direct',
+            sessionStorageAfter: 'direct',
+            transportStrategy: 'server_routed_stream',
+            completedAtMs: 1,
+            // This is consumed by session handoff to resolve sync-changes handoff-back roots.
+            sourceWorkspaceRootPath: '/repo-target',
+        };
+
+        const resolved = resolveSessionHandoffExportMetadata({
+            remoteMetadata: {
+                machineId: 'machine_source',
+                path: '/repo-source-stale',
+                homeDir: '/Users/source',
+                flavor: 'claude',
+                portableMetadataVersion: 'v2',
+                handoffV1: remoteHandoffV1,
+            },
+            localMetadata: {
+                exportMetadata: {
+                    machineId: 'machine_target',
+                    path: '/repo-source-current',
+                    homeDir: '/Users/target',
+                    flavor: 'claude',
+                    // A stale local snapshot may still have a handoff marker that should not override the remote one.
+                    handoffV1: {
+                        v: 1,
+                        sourceMachineId: 'machine_target',
+                        targetMachineId: 'machine_source',
+                    },
+                },
+                runtimeLocalMetadata: {
+                    claudeSessionId: 'sess-handoff-direct',
+                },
+            },
+            preferredLocalExportMachineId: 'machine_target',
+        });
+
+        expect(resolved).toEqual(expect.objectContaining({
+            machineId: 'machine_target',
+            path: '/repo-source-current',
+            homeDir: '/Users/target',
+            flavor: 'claude',
+            portableMetadataVersion: 'v2',
+            claudeSessionId: 'sess-handoff-direct',
+            handoffV1: remoteHandoffV1,
+        }));
+    });
 });

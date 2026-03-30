@@ -386,7 +386,7 @@ describe('happier session send (integration)', () => {
             text: 'Hello active session',
             meta: expect.objectContaining({
               sentFrom: 'cli',
-              source: 'cli',
+              source: 'ui',
               permissionMode: 'safe-yolo',
               model: 'claude-sonnet-4-0',
             }),

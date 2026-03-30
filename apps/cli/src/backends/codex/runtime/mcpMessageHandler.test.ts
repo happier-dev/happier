@@ -57,6 +57,42 @@ describe('forwardCodexErrorToUi', () => {
 });
 
 describe('createCodexMcpMessageHandler', () => {
+  it('logs MCP message shapes without leaking string payloads', () => {
+    let thinking = false;
+    let currentTaskId: string | null = null;
+    const session = {
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendCodexMessage: vi.fn(),
+      sendSessionEvent: vi.fn(),
+      keepAlive: vi.fn(),
+    };
+    const messageBuffer = { addMessage: vi.fn() };
+    const logger = { debug: vi.fn() };
+    const diffProcessor = { processDiff: vi.fn() };
+
+    const handler = createCodexMcpMessageHandler({
+      logger,
+      session,
+      messageBuffer,
+      sendReady: vi.fn(),
+      publishCodexThreadIdToMetadata: vi.fn(),
+      diffProcessor,
+      getCurrentTaskId: () => currentTaskId,
+      setCurrentTaskId: (next: string | null) => {
+        currentTaskId = next;
+      },
+      getThinking: () => thinking,
+      setThinking: (next: boolean) => {
+        thinking = next;
+      },
+    });
+
+    handler({ type: 'agent_message', message: 'SUPER_SECRET_VALUE' });
+
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain('SUPER_SECRET_VALUE');
+  });
+
   it('does not throw when receiving circular event payloads', () => {
     let thinking = false;
     let currentTaskId: string | null = null;

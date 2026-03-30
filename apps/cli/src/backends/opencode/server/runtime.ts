@@ -8,7 +8,7 @@ import { configuration } from '@/configuration';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
 import { buildChangeTitleInstruction, shouldAppendChangeTitleInstruction } from '@/agent/runtime/changeTitleInstruction';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/protocol';
+import { isChangeTitleToolNameAlias } from '@happier-dev/protocol';
 import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 
@@ -20,8 +20,12 @@ import { createOpenCodeTranscriptStreamBridge } from './openCodeTranscriptStream
 import { asRecord, normalizeString, normalizeStringArray } from './openCodeParsing';
 import { extractOpenCodeErrorText } from './openCodeErrorText';
 import { extractOpenCodeSessionMessageId, parseOpenCodeToolPart } from './openCodeMessageParsing';
-import { canonicalizeOpenCodeConfiguredMcpToolName } from './openCodeMcpToolNames';
-import { modelSupportsToolCalls, parseOpenCodeModelId, resolveOpenCodeDefaultProviderIdFromModelId } from './openCodeModelParsing';
+import {
+  canonicalizeOpenCodeConfiguredMcpToolName,
+  resolveOpenCodeChangeTitleToolNameForMcpClient,
+  resolveOpenCodeSessionTitleSetToolNameForMcpClient,
+} from './openCodeMcpToolNames';
+import { parseOpenCodeModelId, resolveOpenCodeDefaultProviderIdFromModelId } from './openCodeModelParsing';
 import { parsePermissionRequest } from './openCodePermissionParsing';
 import {
   buildQuestionAnswersArray,
@@ -225,12 +229,15 @@ export function createOpenCodeServerRuntime(params: {
         const keys = Object.keys(modelsRec).sort();
         for (const key of keys) {
           const modelRec = modelsRec[key];
-          if (!modelSupportsToolCalls(modelRec)) continue;
           const modelId = normalizeString(asRecord(modelRec)?.id) || key;
+          const modelStatus = normalizeString(asRecord(modelRec)?.status);
+          if (modelStatus && modelStatus !== 'active') continue;
+          const capabilities = asRecord((asRecord(modelRec) as any)?.capabilities);
+          const input = capabilities ? asRecord((capabilities as any)?.input) : null;
+          if (input && (input as any).text === false) continue;
           const fullId = `${providerId}/${modelId}`;
           const name = normalizeString(asRecord(modelRec)?.name) || modelId;
           const description = normalizeString(asRecord(modelRec)?.family) || '';
-          const capabilities = asRecord((asRecord(modelRec) as any)?.capabilities);
           const supportsReasoning = capabilities ? capabilities.reasoning === true : false;
           const modelOptions: SessionModelEntry['modelOptions'] | null = supportsReasoning
             ? (buildOpenCodeThinkingModelOptionsFromVariants((asRecord(modelRec) as any)?.variants, variantCandidate) as SessionModelEntry['modelOptions'])
@@ -253,7 +260,7 @@ export function createOpenCodeServerRuntime(params: {
         ?? (availableModes.find((m) => m.id === 'build')?.id ?? availableModes[0]?.id ?? 'build');
       const currentModelId =
         (selectedModel ? `${selectedModel.providerID}/${selectedModel.modelID}` : '')
-        || (defaultModelId && availableModels.some((m) => m.id === defaultModelId) ? defaultModelId : '')
+        || defaultModelId
         || availableModels[0]?.id
         || '';
       const snapshot = await params.session.ensureMetadataSnapshot({ timeoutMs: 60_000 }).catch(() => null);
@@ -1947,9 +1954,16 @@ export function createOpenCodeServerRuntime(params: {
         if (!raw.trim()) return raw;
         if (didSendChangeTitleInstructionForSession) return raw;
         const lower = raw.toLowerCase();
-        const alreadyMentionsChangeTitle =
-          lower.includes(preferredOpenCodeChangeTitleToolName.toLowerCase()) ||
-          CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias));
+        const alreadyMentionsChangeTitle = (() => {
+          if (lower.includes(preferredOpenCodeChangeTitleToolName.toLowerCase())) return true;
+
+          const configuredServers = Object.keys(params.mcpServers ?? {});
+          for (const serverName of configuredServers) {
+            if (lower.includes(resolveOpenCodeChangeTitleToolNameForMcpClient(serverName).toLowerCase())) return true;
+            if (lower.includes(resolveOpenCodeSessionTitleSetToolNameForMcpClient(serverName).toLowerCase())) return true;
+          }
+          return false;
+        })();
         if (alreadyMentionsChangeTitle) {
           didSendChangeTitleInstructionForSession = true;
           return raw;

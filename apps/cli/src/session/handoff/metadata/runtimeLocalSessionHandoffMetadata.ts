@@ -113,6 +113,10 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
             ? {
                 ...input.remoteMetadata,
                 ...cloneMetadataRecord(localSplit!.exportMetadata),
+                // Preserve remote handoff state when resolving a "pinned to another machine" snapshot.
+                // Local export metadata can be stale here, but `handoffV1` must remain the remote truth
+                // (it drives sync-changes handoff-back root resolution).
+                ...(input.remoteMetadata.handoffV1 !== undefined ? { handoffV1: input.remoteMetadata.handoffV1 } : {}),
             }
             : input.remoteMetadata
         : localSplit?.exportMetadata;

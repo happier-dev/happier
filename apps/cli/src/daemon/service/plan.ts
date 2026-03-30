@@ -1,5 +1,7 @@
 import { join, win32 as win32Path } from 'node:path';
 
+import { getReleaseRingCatalogEntry, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+
 import { buildLaunchAgentPlistXml, buildLaunchdPath } from './darwin';
 import { buildServicePath, planServiceAction, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
 
@@ -35,6 +37,11 @@ const DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX = 'happier-daemon';
 const LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL = 'com.happier.cli.daemon';
 const LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME = 'happier-daemon.service';
 
+export function resolveDaemonServiceChannelSegment(channel: PublicReleaseRingId): '' | 'preview' | 'dev' {
+  const label = getReleaseRingCatalogEntry(channel).publicLabel;
+  return label === 'stable' ? '' : label;
+}
+
 export function sanitizeServiceInstanceId(instanceIdRaw: string): string {
   const value = String(instanceIdRaw ?? '').trim();
   if (!value) {
@@ -44,43 +51,56 @@ export function sanitizeServiceInstanceId(instanceIdRaw: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_');
 }
 
-export function resolveDaemonServiceLaunchdLabel(instanceIdRaw: string): string {
+export function resolveDaemonServiceLaunchdLabel(instanceIdRaw: string, channel: PublicReleaseRingId = 'stable'): string {
   const instanceId = sanitizeServiceInstanceId(instanceIdRaw);
-  return `${DAEMON_SERVICE_LAUNCHD_LABEL_PREFIX}.${instanceId}`;
+  const channelSegment = resolveDaemonServiceChannelSegment(channel);
+  return channelSegment
+    ? `${DAEMON_SERVICE_LAUNCHD_LABEL_PREFIX}.${channelSegment}.${instanceId}`
+    : `${DAEMON_SERVICE_LAUNCHD_LABEL_PREFIX}.${instanceId}`;
 }
 
-export function resolveDaemonServiceSystemdUnitLabel(instanceIdRaw: string): string {
+export function resolveDaemonServiceSystemdUnitLabel(instanceIdRaw: string, channel: PublicReleaseRingId = 'stable'): string {
   const instanceId = sanitizeServiceInstanceId(instanceIdRaw);
-  return `${DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX}.${instanceId}`;
+  const channelSegment = resolveDaemonServiceChannelSegment(channel);
+  return channelSegment
+    ? `${DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX}.${channelSegment}.${instanceId}`
+    : `${DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX}.${instanceId}`;
 }
 
-export function resolveDaemonServiceSystemdUnitName(instanceIdRaw: string): string {
-  return `${resolveDaemonServiceSystemdUnitLabel(instanceIdRaw)}.service`;
+export function resolveDaemonServiceSystemdUnitName(instanceIdRaw: string, channel: PublicReleaseRingId = 'stable'): string {
+  return `${resolveDaemonServiceSystemdUnitLabel(instanceIdRaw, channel)}.service`;
 }
 
-export function resolveLaunchAgentPlistPath(params: Readonly<{ userHomeDir: string; instanceId: string }>): string {
-  const label = resolveDaemonServiceLaunchdLabel(params.instanceId);
+export function resolveLaunchAgentPlistPath(params: Readonly<{ userHomeDir: string; instanceId: string; channel?: PublicReleaseRingId }>): string {
+  const label = resolveDaemonServiceLaunchdLabel(params.instanceId, params.channel ?? 'stable');
   return join(params.userHomeDir, 'Library', 'LaunchAgents', `${label}.plist`);
 }
 
-export function resolveSystemdUserUnitPath(params: Readonly<{ userHomeDir: string; instanceId: string }>): string {
-  const unitName = resolveDaemonServiceSystemdUnitName(params.instanceId);
+export function resolveSystemdUserUnitPath(params: Readonly<{ userHomeDir: string; instanceId: string; channel?: PublicReleaseRingId }>): string {
+  const unitName = resolveDaemonServiceSystemdUnitName(params.instanceId, params.channel ?? 'stable');
   return join(params.userHomeDir, '.config', 'systemd', 'user', unitName);
 }
 
-export function resolveSystemdSystemUnitPath(params: Readonly<{ instanceId: string }>): string {
-  const unitName = resolveDaemonServiceSystemdUnitName(params.instanceId);
+export function resolveSystemdSystemUnitPath(params: Readonly<{ instanceId: string; channel?: PublicReleaseRingId }>): string {
+  const unitName = resolveDaemonServiceSystemdUnitName(params.instanceId, params.channel ?? 'stable');
   return join('/etc', 'systemd', 'system', unitName);
 }
 
-export function resolveWindowsDaemonTaskName(params: Readonly<{ instanceId: string }>): string {
-  const label = resolveDaemonServiceSystemdUnitLabel(params.instanceId);
+export function resolveWindowsDaemonTaskName(params: Readonly<{ instanceId: string; channel?: PublicReleaseRingId }>): string {
+  const label = resolveDaemonServiceSystemdUnitLabel(params.instanceId, params.channel ?? 'stable');
   return `Happier\\${label}`;
 }
 
-export function resolveWindowsDaemonWrapperPath(params: Readonly<{ happierHomeDir: string; instanceId: string }>): string {
-  const label = resolveDaemonServiceSystemdUnitLabel(params.instanceId);
-  return win32Path.join(params.happierHomeDir, 'services', `${label}.ps1`);
+export function resolveWindowsDaemonWrapperPath(params: Readonly<{ happierHomeDir: string; instanceId: string; channel?: PublicReleaseRingId }>): string {
+  const label = resolveDaemonServiceSystemdUnitLabel(params.instanceId, params.channel ?? 'stable');
+  const home = String(params.happierHomeDir ?? '').trim();
+  // When callers supply a POSIX absolute path (common in unit tests on macOS/Linux),
+  // `win32.join("/tmp/...", ...)` yields a leading `\\tmp\\...` path which is relative on POSIX and can
+  // accidentally write into the repo CWD. Treat POSIX absolute paths as POSIX paths.
+  if (home.startsWith('/')) {
+    return join(home, 'services', `${label}.ps1`);
+  }
+  return win32Path.join(home, 'services', `${label}.ps1`);
 }
 
 function buildDaemonServiceProgramArgs(params: Readonly<{ nodePath: string; entryPath: string }>): string[] {
@@ -95,6 +115,7 @@ export function planDaemonServiceInstall(params: Readonly<{
   platform: DaemonServicePlatform;
   mode?: DaemonServiceMode;
   systemUser?: string;
+  channel?: PublicReleaseRingId;
   instanceId: string;
   userHomeDir: string;
   happierHomeDir: string;
@@ -106,19 +127,24 @@ export function planDaemonServiceInstall(params: Readonly<{
   uid?: number;
 }>): DaemonServiceInstallPlan {
   const instanceId = sanitizeServiceInstanceId(params.instanceId);
-  const label = resolveDaemonServiceLaunchdLabel(instanceId);
-  const unitLabel = resolveDaemonServiceSystemdUnitLabel(instanceId);
-  const unitName = resolveDaemonServiceSystemdUnitName(instanceId);
+  const channel: PublicReleaseRingId = params.channel ?? 'stable';
+  const publicReleaseChannel = getReleaseRingCatalogEntry(channel).publicLabel;
+  const channelSegment = resolveDaemonServiceChannelSegment(channel);
+  const logPrefix = channelSegment ? `${channelSegment}.` : '';
+  const label = resolveDaemonServiceLaunchdLabel(instanceId, channel);
+  const unitLabel = resolveDaemonServiceSystemdUnitLabel(instanceId, channel);
+  const unitName = resolveDaemonServiceSystemdUnitName(instanceId, channel);
   const programArgs = buildDaemonServiceProgramArgs({ nodePath: params.nodePath, entryPath: params.entryPath });
 
   if (params.platform === 'darwin') {
-    const plistPath = resolveLaunchAgentPlistPath({ userHomeDir: params.userHomeDir, instanceId });
-    const stdoutPath = join(params.happierHomeDir, 'logs', `daemon-service.${instanceId}.out.log`);
-    const stderrPath = join(params.happierHomeDir, 'logs', `daemon-service.${instanceId}.err.log`);
+    const plistPath = resolveLaunchAgentPlistPath({ userHomeDir: params.userHomeDir, instanceId, channel });
+    const stdoutPath = join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${instanceId}.out.log`);
+    const stderrPath = join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${instanceId}.err.log`);
 
     const env: Record<string, string> = {
       PATH: buildLaunchdPath({ execPath: params.nodePath, homeDir: params.userHomeDir }),
       HAPPIER_HOME_DIR: params.happierHomeDir,
+      HAPPIER_PUBLIC_RELEASE_CHANNEL: publicReleaseChannel,
       HAPPIER_ACTIVE_SERVER_ID: instanceId,
       HAPPIER_SERVER_URL: params.serverUrl,
       HAPPIER_WEBAPP_URL: params.webappUrl,
@@ -160,15 +186,16 @@ export function planDaemonServiceInstall(params: Readonly<{
   }
 
   if (params.platform === 'win32') {
-    const wrapperPath = resolveWindowsDaemonWrapperPath({ happierHomeDir: params.happierHomeDir, instanceId });
-    const stdoutPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${instanceId}.out.log`);
-    const stderrPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${instanceId}.err.log`);
+    const wrapperPath = resolveWindowsDaemonWrapperPath({ happierHomeDir: params.happierHomeDir, instanceId, channel });
+    const stdoutPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${instanceId}.out.log`);
+    const stderrPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${instanceId}.err.log`);
 
     const wrapper = renderWindowsScheduledTaskWrapperPs1({
       workingDirectory: params.userHomeDir,
       programArgs,
       env: {
         HAPPIER_HOME_DIR: params.happierHomeDir,
+        HAPPIER_PUBLIC_RELEASE_CHANNEL: publicReleaseChannel,
         HAPPIER_ACTIVE_SERVER_ID: instanceId,
         HAPPIER_SERVER_URL: params.serverUrl,
         HAPPIER_WEBAPP_URL: params.webappUrl,
@@ -181,7 +208,7 @@ export function planDaemonServiceInstall(params: Readonly<{
       stderrPath,
     });
 
-    const taskName = resolveWindowsDaemonTaskName({ instanceId });
+    const taskName = resolveWindowsDaemonTaskName({ instanceId, channel });
     const basePlan = planServiceAction({
       backend: 'schtasks-user',
       action: 'install',
@@ -216,8 +243,8 @@ export function planDaemonServiceInstall(params: Readonly<{
   }
 
   const unitPath = mode === 'system'
-    ? resolveSystemdSystemUnitPath({ instanceId })
-    : resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId });
+    ? resolveSystemdSystemUnitPath({ instanceId, channel })
+    : resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId, channel });
 
   const unit = renderSystemdServiceUnit({
     description: `Happier CLI daemon (${instanceId})`,
@@ -226,6 +253,7 @@ export function planDaemonServiceInstall(params: Readonly<{
     env: {
       PATH: buildServicePath({ execPath: params.nodePath, homeDir: params.userHomeDir, platform: 'linux' }),
       HAPPIER_HOME_DIR: params.happierHomeDir,
+      HAPPIER_PUBLIC_RELEASE_CHANNEL: publicReleaseChannel,
       HAPPIER_ACTIVE_SERVER_ID: instanceId,
       HAPPIER_SERVER_URL: params.serverUrl,
       HAPPIER_WEBAPP_URL: params.webappUrl,
@@ -255,18 +283,20 @@ export function planDaemonServiceInstall(params: Readonly<{
 export function planDaemonServiceUninstall(params: Readonly<{
   platform: DaemonServicePlatform;
   mode?: DaemonServiceMode;
+  channel?: PublicReleaseRingId;
   instanceId: string;
   userHomeDir: string;
   happierHomeDir?: string;
   uid?: number;
 }>): DaemonServiceUninstallPlan {
   const instanceId = sanitizeServiceInstanceId(params.instanceId);
-  const label = resolveDaemonServiceLaunchdLabel(instanceId);
-  const unitLabel = resolveDaemonServiceSystemdUnitLabel(instanceId);
-  const unitName = resolveDaemonServiceSystemdUnitName(instanceId);
+  const channel: PublicReleaseRingId = params.channel ?? 'stable';
+  const label = resolveDaemonServiceLaunchdLabel(instanceId, channel);
+  const unitLabel = resolveDaemonServiceSystemdUnitLabel(instanceId, channel);
+  const unitName = resolveDaemonServiceSystemdUnitName(instanceId, channel);
 
   if (params.platform === 'darwin') {
-    const plistPath = resolveLaunchAgentPlistPath({ userHomeDir: params.userHomeDir, instanceId });
+    const plistPath = resolveLaunchAgentPlistPath({ userHomeDir: params.userHomeDir, instanceId, channel });
     const uid = params.uid;
     const commands: DaemonServicePlannedCommand[] = [];
     if (typeof uid === 'number' && uid > 0) {
@@ -292,8 +322,8 @@ export function planDaemonServiceUninstall(params: Readonly<{
     if (!happierHomeDir) {
       throw new Error('happierHomeDir is required for Windows service uninstall');
     }
-    const wrapperPath = resolveWindowsDaemonWrapperPath({ happierHomeDir, instanceId });
-    const taskName = resolveWindowsDaemonTaskName({ instanceId });
+    const wrapperPath = resolveWindowsDaemonWrapperPath({ happierHomeDir, instanceId, channel });
+    const taskName = resolveWindowsDaemonTaskName({ instanceId, channel });
     const plan = planServiceAction({
       backend: 'schtasks-user',
       action: 'uninstall',
@@ -322,8 +352,8 @@ export function planDaemonServiceUninstall(params: Readonly<{
   const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
   const prefix = mode === 'system' ? [] : ['--user'];
   const unitPath = mode === 'system'
-    ? resolveSystemdSystemUnitPath({ instanceId })
-    : resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId });
+    ? resolveSystemdSystemUnitPath({ instanceId, channel })
+    : resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId, channel });
   const legacyUnitPath = mode === 'system'
     ? join('/etc', 'systemd', 'system', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME)
     : join(params.userHomeDir, '.config', 'systemd', 'user', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME);
@@ -355,19 +385,21 @@ export function planDaemonServiceLifecycle(params: Readonly<{
   platform: DaemonServicePlatform;
   action: DaemonServiceLifecycleAction;
   mode?: DaemonServiceMode;
+  channel?: PublicReleaseRingId;
   instanceId: string;
   userHomeDir: string;
   happierHomeDir?: string;
   uid?: number;
 }>): Readonly<{ platform: DaemonServicePlatform; commands: DaemonServicePlannedCommand[] }> {
   const instanceId = sanitizeServiceInstanceId(params.instanceId);
-  const label = resolveDaemonServiceLaunchdLabel(instanceId);
-  const unitName = resolveDaemonServiceSystemdUnitName(instanceId);
-  const unitLabel = resolveDaemonServiceSystemdUnitLabel(instanceId);
+  const channel: PublicReleaseRingId = params.channel ?? 'stable';
+  const label = resolveDaemonServiceLaunchdLabel(instanceId, channel);
+  const unitName = resolveDaemonServiceSystemdUnitName(instanceId, channel);
+  const unitLabel = resolveDaemonServiceSystemdUnitLabel(instanceId, channel);
 
   if (params.platform === 'darwin') {
     const uid = params.uid;
-    const plistPath = resolveLaunchAgentPlistPath({ userHomeDir: params.userHomeDir, instanceId });
+    const plistPath = resolveLaunchAgentPlistPath({ userHomeDir: params.userHomeDir, instanceId, channel });
     if (typeof uid !== 'number' || uid <= 0) {
       return { platform: 'darwin', commands: [] };
     }
@@ -394,7 +426,7 @@ export function planDaemonServiceLifecycle(params: Readonly<{
   }
 
   if (params.platform === 'win32') {
-    const taskName = resolveWindowsDaemonTaskName({ instanceId });
+    const taskName = resolveWindowsDaemonTaskName({ instanceId, channel });
     if (params.action === 'status') {
       return { platform: 'win32', commands: [{ cmd: 'schtasks', args: ['/Query', '/TN', taskName, '/FO', 'LIST', '/V'] }] };
     }

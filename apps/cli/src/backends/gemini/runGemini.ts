@@ -921,7 +921,7 @@ export async function runGemini(opts: {
           if (options.length > 0) {
             const optionsXml = formatOptionsXml(options);
             finalMessageText = messageText + optionsXml;
-            logger.debug(`[gemini] Found ${options.length} options in response:`, options);
+            logger.debug(`[gemini] Found ${options.length} options in response`);
           } else if (hasIncompleteOptions(turnMessageState.accumulatedResponse)) {
             logger.debug(`[gemini] Warning: Incomplete options block detected`);
           }
@@ -933,7 +933,7 @@ export async function runGemini(opts: {
             ...(options.length > 0 && { options }),
           };
           
-          logger.debug(`[gemini] Sending complete message to mobile (length: ${finalMessageText.length}): ${finalMessageText.substring(0, 100)}...`);
+          logger.debug(`[gemini] Sending complete message to mobile (length: ${finalMessageText.length})`);
           session.sendAgentMessage('gemini', messagePayload);
           turnMessageState.accumulatedResponse = '';
           turnMessageState.isResponseInProgress = false;

@@ -6,6 +6,7 @@ import { basename, join, resolve, sep } from 'node:path';
 describe('createSessionAttachFile', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
   const originalAttachMaxAgeMs = process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS;
+  const originalPublicReleaseChannel = process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL;
   const tempDirs: string[] = [];
 
   afterEach(async () => {
@@ -21,6 +22,11 @@ describe('createSessionAttachFile', () => {
       delete process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS;
     } else {
       process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS = originalAttachMaxAgeMs;
+    }
+    if (originalPublicReleaseChannel === undefined) {
+      delete process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL;
+    } else {
+      process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL = originalPublicReleaseChannel;
     }
     vi.resetModules();
   });
@@ -67,6 +73,26 @@ describe('createSessionAttachFile', () => {
     }
     await cleanup();
     await expect(stat(filePath)).rejects.toBeTruthy();
+  });
+
+  test('scopes session attach files by public release ring (dev lane)', async () => {
+    const { baseDir } = await createHappyHomeFixture();
+    process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL = 'dev';
+
+    vi.resetModules();
+
+    const { encodeBase64 } = await import('@/api/encryption');
+    const { createSessionAttachFile } = await import('./sessionAttachFile');
+
+    const key = encodeBase64(new Uint8Array(32).fill(7), 'base64');
+    const { filePath, cleanup } = await createSessionAttachFile({
+      happySessionId: 'happy-session-dev-1',
+      payload: { v: 2, encryptionMode: 'e2ee', encryptionKeyBase64: key, encryptionVariant: 'dataKey' },
+    });
+
+    const expectedBase = resolve(join(baseDir, '..', 'session-attach.dev'));
+    expect(resolve(filePath).startsWith(expectedBase + sep)).toBe(true);
+    await cleanup();
   });
 
   test('prevents path traversal in happySessionId (always stays within base dir)', async () => {

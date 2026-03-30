@@ -1,5 +1,6 @@
 import { configuration } from '@/configuration';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
+import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
 import { readCredentials, readSettings } from '@/persistence';
 
 import {
@@ -15,7 +16,11 @@ function uniqueSorted(values: string[]): string[] {
 }
 
 export async function buildDoctorSnapshot(): Promise<DoctorSnapshot> {
-  const [settings, credentials] = await Promise.all([readSettings(), readCredentials()]);
+  const [settings, credentials, daemonStatus] = await Promise.all([
+    readSettings(),
+    readCredentials(),
+    readDaemonStatusSnapshot().catch(() => undefined),
+  ]);
 
   const token = credentials?.token ?? '';
   const payload = token ? decodeJwtPayload(token) : null;
@@ -61,6 +66,7 @@ export async function buildDoctorSnapshot(): Promise<DoctorSnapshot> {
       servers,
       knownAccountIds: uniqueSorted(knownAccountIds),
     },
+    ...(daemonStatus ? { daemonStatus } : {}),
   };
 
   const parsed = DoctorSnapshotSchema.safeParse(candidate);
@@ -75,6 +81,7 @@ export async function buildDoctorSnapshot(): Promise<DoctorSnapshot> {
         servers: [],
         knownAccountIds: candidate.settings.knownAccountIds,
       },
+      ...(candidate.daemonStatus ? { daemonStatus: candidate.daemonStatus } : {}),
     });
   }
 

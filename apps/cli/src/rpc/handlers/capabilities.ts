@@ -6,6 +6,7 @@ import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { tmuxCapability } from '@/capabilities/registry/toolTmux';
 import { windowsTerminalCapability } from '@/capabilities/registry/toolWindowsTerminal';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
+import { systemTasksCapability } from '@/capabilities/registry/toolSystemTasks';
 import { createCapabilitiesService } from '@/capabilities/service';
 import type { Capability } from '@/capabilities/service';
 import type {
@@ -317,6 +318,7 @@ export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegist
                 tmuxCapability,
                 windowsTerminalCapability,
                 executionRunsCapability,
+                systemTasksCapability,
             ],
             checklists,
             buildContext: buildDetectContext,

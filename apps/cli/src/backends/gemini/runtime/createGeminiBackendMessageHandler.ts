@@ -11,6 +11,7 @@ import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgen
 import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
 import { GeminiDiffProcessor } from '../utils/diffProcessor';
@@ -29,8 +30,10 @@ export function createGeminiBackendMessageHandler(params: {
     provider: 'gemini',
     makeId: () => randomUUID(),
   });
+  const shapeLogger = createEventShapeLoggerForLog({ logger, scope: 'gemini' });
 
   return (msg: AgentMessage): void => {
+    shapeLogger.log(msg.type, msg);
     switch (msg.type) {
       case 'model-output':
         if (msg.textDelta) {
@@ -121,7 +124,8 @@ export function createGeminiBackendMessageHandler(params: {
 
         logger.debug(`[gemini] 🔧 Tool call received: ${msg.toolName} (${msg.callId})${isInvestigationTool ? ' [INVESTIGATION]' : ''}`);
         if (isInvestigationTool && msg.args && typeof msg.args === 'object' && 'objective' in msg.args) {
-          logger.debug(`[gemini] 🔍 Investigation objective: ${String((msg.args as any).objective).substring(0, 150)}...`);
+          const objectiveText = String((msg.args as any).objective);
+          logger.debug('[gemini] 🔍 Investigation objective received', { length: objectiveText.length });
         }
 
         params.messageBuffer.addMessage(
@@ -174,11 +178,11 @@ export function createGeminiBackendMessageHandler(params: {
           // Intentionally skip terminal spam for streaming chunks.
         } else if (isError) {
           const errorMsg = (msg.result as any).error || 'Tool call failed';
-          logger.debug(`[gemini] ❌ Tool call error: ${errorMsg.substring(0, 300)}`);
+          logger.debug('[gemini] ❌ Tool call error received', { length: String(errorMsg).length });
           params.messageBuffer.addMessage(`Error: ${errorMsg}`, 'status');
         } else {
           if (resultSize > 1000) {
-            logger.debug(`[gemini] ✅ Large tool result (${resultSize} bytes) - first 200 chars: ${truncatedResult}`);
+            logger.debug(`[gemini] ✅ Large tool result received (${resultSize} bytes)`);
           }
           params.messageBuffer.addMessage(`Result: ${truncatedResult}`, 'result');
         }
@@ -257,7 +261,7 @@ export function createGeminiBackendMessageHandler(params: {
               ? String(thinkingPayload.text || '')
               : '';
           if (thinkingText) {
-            logger.debug(`[gemini] 💭 Thinking chunk received: ${thinkingText.length} chars - Preview: ${thinkingText.substring(0, 100)}...`);
+            logger.debug(`[gemini] 💭 Thinking chunk received (${thinkingText.length} chars)`);
             if (!thinkingText.startsWith('**')) {
               const thinkingPreview = thinkingText.substring(0, 100);
               params.messageBuffer.updateLastMessage(`[Thinking] ${thinkingPreview}...`, 'system');

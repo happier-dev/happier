@@ -35,6 +35,15 @@ describe('resolveRuntimeEntrypointPath', () => {
     ).toBe('/home/x/.happier/runtime/node_modules/@happier-dev/cli/dist/index.mjs');
   });
 
+  it('scopes runtime entrypoints by public release ring for side-by-side installs', () => {
+    expect(
+      resolveRuntimeEntrypointPath({ homeDir: '/home/x/.happier', packageName: '@happier-dev/cli', publicReleaseRing: 'publicdev' }),
+    ).toBe('/home/x/.happier/runtime.dev/node_modules/@happier-dev/cli/dist/index.mjs');
+    expect(
+      resolveRuntimeEntrypointPath({ homeDir: '/home/x/.happier', packageName: '@happier-dev/cli', publicReleaseRing: 'preview' }),
+    ).toBe('/home/x/.happier/runtime.preview/node_modules/@happier-dev/cli/dist/index.mjs');
+  });
+
   it('throws when packageName is empty', () => {
     expect(() => resolveRuntimeEntrypointPath({ homeDir: '/home/x/.happier', packageName: '   ' })).toThrow(
       /packageName is required/i,

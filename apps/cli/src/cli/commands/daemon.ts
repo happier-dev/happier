@@ -1,20 +1,26 @@
 import chalk from 'chalk';
 
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
+
 import { checkIfDaemonRunningAndCleanupStaleState, listDaemonSessions, stopDaemon, stopDaemonSession } from '@/daemon/controlClient';
 import { startDaemon } from '@/daemon/startDaemon';
-import { runDaemonServiceCliCommand } from '@/daemon/service/cli';
+import {
+  resolveDaemonServiceInstallationSnapshotFromEnv,
+  runDaemonServiceCliCommand,
+} from '@/daemon/service/cli';
 import { getLatestDaemonLog } from '@/ui/logger';
 import { runDoctorCommand } from '@/ui/doctor';
 import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 import { readCredentials, readSettings } from '@/persistence';
 import { homedir } from 'node:os';
-import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { resolveLaunchAgentPlistPath, resolveSystemdUserUnitPath } from '@/daemon/service/plan';
 import { configuration } from '@/configuration';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
+import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -24,32 +30,58 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
 
   if (daemonSubcommand === 'service') {
     const serviceAction = args[2];
-    if (serviceAction === 'list') {
-      const platformRaw = (process.env.HAPPIER_DAEMON_SERVICE_PLATFORM ?? '').toString().trim().toLowerCase();
-      const platform = platformRaw === 'linux' ? 'linux' : (platformRaw === 'darwin' || platformRaw === 'mac' || platformRaw === 'macos' || platformRaw === 'osx') ? 'darwin' : (process.platform === 'linux' ? 'linux' : process.platform === 'darwin' ? 'darwin' : null);
-      if (!platform) {
-        console.error('Daemon service is currently only supported on macOS and Linux');
-        process.exit(1);
-      }
-
-      const userHomeDir = (process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR ?? '').trim() || homedir();
-      const settings = await readSettings();
-      const servers = settings.servers ?? {};
-      const entries = Object.values(servers);
+      if (serviceAction === 'list') {
+        const json = args.includes('--json');
+        const userHomeDir = (process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR ?? '').trim() || homedir();
+        const happierHomeDir = (process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR ?? '').trim() || configuration.happyHomeDir;
+        const settings = await readSettings();
+        const servers = settings.servers ?? {};
+        const entries = Object.values(servers);
       if (entries.length === 0) {
+        if (json) {
+          process.stdout.write(`${JSON.stringify({ entries: [] })}\n`);
+          return;
+        }
         console.log('(no server profiles configured)');
         return;
       }
 
-      for (const profile of entries.sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0))) {
-        const instanceId = profile.id;
-        const path =
-          platform === 'darwin'
-            ? resolveLaunchAgentPlistPath({ userHomeDir, instanceId })
-            : resolveSystemdUserUnitPath({ userHomeDir, instanceId });
-        const installed = existsSync(path);
-        console.log(`${profile.name} (${instanceId})`);
-        console.log(`  ${installed ? 'installed' : 'not installed'}: ${path}`);
+      const normalizedEntries = entries
+        .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0))
+        .map((profile) => {
+          const instanceId = String(profile.id ?? '').trim();
+          const env = {
+            ...process.env,
+            HAPPIER_DAEMON_SERVICE_INSTANCE_ID: instanceId,
+            HAPPIER_DAEMON_SERVICE_SERVER_URL: String(profile.serverUrl ?? '').trim(),
+            HAPPIER_DAEMON_SERVICE_WEBAPP_URL: String(profile.webappUrl ?? '').trim(),
+            HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: userHomeDir,
+            HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
+          };
+          const service = resolveDaemonServiceInstallationSnapshotFromEnv({ processEnv: env });
+          return {
+            serverId: instanceId,
+            name: String(profile.name ?? instanceId).trim() || instanceId,
+            installed: service.installed,
+            path: service.installedPath,
+            platform: service.platform,
+          };
+        })
+        .filter((entry) => entry.installed);
+
+      if (json) {
+        process.stdout.write(`${JSON.stringify({ entries: normalizedEntries })}\n`);
+        return;
+      }
+
+      if (normalizedEntries.length === 0) {
+        console.log('(no daemon services installed)');
+        return;
+      }
+
+      for (const entry of normalizedEntries) {
+        console.log(`${entry.name} (${entry.serverId})`);
+        console.log(`  ${entry.installed ? 'installed' : 'not installed'}: ${entry.path}`);
       }
       return;
     }
@@ -143,6 +175,75 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   }
 
   if (daemonSubcommand === 'status') {
+      if (args.includes('--json')) {
+      if (args.includes('--all')) {
+        const statuses = await listDaemonStatusesForAllKnownServers();
+        const activeRelayUrl = configuration.publicServerUrl || configuration.serverUrl;
+        const activeComparableKey = (() => {
+          try {
+            return createServerUrlComparableKey(activeRelayUrl);
+          } catch {
+            return null;
+          }
+        })();
+        process.stdout.write(`${JSON.stringify({
+          active: {
+            serverId: configuration.activeServerId,
+            relayUrl: activeRelayUrl,
+            comparableKey: activeComparableKey,
+          },
+          entries: statuses.map((entry) => {
+            let servicePlatform = typeof entry.service.platform === 'string' ? entry.service.platform : null;
+            let serviceInstalledPath = typeof entry.service.installedPath === 'string' ? entry.service.installedPath : null;
+            if (!servicePlatform || !serviceInstalledPath) {
+              try {
+                const snapshot = resolveDaemonServiceInstallationSnapshotFromEnv({
+                  processEnv: {
+                    ...process.env,
+                    HAPPIER_DAEMON_SERVICE_INSTANCE_ID: entry.serverId,
+                    HAPPIER_DAEMON_SERVICE_SERVER_URL: entry.serverUrl,
+                  },
+                });
+                if (!servicePlatform) servicePlatform = snapshot.platform;
+                if (!serviceInstalledPath) serviceInstalledPath = snapshot.installedPath;
+              } catch {
+                // ignore
+              }
+            }
+
+            return {
+            serverId: entry.serverId,
+            name: entry.name,
+            serverUrl: entry.serverUrl,
+            daemonStatePath: entry.daemonStatePath,
+            comparableKey: entry.comparableKey,
+            ...(entry.auth ? { auth: entry.auth } : {}),
+            ...(entry.drift ? { drift: { ...entry.drift, activeRelayUrl: activeRelayUrl } } : {}),
+            service: {
+              installed: entry.service.installed,
+              running: typeof entry.service.running === 'boolean'
+                ? entry.service.running
+                : entry.service.installed && entry.daemon.running,
+              platform: servicePlatform,
+              installedPath: serviceInstalledPath,
+            },
+            daemon: {
+              installed: entry.service.installed,
+              running: entry.daemon.running,
+              pid: entry.daemon.pid,
+              httpPort: entry.daemon.httpPort ?? null,
+              staleStateFile: Boolean(entry.daemon.staleStateFile),
+            },
+            };
+          }),
+        })}\n`);
+        process.exit(0);
+      }
+      const snapshot = await readDaemonStatusSnapshot();
+      process.stdout.write(`${JSON.stringify(snapshot)}\n`);
+      process.exit(0);
+    }
+
     if (args.includes('--all')) {
       const statuses = await listDaemonStatusesForAllKnownServers();
       for (const entry of statuses) {

@@ -179,4 +179,54 @@ describe('readSettings (active server override)', () => {
       expect(settings.machineId).toBe('machine-stack');
     });
   });
+
+  it('does not fall back to a server-scoped machine id when account-scoped bindings exist but the account scope is missing', async () => {
+    await withTempDir('happier-cli-active-server-id-no-account-scope-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+      });
+
+      writeFileSync(
+        join(homeDir, 'settings.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'cloud',
+            servers: {
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: {
+              cloud: 'machine-server-scoped',
+            },
+            machineIdByServerIdByAccountId: {
+              cloud: {
+                'acct-a': 'machine-account-scoped',
+              },
+            },
+            machineIdConfirmedByServerByServerId: {},
+            lastChangesCursorByServerIdByAccountId: {},
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { readSettings } = await import('./persistence');
+      const settings = await readSettings();
+
+      expect(settings.machineId).toBeUndefined();
+    });
+  });
 });

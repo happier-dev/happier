@@ -10,11 +10,13 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSy
 import { constants } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { configuration } from '@/configuration'
+import { resolveDaemonStateBasenameForRing } from '@/cli/runtime/publicReleaseChannel';
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 import * as z from 'zod';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { logger } from '@/ui/logger';
+import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;
@@ -336,19 +338,12 @@ export async function readSettings(): Promise<Settings> {
       merged.lastTokenSubByServerId && typeof merged.lastTokenSubByServerId === 'object'
         ? merged.lastTokenSubByServerId[activeServerId]
         : undefined;
-    const perAccount =
-      merged.machineIdByServerIdByAccountId && typeof merged.machineIdByServerIdByAccountId === 'object'
-        ? merged.machineIdByServerIdByAccountId[activeServerId]
-        : undefined;
-
-    if (typeof lastTokenSub === 'string' && lastTokenSub.trim() && perAccount && typeof perAccount === 'object') {
-      const mid = (perAccount as Record<string, unknown>)[lastTokenSub.trim()];
-      if (typeof mid === 'string' && mid.trim()) merged.machineId = mid.trim();
-    }
-    if (!merged.machineId && merged.machineIdByServerId && typeof merged.machineIdByServerId === 'object') {
-      const mid = merged.machineIdByServerId[activeServerId];
-      if (typeof mid === 'string' && mid.trim()) merged.machineId = mid.trim();
-    }
+    const resolvedMachineId = resolveMachineIdForServerFromSettings(
+      merged,
+      activeServerId,
+      typeof lastTokenSub === 'string' && lastTokenSub.trim() ? lastTokenSub.trim() : null,
+    );
+    if (resolvedMachineId) merged.machineId = resolvedMachineId;
     if (merged.machineIdConfirmedByServerByServerId && typeof merged.machineIdConfirmedByServerByServerId === 'object') {
       const v = merged.machineIdConfirmedByServerByServerId[activeServerId];
       if (typeof v === 'boolean') merged.machineIdConfirmedByServer = v;
@@ -644,9 +639,10 @@ async function readDaemonStateFallbackFromServersDir(): Promise<DaemonLocallyPer
   try {
     const dirents = await readdir(configuration.serversDir, { withFileTypes: true });
     const candidates: DaemonLocallyPersistedState[] = [];
+    const daemonStateBasename = resolveDaemonStateBasenameForRing(configuration.publicReleaseRing);
     for (const dirent of dirents) {
       if (!dirent.isDirectory()) continue;
-      const candidatePath = join(configuration.serversDir, dirent.name, 'daemon.state.json');
+      const candidatePath = join(configuration.serversDir, dirent.name, daemonStateBasename);
       try {
         const content = await readFile(candidatePath, 'utf-8');
         const parsed = DaemonLocallyPersistedStateSchema.safeParse(JSON.parse(content));

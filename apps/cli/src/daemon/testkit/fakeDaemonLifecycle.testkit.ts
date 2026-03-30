@@ -2,7 +2,8 @@ import { mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { reloadConfiguration } from '@/configuration'
+import { configuration, reloadConfiguration } from '@/configuration'
+import { resolveDaemonStateBasenameForRing } from '@/cli/runtime/publicReleaseChannel'
 import { createEnvKeyScope } from '@/testkit/env/envScope'
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir'
 import {
@@ -35,13 +36,16 @@ const baselineServers = {
 export function createDaemonSettingsFixture(options: {
   activeServerId?: string
   servers?: Readonly<Record<string, unknown>>
+  machineIdByServerId?: Readonly<Record<string, string | undefined>>
+  machineIdByServerIdByAccountId?: Readonly<Record<string, Record<string, string | undefined> | undefined>>
 } = {}) {
   return {
     schemaVersion: 5,
     onboardingCompleted: false,
     activeServerId: options.activeServerId ?? 'cloud',
     servers: options.servers ?? baselineServers,
-    machineIdByServerId: {},
+    machineIdByServerId: options.machineIdByServerId ?? {},
+    machineIdByServerIdByAccountId: options.machineIdByServerIdByAccountId ?? {},
     machineIdConfirmedByServerByServerId: {},
     lastChangesCursorByServerIdByAccountId: {},
   }
@@ -50,6 +54,8 @@ export function createDaemonSettingsFixture(options: {
 export async function writeDaemonSettingsFixture(homeDir: string, options: {
   activeServerId?: string
   servers?: Readonly<Record<string, unknown>>
+  machineIdByServerId?: Readonly<Record<string, string | undefined>>
+  machineIdByServerIdByAccountId?: Readonly<Record<string, Record<string, string | undefined> | undefined>>
 } = {}): Promise<void> {
   await writeFile(
     join(homeDir, 'settings.json'),
@@ -66,7 +72,7 @@ export async function writeDaemonStateFixture(homeDir: string, serverId: string,
   controlToken?: string
 }): Promise<string> {
   const serverDir = join(homeDir, 'servers', serverId)
-  const statePath = join(serverDir, 'daemon.state.json')
+  const statePath = join(serverDir, resolveDaemonStateBasenameForRing(configuration.publicReleaseRing))
 
   mkdirSync(serverDir, { recursive: true })
   await writeFile(

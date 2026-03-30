@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 
 import packageJson from '../../../package.json';
 import { configuration } from '@/configuration';
@@ -19,10 +19,8 @@ import {
   writeUpdateCache,
 } from '@happier-dev/cli-common/update';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
-import {
-  normalizePublicReleaseRingId,
-  type PublicReleaseRingId,
-} from '@happier-dev/release-runtime/releaseRings';
+import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
 import {
   resolveCliBinaryAssetBundleFromReleaseAssets,
   updateInstalledCliPayloadFromReleaseAssets,
@@ -94,24 +92,12 @@ function readPackageJsonVersion(path: string): string | null {
   }
 }
 
-function inferSelfChannelFromInvokerPath(invokedPath: string): SelfChannel {
-  const name = basename(String(invokedPath ?? '').trim()).replace(/\.m?js$/i, '').replace(/\.exe$/i, '');
-  if (name === 'hprev') return 'preview';
-  if (name === 'hdev') return 'publicdev';
-  return 'stable';
-}
-
 function resolveSelfNpmDistTag(channel: SelfChannel): 'latest' | 'next' {
   return channel === 'stable' ? 'latest' : 'next';
 }
 
 export function parseSelfChannel(args: string[], invokedPath = process.argv[1] ?? ''): SelfChannel {
-  if (args.includes('--preview')) return 'preview';
-  if (args.includes('--dev')) return 'publicdev';
-  const ch = args.find((a) => a === '--channel' || a.startsWith('--channel='));
-  if (!ch) return inferSelfChannelFromInvokerPath(invokedPath);
-  const value = ch === '--channel' ? (args[args.indexOf(ch) + 1] ?? '') : ch.slice('--channel='.length);
-  return normalizePublicReleaseRingId(value) || 'stable';
+  return resolvePublicReleaseRingIdFromCliArgs({ args, invokedPath });
 }
 
 export function computeSelfUpdateSpec(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
@@ -169,12 +155,21 @@ function npmUpgradeCommand(params: Readonly<{ packageName: string; channel: Self
   return `npm install -g ${pkg}@${resolveSelfNpmDistTag(params.channel)}`;
 }
 
-function cachePath(): string {
-  return join(configuration.happyHomeDir, 'cache', 'update.json');
+function resolvePublicReleaseRingSuffix(ring: SelfChannel): 'stable' | 'preview' | 'dev' {
+  return ring === 'publicdev' ? 'dev' : ring;
 }
 
-function runtimeDir(): string {
-  return join(configuration.happyHomeDir, 'runtime');
+function updateCachePath(channel: SelfChannel): string {
+  const suffix = resolvePublicReleaseRingSuffix(channel);
+  const fileName = suffix === 'stable' ? 'update.json' : `update.${suffix}.json`;
+  return join(configuration.happyHomeDir, 'cache', fileName);
+}
+
+function runtimeDir(channel: SelfChannel): string {
+  const suffix = resolvePublicReleaseRingSuffix(channel);
+  return suffix === 'stable'
+    ? join(configuration.happyHomeDir, 'runtime')
+    : join(configuration.happyHomeDir, `runtime.${suffix}`);
 }
 
 function resolveUpdatePackageName(): string {
@@ -204,9 +199,9 @@ async function cmdCheck(argv: string[]): Promise<void> {
     const current = invokerVersion || null;
     const updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
 
-    const existing = readUpdateCache(cachePath());
+    const existing = readUpdateCache(updateCachePath(channel));
     const checkedAt = Date.now();
-    writeUpdateCache(cachePath(), {
+    writeUpdateCache(updateCachePath(channel), {
       checkedAt,
       latest,
       current,
@@ -229,7 +224,7 @@ async function cmdCheck(argv: string[]): Promise<void> {
   const distTag = resolveSelfNpmDistTag(channel);
   const pkgName = resolveUpdatePackageName();
 
-  const runtimePkgJson = packageJsonPathForNodeModules({ rootDir: runtimeDir(), packageName: pkgName });
+  const runtimePkgJson = packageJsonPathForNodeModules({ rootDir: runtimeDir(channel), packageName: pkgName });
   const runtimeVersion = runtimePkgJson ? readPackageJsonVersion(runtimePkgJson) : null;
   const invokerVersion = configuration.currentCliVersion;
   const current = runtimeVersion || invokerVersion || null;
@@ -237,9 +232,9 @@ async function cmdCheck(argv: string[]): Promise<void> {
   const latest = readNpmDistTagVersion({ packageName: pkgName, distTag, cwd: process.cwd(), env: process.env });
   const updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
 
-  const existing = readUpdateCache(cachePath());
+  const existing = readUpdateCache(updateCachePath(channel));
   const checkedAt = Date.now();
-  writeUpdateCache(cachePath(), {
+  writeUpdateCache(updateCachePath(channel), {
     checkedAt,
     latest,
     current,

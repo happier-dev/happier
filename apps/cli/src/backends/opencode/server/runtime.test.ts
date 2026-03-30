@@ -19,7 +19,8 @@ function createFakeClient() {
   let onEvent: ((evt: OpenCodeGlobalEvent) => void) | null = null;
   let directoryOverride: string | null = null;
   let statusType: string = 'idle';
-  return {
+  const client = {
+    sessionList: vi.fn(async () => ([] as unknown[])),
     sessionCreate: vi.fn(async () => ({ id: 'ses_1' })),
     sessionGet: vi.fn(async ({ sessionId }: { sessionId: string }) => ({ id: sessionId })),
     sessionMessagesList: vi.fn(async () => ([] as unknown[])),
@@ -37,7 +38,7 @@ function createFakeClient() {
       {
         id: 'openai',
         env: ['OPENAI_API_KEY'],
-        models: {
+        models: ({
           'gpt-5.2': {
             id: 'gpt-5.2',
             name: 'GPT-5.2',
@@ -49,11 +50,11 @@ function createFakeClient() {
               high: { reasoningEffort: 'high' },
             },
           },
-        },
+        }) as Record<string, unknown>,
       },
     ])),
-    mcpAdd: vi.fn(async () => ({})),
-    mcpDisconnect: vi.fn(async () => true),
+    mcpAdd: vi.fn(async () => {}),
+    mcpDisconnect: vi.fn(async () => {}),
     questionReply: vi.fn(async () => true),
     questionReject: vi.fn(async () => true),
     questionList: vi.fn(async () => ([] as unknown[])),
@@ -71,7 +72,13 @@ function createFakeClient() {
       statusType = next;
     },
     __getDirectoryOverride: () => directoryOverride,
+  } satisfies OpenCodeServerRuntimeClient & {
+    __emit: (evt: OpenCodeGlobalEvent) => Promise<void>;
+    __setStatusType: (next: string) => void;
+    __getDirectoryOverride: () => string | null;
   };
+
+  return client;
 }
 
 function createFakeSession() {
@@ -190,15 +197,15 @@ describe('createOpenCodeServerRuntime', () => {
     });
   });
 
-  it('continues registering later MCP servers when one MCP add fails', async () => {
-    const client = createFakeClient();
-    client.mcpAdd
-      .mockRejectedValueOnce(new Error('first add failed'))
-      .mockResolvedValueOnce({});
-    const session = createFakeSession();
-    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
-    const runtime = createOpenCodeServerRuntime({
-      directory: '/tmp',
+	  it('continues registering later MCP servers when one MCP add fails', async () => {
+	    const client = createFakeClient();
+	    client.mcpAdd
+	      .mockRejectedValueOnce(new Error('first add failed'))
+	      .mockResolvedValueOnce(undefined);
+	    const session = createFakeSession();
+	    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+	    const runtime = createOpenCodeServerRuntime({
+	      directory: '/tmp',
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {
@@ -543,6 +550,70 @@ describe('createOpenCodeServerRuntime', () => {
     await expect(promptPromise).resolves.toBeUndefined();
   });
 
+  it('does not override the selected model even when MCP servers are configured and the OpenCode default model lacks tool-call support', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+
+    client.globalConfigGet = vi.fn(async () => ({ model: 'openai/gpt-legacy' }));
+    client.providersList = vi.fn(async () => ([
+      {
+        id: 'openai',
+        env: ['OPENAI_API_KEY'],
+        models: ({
+          'gpt-legacy': { id: 'gpt-legacy', name: 'Legacy', status: 'active', capabilities: { toolcall: false, input: { text: true } } },
+          'gpt-5.2': { id: 'gpt-5.2', name: 'GPT-5.2', status: 'active', capabilities: { toolcall: true, input: { text: true } } },
+        }) as Record<string, unknown>,
+      },
+    ]));
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        happier: { command: 'node', args: ['-e', 'process.exit(0)'] },
+      },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+
+    await expect.poll(() => session.updateMetadata.mock.calls.length).toBeGreaterThan(0);
+    const metadata = session.__getMetadata();
+    expect(metadata.sessionModelsV1?.currentModelId).toBe('openai/gpt-legacy');
+    expect(metadata.sessionModelsV1?.availableModels).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'openai/gpt-legacy' })]),
+    );
+
+    runtime.beginTurn();
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello' });
+
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
+    expect(firstCall).toMatchObject({
+      sessionId: 'ses_1',
+      parts: [{ type: 'text', text: `hello\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
+    });
+    expect(firstCall.model).toBeUndefined();
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'ok' } },
+    });
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+    await expect(promptPromise).resolves.toBeUndefined();
+  });
+
   it('appends CHANGE_TITLE_INSTRUCTION to the first prompt only', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
@@ -604,6 +675,49 @@ describe('createOpenCodeServerRuntime', () => {
       payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
     });
     await expect(secondPromptPromise).resolves.toBeUndefined();
+  });
+
+  it('still appends CHANGE_TITLE_INSTRUCTION when the prompt mentions the MCP-prefixed change-title alias', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        happier: { command: 'node', args: ['-e', 'process.exit(0)'] },
+      },
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+
+    runtime.beginTurn();
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello (mcp__happier__change_title)' });
+
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
+    expect(firstCall).toMatchObject({
+      sessionId: 'ses_1',
+      parts: [{ type: 'text', text: `hello (mcp__happier__change_title)\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'ok' } },
+    });
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+    await expect(promptPromise).resolves.toBeUndefined();
   });
 
   it('does not transcribe change_title tool parts as tool-call/tool-result messages', async () => {
