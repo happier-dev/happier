@@ -9,6 +9,7 @@ import {
   ensureTauriWatcherIgnoreFile,
   ensureTauriSidecarEntrypointFile,
   ensureTauriSidecarRuntimeFiles,
+  ensureTauriMcpDevCapability,
   resolveBunTargetForTauriBuildEnv,
   resolveTauriWatcherIgnoreContent,
 } from './prepareTauriSidecar.mjs';
@@ -53,6 +54,9 @@ test('prepareTauriSidecar builds app workspace dependencies before compiling hse
     calls.push(['entrypoint', options]);
     return join(options.srcTauriDir, 'binaries', 'hsetup.js');
   };
+  const ensureTauriMcpDevCapabilityImpl = async () => {
+    calls.push(['mcp-dev']);
+  };
   const spawnSyncImpl = (command, args, options) => {
     calls.push(['spawn', command, args, options]);
     return { status: 0 };
@@ -65,20 +69,44 @@ test('prepareTauriSidecar builds app workspace dependencies before compiling hse
     ensureWorkspacePackagesBuiltForComponent,
     ensureTauriSidecarRuntimeFilesImpl,
     ensureTauriSidecarEntrypointFileImpl,
+    ensureTauriMcpDevCapabilityImpl,
     spawnSyncImpl,
   });
 
   assert.equal(result, 0);
   assert.equal(calls[0][0], 'ensure');
-  assert.match(String(calls[0][1]), /apps\/ui$/);
+  assert.match(String(calls[0][1]), /apps[/\\]ui$/);
   assert.equal(calls[1][0], 'ensure');
-  assert.match(String(calls[1][1]), /apps\/bootstrap$/);
-  assert.equal(calls[2][0], 'spawn');
-  assert.equal(calls[2][1], process.platform === 'win32' ? 'yarn.cmd' : 'yarn');
-  assert.deepEqual(calls[2][2], ['-s', 'workspace', '@happier-dev/bootstrap', 'build:binary']);
-  assert.equal(calls[2][3].env.HAPPIER_BUN_TARGET, 'bun-darwin-arm64');
-  assert.equal(calls[3][0], 'runtime');
-  assert.equal(calls[4][0], 'entrypoint');
+  assert.match(String(calls[1][1]), /apps[/\\]bootstrap$/);
+  assert.equal(calls[2][0], 'mcp-dev');
+  assert.equal(calls[3][0], 'spawn');
+  assert.equal(calls[3][1], process.platform === 'win32' ? 'yarn.cmd' : 'yarn');
+  assert.deepEqual(calls[3][2], ['-s', 'workspace', '@happier-dev/bootstrap', 'build:binary']);
+  assert.equal(calls[3][3].env.HAPPIER_BUN_TARGET, 'bun-darwin-arm64');
+  assert.equal(calls[4][0], 'runtime');
+  assert.equal(calls[5][0], 'entrypoint');
+});
+
+test('ensureTauriMcpDevCapability writes mcp-dev.json with correct content', async () => {
+  const srcTauriDir = await mkdtemp(join(tmpdir(), 'happier-tauri-mcp-dev-'));
+
+  const targetPath = await ensureTauriMcpDevCapability({ srcTauriDir });
+
+  assert.equal(targetPath, join(srcTauriDir, 'capabilities', 'mcp-dev.json'));
+  const capability = JSON.parse(await readFile(targetPath, 'utf8'));
+  assert.equal(capability.identifier, 'mcp-dev');
+  assert.deepEqual(capability.windows, ['main']);
+  assert.ok(capability.permissions.includes('mcp-bridge:default'));
+});
+
+test('ensureTauriMcpDevCapability is idempotent when run multiple times', async () => {
+  const srcTauriDir = await mkdtemp(join(tmpdir(), 'happier-tauri-mcp-dev-idem-'));
+
+  await ensureTauriMcpDevCapability({ srcTauriDir });
+  await ensureTauriMcpDevCapability({ srcTauriDir });
+
+  const capability = JSON.parse(await readFile(join(srcTauriDir, 'capabilities', 'mcp-dev.json'), 'utf8'));
+  assert.equal(capability.identifier, 'mcp-dev');
 });
 
 test('ensureTauriSidecarEntrypointFile copies the compiled hsetup JS companion next to the native wrapper', async () => {

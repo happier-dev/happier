@@ -3,6 +3,26 @@ import { dirname, join } from 'node:path';
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
+const MCP_DEV_CAPABILITY = {
+  $schema: '../gen/schemas/desktop-schema.json',
+  identifier: 'mcp-dev',
+  description: 'enables the MCP bridge plugin in dev/debug builds',
+  windows: ['main'],
+  permissions: ['mcp-bridge:default'],
+};
+
+export async function ensureTauriMcpDevCapability({
+  srcTauriDir = join(uiDir, 'src-tauri'),
+  mkdirImpl = mkdir,
+  writeFileImpl = writeFile,
+} = {}) {
+  const capabilitiesDir = join(srcTauriDir, 'capabilities');
+  await mkdirImpl(capabilitiesDir, { recursive: true });
+  const targetPath = join(capabilitiesDir, 'mcp-dev.json');
+  await writeFileImpl(targetPath, JSON.stringify(MCP_DEV_CAPABILITY, null, 2) + '\n', 'utf8');
+  return targetPath;
+}
+
 import { ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault } from '../../stack/scripts/utils/proc/pm.mjs';
 
 function normalizeTargetTriple(rawValue) {
@@ -117,11 +137,13 @@ export async function prepareTauriSidecar({
   ensureWorkspacePackagesBuiltForComponent = ensureWorkspacePackagesBuiltForComponentDefault,
   ensureTauriSidecarEntrypointFileImpl = ensureTauriSidecarEntrypointFile,
   ensureTauriSidecarRuntimeFilesImpl = ensureTauriSidecarRuntimeFiles,
+  ensureTauriMcpDevCapabilityImpl = ensureTauriMcpDevCapability,
   spawnSyncImpl = spawnSync,
 } = {}) {
   await ensureWorkspacePackagesBuiltForComponent(uiDir, { quiet: false, env });
   await ensureWorkspacePackagesBuiltForComponent(bootstrapDir, { quiet: false, env });
   await ensureTauriWatcherIgnoreFile();
+  await ensureTauriMcpDevCapabilityImpl();
 
   const bunTarget = resolveBunTargetForTauriBuildEnv(env);
   const nextEnv = {
