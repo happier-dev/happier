@@ -64,6 +64,32 @@ describe('buildSshCommand', () => {
     expect(invocation.args.some((arg) => arg.startsWith('UserKnownHostsFile='))).toBe(false);
     expect(invocation.args).not.toContain('GlobalKnownHostsFile=/dev/null');
   });
+
+  it('uses askpass env for password auth without storing the password in ssh args', () => {
+    const invocation = buildSshCommand({
+      target: 'dev@example.test',
+      auth: {
+        kind: 'password',
+        password: 'super-secret',
+      },
+      knownHosts: {
+        mode: 'system',
+      },
+      remoteCommand: 'echo ok',
+    });
+
+    expect(invocation.args).not.toContain('BatchMode=yes');
+    expect(invocation.args).toContain('BatchMode=no');
+    expect(invocation.args.filter((arg) => arg === 'BatchMode=no')).toHaveLength(1);
+    expect(invocation.args).toContain('NumberOfPasswordPrompts=1');
+    expect(invocation.args).toContain('PreferredAuthentications=password,keyboard-interactive');
+    expect(invocation.args).not.toContain('super-secret');
+    expect(invocation.env).toMatchObject({
+      HAPPIER_SSH_PASSWORD: 'super-secret',
+      SSH_ASKPASS_REQUIRE: 'force',
+      SSH_ASKPASS: expect.stringContaining('happier-ssh-askpass'),
+    });
+  });
 });
 
 describe('buildScpCommand', () => {
@@ -128,6 +154,32 @@ describe('buildScpCommand', () => {
     expect(invocation.args).toContain('StrictHostKeyChecking=yes');
     expect(invocation.args.some((arg) => arg.startsWith('UserKnownHostsFile='))).toBe(false);
     expect(invocation.args).not.toContain('GlobalKnownHostsFile=/dev/null');
+  });
+
+  it('uses askpass env for password auth without storing the password in scp args', () => {
+    const invocation = buildScpCommand({
+      target: 'dev@example.test',
+      remotePath: '$HOME/.happier/bootstrap-staging',
+      localPath: '/tmp/payload',
+      auth: {
+        kind: 'password',
+        password: 'super-secret',
+      },
+      knownHosts: {
+        mode: 'system',
+      },
+    });
+
+    expect(invocation.args).not.toContain('BatchMode=yes');
+    expect(invocation.args).toContain('BatchMode=no');
+    expect(invocation.args).toContain('NumberOfPasswordPrompts=1');
+    expect(invocation.args).toContain('PreferredAuthentications=password,keyboard-interactive');
+    expect(invocation.args).not.toContain('super-secret');
+    expect(invocation.env).toMatchObject({
+      HAPPIER_SSH_PASSWORD: 'super-secret',
+      SSH_ASKPASS_REQUIRE: 'force',
+      SSH_ASKPASS: expect.stringContaining('happier-ssh-askpass'),
+    });
   });
 });
 
