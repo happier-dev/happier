@@ -130,6 +130,130 @@ describe('handleMachineCommand', () => {
     ]);
   });
 
+  it('prints explicit relay switching guidance after installing a remote relay runtime', async () => {
+    const result: SystemTaskResult = {
+      protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+      taskId: 'task-2',
+      ok: true,
+      data: {
+        machineId: 'machine-2',
+        relayRuntime: {
+          relayUrl: 'https://relay.remote.example.test',
+          mode: 'user',
+        },
+      },
+    };
+
+    const poll = vi.fn()
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result: null,
+        pendingPrompt: null,
+      })
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result,
+        pendingPrompt: null,
+      });
+
+    await handleMachineCommand(
+      ['setup', '--ssh', 'dev@example.test', '--install-relay-runtime'],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start: vi.fn(async () => ({ taskId: 'task-2' })),
+          poll,
+          respond: vi.fn(async () => undefined),
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => {
+          throw new Error('prompt should not be used');
+        },
+        isInteractiveTerminal: () => false,
+        sleep: async () => undefined,
+      },
+    );
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('Remote relay URL: https://relay.remote.example.test');
+    expect(output).toContain('happier relay set https://relay.remote.example.test --use');
+  });
+
+  it('accepts prefixed relay selection flags before remote machine setup and reuses the selected relay profile', async () => {
+    const start = vi.fn(async () => ({ taskId: 'task-3' }));
+    const poll = vi.fn().mockResolvedValue({
+      events: [],
+      nextCursor: 1,
+      result: {
+        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+        taskId: 'task-3',
+        ok: true,
+        data: {
+          machineId: 'machine-3',
+        },
+      } satisfies SystemTaskResult,
+      pendingPrompt: null,
+    });
+
+    await handleMachineCommand(
+      [
+        'setup',
+        '--server-url',
+        'https://stack.example.test',
+        '--local-server-url',
+        'http://127.0.0.1:53545',
+        '--ssh',
+        'dev@example.test',
+        '--json',
+      ],
+      {
+        applyServerSelectionFromArgs: async (args) => {
+          expect(args.slice(0, 4)).toEqual([
+            '--server-url',
+            'https://stack.example.test',
+            '--local-server-url',
+            'http://127.0.0.1:53545',
+          ]);
+          return ['--ssh', 'dev@example.test', '--json'];
+        },
+        createRunner: () => ({
+          start,
+          poll,
+          respond: vi.fn(async () => undefined),
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://stack.example.test',
+          webappUrl: 'https://app.example.test',
+          publicRelayUrl: 'https://stack.example.test',
+        }),
+        promptInput: async () => {
+          throw new Error('prompt should not be used');
+        },
+        isInteractiveTerminal: () => false,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(start).toHaveBeenCalledWith({
+      spec: {
+        protocolVersion: 1,
+        kind: 'remote.ssh.bootstrapMachine.v1',
+        params: expect.objectContaining({
+          relay: {
+            relayUrl: 'https://stack.example.test',
+            webappUrl: 'https://app.example.test',
+            publicRelayUrl: 'https://stack.example.test',
+          },
+        }),
+      },
+    });
+  });
+
   it('answers SSH trust prompts interactively in text mode', async () => {
     const promptEvent: SystemTaskEvent = {
       protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,

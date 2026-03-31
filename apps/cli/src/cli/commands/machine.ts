@@ -367,6 +367,7 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
         : '';
       if (relayRuntimeUrl) {
         console.log(`Remote relay URL: ${relayRuntimeUrl}`);
+        console.log(chalk.gray(`Switch this computer to it with: happier relay set ${relayRuntimeUrl} --use`));
       }
       return;
     }
