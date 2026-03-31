@@ -1,14 +1,20 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+
+vi.mock('./WizardCardLayout', () => ({
+    WizardCardLayout: ({ children, testID }: { children: React.ReactNode; testID?: string }) =>
+        React.createElement('WizardCardLayout', { testID }, children),
+    useWizardCardLayoutMetrics: () => null,
+}));
 
 describe('WizardModalShell', () => {
     afterEach(() => {
         standardCleanup();
     });
 
-    it('renders the body inside a scroll view so taller steps can scroll within the modal', async () => {
+    it('renders the body without an internal scroll view (the wizard layout owns scrolling)', async () => {
         const { WizardModalShell } = await import('./WizardModalShell');
 
         const screen = await renderScreen(
@@ -26,7 +32,7 @@ describe('WizardModalShell', () => {
             ),
         );
 
-        expect(screen.findByType('ScrollView')).toBeTruthy();
+        expect(screen.findAllByType('ScrollView' as never)).toHaveLength(0);
         expect(screen.findByTestId('wizard-shell-body')).toBeTruthy();
     });
 });

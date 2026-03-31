@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View, useWindowDimensions, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
@@ -8,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { useWizardCardLayoutMetrics, WizardCardLayout } from './WizardCardLayout';
+import { WizardCardLayout } from './WizardCardLayout';
 import { WizardStepDots } from './WizardStepDots';
 
 export type WizardModalShellProps = Readonly<{
@@ -74,8 +74,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'flex-end',
     },
     scroll: {
-        flexGrow: 0,
-        flexShrink: 1,
         minHeight: 0,
     },
     content: {
@@ -149,34 +147,9 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function WizardModalShell(props: WizardModalShellProps) {
     useUnistyles();
     const styles = stylesheet;
-    const { height } = useWindowDimensions();
     const showSkip = props.showSkip ?? true;
     const showBack = props.showBack ?? true;
     const skipDisabled = props.skipDisabled ?? false;
-    const metrics = useWizardCardLayoutMetrics();
-    const [headerHeight, setHeaderHeight] = React.useState(0);
-    const [footerHeight, setFooterHeight] = React.useState(0);
-
-    const footerPaddingBottom = height < 640 ? 12 : styles.footer.paddingBottom;
-
-    const handleHeaderLayout = React.useCallback((event: LayoutChangeEvent) => {
-        setHeaderHeight(event.nativeEvent.layout.height);
-    }, []);
-
-    const handleFooterLayout = React.useCallback((event: LayoutChangeEvent) => {
-        setFooterHeight(event.nativeEvent.layout.height);
-    }, []);
-
-    const scrollMaxHeight = React.useMemo(() => {
-        if (!metrics) return null;
-        const raw = metrics.maxHeight - headerHeight - footerHeight;
-        return raw > 0 ? raw : 0;
-    }, [footerHeight, headerHeight, metrics]);
-
-    const scrollHeightStyle = React.useMemo(() => {
-        if (scrollMaxHeight == null) return null;
-        return { maxHeight: scrollMaxHeight } as const;
-    }, [scrollMaxHeight]);
 
     const content = (
         <>
@@ -195,7 +168,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
     return (
         <WizardCardLayout testID={props.testID}>
             <View style={styles.shell}>
-                <View style={styles.header} onLayout={handleHeaderLayout}>
+                <View style={styles.header}>
                     <View style={styles.headerSide}>
                         <HeaderLogo />
                     </View>
@@ -221,15 +194,11 @@ export function WizardModalShell(props: WizardModalShellProps) {
                     </View>
                 </View>
 
-                <ScrollView
-                    style={[styles.scroll, scrollHeightStyle]}
-                    contentContainerStyle={styles.content}
-                    showsVerticalScrollIndicator={false}
-                >
+                <View style={[styles.scroll, styles.content]}>
                     {content}
-                </ScrollView>
+                </View>
 
-                <View style={[styles.footer, { paddingBottom: footerPaddingBottom }]} onLayout={handleFooterLayout}>
+                <View style={styles.footer}>
                     {props.footerHint
                         ? typeof props.footerHint === 'string' || typeof props.footerHint === 'number'
                             ? <Text style={styles.footerHint}>{props.footerHint}</Text>
