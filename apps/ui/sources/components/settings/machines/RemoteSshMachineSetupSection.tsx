@@ -124,6 +124,7 @@ function resolveStartFailureMessage(error: unknown): string {
 
 export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachineSetupSection(props: Readonly<{
     expanded: boolean;
+    initialInstallRelayRuntime?: boolean;
     runner?: SystemTaskRunner;
     onCompletedChange?: (payload: Readonly<{ machineId: string | null; serverId: string | null; relayRuntimeUrl: string | null }>) => void;
 }>) {
@@ -150,7 +151,7 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
     const [sshTarget, setSshTarget] = React.useState('');
     const [sshAuth, setSshAuth] = React.useState<'agent' | 'keyfile'>('agent');
     const [identityFilePath, setIdentityFilePath] = React.useState('');
-    const [installRelayRuntime, setInstallRelayRuntime] = React.useState(false);
+    const [installRelayRuntime, setInstallRelayRuntime] = React.useState(() => Boolean(props.initialInstallRelayRuntime));
     const {
         activeTaskSnapshot,
         cancel,

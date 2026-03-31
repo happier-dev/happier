@@ -184,4 +184,29 @@ describe('RemoteSshMachineSetupSection', () => {
 
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'remote ssh bootstrap failed');
     });
+
+    it('can start with relay runtime install preselected when requested by the caller', async () => {
+        const { RemoteSshMachineSetupSection } = await import('./RemoteSshMachineSetupSection');
+        const screen = await renderScreen(React.createElement(RemoteSshMachineSetupSection, {
+            expanded: true,
+            initialInstallRelayRuntime: true,
+            runner: {
+                mode: 'tauri' as const,
+                async start() {
+                    return 'task-1';
+                },
+                async cancel() {},
+                async respond() {},
+                subscribe() {
+                    return () => {};
+                },
+                getSnapshot() {
+                    return null;
+                },
+            },
+        }));
+
+        const relayRuntimeToggle = screen.findByTestId('settings.machineSetup.remoteRelayRuntime');
+        expect(relayRuntimeToggle?.props.selected).toBe(true);
+    });
 });
