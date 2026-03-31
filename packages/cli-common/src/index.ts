@@ -8,3 +8,4 @@ export * as componentArtifacts from './componentArtifacts/index.js';
 export * as firstPartyRuntime from './firstPartyRuntime/index.js';
 export * as relayHost from './relayHost/index.js';
 export * as systemTasks from './systemTasks/index.js';
+export * as output from './output/index.js';
