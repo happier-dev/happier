@@ -11,6 +11,33 @@ import { t } from '@/text';
 import { WizardCardLayout } from './WizardCardLayout';
 import { WizardStepDots } from './WizardStepDots';
 
+function isRelayFooterHint(node: React.ReactNode): node is React.ReactElement<{ testID?: string }> {
+    if (!React.isValidElement(node)) return false;
+    const testID = (node.props as { testID?: unknown }).testID;
+    return typeof testID === 'string' && testID.includes('relay-hint');
+}
+
+function forceSingleLineText(node: React.ReactNode): React.ReactNode {
+    if (!React.isValidElement(node)) return node;
+
+    const children = React.Children.map((node.props as { children?: React.ReactNode }).children, forceSingleLineText);
+
+    if (node.type === Text) {
+        const element = node as React.ReactElement<React.ComponentProps<typeof Text>>;
+        return React.cloneElement(
+            element,
+            {
+                ...element.props,
+                numberOfLines: 1,
+                ellipsizeMode: element.props.ellipsizeMode ?? 'middle',
+            },
+            children
+        );
+    }
+
+    return React.cloneElement(node, node.props, children);
+}
+
 export type WizardModalShellProps = Readonly<{
     titleLeading?: React.ReactNode;
     title?: React.ReactNode;
@@ -202,7 +229,11 @@ export function WizardModalShell(props: WizardModalShellProps) {
                     {props.footerHint
                         ? typeof props.footerHint === 'string' || typeof props.footerHint === 'number'
                             ? <Text style={styles.footerHint}>{props.footerHint}</Text>
-                            : <View style={styles.footerHintContainer}>{props.footerHint}</View>
+                            : <View style={styles.footerHintContainer}>
+                                {isRelayFooterHint(props.footerHint)
+                                    ? forceSingleLineText(props.footerHint)
+                                    : props.footerHint}
+                              </View>
                         : null}
                     <View style={styles.footerButtons}>
                         {showBack && props.onBack ? (
