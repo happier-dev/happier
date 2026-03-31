@@ -236,6 +236,7 @@ export { normalizeVoiceAgentTurnTranscriptText } from './voice/normalizeVoiceAge
 export {
   PROVIDER_CLI_RUNTIME_SPECS,
   getProviderCliRuntimeSpec,
+  RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP,
   type ProviderCliInstallCommand,
   type ProviderCliInstallPlatform,
   type ProviderCliManagedInstallSpec,

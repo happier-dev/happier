@@ -41,6 +41,13 @@ export type ProviderCliRuntimeSpec = Readonly<{
   docsUrl?: string | null;
 }>;
 
+export const RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP: ReadonlyArray<AgentId> = [
+  'claude',
+  'codex',
+  'gemini',
+  'opencode',
+];
+
 function bashCurlPipe(url: string): ProviderCliInstallCommand {
   return { cmd: 'bash', args: ['-lc', `curl -fsSL ${url} | bash`] };
 }
