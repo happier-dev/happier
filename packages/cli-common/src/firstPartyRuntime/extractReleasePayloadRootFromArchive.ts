@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readdir, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -25,27 +25,29 @@ export async function extractReleasePayloadRootFromArchive(params: Readonly<{
     windowsHide: true,
   });
 
-  const entries = await readdir(params.extractDir);
-
+  const entries = (await readdir(params.extractDir)).filter((entry) => !entry.startsWith('.'));
   if (entries.length === 1) {
     return join(params.extractDir, entries[0]!);
   }
 
-  // Some archives include extra top-level files (e.g. release notes) alongside the
-  // actual payload directory. Prefer the single directory entry when possible.
-  const directories: string[] = [];
-  for (const entry of entries) {
-    try {
-      const info = await stat(join(params.extractDir, entry));
-      if (info.isDirectory()) directories.push(entry);
-    } catch {
-      // ignore unreadable entries
-    }
+  const entryStats = await Promise.all(
+    entries.map(async (name) => ({
+      name,
+      stat: await lstat(join(params.extractDir, name)),
+    })),
+  );
+
+  const dirEntries = entryStats.filter((entry) => entry.stat.isDirectory()).map((entry) => entry.name);
+  if (dirEntries.length === 1) {
+    return join(params.extractDir, dirEntries[0]!);
   }
 
-  if (directories.length === 1) {
-    return join(params.extractDir, directories[0]!);
+  const archiveStem = params.archiveName.replace(/(\.tar\.gz|\.zip)$/u, '');
+  if (dirEntries.includes(archiveStem)) {
+    return join(params.extractDir, archiveStem);
   }
 
-  throw new Error(`[first-party-runtime] expected exactly one extracted payload root for ${params.archiveName}`);
+  throw new Error(
+    `[first-party-runtime] expected exactly one extracted payload root for ${params.archiveName}; found: ${entries.join(', ')}`,
+  );
 }

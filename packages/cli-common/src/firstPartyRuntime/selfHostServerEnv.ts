@@ -100,7 +100,15 @@ export function applyEnvOverridesToEnvText(
     envText: string,
     overrides: Readonly<Record<string, string>>,
 ): string {
-    const pending = new Map(Object.entries(overrides ?? {}).map(([key, value]) => [String(key), String(value)]));
+    const pending = new Map<string, string>();
+    for (const [rawKey, rawValue] of Object.entries(overrides ?? {})) {
+        const key = String(rawKey ?? '').trim();
+        const value = String(rawValue ?? '');
+        if (!key) continue;
+        assertValidEnvOverrideKey(key);
+        assertValidEnvOverrideValue(value);
+        pending.set(key, value);
+    }
     const lines = String(envText ?? '').split('\n');
     const next: string[] = [];
     for (const line of lines) {
@@ -132,3 +140,17 @@ export function applyEnvOverridesToEnvText(
     return rendered.endsWith('\n') ? rendered : `${rendered}\n`;
 }
 
+function assertValidEnvOverrideKey(key: string): void {
+    if (/[\r\n\0]/.test(key)) {
+        throw new Error('Invalid env override: keys must be single-line.');
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        throw new Error(`Invalid env override: unsupported key "${key}".`);
+    }
+}
+
+function assertValidEnvOverrideValue(value: string): void {
+    if (/[\r\n\0]/.test(value)) {
+        throw new Error('Invalid env override: values must be single-line.');
+    }
+}

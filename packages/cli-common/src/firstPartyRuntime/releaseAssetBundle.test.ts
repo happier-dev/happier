@@ -74,10 +74,10 @@ describe('releaseAssetBundle', () => {
         }
     });
 
-    it('extracts the payload root directory when an archive includes extra top-level files', async () => {
-        const root = mkdtempSync(join(tmpdir(), 'first-party-runtime-release-bundle-multi-entry-'));
+    it('extracts the payload root when the archive contains one directory plus extra top-level files', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'first-party-runtime-release-bundle-multi-root-'));
         try {
-            const version = '9.9.11-preview.1';
+            const version = '9.9.10-preview.4';
             const stem = `happier-v${version}-linux-x64`;
             const artifactDir = join(root, stem);
             mkdirSync(join(artifactDir, 'package-dist'), { recursive: true });
@@ -85,12 +85,11 @@ describe('releaseAssetBundle', () => {
             chmodSync(join(artifactDir, 'happier'), 0o755);
             writeFileSync(join(artifactDir, 'package-dist', 'index.mjs'), 'export default "ok";\n', 'utf8');
 
-            // Extra top-level entry that should not change payload-root resolution.
-            writeFileSync(join(root, 'README.txt'), 'extra\n', 'utf8');
+            writeFileSync(join(root, 'LICENSE.txt'), 'license\n', 'utf8');
 
             const archiveName = `${stem}.tar.gz`;
             const archivePath = join(root, archiveName);
-            const tarRes = spawnSync('tar', ['-czf', archivePath, '-C', root, stem, 'README.txt'], { encoding: 'utf8' });
+            const tarRes = spawnSync('tar', ['-czf', archivePath, '-C', root, stem, 'LICENSE.txt'], { encoding: 'utf8' });
             expect(tarRes.status).toBe(0);
 
             const extractedRoot = await extractReleasePayloadRootFromArchive({

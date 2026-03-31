@@ -255,31 +255,72 @@ export async function checkRelayRuntimeHealth(params: Readonly<{
   const timeoutMs = Number.isFinite(params.timeoutMs) ? Math.max(1, Math.floor(params.timeoutMs)) : 30_000;
   const url = buildRelayRuntimeUrl({ host, port, path: params.path ?? '/v1/version' });
 
-  const portOpen = await params.probePortOpen({ host, port, timeoutMs });
-  if (!portOpen) {
-    return {
-      reachable: false,
-      portOpen: false,
-      pingOk: false,
-      url,
-      statusCode: null,
-      version: null,
-    };
-  }
-
-  const response = await params.fetchJson({ url, timeoutMs });
-  const body = response.body;
-  const version = body && typeof body === 'object' && typeof (body as { version?: unknown }).version === 'string'
-    ? String((body as { version: string }).version)
-    : null;
-  const pingOk = response.ok === true;
-
-  return {
-    reachable: portOpen && pingOk,
-    portOpen,
-    pingOk,
-    url,
-    statusCode: typeof response.status === 'number' ? response.status : null,
-    version,
+  const sleep = async (ms: number): Promise<void> => {
+    if (ms <= 0) return;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    });
   };
+
+  const start = Date.now();
+  const retryDelayMs = 250;
+  let last: RelayRuntimeHealthResult = {
+    reachable: false,
+    portOpen: false,
+    pingOk: false,
+    url,
+    statusCode: null,
+    version: null,
+  };
+
+  while (true) {
+    const elapsed = Date.now() - start;
+    const remaining = timeoutMs - elapsed;
+    if (remaining <= 0) return last;
+
+    const attemptTimeoutMs = Math.max(1, Math.min(1_000, remaining));
+    let portOpen = false;
+    try {
+      portOpen = await params.probePortOpen({ host, port, timeoutMs: attemptTimeoutMs });
+    } catch {
+      portOpen = false;
+    }
+
+    if (!portOpen) {
+      last = {
+        reachable: false,
+        portOpen: false,
+        pingOk: false,
+        url,
+        statusCode: null,
+        version: null,
+      };
+      await sleep(Math.min(retryDelayMs, remaining));
+      continue;
+    }
+
+    let response: Readonly<{ ok: boolean; status: number; body: unknown }> | null = null;
+    try {
+      response = await params.fetchJson({ url, timeoutMs: attemptTimeoutMs });
+    } catch {
+      response = null;
+    }
+
+    const body = response?.body;
+    const version = body && typeof body === 'object' && typeof (body as { version?: unknown }).version === 'string'
+      ? String((body as { version: string }).version)
+      : null;
+    const pingOk = response?.ok === true;
+    last = {
+      reachable: portOpen && pingOk,
+      portOpen,
+      pingOk,
+      url,
+      statusCode: typeof response?.status === 'number' ? response.status : null,
+      version,
+    };
+    if (last.reachable) return last;
+
+    await sleep(Math.min(retryDelayMs, remaining));
+  }
 }

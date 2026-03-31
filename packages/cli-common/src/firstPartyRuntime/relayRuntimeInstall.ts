@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, copyFile, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -15,6 +15,40 @@ import {
 
 import { checkRelayRuntimeHealth, resolveRelayRuntimeDefaults } from './relayRuntime.js';
 import { applyEnvOverridesToEnvText, parseEnvText, renderSelfHostServerEnvText } from './selfHostServerEnv.js';
+
+async function copyDirectoryContents(params: Readonly<{
+    sourceDir: string;
+    destDir: string;
+}>): Promise<void> {
+    await mkdir(params.destDir, { recursive: true });
+    const entries = await readdir(params.sourceDir, { withFileTypes: true });
+    for (const entry of entries) {
+        if (!entry.name || entry.name === '.' || entry.name === '..') continue;
+        if (entry.name.startsWith('._')) continue;
+        const sourcePath = join(params.sourceDir, entry.name);
+        const destPath = join(params.destDir, entry.name);
+        if (entry.isDirectory()) {
+            await copyDirectoryContents({ sourceDir: sourcePath, destDir: destPath });
+            continue;
+        }
+        if (entry.isFile()) {
+            await mkdir(dirname(destPath), { recursive: true });
+            await copyFile(sourcePath, destPath);
+            continue;
+        }
+        try {
+            const info = await stat(sourcePath);
+            if (info.isDirectory()) {
+                await copyDirectoryContents({ sourceDir: sourcePath, destDir: destPath });
+            } else if (info.isFile()) {
+                await mkdir(dirname(destPath), { recursive: true });
+                await copyFile(sourcePath, destPath);
+            }
+        } catch {
+            continue;
+        }
+    }
+}
 
 function assertRootIfRequired(params: Readonly<{ platform: NodeJS.Platform; mode: 'user' | 'system' }>): void {
     if (params.mode !== 'system') return;
@@ -153,6 +187,16 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
     await mkdir(dbDir, { recursive: true });
     await mkdir(defaults.logDir, { recursive: true });
 
+    const migrationsSourceDir = join(dirname(params.serverBinaryPath), 'prisma', 'sqlite', 'migrations');
+    const migrationsDestDir = join(defaults.dataDir, 'migrations', 'sqlite');
+    await mkdir(migrationsDestDir, { recursive: true });
+    if (existsSync(migrationsSourceDir)) {
+        await copyDirectoryContents({
+            sourceDir: migrationsSourceDir,
+            destDir: migrationsDestDir,
+        });
+    }
+
     await installBinaryShim({
         platform,
         sourcePath: params.serverBinaryPath,
@@ -237,4 +281,3 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         version: state.version,
     };
 }
-

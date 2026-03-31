@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   checkRelayRuntimeHealth,
@@ -141,7 +141,7 @@ describe('checkRelayRuntimeHealth', () => {
       host: '127.0.0.1',
       port: 3005,
       path: '/v1/version',
-      timeoutMs: 5_000,
+      timeoutMs: 1,
       probePortOpen: async () => true,
       fetchJson: async () => ({ ok: false, status: 503, body: null }),
     })).resolves.toEqual({
@@ -152,5 +152,32 @@ describe('checkRelayRuntimeHealth', () => {
       statusCode: 503,
       version: null,
     });
+  });
+
+  it('retries until the runtime becomes reachable within the timeout window', async () => {
+    vi.useFakeTimers();
+    try {
+      let probeAttempts = 0;
+      const healthPromise = checkRelayRuntimeHealth({
+        host: '127.0.0.1',
+        port: 3005,
+        path: '/v1/version',
+        timeoutMs: 1_000,
+        probePortOpen: async () => {
+          probeAttempts += 1;
+          return probeAttempts >= 3;
+        },
+        fetchJson: async () => ({ ok: true, status: 200, body: { version: '1.2.3' } }),
+      });
+
+      await vi.runAllTimersAsync();
+      await expect(healthPromise).resolves.toMatchObject({
+        reachable: true,
+        pingOk: true,
+      });
+      expect(probeAttempts).toBeGreaterThanOrEqual(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
