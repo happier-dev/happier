@@ -80,20 +80,23 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         paddingVertical: 10,
     },
+    embeddedQrBlock: {
+        paddingVertical: 6,
+    },
     footer: {
         marginTop: 18,
         alignItems: 'center',
         width: '100%',
     },
     embeddedFooter: {
-        marginTop: 14,
+        marginTop: 10,
     },
     footerButton: {
         width: '100%',
         maxWidth: 320,
     },
     footerButtonSpacer: {
-        height: 12,
+        height: 10,
     },
     textInput: {
         backgroundColor: theme.colors.input.background,
@@ -143,6 +146,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     }, [props.onBack, router]);
 
     const embedded = props.embedded === true;
+    const qrSize = embedded ? 220 : 260;
     const scrollViewStyle: StyleProp<ViewStyle> = embedded
         ? [styles.scrollView, { backgroundColor: 'transparent' }]
         : styles.scrollView;
@@ -229,15 +233,15 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     {t('connect.restoreQrInstructions')}
                 </Text>
 
-                <View style={styles.qrBlock}>
+                <View style={[styles.qrBlock, embedded ? styles.embeddedQrBlock : null]}>
                     {!authReady ? (
-                        <View style={{ width: 220, height: 220, alignItems: 'center', justifyContent: 'center' }}>
+                        <View style={{ width: qrSize, height: qrSize, alignItems: 'center', justifyContent: 'center' }}>
                             <ActivityIndicator size="small" color={theme.colors.text} />
                         </View>
                     ) : (
                         <QRCode
                             data={buildAccountConnectDeepLink({ publicKeyB64Url: encodeBase64(keypair.publicKey, 'base64url') })}
-                            size={260}
+                            size={qrSize}
                             foregroundColor={theme.colors.text}
                             backgroundColor={theme.colors.surface}
                         />

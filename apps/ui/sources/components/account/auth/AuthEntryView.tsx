@@ -259,7 +259,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         paddingHorizontal: 14,
         paddingVertical: 12,
-        marginBottom: 10,
+        marginBottom: 8,
     },
     serverUnavailableTitle: {
         ...Typography.default('semiBold'),
@@ -270,7 +270,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 14,
         color: theme.colors.textSecondary,
-        marginTop: 6,
+        marginTop: 4,
         lineHeight: 20,
     },
     serverLoadingBlock: {
