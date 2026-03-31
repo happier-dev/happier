@@ -35,7 +35,8 @@ function forceSingleLineText(node: React.ReactNode): React.ReactNode {
         );
     }
 
-    return React.cloneElement(node, node.props, children);
+    const element = node as React.ReactElement<Record<string, unknown>>;
+    return React.cloneElement(element, undefined, children);
 }
 
 export type WizardModalShellProps = Readonly<{
@@ -194,7 +195,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
 
     return (
         <WizardCardLayout testID={props.testID}>
-            <View style={styles.shell}>
+            <View testID={props.testID} style={styles.shell}>
                 <View style={styles.header}>
                     <View style={styles.headerSide}>
                         <HeaderLogo />

@@ -66,8 +66,7 @@ describe('WizardModalShell', () => {
             ),
         );
 
-        const relayLine = screen.findByTestId('wizard-shell-relay-hint-line');
-        expect(relayLine).toBeTruthy();
+        const relayLine = screen.findByTestId('wizard-shell-relay-hint-line')!;
         expect(relayLine.props.numberOfLines).toBe(1);
         expect(relayLine.props.ellipsizeMode).toBe('middle');
     });
