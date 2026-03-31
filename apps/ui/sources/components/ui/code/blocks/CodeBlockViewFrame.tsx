@@ -11,6 +11,7 @@ import { t } from '@/text';
 export type CodeBlockViewFrameProps = Readonly<{
     code: string;
     language?: string | null;
+    showHeaderRow?: boolean;
     selectable?: boolean;
     wrap?: boolean;
     showCopyButton?: boolean;
@@ -22,6 +23,7 @@ export type CodeBlockViewFrameProps = Readonly<{
 export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     code,
     language = null,
+    showHeaderRow = true,
     selectable = true,
     wrap = false,
     showCopyButton = false,
@@ -58,7 +60,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
         };
     }, []);
 
-    const shouldRenderHeaderRow = Boolean(language) || Boolean(headerRight);
+    const shouldRenderHeaderRow = showHeaderRow && (Boolean(language) || Boolean(headerRight));
     const shouldOverlayCopyButton = showCopyButton && !shouldRenderHeaderRow;
     const contentPaddingStyle = shouldOverlayCopyButton ? [styles.codePadding, styles.codePaddingOverlay] : styles.codePadding;
 

@@ -100,6 +100,27 @@ describe('CodeBlockViewFrame', () => {
         expect(flattened.some((s: any) => s?.position === 'absolute')).toBe(false);
     });
 
+    it('can hide the header row even when a language is provided', async () => {
+        const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(
+            <CodeBlockViewFrame
+                code={'x'}
+                language={'typescript'}
+                wrap={true}
+                showCopyButton={true}
+                showHeaderRow={false}
+            >
+                <React.Fragment>child</React.Fragment>
+            </CodeBlockViewFrame>,
+        )).tree;
+
+        const pressable = tree.findByProps({ accessibilityLabel: 'common.copy' });
+        const flattened = Array.isArray(pressable.props.style) ? pressable.props.style.flat() : [pressable.props.style];
+        expect(flattened.some((s: any) => s?.position === 'absolute')).toBe(true);
+    });
+
     it('copies without showing a modal and shows a temporary copied state', async () => {
         setStringAsyncSpy.mockClear();
         alertSpy.mockClear();

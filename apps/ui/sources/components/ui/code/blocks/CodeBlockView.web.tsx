@@ -18,6 +18,7 @@ import { CodeBlockViewFrame } from './CodeBlockViewFrame';
 export const CodeBlockView = React.memo<CodeBlockViewProps>(({
     code,
     language = null,
+    showHeaderRow = true,
     selectable = true,
     wrap = false,
     showCopyButton = false,
@@ -146,6 +147,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
         <CodeBlockViewFrame
             code={code}
             language={language}
+            showHeaderRow={showHeaderRow}
             selectable={selectable}
             wrap={wrap}
             showCopyButton={showCopyButton}
