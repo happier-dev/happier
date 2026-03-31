@@ -307,6 +307,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
               : parsedRemote.relay.relayUrl,
           mode: parsedRemote.relayRuntime.mode ?? 'user',
         };
+
         parsedForDaemon = {
           ...parsedRemote,
           relay: {
@@ -314,6 +315,10 @@ export function createRemoteSshBootstrapMachineTaskKind(
             relayUrl: relayRuntime.relayUrl,
           },
         };
+
+        // When we install a relay runtime on the remote machine, prefer switching the remote
+        // CLI/daemon to that relay URL so subsequent operations (daemon install/start) attach to
+        // the freshly-installed relay host by default.
         requireOk(
           await deps.runRemoteCommand({
             label: 'server.configure',

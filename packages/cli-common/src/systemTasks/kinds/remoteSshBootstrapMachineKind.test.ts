@@ -454,7 +454,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     expect(invocations.map((entry) => entry.label)).toContain('relay.runtime.install');
   });
 
-  it('reconfigures the remote CLI and daemon to use the installed relay runtime', async () => {
+  it('switches the remote CLI and daemon to the installed relay runtime when enabled', async () => {
     const invocations: Array<Readonly<{ label: string; relayUrl: string }>> = [];
     const kind = createRemoteSshBootstrapMachineTaskKind({
       resolveHostTrust: async () => ({ status: 'trusted' }),
