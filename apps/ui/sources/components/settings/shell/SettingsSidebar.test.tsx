@@ -133,4 +133,20 @@ describe('SettingsSidebar', () => {
         const iconNamesAfter = rowAfter.findAllByType('Ionicons').map((node: any) => node.props?.name).filter(Boolean);
         expect(iconNamesAfter).toContain('settings-outline');
     });
+
+    it('allows expanding a routed parent item via the hover chevron toggle', async () => {
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+
+        const machinesRow: any = screen.findByTestId('settings-sidebar.item.machines');
+        expect(machinesRow).toBeTruthy();
+
+        await act(async () => {
+            machinesRow.props.onHoverIn?.();
+        });
+
+        await screen.pressByTestIdAsync('settings-sidebar.toggle.machines');
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(screen.findByTestId('settings-sidebar.item.machinesAdd')).toBeTruthy();
+    });
 });

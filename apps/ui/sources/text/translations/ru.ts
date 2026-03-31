@@ -3123,6 +3123,9 @@ export const ru: TranslationStructure = {
     multiPanePanels: "Правые панели",
     multiPanePanelsDescription:
       "Показывать изменяемые по размеру правые панели для файлов и контроля версий (web/tablet)",
+    settingsNavSidebar: "Боковая панель настроек",
+    settingsNavSidebarDescription:
+      "Показывать боковую панель навигации по настройкам (web/tablet)",
     sessionsRightPaneDefaultOpen: "Всегда показывать правую боковую панель в сессиях",
     sessionsRightPaneDefaultOpenDescription:
       "Автоматически открывать правую боковую панель при входе в сессию (web/tablet)",

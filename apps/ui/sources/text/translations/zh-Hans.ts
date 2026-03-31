@@ -3000,6 +3000,8 @@ export const zhHans: TranslationStructure = {
     displayDescription: "控制布局和间距",
     multiPanePanels: "右侧面板",
     multiPanePanelsDescription: "显示可调整大小的右侧文件/源代码控制面板（Web/平板）",
+    settingsNavSidebar: "设置侧边栏",
+    settingsNavSidebarDescription: "显示设置导航侧边栏（Web/平板）",
     sessionsRightPaneDefaultOpen: "在会话中始终显示右侧边栏",
     sessionsRightPaneDefaultOpenDescription: "进入会话时自动打开右侧边栏（Web/平板）",
     detailsPaneTabsBehavior: "编辑器标签页",

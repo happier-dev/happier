@@ -2,7 +2,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
-import { sanitizeBugReportUrl } from '@happier-dev/protocol';
 
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
@@ -16,6 +15,7 @@ import { buildThisComputerChecklistItems } from './buildThisComputerChecklistIte
 import { mapThisComputerTaskToChecklistExecution } from './mapThisComputerTaskToChecklistExecution';
 import { useThisComputerSetupPreflight } from './useThisComputerSetupPreflight';
 import type { ThisComputerChecklistItemId } from './types';
+import { buildThisComputerChecklistDiagnosticsPayload } from './buildThisComputerChecklistDiagnosticsPayload';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -141,57 +141,14 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         return filtered;
     }, [activeTaskSnapshot, controller.phase, controller.selectedIds]);
 
-    const redactId = React.useCallback((value: string | null | undefined) => {
-        const raw = typeof value === 'string' ? value.trim() : '';
-        if (!raw) return null;
-        if (raw.length <= 8) return '***';
-        return `${raw.slice(0, 4)}…${raw.slice(-4)}`;
-    }, []);
-
     const handleCopyDiagnostics = React.useCallback(async (itemId: string) => {
-        const rowExecution = executionById?.[itemId];
-        const payload = {
-            capturedAt: new Date().toISOString(),
-            kind: 'setup.thisComputer',
-            row: itemId,
-            selection: controller.selectedIds,
-            activeRelayUrl: sanitizeBugReportUrl(preflight.activeRelayUrl) ?? preflight.activeRelayUrl,
-            uiAccountId: redactId(preflight.uiAccountId),
-            daemon: {
-                serviceInstalled: preflight.serviceInstalled,
-                daemonRunning: preflight.daemonRunning,
-                needsAuth: preflight.needsAuth,
-                machineId: redactId(preflight.machineId),
-                serverUrl: sanitizeBugReportUrl(preflight.daemonServerUrl) ?? preflight.daemonServerUrl,
-                accountId: redactId(preflight.daemonAccountId),
-                machineRegistered: preflight.daemonMachineRegistered,
-            },
-            mismatch: {
-                serverMismatch: preflight.serverMismatch,
-                accountMismatch: preflight.accountMismatch,
-                pairingRequired: preflight.pairingRequired,
-            },
-            task: activeTaskSnapshot?.result && !activeTaskSnapshot.result.ok
-                ? {
-                    status: activeTaskSnapshot.status,
-                    currentStepId: activeTaskSnapshot.currentStepId ?? null,
-                    errorCode: activeTaskSnapshot.result.error.code,
-                }
-                : activeTaskSnapshot
-                    ? {
-                        status: activeTaskSnapshot.status,
-                        currentStepId: activeTaskSnapshot.currentStepId ?? null,
-                    }
-                    : null,
-            logs: rowExecution?.logs ?? [],
-            error: rowExecution?.error
-                ? {
-                    title: rowExecution.error.title,
-                    message: rowExecution.error.message ?? null,
-                }
-                : null,
-        };
-
+        const payload = buildThisComputerChecklistDiagnosticsPayload({
+            itemId,
+            selectedIds: controller.selectedIds,
+            preflight,
+            activeTaskSnapshot,
+            executionById,
+        });
         await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
         Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('common.details') }));
     }, [
@@ -199,7 +156,6 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         controller.selectedIds,
         executionById,
         preflight,
-        redactId,
     ]);
 
     React.useLayoutEffect(() => {

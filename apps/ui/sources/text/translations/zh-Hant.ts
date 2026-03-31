@@ -2768,6 +2768,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         displayDescription: '控制版面配置和間距',
         multiPanePanels: '右側面板',
         multiPanePanelsDescription: '顯示可調整大小的右側檔案/版本控制面板（Web/平板）',
+        settingsNavSidebar: '設定側邊欄',
+        settingsNavSidebarDescription: '顯示設定導覽側邊欄（Web/平板）',
         sessionsRightPaneDefaultOpen: '在工作階段中一律顯示右側邊欄',
         sessionsRightPaneDefaultOpenDescription: '進入工作階段時自動開啟右側邊欄（Web/平板）',
         detailsPaneTabsBehavior: '編輯器分頁',

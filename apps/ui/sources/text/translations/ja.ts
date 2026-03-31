@@ -3423,6 +3423,9 @@ localTailscale: {
     multiPanePanels: "右パネル",
     multiPanePanelsDescription:
       "ファイルとソース管理のための右側パネルを表示（Web/タブレット）",
+    settingsNavSidebar: "設定サイドバー",
+    settingsNavSidebarDescription:
+      "設定ナビゲーションのサイドバーを表示（Web/タブレット）",
     sessionsRightPaneDefaultOpen: "セッションで右サイドバーを常に表示",
     sessionsRightPaneDefaultOpenDescription:
       "セッションを開くと右サイドバーを自動的に開きます（Web/タブレット）",

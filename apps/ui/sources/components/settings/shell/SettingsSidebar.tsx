@@ -32,7 +32,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.divider,
         color: theme.colors.text,
-        ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : null),
+        ...(Platform.select({
+            web: {
+                outline: 'none',
+                outlineStyle: 'none',
+                outlineWidth: 0,
+                outlineColor: 'transparent',
+                boxShadow: 'none',
+                WebkitBoxShadow: 'none',
+                WebkitAppearance: 'none',
+            },
+            default: {},
+        }) as object),
     },
 }));
 
@@ -144,12 +155,12 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
         const resolvedIconNode = iconNode ?? (
             <Ionicons
                 name="ellipse-outline"
-                size={16}
+                size={18}
                 color={theme.colors.textSecondary}
             />
         );
 
-        const hoveredIconNode = hasChildren ? (
+        const iconPressable = (child: React.ReactNode) => (
             <Pressable
                 testID={`settings-sidebar.toggle.${node.id}`}
                 onPress={(event: any) => {
@@ -158,13 +169,18 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                     toggleExpanded(node.id);
                 }}
                 style={{ flex: 1, width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}
+                hitSlop={6}
             >
-                <Ionicons
-                    name={expanded ? 'chevron-down' : 'chevron-forward'}
-                    size={18}
-                    color={theme.colors.textSecondary}
-                />
+                {child}
             </Pressable>
+        );
+
+        const hoveredIconNode = hasChildren ? iconPressable(
+            <Ionicons
+                name={expanded ? 'chevron-down' : 'chevron-forward'}
+                size={16}
+                color={theme.colors.textSecondary}
+            />
         ) : undefined;
 
         return (
@@ -172,8 +188,14 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                 <Item
                     testID={`settings-sidebar.item.${node.id}`}
                     title={String(t(node.titleKey))}
-                    icon={resolvedIconNode}
-                    leftElementWhenHovered={hoveredIconNode}
+                    {...(hasChildren
+                        ? {
+                            leftElement: iconPressable(resolvedIconNode),
+                            leftElementWhenHovered: hoveredIconNode,
+                        }
+                        : {
+                            icon: resolvedIconNode,
+                        })}
                     density="compact"
                     selected={resolved.activePageId === node.id}
                     showChevron={false}

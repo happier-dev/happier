@@ -3262,6 +3262,9 @@ export const pt: TranslationStructure = {
     multiPanePanels: "Painéis à direita",
     multiPanePanelsDescription:
       "Mostre painéis laterais redimensionáveis para arquivos e controle de código fonte (web/tablet)",
+    settingsNavSidebar: "Barra lateral de configurações",
+    settingsNavSidebarDescription:
+      "Mostrar a barra lateral de navegação das configurações (web/tablet)",
     sessionsRightPaneDefaultOpen: "Mostrar sempre a barra lateral direita nas sessões",
     sessionsRightPaneDefaultOpenDescription:
       "Abrir automaticamente a barra lateral direita ao entrar numa sessão (web/tablet)",

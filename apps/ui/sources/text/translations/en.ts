@@ -1906,12 +1906,12 @@ export const en = {
                 },
             },
             serverMismatch: {
-                title: 'Server mismatch (UI vs daemon)',
-                subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • Daemon: ${machine}`,
+                title: 'Relay mismatch (app vs background service)',
+                subtitle: ({ ui, machine }: { ui: string; machine: string }) => `App: ${ui} • Background service: ${machine}`,
                 steps: {
                     chooseAccount: 'Decide which server/account you want to use.',
-                    switchUiServer: 'Switch the UI to the same server as the daemon (or vice versa).',
-                    restartDaemon: 'Restart the daemon targeting the correct server, then retry.',
+                    switchUiServer: 'Switch the app to the same Relay as the background service (or reconnect the background service to this Relay).',
+                    restartDaemon: 'Restart the background service targeting the correct Relay, then retry.',
                 },
             },
             serverMismatchPasted: {
@@ -1924,11 +1924,11 @@ export const en = {
                     `settings.json: ${settings} • resolved: ${resolved}`,
             },
             accountMismatch: {
-                title: 'Account mismatch (UI vs daemon)',
-                subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • Daemon: ${machine}`,
+                title: 'Account mismatch (app vs background service)',
+                subtitle: ({ ui, machine }: { ui: string; machine: string }) => `App: ${ui} • Background service: ${machine}`,
                 steps: {
-                    signInSameAccount: 'Make sure UI and CLI are signed in to the same account on the same server.',
-                    cliReauth: 'In CLI: log out, then run auth again for the correct server.',
+                    signInSameAccount: 'Make sure the app and background service are signed in to the same account on the same Relay.',
+                    cliReauth: 'In CLI: sign out, then authenticate again for the correct Relay.',
                 },
             },
             machineMissingAccount: {
@@ -2945,6 +2945,8 @@ export const en = {
         displayDescription: 'Control layout and spacing',
         multiPanePanels: 'Right panels',
         multiPanePanelsDescription: 'Show resizable right-side panels for files and source control (web/tablet)',
+        settingsNavSidebar: 'Settings sidebar',
+        settingsNavSidebarDescription: 'Show the settings navigation sidebar (web/tablet)',
         sessionsRightPaneDefaultOpen: 'Always show right sidebar in sessions',
         sessionsRightPaneDefaultOpenDescription: 'Open the right sidebar automatically when you enter a session (web/tablet)',
         detailsPaneTabsBehavior: 'Editor tabs',

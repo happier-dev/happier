@@ -3477,6 +3477,9 @@ export const it: TranslationStructure = {
     multiPanePanels: "Pannelli destri",
     multiPanePanelsDescription:
       "Mostra pannelli laterali ridimensionabili per file e controllo versione (web/tablet)",
+    settingsNavSidebar: "Barra laterale delle impostazioni",
+    settingsNavSidebarDescription:
+      "Mostra la barra laterale di navigazione delle impostazioni (web/tablet)",
     sessionsRightPaneDefaultOpen:
       "Mostra sempre la barra laterale destra nelle sessioni",
     sessionsRightPaneDefaultOpenDescription:

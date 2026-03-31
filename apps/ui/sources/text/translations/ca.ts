@@ -2988,6 +2988,8 @@ export const ca: TranslationStructure = {
         displayDescription: 'Controla la disposició i l\'espaiat',
         multiPanePanels: 'Panells a la dreta',
         multiPanePanelsDescription: 'Mostra panells laterals redimensionables per a fitxers i control de codi font (web/tablet)',
+        settingsNavSidebar: 'Barra lateral de configuració',
+        settingsNavSidebarDescription: 'Mostra la barra lateral de navegació de configuració (web/tablet)',
         sessionsRightPaneDefaultOpen: 'Mostra sempre la barra lateral dreta a les sessions',
         sessionsRightPaneDefaultOpenDescription: 'Obre automàticament la barra lateral dreta quan entres a una sessió (web/tablet)',
         detailsPaneTabsBehavior: 'Pestanyes de l’editor',

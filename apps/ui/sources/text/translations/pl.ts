@@ -3172,6 +3172,9 @@ export const pl: TranslationStructure = {
     multiPanePanels: "Panele po prawej",
     multiPanePanelsDescription:
       "Pokaż skalowalne panele po prawej stronie dla plików i kontroli wersji (web/tablet)",
+    settingsNavSidebar: "Pasek boczny ustawień",
+    settingsNavSidebarDescription:
+      "Pokaż pasek boczny nawigacji ustawień (web/tablet)",
     sessionsRightPaneDefaultOpen: "Zawsze pokazuj prawy pasek boczny w sesjach",
     sessionsRightPaneDefaultOpenDescription:
       "Automatycznie otwieraj prawy pasek boczny po wejściu do sesji (web/tablet)",

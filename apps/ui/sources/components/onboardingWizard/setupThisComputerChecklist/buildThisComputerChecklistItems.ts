@@ -51,7 +51,7 @@ function resolveServerMismatchSubtitle(preflight: ThisComputerSetupPreflight): s
 
     const ui = preflight.activeRelayUrl ? toServerUrlDisplay(preflight.activeRelayUrl) : t('status.unknown');
     const machine = preflight.daemonServerUrl ? toServerUrlDisplay(preflight.daemonServerUrl) : t('status.unknown');
-    return t('diagnosis.findings.serverMismatch.subtitle', { ui, machine });
+    return t('server.relayDrift.bannerDifferentRelayDescription', { activeRelayUrl: ui, daemonRelayUrl: machine });
 }
 
 function resolveAccountMismatchSubtitle(preflight: ThisComputerSetupPreflight): string {
