@@ -122,6 +122,55 @@ describe('RelayHostEngine (remote SSH)', () => {
     expect(setupCommand).toContain('mkdir -p $HOME/.happier/bin');
   });
 
+  it('ensures the shim install command creates the destination directory before copying', async () => {
+    let setupCommand = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('rm -f') && command.includes('happier-server') && command.includes('(ln -s')) {
+          setupCommand = command;
+        }
+        if (command.includes('echo yes')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '$HOME/.happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    await engine.installOrUpdate({
+      target: {
+        kind: 'ssh',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+      channel: 'dev',
+      mode: 'user',
+    });
+
+    expect(setupCommand).toContain('mkdir -p $HOME/.happier/bin;');
+    expect(setupCommand).toContain('rm -f $HOME/.happier/bin/happier-server;');
+  });
+
   it('renders a systemd user service without $HOME shell tokens', async () => {
     let renderedServiceDefinition = '';
     let renderedEnvText = '';
@@ -252,5 +301,40 @@ describe('RelayHostEngine (remote SSH)', () => {
     });
 
     expect(status.service).toEqual({ enabled: null, active: null });
+  });
+
+  it('uninstalls a remote relay runtime by disabling the service and removing installed paths', async () => {
+    const commands: string[] = [];
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        commands.push(command);
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async () => ({ binaryPath: '$HOME/.happier/happier-server/current/happier-server', versionId: 'publicdev-1' }),
+    });
+
+    await engine.control({
+      target: {
+        kind: 'ssh',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+      channel: 'dev',
+      mode: 'user',
+      action: 'uninstall',
+    });
+
+    expect(commands.some((command) => command.includes('systemctl --user disable --now'))).toBe(true);
+    expect(commands.some((command) => command.includes('rm -rf'))).toBe(true);
   });
 });

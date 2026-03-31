@@ -7,7 +7,10 @@ import { basename, dirname, join, posix as posixPath } from 'node:path';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import {
+  applyServicePlan,
+  buildServiceDefinition,
   resolveServiceBackend,
+  planServiceAction,
   type ServiceBackend,
   type ServiceSpec,
 } from '../service/index.js';
@@ -72,7 +75,7 @@ export type RelayHostEngineDeps = Readonly<{
 export type RelayHostEngine = Readonly<{
   readStatus: (params: RelayRuntimeTaskParams) => Promise<RelayRuntimeStatusSnapshot>;
   installOrUpdate: (params: RelayRuntimeTaskParams) => Promise<Readonly<{ relayUrl: string; mode: 'user' | 'system' }>>;
-  control: (params: RelayRuntimeTaskParams & Readonly<{ action: 'start' | 'stop' | 'restart' }>) => Promise<void>;
+  control: (params: RelayRuntimeTaskParams & Readonly<{ action: 'start' | 'stop' | 'restart' | 'uninstall' }>) => Promise<void>;
 }>;
 
 function quoteRemoteShellArg(value: string): string {
@@ -110,6 +113,25 @@ function resolveRemoteHomeDirForRuntime(): string {
 
 function resolveRemoteHomeDirForComponents(): string {
   return '$HOME/.happier';
+}
+
+function buildRelayRuntimeServiceSpec(params: Readonly<{
+  label: string;
+  installRoot: string;
+  serverBinaryPath: string;
+  env: Record<string, string>;
+  stdoutPath: string;
+  stderrPath: string;
+}>): ServiceSpec {
+  return {
+    label: params.label,
+    description: `Happier Relay Runtime (${params.label})`,
+    programArgs: [params.serverBinaryPath],
+    workingDirectory: params.installRoot,
+    env: params.env,
+    stdoutPath: params.stdoutPath,
+    stderrPath: params.stderrPath,
+  };
 }
 
 async function resolveRemoteUserHomeDir(
@@ -385,15 +407,24 @@ function normalizeRemoteServiceSnapshot(params: Readonly<{
   return { enabled: null, active: null };
 }
 
-function buildRemoteControlCommand(params: Readonly<{ backend: ServiceBackend; serviceName: string; action: 'start' | 'stop' | 'restart' }>): string {
+function buildRemoteControlCommand(params: Readonly<{ backend: ServiceBackend; serviceName: string; action: 'start' | 'stop' | 'restart' | 'uninstall' }>): string {
   const svc = `${params.serviceName}.service`;
   if (params.backend === 'systemd-user') {
+    if (params.action === 'uninstall') {
+      return `systemctl --user disable --now ${quoteRemoteShellArg(svc)} 2>/dev/null || true; systemctl --user daemon-reload`;
+    }
     return `systemctl --user ${params.action} ${quoteRemoteShellArg(svc)}`;
   }
   if (params.backend === 'systemd-system') {
+    if (params.action === 'uninstall') {
+      return `systemctl disable --now ${quoteRemoteShellArg(svc)} 2>/dev/null || true; systemctl daemon-reload`;
+    }
     return `systemctl ${params.action} ${quoteRemoteShellArg(svc)}`;
   }
   if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
+    if (params.action === 'uninstall') {
+      return `launchctl unload -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))} 2>/dev/null || true; launchctl remove ${quoteRemoteShellArg(params.serviceName)} 2>/dev/null || true`;
+    }
     if (params.action === 'stop') {
       return `launchctl unload -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))}`;
     }
@@ -499,6 +530,25 @@ function resolveRemoteServiceDefinitionContents(params: Readonly<{
   }
 
   throw new Error(`Unsupported backend: ${params.backend}`);
+}
+
+function buildRemoteRelayRuntimeCleanupCommand(params: Readonly<{
+  definitionPath: string;
+  installRoot: string;
+  binDir: string;
+  configDir: string;
+  dataDir: string;
+  logDir: string;
+}>): string {
+  return [
+    'set -eu',
+    `rm -f ${quoteRemoteShellArg(params.definitionPath)}`,
+    `rm -f ${quoteRemoteShellArg(posixPath.join(params.binDir, 'happier-server'))}`,
+    `rm -rf ${quoteRemoteShellArg(params.installRoot)}`,
+    `rm -rf ${quoteRemoteShellArg(params.configDir)}`,
+    `rm -rf ${quoteRemoteShellArg(params.dataDir)}`,
+    `rm -rf ${quoteRemoteShellArg(params.logDir)}`,
+  ].join('; ');
 }
 
 async function resolveRemotePathEnv(
@@ -669,6 +719,59 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       relayUrl: String(local.baseUrl ?? '').trim() || `http://127.0.0.1:${resolveRelayRuntimeDefaults({ mode, channel, homeDir: homedir() }).serverPort}`,
       mode,
     };
+  }
+
+  async function uninstallLocal(parsed: RelayRuntimeTaskParams): Promise<void> {
+    const mode = normalizeMode(parsed.mode);
+    const channel = normalizeChannel(parsed.channel);
+    const defaults = resolveRelayRuntimeDefaults({
+      platform: process.platform,
+      mode,
+      channel,
+      homeDir: homedir(),
+    });
+    const serverBinaryName = process.platform === 'win32' ? 'happier-server.exe' : 'happier-server';
+    const installServerBinaryPath = join(defaults.installRoot, 'bin', serverBinaryName);
+    const stdoutPath = join(defaults.logDir, 'server.out.log');
+    const stderrPath = join(defaults.logDir, 'server.err.log');
+    const backend = resolveServiceBackend({ platform: process.platform, mode });
+    const serviceSpec = buildRelayRuntimeServiceSpec({
+      label: defaults.serviceName,
+      installRoot: defaults.installRoot,
+      serverBinaryPath: installServerBinaryPath,
+      env: {},
+      stdoutPath,
+      stderrPath,
+    });
+    const definition = buildServiceDefinition({
+      backend,
+      homeDir: homedir(),
+      spec: serviceSpec,
+    });
+    const plan = planServiceAction({
+      backend,
+      action: 'uninstall',
+      label: serviceSpec.label,
+      definitionPath: definition.path,
+      persistent: true,
+    });
+
+    await applyServicePlan(plan, {
+      runCommands: true,
+    });
+
+    const cleanupTargets = [
+      definition.path,
+      installServerBinaryPath,
+      join(defaults.binDir, serverBinaryName),
+      defaults.installRoot,
+      defaults.configDir,
+      defaults.dataDir,
+      defaults.logDir,
+    ];
+    await Promise.all(cleanupTargets.map(async (path) => {
+      await rm(path, { force: true, recursive: true }).catch(() => undefined);
+    }));
   }
 
   async function resolveRemoteTarget(ssh: SystemTaskSshConnectionConfig, knownHostsMode?: 'app' | 'system'): Promise<RemoteReleaseTarget> {
@@ -883,6 +986,60 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     };
   }
 
+  async function uninstallRemote(params: Readonly<{ parsed: RelayRuntimeTaskParams; ssh: SystemTaskSshConnectionConfig }>): Promise<void> {
+    const knownHostsMode: 'app' | 'system' = params.ssh.knownHostsPath ? 'app' : 'system';
+    const target = await resolveRemoteTarget(params.ssh, knownHostsMode);
+    const platform = resolveRemotePlatform({ target });
+    const mode = normalizeMode(params.parsed.mode);
+    const channel = normalizeChannel(params.parsed.channel);
+    const defaults = resolveRelayDefaultsForRemote({ platform, channel, mode });
+    const remoteHomeDir = await resolveRemoteUserHomeDir(deps, { ssh: params.ssh, knownHostsMode }) ?? resolveRemoteHomeDirForRuntime();
+    const backend = resolveServiceBackend({ platform, mode });
+    const serviceSpec = buildRelayRuntimeServiceSpec({
+      label: defaults.serviceName,
+      installRoot: defaults.installRoot,
+      serverBinaryPath: `${defaults.installRoot}/bin/happier-server`,
+      env: {},
+      stdoutPath: `${defaults.logDir}/server.out.log`,
+      stderrPath: `${defaults.logDir}/server.err.log`,
+    });
+    const definitionPath = resolveRemoteServiceDefinitionPath({
+      backend,
+      label: serviceSpec.label,
+      remoteHomeDir,
+    });
+
+    const controlResult = await deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode,
+      remoteCommand: buildRemoteControlCommand({
+        backend,
+        serviceName: defaults.serviceName,
+        action: 'uninstall',
+      }),
+    });
+    if (controlResult.status !== 0) {
+      throw new Error(controlResult.stderr.trim() || 'Failed to uninstall relay runtime service');
+    }
+
+    const cleanupCommand = buildRemoteRelayRuntimeCleanupCommand({
+      definitionPath,
+      installRoot: defaults.installRoot,
+      binDir: defaults.binDir,
+      configDir: defaults.configDir,
+      dataDir: defaults.dataDir,
+      logDir: defaults.logDir,
+    });
+    const cleanupResult = await deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode,
+      remoteCommand: cleanupCommand,
+    });
+    if (cleanupResult.status !== 0) {
+      throw new Error(cleanupResult.stderr.trim() || 'Failed to remove relay runtime files');
+    }
+  }
+
   return {
     async readStatus(params) {
       const parsed = params;
@@ -911,6 +1068,10 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
         });
         const backend = resolveServiceBackend({ platform: process.platform, mode });
         const serviceName = defaults.serviceName;
+        if (parsed.action === 'uninstall') {
+          await uninstallLocal(parsed);
+          return;
+        }
         if (backend === 'systemd-user' || backend === 'systemd-system') {
           const prefix = backend === 'systemd-user' ? ['--user'] : [];
           const result = runLocalText('systemctl', [...prefix, parsed.action, `${serviceName}.service`]);
@@ -948,6 +1109,10 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       const channel = normalizeChannel(parsed.channel);
       const defaults = resolveRelayDefaultsForRemote({ platform, channel, mode });
       const backend = resolveServiceBackend({ platform, mode });
+      if (parsed.action === 'uninstall') {
+        await uninstallRemote({ parsed, ssh: parsed.target.ssh });
+        return;
+      }
       const result = await deps.runRemoteText({
         ssh: parsed.target.ssh,
         knownHostsMode,
