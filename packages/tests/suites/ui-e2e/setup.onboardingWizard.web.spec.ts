@@ -66,7 +66,8 @@ test.describe('ui e2e: web onboarding wizard', () => {
 
         await page.setViewportSize({ width: 1440, height: 900 });
         await gotoCommittedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
-        await expect(page.getByTestId('onboarding-wizard')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-welcome-auth')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 120_000 });
     }
 
     async function advanceWizardToAuthEntry(page: Page, mode: 'guided' | 'skip') {
@@ -74,21 +75,12 @@ test.describe('ui e2e: web onboarding wizard', () => {
 
         if (mode === 'skip') {
             await expect(page.getByTestId('onboarding-wizard-skip')).toHaveCount(1, { timeout: 120_000 });
-            await page.getByTestId('onboarding-wizard-skip').click();
-            await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 120_000 });
             return;
         }
 
-        await expect(page.locator('[data-testid^="onboarding-wizard-welcome-provider:"]').first()).toBeVisible({ timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-primary')).toHaveCount(1, { timeout: 120_000 });
-        await page.getByTestId('onboarding-wizard-primary').click();
-
-        await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-relay:cloud')).toHaveCount(1, { timeout: 120_000 });
-        await page.getByTestId('onboarding-wizard-relay:cloud').click();
-        await page.getByTestId('onboarding-wizard-primary').click();
-
-        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('welcome-restore')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('welcome-signup-provider')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-change-relay')).toHaveCount(1, { timeout: 120_000 });
     }
 
     async function openRootAndCreateAccount(page: Page, mode: 'guided' | 'skip' = 'guided') {
@@ -124,29 +116,30 @@ test.describe('ui e2e: web onboarding wizard', () => {
         await openRootAndCreateAccount(page, 'skip');
     });
 
-    test('web onboarding supports providers showcase and back navigation', async ({ page }) => {
+    test('web onboarding supports auth entry relay changes and back navigation', async ({ page }) => {
         test.setTimeout(300_000);
         await openRoot(page);
 
-        await expect(page.locator('[data-testid^="onboarding-wizard-welcome-provider:"]').first()).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-welcome-auth')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('welcome-restore')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('welcome-signup-provider')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-change-relay')).toHaveCount(1, { timeout: 120_000 });
 
-        await page.getByTestId('onboarding-wizard-primary').click();
-
+        await page.getByTestId('onboarding-wizard-change-relay').click();
+        await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('onboarding-wizard-back')).toHaveCount(1, { timeout: 120_000 });
         await page.getByTestId('onboarding-wizard-back').click();
 
-        await expect(page.locator('[data-testid^="onboarding-wizard-welcome-provider:"]').first()).toBeVisible({ timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-primary')).toHaveCount(1, { timeout: 120_000 });
-
-        await page.getByTestId('onboarding-wizard-primary').click();
-        await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-welcome-auth')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-change-relay')).toHaveCount(1, { timeout: 120_000 });
     });
 
     test('web onboarding supports "On this computer" guided handoff', async ({ page }) => {
         test.setTimeout(300_000);
         await openRoot(page);
 
-        await page.getByTestId('onboarding-wizard-primary').click();
+        await page.getByTestId('onboarding-wizard-change-relay').click();
 
         await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('onboarding-wizard-relay:thisComputer')).toHaveCount(1, { timeout: 120_000 });
