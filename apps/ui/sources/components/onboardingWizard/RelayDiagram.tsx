@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, useWindowDimensions } from 'react-native';
+import { Platform, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -21,6 +21,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingTop: 6,
         paddingBottom: 4,
         alignSelf: 'center',
+        ...Platform.select({
+            web: {
+                marginLeft: 'auto',
+                marginRight: 'auto',
+            },
+            default: {},
+        }),
     },
     row: {
         flexDirection: 'row',
@@ -69,7 +76,7 @@ export const RelayDiagram = React.memo(function RelayDiagram(props: RelayDiagram
             testID={props.testID}
             style={[
                 styles.root,
-                { width: diagramWidth, maxWidth: diagramWidth },
+                { width: diagramWidth },
             ]}
         >
             <View style={styles.row}>

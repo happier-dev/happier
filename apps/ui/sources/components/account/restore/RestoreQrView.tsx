@@ -29,10 +29,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         paddingHorizontal: 24,
     },
+    embeddedContainer: {
+        flex: 0,
+        paddingHorizontal: 0,
+    },
     contentWrapper: {
         width: '100%',
         maxWidth: 560,
         paddingVertical: 28,
+    },
+    embeddedContentWrapper: {
+        paddingVertical: 0,
     },
     noticeCard: {
         borderWidth: 1,
@@ -63,6 +70,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 21,
         ...Typography.default(),
     },
+    embeddedSectionLead: {
+        marginTop: 0,
+        marginBottom: 10,
+    },
     qrBlock: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -73,6 +84,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: 18,
         alignItems: 'center',
         width: '100%',
+    },
+    embeddedFooter: {
+        marginTop: 14,
     },
     footerButton: {
         width: '100%',
@@ -128,7 +142,8 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         router.back();
     }, [props.onBack, router]);
 
-    const scrollViewStyle: StyleProp<ViewStyle> = props.embedded
+    const embedded = props.embedded === true;
+    const scrollViewStyle: StyleProp<ViewStyle> = embedded
         ? [styles.scrollView, { backgroundColor: 'transparent' }]
         : styles.scrollView;
 
@@ -200,61 +215,71 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         };
     }, [keypair]);
 
-    return (
-        <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
-            <View style={styles.container}>
-                <View style={styles.contentWrapper}>
-                    {restoreRedirectNotice ? (
-                        <View style={styles.noticeCard}>
-                            <Text style={styles.noticeTitle}>{restoreRedirectNotice.title}</Text>
-                            <Text style={styles.noticeBody}>{restoreRedirectNotice.body}</Text>
+    const content = (
+        <View style={[styles.container, embedded ? styles.embeddedContainer : null]}>
+            <View style={[styles.contentWrapper, embedded ? styles.embeddedContentWrapper : null]}>
+                {restoreRedirectNotice ? (
+                    <View style={styles.noticeCard}>
+                        <Text style={styles.noticeTitle}>{restoreRedirectNotice.title}</Text>
+                        <Text style={styles.noticeBody}>{restoreRedirectNotice.body}</Text>
+                    </View>
+                ) : null}
+
+                <Text style={[styles.sectionLead, embedded ? styles.embeddedSectionLead : null]}>
+                    {t('connect.restoreQrInstructions')}
+                </Text>
+
+                <View style={styles.qrBlock}>
+                    {!authReady ? (
+                        <View style={{ width: 220, height: 220, alignItems: 'center', justifyContent: 'center' }}>
+                            <ActivityIndicator size="small" color={theme.colors.text} />
                         </View>
-                    ) : null}
+                    ) : (
+                        <QRCode
+                            data={buildAccountConnectDeepLink({ publicKeyB64Url: encodeBase64(keypair.publicKey, 'base64url') })}
+                            size={260}
+                            foregroundColor={theme.colors.text}
+                            backgroundColor={theme.colors.surface}
+                        />
+                    )}
+                </View>
 
-                    <Text style={styles.sectionLead}>{t('connect.restoreQrInstructions')}</Text>
-
-                    <View style={styles.qrBlock}>
-                        {!authReady ? (
-                            <View style={{ width: 220, height: 220, alignItems: 'center', justifyContent: 'center' }}>
-                                <ActivityIndicator size="small" color={theme.colors.text} />
+                <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
+                    <View style={styles.footerButton}>
+                        <RoundButton
+                            testID="restore-open-manual"
+                            size="normal"
+                            title={t('connect.restoreWithSecretKeyInstead')}
+                            display="inverted"
+                            onPress={() => router.push('/restore/manual')}
+                        />
+                    </View>
+                    {providerResetEnabled ? (
+                        <>
+                            <View style={styles.footerButtonSpacer} />
+                            <View style={styles.footerButton}>
+                                <RoundButton
+                                    testID="restore-open-lost-access"
+                                    size="small"
+                                    title={t('connect.lostAccessLink')}
+                                    display="inverted"
+                                    onPress={() => router.push('/restore/lost-access')}
+                                />
                             </View>
-                        ) : (
-                            <QRCode
-                                data={buildAccountConnectDeepLink({ publicKeyB64Url: encodeBase64(keypair.publicKey, 'base64url') })}
-                                size={260}
-                                foregroundColor={theme.colors.text}
-                                backgroundColor={theme.colors.surface}
-                            />
-                        )}
-                    </View>
-
-                    <View style={styles.footer}>
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-open-manual"
-                                size="normal"
-                                title={t('connect.restoreWithSecretKeyInstead')}
-                                display="inverted"
-                                onPress={() => router.push('/restore/manual')}
-                            />
-                        </View>
-                        {providerResetEnabled ? (
-                            <>
-                                <View style={styles.footerButtonSpacer} />
-                                <View style={styles.footerButton}>
-                                    <RoundButton
-                                        testID="restore-open-lost-access"
-                                        size="small"
-                                        title={t('connect.lostAccessLink')}
-                                        display="inverted"
-                                        onPress={() => router.push('/restore/lost-access')}
-                                    />
-                                </View>
-                            </>
-                        ) : null}
-                    </View>
+                        </>
+                    ) : null}
                 </View>
             </View>
+        </View>
+    );
+
+    if (embedded) {
+        return content;
+    }
+
+    return (
+        <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
+            {content}
         </ScrollView>
     );
 });

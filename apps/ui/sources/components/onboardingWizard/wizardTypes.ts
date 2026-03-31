@@ -24,11 +24,12 @@ export type WizardStepId =
     | 'providers_optional'
     | 'done';
 
-export type WizardRelayChoiceId = 'cloud' | 'thisComputer' | 'customUrl';
+export type WizardRelayChoiceId = 'cloud' | 'thisComputer' | 'remoteComputer' | 'customUrl';
 
 export type WizardRelaySelection = Readonly<{
     choiceId: WizardRelayChoiceId | null;
     serverUrl: string | null;
+    relayProfileId?: string | null;
     locked: boolean;
 }>;
 

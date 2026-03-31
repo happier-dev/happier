@@ -19,12 +19,12 @@ describe('wizardResume', () => {
         vi.clearAllMocks();
     });
 
-    it('routes back to setup only for awaiting-auth desktop resumes', async () => {
+    it('routes back to the setup wizard only for awaiting-auth desktop resumes', async () => {
         const { resolveWizardAuthReturnToRoute } = await import('./wizardResume');
 
         isTauriDesktopMock.mockReturnValue(true);
         getPendingSetupIntentMock.mockReturnValue({ branch: 'thisComputer', phase: 'awaiting_auth', relayUrl: 'https://relay.example.test' });
-        expect(resolveWizardAuthReturnToRoute()).toBe('/setup');
+        expect(resolveWizardAuthReturnToRoute()).toBe('/');
 
         getPendingSetupIntentMock.mockReturnValue({ branch: 'thisComputer', phase: 'pre_auth', relayUrl: 'https://relay.example.test' });
         expect(resolveWizardAuthReturnToRoute()).toBe('/');
@@ -32,6 +32,49 @@ describe('wizardResume', () => {
         isTauriDesktopMock.mockReturnValue(false);
         getPendingSetupIntentMock.mockReturnValue({ branch: 'thisComputer', phase: 'awaiting_auth', relayUrl: 'https://relay.example.test' });
         expect(resolveWizardAuthReturnToRoute()).toBe('/');
+    });
+
+    it('routes browser sessions into the app once at least one machine is online', async () => {
+        const { resolvePostAuthSetupRoute } = await import('./wizardResume');
+
+        expect(resolvePostAuthSetupRoute({
+            isDesktopShell: false,
+            onlineMachineCount: 1,
+            currentMachineIsConfiguredAndHealthy: false,
+            hasRelayDrift: false,
+        })).toBe('/');
+
+        expect(resolvePostAuthSetupRoute({
+            isDesktopShell: false,
+            onlineMachineCount: 0,
+            currentMachineIsConfiguredAndHealthy: false,
+            hasRelayDrift: false,
+        })).toBe('/setup');
+    });
+
+    it('routes desktop sessions into the app only when the current machine is healthy and aligned', async () => {
+        const { resolvePostAuthSetupRoute } = await import('./wizardResume');
+
+        expect(resolvePostAuthSetupRoute({
+            isDesktopShell: true,
+            onlineMachineCount: 2,
+            currentMachineIsConfiguredAndHealthy: true,
+            hasRelayDrift: false,
+        })).toBe('/');
+
+        expect(resolvePostAuthSetupRoute({
+            isDesktopShell: true,
+            onlineMachineCount: 2,
+            currentMachineIsConfiguredAndHealthy: false,
+            hasRelayDrift: false,
+        })).toBe('/setup');
+
+        expect(resolvePostAuthSetupRoute({
+            isDesktopShell: true,
+            onlineMachineCount: 2,
+            currentMachineIsConfiguredAndHealthy: true,
+            hasRelayDrift: true,
+        })).toBe('/setup');
     });
 
     it('persists onboarding resume phases through the canonical pending setup intent', async () => {

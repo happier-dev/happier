@@ -33,10 +33,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         paddingHorizontal: 24,
     },
+    embeddedContainer: {
+        flex: 0,
+        paddingHorizontal: 0,
+    },
     contentWrapper: {
         width: '100%',
         maxWidth: 560,
         paddingVertical: 28,
+    },
+    embeddedContentWrapper: {
+        paddingVertical: 0,
     },
     title: {
         fontSize: 18,
@@ -61,6 +68,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 14,
         backgroundColor: theme.colors.surface,
     },
+    embeddedStatusCard: {
+        marginTop: 10,
+    },
     codeLabel: {
         marginTop: 12,
         fontSize: 12,
@@ -79,6 +89,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         width: '100%',
         gap: 12,
+    },
+    embeddedFooter: {
+        marginTop: 14,
     },
     footerButton: {
         width: '100%',
@@ -105,6 +118,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     const styles = stylesheet;
     const router = useRouter();
     const auth = useAuth();
+    const embedded = props.embedded === true;
     const pairingDecision = useFeatureDecision('auth.pairing.desktopQrMobileScan');
     const pairingState = pairingDecision?.state ?? 'unknown';
 
@@ -124,6 +138,8 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     const scrollViewStyle: StyleProp<ViewStyle> = props.embedded
         ? [styles.scrollView, { backgroundColor: 'transparent' }]
         : styles.scrollView;
+    const containerStyle: StyleProp<ViewStyle> = [styles.container, embedded ? styles.embeddedContainer : null];
+    const contentWrapperStyle: StyleProp<ViewStyle> = [styles.contentWrapper, embedded ? styles.embeddedContentWrapper : null];
 
     const processPairingLink = React.useCallback(
         async (rawUrl: string) => {
@@ -235,103 +251,111 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     : `${t('connect.waitingForApproval')}${waitingSuffix}`;
 
     if (pairingState === 'unknown') {
-        return (
-            <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
-                <View style={styles.container}>
-                    <View style={styles.contentWrapper}>
-                        <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
-                        <Text style={styles.subtitle}>{t('common.loading')}</Text>
+        const frame = (
+            <View style={containerStyle}>
+                <View style={contentWrapperStyle}>
+                    <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
+                    <Text style={styles.subtitle}>{t('common.loading')}</Text>
 
-                        <View style={styles.statusCard}>
-                            <ActivityIndicator size="small" color={theme.colors.text} />
+                    <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
+                        <ActivityIndicator size="small" color={theme.colors.text} />
+                    </View>
+
+                    <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
+                        <View style={styles.footerButton}>
+                            <RoundButton
+                                testID="restore-open-manual"
+                                size="small"
+                                title={t('connect.restoreWithSecretKeyInstead')}
+                                display="inverted"
+                                action={async () => {
+                                    router.push('/restore/manual');
+                                }}
+                            />
                         </View>
-
-                        <View style={styles.footer}>
-                            <View style={styles.footerButton}>
-                                <RoundButton
-                                    testID="restore-open-manual"
-                                    size="small"
-                                    title={t('connect.restoreWithSecretKeyInstead')}
-                                    display="inverted"
-                                    action={async () => {
-                                        router.push('/restore/manual');
-                                    }}
-                                />
-                            </View>
-                            <View style={styles.footerButton}>
-                                <RoundButton
-                                    testID="restore-show-qr-instead"
-                                    size="small"
-                                    title={t('connect.showQrInstead')}
-                                    display="inverted"
-                                    action={async () => {
-                                        router.push('/restore/show-qr');
-                                    }}
-                                />
-                            </View>
-                            <View style={styles.footerButton}>
-                                <RoundButton
-                                    testID="restore-scan-cancel"
-                                    size="small"
-                                    title={t('common.back')}
-                                    display="inverted"
-                                    onPress={handleBack}
-                                />
-                            </View>
+                        <View style={styles.footerButton}>
+                            <RoundButton
+                                testID="restore-show-qr-instead"
+                                size="small"
+                                title={t('connect.showQrInstead')}
+                                display="inverted"
+                                action={async () => {
+                                    router.push('/restore/show-qr');
+                                }}
+                            />
+                        </View>
+                        <View style={styles.footerButton}>
+                            <RoundButton
+                                testID="restore-scan-cancel"
+                                size="small"
+                                title={t('common.back')}
+                                display="inverted"
+                                onPress={handleBack}
+                            />
                         </View>
                     </View>
                 </View>
+            </View>
+        );
+
+        return embedded ? frame : (
+            <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
+                {frame}
             </ScrollView>
         );
     }
 
     if (pairingState !== 'enabled') {
-        return (
-            <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
-                <View style={styles.container}>
-                    <View style={styles.contentWrapper}>
-                        <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
-                        <Text style={styles.subtitle}>{t('connect.scanComputerQrUnavailableBody')}</Text>
+        const frame = (
+            <View style={containerStyle}>
+                <View style={contentWrapperStyle}>
+                    <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
+                    <Text style={styles.subtitle}>{t('connect.scanComputerQrUnavailableBody')}</Text>
 
-                        <View style={styles.statusCard}>
-                            <Text style={styles.codeLabel}>{t('connect.scanComputerQrUnavailableTitle')}</Text>
+                    <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
+                        <Text style={styles.codeLabel}>{t('connect.scanComputerQrUnavailableTitle')}</Text>
+                    </View>
+
+                    <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
+                        <View style={styles.footerButton}>
+                            <RoundButton
+                                testID="restore-open-manual"
+                                size="small"
+                                title={t('connect.restoreWithSecretKeyInstead')}
+                                display="inverted"
+                                action={async () => {
+                                    router.push('/restore/manual');
+                                }}
+                            />
                         </View>
-
-                        <View style={styles.footer}>
-                            <View style={styles.footerButton}>
-                                <RoundButton
-                                    testID="restore-open-manual"
-                                    size="small"
-                                    title={t('connect.restoreWithSecretKeyInstead')}
-                                    display="inverted"
-                                    action={async () => {
-                                        router.push('/restore/manual');
-                                    }}
-                                />
-                            </View>
-                            <View style={styles.footerButton}>
-                                <RoundButton
-                                    testID="restore-show-qr-instead"
-                                    size="small"
-                                    title={t('connect.showQrInstead')}
-                                    display="inverted"
-                                    action={async () => {
-                                        router.push('/restore/show-qr');
-                                    }}
-                                />
-                            </View>
-                            <View style={styles.footerButton}>
-                                <RoundButton
-                                    testID="restore-scan-cancel"
-                                    size="small"
-                                    title={t('common.back')}
-                                    display="inverted"
-                                    onPress={handleBack}
-                                />
-                            </View>
+                        <View style={styles.footerButton}>
+                            <RoundButton
+                                testID="restore-show-qr-instead"
+                                size="small"
+                                title={t('connect.showQrInstead')}
+                                display="inverted"
+                                action={async () => {
+                                    router.push('/restore/show-qr');
+                                }}
+                            />
+                        </View>
+                        <View style={styles.footerButton}>
+                            <RoundButton
+                                testID="restore-scan-cancel"
+                                size="small"
+                                title={t('common.back')}
+                                display="inverted"
+                                onPress={handleBack}
+                            />
                         </View>
                     </View>
                 </View>
+            </View>
+        );
+
+        return embedded ? frame : (
+            <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
+                {frame}
             </ScrollView>
         );
     }
@@ -343,6 +367,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 title={t('connect.restoreAccount')}
                 subtitle={t('connect.scanComputerQrInstructions')}
                 permissionRequiredMessage={t('modals.cameraPermissionsRequiredToScanQr')}
+                embedded={props.embedded}
                 onCancel={handleBack}
                 onScan={async (data) => {
                     if (typeof data === 'string' && data.trim()) {
@@ -404,75 +429,79 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         );
     }
 
-    return (
-        <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
-            <View style={styles.container}>
-                <View style={styles.contentWrapper}>
-                    <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
-                    <Text style={styles.subtitle}>{statusText}</Text>
+    const frame = (
+        <View style={containerStyle}>
+            <View style={contentWrapperStyle}>
+                <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
+                <Text style={styles.subtitle}>{statusText}</Text>
 
-                    <View style={styles.statusCard}>
-                        <ActivityIndicator size="small" color={theme.colors.text} />
-                        {confirmCode ? (
-                            <>
-                                <Text style={styles.codeLabel}>{t('connect.confirmCodeLabel')}</Text>
-                                <Text style={styles.codeValue}>{confirmCode}</Text>
-                            </>
-                        ) : null}
+                <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
+                    <ActivityIndicator size="small" color={theme.colors.text} />
+                    {confirmCode ? (
+                        <>
+                            <Text style={styles.codeLabel}>{t('connect.confirmCodeLabel')}</Text>
+                            <Text style={styles.codeValue}>{confirmCode}</Text>
+                        </>
+                    ) : null}
+                </View>
+
+                <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
+                    <View style={styles.footerButton}>
+                        <RoundButton
+                            testID="restore-enter-pairing-link"
+                            size="small"
+                            title={t('connect.enterUrlManually')}
+                            display="inverted"
+                            action={async () => {
+                                const url = await Modal.prompt(
+                                    t('connect.enterUrlManually'),
+                                    undefined,
+                                    {
+                                        placeholder: buildPairingDeepLink({
+                                            pairId: '…',
+                                            secret: '…',
+                                            serverUrl: getActiveServerUrl(),
+                                        }),
+                                        confirmText: t('common.continue'),
+                                        cancelText: t('common.cancel'),
+                                    },
+                                );
+                                if (typeof url === 'string' && url.trim()) {
+                                    await processPairingLink(url.trim());
+                                }
+                            }}
+                        />
                     </View>
-
-                    <View style={styles.footer}>
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-enter-pairing-link"
-                                size="small"
-                                title={t('connect.enterUrlManually')}
-                                display="inverted"
-                                action={async () => {
-                                    const url = await Modal.prompt(
-                                        t('connect.enterUrlManually'),
-                                        undefined,
-                                        {
-                                            placeholder: buildPairingDeepLink({
-                                                pairId: '…',
-                                                secret: '…',
-                                                serverUrl: getActiveServerUrl(),
-                                            }),
-                                            confirmText: t('common.continue'),
-                                            cancelText: t('common.cancel'),
-                                        },
-                                    );
-                                    if (typeof url === 'string' && url.trim()) {
-                                        await processPairingLink(url.trim());
-                                    }
-                                }}
-                            />
-                        </View>
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-open-manual"
-                                size="small"
-                                title={t('connect.restoreWithSecretKeyInstead')}
-                                display="inverted"
-                                action={async () => {
-                                    router.push('/restore/manual');
-                                }}
-                            />
-                        </View>
-                        <View style={styles.footerButton}>
-                            <RoundButton
-                                testID="restore-show-qr-instead"
-                                size="small"
-                                title={t('connect.showQrInstead')}
-                                display="inverted"
-                                action={async () => {
-                                    router.push('/restore/show-qr');
-                                }}
-                            />
-                        </View>
+                    <View style={styles.footerButton}>
+                        <RoundButton
+                            testID="restore-open-manual"
+                            size="small"
+                            title={t('connect.restoreWithSecretKeyInstead')}
+                            display="inverted"
+                            action={async () => {
+                                router.push('/restore/manual');
+                            }}
+                        />
+                    </View>
+                    <View style={styles.footerButton}>
+                        <RoundButton
+                            testID="restore-show-qr-instead"
+                            size="small"
+                            title={t('connect.showQrInstead')}
+                            display="inverted"
+                            action={async () => {
+                                router.push('/restore/show-qr');
+                            }}
+                        />
                     </View>
                 </View>
             </View>
+        </View>
+    );
+
+    return embedded ? frame : (
+        <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>
+            {frame}
         </ScrollView>
     );
 });

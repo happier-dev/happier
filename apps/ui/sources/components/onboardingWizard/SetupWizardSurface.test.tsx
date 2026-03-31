@@ -336,6 +336,34 @@ describe('SetupWizardSurface', () => {
         vi.resetModules();
     });
 
+    it('preselects relay runtime install when remote relay hosting is chosen on desktop', async () => {
+        vi.resetModules();
+
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+        }));
+
+        const remoteRelayBranch = screen.findByTestId('setupWizard-branch:remoteRelay');
+        await act(async () => {
+            const handler = remoteRelayBranch?.props.action ?? remoteRelayBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+
+        const remoteSshSection = screen.findByType('RemoteSshMachineSetupSection' as never) as unknown as {
+            props: { initialInstallRelayRuntime?: unknown };
+        };
+        expect(remoteSshSection.props.initialInstallRelayRuntime).toBe(true);
+
+        vi.resetModules();
+    });
+
     it('guides web users selecting secure access (Tailscale) to continue on desktop', async () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));

@@ -12,6 +12,9 @@ const expoRouterMock = createExpoRouterMock({
 });
 const relayDriftBannerMock = vi.hoisted(() => vi.fn());
 const clearPendingSetupIntentMock = vi.hoisted(() => vi.fn());
+const connectionHealthMock = vi.hoisted(() => ({
+    onlineCount: 0 as number | null,
+}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -82,6 +85,9 @@ vi.mock('@/components/settings/server/RelayDriftActionCard', () => ({
 vi.mock('@/components/settings/server/useRelayDriftBanner', () => ({
     useRelayDriftBanner: () => relayDriftBannerMock(),
 }));
+vi.mock('@/components/navigation/connectionStatus/useConnectionHealth', () => ({
+    useConnectionHealth: () => connectionHealthMock,
+}));
 
 vi.mock('@/components/systemTasks', () => ({
     SystemTaskProgressCard: (props: Record<string, unknown>) => React.createElement('SystemTaskProgressCard', props),
@@ -139,6 +145,7 @@ describe('/setup route web gating', () => {
         clearPendingSetupIntentMock.mockReset();
         relayDriftBannerMock.mockReset();
         relayDriftBannerMock.mockReturnValue(null);
+        connectionHealthMock.onlineCount = 0;
         expoRouterMock.spies.replace.mockReset();
         expoRouterMock.spies.push.mockReset();
     });
@@ -191,6 +198,19 @@ describe('/setup route web gating', () => {
         expect(screen.findByTestId('setup.webRelayDriftNotice')).toBeNull();
         expect(screen.findAllByType('MachineSetupFlowScreen' as never)).toHaveLength(0);
         expect(screen.findAllByType('RelayDriftActionCard' as never)).toHaveLength(0);
+        expect(clearPendingSetupIntentMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes browser web users into the app when the account already has an online machine', async () => {
+        isAuthenticated = true;
+        connectionHealthMock.onlineCount = 1;
+
+        const Screen = (await import('@/app/(app)/setup/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+
+        expect(screen.findByTestId('setup.desktopOnlyNotice')).toBeNull();
+        expect(screen.findByTestId('setup.web.activeRelay')).toBeNull();
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
         expect(clearPendingSetupIntentMock).toHaveBeenCalledTimes(1);
     });
 });

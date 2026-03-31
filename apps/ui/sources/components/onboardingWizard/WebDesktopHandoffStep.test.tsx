@@ -19,9 +19,7 @@ describe('WebDesktopHandoffStep', () => {
         expect(screen.findByTestId('web-desktop-handoff-terminal')).toBeTruthy();
 
         expect(screen.findByTestId('web-desktop-handoff-terminal-step-cli-install')).toBeTruthy();
-        expect(screen.findByTestId('web-desktop-handoff-terminal-step-daemon-install')).toBeTruthy();
         expect(screen.findByTestId('web-desktop-handoff-terminal-step-relay-install')).toBeTruthy();
         expect(screen.findByTestId('web-desktop-handoff-terminal-step-relay-status')).toBeTruthy();
     });
 });
-

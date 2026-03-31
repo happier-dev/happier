@@ -1,5 +1,5 @@
 import { useAuth } from "@/auth/context/AuthContext";
-import { Platform, Linking } from 'react-native';
+import { Platform, Linking, StyleSheet, View } from 'react-native';
 import * as React from 'react';
 import { encodeBase64 } from "@/encryption/base64";
 import { authGetToken } from "@/auth/flows/getToken";
@@ -23,12 +23,26 @@ import { digest } from "@/platform/digest";
 import { encodeHex } from "@/encryption/hex";
 import { resolveAppUrlScheme } from "@/utils/url/appScheme";
 import { readConfiguredServerUrlEnv } from "@/sync/domains/server/readConfiguredServerUrlEnv";
-import { getPendingSetupIntent } from "@/sync/domains/pending/pendingSetupIntent";
+import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from "@/sync/domains/pending/pendingSetupIntent";
 import { isTauriDesktop } from "@/utils/platform/tauri";
 import { isAuthenticatedRootDeepLinkRedirectAllowed } from "@/auth/routing/isAuthenticatedRootDeepLinkRedirectAllowed";
-import { shouldResumeSetupWizardAfterAuth } from "@/components/onboardingWizard/wizardResume";
+import { resolvePostAuthSetupRoute } from "@/components/onboardingWizard/wizardResume";
 import { PreAuthOnboardingWizardEntry } from "@/components/onboardingWizard/PreAuthOnboardingWizardEntry";
-import { shouldAutoRedirectToSetupOnFirstLaunch } from '@/utils/platform/firstLaunchSetupRedirectPolicy';
+import { SetupWizardSurface } from "@/components/onboardingWizard/SetupWizardSurface";
+import { useConnectionHealth } from "@/components/navigation/connectionStatus/useConnectionHealth";
+import { useLocalDaemonControl } from "@/components/settings/machines/localControl/useLocalDaemonControl";
+import { useRelayDriftBanner } from "@/components/settings/server/useRelayDriftBanner";
+
+const stylesheet = StyleSheet.create({
+    root: {
+        flex: 1,
+        position: 'relative',
+    },
+    overlay: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 100000,
+    },
+});
 
 export default function Home() {
     const auth = useAuth();
@@ -43,10 +57,29 @@ export default function Home() {
 function Authenticated() {
     const params = useLocalSearchParams<{ id?: string | string[]; messageId?: string | string[]; jumpChildId?: string | string[] }>();
     const router = useRouter();
+    const connectionHealth = useConnectionHealth();
+    const localDaemonControl = useLocalDaemonControl();
+    const relayDriftBanner = useRelayDriftBanner();
+    const [setupWizardVisible, setSetupWizardVisible] = React.useState(false);
 
     const sessionId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? (params.id[0] ?? null) : null;
     const messageId = typeof params.messageId === 'string' ? params.messageId : Array.isArray(params.messageId) ? (params.messageId[0] ?? null) : null;
     const jumpChildId = typeof params.jumpChildId === 'string' ? params.jumpChildId : Array.isArray(params.jumpChildId) ? (params.jumpChildId[0] ?? null) : null;
+    const postAuthSetupRoute = resolvePostAuthSetupRoute({
+        isDesktopShell: isTauriDesktop(),
+        onlineMachineCount: connectionHealth.onlineCount,
+        currentMachineIsConfiguredAndHealthy:
+            localDaemonControl.status?.serviceInstalled === true
+            && localDaemonControl.status?.daemonRunning === true
+            && localDaemonControl.status?.needsAuth !== true
+            && Boolean(localDaemonControl.status?.machineId),
+        hasRelayDrift: relayDriftBanner != null,
+    });
+    const pendingSetupIntent = getPendingSetupIntent();
+    const hasPendingSetupContinuation =
+        pendingSetupIntent?.phase === 'awaiting_auth'
+        || pendingSetupIntent?.phase === 'post_auth';
+    const needsSetupWizard = hasPendingSetupContinuation || postAuthSetupRoute === '/setup';
 
     React.useEffect(() => {
         const sid = String(sessionId ?? '').trim();
@@ -69,11 +102,48 @@ function Authenticated() {
         if (sid) return;
         if (!isAuthenticatedRootDeepLinkRedirectAllowed()) return;
 
-        if (!shouldResumeSetupWizardAfterAuth()) {
+        if (setupWizardVisible) {
             return;
         }
-        router.replace('/setup');
-    }, [router, sessionId]);
+        if (!needsSetupWizard) {
+            if (postAuthSetupRoute === '/') {
+                clearPendingSetupIntent();
+            }
+            return;
+        }
 
-    return <MainView variant="phone" />;
+        if (pendingSetupIntent?.phase === 'awaiting_auth') {
+            setPendingSetupIntent({
+                ...pendingSetupIntent,
+                phase: 'post_auth',
+            });
+        } else if (!pendingSetupIntent && postAuthSetupRoute === '/setup') {
+            const snapshot = getActiveServerSnapshot();
+            const relayUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim().replace(/\/+$/, '') : null;
+            setPendingSetupIntent({
+                branch: 'thisComputer',
+                phase: 'post_auth',
+                relayUrl: relayUrl || null,
+            });
+        }
+
+        setSetupWizardVisible(true);
+    }, [needsSetupWizard, pendingSetupIntent, postAuthSetupRoute, sessionId, setupWizardVisible]);
+
+    return (
+        <View style={stylesheet.root}>
+            <MainView variant="phone" />
+            {setupWizardVisible ? (
+                <View style={stylesheet.overlay}>
+                    <SetupWizardSurface
+                        isDesktopShell={isTauriDesktop()}
+                        onExit={() => {
+                            setSetupWizardVisible(false);
+                            clearPendingSetupIntent();
+                        }}
+                    />
+                </View>
+            ) : null}
+        </View>
+    );
 }

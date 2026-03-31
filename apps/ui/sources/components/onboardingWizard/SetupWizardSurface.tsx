@@ -14,7 +14,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
+import { getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { t, tLoose } from '@/text';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -34,6 +34,7 @@ import { WebDesktopDownloadCta } from './WebDesktopDownloadCta';
 export type SetupWizardSurfaceProps = Readonly<{
     testID?: string;
     isDesktopShell: boolean;
+    onExit?: () => void;
 }>;
 
 type SetupAction = 'local' | 'relayLocal' | 'remote' | 'tailscale' | null;
@@ -204,7 +205,13 @@ function renderSetupStepBody(params: Readonly<{
                     />
                 );
             }
-            return <RemoteSshMachineSetupSection expanded onCompletedChange={params.onRemoteRelayRuntimeCompletedChange} />;
+            return (
+                <RemoteSshMachineSetupSection
+                    expanded
+                    initialInstallRelayRuntime={params.remoteSetupIntent === 'remoteRelayHost'}
+                    onCompletedChange={params.onRemoteRelayRuntimeCompletedChange}
+                />
+            );
         case 'confirm_switch_relay': {
             const relayUrl = typeof params.relayUrl === 'string' ? params.relayUrl.trim() : '';
             return (
@@ -241,6 +248,32 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     const testIDPrefix = props.testID ?? 'setupWizard';
     const relayDriftBanner = useRelayDriftBanner();
     const activeServerSnapshot = getActiveServerSnapshot();
+    const initialPendingSetupIntent = React.useMemo(() => getPendingSetupIntent(), []);
+    const resumeFromPending =
+        initialPendingSetupIntent?.phase === 'awaiting_auth'
+        || initialPendingSetupIntent?.phase === 'post_auth';
+    const initialStepId: WizardStepId = resumeFromPending
+        ? initialPendingSetupIntent?.branch === 'remoteMachine'
+            ? 'remote_ssh_setup'
+            : 'setup_this_computer'
+        : 'setup_chooser';
+    const initialSetupAction: SetupAction = resumeFromPending
+        ? initialPendingSetupIntent?.branch === 'remoteMachine'
+            ? 'remote'
+            : 'local'
+        : null;
+    const initialRemoteIntent: RemoteSetupIntent = resumeFromPending && initialPendingSetupIntent?.branch === 'remoteMachine'
+        ? 'remoteMachine'
+        : 'remoteMachine';
+    const initialStepIdRef = React.useRef<WizardStepId>(initialStepId);
+
+    const exitWizard = React.useCallback(() => {
+        props.onExit?.();
+        if (!props.onExit) {
+            router.replace('/setup');
+        }
+    }, [props.onExit]);
+
     const [state, dispatch] = React.useReducer(
         wizardReducer,
         null,
@@ -256,9 +289,9 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                     relayLockConfirmationPending: false,
                     relaySwitchConfirmationPending: false,
                     authIntent: 'standard',
-                    setupAction: null,
+                    setupAction: initialSetupAction,
                 },
-                currentStepId: 'setup_chooser',
+                currentStepId: initialStepId,
                 history: [],
                 resumeState: null,
                 parsedScanPayload: null,
@@ -281,7 +314,17 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     }> | null>(null);
     const [localMachineId, setLocalMachineId] = React.useState<string | null>(null);
     const [remoteMachineId, setRemoteMachineId] = React.useState<string | null>(null);
-    const [remoteSetupIntent, setRemoteSetupIntent] = React.useState<RemoteSetupIntent>('remoteMachine');
+    const [remoteSetupIntent, setRemoteSetupIntent] = React.useState<RemoteSetupIntent>(initialRemoteIntent);
+
+    React.useEffect(() => {
+        if (initialPendingSetupIntent?.phase !== 'awaiting_auth') {
+            return;
+        }
+        setPendingSetupIntent({
+            ...initialPendingSetupIntent,
+            phase: 'post_auth',
+        });
+    }, []);
 
     const handleLocalSetupSucceeded = React.useCallback((machineId: string | null) => {
         const normalized = typeof machineId === 'string' && machineId.trim().length > 0 ? machineId.trim() : null;
@@ -311,16 +354,20 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     }, [clearRelayRuntimeCandidate]);
 
     const onSkip = React.useCallback(() => {
-        router.replace('/setup');
-    }, []);
+        exitWizard();
+    }, [exitWizard]);
 
     const onBack = React.useCallback(() => {
+        if (resumeFromPending && stepId === initialStepIdRef.current) {
+            exitWizard();
+            return;
+        }
         if (stepId === 'setup_chooser') {
-            router.replace('/setup');
+            exitWizard();
             return;
         }
         dispatch({ type: 'wizard/back' });
-    }, [stepId]);
+    }, [exitWizard, resumeFromPending, stepId]);
 
     const chooseAction = React.useCallback((nextAction: SetupChooserAction) => {
         clearRelayRuntimeCandidate();
@@ -421,6 +468,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                 });
             }
 
+            props.onExit?.();
             router.replace('/');
             return;
         }
@@ -429,8 +477,8 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             return;
         }
 
-        router.replace('/setup');
-    }, [action, pendingRelayRuntime?.machineId, relayCandidateUrl, relaySwitchDecision, stepId]);
+        exitWizard();
+    }, [action, exitWizard, pendingRelayRuntime?.machineId, props.onExit, relayCandidateUrl, relaySwitchDecision, stepId]);
 
     const handleLocalRelayStatusChange = React.useCallback((status: unknown) => {
         const relayUrl = (status as { relayUrl?: unknown } | null | undefined)?.relayUrl;

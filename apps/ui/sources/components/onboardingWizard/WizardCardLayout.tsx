@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { layout } from '@/components/ui/layout/layout';
@@ -41,6 +41,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexGrow: 0,
         flexShrink: 1,
         minHeight: 0,
+        ...Platform.select({
+            web: {
+                height: 'auto',
+            },
+            default: {},
+        }),
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
 }));

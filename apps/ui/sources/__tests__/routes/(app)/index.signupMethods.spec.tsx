@@ -20,6 +20,10 @@ vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
 vi.mock('@/components/navigation/shell/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
 vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null }));
 vi.mock('@shopify/react-native-skia', () => ({}));
+vi.mock('expo-camera', () => ({
+    CameraView: () => null,
+    Camera: () => null,
+}));
 vi.mock('@/encryption/libsodium.lib', () => ({
     default: {
         crypto_sign_seed_keypair: () => ({
@@ -271,8 +275,8 @@ describe('/ (welcome) signup methods', () => {
             expect(screen.findAllByTestId('welcome-restore')).toHaveLength(0);
             expect(screen.findAllByTestId('welcome-signup-provider')).toHaveLength(0);
             expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
-            expect(screen.findByTestId('welcome-retry-server')).not.toBeNull();
             expect(screen.findByTestId('welcome-configure-server')).not.toBeNull();
+            expect(screen.findAllByTestId('welcome-retry-server')).toHaveLength(0);
         } finally {
             delete process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;
             vi.clearAllTimers();
@@ -296,7 +300,7 @@ describe('/ (welcome) signup methods', () => {
         expect(screen.findAllByTestId('welcome-restore')).toHaveLength(0);
         expect(screen.findAllByTestId('welcome-signup-provider')).toHaveLength(0);
         expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
-        expect(screen.findByTestId('welcome-retry-server')).not.toBeNull();
         expect(screen.findByTestId('welcome-configure-server')).not.toBeNull();
+        expect(screen.findAllByTestId('welcome-retry-server')).toHaveLength(0);
     });
 });

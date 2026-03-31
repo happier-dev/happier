@@ -31,6 +31,7 @@ export type WizardModalShellProps = Readonly<{
     secondaryDisabled?: boolean;
     showSkip?: boolean;
     showBack?: boolean;
+    skipDisabled?: boolean;
     footerHint?: React.ReactNode;
     testID?: string;
     contentStyle?: StyleProp<ViewStyle>;
@@ -134,7 +135,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: 12,
+        gap: 8,
         flexWrap: 'wrap',
     },
     footerButton: {
@@ -151,10 +152,10 @@ export function WizardModalShell(props: WizardModalShellProps) {
     const { height } = useWindowDimensions();
     const showSkip = props.showSkip ?? true;
     const showBack = props.showBack ?? true;
+    const skipDisabled = props.skipDisabled ?? false;
     const metrics = useWizardCardLayoutMetrics();
     const [headerHeight, setHeaderHeight] = React.useState(0);
     const [footerHeight, setFooterHeight] = React.useState(0);
-    const [contentHeight, setContentHeight] = React.useState<number | null>(null);
 
     const footerPaddingBottom = height < 640 ? 12 : styles.footer.paddingBottom;
 
@@ -172,16 +173,10 @@ export function WizardModalShell(props: WizardModalShellProps) {
         return raw > 0 ? raw : 0;
     }, [footerHeight, headerHeight, metrics]);
 
-    const shouldClampScrollHeight = React.useMemo(() => {
-        if (scrollMaxHeight == null) return false;
-        if (contentHeight == null) return false;
-        return contentHeight > scrollMaxHeight;
-    }, [contentHeight, scrollMaxHeight]);
-
-    const scrollEnabled = React.useMemo(() => {
-        if (contentHeight == null) return true;
-        return shouldClampScrollHeight;
-    }, [contentHeight, shouldClampScrollHeight]);
+    const scrollHeightStyle = React.useMemo(() => {
+        if (scrollMaxHeight == null) return null;
+        return { maxHeight: scrollMaxHeight } as const;
+    }, [scrollMaxHeight]);
 
     const content = (
         <>
@@ -219,30 +214,20 @@ export function WizardModalShell(props: WizardModalShellProps) {
                                 size="small"
                                 display="inverted"
                                 title={props.skipLabel ?? t('common.skip')}
+                                disabled={skipDisabled}
                                 onPress={props.onSkip}
                             />
                         ) : null}
                     </View>
                 </View>
 
-                {shouldClampScrollHeight ? (
-                    <ScrollView
-                        style={[styles.scroll, scrollMaxHeight != null ? { maxHeight: scrollMaxHeight } : null]}
-                        contentContainerStyle={styles.content}
-                        showsVerticalScrollIndicator={false}
-                        scrollEnabled={scrollEnabled}
-                        onContentSizeChange={(_, height) => setContentHeight(height)}
-                    >
-                        {content}
-                    </ScrollView>
-                ) : (
-                    <View
-                        style={styles.content}
-                        onLayout={(event) => setContentHeight(event.nativeEvent.layout.height)}
-                    >
-                        {content}
-                    </View>
-                )}
+                <ScrollView
+                    style={[styles.scroll, scrollHeightStyle]}
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                >
+                    {content}
+                </ScrollView>
 
                 <View style={[styles.footer, { paddingBottom: footerPaddingBottom }]} onLayout={handleFooterLayout}>
                     {props.footerHint

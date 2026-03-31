@@ -44,9 +44,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
     const keylessProviderId = props.options.keylessProviderId;
 
     const isLandscape = props.layout === 'landscape';
-    const buttonContainerStyle = isLandscape ? styles.landscapeButtonContainer : styles.buttonContainer;
-    const secondaryContainerStyle = isLandscape ? styles.landscapeButtonContainerSecondary : styles.buttonContainerSecondary;
-    const tertiaryContainerStyle = isLandscape ? styles.landscapeButtonContainerTertiary : styles.buttonContainerTertiary;
+    const actionStackStyle = isLandscape ? styles.landscapeActionStack : styles.actionStack;
     const smallButtonSize = isLandscape ? 'small' : 'small';
     const normalButtonSize = 'normal';
 
@@ -69,160 +67,156 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                         : t('welcome.serverUnavailableBody', { serverUrl: props.options.serverUrlForCopy })}
                 </Text>
             </View>
-            <View style={buttonContainerStyle}>
-                <RoundButton
-                    testID="welcome-configure-server"
-                    size={normalButtonSize}
-                    title={t('setupOnboarding.changeRelayAction')}
-                    onPress={props.onChangeRelay}
-                />
-            </View>
-            <View style={secondaryContainerStyle}>
-                <RoundButton
-                    testID="welcome-retry-server"
-                    title={t('common.retry')}
-                    onPress={() => {
-                        props.options.retryServerCheck();
-                    }}
-                    display="inverted"
-                />
+            <View style={actionStackStyle}>
+                <View style={styles.actionRow}>
+                    <RoundButton
+                        testID="welcome-configure-server"
+                        size={normalButtonSize}
+                        title={t('setupOnboarding.changeRelayAction')}
+                        onPress={props.onChangeRelay}
+                    />
+                </View>
             </View>
         </>
     );
 
     const renderReadyActions = () => (
         <>
-            {props.isDesktopShell && (
-                <View style={buttonContainerStyle}>
+            <View style={actionStackStyle}>
+                {props.isDesktopShell && (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-open-setup"
+                            size={normalButtonSize}
+                            title={t('setupOnboarding.openSetupAction')}
+                            onPress={props.onOpenSetup}
+                            display="inverted"
+                        />
+                    </View>
+                )}
+                <View style={styles.actionRow}>
                     <RoundButton
-                        testID="welcome-open-setup"
+                        testID="welcome-restore"
                         size={normalButtonSize}
-                        title={t('setupOnboarding.openSetupAction')}
-                        onPress={props.onOpenSetup}
-                        display="inverted"
+                        title={restoreTitle}
+                        onPress={props.onRestore}
                     />
                 </View>
-            )}
-            <View style={buttonContainerStyle}>
-                <RoundButton
-                    testID="welcome-restore"
-                    size={normalButtonSize}
-                    title={restoreTitle}
-                    onPress={props.onRestore}
-                />
+                {showProviderSignup && (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-signup-provider"
+                            size={normalButtonSize}
+                            title={props.options.providerSignupTitle}
+                            action={wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId!))}
+                        />
+                    </View>
+                )}
+                {showMtlsLogin && !mtlsPrimary && (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-mtls-login"
+                            size={normalButtonSize}
+                            title={props.options.mtlsTitle}
+                            action={wrapAsyncAction(props.onLoginWithMtls)}
+                        />
+                    </View>
+                )}
+                {showAnonymousSignup && (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-create-account"
+                            size={smallButtonSize}
+                            title={props.options.anonymousSignupTitle}
+                            action={wrapAsyncAction(props.onCreateAccount)}
+                            display="inverted"
+                        />
+                    </View>
+                )}
+                {!showProviderSignup && !showAnonymousSignup && (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-create-account"
+                            size={smallButtonSize}
+                            title={props.options.primarySignupTitle}
+                            action={
+                                mtlsPrimary
+                                    ? wrapAsyncAction(props.onLoginWithMtls)
+                                    : keylessPrimary && keylessProviderId
+                                        ? wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId))
+                                        : showProviderSignup && providerId
+                                            ? wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId))
+                                            : wrapAsyncAction(props.onCreateAccount)
+                            }
+                            display="inverted"
+                        />
+                    </View>
+                )}
             </View>
-            {showProviderSignup && (
-                <View style={showAnonymousSignup ? secondaryContainerStyle : buttonContainerStyle}>
-	                    <RoundButton
-	                        testID="welcome-signup-provider"
-	                        size={normalButtonSize}
-	                        title={props.options.providerSignupTitle}
-	                        action={wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId!))}
-	                    />
-	                </View>
-	            )}
-            {showMtlsLogin && !mtlsPrimary && (
-                <View style={showProviderSignup ? secondaryContainerStyle : buttonContainerStyle}>
-	                    <RoundButton
-	                        testID="welcome-mtls-login"
-	                        size={normalButtonSize}
-	                        title={props.options.mtlsTitle}
-	                        action={wrapAsyncAction(props.onLoginWithMtls)}
-	                    />
-	                </View>
-	            )}
-            {showAnonymousSignup && (
-                <View style={showProviderSignup ? tertiaryContainerStyle : secondaryContainerStyle}>
-	                    <RoundButton
-	                        testID="welcome-create-account"
-	                        size={smallButtonSize}
-	                        title={props.options.anonymousSignupTitle}
-	                        action={wrapAsyncAction(props.onCreateAccount)}
-	                        display="inverted"
-	                    />
-	                </View>
-	            )}
-            {!showProviderSignup && !showAnonymousSignup && (
-                <View style={secondaryContainerStyle}>
-	                    <RoundButton
-	                        testID="welcome-create-account"
-	                        size={smallButtonSize}
-	                        title={props.options.primarySignupTitle}
-	                        action={
-	                            mtlsPrimary
-	                                ? wrapAsyncAction(props.onLoginWithMtls)
-	                                : keylessPrimary && keylessProviderId
-	                                    ? wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId))
-	                                    : showProviderSignup && providerId
-	                                        ? wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId))
-	                                        : wrapAsyncAction(props.onCreateAccount)
-	                        }
-	                        display="inverted"
-	                    />
-	                </View>
-	            )}
         </>
     );
 
     const renderMobileActions = () => (
         <>
-            {props.isDesktopShell && (
-                <View style={buttonContainerStyle}>
+            <View style={actionStackStyle}>
+                {props.isDesktopShell && (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-open-setup"
+                            size={normalButtonSize}
+                            title={t('setupOnboarding.openSetupAction')}
+                            onPress={props.onOpenSetup}
+                            display="inverted"
+                        />
+                    </View>
+                )}
+                <View style={styles.actionRow}>
                     <RoundButton
-                        testID="welcome-open-setup"
+                        testID={showProviderSignup ? 'welcome-signup-provider' : 'welcome-create-account'}
                         size={normalButtonSize}
-                        title={t('setupOnboarding.openSetupAction')}
-                        onPress={props.onOpenSetup}
+                        title={props.options.primarySignupTitle}
+                        action={
+                            mtlsPrimary
+                                ? wrapAsyncAction(props.onLoginWithMtls)
+                                : keylessPrimary && keylessProviderId
+                                    ? wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId))
+                                    : showProviderSignup && providerId
+                                        ? wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId))
+                                        : wrapAsyncAction(props.onCreateAccount)
+                        }
+                    />
+                </View>
+                {showMtlsLogin && !mtlsPrimary && (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-mtls-login"
+                            size={smallButtonSize}
+                            title={props.options.mtlsTitle}
+                            action={wrapAsyncAction(props.onLoginWithMtls)}
+                            display="inverted"
+                        />
+                    </View>
+                )}
+                {showProviderSignup && showAnonymousSignup && (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-create-account"
+                            size={smallButtonSize}
+                            title={props.options.anonymousSignupTitle}
+                            action={wrapAsyncAction(props.onCreateAccount)}
+                            display="inverted"
+                        />
+                    </View>
+                )}
+                <View style={styles.actionRow}>
+                    <RoundButton
+                        testID="welcome-restore"
+                        size={smallButtonSize}
+                        title={t('welcome.linkOrRestoreAccount')}
+                        onPress={props.onRestore}
                         display="inverted"
                     />
                 </View>
-            )}
-            <View style={buttonContainerStyle}>
-	                <RoundButton
-	                    testID={showProviderSignup ? 'welcome-signup-provider' : 'welcome-create-account'}
-	                    size={normalButtonSize}
-	                    title={props.options.primarySignupTitle}
-	                    action={
-	                        mtlsPrimary
-	                            ? wrapAsyncAction(props.onLoginWithMtls)
-	                            : keylessPrimary && keylessProviderId
-	                                ? wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId))
-	                                : showProviderSignup && providerId
-	                                    ? wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId))
-	                                    : wrapAsyncAction(props.onCreateAccount)
-	                    }
-	                />
-	            </View>
-            {showMtlsLogin && !mtlsPrimary && (
-                <View style={secondaryContainerStyle}>
-	                    <RoundButton
-	                        testID="welcome-mtls-login"
-	                        size={smallButtonSize}
-	                        title={props.options.mtlsTitle}
-	                        action={wrapAsyncAction(props.onLoginWithMtls)}
-	                        display="inverted"
-	                    />
-	                </View>
-	            )}
-            {showProviderSignup && showAnonymousSignup && (
-                <View style={secondaryContainerStyle}>
-	                    <RoundButton
-	                        testID="welcome-create-account"
-	                        size={smallButtonSize}
-	                        title={props.options.anonymousSignupTitle}
-	                        action={wrapAsyncAction(props.onCreateAccount)}
-	                        display="inverted"
-	                    />
-	                </View>
-	            )}
-            <View style={showProviderSignup && showAnonymousSignup ? tertiaryContainerStyle : secondaryContainerStyle}>
-                <RoundButton
-                    testID="welcome-restore"
-                    size={smallButtonSize}
-                    title={t('welcome.linkOrRestoreAccount')}
-                    onPress={props.onRestore}
-                    display="inverted"
-                />
             </View>
         </>
     );
@@ -256,7 +250,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
         paddingHorizontal: 14,
         paddingVertical: 12,
-        marginBottom: 20,
+        marginBottom: 10,
     },
     serverUnavailableTitle: {
         ...Typography.default('semiBold'),
@@ -281,37 +275,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 15,
         color: theme.colors.textSecondary,
     },
-    buttonContainer: {
+    actionStack: {
         width: '100%',
         maxWidth: 360,
-        marginTop: 12,
+        gap: 10,
     },
-    buttonContainerSecondary: {
+    actionRow: {
         width: '100%',
-        maxWidth: 360,
-        marginTop: 12,
     },
-    buttonContainerTertiary: {
+    landscapeActionStack: {
         width: '100%',
         maxWidth: 360,
-        marginTop: 12,
-    },
-    landscapeButtonContainer: {
-        width: '100%',
-        maxWidth: 360,
-        marginTop: 12,
         alignSelf: 'center',
-    },
-    landscapeButtonContainerSecondary: {
-        width: '100%',
-        maxWidth: 360,
-        marginTop: 12,
-        alignSelf: 'center',
-    },
-    landscapeButtonContainerTertiary: {
-        width: '100%',
-        maxWidth: 360,
-        marginTop: 12,
-        alignSelf: 'center',
+        gap: 10,
     },
 }));

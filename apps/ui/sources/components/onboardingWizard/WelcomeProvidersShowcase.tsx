@@ -8,6 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
+import { lightTheme } from '@/theme';
 
 export type WelcomeProvidersShowcaseProps = Readonly<{
     testIDPrefix?: string;
@@ -18,7 +19,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         width: '100%',
         alignItems: 'center',
-        gap: theme.margins.md,
+        gap: theme.margins?.md ?? lightTheme.margins.md,
         paddingTop: 6,
     },
     label: {
@@ -30,10 +31,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     showcaseFrame: {
         width: '100%',
         maxWidth: 420,
-        paddingVertical: theme.margins.sm,
-        paddingHorizontal: theme.margins.sm,
+        paddingVertical: theme.margins?.sm ?? lightTheme.margins.sm,
+        paddingHorizontal: theme.margins?.sm ?? lightTheme.margins.sm,
         overflow: 'hidden',
-        gap: theme.margins.sm,
+        gap: theme.margins?.sm ?? lightTheme.margins.sm,
     },
     rowViewport: {
         width: '100%',
@@ -44,7 +45,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'flex-start',
-        gap: theme.margins.sm,
+        gap: theme.margins?.sm ?? lightTheme.margins.sm,
     },
     cell: {
         width: 44,
@@ -58,14 +59,15 @@ export const WelcomeProvidersShowcase = React.memo(function WelcomeProvidersShow
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const reduceMotion = useReducedMotionPreference();
+    const margins = theme.margins ?? lightTheme.margins;
 
     const evenAgentIds = React.useMemo(() => AGENT_IDS.filter((_, index) => index % 2 === 0), []);
     const oddAgentIds = React.useMemo(() => AGENT_IDS.filter((_, index) => index % 2 === 1), []);
 
     const [viewportWidth, setViewportWidth] = React.useState<number | null>(null);
-    const cellPitch = 44 + theme.margins.sm;
-    const evenRowWidth = Math.max(0, (evenAgentIds.length * cellPitch) - theme.margins.sm);
-    const oddRowWidth = Math.max(0, (oddAgentIds.length * cellPitch) - theme.margins.sm);
+    const cellPitch = 44 + margins.sm;
+    const evenRowWidth = Math.max(0, (evenAgentIds.length * cellPitch) - margins.sm);
+    const oddRowWidth = Math.max(0, (oddAgentIds.length * cellPitch) - margins.sm);
     const evenTravel = viewportWidth == null ? 0 : Math.max(0, evenRowWidth - viewportWidth);
     const oddTravel = viewportWidth == null ? 0 : Math.max(0, oddRowWidth - viewportWidth);
 

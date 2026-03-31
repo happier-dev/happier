@@ -1,5 +1,4 @@
 import { getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
-import { isTauriDesktop } from '@/utils/platform/tauri';
 
 export function setOnboardingWizardPreAuthResumeIntent(relayUrl: string | null): void {
     setPendingSetupIntent({
@@ -18,9 +17,28 @@ export function setOnboardingWizardAwaitingAuthResumeIntent(relayUrl: string | n
 }
 
 export function shouldResumeSetupWizardAfterAuth(): boolean {
-    return isTauriDesktop() && getPendingSetupIntent()?.phase === 'awaiting_auth';
+    return getPendingSetupIntent()?.phase === 'awaiting_auth';
+}
+
+export type PostAuthSetupRouteInputs = Readonly<{
+    isDesktopShell: boolean;
+    onlineMachineCount: number | null;
+    currentMachineIsConfiguredAndHealthy: boolean;
+    hasRelayDrift: boolean;
+}>;
+
+export function resolvePostAuthSetupRoute(params: PostAuthSetupRouteInputs): '/' | '/setup' {
+    if (!params.isDesktopShell) {
+        return (params.onlineMachineCount ?? 0) >= 1 ? '/' : '/setup';
+    }
+
+    if (!params.currentMachineIsConfiguredAndHealthy) {
+        return '/setup';
+    }
+
+    return params.hasRelayDrift ? '/setup' : '/';
 }
 
 export function resolveWizardAuthReturnToRoute(): string {
-    return shouldResumeSetupWizardAfterAuth() ? '/setup' : '/';
+    return '/';
 }
