@@ -14,6 +14,7 @@ import { handleMachineCliCommand } from './commands/machine';
 import { handleMcpCliCommand } from './commands/mcp';
 import { handleNotifyCliCommand } from './commands/notify';
 import { handleProfilesCliCommand } from './commands/profiles';
+import { handleProvidersCliCommand } from './commands/providers';
 import { handleRelayCliCommand } from './commands/relay';
 import { handleResumeCliCommand } from './commands/resume';
 import { handleSetupCliCommand } from './commands/setup';
@@ -65,6 +66,7 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   notify: handleNotifyCliCommand,
   profile: handleProfilesCliCommand,
   profiles: handleProfilesCliCommand,
+  providers: handleProvidersCliCommand,
   relay: handleRelayCliCommand,
   resume: handleResumeCliCommand,
   session: handleSessionCliCommand,

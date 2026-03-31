@@ -14,6 +14,7 @@ describe('CLI command-surface manifest', () => {
       'opencode',
       'gemini',
       'connect',
+      'providers',
       'notify',
       'install',
       'daemon',

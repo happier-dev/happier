@@ -56,6 +56,12 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
   },
   {
+    command: 'providers',
+    rootHelpLabel: 'happier providers',
+    rootHelpDescription: 'Install and manage provider CLIs',
+    allowTmux: false,
+  },
+  {
     command: 'notify',
     rootHelpLabel: 'happier notify',
     rootHelpDescription: 'Send push notification',
