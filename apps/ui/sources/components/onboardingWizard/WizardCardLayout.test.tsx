@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet as ReactNativeStyleSheet } from 'react-native';
+import { Platform, StyleSheet as ReactNativeStyleSheet } from 'react-native';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -45,6 +45,15 @@ describe('WizardCardLayout', () => {
         const scrollViews = screen.findAllByType('ScrollView' as never);
         expect(scrollViews).toHaveLength(1);
         const scrollView = scrollViews[0];
+
+        if (Platform.OS === 'web') {
+            const flattenedRoot = flattenStyleProp(scrollView.props.style as unknown);
+            expect(flattenedRoot.position).toBe('fixed');
+            expect(flattenedRoot.top).toBe(0);
+            expect(flattenedRoot.left).toBe(0);
+            expect(flattenedRoot.right).toBe(0);
+            expect(flattenedRoot.bottom).toBe(0);
+        }
 
         const flattened = flattenStyleProp(scrollView.props.contentContainerStyle as unknown);
 

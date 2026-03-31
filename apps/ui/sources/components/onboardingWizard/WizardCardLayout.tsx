@@ -3,6 +3,7 @@ import { Platform, ScrollView, View, useWindowDimensions, type StyleProp, type V
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { layout } from '@/components/ui/layout/layout';
+import { resolveWebBlurTintColor } from '@/components/ui/overlays/resolveWebBlurTintColor';
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
 import { shadowLevelStyle } from '@/shadowElevation';
 
@@ -98,9 +99,12 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
         cardWidth,
     }), [cardWidth]);
     const webBackdropStyle = Platform.OS === 'web' && !wantsFullscreen
-        ? ({ backdropFilter: 'blur(6px)' } as unknown as ViewStyle)
+        ? (() => {
+            const tintColor = resolveWebBlurTintColor({ surfaceColor: theme.colors.surface, dark: theme.dark });
+            return ({ backdropFilter: 'blur(6px)', backgroundColor: tintColor } as unknown as ViewStyle);
+        })()
         : null;
-    const webFixedViewportStyle = Platform.OS === 'web' && !wantsFullscreen
+    const webFixedViewportStyle = Platform.OS === 'web'
         ? ({
             position: 'fixed',
             top: 0,
