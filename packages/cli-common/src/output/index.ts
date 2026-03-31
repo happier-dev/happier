@@ -33,3 +33,13 @@ export {
   type TerminalStyles,
 } from './presentation.js';
 export { createStepPrinter, runCommandLogged } from './progress.js';
+export { createHelpFormatter, helpFormatter, type HelpRow, type HelpRenderOptions } from './help.js';
+export { renderHelpPage, type HelpPageOptions, type HelpPageSection, type RenderHelpPageOptions } from './helpPage.js';
+export {
+  createOutputBuilder,
+  renderOutputItems,
+  type OutputBuilder,
+  type OutputItem,
+  type OutputPresentation,
+  type RenderOutputOptions,
+} from './document.js';
