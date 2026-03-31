@@ -152,6 +152,32 @@ fn physical_size_to_rect(pos: PhysicalPosition<i32>, size: PhysicalSize<u32>) ->
 }
 
 #[cfg(desktop)]
+fn resolve_launch_window_rect(monitor_rect: Rect, persisted: Option<&PersistedWindowState>) -> Rect {
+    if let Some(persisted) = persisted {
+        return clamp_window_rect_to_monitor(
+            Rect {
+                x: persisted.x,
+                y: persisted.y,
+                width: persisted.width,
+                height: persisted.height,
+            },
+            monitor_rect,
+        );
+    }
+
+    let (width, height) = compute_default_window_size(monitor_rect);
+    clamp_window_rect_to_monitor(
+        Rect {
+            x: monitor_rect.x + ((monitor_rect.width - width) / 2.0).max(0.0),
+            y: monitor_rect.y + ((monitor_rect.height - height) / 2.0).max(0.0),
+            width,
+            height,
+        },
+        monitor_rect,
+    )
+}
+
+#[cfg(desktop)]
 pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
@@ -167,24 +193,7 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     if let Some(monitor) = monitor {
         let monitor_rect = monitor_to_rect(&monitor);
 
-        let desired_rect = if let Some(persisted) = &persisted {
-            Rect {
-                x: persisted.x,
-                y: persisted.y,
-                width: persisted.width,
-                height: persisted.height,
-            }
-        } else {
-            let (width, height) = compute_default_window_size(monitor_rect);
-            Rect {
-                x: monitor_rect.x + ((monitor_rect.width - width) / 2.0).max(0.0),
-                y: monitor_rect.y + ((monitor_rect.height - height) / 2.0).max(0.0),
-                width,
-                height,
-            }
-        };
-
-        let clamped = clamp_window_rect_to_monitor(desired_rect, monitor_rect);
+        let clamped = resolve_launch_window_rect(monitor_rect, persisted.as_ref());
         let _ = window.set_size(tauri::Size::Physical(PhysicalSize {
             width: clamped.width.round().max(1.0) as u32,
             height: clamped.height.round().max(1.0) as u32,
@@ -332,5 +341,46 @@ mod tests {
         assert!(clamped.y >= monitor.y);
         assert!(clamped.x + clamped.width <= monitor.x + monitor.width + 0.01);
         assert!(clamped.y + clamped.height <= monitor.y + monitor.height + 0.01);
+    }
+
+    #[test]
+    fn resolve_launch_window_rect_uses_default_size_for_fresh_launch() {
+        let monitor = Rect {
+            x: 20.0,
+            y: 30.0,
+            width: 2000.0,
+            height: 1000.0,
+        };
+        let rect = resolve_launch_window_rect(monitor, None);
+        assert!((rect.width - MAX_WINDOW_WIDTH_PX).abs() < 0.1, "width={}", rect.width);
+        assert!((rect.height - 850.0).abs() < 0.1, "height={}", rect.height);
+        assert!(rect.x >= monitor.x);
+        assert!(rect.y >= monitor.y);
+        assert!(rect.x + rect.width <= monitor.x + monitor.width + 0.01);
+        assert!(rect.y + rect.height <= monitor.y + monitor.height + 0.01);
+    }
+
+    #[test]
+    fn resolve_launch_window_rect_clamps_persisted_state_to_current_monitor() {
+        let monitor = Rect {
+            x: 50.0,
+            y: 75.0,
+            width: 1200.0,
+            height: 800.0,
+        };
+        let persisted = PersistedWindowState {
+            x: -5000.0,
+            y: 9999.0,
+            width: 5000.0,
+            height: 4000.0,
+            maximized: false,
+        };
+        let rect = resolve_launch_window_rect(monitor, Some(&persisted));
+        assert!(rect.width <= monitor.width);
+        assert!(rect.height <= monitor.height);
+        assert!(rect.x >= monitor.x);
+        assert!(rect.y >= monitor.y);
+        assert!(rect.x + rect.width <= monitor.x + monitor.width + 0.01);
+        assert!(rect.y + rect.height <= monitor.y + monitor.height + 0.01);
     }
 }
