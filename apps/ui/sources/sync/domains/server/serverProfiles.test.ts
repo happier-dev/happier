@@ -103,6 +103,24 @@ describe('serverProfiles', () => {
         expect(third.serverUrl).toBe('https://next.example.test');
     });
 
+    it('tracks whether the active server selection is explicit', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('https://origin.example.test');
+
+        const profiles = await importFresh();
+
+        expect(profiles.isActiveServerSelectionExplicit()).toBe(false);
+
+        const created = profiles.upsertServerProfile({
+            serverUrl: 'https://device.example.test',
+            name: 'Device',
+        });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+
+        expect(profiles.isActiveServerSelectionExplicit()).toBe(true);
+    });
+
     it('persists a shareable relay URL on the active server snapshot', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;

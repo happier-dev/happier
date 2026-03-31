@@ -1,5 +1,6 @@
 import {
     getActiveServerSnapshot as getSnapshotFromProfiles,
+    isActiveServerSelectionExplicit as isExplicitFromProfiles,
     setActiveServerId,
     setServerProfileShareableUrl,
     subscribeActiveServer as subscribeFromProfiles,
@@ -16,6 +17,10 @@ export function getActiveServerSnapshot(): ActiveServerSnapshot {
 
 export function subscribeActiveServer(listener: (snapshot: ActiveServerSnapshot) => void): () => void {
     return subscribeFromProfiles(listener);
+}
+
+export function isActiveServerSelectionExplicit(): boolean {
+    return isExplicitFromProfiles();
 }
 
 export function setActiveServer(params: Readonly<{ serverId: string; scope?: 'device' | 'tab' }>): void {

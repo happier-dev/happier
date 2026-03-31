@@ -732,6 +732,13 @@ export function getActiveServerId(): string {
     return resolvePrimaryActiveServerId(state.servers, state.activeServerId);
 }
 
+export function isActiveServerSelectionExplicit(): boolean {
+    const state = readPersistedState();
+    const tab = readTabActiveServerId();
+    if (tab && tab in state.servers) return true;
+    return state.activeServerIdIsExplicit === true;
+}
+
 export function getActiveServerUrl(): string {
     const state = readPersistedState();
     const tab = readTabActiveServerId();
