@@ -187,4 +187,51 @@ describe('server selection flags', () => {
       expect((await getActiveServerProfile()).id).toBe('cloud');
     });
   });
+
+  it('rejects legacy --public-server-url with guidance to use --local-server-url', async () => {
+    await withTempDir('happier-cli-server-select-legacy-public-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_LOCAL_SERVER_URL: undefined,
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+      const { applyServerSelectionFromArgs } = await import('./serverSelection');
+
+      await expect(
+        applyServerSelectionFromArgs([
+          '--server-url',
+          'http://127.0.0.1:53545',
+          '--public-server-url',
+          'https://stack.example.test',
+        ]),
+      ).rejects.toThrow(/--local-server-url/i);
+    });
+  });
+
+  it('rejects legacy --public-server-url in prefix-only selection flags with guidance to use --local-server-url', async () => {
+    await withTempDir('happier-cli-server-select-legacy-public-prefix-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_LOCAL_SERVER_URL: undefined,
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+      const { applyEphemeralServerSelectionFromPrefixArgs } = await import('./serverSelection');
+
+      await expect(
+        applyEphemeralServerSelectionFromPrefixArgs([
+          '--public-server-url',
+          'https://stack.example.test',
+          'doctor',
+        ]),
+      ).rejects.toThrow(/--local-server-url/i);
+    });
+  });
 });

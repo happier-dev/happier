@@ -152,7 +152,7 @@ if [[ -n "$REMOTE_SELF_HOST_SERVER_BINARY" ]]; then
     echo "[remote-server] missing REMOTE_SELF_HOST_SERVER_BINARY at $REMOTE_SELF_HOST_SERVER_BINARY" >&2
     exit 1
   fi
-  setup_args+=(--self-host-server-binary "$REMOTE_SELF_HOST_SERVER_BINARY")
+  setup_args+=(--server-binary "$REMOTE_SELF_HOST_SERVER_BINARY")
 fi
 
 if [[ -n "$REMOTE_SELF_HOST_PRISMA_ENGINE_PATH" ]]; then

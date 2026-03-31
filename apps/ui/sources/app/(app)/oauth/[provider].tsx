@@ -20,6 +20,9 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 
+import { WizardModalShell } from '@/components/onboardingWizard/WizardModalShell';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+
 
 function paramString(params: Record<string, unknown>, key: string): string | null {
     const value = (params as any)[key];
@@ -651,122 +654,131 @@ export default function OAuthProviderReturn() {
         resolvedFlow === 'auth' ? '' : auth.credentials?.token ?? '',
     ]);
 
-    if (provisioningChoiceOpen) {
-        return (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
-                <View style={{ width: '100%', maxWidth: 420 }}>
-                    <Text style={{ fontSize: 18, marginBottom: 8, color: theme.colors.text }}>
-                        {t('welcome.chooseEncryptionTitle')}
-                    </Text>
-                    <Text style={{ fontSize: 14, marginBottom: 16, color: theme.colors.textSecondary }}>
-                        {t('welcome.chooseEncryptionBody')}
-                    </Text>
+    const handleBack = React.useCallback(() => {
+        safeRouterBack({ router, fallbackHref: '/' });
+    }, [router]);
 
-                    <View style={{ flexDirection: 'column', gap: 12 }}>
-                        <Pressable
-                            testID="oauth-provisioning-choice-e2ee"
-                            onPress={() => chooseProvisioningMode('e2ee')}
-                            style={{
-                                paddingVertical: 10,
-                                borderRadius: 8,
-                                backgroundColor: theme.colors.button.primary.background,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                            }}
-                        >
-                            <Text style={{ color: theme.colors.button.primary.tint }}>
-                                {t('welcome.chooseEncryptionEncrypted')}
-                            </Text>
-                        </Pressable>
+    const wizardTitle =
+        provisioningChoiceOpen
+            ? t('welcome.chooseEncryptionTitle')
+            : usernameHint != null
+                ? t('profile.username')
+                : t('setupOnboarding.resumeIntentTitle');
 
-                        <Pressable
-                            testID="oauth-provisioning-choice-plain"
-                            onPress={() => chooseProvisioningMode('plain')}
-                            style={{
-                                paddingVertical: 10,
-                                borderRadius: 8,
-                                borderWidth: 1,
-                                borderColor: theme.colors.divider,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                            }}
-                        >
-                            <Text style={{ color: theme.colors.text }}>
-                                {t('welcome.chooseEncryptionPlain')}
-                            </Text>
-                        </Pressable>
-                    </View>
-                </View>
-                {busy ? <ActivityIndicator size="small" style={{ marginTop: 16 }} /> : null}
-            </View>
-        );
-    }
+    const wizardSubtitle =
+        provisioningChoiceOpen
+            ? t('welcome.chooseEncryptionBody')
+            : usernameHint != null
+                ? usernameHint
+                : t('setupOnboarding.resumeIntentBody');
 
-    if (usernameHint != null) {
-        return (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
-                <View style={{ width: '100%', maxWidth: 420 }}>
-                    <Text style={{ fontSize: 18, marginBottom: 8, color: theme.colors.text }}>{t('profile.username')}</Text>
-                    <Text style={{ fontSize: 14, marginBottom: 16, color: theme.colors.textSecondary }}>{usernameHint}</Text>
-                    <TextInput
-                        testID="oauth-username-input"
-                        value={usernameValue}
-                        onChangeText={setUsernameValue}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        placeholder={t('profile.username')}
-                        placeholderTextColor={theme.colors.input.placeholder}
-                        style={{
-                            borderWidth: 1,
-                            borderColor: theme.colors.divider,
-                            borderRadius: 8,
-                            paddingHorizontal: 12,
-                            paddingVertical: 10,
-                            marginBottom: 12,
-                            backgroundColor: theme.colors.input.background,
-                            color: theme.colors.input.text,
-                        }}
-                    />
-                    <View style={{ flexDirection: 'row', gap: 12 }}>
-                        <Pressable
-                            testID="oauth-username-cancel"
-                            onPress={cancelUsername}
-                            style={{
-                                flex: 1,
-                                paddingVertical: 10,
-                                borderRadius: 8,
-                                borderWidth: 1,
-                                borderColor: theme.colors.divider,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                            }}
-                        >
-                            <Text style={{ color: theme.colors.text }}>{t('common.cancel')}</Text>
-                        </Pressable>
-                        <Pressable
-                            testID="oauth-username-save"
-                            onPress={submitUsername}
-                            style={{
-                                flex: 1,
-                                paddingVertical: 10,
-                                borderRadius: 8,
-                                backgroundColor: theme.colors.button.primary.background,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                            }}
-                        >
-                            <Text style={{ color: theme.colors.button.primary.tint }}>{t('common.save')}</Text>
-                        </Pressable>
-                    </View>
-                </View>
-                {busy ? <ActivityIndicator size="small" style={{ marginTop: 16 }} /> : null}
-            </View>
-        );
-    }
+    const body = provisioningChoiceOpen ? (
+        <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: 12 }}>
+            <Pressable
+                testID="oauth-provisioning-choice-e2ee"
+                onPress={() => chooseProvisioningMode('e2ee')}
+                style={{
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    backgroundColor: theme.colors.button.primary.background,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }}
+            >
+                <Text style={{ color: theme.colors.button.primary.tint }}>
+                    {t('welcome.chooseEncryptionEncrypted')}
+                </Text>
+            </Pressable>
 
-    return (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <Pressable
+                testID="oauth-provisioning-choice-plain"
+                onPress={() => chooseProvisioningMode('plain')}
+                style={{
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: theme.colors.divider,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }}
+            >
+                <Text style={{ color: theme.colors.text }}>
+                    {t('welcome.chooseEncryptionPlain')}
+                </Text>
+            </Pressable>
+
             {busy ? <ActivityIndicator size="small" /> : null}
         </View>
+    ) : usernameHint != null ? (
+        <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: 12 }}>
+            <TextInput
+                testID="oauth-username-input"
+                value={usernameValue}
+                onChangeText={setUsernameValue}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder={t('profile.username')}
+                placeholderTextColor={theme.colors.input.placeholder}
+                style={{
+                    borderWidth: 1,
+                    borderColor: theme.colors.divider,
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    backgroundColor: theme.colors.input.background,
+                    color: theme.colors.input.text,
+                }}
+            />
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+                <Pressable
+                    testID="oauth-username-cancel"
+                    onPress={cancelUsername}
+                    style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: theme.colors.divider,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                    }}
+                >
+                    <Text style={{ color: theme.colors.text }}>{t('common.cancel')}</Text>
+                </Pressable>
+                <Pressable
+                    testID="oauth-username-save"
+                    onPress={submitUsername}
+                    style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                        backgroundColor: theme.colors.button.primary.background,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                    }}
+                >
+                    <Text style={{ color: theme.colors.button.primary.tint }}>{t('common.save')}</Text>
+                </Pressable>
+            </View>
+            {busy ? <ActivityIndicator size="small" /> : null}
+        </View>
+    ) : (
+        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+            {busy ? <ActivityIndicator size="small" /> : null}
+        </View>
+    );
+
+    return (
+        <WizardModalShell
+            testID="oauth-return-wizard"
+            stepIndex={1}
+            stepCount={3}
+            title={wizardTitle}
+            subtitle={wizardSubtitle}
+            onBack={handleBack}
+            showSkip={false}
+        >
+            {body}
+        </WizardModalShell>
     );
 }

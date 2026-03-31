@@ -40,6 +40,17 @@ const getServerProfileByIdMock = vi.hoisted(() => vi.fn((serverId: string) => (
         : null
 )));
 
+vi.mock('react-native', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        Platform: {
+            ...actual.Platform,
+            OS: 'web',
+        },
+    };
+});
+
 vi.mock('expo-router', () => expoRouterMock.module);
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     setPendingSetupIntent: (value: PendingSetupIntent) => setPendingSetupIntentMock(value),
@@ -66,10 +77,15 @@ vi.mock('@/auth/providers/registry', () => ({
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => activeServerSnapshotMock,
+    subscribeActiveServer: () => () => {},
 }));
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getResetToDefaultServerId: () => getResetToDefaultServerIdMock(),
     getServerProfileById: (serverId: string) => getServerProfileByIdMock(serverId),
+    listServerProfiles: () => {
+        const cloud = getServerProfileByIdMock('cloud-profile');
+        return cloud ? [cloud] : [];
+    },
 }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     isSameServerUrl: (left: string, right: string) => left === right,
@@ -91,6 +107,9 @@ vi.mock('@/components/onboardingWizard/restore/LostAccessEmbedded', () => ({
 }));
 vi.mock('@/components/onboardingWizard/WelcomeProvidersShowcase', () => ({
     WelcomeProvidersShowcase: () => null,
+}));
+vi.mock('@/components/onboardingWizard/WebDesktopHandoffStep', () => ({
+    WebDesktopHandoffStep: (props: Record<string, unknown>) => React.createElement('WebDesktopHandoffStep', props),
 }));
 vi.mock('@/components/account/auth/AuthEntryView', () => ({
     AuthEntryView: () => null,
@@ -159,12 +178,32 @@ describe('OnboardingWizardSurface', () => {
         webQrScannerSupportedMock.value = false;
         webMobileLikeQrScannerHostMock.value = false;
         activeServerSnapshotMock.serverId = 'relay-profile';
-        activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
+        activeServerSnapshotMock.serverUrl = '';
         activeServerSnapshotMock.activeLocalRelayUrl = null;
     });
 
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('can start on relay selection when initialStepId is provided', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                initialStepId: 'relay_select',
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        expect(screen.findByTestId('onboarding-wizard-relay:cloud')).toBeTruthy();
+        expect(screen.findAllByTestId('onboarding-wizard-welcome-body')).toHaveLength(0);
     });
 
     it('stores an awaiting-auth resume intent when continuing past relay selection', async () => {
@@ -197,7 +236,7 @@ describe('OnboardingWizardSurface', () => {
         expect(setPendingSetupIntentMock).toHaveBeenCalledWith({
             branch: 'thisComputer',
             phase: 'awaiting_auth',
-            relayUrl: 'https://relay.example.test',
+            relayUrl: 'https://api.happier.dev',
         });
     });
 
@@ -225,6 +264,37 @@ describe('OnboardingWizardSurface', () => {
         expect(setPendingSetupIntentMock).toHaveBeenCalledWith({
             branch: 'thisComputer',
             phase: 'pre_auth',
+            relayUrl: 'https://api.happier.dev',
+        });
+    });
+
+    it('fast-paths from welcome to auth when a non-cloud relay is already selected', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+
+        expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
+        expect(setPendingSetupIntentMock).toHaveBeenCalledWith({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
             relayUrl: 'https://relay.example.test',
         });
     });
@@ -303,6 +373,119 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-relay-url-input')).not.toBeNull();
     });
 
+    it('guides web users to continue on desktop when selecting "On this computer"', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
+        activeServerSnapshotMock.activeLocalRelayUrl = null;
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: false,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const thisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
+        await act(async () => {
+            await thisComputerRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-desktop-handoff')).toBeTruthy();
+
+        const handoffContinueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await handoffContinueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-relay-url-input')).toBeTruthy();
+    });
+
+    it('shows background service install guidance after saving a relay url from the web "On this computer" handoff', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
+        activeServerSnapshotMock.activeLocalRelayUrl = null;
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: false,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const thisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
+        await act(async () => {
+            await thisComputerRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-desktop-handoff')).toBeTruthy();
+
+        const handoffContinueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await handoffContinueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input')!;
+        await act(async () => {
+            relayInput.props.onChangeText?.('https://relay.local.test');
+        });
+
+        const saveRelayButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await saveRelayButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-background-service-handoff')).toBeTruthy();
+
+        const continueToAuthButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueToAuthButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
+    });
+
     it('skips relay URL entry when a custom relay has already been resolved', async () => {
         activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
 
@@ -369,7 +552,7 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
     });
 
-    it('routes through local relay hosting on desktop when "On this Mac" is selected', async () => {
+    it('routes through local relay hosting on desktop when "On this computer" is selected', async () => {
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
@@ -390,7 +573,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const localRelayRow = screen.findByTestId('onboarding-wizard-relay:thisMac')!;
+        const localRelayRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
         await act(async () => {
             await localRelayRow.props.onPress?.();
         });
@@ -402,6 +585,104 @@ describe('OnboardingWizardSurface', () => {
         });
 
         expect(screen.findByType('LocalRelayRuntimeControlSection' as never)).toBeTruthy();
+    });
+
+    it('requires explicit relay switch confirmation after hosting a local relay', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const onThisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
+        await act(async () => {
+            await onThisComputerRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueToHost = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueToHost.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByType('LocalRelayRuntimeControlSection' as never)).toBeTruthy();
+
+        const continueAfterHosted = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterHosted.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(upsertActivateAndSwitchServerMock).not.toHaveBeenCalled();
+        expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeTruthy();
+
+        const switchChoice = screen.findByTestId('onboarding-wizard-confirmSwitchRelay.choice:switch')!;
+        await act(async () => {
+            await switchChoice.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const confirmButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await confirmButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(upsertActivateAndSwitchServerMock).toHaveBeenCalledWith(expect.objectContaining({ serverUrl: 'http://localhost:31337' }));
+        expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
+    });
+
+    it('routes web users selecting "On this computer" to the desktop handoff guidance step', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: false,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const onThisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
+        expect(onThisComputerRow.props.disabled).toBe(false);
+
+        await act(async () => {
+            await onThisComputerRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-desktop-handoff')).toBeTruthy();
     });
 
     it('switches to the canonical Happier Cloud profile before continuing to auth', async () => {
@@ -477,5 +758,48 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findByTestId('onboarding-wizard-relay-url-input')).not.toBeNull();
+    });
+
+    it('requires explicit confirmation before locking in a scanned relay url', async () => {
+        webQrScannerSupportedMock.value = true;
+        webMobileLikeQrScannerHostMock.value = true;
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const scanButton = screen.findByTestId('onboarding-wizard-scan')!;
+
+        await act(async () => {
+            await scanButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const scanner = screen.findByType('QrCodeScannerView')!;
+
+        await act(async () => {
+            await scanner.props.onScan?.('https://relay.example.com');
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-confirm-relay-lock')).not.toBeNull();
+
+        const confirmButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await confirmButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
     });
 });

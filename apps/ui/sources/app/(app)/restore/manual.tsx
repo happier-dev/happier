@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, ScrollView, Pressable } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -8,28 +8,15 @@ import { Typography } from '@/constants/Typography';
 import { normalizeSecretKey } from '@/auth/recovery/secretKeyBackup';
 import { authGetToken } from '@/auth/flows/getToken';
 import { decodeBase64 } from '@/encryption/base64';
-import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { WizardModalShell } from '@/components/onboardingWizard/WizardModalShell';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
-    scrollView: {
-        flex: 1,
-        backgroundColor: theme.colors.surface,
-    },
-    container: {
-        flex: 1,
-        alignItems: 'center',
-        paddingHorizontal: 24,
-    },
-    contentWrapper: {
-        width: '100%',
-        maxWidth: Math.min(560, layout.maxWidth),
-        paddingVertical: 28,
-    },
     noticeCard: {
         borderWidth: 1,
         borderColor: theme.colors.divider,
@@ -130,52 +117,56 @@ export default function Restore() {
     };
 
     return (
-        <ScrollView style={styles.scrollView}>
-            <View style={styles.container}>
-                <View style={styles.contentWrapper}>
-                    <View style={styles.noticeCard}>
-                        <Text style={styles.noticeText}>{t('connect.restoreWithSecretKeyDescription')}</Text>
-                    </View>
-
-                    <View style={styles.textInputWrapper}>
-                        <TextInput
-                            testID="restore-manual-secret-input"
-                            style={styles.textInput}
-                            placeholder={t('connect.secretKeyPlaceholder')}
-                            placeholderTextColor={theme.colors.input.placeholder}
-                            value={restoreKey}
-                            onChangeText={setRestoreKey}
-                            secureTextEntry={!revealed}
-                            // Secret keys may be pasted in base64url (case-sensitive) or the grouped base32 backup format.
-                            // Auto-capitalization would corrupt base64url keys, so keep it disabled.
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            multiline={false}
-                        />
-
-                        <Pressable
-                            testID="restore-manual-secret-reveal"
-                            accessibilityRole="button"
-                            accessibilityLabel={revealed ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
-                            onPress={() => setRevealed((v) => !v)}
-                            style={styles.revealButton}
-                            hitSlop={10}
-                        >
-                            <Ionicons
-                                name={revealed ? 'eye-off-outline' : 'eye-outline'}
-                                size={20}
-                                color={theme.colors.textSecondary}
-                            />
-                        </Pressable>
-                    </View>
-
-                    <RoundButton
-                        testID="restore-manual-submit"
-                        title={t('connect.restoreAccount')}
-                        action={handleRestore}
-                    />
-                </View>
+        <WizardModalShell
+            testID="restore-manual-wizard"
+            stepIndex={1}
+            stepCount={3}
+            title={t('setupOnboarding.authRestoreTitle')}
+            subtitle={t('setupOnboarding.authRestoreSubtitle')}
+            onBack={() => safeRouterBack({ router, fallbackHref: '/restore' })}
+            showSkip={false}
+        >
+            <View style={styles.noticeCard}>
+                <Text style={styles.noticeText}>{t('connect.restoreWithSecretKeyDescription')}</Text>
             </View>
-        </ScrollView>
+
+            <View style={styles.textInputWrapper}>
+                <TextInput
+                    testID="restore-manual-secret-input"
+                    style={styles.textInput}
+                    placeholder={t('connect.secretKeyPlaceholder')}
+                    placeholderTextColor={theme.colors.input.placeholder}
+                    value={restoreKey}
+                    onChangeText={setRestoreKey}
+                    secureTextEntry={!revealed}
+                    // Secret keys may be pasted in base64url (case-sensitive) or the grouped base32 backup format.
+                    // Auto-capitalization would corrupt base64url keys, so keep it disabled.
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    multiline={false}
+                />
+
+                <Pressable
+                    testID="restore-manual-secret-reveal"
+                    accessibilityRole="button"
+                    accessibilityLabel={revealed ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
+                    onPress={() => setRevealed((v) => !v)}
+                    style={styles.revealButton}
+                    hitSlop={10}
+                >
+                    <Ionicons
+                        name={revealed ? 'eye-off-outline' : 'eye-outline'}
+                        size={20}
+                        color={theme.colors.textSecondary}
+                    />
+                </Pressable>
+            </View>
+
+            <RoundButton
+                testID="restore-manual-submit"
+                title={t('connect.restoreAccount')}
+                action={handleRestore}
+            />
+        </WizardModalShell>
     );
 }

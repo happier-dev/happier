@@ -70,6 +70,17 @@ type ServerProfileSummary = Readonly<{
   lastUsedAt?: number;
 }>;
 
+function assertNoUnknownFlags(args: string[], allowedFlags: ReadonlySet<string>): void {
+  for (const raw of args) {
+    if (!String(raw).startsWith('--')) continue;
+    if (raw === '--') break;
+    const flag = String(raw).split('=')[0] ?? '';
+    if (!allowedFlags.has(flag)) {
+      throw new Error(`Unknown flag: ${flag}`);
+    }
+  }
+}
+
 function safeComparableKey(serverUrlRaw: unknown): string {
   const serverUrl = String(serverUrlRaw ?? '');
   try {
@@ -156,12 +167,27 @@ async function cmdCurrent(args: string[]): Promise<void> {
 }
 
 async function cmdAdd(args: string[]): Promise<void> {
+  assertNoUnknownFlags(
+    args,
+    new Set([
+      '--help',
+      '--json',
+      '--name',
+      '--server-url',
+      '--local-server-url',
+      '--webapp-url',
+      '--use',
+      '--no-use',
+      '--start-daemon',
+      '--install-service',
+    ]),
+  );
+
   const json = wantsJson(args);
   const interactive = isInteractiveTerminal() && !json;
   let name = argvValue(args, '--name');
   let serverUrlRaw = argvValue(args, '--server-url');
   let localServerUrlRaw = argvValue(args, '--local-server-url');
-  let publicServerUrlRaw = argvValue(args, '--public-server-url');
   let webappUrlRaw = argvValue(args, '--webapp-url');
   const hasUse = args.includes('--use');
   const hasNoUse = args.includes('--no-use');
@@ -194,7 +220,7 @@ async function cmdAdd(args: string[]): Promise<void> {
       serverUrlRaw = (await promptInput('Server URL (https://...): ')).trim();
     }
 
-    if (!localServerUrlRaw && !publicServerUrlRaw) {
+    if (!localServerUrlRaw) {
       const normalized = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
       if (isLocalishServerUrl(normalized)) {
         const answer = await promptInput('Is this URL only reachable from this machine/LAN? [Y/n]: ');
@@ -238,20 +264,10 @@ async function cmdAdd(args: string[]): Promise<void> {
   }
 
   if (!name) throw new Error('Missing --name');
-  // Compatibility: legacy `--public-server-url` (canonical) + legacy `--server-url` (local).
-  if (publicServerUrlRaw) {
-    if (serverUrlRaw && !localServerUrlRaw) {
-      localServerUrlRaw = serverUrlRaw;
-      serverUrlRaw = publicServerUrlRaw;
-    } else if (!serverUrlRaw) {
-      serverUrlRaw = publicServerUrlRaw;
-    }
-  }
-
   let serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
   let localServerUrl = localServerUrlRaw ? normalizeUrlOrThrow(localServerUrlRaw, '--local-server-url') : '';
 
-  if (!publicServerUrlRaw && shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
+  if (shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
     const inferred = await tailscaleServeHttpsUrlForInternalServerUrl({
       internalServerUrl: serverUrl,
       timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
@@ -392,26 +408,26 @@ async function cmdTest(args: string[]): Promise<void> {
 }
 
 async function cmdSet(args: string[]): Promise<void> {
+  assertNoUnknownFlags(
+    args,
+    new Set([
+      '--help',
+      '--json',
+      '--server-url',
+      '--local-server-url',
+      '--webapp-url',
+    ]),
+  );
+
   const json = wantsJson(args);
   let serverUrlRaw = argvValue(args, '--server-url');
   let localServerUrlRaw = argvValue(args, '--local-server-url');
-  const publicServerUrlRaw = argvValue(args, '--public-server-url');
   let webappUrlRaw = argvValue(args, '--webapp-url');
-
-  // Compatibility: legacy `--public-server-url` (canonical) + legacy `--server-url` (local).
-  if (publicServerUrlRaw) {
-    if (serverUrlRaw && !localServerUrlRaw) {
-      localServerUrlRaw = serverUrlRaw;
-      serverUrlRaw = publicServerUrlRaw;
-    } else if (!serverUrlRaw) {
-      serverUrlRaw = publicServerUrlRaw;
-    }
-  }
 
   let serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
   let localServerUrl = localServerUrlRaw ? normalizeUrlOrThrow(localServerUrlRaw, '--local-server-url') : '';
 
-  if (!publicServerUrlRaw && shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
+  if (shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
     const inferred = await tailscaleServeHttpsUrlForInternalServerUrl({
       internalServerUrl: serverUrl,
       timeoutMs: resolveTailscaleServeStatusTimeoutMs(),

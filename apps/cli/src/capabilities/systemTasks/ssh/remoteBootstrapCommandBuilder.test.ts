@@ -27,8 +27,12 @@ describe('buildRemoteBootstrapCommand', () => {
       label: 'server.configure',
       serverUrl: 'https://relay.example.test',
       webappUrl: 'https://app.example.test',
-      publicServerUrl: 'https://public.example.test',
-    })).toContain("server set --server-url 'https://relay.example.test' --webapp-url 'https://app.example.test' --public-server-url 'https://public.example.test' --json");
+    })).toContain("server set --server-url 'https://relay.example.test' --webapp-url 'https://app.example.test' --json");
+    expect(buildRemoteBootstrapCommand({
+      label: 'server.configure',
+      serverUrl: 'https://relay.example.test',
+      webappUrl: 'https://app.example.test',
+    })).not.toContain('--public-server-url');
   });
 
   it('pins daemon service lifecycle commands to the selected relay urls', () => {
@@ -36,13 +40,11 @@ describe('buildRemoteBootstrapCommand', () => {
       label: 'daemon.service.install',
       serverUrl: 'https://relay.example.test',
       webappUrl: 'https://app.example.test',
-      publicServerUrl: 'https://public.example.test',
       daemonServiceMode: 'user',
     });
 
     expect(command).toContain("HAPPIER_DAEMON_SERVICE_SERVER_URL='https://relay.example.test'");
     expect(command).toContain("HAPPIER_DAEMON_SERVICE_WEBAPP_URL='https://app.example.test'");
-    expect(command).toContain("HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL='https://public.example.test'");
     expect(command).toContain('daemon service install --mode=user --json');
   });
 

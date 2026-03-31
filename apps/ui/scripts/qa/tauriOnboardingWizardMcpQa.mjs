@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -37,6 +37,42 @@ function readString(value, fallback = '') {
 function readNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+export function resolveCandidateDriverSessionPorts({ preferredPort, env = process.env } = {}) {
+  const ports = [];
+  const seen = new Set();
+
+  function push(value) {
+    const port = Number(value);
+    if (!Number.isFinite(port) || port <= 0) return;
+    const normalized = Math.floor(port);
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    ports.push(normalized);
+  }
+
+  const preferred = readNumber(
+    preferredPort
+      ?? env.HAPPIER_TAURI_MCP_APP_IDENTIFIER
+      ?? env.HAPPIER_TAURI_MCP_PORT
+      ?? env.HAPPIER_TAURI_APP_PORT,
+    0,
+  );
+  if (preferred) {
+    push(preferred);
+    push(preferred + 1);
+    push(preferred + 2);
+    push(preferred - 1);
+  }
+
+  // Include known defaults used in our repo scripts and the upstream CLI default.
+  push(9225);
+  push(9226);
+  push(9227);
+  push(9223);
+
+  return ports;
 }
 
 function buildStepPlan() {
@@ -77,12 +113,8 @@ function buildStepPlan() {
       selectors: [
         '[data-testid="onboarding-wizard-relay-diagram"]',
         '[data-testid="onboarding-wizard-relay:cloud"]',
-        '[data-testid="onboarding-wizard-relay:thisMac"]',
+        '[data-testid="onboarding-wizard-relay:thisComputer"]',
         '[data-testid="onboarding-wizard-relay:customUrl"]',
-        '[data-testid="onboarding-wizard-relay-url-input"]',
-        '[data-testid="onboarding-wizard-back"]',
-        '[data-testid="onboarding-wizard-skip"]',
-        '[data-testid="onboarding-wizard-primary"]',
       ],
       screenshot: '03-relay.png',
       domStructure: '03-relay.structure.yml',
@@ -148,13 +180,16 @@ function buildStepPlan() {
 export function buildTauriOnboardingWizardQaPlan({ env = process.env } = {}) {
   const driverSessionPort = readNumber(
     env.HAPPIER_TAURI_MCP_APP_IDENTIFIER ?? env.HAPPIER_TAURI_MCP_PORT ?? env.HAPPIER_TAURI_APP_PORT,
-    9223,
+    9225,
   );
-  const trackerPath = readString(env.HAPPIER_TAURI_QA_TRACKER_PATH, defaultTrackerPath);
-  const artifactRoot = readString(
+  const trackerPathRaw = readString(env.HAPPIER_TAURI_QA_TRACKER_PATH, defaultTrackerPath);
+  const artifactRootRaw = readString(
     env.HAPPIER_TAURI_QA_OUTDIR,
     resolveWizardQaArtifactRoot(repoRoot, { date: new Date(), runId: nowStamp() }),
   );
+
+  const trackerPath = isAbsolute(trackerPathRaw) ? trackerPathRaw : join(repoRoot, trackerPathRaw);
+  const artifactRoot = isAbsolute(artifactRootRaw) ? artifactRootRaw : join(repoRoot, artifactRootRaw);
   const stepPlan = buildStepPlan();
 
   return {
@@ -355,13 +390,46 @@ async function isSelectorPresent(selector, { appIdentifier, env, timeoutMs = 120
 }
 
 async function clickSelector(selector, { appIdentifier, env } = {}) {
+  const rawSelector = String(selector);
+  const normalizedSelector = rawSelector.replace(
+    /^\[data-testid="([^"]+)"\]$/u,
+    (_match, testId) => `[data-testid='${testId}']`,
+  );
+  await runTauriMcpCli(
+    [
+      'webview-wait-for',
+      '--type',
+      'selector',
+      '--strategy',
+      'css',
+      '--value',
+      normalizedSelector,
+      '--timeout',
+      '8000',
+      '--app-identifier',
+      String(appIdentifier),
+    ],
+    { cwd: packageRoot, env },
+  );
+  await runTauriMcpCli(
+    [
+      'webview-interact',
+      '--action',
+      'focus',
+      '--selector',
+      normalizedSelector,
+      '--app-identifier',
+      String(appIdentifier),
+    ],
+    { cwd: packageRoot, env },
+  ).catch(() => {});
   await runTauriMcpCli(
     [
       'webview-interact',
       '--action',
       'click',
       '--selector',
-      String(selector),
+      normalizedSelector,
       '--app-identifier',
       String(appIdentifier),
     ],
@@ -420,6 +488,11 @@ async function appendTrackerEvidence({ trackerPath, artifactRoot, stepArtifacts,
   await appendTextArtifact(trackerPath, `${lines.join('\n')}\n`);
 }
 
+async function appendJsonLineArtifact(filePath, data) {
+  const payload = typeof data === 'string' ? data : JSON.stringify(data);
+  await appendTextArtifact(filePath, `${payload}\n`);
+}
+
 async function main(argv = process.argv.slice(2)) {
   const plan = buildTauriOnboardingWizardQaPlan();
   const json = argv.includes('--json');
@@ -452,35 +525,65 @@ async function main(argv = process.argv.slice(2)) {
 
   await ensureDir(plan.artifactRoot);
 
+  const driverSessionAttemptsFile = join(plan.artifactRoot, '00-driver-session-attempts.jsonl');
+  const candidatePorts = resolveCandidateDriverSessionPorts({ preferredPort: plan.driverSessionPort, env: process.env });
+
+  let usedDriverSessionPort = null;
+  let driverSessionResponse = null;
+  let driverSessionStatusResponse = null;
+
   // Ensure we always start from a fresh driver session. Stale sessions can keep
   // the MCP bridge "connected" while the underlying plugin/webview connection is
   // dead, leading to `Not connected to plugin and reconnection failed`.
-  await runTauriMcpCli(
-    [
-      'driver-session',
-      'stop',
-      '--port',
-      String(plan.driverSessionPort),
-    ],
-    { cwd: plan.packageRoot, env: process.env },
-  ).catch(() => {});
+  for (const candidatePort of candidatePorts) {
+    // eslint-disable-next-line no-await-in-loop
+    await runTauriMcpCli(
+      ['driver-session', 'stop', '--port', String(candidatePort)],
+      { cwd: plan.packageRoot, env: process.env },
+    ).catch(() => {});
 
-  const driverSessionResponse = await runTauriMcpCliJson(plan.driverSession.args, {
-    cwd: plan.packageRoot,
-    env: {
-      ...process.env,
-      HAPPIER_TAURI_MCP_APP_IDENTIFIER: String(plan.driverSessionPort),
-    },
-  });
-  const driverSessionCommand = ['yarn', ...plan.driverSession.baseArgs, ...plan.driverSession.args].join(' ');
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      driverSessionResponse = await runTauriMcpCliJson(['driver-session', 'start', '--port', String(candidatePort)], {
+        cwd: plan.packageRoot,
+        env: process.env,
+      });
+      // eslint-disable-next-line no-await-in-loop
+      driverSessionStatusResponse = await runTauriMcpCliJson(
+        ['driver-session', 'status', '--port', String(candidatePort)],
+        { cwd: plan.packageRoot, env: process.env },
+      );
+      const parsed = tryParseDriverSessionStatus(driverSessionStatusResponse);
+      const resolved = resolveAppIdentifierFromDriverStatus(parsed);
+      if (resolved) {
+        usedDriverSessionPort = candidatePort;
+        // eslint-disable-next-line no-await-in-loop
+        await appendJsonLineArtifact(driverSessionAttemptsFile, { ok: true, port: candidatePort, appIdentifier: resolved });
+        break;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await appendJsonLineArtifact(driverSessionAttemptsFile, { ok: false, port: candidatePort, reason: 'no-app-identifier' });
+    } catch (error) {
+      // eslint-disable-next-line no-await-in-loop
+      await appendJsonLineArtifact(driverSessionAttemptsFile, {
+        ok: false,
+        port: candidatePort,
+        reason: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+  }
+
+  if (!usedDriverSessionPort || !driverSessionResponse || !driverSessionStatusResponse) {
+    throw new Error(`Unable to resolve a connected Tauri app identifier from driver-session status. Tried ports: ${candidatePorts.join(', ')}`);
+  }
+
+  const driverSessionCommand = ['yarn', ...plan.driverSession.baseArgs, 'driver-session', 'start', '--port', String(usedDriverSessionPort)].join(' ');
   const driverSessionResponseFile = join(plan.artifactRoot, '00-driver-session.json');
   await writeTextArtifact(driverSessionResponseFile, `${JSON.stringify(driverSessionResponse, null, 2)}\n`);
 
-  const driverSessionStatusResponse = await runTauriMcpCliJson(
-    ['driver-session', 'status', '--port', String(plan.driverSessionPort)],
-    { cwd: plan.packageRoot, env: process.env },
-  );
-  const driverSessionStatusCommand = ['yarn', ...plan.driverSession.baseArgs, 'driver-session', 'status', '--port', String(plan.driverSessionPort)].join(' ');
+  const driverSessionStatusCommand = ['yarn', ...plan.driverSession.baseArgs, 'driver-session', 'status', '--port', String(usedDriverSessionPort)].join(' ');
   const driverSessionStatusResponseFile = join(plan.artifactRoot, '00-driver-session-status.json');
   await writeTextArtifact(driverSessionStatusResponseFile, `${JSON.stringify(driverSessionStatusResponse, null, 2)}\n`);
 
@@ -575,9 +678,13 @@ async function main(argv = process.argv.slice(2)) {
     await appendWarning(plan.artifactRoot, `- primary click (post-back) failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // If relay is shown again, proceed once more.
+  // If relay is shown again, prefer selecting the cloud relay explicitly before continuing so
+  // the auth surface isn't blocked by a stale/unsupported local relay URL.
   if (await isSelectorPresent('[data-testid="onboarding-wizard-relay-diagram"]', { appIdentifier: resolvedAppIdentifier, env: process.env, timeoutMs: 2500 })) {
     try {
+      if (await isSelectorPresent('[data-testid="onboarding-wizard-relay:cloud"]', { appIdentifier: resolvedAppIdentifier, env: process.env, timeoutMs: 1500 })) {
+        await clickSelector('[data-testid="onboarding-wizard-relay:cloud"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
+      }
       await clickSelector('[data-testid="onboarding-wizard-primary"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
     } catch (error) {
       await appendWarning(plan.artifactRoot, `- relay primary click (resume) failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -588,11 +695,38 @@ async function main(argv = process.argv.slice(2)) {
   if (!authArtifacts) {
     await appendWarning(plan.artifactRoot, '- auth surface not detected; unable to validate restore / lost access drill-down');
   } else {
+    // 6) Auth -> Lost access (preferred). This is the canonical entry point for recovery.
+    // Some servers may not expose provider reset, so treat this as best-effort.
+    if (await isSelectorPresent('[data-testid="onboarding-wizard-lost-access"]', { appIdentifier: resolvedAppIdentifier, env: process.env, timeoutMs: 2500 })) {
+      try {
+        await clickSelector('[data-testid="onboarding-wizard-lost-access"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
+      } catch (error) {
+        await appendWarning(plan.artifactRoot, `- lost access click (auth) failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      await captureBestEffort('lost_access');
+      // Navigate back to auth for the next drill-down.
+      try {
+        if (await isSelectorPresent('[data-testid="common.back"]', { appIdentifier: resolvedAppIdentifier, env: process.env, timeoutMs: 1500 })) {
+          await clickSelector('[data-testid="common.back"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
+        } else if (await isSelectorPresent('[data-testid="common.cancel"]', { appIdentifier: resolvedAppIdentifier, env: process.env, timeoutMs: 1500 })) {
+          await clickSelector('[data-testid="common.cancel"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
+        }
+      } catch (error) {
+        await appendWarning(plan.artifactRoot, `- navigation back from lost access failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      await appendWarning(plan.artifactRoot, '- lost access button not present on auth surface; skipping lost access drill-down');
+    }
+
     // 6) Auth -> Restore
-    try {
-      await clickSelector('[data-testid="welcome-restore"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
-    } catch (error) {
-      await appendWarning(plan.artifactRoot, `- restore click failed: ${error instanceof Error ? error.message : String(error)}`);
+    if (await isSelectorPresent('[data-testid="welcome-restore"]', { appIdentifier: resolvedAppIdentifier, env: process.env, timeoutMs: 2500 })) {
+      try {
+        await clickSelector('[data-testid="welcome-restore"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
+      } catch (error) {
+        await appendWarning(plan.artifactRoot, `- restore click failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      await appendWarning(plan.artifactRoot, '- restore button not present on auth surface; skipping restore drill-down');
     }
 
     const restoreArtifacts = await captureBestEffort('restore');
@@ -600,10 +734,14 @@ async function main(argv = process.argv.slice(2)) {
       await appendWarning(plan.artifactRoot, '- restore surface not detected after clicking restore');
     } else {
       // 7) Restore -> Lost access
-      try {
-        await clickSelector('[data-testid="restore-open-lost-access"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
-      } catch (error) {
-        await appendWarning(plan.artifactRoot, `- lost access click failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (await isSelectorPresent('[data-testid="restore-open-lost-access"]', { appIdentifier: resolvedAppIdentifier, env: process.env, timeoutMs: 2500 })) {
+        try {
+          await clickSelector('[data-testid="restore-open-lost-access"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
+        } catch (error) {
+          await appendWarning(plan.artifactRoot, `- lost access click failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else {
+        await appendWarning(plan.artifactRoot, '- lost access button not present on restore surface; skipping lost access drill-down');
       }
       await captureBestEffort('lost_access');
     }

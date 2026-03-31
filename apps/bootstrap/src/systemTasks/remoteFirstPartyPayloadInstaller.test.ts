@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { installRemoteFirstPartyComponent } from './remoteFirstPartyPayloadInstaller.js';
 
 describe('installRemoteFirstPartyComponent', () => {
-    it('uploads a verified payload and installs it with happier self __install-payload instead of curl bash', async () => {
+    it('uploads a verified payload and promotes it by updating the current symlink (no curl bash)', async () => {
         const remoteCommands: string[] = [];
         const copiedPaths: Array<Readonly<{ localPath: string; remotePath: string }>> = [];
 
@@ -45,12 +45,12 @@ describe('installRemoteFirstPartyComponent', () => {
         expect(copiedPaths).toEqual([
             {
                 localPath: '/tmp/local/happier-linux-x64',
-                remotePath: '$HOME/.happier/bootstrap-staging/happier-cli-1.2.3-1700000000000',
+                remotePath: '.happier/bootstrap-staging/happier-cli-1.2.3-1700000000000',
             },
         ]);
         expect(remoteCommands.join('\n')).not.toContain('curl -fsSL https://happier.dev/install');
-        expect(remoteCommands.at(-1)).toContain('self __install-payload');
-        expect(remoteCommands.at(-1)).toMatch(/--component\b[^;]*happier-cli/);
+        expect(remoteCommands.at(-1)).toContain('ln -sfn');
+        expect(remoteCommands.at(-1)).toContain('/versions/');
         expect(result).toEqual({
             binaryPath: '$HOME/.happier/cli-preview/current/happier',
             versionId: '1.2.3',

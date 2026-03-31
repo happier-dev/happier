@@ -2,19 +2,14 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import {
-  createRemoteSshBootstrapMachineTaskKind,
-  extractFirstScannedSshKnownHostLine,
-  installRemoteFirstPartyComponent,
-  normalizeRemoteReleaseArch,
-  normalizeRemoteReleaseOs,
-  resolveSshKnownHostTrust,
-  SystemTaskExecutionError,
-  type RemoteFirstPartyCommandResult,
-  type RemoteHostTrustResolution,
-  type SystemTaskSshConnectionConfig,
+import * as relayHost from '@happier-dev/cli-common/relayHost';
+import * as systemTasks from '@happier-dev/cli-common/systemTasks';
+import type {
+  RemoteFirstPartyCommandResult,
+  RemoteHostTrustResolution,
+  SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
-import { createRelayHostEngine } from '@happier-dev/cli-common/relayHost';
+import { redactBugReportSensitiveText, sanitizeBugReportArtifactPath } from '@happier-dev/protocol';
 
 import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
 import { configuration } from '@/configuration';
@@ -30,6 +25,17 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 type RemoteCommandResult = Readonly<{ status: number; stdout: string; stderr: string }>;
+
+const ABSOLUTE_PATH_TOKEN_PATTERN = /(^|[\s"'`=:(])((?:~\/|\/|[A-Za-z]:\\)[^\s"'`]+)/gu;
+
+function redactSshStderrForErrorMessage(raw: string): string {
+  const base = redactBugReportSensitiveText(String(raw ?? ''));
+  return base.replace(ABSOLUTE_PATH_TOKEN_PATTERN, (match, prefix: string, token: string) => {
+    const sanitized = sanitizeBugReportArtifactPath(token);
+    if (!sanitized) return match;
+    return `${prefix}${sanitized}`;
+  });
+}
 
 function resolveAppKnownHostsPath(): string {
   return join(configuration.happyHomeDir, 'ssh', 'known_hosts');
@@ -84,6 +90,35 @@ function parseSshTarget(target: string): Readonly<{ host: string; port?: number 
   return { host: withoutUser };
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = String(hostname ?? '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized === 'localhost') return true;
+  if (normalized === '127.0.0.1') return true;
+  if (normalized === '0.0.0.0') return true;
+  if (normalized === '::1') return true;
+  return false;
+}
+
+function isLoopbackUrl(url: string | undefined): boolean {
+  const normalized = String(url ?? '').trim();
+  if (!normalized) return false;
+  try {
+    const parsed = new URL(normalized);
+    return isLoopbackHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function formatKnownHostsHostToken(params: Readonly<{ host: string; port?: number }>): string {
+  const host = String(params.host ?? '').trim();
+  const port = params.port;
+  if (!host) return host;
+  if (!port || !Number.isFinite(port) || port <= 0 || port === 22) return host;
+  return `[${host}]:${Math.floor(port)}`;
+}
+
 function resolveSshEndpoint(params: Readonly<{
   ssh: SystemTaskSshConnectionConfig;
 }>): Readonly<{ host: string; port?: number }> {
@@ -102,7 +137,8 @@ function resolveSshEndpoint(params: Readonly<{
   }
   if ((result.status ?? 1) !== 0) {
     const stderr = String(result.stderr ?? '').trim();
-    throw new Error(stderr ? `SSH config resolution failed: ${stderr}` : 'SSH config resolution failed');
+    const redactedStderr = redactSshStderrForErrorMessage(stderr).trim();
+    throw new Error(redactedStderr ? `SSH config resolution failed: ${redactedStderr}` : 'SSH config resolution failed');
   }
 
   const values = new Map<string, string>();
@@ -142,7 +178,14 @@ function runCommandSync(params: Readonly<{
   }
   if ((result.status ?? 1) !== 0) {
     const stderr = String(result.stderr ?? '').trim();
-    throw new Error(stderr ? `${params.errorPrefix}: ${stderr}` : `${params.errorPrefix}: ${params.redactedLabel ?? params.command}`);
+    const stdout = String(result.stdout ?? '').trim();
+    const detail = stderr || stdout;
+    const redactedDetail = detail ? redactSshStderrForErrorMessage(detail).trim() : '';
+    throw new Error(
+      redactedDetail
+        ? `${params.errorPrefix}: ${redactedDetail}`
+        : `${params.errorPrefix}: ${params.redactedLabel ?? params.command}`,
+    );
   }
   return String(result.stdout ?? '');
 }
@@ -222,19 +265,45 @@ function runSshJson<T extends JsonRecord>(params: Readonly<{
   knownHostsMode?: 'app' | 'system';
   remoteCommand: readonly string[];
 }>): T {
-  const parsed = parseJsonLinesBestEffort<T>(
-    runSshCommand({
-      ssh: params.ssh,
-      auth: params.auth,
-      knownHostsPath: params.knownHostsPath,
-      knownHostsMode: params.knownHostsMode,
-      remoteCommand: params.remoteCommand,
-    }),
-  );
-  if (!parsed) {
+  if ((params.knownHostsMode ?? 'app') === 'app' && params.knownHostsPath) {
+    mkdirSync(dirname(params.knownHostsPath), { recursive: true });
+  }
+  const invocation = buildSshCommand({
+    sshBin: 'ssh',
+    target: params.ssh.target,
+    port: params.ssh.port,
+    sshConfigFile: params.ssh.sshConfigFile,
+    remoteCommand: params.remoteCommand,
+    knownHostsPath: params.knownHostsPath,
+    knownHostsMode: params.knownHostsMode,
+    auth: params.auth,
+    connectTimeoutSec: 10,
+    serverAliveIntervalSec: 15,
+    serverAliveCountMax: 2,
+  });
+  const result = spawnSync(invocation.command, [...invocation.args], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  const stdout = String(result.stdout ?? '');
+  const parsed = parseJsonLinesBestEffort<T>(stdout);
+  if (parsed) {
+    return parsed;
+  }
+  if ((result.status ?? 1) === 0) {
     throw new Error('Remote command did not return valid JSON');
   }
-  return parsed;
+  const stderr = String(result.stderr ?? '').trim();
+  const detail = stderr || stdout.trim();
+  const redactedDetail = detail ? redactSshStderrForErrorMessage(detail).trim() : '';
+  throw new Error(
+    redactedDetail
+      ? `SSH command failed: ${redactedDetail}`
+      : `SSH command failed: ${invocation.redactedLabel}`,
+  );
 }
 
 function runSshPosixJson<T extends JsonRecord>(params: Readonly<{
@@ -354,7 +423,7 @@ async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
     ? { ...params.ssh, knownHostsPath: params.knownHostsPath }
     : params.ssh;
 
-  const engine = createRelayHostEngine({
+  const engine = relayHost.createRelayHostEngine({
     resolveRemoteReleaseTarget: async ({ ssh, knownHostsMode }) => {
       const transportKnownHostsPath = knownHostsMode === 'app' ? params.knownHostsPath : undefined;
       const preflight = runSshPosixJson<Readonly<{ platform?: unknown; arch?: unknown }>>({
@@ -369,8 +438,8 @@ async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
         ].join(' '),
       });
       return {
-        os: normalizeRemoteReleaseOs(preflight.platform),
-        arch: normalizeRemoteReleaseArch(preflight.arch),
+        os: systemTasks.normalizeRemoteReleaseOs(preflight.platform),
+        arch: systemTasks.normalizeRemoteReleaseArch(preflight.arch),
       };
     },
     runRemoteText: async ({ ssh, remoteCommand, knownHostsMode }) => {
@@ -396,7 +465,7 @@ async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
     },
     installRemoteComponent: async ({ componentId, channel, ssh, knownHostsMode, installerBinaryPath, remoteHomeDir }) => {
       const transportKnownHostsPath = knownHostsMode === 'app' ? params.knownHostsPath : undefined;
-      const installed = await installRemoteFirstPartyComponent({
+      const installed = await systemTasks.installRemoteFirstPartyComponent({
         componentId,
         channel,
         ssh,
@@ -417,8 +486,8 @@ async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
             ].join(' '),
           });
           return {
-            os: normalizeRemoteReleaseOs(preflight.platform),
-            arch: normalizeRemoteReleaseArch(preflight.arch),
+            os: systemTasks.normalizeRemoteReleaseOs(preflight.platform),
+            arch: systemTasks.normalizeRemoteReleaseArch(preflight.arch),
           };
         },
         runRemoteText: async ({ remoteCommand }) => runSshPosixText({
@@ -464,7 +533,7 @@ async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
 }
 
 export function createLiveRemoteSshBootstrapTaskKind() {
-  const baseKind = createRemoteSshBootstrapMachineTaskKind({
+  const baseKind = systemTasks.createRemoteSshBootstrapMachineTaskKind({
     resolveHostTrust: async ({ ssh, knownHostsMode }): Promise<RemoteHostTrustResolution> => {
       if (knownHostsMode === 'system') {
         return { status: 'trusted' };
@@ -485,15 +554,20 @@ export function createLiveRemoteSshBootstrapTaskKind() {
         ],
         errorPrefix: 'ssh-keyscan failed',
       });
-      const scanned = extractFirstScannedSshKnownHostLine(keyscanOutput);
-      const trust = resolveSshKnownHostTrust({
+      const scanned = systemTasks.extractFirstScannedSshKnownHostLine(keyscanOutput);
+      const normalizedScannedHostKeyLine = (() => {
+        const normalizedHost = formatKnownHostsHostToken(parsedTarget);
+        if (!normalizedHost) return scanned.line;
+        return `${normalizedHost} ${scanned.keyType} ${scanned.key}`;
+      })();
+      const trust = systemTasks.resolveSshKnownHostTrust({
         knownHostsText: existingKnownHostsText,
-        scannedHostKeyLine: scanned.line,
+        scannedHostKeyLine: normalizedScannedHostKeyLine,
         trustedHostKey: ssh.trustedHostKey,
       });
 
       if (trust.status === 'rejected') {
-        throw new SystemTaskExecutionError(
+        throw new systemTasks.SystemTaskExecutionError(
           trust.reason === 'invalidTrustedHostKey'
             ? 'invalid_trusted_host_key'
             : 'trusted_host_key_mismatch',
@@ -529,7 +603,7 @@ export function createLiveRemoteSshBootstrapTaskKind() {
     },
     installRemoteCli: async ({ parsed, auth, knownHostsMode }) => {
       const knownHostsPath = resolveKnownHostsPath(parsed.ssh, knownHostsMode);
-      await installRemoteFirstPartyComponent({
+      await systemTasks.installRemoteFirstPartyComponent({
         componentId: 'happier-cli',
         channel: parsed.channel,
         ssh: parsed.ssh,
@@ -548,8 +622,8 @@ export function createLiveRemoteSshBootstrapTaskKind() {
             ].join(' '),
           });
           return {
-            os: normalizeRemoteReleaseOs(preflight.platform),
-            arch: normalizeRemoteReleaseArch(preflight.arch),
+            os: systemTasks.normalizeRemoteReleaseOs(preflight.platform),
+            arch: systemTasks.normalizeRemoteReleaseArch(preflight.arch),
           };
         },
         runRemoteText: async ({ remoteCommand }) => runSshPosixText({
@@ -606,8 +680,7 @@ export function createLiveRemoteSshBootstrapTaskKind() {
           label,
           channel: parsed.channel,
           serverUrl: parsed.relay.relayUrl,
-          webappUrl: parsed.relay.webappUrl,
-          publicServerUrl: parsed.relay.publicRelayUrl,
+          webappUrl: isLoopbackUrl(parsed.relay.webappUrl) ? undefined : parsed.relay.webappUrl,
           daemonServiceMode: parsed.serviceMode,
           data: label === 'auth.wait'
             ? { publicKey: data?.publicKey }

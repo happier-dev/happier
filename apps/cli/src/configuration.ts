@@ -255,6 +255,7 @@ class Configuration {
       envWebappUrl: envWebappUrl || null,
       envActiveServerId,
       persisted,
+      serversDir: this.serversDir,
     });
 
     this.serverUrl = resolved.serverUrl
@@ -867,6 +868,7 @@ function resolveServerSelection(params: Readonly<{
   envWebappUrl: string | null;
   envActiveServerId: string | null;
   persisted: PersistedServerSettings | null;
+  serversDir: string;
 }>): Readonly<{ activeServerId: string; serverUrl: string; apiServerUrl: string; webappUrl: string }> {
   const DEFAULT_SERVER_URL = 'https://api.happier.dev';
   const DEFAULT_WEBAPP_URL = 'https://app.happier.dev';
@@ -897,11 +899,45 @@ function resolveServerSelection(params: Readonly<{
 
     const persistedMatch = params.persisted
       ? (() => {
+          const hasAccessKeyForServerId = (id: string): boolean => {
+            try {
+              return existsSync(join(params.serversDir, id, 'access.key'));
+            } catch {
+              return false;
+            }
+          };
+
+          const matchesUrl = (server: Readonly<{ serverUrl: string; localServerUrl?: string | null }>, url: string): boolean => {
+            if (normalizeServerUrl(server.serverUrl) === url) return true;
+            const local = normalizeServerUrl(server.localServerUrl ?? '');
+            return Boolean(local && local === url);
+          };
+
           const persistedActive = params.persisted.servers[params.persisted.activeServerId] ?? null;
-          if (persistedActive && normalizeServerUrl(persistedActive.serverUrl) === envCanonicalServerUrl) {
-            return persistedActive;
+          const findMatch = (url: string): Readonly<{ id: string; serverUrl: string; localServerUrl?: string | null; webappUrl: string }> | null =>
+            Object.values(params.persisted!.servers).find((s) => matchesUrl(s, url)) ?? null;
+
+          const canonicalMatch =
+            (persistedActive && matchesUrl(persistedActive, envCanonicalServerUrl) ? persistedActive : null)
+            ?? findMatch(envCanonicalServerUrl);
+
+          if (envApiServerUrl && envApiServerUrl !== envCanonicalServerUrl) {
+            const apiMatch =
+              (persistedActive && matchesUrl(persistedActive, envApiServerUrl) ? persistedActive : null)
+              ?? findMatch(envApiServerUrl);
+
+            if (canonicalMatch && apiMatch && canonicalMatch.id !== apiMatch.id) {
+              const canonicalHasAccessKey = hasAccessKeyForServerId(canonicalMatch.id);
+              const apiHasAccessKey = hasAccessKeyForServerId(apiMatch.id);
+              if (apiHasAccessKey && !canonicalHasAccessKey) return apiMatch;
+              if (canonicalHasAccessKey && !apiHasAccessKey) return canonicalMatch;
+              return canonicalMatch;
+            }
+
+            return canonicalMatch ?? apiMatch;
           }
-          return Object.values(params.persisted.servers).find((s) => normalizeServerUrl(s.serverUrl) === envCanonicalServerUrl) ?? null;
+
+          return canonicalMatch;
         })()
       : null;
 
@@ -919,7 +955,10 @@ function resolveServerSelection(params: Readonly<{
         }
       }
     }
-    const activeServerId = resolveActiveServerId(persistedMatch?.id ?? deriveServerIdFromUrl(envCanonicalServerUrl));
+    const activeServerId = sanitizeServerIdForFilesystem(
+      persistedMatch?.id ?? (params.envActiveServerId ?? deriveServerIdFromUrl(envCanonicalServerUrl)),
+      'cloud',
+    );
     return { activeServerId, serverUrl: envCanonicalServerUrl, apiServerUrl: envApiServerUrl, webappUrl };
   }
 

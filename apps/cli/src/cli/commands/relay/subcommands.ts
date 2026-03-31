@@ -169,6 +169,9 @@ async function cmdSet(args: string[]): Promise<void> {
 
 export async function runRelaySubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
+    case 'install':
+      await runRelayHostSubcommand(['install', ...args.slice(1)]);
+      return true;
     case 'inspect-target':
       await cmdInspectTarget(args.slice(1));
       return true;

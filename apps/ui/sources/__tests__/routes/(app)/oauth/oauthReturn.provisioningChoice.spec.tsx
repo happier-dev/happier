@@ -33,6 +33,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       screen = await renderScreen(<Screen />);
     });
     await flushOAuthEffects();
+    expect(screen!.findByTestId('oauth-return-wizard')).toBeTruthy();
     return screen!;
   }
 

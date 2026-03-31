@@ -1,11 +1,11 @@
 export const TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND = 'secureAccess.tailscale.v1' as const;
 
 export const TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_STEP_IDS = [
-  'detect',
-  'install',
-  'login',
-  'serve enable',
-  'verify url',
+  'tailscale.detect',
+  'tailscale.install',
+  'tailscale.login',
+  'tailscale.serveEnable',
+  'tailscale.verifyUrl',
 ] as const;
 
 export type TailscaleSecureAccessSystemTaskStepId = (typeof TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_STEP_IDS)[number];
@@ -54,4 +54,3 @@ export function createTailscaleSecureAccessTaskSpec(
     },
   };
 }
-

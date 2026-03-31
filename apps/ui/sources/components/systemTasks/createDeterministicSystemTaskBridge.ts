@@ -31,8 +31,25 @@ type TaskRuntime = {
     completed: boolean;
 };
 
+type DevScenarioOverrides = Readonly<Record<string, unknown>>;
+
+function readDevSystemTaskScenarioOverride(taskKind: string): string | null {
+    const record: DevScenarioOverrides | null =
+        typeof globalThis !== 'undefined'
+            && (globalThis as any).__HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__
+            && typeof (globalThis as any).__HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__ === 'object'
+            ? ((globalThis as any).__HAPPIER_DEV_SYSTEM_TASK_SCENARIOS__ as DevScenarioOverrides)
+            : null;
+    if (!record) {
+        return null;
+    }
+    const override = record[taskKind];
+    return typeof override === 'string' && override.trim().length > 0 ? override.trim() : null;
+}
+
 function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly DeterministicScenarioStep[] {
   const taskKind = spec.kind;
+    const scenarioOverride = readDevSystemTaskScenarioOverride(taskKind);
     if (taskKind === 'daemon.service.status.v1') {
         return [
             {
@@ -47,6 +64,102 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                         daemonRunning: true,
                         needsAuth: false,
                         machineId: 'machine-local-1',
+                    },
+                },
+            },
+        ];
+    }
+    if (taskKind === 'secureAccess.tailscale.v1') {
+        const approvalUrl = 'https://login.tailscale.com/f/serve?node=node-dev';
+        if (scenarioOverride === 'approval') {
+            return [
+                {
+                    delayMs: 30,
+                    type: 'event',
+                    payload: {
+                        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                        taskId,
+                        tsMs: 30,
+                        type: 'step',
+                        stepId: 'tailscale.detect',
+                        message: t('common.loading'),
+                    },
+                },
+                {
+                    delayMs: 120,
+                    type: 'event',
+                    payload: {
+                        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                        taskId,
+                        tsMs: 120,
+                        type: 'prompt',
+                        stepId: 'tailscale.serveEnable',
+                        message: t('common.continue'),
+                        data: {
+                            kind: 'tailscaleServeApproval',
+                            url: approvalUrl,
+                        },
+                    },
+                },
+                {
+                    delayMs: 180,
+                    type: 'result',
+                    payload: {
+                        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                        taskId,
+                        ok: true,
+                        data: {
+                            tailscaleInstalled: true,
+                            tailscaleLoggedIn: true,
+                            serveEnabled: false,
+                            shareableHttpsUrl: null,
+                            requiresApproval: {
+                                url: approvalUrl,
+                            },
+                        },
+                    },
+                },
+            ];
+        }
+
+        return [
+            {
+                delayMs: 30,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 30,
+                    type: 'step',
+                    stepId: 'tailscale.detect',
+                    message: t('common.loading'),
+                },
+            },
+            {
+                delayMs: 90,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 90,
+                    type: 'progress',
+                    stepId: 'tailscale.serveEnable',
+                    message: t('settings.localTailscale.statusWorking'),
+                },
+            },
+            {
+                delayMs: 150,
+                type: 'result',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: true,
+                    data: {
+                        tailscaleInstalled: true,
+                        tailscaleLoggedIn: true,
+                        serveEnabled: true,
+                        shareableHttpsUrl: 'https://relay.tailnet.ts.net',
+                        requiresApproval: null,
                     },
                 },
             },
@@ -95,7 +208,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
             },
         ];
     }
-    if (taskKind === 'relay.connectBackgroundService.v1') {
+    if (taskKind === 'setup.repairThisComputer.v1') {
         return [
             {
                 delayMs: 30,
@@ -105,7 +218,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                     taskId,
                     tsMs: 30,
                     type: 'step',
-                    stepId: 'relay.connectBackgroundService.prepare',
+                    stepId: 'setup.repairThisComputer.prepare',
                     message: t('server.relayDrift.progressStepPrepare'),
                 },
             },
@@ -117,7 +230,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                     taskId,
                     tsMs: 90,
                     type: 'progress',
-                    stepId: 'relay.connectBackgroundService.configureRelay',
+                    stepId: 'setup.repairThisComputer.configureRelay',
                     message: t('server.relayDrift.progressStepConfigureRelay'),
                 },
             },
@@ -129,7 +242,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                     taskId,
                     tsMs: 150,
                     type: 'progress',
-                    stepId: 'relay.connectBackgroundService.authenticate',
+                    stepId: 'setup.repairThisComputer.authenticate',
                     message: t('server.relayDrift.progressStepAuthenticate'),
                 },
             },
@@ -141,7 +254,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                     taskId,
                     tsMs: 210,
                     type: 'progress',
-                    stepId: 'relay.connectBackgroundService.finish',
+                    stepId: 'setup.repairThisComputer.finish',
                     message: t('server.relayDrift.progressStepFinish'),
                 },
             },

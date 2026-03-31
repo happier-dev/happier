@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 
@@ -43,9 +43,6 @@ test('tauri onboarding wizard QA exposes a deterministic capture plan', async ()
       '[data-testid="onboarding-wizard-relay:thisMac"]',
       '[data-testid="onboarding-wizard-relay:customUrl"]',
       '[data-testid="onboarding-wizard-relay-url-input"]',
-      '[data-testid="onboarding-wizard-back"]',
-      '[data-testid="onboarding-wizard-skip"]',
-      '[data-testid="onboarding-wizard-primary"]',
     ],
   );
   assert.equal(payload.plan.steps.find((step) => step.id === 'welcome_back')?.screenshot, '04-welcome-back.png');
@@ -53,5 +50,33 @@ test('tauri onboarding wizard QA exposes a deterministic capture plan', async ()
   assert.deepEqual(payload.plan.commandRunner.baseArgs, ['-s', 'tauri:mcp:cli']);
   assert.equal(payload.plan.driverSession.command, 'yarn');
   assert.deepEqual(payload.plan.driverSession.baseArgs, ['-s', 'tauri:mcp:cli']);
-  assert.deepEqual(payload.plan.driverSession.args, ['driver-session', 'start', '--port', '9223']);
+  assert.deepEqual(payload.plan.driverSession.args, ['driver-session', 'start', '--port', '9225']);
+});
+
+test('tauri onboarding wizard QA can derive fallback MCP ports', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
+  const module = await import(pathToFileURL(scriptPath).href);
+
+  assert.equal(typeof module.resolveCandidateDriverSessionPorts, 'function');
+  const ports = module.resolveCandidateDriverSessionPorts({ preferredPort: 9225, env: {} });
+  assert.equal(ports[0], 9225);
+  assert.equal(ports.includes(9226), true);
+  assert.equal(ports.includes(9223), true);
+});
+
+test('tauri onboarding wizard QA resolves relative outdir against repo root', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
+
+  const relativeOutdir = '.project/logs/bootstrap-qa/tauri-onboarding-wizard-test-relative';
+  const { stdout } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
+    cwd: dirname(dirname(scriptsDir)),
+    env: { ...process.env, HAPPIER_TAURI_QA_OUTDIR: relativeOutdir },
+    encoding: 'utf8',
+  });
+
+  const payload = JSON.parse(stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.plan.artifactRoot, join(payload.plan.repoRoot, relativeOutdir));
 });

@@ -19,6 +19,15 @@ export {
   type RemoteSshBootstrapMachineDeps,
 } from './remoteSshBootstrapMachineKind.js';
 export {
+  createSetupRepairThisComputerTaskKind,
+  parseSetupRepairThisComputerParams,
+  type SetupRepairThisComputerAuthStatus,
+  type SetupRepairThisComputerDaemonStatus,
+  type SetupRepairThisComputerDeps,
+  type SetupRepairThisComputerParams,
+  type SetupRepairThisComputerRelayProfile,
+} from './setupRepairThisComputerKind.js';
+export {
   installRemoteFirstPartyComponent,
   normalizeRemoteReleaseArch,
   normalizeRemoteReleaseOs,

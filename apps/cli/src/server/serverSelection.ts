@@ -79,12 +79,28 @@ function takePrefixFlagValue(args: string[], name: string): { value: string | nu
   return { value: null, consumed: 0 };
 }
 
+function createLegacyPublicServerUrlFlagError(): Error {
+  return new Error(
+    [
+      'Legacy flag --public-server-url is no longer supported.',
+      'Use --local-server-url to specify the local/loopback API URL while keeping --server-url as the canonical URL.',
+      '',
+      'Example:',
+      '  happier --server-url https://stack.example.test --local-server-url http://127.0.0.1:53545 ...',
+    ].join('\n'),
+  );
+}
+
+function hasLegacyPublicServerUrlFlag(args: string[]): boolean {
+  return args.some((a) => a === '--public-server-url' || a.startsWith('--public-server-url='));
+}
+
 /**
  * Apply prefix-only server selection flags without persisting settings.
  *
  * Supported:
  * - --server <name-or-id>
- * - --server-url <url> [--webapp-url <url>] [--public-server-url <url>]
+ * - --server-url <url> [--local-server-url <url>] [--webapp-url <url>]
  *
  * Notes:
  * - Flags are consumed only from the start of the argv list.
@@ -96,7 +112,6 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
   let server: string | null = null;
   let serverUrl: string | null = null;
   let webappUrl: string | null = null;
-  let publicServerUrl: string | null = null;
   let localServerUrl: string | null = null;
 
   let i = 0;
@@ -126,16 +141,14 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
       i += localUrlFlag.consumed;
       continue;
     }
-    const publicUrlFlag = takePrefixFlagValue(slice, '--public-server-url');
-    if (publicUrlFlag.consumed) {
-      publicServerUrl = publicUrlFlag.value;
-      i += publicUrlFlag.consumed;
-      continue;
+    const a0 = String(slice[0] ?? '');
+    if (a0 === '--public-server-url' || a0.startsWith('--public-server-url=')) {
+      throw createLegacyPublicServerUrlFlagError();
     }
     break;
   }
 
-  if (!server && !serverUrl && !webappUrl && !publicServerUrl && !localServerUrl) {
+  if (!server && !serverUrl && !webappUrl && !localServerUrl) {
     return argsRaw;
   }
 
@@ -147,16 +160,6 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
   }
   if (webappUrl && !serverUrl) {
     throw new Error('Cannot use --webapp-url without --server-url');
-  }
-
-  // Compatibility: legacy `--public-server-url` (canonical) + legacy `--server-url` (local).
-  if (publicServerUrl) {
-    if (serverUrl && !localServerUrl) {
-      localServerUrl = serverUrl;
-      serverUrl = publicServerUrl;
-    } else if (!serverUrl) {
-      serverUrl = publicServerUrl;
-    }
   }
 
   const applyEphemeralSelectionEnv = (params: Readonly<{ serverUrl: string; webappUrl: string; localServerUrl?: string | null }>) => {
@@ -215,6 +218,8 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
  * - Always reloads configuration if selection is applied
  */
 export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<string[]> {
+  if (hasLegacyPublicServerUrlFlag(argsRaw)) throw createLegacyPublicServerUrlFlagError();
+
   let args = [...argsRaw];
 
   const server = takeFlagValue(args, '--server');

@@ -278,8 +278,8 @@ test('npm-e2e-smoke remote server smoke forwards self-host server binary overrid
   );
   assert.match(
     raw,
-    /--self-host-server-binary/,
-    'expected remote server smoke to forward a self-host binary override when provided'
+    /--server-binary/,
+    'expected remote server smoke to forward a server binary override when provided'
   );
   assert.match(
     raw,
@@ -303,13 +303,18 @@ test('npm-e2e-smoke compose remote server smoke forwards local self-host env ove
   );
 });
 
-test('hstack remote server setup supports self-host server binary override flag', async () => {
+test('hstack remote server setup supports a server binary override flag', async () => {
   const remoteCmdPath = join(repoRoot, 'apps', 'stack', 'scripts', 'remote_cmd.mjs');
   const raw = await readFile(remoteCmdPath, 'utf8');
   assert.match(
     raw,
-    /--self-host-server-binary/,
-    'expected remote setup usage and parser to include --self-host-server-binary'
+    /--server-binary/,
+    'expected remote setup usage and parser to include --server-binary'
+  );
+  assert.match(
+    raw,
+    /\['--server-binary', serverBinary\]/,
+    'expected remote setup to forward --server-binary to the underlying happier relay host command'
   );
 });
 

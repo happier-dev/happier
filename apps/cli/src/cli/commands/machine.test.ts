@@ -262,4 +262,83 @@ describe('handleMachineCommand', () => {
     expect(logSpy.mock.calls.flat().join('\n')).toContain('"ok":false');
     expect(logSpy.mock.calls.flat().join('\n')).toContain('invalid_arguments');
   });
+
+  it('rejects specifying a port in --ssh with actionable guidance', async () => {
+    await handleMachineCommand(
+      ['setup', '--ssh', 'dev@example.test:2222'],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start: vi.fn(async () => ({ taskId: 'task-1' })),
+          poll: vi.fn(async () => ({
+            events: [],
+            nextCursor: 0,
+            result: null,
+            pendingPrompt: null,
+          })),
+          respond: vi.fn(async () => undefined),
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => 'y',
+        isInteractiveTerminal: () => false,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(errorSpy.mock.calls.flat().join('\n')).toContain('port in --ssh');
+    expect(errorSpy.mock.calls.flat().join('\n')).toContain('--ssh-config-file');
+  });
+
+  it('sets a non-zero exit code when the JSON result is not ok', async () => {
+    const result: SystemTaskResult = {
+      protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+      taskId: 'task-1',
+      ok: false,
+      error: {
+        code: 'system_task_failed',
+        message: 'boom',
+      },
+    };
+
+    const poll = vi.fn()
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result: null,
+        pendingPrompt: null,
+      })
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result,
+        pendingPrompt: null,
+      });
+
+    await handleMachineCommand(
+      ['setup', '--ssh', 'dev@example.test', '--json'],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start: vi.fn(async () => ({ taskId: 'task-1' })),
+          poll,
+          respond: vi.fn(async () => undefined),
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => {
+          throw new Error('prompt should not be used');
+        },
+        isInteractiveTerminal: () => false,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(logSpy.mock.calls.map((call) => call[0])).toContain(JSON.stringify(result));
+    expect(process.exitCode).toBe(1);
+  });
 });

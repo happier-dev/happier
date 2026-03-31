@@ -96,11 +96,11 @@ describe('createSecureAccessTailscaleHandler', () => {
         expect(ensureInstalled).toHaveBeenCalledTimes(1);
         expect(inspectState).toHaveBeenCalledTimes(2);
         expect(events).toEqual([
-            expect.objectContaining({ type: 'progress', stepId: 'detect' }),
-            expect.objectContaining({ type: 'progress', stepId: 'install' }),
+            expect.objectContaining({ type: 'progress', stepId: 'tailscale.detect' }),
+            expect.objectContaining({ type: 'progress', stepId: 'tailscale.install' }),
             expect.objectContaining({
                 type: 'progress',
-                stepId: 'verify url',
+                stepId: 'tailscale.verifyUrl',
                 data: {
                     kind: 'tailscaleSecureAccessUrl',
                     shareableHttpsUrl: 'https://relay.tailf00.ts.net',
@@ -147,7 +147,7 @@ describe('createSecureAccessTailscaleHandler', () => {
         });
 
         expect(tailscaleMocks.runTailscaleServeEnable).toHaveBeenCalledTimes(1);
-        expect(events.some((event) => (event as any)?.stepId === 'serve enable')).toBe(true);
+        expect(events.some((event) => (event as any)?.stepId === 'tailscale.serveEnable')).toBe(true);
         expect(result).toEqual(expect.objectContaining({
             shareableHttpsUrl: 'https://relay.tailf00.ts.net',
             serveEnabled: true,

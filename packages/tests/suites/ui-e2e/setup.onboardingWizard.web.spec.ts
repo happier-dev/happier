@@ -141,4 +141,28 @@ test.describe('ui e2e: web onboarding wizard', () => {
         await page.getByTestId('onboarding-wizard-primary').click();
         await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
     });
+
+    test('web onboarding supports "On this computer" guided handoff', async ({ page }) => {
+        test.setTimeout(300_000);
+        await openRoot(page);
+
+        await page.getByTestId('onboarding-wizard-primary').click();
+
+        await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-relay:thisComputer')).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId('onboarding-wizard-relay:thisComputer').click();
+        await page.getByTestId('onboarding-wizard-primary').click();
+
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-download-desktop')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal-step-cli-install')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal-step-daemon-install')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal-step-relay-install')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal-step-relay-status')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-optional')).toHaveCount(1, { timeout: 120_000 });
+
+        await page.getByTestId('onboarding-wizard-primary').click();
+        await expect(page.getByTestId('onboarding-wizard-relay-url-input')).toHaveCount(1, { timeout: 120_000 });
+    });
 });

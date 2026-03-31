@@ -215,14 +215,23 @@ export function useLocalDaemonControl(options: Readonly<{
     const isBusy = activeTaskSnapshot != null && activeTaskSnapshot.result == null;
     const canStart = !isUnavailable && !isBusy && lastStatus?.serviceInstalled === true && lastStatus.daemonRunning !== true && lastStatus.needsAuth !== true;
     const canRepair = !isUnavailable && !isBusy && Boolean(activeServerSnapshot.serverUrl);
+    const showInstallBackgroundService = runner.mode === 'tauri' && lastStatus?.serviceInstalled === false;
+    const canInstall = runner.mode === 'tauri'
+        && !isUnavailable
+        && !isBusy
+        && lastStatus?.serviceInstalled === false
+        && Boolean(activeServerSnapshot.serverUrl);
 
     return {
         activeTaskSnapshot,
         activeTaskTitle,
+        canInstall,
         canRepair,
         canStart,
         lastErrorMessage,
+        showInstallBackgroundService,
         refreshStatus,
+        installBackgroundService: repairBackgroundService,
         repairBackgroundService,
         startDaemonService,
         status: lastStatus,

@@ -156,6 +156,113 @@ describe('LocalDaemonControlSection', () => {
         expect(starts.some((entry) => (entry as { kind?: unknown }).kind === 'daemon.service.start.v1')).toBe(true);
     });
 
+    it('shows an install background service CTA when the service is not installed (desktop only)', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+
+        let nextTaskId = 1;
+        const listeners = new Map<string, {
+            onEvent: (payload: unknown) => void;
+            onResult: (payload: unknown) => void;
+        }>();
+        const starts: unknown[] = [];
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    const parsed = SystemTaskSpecSchema.parse(spec);
+                    starts.push(parsed);
+                    return `task_${nextTaskId++}:${parsed.kind}`;
+                },
+                async subscribe(taskId, listenerSet) {
+                    listeners.set(taskId, listenerSet);
+                    return () => {
+                        listeners.delete(taskId);
+                    };
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalDaemonControlSection } = await import('./LocalDaemonControlSection');
+        const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner }));
+
+        await renderer.act(async () => {
+            listeners.get('task_1:daemon.service.status.v1')?.onResult({
+                protocolVersion: 1,
+                taskId: 'task_1:daemon.service.status.v1',
+                ok: true,
+                data: {
+                    serviceInstalled: false,
+                    daemonRunning: false,
+                    needsAuth: false,
+                    machineId: null,
+                },
+            });
+        });
+
+        expect(screen.findByTestId('settings.localDaemonControl.install')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('settings.localDaemonControl.install');
+
+        expect(starts).toContainEqual(expect.objectContaining({
+            kind: 'setup.repairThisComputer.v1',
+            params: expect.objectContaining({
+                activeRelayUrl: 'https://relay.example.test',
+                activeWebappUrl: 'https://relay.example.test',
+                activeLocalRelayUrl: null,
+                surface: 'desktop.ui',
+            }),
+        }));
+    });
+
+    it('does not show the install background service CTA when system tasks are not running in tauri mode', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+
+        let nextTaskId = 1;
+        const listeners = new Map<string, {
+            onEvent: (payload: unknown) => void;
+            onResult: (payload: unknown) => void;
+        }>();
+
+        const runner = createSystemTaskRunner({
+            mode: 'dev',
+            bridge: {
+                async start(spec) {
+                    return `task_${nextTaskId++}:${(spec as { kind?: string }).kind ?? 'unknown'}`;
+                },
+                async subscribe(taskId, listenerSet) {
+                    listeners.set(taskId, listenerSet);
+                    return () => {
+                        listeners.delete(taskId);
+                    };
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalDaemonControlSection } = await import('./LocalDaemonControlSection');
+        const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner }));
+
+        await renderer.act(async () => {
+            listeners.get('task_1:daemon.service.status.v1')?.onResult({
+                protocolVersion: 1,
+                taskId: 'task_1:daemon.service.status.v1',
+                ok: true,
+                data: {
+                    serviceInstalled: false,
+                    daemonRunning: false,
+                    needsAuth: false,
+                    machineId: null,
+                },
+            });
+        });
+
+        expect(screen.findByTestId('settings.localDaemonControl.install')).toBeNull();
+    });
+
     it('starts the canonical background-service repair task against the active relay', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
         const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
@@ -184,7 +291,7 @@ describe('LocalDaemonControlSection', () => {
         await screen.pressByTestIdAsync('settings.localDaemonControl.repair');
 
         expect(starts).toContainEqual(expect.objectContaining({
-            kind: 'relay.connectBackgroundService.v1',
+            kind: 'setup.repairThisComputer.v1',
             params: expect.objectContaining({
                 activeRelayUrl: 'https://relay.example.test',
                 activeWebappUrl: 'https://relay.example.test',

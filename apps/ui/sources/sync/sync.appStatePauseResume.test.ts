@@ -26,9 +26,16 @@ vi.mock('react-native-mmkv', () => {
 });
 
 const appStateHandlers = vi.hoisted(() => new Set<(state: string) => void>());
+const appStateCurrentState = vi.hoisted(() => ({ value: 'active' as string }));
 const appStateAddListener = vi.hoisted(() => vi.fn((_event: string, handler: (state: string) => void) => {
     appStateHandlers.add(handler);
     return { remove: vi.fn(() => appStateHandlers.delete(handler)) };
+}));
+
+const tauriDesktopState = vi.hoisted(() => ({ value: false }));
+
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => tauriDesktopState.value,
 }));
 
 vi.mock('react-native', async () => {
@@ -37,7 +44,9 @@ vi.mock('react-native', async () => {
         {
                         Platform: { OS: 'web' },
                         AppState: {
-                            currentState: 'active',
+                            get currentState() {
+                                return appStateCurrentState.value;
+                            },
                             addEventListener: appStateAddListener as any,
                         },
                     }
@@ -71,6 +80,8 @@ describe('sync AppState pause/resume', () => {
         kvStore.clear();
         appStateHandlers.clear();
         appStateAddListener.mockClear();
+        appStateCurrentState.value = 'active';
+        tauriDesktopState.value = false;
         apiSocketDisconnect.mockClear();
         apiSocketConnect.mockClear();
     });
@@ -148,6 +159,51 @@ describe('sync AppState pause/resume', () => {
         } finally {
             globalWithDocument.document = originalDocument;
         }
+    });
+
+    it('does not treat Tauri desktop "hidden" visibility as backgrounded (keeps sync unpaused)', async () => {
+        tauriDesktopState.value = true;
+
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const handlers = new Map<string, Set<() => void>>();
+        const documentStub = {
+            visibilityState: 'hidden',
+            addEventListener: (event: string, listener: () => void) => {
+                const set = handlers.get(event) ?? new Set<() => void>();
+                set.add(listener);
+                handlers.set(event, set);
+            },
+            removeEventListener: (event: string, listener: () => void) => {
+                handlers.get(event)?.delete(listener);
+            },
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+
+        try {
+            const { sync } = await import('./sync');
+            const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+
+            const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
+            expect(pauseController.isPaused()).toBe(false);
+            expect(apiSocketDisconnect).toHaveBeenCalledTimes(0);
+            expect(isServerReachabilityNetworkAllowed()).toBe(true);
+        } finally {
+            globalWithDocument.document = originalDocument;
+        }
+    });
+
+    it('treats Tauri desktop as foreground even when AppState is not active (keeps reachability enabled)', async () => {
+        tauriDesktopState.value = true;
+        appStateCurrentState.value = 'background';
+
+        const { sync } = await import('./sync');
+        const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+
+        const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
+        expect(pauseController.isPaused()).toBe(false);
+        expect(isServerReachabilityNetworkAllowed()).toBe(true);
     });
 
     it('pauses on web visibility hidden and resumes on visible', async () => {

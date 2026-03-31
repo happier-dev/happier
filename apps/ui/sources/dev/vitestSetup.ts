@@ -640,6 +640,7 @@ vi.mock('react-native-unistyles', () => {
             overlay: {
                 scrim: 'rgba(0, 0, 0, 0.45)',
                 scrimStrong: 'rgba(0, 0, 0, 0.6)',
+                scrimWizard: 'rgba(0, 0, 0, 0.03)',
                 text: '#FFFFFF',
                 textSecondary: 'rgba(255, 255, 255, 0.9)',
             },
@@ -691,6 +692,14 @@ vi.mock('react-native-unistyles', () => {
                 hunkHeaderText: '#666',
                 contextText: '#333',
             },
+        },
+        borderRadius: {
+            sm: 4,
+            md: 8,
+            lg: 10,
+            xl: 12,
+            modalCard: 14,
+            xxl: 16,
         },
     };
 

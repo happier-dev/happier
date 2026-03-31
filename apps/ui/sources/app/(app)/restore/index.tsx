@@ -1,18 +1,29 @@
 import * as React from 'react';
-import { Platform, useWindowDimensions } from 'react-native';
 
-import { isRunningOnMac } from '@/utils/platform/platform';
-import { RestoreQrView } from '@/components/account/restore/RestoreQrView';
-import { RestoreScanComputerQrView } from '@/components/account/restore/RestoreScanComputerQrView';
-import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
-import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { useRouter } from 'expo-router';
+
+import { RestoreIndexEmbedded } from '@/components/onboardingWizard/restore/RestoreIndexEmbedded';
+import { WizardModalShell } from '@/components/onboardingWizard/WizardModalShell';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { t } from '@/text';
 
 export default function RestoreIndex() {
-    const { width, height } = useWindowDimensions();
-    const isNativePhone = (Platform.OS === 'ios' || Platform.OS === 'android') && !isRunningOnMac();
-    const isWebPhoneWithCamera =
-        Platform.OS === 'web' && isWebQrScannerSupported() && isWebMobileLikeQrScannerHost({ width, height });
-    const showScannerFirst = isNativePhone || isWebPhoneWithCamera;
+    const router = useRouter();
+    const handleBack = React.useCallback(() => {
+        safeRouterBack({ router, fallbackHref: '/' });
+    }, [router]);
 
-    return showScannerFirst ? <RestoreScanComputerQrView /> : <RestoreQrView />;
+    return (
+        <WizardModalShell
+            testID="restore-wizard"
+            stepIndex={1}
+            stepCount={3}
+            title={t('setupOnboarding.authRestoreTitle')}
+            subtitle={t('setupOnboarding.authRestoreSubtitle')}
+            onBack={handleBack}
+            showSkip={false}
+        >
+            <RestoreIndexEmbedded onBack={handleBack} />
+        </WizardModalShell>
+    );
 }

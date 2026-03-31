@@ -38,6 +38,31 @@ vi.mock('@/configuration', () => ({
   },
 }));
 
+vi.mock('@happier-dev/cli-common/systemTasks', async () => {
+  const actual = await vi.importActual<typeof import('@happier-dev/cli-common/systemTasks')>(
+    '@happier-dev/cli-common/systemTasks',
+  );
+  return {
+    ...actual,
+    installRemoteFirstPartyComponent: async (
+      ...args: Parameters<typeof actual.installRemoteFirstPartyComponent>
+    ) => {
+      const [params, deps] = args;
+      return await actual.installRemoteFirstPartyComponent(params, {
+        ...deps,
+        preparePayload: async ({ componentId, channel }) => ({
+          componentId,
+          channel,
+          versionId: 'test-version',
+          payloadRoot: '/tmp/mock-payload',
+          source: 'unit-test',
+          cleanup: async () => undefined,
+        }),
+      });
+    },
+  };
+});
+
 import { createLiveRemoteSshBootstrapTaskKind } from './liveRemoteSshBootstrap';
 
 function jsonResult(data: Record<string, unknown>) {
@@ -48,8 +73,10 @@ function jsonResult(data: Record<string, unknown>) {
   };
 }
 
-const TRUSTED_HOST_KEY = 'example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
-const MISMATCHED_TRUSTED_HOST_KEY = 'example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
+	const TRUSTED_HOST_KEY = 'example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+	const MISMATCHED_TRUSTED_HOST_KEY = 'example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
+	const BRACKETED_PORT_HOST_KEY = '[127.0.0.1]:54470 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+	const UNBRACKETED_PORT_KEYSCAN_OUTPUT = '127.0.0.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 
 describe('createLiveRemoteSshBootstrapTaskKind', () => {
   beforeEach(() => {
@@ -140,12 +167,13 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
           },
         });
       }
-      if (remoteCommand.includes('server set')) {
-        return jsonResult({
-          ok: true,
-          data: {},
-        });
-      }
+	      if (remoteCommand.includes('server set')) {
+	        expect(remoteCommand).not.toContain('--public-server-url');
+	        return jsonResult({
+	          ok: true,
+	          data: {},
+	        });
+	      }
       if (remoteCommand.includes('auth request')) {
         return jsonResult({
           ok: true,
@@ -206,8 +234,111 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     expect(sshInvocations.some((args) => args.includes('-F') && args.includes('/tmp/lima-ssh.config'))).toBe(true);
   });
 
+	  it('never emits deprecated --public-server-url when a relay public url is provided', async () => {
+	    const previousImplementation = spawnSync.getMockImplementation();
+	    if (!previousImplementation) {
+	      throw new Error('Missing spawnSync mock implementation');
+	    }
+	    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+	      if (command === 'ssh') {
+	        const remoteCommand = String(args.at(-1) ?? '');
+	        if (remoteCommand.includes('server set')) {
+	          expect(remoteCommand).toContain('https://public.example.test');
+	          expect(remoteCommand).not.toContain('127.0.0.1:3005');
+	          expect(remoteCommand).not.toContain('localhost:3005');
+	        }
+	      }
+	      return previousImplementation(command, args);
+	    });
+
+	    const kind = createLiveRemoteSshBootstrapTaskKind();
+
+	    await kind.run({
+	      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'http://127.0.0.1:3005',
+          webappUrl: 'http://localhost:3005',
+          publicRelayUrl: 'https://public.example.test',
+        },
+        channel: 'preview',
+        knownHostsMode: 'system',
+        serviceMode: 'none',
+      },
+	      emit: () => undefined,
+	      prompt: async (request) => {
+	        if (request.kind === 'auth.approveRemoteProvisioning') {
+	          return { approved: true };
+	        }
+	        throw new Error(`Unexpected prompt: ${request.kind}`);
+	      },
+	    });
+	  });
+
+	  it('prompts to replace host keys when known_hosts already contains a mismatched entry for a non-22 port', async () => {
+	    readFileSync.mockReturnValue(`${BRACKETED_PORT_HOST_KEY}\n`);
+
+	    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+	      if (command === 'ssh-keyscan') {
+	        expect(args).toContain('-p');
+	        expect(args).toContain('54470');
+	        return {
+	          status: 0,
+	          stdout: `${UNBRACKETED_PORT_KEYSCAN_OUTPUT}\n`,
+	          stderr: '',
+	        };
+	      }
+	      throw new Error(`Unexpected command: ${command}`);
+	    });
+
+	    const kind = createLiveRemoteSshBootstrapTaskKind();
+
+	    await expect(kind.run({
+	      params: {
+	        ssh: {
+	          target: '127.0.0.1:54470',
+	          auth: 'agent',
+	          knownHostsPath: '/tmp/custom-known_hosts',
+	        },
+	        relay: {
+	          relayUrl: 'https://relay.example.test',
+	        },
+	        channel: 'preview',
+	        serviceMode: 'none',
+	      },
+	      emit: () => undefined,
+	      prompt: async (request) => {
+	        if (request.kind === 'ssh.replaceHostKey') {
+	          return { trusted: false };
+	        }
+	        throw new Error(`Unexpected prompt: ${request.kind}`);
+	      },
+	    })).rejects.toThrow(/host trust was declined/i);
+	  });
+
   it('installs the remote CLI from the verified payload path instead of curl-bash', async () => {
     const kind = createLiveRemoteSshBootstrapTaskKind();
+    const previousImplementation = spawnSync.getMockImplementation();
+    if (!previousImplementation) {
+      throw new Error('Missing spawnSync mock implementation');
+    }
+    let serverConfigureAttempts = 0;
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      if (command === 'ssh') {
+        const remoteCommand = String(args.at(-1) ?? '');
+        if (remoteCommand.includes('server set') && serverConfigureAttempts++ === 0) {
+          return {
+            status: 127,
+            stdout: '',
+            stderr: 'bash: happier: command not found\n',
+          };
+        }
+      }
+      return previousImplementation(command, args as any);
+    });
 
     await kind.run({
       params: {
@@ -235,7 +366,7 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       .filter(([command]) => command === 'ssh')
       .map(([, args]) => String((args as readonly string[]).at(-1) ?? ''));
 
-    expect(sshRemoteCommands.some((command) => command.includes('self __install-payload'))).toBe(true);
+    expect(sshRemoteCommands.some((command) => command.includes('ln -sfn'))).toBe(true);
     expect(sshRemoteCommands.join('\n')).not.toContain('curl -fsSL https://happier.dev/install');
     expect(approveTerminalAuthRequest).toHaveBeenCalledWith({ publicKey: 'pub-key' });
   });
@@ -390,5 +521,201 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     expect(spawnSync.mock.calls.filter(([command]) => command === 'scp')).toHaveLength(0);
     expect(writeFileSync).not.toHaveBeenCalled();
     expect(approveTerminalAuthRequest).not.toHaveBeenCalled();
+  });
+
+  it('surfaces stdout when an SSH command fails without stderr', async () => {
+    const kind = createLiveRemoteSshBootstrapTaskKind();
+
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      if (command === 'ssh-keyscan') {
+        return {
+          status: 0,
+          stdout: `${TRUSTED_HOST_KEY}\n`,
+          stderr: '',
+        };
+      }
+      if (command === 'scp') {
+        return {
+          status: 0,
+          stdout: '',
+          stderr: '',
+        };
+      }
+      if (command !== 'ssh') {
+        throw new Error(`Unexpected command: ${command}`);
+      }
+      const remoteCommand = String(args.at(-1) ?? '');
+      if (remoteCommand.includes('"arch"')) {
+        return jsonResult({
+          platform: 'linux',
+          arch: 'x86_64',
+        });
+      }
+      if (remoteCommand.includes('server set')) {
+        return {
+          status: 127,
+          stdout: '',
+          stderr: 'bash: happier: command not found\n',
+        };
+      }
+      if (remoteCommand.includes('ln -sfn') || remoteCommand.includes('cp -R')) {
+        return {
+          status: 255,
+          stdout: 'remote installer failed\n',
+          stderr: '',
+        };
+      }
+      return jsonResult({ ok: true, data: {} });
+    });
+
+    await expect(
+      kind.run({
+        params: {
+          ssh: {
+            target: 'dev@example.test',
+            auth: 'agent',
+            trustedHostKey: TRUSTED_HOST_KEY,
+          },
+          relay: {
+            relayUrl: 'https://relay.example.test',
+          },
+          channel: 'preview',
+          knownHostsMode: 'system',
+          serviceMode: 'none',
+        },
+        emit: () => undefined,
+        prompt: async () => {
+          throw new Error('Unexpected prompt');
+        },
+      }),
+    ).rejects.toThrow(/remote installer failed/i);
+  });
+
+  it('parses JSON output even when the remote command exits non-zero (auth status not authenticated)', async () => {
+    const kind = createLiveRemoteSshBootstrapTaskKind();
+    const previousImplementation = spawnSync.getMockImplementation();
+    if (!previousImplementation) {
+      throw new Error('Missing spawnSync mock implementation');
+    }
+
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      if (command === 'ssh') {
+        const remoteCommand = String(args.at(-1) ?? '');
+        if (remoteCommand.includes('auth status --json')) {
+          return {
+            status: 1,
+            stdout: `${JSON.stringify({
+              v: 1,
+              ok: false,
+              kind: 'auth_status',
+              error: { code: 'not_authenticated' },
+            })}\n`,
+            stderr: '',
+          };
+        }
+      }
+      return previousImplementation(command, args);
+    });
+
+    await expect(kind.run({
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'https://relay.example.test',
+        },
+        channel: 'preview',
+        knownHostsMode: 'system',
+        serviceMode: 'none',
+      },
+      emit: () => undefined,
+      prompt: async (request) => {
+        if (request.kind === 'auth.approveRemoteProvisioning') {
+          return { approved: true };
+        }
+        throw new Error(`Unexpected prompt: ${request.kind}`);
+      },
+    })).resolves.toBeDefined();
+
+    expect(approveTerminalAuthRequest).toHaveBeenCalledWith({ publicKey: 'pub-key' });
+  });
+
+  it('redacts sensitive values and absolute paths from stderr when ssh config resolution fails', async () => {
+    const kind = createLiveRemoteSshBootstrapTaskKind();
+
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      if (command === 'ssh' && args.includes('-G')) {
+        return {
+          status: 1,
+          stdout: '',
+          stderr: [
+            'Bad configuration option: IdentityFile /Users/leeroy/.ssh/id_ed25519',
+            'password=supersecret',
+            'known_hosts=/mock-home/ssh/known_hosts',
+          ].join('\n'),
+        };
+      }
+      if (command === 'ssh-keyscan') {
+        return {
+          status: 0,
+          stdout: `${TRUSTED_HOST_KEY}\n`,
+          stderr: '',
+        };
+      }
+      if (command === 'scp') {
+        return {
+          status: 0,
+          stdout: '',
+          stderr: '',
+        };
+      }
+      if (command !== 'ssh') {
+        throw new Error(`Unexpected command: ${command}`);
+      }
+      const remoteCommand = String(args.at(-1) ?? '');
+      if (remoteCommand.includes('"arch"')) {
+        return jsonResult({
+          platform: 'linux',
+          arch: 'x86_64',
+        });
+      }
+      return jsonResult({ ok: true, data: {} });
+    });
+
+    try {
+      await kind.run({
+        params: {
+          ssh: {
+            target: 'lima-happier-wsrepl-qa-local',
+            auth: 'agent',
+            sshConfigFile: '/Users/leeroy/.ssh/config',
+          },
+          relay: {
+            relayUrl: 'https://relay.example.test',
+          },
+          channel: 'preview',
+          serviceMode: 'none',
+        },
+        emit: () => undefined,
+        prompt: async (request) => {
+          if (request.kind === 'auth.approveRemoteProvisioning') {
+            return { approved: true };
+          }
+          if (request.kind === 'ssh.trustHost' || request.kind === 'ssh.replaceHostKey') {
+            return { trusted: true };
+          }
+          throw new Error(`Unexpected prompt: ${request.kind}`);
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toContain('/Users/leeroy/.ssh/id_ed25519');
+      expect(message).not.toContain('/mock-home/ssh/known_hosts');
+      expect(message).not.toContain('supersecret');
+      expect(message).toContain('id_ed25519');
+      expect(message).toContain('known_hosts');
+    }
   });
 });

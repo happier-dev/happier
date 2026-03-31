@@ -12,6 +12,12 @@ use serde::Deserialize;
 #[cfg(desktop)]
 const SHOW_MAIN_WINDOW_MENU_ID: &str = "tray-show-main-window";
 #[cfg(desktop)]
+const OPEN_SETUP_MENU_ID: &str = "tray-open-setup";
+#[cfg(desktop)]
+const OPEN_SETTINGS_MENU_ID: &str = "tray-open-settings";
+#[cfg(desktop)]
+const RESOLVE_SETUP_MENU_ID: &str = "tray-resolve-setup";
+#[cfg(desktop)]
 const QUIT_APP_MENU_ID: &str = "tray-quit-app";
 #[cfg(desktop)]
 const TRAY_ICON_ID: &str = "main";
@@ -91,6 +97,15 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
         SHOW_MAIN_WINDOW_MENU_ID => {
             let _ = show_main_window(app);
         }
+        OPEN_SETUP_MENU_ID => {
+            let _ = navigate_main_window_to_path(app, "/setup/wizard");
+        }
+        OPEN_SETTINGS_MENU_ID => {
+            let _ = navigate_main_window_to_path(app, "/settings");
+        }
+        RESOLVE_SETUP_MENU_ID => {
+            let _ = navigate_main_window_to_path(app, "/setup");
+        }
         QUIT_APP_MENU_ID => {
             app.exit(0);
         }
@@ -106,6 +121,32 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         window.set_focus()?;
     }
     Ok(())
+}
+
+#[cfg(desktop)]
+fn navigate_main_window_to_path<R: Runtime>(
+    app: &AppHandle<R>,
+    path: &str,
+) -> tauri::Result<()> {
+    show_main_window(app)?;
+    if let Some(window) = app.get_webview_window("main") {
+        let script = build_navigation_script(path);
+        window.eval(&script)?;
+    }
+    Ok(())
+}
+
+#[cfg(desktop)]
+fn build_navigation_script(path: &str) -> String {
+    let target_json = serde_json::to_string(path).unwrap_or_else(|_| "\"/\"".to_string());
+    format!(
+        r#"(function(){{try{{const target={target_json}; if(typeof target!=="string"||!target){{return;}} if(window.location&&window.location.pathname===target){{return;}} if(window.history&&window.history.pushState){{window.history.pushState(null,"",target); const evt=(typeof PopStateEvent==="function")?new PopStateEvent("popstate"):new Event("popstate"); window.dispatchEvent(evt); }} else {{ window.location.href=target; }} }}catch(_e){{}}}})();"#,
+    )
+}
+
+#[cfg(desktop)]
+fn should_include_resolve_setup_action(status: DesktopTrayStatus) -> bool {
+    !matches!(status, DesktopTrayStatus::Healthy | DesktopTrayStatus::Connecting)
 }
 
 #[cfg(desktop)]
@@ -135,14 +176,27 @@ fn build_menu<R: Runtime>(
     let detail_item = MenuItemBuilder::new(state.detail.clone())
         .enabled(false)
         .build(app)?;
+    let resolve_setup_item =
+        MenuItemBuilder::with_id(RESOLVE_SETUP_MENU_ID, "Resolve setup…").build(app)?;
     let show_main_window_item =
         MenuItemBuilder::with_id(SHOW_MAIN_WINDOW_MENU_ID, "Open Happier").build(app)?;
+    let open_setup_item = MenuItemBuilder::with_id(OPEN_SETUP_MENU_ID, "Open Setup").build(app)?;
+    let open_settings_item =
+        MenuItemBuilder::with_id(OPEN_SETTINGS_MENU_ID, "Open Settings").build(app)?;
     let quit_app = MenuItemBuilder::with_id(QUIT_APP_MENU_ID, "Quit Happier").build(app)?;
 
-    MenuBuilder::new(app)
+    let mut builder = MenuBuilder::new(app)
         .item(&status_item)
         .item(&detail_item)
-        .separator()
+        .separator();
+
+    if should_include_resolve_setup_action(state.status) {
+        builder = builder.item(&resolve_setup_item).separator();
+    }
+
+    builder
+        .item(&open_setup_item)
+        .item(&open_settings_item)
         .item(&show_main_window_item)
         .separator()
         .item(&quit_app)
@@ -188,4 +242,34 @@ fn build_status_icon(status: DesktopTrayStatus) -> Image<'static> {
     }
 
     Image::new_owned(rgba, TRAY_ICON_SIZE, TRAY_ICON_SIZE)
+}
+
+#[cfg(all(test, desktop))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_setup_action_is_enabled_for_all_nonhealthy_statuses() {
+        assert!(!should_include_resolve_setup_action(DesktopTrayStatus::Healthy));
+        assert!(!should_include_resolve_setup_action(DesktopTrayStatus::Connecting));
+        assert!(should_include_resolve_setup_action(
+            DesktopTrayStatus::AttentionRequired
+        ));
+        assert!(should_include_resolve_setup_action(DesktopTrayStatus::ServerUnreachable));
+        assert!(should_include_resolve_setup_action(DesktopTrayStatus::AuthRequired));
+        assert!(should_include_resolve_setup_action(DesktopTrayStatus::ServerError));
+        assert!(should_include_resolve_setup_action(DesktopTrayStatus::NoMachine));
+        assert!(should_include_resolve_setup_action(
+            DesktopTrayStatus::MachineOffline
+        ));
+    }
+
+    #[test]
+    fn navigation_script_uses_history_pushstate_instead_of_reload() {
+        let script = build_navigation_script("/setup/wizard");
+        assert!(script.contains("history.pushState"));
+        assert!(script.contains("/setup/wizard"));
+        assert!(!script.contains("location.assign"));
+        assert!(!script.contains("location.replace"));
+    }
 }

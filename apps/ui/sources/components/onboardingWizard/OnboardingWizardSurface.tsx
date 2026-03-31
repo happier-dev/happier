@@ -31,10 +31,13 @@ import { LostAccessEmbedded } from '@/components/onboardingWizard/restore/LostAc
 import { RelayDiagram } from './RelayDiagram';
 import { WizardLogotype } from './WizardLogotype';
 import { WelcomeProvidersShowcase } from './WelcomeProvidersShowcase';
+import { WizardTerminalHandoff } from './WizardTerminalHandoff';
 import { WizardChoiceRow } from './WizardChoiceRow';
+import { WebDesktopHandoffStep } from '@/components/onboardingWizard/WebDesktopHandoffStep';
 import { canSkipWizardStep, getWizardProgress } from './wizardSelectors';
 import { createWizardState, wizardReducer } from './wizardReducer';
 import type { WizardRelaySelection, WizardStepId } from './wizardTypes';
+import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from './ConfirmSwitchRelayStep';
 import { parseOnboardingScanPayload } from './scanPayload';
 import { WizardModalShell } from './WizardModalShell';
 import {
@@ -48,6 +51,7 @@ export type OnboardingWizardSurfaceProps = Readonly<{
     layout: 'portrait' | 'landscape';
     isDesktopShell: boolean;
     authEntryOptions: AuthEntryOptions;
+    initialStepId?: WizardStepId;
 
     onCreateAccount: () => Promise<void> | void;
     onCreateAccountViaProvider: (providerId: string) => Promise<void> | void;
@@ -57,7 +61,7 @@ export type OnboardingWizardSurfaceProps = Readonly<{
 }>;
 
 type WizardChoice = Readonly<{
-    id: 'cloud' | 'thisMac' | 'customUrl';
+    id: 'cloud' | 'thisComputer' | 'customUrl';
     title: string;
     subtitle: string;
     icon: React.ComponentProps<typeof Ionicons>['name'];
@@ -120,6 +124,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 16,
     },
+    diagramContainer: {
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+        alignSelf: 'center',
+    },
     labelContainer: {
     },
     label: {
@@ -145,7 +155,7 @@ function buildDefaultRelaySelection(): WizardRelaySelection {
 
     if (serverUrl && isLocalishServerUrl(serverUrl)) {
         return {
-            choiceId: 'thisMac',
+            choiceId: 'thisComputer',
             serverUrl,
             locked: false,
         };
@@ -190,28 +200,40 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     );
 
     const [urlDraft, setUrlDraft] = React.useState('');
+    const [relaySwitchDecision, setRelaySwitchDecision] = React.useState<RelaySwitchDecision>('switch');
     type LocalRelayRuntimeStatus = ReturnType<typeof useLocalRelayRuntimeControl>['status'];
     const [localRelayRuntimeStatus, setLocalRelayRuntimeStatus] = React.useState<LocalRelayRuntimeStatus>(null);
     const [state, dispatch] = React.useReducer(
         wizardReducer,
         null,
-        () =>
-            createWizardState({
-                context: {
-                    mode: 'onboarding',
-                    platform: props.isDesktopShell ? 'desktop' : (Platform.OS === 'web' ? 'web' : 'native'),
-                    canScanQr,
-                    scanStepEnabled: false,
+        () => {
+            const context = {
+                mode: 'onboarding',
+                platform: props.isDesktopShell ? 'desktop' : (Platform.OS === 'web' ? 'web' : 'native'),
+                canScanQr,
+                scanStepEnabled: false,
                     canRunSystemTasks: props.isDesktopShell,
                     relaySelection: buildDefaultRelaySelection(),
+                    relayLockConfirmationPending: false,
+                    relaySwitchConfirmationPending: false,
                     authIntent: 'standard',
                     setupAction: null,
+                } as const;
+
+            const requestedStepId = props.initialStepId ?? 'welcome';
+            const isRequestedVisible = getWizardStepDefinition(requestedStepId).visibleWhen(context);
+            const initialStepId = isRequestedVisible ? requestedStepId : 'welcome';
+
+            return createWizardState({
+                context: {
+                    ...context,
                 },
-                currentStepId: 'welcome',
+                currentStepId: initialStepId,
                 history: [],
                 resumeState: null,
                 parsedScanPayload: null,
-            })
+            });
+        },
     );
 
     const stepId = state.currentStepId;
@@ -234,11 +256,11 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             badge: t('setupOnboarding.recommendedBadge'),
         },
         {
-            id: 'thisMac',
-            title: t('setupOnboarding.relayOnThisMacTitle'),
-            subtitle: t('setupOnboarding.relayOnThisMacSubtitle'),
+            id: 'thisComputer',
+            title: t('setupOnboarding.relayOnThisComputerTitle'),
+            subtitle: t('setupOnboarding.relayOnThisComputerSubtitle'),
             icon: 'laptop-outline',
-            disabled: !props.isDesktopShell,
+            disabled: Platform.OS !== 'web' && !props.isDesktopShell,
         },
         {
             id: 'customUrl',
@@ -261,7 +283,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                     serverUrl: canonicalCloudProfile?.serverUrl ?? currentCustomRelayUrl,
                     locked: false,
                 }
-                : choiceId === 'thisMac'
+                : choiceId === 'thisComputer'
                     ? {
                         choiceId,
                         serverUrl: resolveKnownLocalRelayUrl({
@@ -347,7 +369,11 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             return;
         }
 
-        if (selection.choiceId === 'thisMac') {
+        if (selection.choiceId === 'thisComputer') {
+            if (!props.isDesktopShell && Platform.OS === 'web') {
+                dispatch({ type: 'wizard/goToStep', stepId: 'desktop_handoff' });
+                return;
+            }
             const knownLocalRelayUrl = resolveKnownLocalRelayUrl({
                 activeServerUrl: snapshot.serverUrl,
                 activeLocalRelayUrl: snapshot.activeLocalRelayUrl,
@@ -359,7 +385,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                 dispatch({
                     type: 'wizard/setRelaySelection',
                     relaySelection: {
-                        choiceId: 'thisMac',
+                        choiceId: 'thisComputer',
                         serverUrl: knownLocalRelayUrl,
                         locked: false,
                     },
@@ -373,7 +399,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
 
         dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
-    }, [state.context.relaySelection, stepId]);
+    }, [props.isDesktopShell, state.context.relaySelection, stepId]);
 
     const handleBack = React.useCallback(() => {
         dispatch({ type: 'wizard/back' });
@@ -389,20 +415,19 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             return;
         }
         if (parsed.kind === 'relay_url') {
-            await upsertActivateAndSwitchServer({ serverUrl: parsed.serverUrl, source: 'url', scope: 'device' });
-            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: parsed.serverUrl, locked: true } });
+            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: parsed.serverUrl, locked: false } });
+            dispatch({ type: 'wizard/setRelayLockConfirmationPending', pending: true });
             dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
-            setOnboardingWizardAwaitingAuthResumeIntent(parsed.serverUrl);
-            dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
+            dispatch({ type: 'wizard/goToStep', stepId: 'confirm_relay_lock' });
             return;
         }
         if (parsed.kind === 'pairing_link') {
             dispatch({ type: 'wizard/setAuthIntent', authIntent: 'restore' });
-            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: parsed.serverUrl, locked: Boolean(parsed.serverUrl) } });
+            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: parsed.serverUrl, locked: false } });
             dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
             if (parsed.serverUrl) {
-                setOnboardingWizardAwaitingAuthResumeIntent(parsed.serverUrl);
-                dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' });
+                dispatch({ type: 'wizard/setRelayLockConfirmationPending', pending: true });
+                dispatch({ type: 'wizard/goToStep', stepId: 'confirm_relay_lock' });
                 return;
             }
             dispatch({ type: 'wizard/goToStep', stepId: 'relay_enter_url' });
@@ -425,10 +450,18 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             return;
         }
         await upsertActivateAndSwitchServer({ serverUrl: normalized, source: 'url', scope: 'device' });
-        dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: normalized, locked: false } });
+        const nextChoiceId =
+            state.context.platform === 'web' && state.context.relaySelection.choiceId === 'thisComputer'
+                ? 'thisComputer'
+                : 'customUrl';
+        dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: nextChoiceId, serverUrl: normalized, locked: false } });
         setOnboardingWizardAwaitingAuthResumeIntent(normalized);
+        if (state.context.platform === 'web' && nextChoiceId === 'thisComputer') {
+            dispatch({ type: 'wizard/goToStep', stepId: 'background_service_handoff' });
+            return;
+        }
         dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' });
-    }, [state.context.authIntent, urlDraft]);
+    }, [state.context.authIntent, state.context.platform, state.context.relaySelection.choiceId, urlDraft]);
 
     const showBack = stepId !== 'welcome';
     const showSkip = canSkipWizardStep(state.context, stepId) && stepId !== 'auth';
@@ -440,6 +473,10 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     const primaryLabel =
         stepId === 'welcome'
             ? t('setupOnboarding.letsStart')
+            : stepId === 'confirm_relay_lock'
+                ? t('setupOnboarding.confirmSwitchRelaySwitchTitle')
+            : stepId === 'desktop_handoff'
+                ? t('setupOnboarding.webDesktopOnlyPrimary')
             : t('common.continue');
 
     const renderRelayHint = React.useCallback((params: Readonly<{
@@ -463,8 +500,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         const relayLabel =
             state.context.relaySelection.choiceId === 'cloud'
                 ? t('setupOnboarding.relayCloudTitle')
-                : state.context.relaySelection.choiceId === 'thisMac'
-                    ? t('setupOnboarding.relayOnThisMacTitle')
+                : state.context.relaySelection.choiceId === 'thisComputer'
+                    ? t('setupOnboarding.relayOnThisComputerTitle')
                     : t('setupOnboarding.relayCustomUrlTitle');
         return renderRelayHint({
             testID: `${props.testID ?? 'onboarding-wizard'}-relay-hint`,
@@ -480,7 +517,16 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
 
     const onPrimary =
         stepId === 'welcome'
-            ? () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' })
+            ? () => {
+                const selection = state.context.relaySelection;
+                const relayUrl = selection.serverUrl ? String(selection.serverUrl).trim() : '';
+                if (selection.choiceId === 'customUrl' && relayUrl.length > 0) {
+                    setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
+                    dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' });
+                    return;
+                }
+                dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
+            }
             : stepId === 'relay_enter_url'
                 ? handleSaveCustomRelayUrl
                 : stepId === 'relay_select'
@@ -488,6 +534,36 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                         setOnboardingWizardAwaitingAuthResumeIntent(state.context.relaySelection.serverUrl);
                         await handleAdvance();
                     }
+                    : stepId === 'confirm_relay_lock'
+                        ? async () => {
+                            const relayUrl = state.context.relaySelection.serverUrl ? String(state.context.relaySelection.serverUrl).trim() : '';
+                            if (!relayUrl) {
+                                dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
+                                return;
+                            }
+                            const snapshot = getActiveServerSnapshot();
+                            if (!isSameServerUrl(snapshot.serverUrl, relayUrl)) {
+                                await upsertActivateAndSwitchServer({ serverUrl: relayUrl, source: 'url', scope: 'device' });
+                            }
+                            dispatch({
+                                type: 'wizard/setRelaySelection',
+                                relaySelection: {
+                                    ...state.context.relaySelection,
+                                    serverUrl: relayUrl,
+                                    locked: true,
+                                },
+                            });
+                            dispatch({ type: 'wizard/setRelayLockConfirmationPending', pending: false });
+                            setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
+                            dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' });
+                        }
+                    : stepId === 'desktop_handoff'
+                        ? () => {
+                            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'thisComputer', serverUrl: null, locked: false } });
+                            dispatch({ type: 'wizard/goToStep', stepId: 'relay_enter_url' });
+                        }
+                    : stepId === 'background_service_handoff'
+                        ? () => dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' })
                     : stepId === 'host_relay_local'
                         ? async () => {
                             const relayUrlRaw = localRelayRuntimeStatus?.relayUrl ?? '';
@@ -495,11 +571,35 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                             if (!relayUrl) {
                                 return;
                             }
-                            await upsertActivateAndSwitchServer({ serverUrl: relayUrl, source: 'url', scope: 'device' });
-                            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'thisMac', serverUrl: relayUrl, locked: false } });
-                            setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
-                            dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
+                            setRelaySwitchDecision('switch');
+                            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'thisComputer', serverUrl: relayUrl, locked: false } });
+                            dispatch({ type: 'wizard/setRelaySwitchConfirmationPending', pending: true });
+                            dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' });
                         }
+                        : stepId === 'confirm_switch_relay'
+                            ? async () => {
+                                const relayUrl = typeof state.context.relaySelection.serverUrl === 'string'
+                                    ? state.context.relaySelection.serverUrl.trim()
+                                    : '';
+                                if (!relayUrl) {
+                                    dispatch({ type: 'wizard/setRelaySwitchConfirmationPending', pending: false });
+                                    dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
+                                    return;
+                                }
+
+                                if (relaySwitchDecision === 'switch') {
+                                    await upsertActivateAndSwitchServer({ serverUrl: relayUrl, source: 'url', scope: 'device' });
+                                    dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'thisComputer', serverUrl: relayUrl, locked: false } });
+                                    setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
+                                } else {
+                                    const fallbackSelection = buildDefaultRelaySelection();
+                                    dispatch({ type: 'wizard/setRelaySelection', relaySelection: fallbackSelection });
+                                    setOnboardingWizardAwaitingAuthResumeIntent(fallbackSelection.serverUrl);
+                                }
+
+                                dispatch({ type: 'wizard/setRelaySwitchConfirmationPending', pending: false });
+                                dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' });
+                            }
                     : undefined;
 
     const onBack =
@@ -541,6 +641,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                 testIDPrefix={`${props.testID ?? 'onboarding-wizard'}-scan`}
                 title={t('setupOnboarding.scanQrCode')}
                 permissionRequiredMessage={t('modals.cameraPermissionsRequiredToScanQr')}
+                embedded
                 onCancel={() => {
                     dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
                     dispatch({ type: 'wizard/goToStep', stepId: 'welcome' });
@@ -551,11 +652,19 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     } else if (stepId === 'relay_select') {
         body = (
             <>
-            <RelayDiagram testID={`${props.testID ?? 'onboarding-wizard'}-relay-diagram`} />
+                <View style={styles.diagramContainer}>
+                    <RelayDiagram testID={`${props.testID ?? 'onboarding-wizard'}-relay-diagram`} />
+                </View>
                 <View>
                     {choices.map(renderRelayChoiceRow)}
                 </View>
             </>
+        );
+    } else if (stepId === 'confirm_relay_lock') {
+        body = (
+            <View testID={`${props.testID ?? 'onboarding-wizard'}-confirm-relay-lock`}>
+                <Text style={styles.urlHint}>{t('setupOnboarding.confirmSwitchRelayWarning')}</Text>
+            </View>
         );
     } else if (stepId === 'relay_enter_url') {
         body = (
@@ -573,10 +682,40 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                 <Text style={styles.urlHint}>{t('setupOnboarding.relayCustomUrlSubtitle')}</Text>
             </View>
         );
+    } else if (stepId === 'background_service_handoff') {
+        body = (
+            <WizardTerminalHandoff
+                testID={`${props.testID ?? 'onboarding-wizard'}-background-service-handoff`}
+                steps={[
+                    {
+                        title: t('sessionGettingStarted.steps.daemonInstall.title'),
+                        subtitle: t('sessionGettingStarted.steps.daemonInstall.description'),
+                        code: 'happier daemon install',
+                        scrollTestIDSuffix: 'daemon-install',
+                    },
+                    {
+                        title: t('sessionGettingStarted.steps.daemonStart.title'),
+                        subtitle: t('sessionGettingStarted.steps.daemonStart.description'),
+                        code: 'happier daemon start',
+                        scrollTestIDSuffix: 'daemon-start',
+                    },
+                ]}
+            />
+        );
     } else if (stepId === 'host_relay_local') {
         body = (
             <LocalRelayRuntimeControlSection
                 onStatusChange={setLocalRelayRuntimeStatus}
+            />
+        );
+    } else if (stepId === 'confirm_switch_relay') {
+        const relayUrl = typeof state.context.relaySelection.serverUrl === 'string' ? state.context.relaySelection.serverUrl : '';
+        body = (
+            <ConfirmSwitchRelayStep
+                testIDPrefix={props.testID ?? 'onboarding-wizard'}
+                relayUrl={relayUrl}
+                decision={relaySwitchDecision}
+                onDecisionChange={setRelaySwitchDecision}
             />
         );
     } else if (stepId === 'auth') {
@@ -604,6 +743,10 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                     />
                 </View>
             </>
+        );
+    } else if (stepId === 'desktop_handoff') {
+        body = (
+            <WebDesktopHandoffStep testID={`${props.testID ?? 'onboarding-wizard'}-desktop-handoff`} />
         );
     } else if (stepId === 'auth_restore') {
         body = <RestoreIndexEmbedded onBack={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth' })} />;

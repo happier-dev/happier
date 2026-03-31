@@ -128,10 +128,11 @@ export async function approveLocalRemoteAuthRequestDefault(params: Readonly<{
 }>, deps: Readonly<{
   runLocalHappierJsonCommand?: typeof runLocalHappierJsonCommand;
 }> = {}): Promise<void> {
+  const serverUrl = (params.parsed.relay.publicRelayUrl ?? params.parsed.relay.relayUrl).trim();
+  const webappUrl = (params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl).trim();
   const relayArgs = [
-    `--server-url=${params.parsed.relay.relayUrl}`,
-    `--webapp-url=${params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl}`,
-    ...(params.parsed.relay.publicRelayUrl ? [`--public-server-url=${params.parsed.relay.publicRelayUrl}`] : []),
+    `--server-url=${serverUrl}`,
+    `--webapp-url=${webappUrl}`,
   ];
   await (deps.runLocalHappierJsonCommand ?? runLocalHappierJsonCommand)({
     args: ['auth', 'approve', '--public-key', params.publicKey, '--json', '--persist', ...relayArgs],
@@ -164,7 +165,6 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
   const relayArgs = [
     `--server-url=${params.parsed.relay.relayUrl}`,
     `--webapp-url=${params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl}`,
-    ...(params.parsed.relay.publicRelayUrl ? [`--public-server-url=${params.parsed.relay.publicRelayUrl}`] : []),
   ];
   const daemonEnv = [
     `HAPPIER_DAEMON_SERVICE_SERVER_URL=${shellQuote(params.parsed.relay.relayUrl)}`,

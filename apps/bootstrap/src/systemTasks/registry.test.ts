@@ -374,6 +374,20 @@ async function executeSetupThisComputerTask(): Promise<Awaited<ReturnType<typeof
   });
 }
 
+async function executeSetupRepairThisComputerTask(): Promise<Awaited<ReturnType<typeof executeSystemTask>>> {
+  return await executeSystemTask({
+    spec: {
+      protocolVersion: 1,
+      kind: 'setup.repairThisComputer.v1',
+      params: {},
+    },
+    taskId: 'task_repair_1',
+    registry: createHsetupSystemTaskRegistry(),
+    now: () => 1700000000000,
+    emitEvent() {},
+  });
+}
+
 describe('createHsetupSystemTaskRegistry', () => {
   it('runs setup.thisComputer.v1 with deterministic step ids and returns a machine id', async () => {
     const fakeCli = createFakeHappierCli({});
@@ -426,6 +440,102 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['daemon', 'service', 'install', '--json'],
         ['daemon', 'service', 'start', '--json'],
         ['daemon', 'status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);
+      fakeCli.cleanup();
+    }
+  });
+
+  it('runs setup.repairThisComputer.v1 when already authenticated', async () => {
+    const fakeCli = createFakeHappierCli({});
+    const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+    const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_CLI_LOG_PATH;
+    try {
+      process.env.HAPPIER_BOOTSTRAP_CLI_PATH = fakeCli.cliPath;
+      process.env.HAPPIER_FAKE_CLI_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
+      process.env.HAPPIER_FAKE_CLI_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
+
+      const result = await executeSetupRepairThisComputerTask();
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_repair_1',
+        ok: true,
+        data: {
+          machineId: 'machine-local-1',
+        },
+      });
+      expect(fakeCli.readInvocations()).toEqual([
+        ['server', 'current', '--json'],
+        ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
+        ['auth', 'status', '--json'],
+        ['daemon', 'service', 'install', '--json'],
+        ['daemon', 'service', 'start', '--json'],
+        ['daemon', 'status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);
+      fakeCli.cleanup();
+    }
+  });
+
+  it('emits a prompt and fails setup.repairThisComputer.v1 when approval is required', async () => {
+    const fakeCli = createFakeHappierCli({
+      authStatus: {
+        ok: false,
+        kind: 'auth_status',
+        error: {
+          code: 'not_authenticated',
+        },
+      },
+    });
+    const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+    const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_CLI_LOG_PATH;
+    const events: unknown[] = [];
+    try {
+      process.env.HAPPIER_BOOTSTRAP_CLI_PATH = fakeCli.cliPath;
+      process.env.HAPPIER_FAKE_CLI_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
+      process.env.HAPPIER_FAKE_CLI_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'setup.repairThisComputer.v1',
+          params: {},
+        },
+        taskId: 'task_repair_prompt_1',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent(event) {
+          events.push(event);
+        },
+      });
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_repair_prompt_1',
+        ok: false,
+        error: {
+          code: 'prompt_required',
+          message: 'Approve pairing request',
+        },
+      });
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'prompt',
+        stepId: 'setup.repairThisComputer.authRequest',
+      }));
+      expect(fakeCli.readInvocations()).toEqual([
+        ['server', 'current', '--json'],
+        ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
+        ['auth', 'status', '--json'],
+        ['auth', 'request', '--json'],
       ]);
     } finally {
       restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
@@ -1357,8 +1467,8 @@ describe('createHsetupSystemTaskRegistry', () => {
         },
       });
       expect(events).toEqual([
-        expect.objectContaining({ type: 'progress', stepId: 'detect' }),
-        expect.objectContaining({ type: 'progress', stepId: 'verify url' }),
+        expect.objectContaining({ type: 'progress', stepId: 'tailscale.detect' }),
+        expect.objectContaining({ type: 'progress', stepId: 'tailscale.verifyUrl' }),
       ]);
       expect(fakeCli.readInvocations()).toEqual([
         ['status', '--json'],
@@ -1410,17 +1520,15 @@ describe('createHsetupSystemTaskRegistry', () => {
     const previousTailscaleBin = process.env.HAPPIER_TAILSCALE_BIN;
     const previousStatePath = process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH;
     const previousLogPath = process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH;
-    const previousPollTimeout = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS;
-    const previousPollInterval = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS;
+    const previousPollTimeoutMs = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS;
+    const previousPollIntervalMs = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS;
     const events: unknown[] = [];
     try {
       process.env.HAPPIER_TAILSCALE_BIN = fakeCli.cliPath;
       process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
       process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
-      // Avoid long approval polling in this registry integration test. The handler still returns the approval URL,
-      // and the UX layer can re-run or poll separately if desired.
       process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS = '0';
-      process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS = '0';
+      process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS = '1';
 
       const result = await executeSystemTask({
         spec: {
@@ -1454,10 +1562,10 @@ describe('createHsetupSystemTaskRegistry', () => {
         },
       });
       expect(events).toEqual([
-        expect.objectContaining({ type: 'progress', stepId: 'detect' }),
+        expect.objectContaining({ type: 'progress', stepId: 'tailscale.detect' }),
         expect.objectContaining({
           type: 'prompt',
-          stepId: 'login',
+          stepId: 'tailscale.login',
           data: {
             kind: 'needsUserAction.scanQr',
             url: 'https://login.tailscale.com/a/example',
@@ -1466,15 +1574,19 @@ describe('createHsetupSystemTaskRegistry', () => {
         }),
         expect.objectContaining({
           type: 'progress',
-          stepId: 'serve enable',
+          stepId: 'tailscale.serveEnable',
         }),
         expect.objectContaining({
           type: 'prompt',
-          stepId: 'serve enable',
+          stepId: 'tailscale.serveEnable',
           data: {
             kind: 'tailscaleServeApproval',
             url: 'https://login.tailscale.com/f/serve?node=node-123',
           },
+        }),
+        expect.objectContaining({
+          type: 'progress',
+          stepId: 'tailscale.serveEnable',
         }),
       ]);
       expect(fakeCli.readInvocations()).toEqual([
@@ -1483,13 +1595,187 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['status', '--json'],
         ['serve', 'status'],
         ['serve', '--bg', 'http://127.0.0.1:3005'],
+        ['status', '--json'],
+        ['serve', 'status'],
       ]);
     } finally {
       restoreEnvVar('HAPPIER_TAILSCALE_BIN', previousTailscaleBin);
       restoreEnvVar('HAPPIER_FAKE_TAILSCALE_STATE_PATH', previousStatePath);
       restoreEnvVar('HAPPIER_FAKE_TAILSCALE_LOG_PATH', previousLogPath);
-      restoreEnvVar('HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS', previousPollTimeout);
-      restoreEnvVar('HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS', previousPollInterval);
+      restoreEnvVar('HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS', previousPollTimeoutMs);
+      restoreEnvVar('HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS', previousPollIntervalMs);
+      fakeCli.cleanup();
+    }
+  });
+
+  it('polls for interactive tailscale login completion when status remains logged out after the login command', async () => {
+    const fakeCli = createFakeTailscaleCli({
+      statusJsons: [
+        {
+          BackendState: 'NeedsLogin',
+          AuthURL: 'https://login.tailscale.com/a/example',
+          HaveNodeKey: false,
+        },
+        {
+          BackendState: 'NeedsLogin',
+          AuthURL: 'https://login.tailscale.com/a/example',
+          HaveNodeKey: false,
+        },
+        {
+          BackendState: 'Running',
+          AuthURL: '',
+          HaveNodeKey: true,
+          Self: {
+            DNSName: 'relay.tailf00.ts.net.',
+          },
+          CurrentTailnet: {
+            Name: 'example-tailnet',
+          },
+          TailscaleIPs: ['100.64.0.10'],
+        },
+      ],
+      loginOutputs: [
+        {
+          exitCode: 0,
+          stdout: 'To authenticate, visit https://login.tailscale.com/a/example',
+        },
+      ],
+      serveStatuses: [
+        [
+          'https://relay.tailf00.ts.net',
+          '|-- / proxy http://127.0.0.1:3005',
+        ].join('\n'),
+      ],
+    });
+    const previousTailscaleBin = process.env.HAPPIER_TAILSCALE_BIN;
+    const previousStatePath = process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH;
+    const previousLoginTimeoutMs = process.env.HAPPIER_TAILSCALE_LOGIN_POLL_TIMEOUT_MS;
+    const previousLoginIntervalMs = process.env.HAPPIER_TAILSCALE_LOGIN_POLL_INTERVAL_MS;
+    const events: unknown[] = [];
+    try {
+      process.env.HAPPIER_TAILSCALE_BIN = fakeCli.cliPath;
+      process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
+      process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
+      process.env.HAPPIER_TAILSCALE_LOGIN_POLL_TIMEOUT_MS = '2';
+      process.env.HAPPIER_TAILSCALE_LOGIN_POLL_INTERVAL_MS = '1';
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'secureAccess.tailscale.v1',
+          params: {
+            upstreamUrl: 'http://127.0.0.1:3005',
+            loginPolicy: 'interactive',
+          },
+        },
+        taskId: 'task_tailscale_login_poll_1',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent(event) {
+          events.push(event);
+        },
+      });
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_tailscale_login_poll_1',
+        ok: true,
+        data: {
+          tailscaleInstalled: true,
+          tailscaleLoggedIn: true,
+          serveEnabled: true,
+          shareableHttpsUrl: 'https://relay.tailf00.ts.net',
+          requiresApproval: null,
+        },
+      });
+      expect(fakeCli.readInvocations().filter((invocation) => invocation[0] === 'status' && invocation[1] === '--json')).toHaveLength(3);
+      expect(events).toEqual([
+        expect.objectContaining({ type: 'progress', stepId: 'tailscale.detect' }),
+        expect.objectContaining({
+          type: 'prompt',
+          stepId: 'tailscale.login',
+        }),
+        expect.objectContaining({
+          type: 'progress',
+          stepId: 'tailscale.verifyUrl',
+        }),
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_TAILSCALE_BIN', previousTailscaleBin);
+      restoreEnvVar('HAPPIER_FAKE_TAILSCALE_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_TAILSCALE_LOG_PATH', previousLogPath);
+      restoreEnvVar('HAPPIER_TAILSCALE_LOGIN_POLL_TIMEOUT_MS', previousLoginTimeoutMs);
+      restoreEnvVar('HAPPIER_TAILSCALE_LOGIN_POLL_INTERVAL_MS', previousLoginIntervalMs);
+      fakeCli.cleanup();
+    }
+  });
+
+  it('prompts for managedAdmin tailscale login without running the interactive login command', async () => {
+    const fakeCli = createFakeTailscaleCli({
+      statusJsons: [
+        {
+          BackendState: 'NeedsLogin',
+          AuthURL: 'https://login.tailscale.com/a/example',
+          HaveNodeKey: false,
+        },
+      ],
+    });
+    const previousTailscaleBin = process.env.HAPPIER_TAILSCALE_BIN;
+    const previousStatePath = process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH;
+    const events: unknown[] = [];
+    try {
+      process.env.HAPPIER_TAILSCALE_BIN = fakeCli.cliPath;
+      process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
+      process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'secureAccess.tailscale.v1',
+          params: {
+            upstreamUrl: 'http://127.0.0.1:3005',
+            mode: 'managedAdmin',
+            loginPolicy: 'interactive',
+          },
+        },
+        taskId: 'task_tailscale_managed_admin_1',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent(event) {
+          events.push(event);
+        },
+      });
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_tailscale_managed_admin_1',
+        ok: false,
+        error: {
+          code: 'prompt_required',
+          message: 'Complete Tailscale sign-in before enabling secure access.',
+        },
+      });
+      expect(events).toEqual([
+        expect.objectContaining({ type: 'progress', stepId: 'tailscale.detect' }),
+        expect.objectContaining({
+          type: 'prompt',
+          stepId: 'tailscale.login',
+          data: {
+            kind: 'needsUserAction.openUrl',
+            url: 'https://login.tailscale.com/a/example',
+            usedQr: false,
+          },
+        }),
+      ]);
+      expect(fakeCli.readInvocations()).toEqual([
+        ['status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_TAILSCALE_BIN', previousTailscaleBin);
+      restoreEnvVar('HAPPIER_FAKE_TAILSCALE_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_TAILSCALE_LOG_PATH', previousLogPath);
       fakeCli.cleanup();
     }
   });
@@ -1529,14 +1815,14 @@ describe('createHsetupSystemTaskRegistry', () => {
         },
       });
       expect(events).toEqual([
-        expect.objectContaining({ type: 'progress', stepId: 'detect' }),
+        expect.objectContaining({ type: 'progress', stepId: 'tailscale.detect' }),
         expect.objectContaining({
           type: 'progress',
-          stepId: 'install',
+          stepId: 'tailscale.install',
         }),
         expect.objectContaining({
           type: 'prompt',
-          stepId: 'install',
+          stepId: 'tailscale.install',
           data: {
             kind: 'tailscaleInstall',
             platform: process.platform,

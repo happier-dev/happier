@@ -1,9 +1,12 @@
 import { t, type TranslationKey } from '@/text';
 
 const SYSTEM_TASK_STEP_TRANSLATION_KEYS: Readonly<Record<string, TranslationKey>> = {
+    prepare: 'settings.systemTaskStepPrepare',
     'task.step.prepare': 'settings.systemTaskStepPrepare',
+    install: 'settings.systemTaskStepInstallRuntime',
     'task.step.installRuntime': 'settings.systemTaskStepInstallRuntime',
     'task.step.finish': 'settings.systemTaskStepFinish',
+    finish: 'settings.systemTaskStepFinish',
     'install.runtime': 'settings.systemTaskStepInstallRuntime',
     'setup.thisComputer.resolveRelay': 'settings.machineSetupStageConnect',
     'setup.thisComputer.checkAuth': 'settings.machineSetupStageConnect',
@@ -16,6 +19,16 @@ const SYSTEM_TASK_STEP_TRANSLATION_KEYS: Readonly<Record<string, TranslationKey>
     'relay.connectBackgroundService.authenticate': 'server.relayDrift.progressStepAuthenticate',
     'relay.connectBackgroundService.finish': 'server.relayDrift.progressStepFinish',
     'relay.drift.repair.start': 'server.relayDrift.progressStepPrepare',
+    'relay.status.inspect': 'settings.localRelayRuntime.progressStepInspect',
+    'relay.status.health': 'settings.localRelayRuntime.progressStepHealth',
+    'relay.install': 'settings.localRelayRuntime.progressStepInstall',
+    'relay.start': 'settings.localRelayRuntime.progressStepStart',
+    'relay.stop': 'settings.localRelayRuntime.progressStepStop',
+    'tailscale.detect': 'settings.localTailscale.progressStepDetect',
+    'tailscale.install': 'settings.localTailscale.progressStepInstall',
+    'tailscale.login': 'settings.localTailscale.progressStepLogin',
+    'tailscale.serveEnable': 'settings.localTailscale.progressStepServeEnable',
+    'tailscale.verifyUrl': 'settings.localTailscale.progressStepVerifyUrl',
     'ssh.trust': 'settings.machineSetupStageConnect',
     'ssh.hostTrust': 'settings.machineSetupStageConnect',
     'ssh.auth.request': 'settings.machineSetupStageConnect',
@@ -32,5 +45,5 @@ export function resolveSystemTaskStepLabel(stepId: string | null): string | null
     }
 
     const translationKey = SYSTEM_TASK_STEP_TRANSLATION_KEYS[stepId];
-    return translationKey ? t(translationKey) : stepId;
+    return translationKey ? t(translationKey) : null;
 }

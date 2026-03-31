@@ -149,6 +149,17 @@ function buildMachineSetupSpec(params: Readonly<{
   if (!ssh.value) {
     throw new Error('Missing required flag: --ssh <user@host>');
   }
+  const normalizedSshTarget = ssh.value.trim();
+  const sshTargetAfterUser = normalizedSshTarget.includes('@')
+    ? normalizedSshTarget.slice(normalizedSshTarget.lastIndexOf('@') + 1)
+    : normalizedSshTarget;
+  if (/\]:\d+$/.test(sshTargetAfterUser)) {
+    throw new Error('SSH target does not support specifying a port in --ssh. Use --ssh-config-file to set Port.');
+  }
+  const sshTargetHostParts = sshTargetAfterUser.split(':');
+  if (sshTargetHostParts.length === 2 && /^\d+$/.test(sshTargetHostParts[1] ?? '')) {
+    throw new Error('SSH target does not support specifying a port in --ssh. Use --ssh-config-file to set Port.');
+  }
 
   const identityFile = takeFlagValue(args, '--identity-file');
   args = identityFile.rest;
@@ -175,7 +186,7 @@ function buildMachineSetupSpec(params: Readonly<{
     kind: 'remote.ssh.bootstrapMachine.v1',
     params: {
       ssh: {
-        target: ssh.value.trim(),
+        target: normalizedSshTarget,
         auth: usesKeyfileAuth ? 'keyfile' : 'agent',
         ...(usesKeyfileAuth ? { identityFile: identityFile.value!.trim() } : {}),
         ...(sshConfigFile.value?.trim() ? { sshConfigFile: sshConfigFile.value.trim() } : {}),
@@ -331,6 +342,9 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
     if (snapshot.result) {
       if (json) {
         console.log(JSON.stringify(snapshot.result));
+        if (!snapshot.result.ok) {
+          process.exitCode = typeof process.exitCode === 'number' && process.exitCode > 1 ? process.exitCode : 1;
+        }
         return;
       }
 

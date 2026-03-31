@@ -1,6 +1,7 @@
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
 import {
   extractTailscaleServeHttpsUrl,
+  resolveTailscaleInstallStrategy,
   runTailscaleLogin,
   runTailscaleServeEnable,
   runTailscaleServeStatus,
@@ -38,24 +39,6 @@ type SecureAccessTailscaleDeps = Readonly<{
   now: () => number;
 }>;
 
-function parseNonNegativeIntEnv(name: string, fallback: number): number {
-  const raw = String(process.env[name] ?? '').trim();
-  if (!raw) return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) return fallback;
-  return Math.floor(parsed);
-}
-
-function resolveTailscaleApprovalPollConfigFromEnv(): Readonly<{
-  timeoutMs: number;
-  intervalMs: number;
-}> {
-  return {
-    timeoutMs: parseNonNegativeIntEnv('HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS', DEFAULT_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS),
-    intervalMs: parseNonNegativeIntEnv('HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS', DEFAULT_TAILSCALE_APPROVAL_POLL_INTERVAL_MS),
-  };
-}
-
 export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAccessTailscaleDeps>) {
   const deps = createSecureAccessTailscaleDeps(overrides);
 
@@ -76,16 +59,55 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
 
     yield {
       type: 'progress',
-      stepId: 'detect',
+      stepId: 'tailscale.detect',
       message: 'Checking Tailscale secure-access status',
     };
 
     let state = await deps.inspectState(parsed);
+
+    if (parsed.mode === 'managedAdmin') {
+      const docsUrl = resolveTailscaleInstallStrategy(process.platform, process.env).docsUrl;
+      if (!state.installed) {
+        yield {
+          type: 'prompt',
+          stepId: 'tailscale.install',
+          message: 'Install Tailscale to continue',
+          data: {
+            kind: 'tailscaleInstall',
+            platform: process.platform,
+            url: docsUrl,
+          },
+        };
+        throw new systemTasks.SystemTaskExecutionError(
+          'prompt_required',
+          'Install Tailscale and rerun secure access setup.',
+        );
+      }
+
+      if (!state.loggedIn) {
+        const actionUrl = state.authUrl ?? docsUrl;
+        yield {
+          type: 'prompt',
+          stepId: 'tailscale.login',
+          message: 'Complete Tailscale sign-in to continue',
+          data: {
+            kind: 'needsUserAction.openUrl',
+            url: actionUrl,
+            usedQr: false,
+          },
+        };
+        throw new systemTasks.SystemTaskExecutionError(
+          'prompt_required',
+          'Complete Tailscale sign-in before enabling secure access.',
+        );
+      }
+    }
+
     if (!state.installed) {
       if (parsed.installPolicy === 'installIfMissing') {
         yield {
           type: 'progress',
-          stepId: 'install',
+          stepId: 'tailscale.install',
           message: 'Installing Tailscale (you may see system prompts)',
         };
 
@@ -94,7 +116,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
           const prompt = install.prompt;
           yield {
             type: 'prompt',
-            stepId: 'install',
+            stepId: 'tailscale.install',
             message: 'Install Tailscale to continue',
             data: {
               kind: 'tailscaleInstall',
@@ -116,7 +138,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       if (!state.installed) {
         yield {
           type: 'progress',
-          stepId: 'install',
+          stepId: 'tailscale.install',
           message: 'Tailscale install is still pending',
           data: {
             kind: 'tailscaleInstallPending',
@@ -141,21 +163,24 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       }
 
       const login = await deps.loginInteractive();
-      if (login.actionUrl) {
+      const loginActionUrl = login.actionUrl ?? state.authUrl;
+      if (loginActionUrl) {
         yield {
           type: 'prompt',
-          stepId: 'login',
+          stepId: 'tailscale.login',
           message: 'Complete Tailscale sign-in to continue',
           data: {
-            kind: login.usedQr ? 'needsUserAction.scanQr' : 'needsUserAction.openUrl',
-            url: login.actionUrl,
+            kind: login.actionUrl
+              ? (login.usedQr ? 'needsUserAction.scanQr' : 'needsUserAction.openUrl')
+              : 'needsUserAction.openUrl',
+            url: loginActionUrl,
             usedQr: login.usedQr,
           },
         };
       } else {
         yield {
           type: 'progress',
-          stepId: 'login',
+          stepId: 'tailscale.login',
           message: 'Started interactive Tailscale sign-in',
           data: {
             kind: 'tailscaleLogin',
@@ -166,17 +191,52 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
 
       state = await deps.inspectState(parsed);
       if (!state.loggedIn) {
-        throw new systemTasks.SystemTaskExecutionError(
-          'tailscale_login_required',
-          'Complete Tailscale sign-in before enabling secure access.',
+        const loginPollTimeoutMs = readBoundedIntEnv(
+          'HAPPIER_TAILSCALE_LOGIN_POLL_TIMEOUT_MS',
+          60_000,
+          { min: 0, max: 600_000 },
         );
+        const loginPollIntervalMs = readBoundedIntEnv(
+          'HAPPIER_TAILSCALE_LOGIN_POLL_INTERVAL_MS',
+          1_000,
+          { min: 1, max: 60_000 },
+        );
+        const maxAttempts = Math.max(1, Math.ceil(loginPollTimeoutMs / loginPollIntervalMs));
+
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (context?.signal?.aborted) {
+            throw new systemTasks.SystemTaskExecutionError('cancelled', 'System task execution was cancelled.');
+          }
+
+          const refreshed = await deps.inspectState(parsed);
+          if (refreshed.loggedIn) {
+            state = refreshed;
+            break;
+          }
+
+          yield {
+            type: 'progress',
+            stepId: 'tailscale.login',
+            message: attempt === 0 ? 'Waiting for Tailscale sign-in' : 'Still waiting for Tailscale sign-in',
+          };
+          if (attempt < maxAttempts - 1) {
+            await deps.sleep(loginPollIntervalMs, context?.signal);
+          }
+        }
+
+        if (!state.loggedIn) {
+          throw new systemTasks.SystemTaskExecutionError(
+            'prompt_required',
+            'Complete Tailscale sign-in before enabling secure access.',
+          );
+        }
       }
     }
 
     if (state.shareableHttpsUrl) {
       yield {
         type: 'progress',
-        stepId: 'verify url',
+        stepId: 'tailscale.verifyUrl',
         message: 'Verified Tailscale secure-access URL',
         data: {
           kind: 'tailscaleSecureAccessUrl',
@@ -194,7 +254,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
 
     yield {
       type: 'progress',
-      stepId: 'serve enable',
+      stepId: 'tailscale.serveEnable',
       message: 'Enabling Tailscale Serve for secure access',
     };
 
@@ -205,7 +265,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
     if (enable.approvalUrl) {
       yield {
         type: 'prompt',
-        stepId: 'serve enable',
+        stepId: 'tailscale.serveEnable',
         message: 'Approve Tailscale Serve in your tailnet',
         data: {
           kind: 'tailscaleServeApproval',
@@ -214,23 +274,17 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       };
 
       let approvedUrl: string | null = null;
-      const pollConfig = resolveTailscaleApprovalPollConfigFromEnv();
-      const maxAttempts =
-        pollConfig.timeoutMs <= 0 || pollConfig.intervalMs <= 0
-          ? 1
-          : Math.max(1, Math.ceil(pollConfig.timeoutMs / pollConfig.intervalMs));
-
-      if (maxAttempts <= 1) {
-        return {
-          tailscaleInstalled: true,
-          tailscaleLoggedIn: true,
-          serveEnabled: false,
-          shareableHttpsUrl: null,
-          requiresApproval: {
-            url: enable.approvalUrl,
-          },
-        };
-      }
+      const approvalPollTimeoutMs = readBoundedIntEnv(
+        'HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS',
+        60_000,
+        { min: 0, max: 600_000 },
+      );
+      const approvalPollIntervalMs = readBoundedIntEnv(
+        'HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS',
+        1_000,
+        { min: 1, max: 60_000 },
+      );
+      const maxAttempts = Math.max(1, Math.ceil(approvalPollTimeoutMs / approvalPollIntervalMs));
 
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (context?.signal?.aborted) {
@@ -245,11 +299,11 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
 
         yield {
           type: 'progress',
-          stepId: 'serve enable',
+          stepId: 'tailscale.serveEnable',
           message: attempt === 0 ? 'Waiting for Tailscale Serve approval' : 'Still waiting for Tailscale Serve approval',
         };
         if (attempt < maxAttempts - 1) {
-          await deps.sleep(pollConfig.intervalMs, context?.signal);
+          await deps.sleep(approvalPollIntervalMs, context?.signal);
         }
       }
 
@@ -267,7 +321,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
 
       yield {
         type: 'progress',
-        stepId: 'verify url',
+        stepId: 'tailscale.verifyUrl',
         message: 'Verified Tailscale secure-access URL',
         data: {
           kind: 'tailscaleSecureAccessUrl',
@@ -295,7 +349,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
 
     yield {
       type: 'progress',
-      stepId: 'verify url',
+      stepId: 'tailscale.verifyUrl',
       message: 'Verified Tailscale secure-access URL',
       data: {
         kind: 'tailscaleSecureAccessUrl',
@@ -324,8 +378,21 @@ function createSecureAccessTailscaleDeps(overrides?: Partial<SecureAccessTailsca
   };
 }
 
-const DEFAULT_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS = 60_000;
-const DEFAULT_TAILSCALE_APPROVAL_POLL_INTERVAL_MS = 1_000;
+function readBoundedIntEnv(
+  envVarName: string,
+  fallback: number,
+  bounds: Readonly<{ min: number; max: number }>,
+): number {
+  const raw = process.env[envVarName];
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(bounds.max, Math.max(bounds.min, parsed));
+}
 
 async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   const duration = Number.isFinite(ms) ? Math.max(0, Math.floor(ms)) : 0;

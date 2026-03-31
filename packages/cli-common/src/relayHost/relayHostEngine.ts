@@ -22,6 +22,7 @@ import type {
   RelayRuntimeTaskParams,
   SystemTaskSshConnectionConfig,
 } from '../systemTasks/kinds/relayRuntimeKinds.js';
+import { normalizeScpRemotePath } from '../systemTasks/ssh/scpRemotePath.js';
 
 export type RelayHostRemoteCommandResult = Readonly<{ status: number; stdout: string; stderr: string }>;
 
@@ -109,6 +110,19 @@ function resolveRemoteHomeDirForRuntime(): string {
 
 function resolveRemoteHomeDirForComponents(): string {
   return '$HOME/.happier';
+}
+
+async function resolveRemoteUserHomeDir(
+  deps: Pick<RemoteDeps, 'runRemoteText'>,
+  params: Readonly<{ ssh: SystemTaskSshConnectionConfig; knownHostsMode?: 'app' | 'system' }>,
+): Promise<string | null> {
+  const result = await deps.runRemoteText({
+    ssh: params.ssh,
+    knownHostsMode: params.knownHostsMode,
+    remoteCommand: `printf '%s\\n' \"$HOME\"`,
+  }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
+  const candidate = result.status === 0 ? String(result.stdout ?? '').trim() : '';
+  return candidate.startsWith('/') ? candidate : null;
 }
 
 function resolveRemotePlatform(params: Readonly<{ target: RemoteReleaseTarget }>): 'linux' | 'darwin' {
@@ -202,7 +216,7 @@ function buildRemoteRelayRuntimeEnvText(params: Readonly<{
   nodeModulesPath?: string;
 }>): Readonly<{ envText: string; parsed: Record<string, string> }> {
   const normalizedDataDir = String(params.defaults.dataDir ?? '').replace(/\/+$/, '') || String(params.defaults.dataDir ?? '');
-  const migrationsDir = `${normalizedDataDir}/migrations/sqlite`;
+  const migrationsDir = posixPath.join(params.serverBinDir, 'prisma', 'sqlite', 'migrations');
   const dbPath = `${normalizedDataDir}/happier-server-light.sqlite`;
   const databaseUrl = `file:${dbPath}`;
   const filesDir = `${params.defaults.dataDir}/files`;
@@ -240,6 +254,12 @@ function buildRemoteRelayRuntimeEnvText(params: Readonly<{
   };
 }
 
+function resolveRemoteEnvTextForConfigFile(params: Readonly<{ envText: string; remoteHomeDir: string }>): string {
+  const remoteHomeDir = String(params.remoteHomeDir ?? '').trim().replace(/\/+$/, '');
+  if (!remoteHomeDir) return params.envText;
+  return String(params.envText ?? '').replaceAll('$HOME', remoteHomeDir);
+}
+
 async function writeRemoteFilesViaScp(params: Readonly<{
   deps: Pick<RemoteDeps, 'copyLocalDirectoryToRemote' | 'runRemoteText'>;
   ssh: SystemTaskSshConnectionConfig;
@@ -251,6 +271,7 @@ async function writeRemoteFilesViaScp(params: Readonly<{
   if (!stageParent) {
     throw new Error('remoteStageParent is required');
   }
+  const stageParentForScp = normalizeScpRemotePath(stageParent);
 
   const localRoot = await mkdtemp(join(tmpdir(), 'happier-relayhost-stage-'));
   try {
@@ -271,7 +292,7 @@ async function writeRemoteFilesViaScp(params: Readonly<{
       ssh: params.ssh,
       knownHostsMode: params.knownHostsMode,
       localPath: localRoot,
-      remotePath: stageParent,
+      remotePath: stageParentForScp,
     });
 
     const remoteRoot = `${stageParent}/${sanitizeRemotePathSegment(basename(localRoot))}`;
@@ -304,10 +325,10 @@ function tryParseJsonObject(text: string): Record<string, unknown> | null {
 function buildRemoteServiceStatusCommand(params: Readonly<{ backend: ServiceBackend; serviceName: string }>): string {
   const svc = `${params.serviceName}.service`;
   if (params.backend === 'systemd-user') {
-    return `systemctl --user show ${quoteRemoteShellArg(svc)} --property=UnitFileState,ActiveState,SubState --value`;
+    return `systemctl --user show ${quoteRemoteShellArg(svc)} --property=UnitFileState,ActiveState,SubState`;
   }
   if (params.backend === 'systemd-system') {
-    return `systemctl show ${quoteRemoteShellArg(svc)} --property=UnitFileState,ActiveState,SubState --value`;
+    return `systemctl show ${quoteRemoteShellArg(svc)} --property=UnitFileState,ActiveState,SubState`;
   }
   if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
     return `launchctl list ${quoteRemoteShellArg(params.serviceName)}`;
@@ -315,12 +336,39 @@ function buildRemoteServiceStatusCommand(params: Readonly<{ backend: ServiceBack
   throw new Error(`Unsupported remote backend: ${params.backend}`);
 }
 
+function parseSystemctlShowOutput(stdout: string): Readonly<{ unitFileState: string; activeState: string; subState: string }> {
+  const lines = String(stdout ?? '').split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const map = new Map<string, string>();
+  const rawValues: string[] = [];
+
+  for (const line of lines) {
+    const eqIndex = line.indexOf('=');
+    if (eqIndex > 0) {
+      const key = line.slice(0, eqIndex).trim().toLowerCase();
+      const value = line.slice(eqIndex + 1).trim();
+      if (key) {
+        map.set(key, value);
+      }
+      continue;
+    }
+    rawValues.push(line);
+  }
+
+  const unitFileState = map.get('unitfilestate') ?? rawValues[0] ?? '';
+  const activeState = map.get('activestate') ?? rawValues[1] ?? '';
+  const subState = map.get('substate') ?? rawValues[2] ?? '';
+  return { unitFileState, activeState, subState };
+}
+
 function normalizeRemoteServiceSnapshot(params: Readonly<{
   backend: ServiceBackend;
   commandResult: RelayHostRemoteCommandResult;
 }>): RelayRuntimeStatusSnapshot['service'] {
   if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
-    const [unitFileState = '', activeState = '', subState = ''] = String(params.commandResult.stdout ?? '').split(/\r?\n/u);
+    if (params.commandResult.status !== 0) {
+      return { enabled: null, active: null };
+    }
+    const { unitFileState, activeState } = parseSystemctlShowOutput(params.commandResult.stdout);
     return {
       enabled: unitFileState.trim().toLowerCase() === 'enabled',
       active: activeState.trim().toLowerCase() === 'active',
@@ -395,17 +443,35 @@ function resolveRemoteServiceDefinitionContents(params: Readonly<{
     ...(params.defaultPathEnv ? { PATH: params.defaultPathEnv } : {}),
   };
 
-  if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
-    const wantedBy = params.backend === 'systemd-system' ? 'multi-user.target' : 'default.target';
+	  if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
+	    const wantedBy = params.backend === 'systemd-system' ? 'multi-user.target' : 'default.target';
+	    const resolvedHomeDir = String(params.remoteHomeDir ?? '').trim();
+	    const materializeHome = (value: string): string => value.replaceAll('$HOME', resolvedHomeDir);
+	    const workingDirectoryCandidate = params.spec.workingDirectory;
+	    const workingDirectory = resolvedHomeDir.startsWith('/')
+	      ? (workingDirectoryCandidate ? materializeHome(workingDirectoryCandidate) : undefined)
+	      : workingDirectoryCandidate;
+	    const execStart = resolvedHomeDir.startsWith('/')
+	      ? params.spec.programArgs.map((arg) => materializeHome(String(arg)))
+	      : params.spec.programArgs;
+    const stdoutPath = resolvedHomeDir.startsWith('/') && params.spec.stdoutPath
+      ? materializeHome(params.spec.stdoutPath)
+      : params.spec.stdoutPath;
+    const stderrPath = resolvedHomeDir.startsWith('/') && params.spec.stderrPath
+      ? materializeHome(params.spec.stderrPath)
+      : params.spec.stderrPath;
+    const envMaterialized = resolvedHomeDir.startsWith('/')
+      ? Object.fromEntries(Object.entries(env).map(([key, value]) => [key, materializeHome(String(value))]))
+      : env;
     return renderSystemdServiceUnit({
       description: params.spec.description ?? params.spec.label,
-      execStart: params.spec.programArgs,
-      workingDirectory: params.spec.workingDirectory,
-      env,
+      execStart,
+      workingDirectory,
+      env: envMaterialized,
       restart: 'always',
       runAsUser: params.spec.runAsUser,
-      stdoutPath: params.spec.stdoutPath,
-      stderrPath: params.spec.stderrPath,
+      stdoutPath,
+      stderrPath,
       wantedBy,
     });
   }
@@ -537,11 +603,11 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const service = (() => {
       if (backend === 'systemd-user' || backend === 'systemd-system') {
         const prefix = backend === 'systemd-user' ? ['--user'] : [];
-        const result = runLocalText('systemctl', [...prefix, 'show', `${defaults.serviceName}.service`, '--property=UnitFileState,ActiveState,SubState', '--value']);
+        const result = runLocalText('systemctl', [...prefix, 'show', `${defaults.serviceName}.service`, '--property=UnitFileState,ActiveState,SubState']);
         if (result.status !== 0) {
           return { enabled: null, active: null };
         }
-        const [unitFileState = '', activeState = ''] = String(result.stdout ?? '').split(/\r?\n/u);
+        const { unitFileState, activeState } = parseSystemctlShowOutput(result.stdout);
         return {
           enabled: unitFileState.trim().toLowerCase() === 'enabled',
           active: activeState.trim().toLowerCase() === 'active',
@@ -665,7 +731,8 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const mode = normalizeMode(params.parsed.mode);
     const channel = normalizeChannel(params.parsed.channel);
     const defaults = resolveRelayDefaultsForRemote({ platform, channel, mode });
-    const remoteHomeDir = resolveRemoteHomeDirForRuntime();
+    const remoteHomeDir = await resolveRemoteUserHomeDir(deps, { ssh: params.ssh, knownHostsMode })
+      ?? resolveRemoteHomeDirForRuntime();
     const remoteComponentHomeDir = resolveRemoteHomeDirForComponents();
 
     const remoteCli = await deps.installRemoteComponent({
@@ -761,7 +828,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       knownHostsMode,
       remoteStageParent: stageParent,
       files: [
-        { relativePath: 'server.env', contents: renderedEnv.envText },
+        { relativePath: 'server.env', contents: resolveRemoteEnvTextForConfigFile({ envText: renderedEnv.envText, remoteHomeDir }) },
         { relativePath: 'self-host-state.json', contents: `${JSON.stringify({
           channel,
           mode,
@@ -777,6 +844,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const setupCommands = [
       'set -eu',
       `mkdir -p ${quoteRemoteShellArg(defaults.installRoot)}`,
+      `mkdir -p ${quoteRemoteShellArg(defaults.binDir)}`,
       `mkdir -p ${quoteRemoteShellArg(defaults.configDir)}`,
       `mkdir -p ${quoteRemoteShellArg(defaults.dataDir)}`,
       `mkdir -p ${quoteRemoteShellArg(filesDir)}`,

@@ -77,12 +77,26 @@ function renderKnownHostsText(entries: readonly ParsedSshKnownHostLine[]): strin
   return entries.map((entry) => entry.line).join('\n');
 }
 
+function splitKnownHostsHostToken(hostToken: string): readonly string[] {
+  return String(hostToken ?? '')
+    .split(',')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+}
+
+function hostTokenContains(hostToken: string, host: string): boolean {
+  const normalized = String(host ?? '').trim();
+  if (!normalized) return false;
+  return splitKnownHostsHostToken(hostToken).some((token) => token === normalized);
+}
+
 function replaceHostEntries(
   entries: readonly ParsedSshKnownHostLine[],
+  matchHost: string,
   nextEntry: ParsedSshKnownHostLine,
 ): string {
   return renderKnownHostsText([
-    ...entries.filter((entry) => entry.host !== nextEntry.host),
+    ...entries.filter((entry) => !(entry.keyType === nextEntry.keyType && hostTokenContains(entry.host, matchHost))),
     nextEntry,
   ]);
 }
@@ -98,7 +112,7 @@ export function resolveSshKnownHostTrust(params: Readonly<{
   }
 
   const entries = parseKnownHostsText(params.knownHostsText ?? '');
-  const persistedEntry = entries.find((entry) => entry.host === scanned.host && entry.keyType === scanned.keyType);
+  const persistedEntry = entries.find((entry) => entry.keyType === scanned.keyType && hostTokenContains(entry.host, scanned.host));
   const trustedHostKey = String(params.trustedHostKey ?? '').trim();
 
   if (trustedHostKey) {
@@ -129,7 +143,7 @@ export function resolveSshKnownHostTrust(params: Readonly<{
     return {
       status: 'trusted',
       scanned,
-      nextKnownHostsText: replaceHostEntries(entries, scanned),
+      nextKnownHostsText: replaceHostEntries(entries, scanned.host, scanned),
     };
   }
 
@@ -141,12 +155,17 @@ export function resolveSshKnownHostTrust(params: Readonly<{
         nextKnownHostsText: renderKnownHostsText(entries),
       };
     }
+    const nextLine = `${persistedEntry.host} ${scanned.keyType} ${scanned.key}`;
+    const nextEntry = parseSshKnownHostLine(nextLine);
+    if (!nextEntry) {
+      throw new Error('Unable to build replacement known_hosts entry');
+    }
     return {
       status: 'prompt',
       promptKind: 'ssh.replaceHostKey',
       scanned,
       existingFingerprint: persistedEntry.fingerprint,
-      nextKnownHostsText: replaceHostEntries(entries, scanned),
+      nextKnownHostsText: replaceHostEntries(entries, scanned.host, nextEntry),
     };
   }
 
@@ -154,6 +173,6 @@ export function resolveSshKnownHostTrust(params: Readonly<{
     status: 'prompt',
     promptKind: 'ssh.trustHost',
     scanned,
-    nextKnownHostsText: replaceHostEntries(entries, scanned),
+    nextKnownHostsText: replaceHostEntries(entries, scanned.host, scanned),
   };
 }

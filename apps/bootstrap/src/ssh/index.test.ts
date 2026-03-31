@@ -108,7 +108,7 @@ describe('buildScpCommand', () => {
       '/tmp/id_happier',
       '-r',
       '/tmp/payload',
-      'dev@example.test:$HOME/.happier/bootstrap-staging',
+      'dev@example.test:.happier/bootstrap-staging',
     ]);
   });
 

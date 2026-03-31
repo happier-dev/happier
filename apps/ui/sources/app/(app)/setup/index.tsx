@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { router } from 'expo-router';
 
 import { useAuth } from '@/auth/context/AuthContext';
+import { PreAuthOnboardingWizardEntry } from '@/components/onboardingWizard/PreAuthOnboardingWizardEntry';
 import { DesktopOnlySetupNotice } from '@/components/settings/machines/DesktopOnlySetupNotice';
 import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
@@ -14,7 +15,6 @@ import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent }
 import { t } from '@/text';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { isTauriDesktop } from '@/utils/platform/tauri';
-import { SetupAccessGateNotice } from './SetupAccessGateNotice';
 
 function BrowserWebSetupRoute() {
     const snapshot = React.useSyncExternalStore(subscribeActiveServer, getActiveServerSnapshot, getActiveServerSnapshot);
@@ -166,8 +166,16 @@ function PostAuthSetupRoute() {
 export default function SetupRoute() {
     const auth = useAuth();
     const isBrowserWeb = Platform.OS === 'web' && !isTauriDesktop();
+
+    React.useEffect(() => {
+        if (!auth.isAuthenticated) {
+            clearPendingSetupIntent();
+            router.replace('/');
+        }
+    }, [auth.isAuthenticated]);
+
     if (!auth.isAuthenticated) {
-        return <SetupAccessGateNotice />;
+        return null;
     }
     if (isBrowserWeb) {
         return <BrowserWebSetupRoute />;

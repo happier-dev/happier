@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -7,6 +7,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { WizardIconBox } from './WizardIconBox';
+import { useWizardCardLayoutMetrics } from './WizardCardLayout';
 
 export type RelayDiagramProps = Readonly<{
     testID?: string;
@@ -14,18 +15,20 @@ export type RelayDiagramProps = Readonly<{
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
-        alignItems: 'stretch',
+        alignItems: 'center',
         justifyContent: 'center',
         gap: 10,
         paddingTop: 6,
         paddingBottom: 4,
-        maxWidth: 300,
+        alignSelf: 'center',
     },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         gap: 12,
+        alignSelf: 'center',
+        width: '100%',
     },
     node: {
         alignItems: 'center',
@@ -41,7 +44,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     connector: {
         height: 2,
-        background: `repeating-linear-gradient(to right, ${theme.colors.divider} 0, ${theme.colors.divider} 4px, transparent 4px, transparent 8px)`,
+        borderBottomWidth: 2,
+        borderBottomColor: theme.colors.divider,
+        borderStyle: 'dashed',
         marginHorizontal: 2,
         marginBottom: 18,
         flexGrow: 1,
@@ -51,9 +56,22 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const RelayDiagram = React.memo(function RelayDiagram(props: RelayDiagramProps) {
     useUnistyles();
     const styles = stylesheet;
+    const { width } = useWindowDimensions();
+    const metrics = useWizardCardLayoutMetrics();
+    const diagramWidth = React.useMemo(() => {
+        const safeAvailableWidth = Math.max(0, (metrics?.cardWidth ?? width) - 48);
+        if (safeAvailableWidth < 220) return safeAvailableWidth;
+        return Math.min(300, safeAvailableWidth);
+    }, [metrics?.cardWidth, width]);
 
     return (
-        <View testID={props.testID} style={styles.root}>
+        <View
+            testID={props.testID}
+            style={[
+                styles.root,
+                { width: diagramWidth, maxWidth: diagramWidth },
+            ]}
+        >
             <View style={styles.row}>
                 <View style={styles.node}>
                     <WizardIconBox icon="phone-portrait-outline" boxSize={44} iconSize={22} />
@@ -65,8 +83,7 @@ export const RelayDiagram = React.memo(function RelayDiagram(props: RelayDiagram
                     accessible={false}
                     accessibilityElementsHidden
                     importantForAccessibility="no-hide-descendants"
-                >
-                </View>
+                />
 
                 <View style={styles.node}>
                     <WizardIconBox icon="cloud-outline" selected boxSize={44} iconSize={22} />
@@ -78,8 +95,7 @@ export const RelayDiagram = React.memo(function RelayDiagram(props: RelayDiagram
                     accessible={false}
                     accessibilityElementsHidden
                     importantForAccessibility="no-hide-descendants"
-                >
-                </View>
+                />
 
                 <View style={styles.node}>
                     <WizardIconBox icon="laptop-outline" boxSize={44} iconSize={22} />

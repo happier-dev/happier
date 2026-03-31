@@ -70,6 +70,22 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
                     relaySelection: action.relaySelection,
                 },
             };
+        case 'wizard/setRelayLockConfirmationPending':
+            return {
+                ...state,
+                context: {
+                    ...state.context,
+                    relayLockConfirmationPending: action.pending,
+                },
+            };
+        case 'wizard/setRelaySwitchConfirmationPending':
+            return {
+                ...state,
+                context: {
+                    ...state.context,
+                    relaySwitchConfirmationPending: action.pending,
+                },
+            };
         case 'wizard/setAuthIntent':
             return {
                 ...state,

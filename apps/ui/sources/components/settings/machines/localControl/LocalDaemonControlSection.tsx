@@ -43,8 +43,11 @@ export const LocalDaemonControlSection = React.memo(function LocalDaemonControlS
         activeTaskTitle,
         canRepair,
         canStart,
+        canInstall,
+        showInstallBackgroundService,
         cancel,
         lastErrorMessage,
+        installBackgroundService,
         repairBackgroundService,
         startDaemonService,
         status,
@@ -73,6 +76,17 @@ export const LocalDaemonControlSection = React.memo(function LocalDaemonControlS
                         subtitle={status.machineId}
                         showChevron={false}
                         mode="info"
+                    />
+                ) : null}
+                {showInstallBackgroundService ? (
+                    <Item
+                        testID="settings.localDaemonControl.install"
+                        title={t('sessionGettingStarted.steps.daemonInstall.title')}
+                        subtitle={t('sessionGettingStarted.steps.daemonInstall.description')}
+                        onPress={() => {
+                            void installBackgroundService();
+                        }}
+                        disabled={!canInstall}
                     />
                 ) : null}
                 <Item

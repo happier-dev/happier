@@ -9,6 +9,8 @@ const onboardingContext = {
     scanStepEnabled: false,
     canRunSystemTasks: false,
     relaySelection: { choiceId: null, serverUrl: null, locked: false },
+    relayLockConfirmationPending: false,
+    relaySwitchConfirmationPending: false,
     authIntent: 'standard' as const,
     setupAction: null,
 };
@@ -20,6 +22,8 @@ const setupContext = {
     scanStepEnabled: false,
     canRunSystemTasks: true,
     relaySelection: { choiceId: null, serverUrl: null, locked: false },
+    relayLockConfirmationPending: false,
+    relaySwitchConfirmationPending: false,
     authIntent: 'standard' as const,
     setupAction: null,
 };
@@ -40,6 +44,17 @@ describe('wizardSelectors', () => {
             'welcome',
             'scan_code',
             'relay_select',
+            'auth',
+            'auth_restore',
+            'auth_lost_access',
+        ]);
+    });
+
+    it('includes the relay lock confirmation step only when required by scan intent', () => {
+        expect(getVisibleWizardStepIds({ ...onboardingContext, relayLockConfirmationPending: true })).toEqual([
+            'welcome',
+            'relay_select',
+            'confirm_relay_lock',
             'auth',
             'auth_restore',
             'auth_lost_access',
@@ -86,7 +101,6 @@ describe('wizardSelectors', () => {
         })).toEqual([
             'setup_chooser',
             'setup_this_computer',
-            'host_relay_local',
             'providers_optional',
             'done',
         ]);
@@ -101,9 +115,30 @@ describe('wizardSelectors', () => {
         })).toEqual([
             'setup_chooser',
             'setup_this_computer',
+            'providers_optional',
+            'done',
+        ]);
+
+        expect(getVisibleWizardStepIds({
+            ...setupContext,
+            setupAction: 'relayLocal',
+        })).toEqual([
+            'setup_chooser',
+            'host_relay_local',
+            'done',
+        ]);
+
+        expect(getVisibleWizardStepIds({
+            ...setupContext,
+            setupAction: 'relayLocal',
+            relaySelection: {
+                ...setupContext.relaySelection,
+                serverUrl: 'https://local-relay.example.test',
+            },
+        })).toEqual([
+            'setup_chooser',
             'host_relay_local',
             'confirm_switch_relay',
-            'providers_optional',
             'done',
         ]);
 
@@ -113,7 +148,6 @@ describe('wizardSelectors', () => {
         })).toEqual([
             'setup_chooser',
             'remote_ssh_setup',
-            'host_relay_remote',
             'providers_optional',
             'done',
         ]);
@@ -128,7 +162,6 @@ describe('wizardSelectors', () => {
         })).toEqual([
             'setup_chooser',
             'remote_ssh_setup',
-            'host_relay_remote',
             'confirm_switch_relay',
             'providers_optional',
             'done',

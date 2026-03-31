@@ -4,49 +4,72 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { LocalDaemonControlSection } from '@/components/settings/machines/localControl/LocalDaemonControlSection';
+import { MachineSetupFlowScreen } from '@/components/settings/machines/MachineSetupFlowScreen';
 import { RemoteSshMachineSetupSection } from '@/components/settings/machines/RemoteSshMachineSetupSection';
 import { LocalRelayRuntimeControlSection } from '@/components/settings/server/localControl/LocalRelayRuntimeControlSection';
 import { ProviderSetupFlow } from '@/components/settings/providers/setup/ProviderSetupFlow';
+import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
+import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { t, tLoose } from '@/text';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 import { createWizardState, wizardReducer } from './wizardReducer';
 import { canSkipWizardStep, getWizardProgress } from './wizardSelectors';
 import type { WizardStepId } from './wizardTypes';
 import { WizardModalShell } from './WizardModalShell';
+import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from './ConfirmSwitchRelayStep';
 import { SecureAccessTailscaleStep } from './SecureAccessTailscaleStep';
 import { getWizardStepDefinition } from './wizardStepRegistry';
+import { WizardTerminalHandoff } from './WizardTerminalHandoff';
+import { buildAuthLoginCommandForServerUrl, buildCliInstallCommandForCurrentApp } from './wizardCliCommands';
+import { buildWebDesktopRelayHostHandoffSteps } from './webDesktopHandoffSteps';
+import { WebDesktopDownloadCta } from './WebDesktopDownloadCta';
 
 export type SetupWizardSurfaceProps = Readonly<{
     testID?: string;
     isDesktopShell: boolean;
 }>;
 
-type SetupAction = 'local' | 'remote' | 'tailscale' | null;
-type RelaySwitchDecision = 'keep' | 'switch';
+type SetupAction = 'local' | 'relayLocal' | 'remote' | 'tailscale' | null;
+type SetupChooserAction = 'local' | 'relayLocal' | 'remote' | 'tailscale';
+type RemoteSetupIntent = 'remoteMachine' | 'remoteRelayHost';
 
 const stylesheet = StyleSheet.create((theme) => ({
     branchList: {
         width: '100%',
         gap: 6,
     },
+    urlBlock: {
+        width: '100%',
+        gap: 10,
+    },
+    urlInput: {
+        width: '100%',
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surface,
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        color: theme.colors.text,
+    },
+    urlHint: {
+        color: theme.colors.textSecondary,
+        textAlign: 'center',
+    },
     branchHint: {
         color: theme.colors.textSecondary,
         textAlign: 'center',
     },
-    confirmChoices: {
+    webRelayHostHandoff: {
         width: '100%',
-        gap: 6,
-    },
-    confirmWarning: {
-        color: theme.colors.textSecondary,
-        textAlign: 'center',
+        gap: 16,
     },
 }));
 
@@ -61,105 +84,149 @@ function renderSetupStepBody(params: Readonly<{
     styles: typeof stylesheet;
     stepId: WizardStepId;
     testIDPrefix: string;
+    platform: 'desktop' | 'web' | 'native';
+    isDesktopShell: boolean;
+    remoteSetupIntent: RemoteSetupIntent;
+    activeServerUrl: string | null;
     relayUrl: string | null;
+    providerMachineId: string | null;
+    onLocalSetupSucceeded: (machineId: string | null) => void;
     relaySwitchDecision: RelaySwitchDecision;
     onRelaySwitchDecisionChange: (decision: RelaySwitchDecision) => void;
     onLocalRelayStatusChange: (status: unknown) => void;
     onRemoteRelayRuntimeCompletedChange: (payload: RemoteRelayRuntimeCompletion) => void;
+    onRelayUrlPasteChange: (value: string) => void;
 }>): React.ReactNode {
+    const requiresDesktop = params.platform === 'web' && !params.isDesktopShell;
     switch (params.stepId) {
         case 'setup_this_computer':
-            return <LocalDaemonControlSection />;
+            if (requiresDesktop) {
+                const cliInstallCommand = buildCliInstallCommandForCurrentApp();
+                const authLoginCommand = params.activeServerUrl
+                    ? buildAuthLoginCommandForServerUrl(params.activeServerUrl)
+                    : 'happier auth login --persist --method web';
+                return (
+                    <WizardTerminalHandoff
+                        testID="setupWizard-terminal-handoff"
+                        steps={[
+                            {
+                                title: t('sessionGettingStarted.steps.installCli.title'),
+                                subtitle: t('sessionGettingStarted.steps.installCli.description'),
+                                code: cliInstallCommand,
+                                scrollTestIDSuffix: 'cli-install',
+                            },
+                            {
+                                title: t('sessionGettingStarted.steps.authLogin.title'),
+                                subtitle: t('sessionGettingStarted.steps.authLogin.description'),
+                                code: authLoginCommand,
+                                scrollTestIDSuffix: 'auth-login',
+                            },
+                            {
+                                title: t('sessionGettingStarted.steps.daemonInstall.title'),
+                                subtitle: t('sessionGettingStarted.steps.daemonInstall.description'),
+                                code: 'happier daemon install',
+                                scrollTestIDSuffix: 'daemon-install',
+                            },
+                        ]}
+                    />
+                );
+            }
+            return (
+                <MachineSetupFlowScreen
+                    embedded
+                    mode="localOnly"
+                    autoStartLocalTask
+                    onLocalSetupSucceeded={params.onLocalSetupSucceeded}
+                />
+            );
         case 'host_relay_local':
+            if (requiresDesktop) {
+                const cliInstallCommand = buildCliInstallCommandForCurrentApp();
+                return (
+                    <View testID="setupWizard-web-relay-host-handoff" style={params.styles.webRelayHostHandoff}>
+                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-relay" />
+                        <WizardTerminalHandoff
+                            testID="setupWizard-terminal-handoff"
+                            steps={buildWebDesktopRelayHostHandoffSteps({
+                                cliInstallCommand,
+                                includeDaemonInstall: true,
+                            })}
+                        />
+                        <View style={params.styles.urlBlock}>
+                            <TextInput
+                                testID="setupWizard-relay-url-input"
+                                placeholder={t('common.urlPlaceholder')}
+                                placeholderTextColor={params.theme.colors.textSecondary}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                onChangeText={params.onRelayUrlPasteChange}
+                                style={params.styles.urlInput}
+                            />
+                            <Text style={params.styles.urlHint}>{t('setupOnboarding.webDesktopOnlyRelayStatusSubtitle')}</Text>
+                        </View>
+                    </View>
+                );
+            }
             return <LocalRelayRuntimeControlSection onStatusChange={params.onLocalRelayStatusChange} />;
         case 'remote_ssh_setup':
-            return (
-                <ItemGroup title={t('settings.machineSetupStagesTitle')} footer={t('settings.machineSetupSshMachineSubtitle')}>
-                    <Item
-                        title={t('settings.machineSetupStageConnect')}
-                        showChevron={false}
-                        mode="info"
+            if (requiresDesktop) {
+                const cliInstallCommand = buildCliInstallCommandForCurrentApp();
+                const authLoginCommand = params.activeServerUrl
+                    ? buildAuthLoginCommandForServerUrl(params.activeServerUrl)
+                    : 'happier auth login --persist --method web';
+                const sshCommand =
+                    params.remoteSetupIntent === 'remoteRelayHost'
+                        ? 'happier machine setup --ssh user@host --install-relay-runtime --yes'
+                        : 'happier machine setup --ssh user@host --yes';
+                return (
+                    <WizardTerminalHandoff
+                        testID="setupWizard-terminal-handoff"
+                        steps={[
+                            {
+                                title: t('sessionGettingStarted.steps.installCli.title'),
+                                subtitle: t('sessionGettingStarted.steps.installCli.description'),
+                                code: cliInstallCommand,
+                                scrollTestIDSuffix: 'cli-install',
+                            },
+                            {
+                                title: t('sessionGettingStarted.steps.authLogin.title'),
+                                subtitle: t('sessionGettingStarted.steps.authLogin.description'),
+                                code: authLoginCommand,
+                                scrollTestIDSuffix: 'auth-login',
+                            },
+                            {
+                                title: t('settings.machineSetupSshMachineTitle'),
+                                subtitle: t('settings.machineSetupSshMachineSubtitle'),
+                                code: sshCommand,
+                                scrollTestIDSuffix: 'remote-ssh-setup',
+                            },
+                        ]}
                     />
-                    <Item
-                        title={t('settings.machineSetupStageInstall')}
-                        showChevron={false}
-                        mode="info"
-                    />
-                    <Item
-                        title={t('settings.machineSetupStageFinish')}
-                        showChevron={false}
-                        mode="info"
-                    />
-                </ItemGroup>
-            );
-        case 'host_relay_remote':
+                );
+            }
             return <RemoteSshMachineSetupSection expanded onCompletedChange={params.onRemoteRelayRuntimeCompletedChange} />;
         case 'confirm_switch_relay': {
             const relayUrl = typeof params.relayUrl === 'string' ? params.relayUrl.trim() : '';
             return (
-                <>
-                    <ItemGroup title={t('setupOnboarding.confirmSwitchRelayTitle')} footer={t('setupOnboarding.confirmSwitchRelaySubtitle')}>
-                        <Item
-                            testID={`${params.testIDPrefix}-confirmSwitchRelay`}
-                            title={t('setupOnboarding.selectedRelayFooterLabel')}
-                            subtitle={relayUrl}
-                            showChevron={false}
-                            mode="info"
-                        />
-                    </ItemGroup>
-                    <View style={params.styles.confirmChoices}>
-                        <SelectableRow
-                            testID={`${params.testIDPrefix}-confirmSwitchRelay.choice:keep`}
-                            variant="selectable"
-                            selected={params.relaySwitchDecision === 'keep'}
-                            onPress={() => params.onRelaySwitchDecisionChange('keep')}
-                            left={
-                                <Ionicons
-                                    name="remove-circle-outline"
-                                    size={18}
-                                    color={params.relaySwitchDecision === 'keep' ? params.theme.colors.accent.blue : params.theme.colors.textSecondary}
-                                />
-                            }
-                            title={t('setupOnboarding.confirmSwitchRelayKeepTitle')}
-                            subtitle={t('setupOnboarding.confirmSwitchRelayKeepSubtitle')}
-                            right={
-                                <Ionicons
-                                    name={params.relaySwitchDecision === 'keep' ? 'checkmark-circle' : 'ellipse-outline'}
-                                    size={18}
-                                    color={params.relaySwitchDecision === 'keep' ? params.theme.colors.accent.blue : params.theme.colors.textSecondary}
-                                />
-                            }
-                        />
-                        <SelectableRow
-                            testID={`${params.testIDPrefix}-confirmSwitchRelay.choice:switch`}
-                            variant="selectable"
-                            selected={params.relaySwitchDecision === 'switch'}
-                            onPress={() => params.onRelaySwitchDecisionChange('switch')}
-                            left={
-                                <Ionicons
-                                    name="swap-horizontal-outline"
-                                    size={18}
-                                    color={params.relaySwitchDecision === 'switch' ? params.theme.colors.accent.blue : params.theme.colors.textSecondary}
-                                />
-                            }
-                            title={t('setupOnboarding.confirmSwitchRelaySwitchTitle')}
-                            subtitle={t('setupOnboarding.confirmSwitchRelaySwitchSubtitle')}
-                            right={
-                                <Ionicons
-                                    name={params.relaySwitchDecision === 'switch' ? 'checkmark-circle' : 'ellipse-outline'}
-                                    size={18}
-                                    color={params.relaySwitchDecision === 'switch' ? params.theme.colors.accent.blue : params.theme.colors.textSecondary}
-                                />
-                            }
-                        />
-                    </View>
-                    <Text style={params.styles.confirmWarning}>{t('setupOnboarding.confirmSwitchRelayWarning')}</Text>
-                </>
+                <ConfirmSwitchRelayStep
+                    testIDPrefix={params.testIDPrefix}
+                    relayUrl={relayUrl}
+                    decision={params.relaySwitchDecision}
+                    onDecisionChange={params.onRelaySwitchDecisionChange}
+                />
             );
         }
         case 'providers_optional':
-            return <ProviderSetupFlow />;
+            return <ProviderSetupFlow machineId={params.providerMachineId} />;
         case 'secure_access_tailscale':
+            if (requiresDesktop) {
+                return (
+                    <View testID="setupWizard-web-tailscale-handoff" style={params.styles.branchList}>
+                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-tailscale" />
+                        <Text style={params.styles.branchHint}>{t('setupOnboarding.webDesktopOnlyBody')}</Text>
+                    </View>
+                );
+            }
             return <SecureAccessTailscaleStep />;
         case 'done':
             return <Text>{t('setupOnboarding.nextActionReady')}</Text>;
@@ -172,6 +239,8 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const testIDPrefix = props.testID ?? 'setupWizard';
+    const relayDriftBanner = useRelayDriftBanner();
+    const activeServerSnapshot = getActiveServerSnapshot();
     const [state, dispatch] = React.useReducer(
         wizardReducer,
         null,
@@ -184,6 +253,8 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                     scanStepEnabled: false,
                     canRunSystemTasks: props.isDesktopShell,
                     relaySelection: { choiceId: null, serverUrl: null, locked: false },
+                    relayLockConfirmationPending: false,
+                    relaySwitchConfirmationPending: false,
                     authIntent: 'standard',
                     setupAction: null,
                 },
@@ -208,6 +279,14 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         relayUrl: string;
         machineId: string | null;
     }> | null>(null);
+    const [localMachineId, setLocalMachineId] = React.useState<string | null>(null);
+    const [remoteMachineId, setRemoteMachineId] = React.useState<string | null>(null);
+    const [remoteSetupIntent, setRemoteSetupIntent] = React.useState<RemoteSetupIntent>('remoteMachine');
+
+    const handleLocalSetupSucceeded = React.useCallback((machineId: string | null) => {
+        const normalized = typeof machineId === 'string' && machineId.trim().length > 0 ? machineId.trim() : null;
+        setLocalMachineId((current) => current === normalized ? current : normalized);
+    }, []);
 
     const clearRelayRuntimeCandidate = React.useCallback(() => {
         setRelaySwitchDecision('keep');
@@ -243,15 +322,40 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         dispatch({ type: 'wizard/back' });
     }, [stepId]);
 
-    const chooseAction = React.useCallback((nextAction: Exclude<SetupAction, null>) => {
+    const chooseAction = React.useCallback((nextAction: SetupChooserAction) => {
         clearRelayRuntimeCandidate();
+        if (nextAction !== 'local') {
+            setLocalMachineId(null);
+        }
+        setRemoteMachineId(null);
+        setRemoteSetupIntent('remoteMachine');
         dispatch({ type: 'wizard/setSetupAction', setupAction: nextAction });
+    }, [clearRelayRuntimeCandidate]);
+
+    const chooseRemoteMachineSetup = React.useCallback(() => {
+        clearRelayRuntimeCandidate();
+        setLocalMachineId(null);
+        setRemoteMachineId(null);
+        setRemoteSetupIntent('remoteMachine');
+        dispatch({ type: 'wizard/setSetupAction', setupAction: 'remote' });
+    }, [clearRelayRuntimeCandidate]);
+
+    const chooseRemoteRelayHost = React.useCallback(() => {
+        clearRelayRuntimeCandidate();
+        setLocalMachineId(null);
+        setRemoteMachineId(null);
+        setRemoteSetupIntent('remoteRelayHost');
+        dispatch({ type: 'wizard/setSetupAction', setupAction: 'remote' });
     }, [clearRelayRuntimeCandidate]);
 
     const onPrimary = React.useCallback(async () => {
         if (stepId === 'setup_chooser') {
             if (action === 'local') {
                 dispatch({ type: 'wizard/goToStep', stepId: 'setup_this_computer' });
+                return;
+            }
+            if (action === 'relayLocal') {
+                dispatch({ type: 'wizard/goToStep', stepId: 'host_relay_local' });
                 return;
             }
             if (action === 'remote') {
@@ -265,7 +369,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         }
 
         if (stepId === 'setup_this_computer') {
-            dispatch({ type: 'wizard/goToStep', stepId: 'host_relay_local' });
+            dispatch({ type: 'wizard/goToStep', stepId: 'providers_optional' });
             return;
         }
         if (stepId === 'host_relay_local') {
@@ -273,14 +377,10 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                 dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' });
                 return;
             }
-            dispatch({ type: 'wizard/goToStep', stepId: 'providers_optional' });
+            dispatch({ type: 'wizard/goToStep', stepId: action === 'relayLocal' ? 'done' : 'providers_optional' });
             return;
         }
         if (stepId === 'remote_ssh_setup') {
-            dispatch({ type: 'wizard/goToStep', stepId: 'host_relay_remote' });
-            return;
-        }
-        if (stepId === 'host_relay_remote') {
             if (typeof relayCandidateUrl === 'string' && relayCandidateUrl.trim().length > 0) {
                 dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' });
                 return;
@@ -291,12 +391,12 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         if (stepId === 'confirm_switch_relay') {
             const nextRelayUrl = typeof relayCandidateUrl === 'string' ? relayCandidateUrl.trim() : '';
             if (!nextRelayUrl) {
-                dispatch({ type: 'wizard/goToStep', stepId: 'providers_optional' });
+                dispatch({ type: 'wizard/goToStep', stepId: action === 'relayLocal' ? 'done' : 'providers_optional' });
                 return;
             }
 
             if (relaySwitchDecision === 'keep') {
-                dispatch({ type: 'wizard/goToStep', stepId: 'providers_optional' });
+                dispatch({ type: 'wizard/goToStep', stepId: action === 'relayLocal' ? 'done' : 'providers_optional' });
                 return;
             }
 
@@ -338,13 +438,22 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     }, [setRelayRuntimeCandidate]);
 
     const handleRemoteRelayRuntimeCompletedChange = React.useCallback((payload: RemoteRelayRuntimeCompletion) => {
-        setRelayRuntimeCandidate(payload.relayRuntimeUrl, payload.machineId);
+        setRemoteMachineId(payload.machineId);
+        const relayUrl = typeof payload.relayRuntimeUrl === 'string' ? payload.relayRuntimeUrl.trim() : '';
+        if (relayUrl.length > 0) {
+            setRelayRuntimeCandidate(relayUrl, payload.machineId);
+        }
+    }, [setRelayRuntimeCandidate]);
+
+    const handleRelayUrlPasteChange = React.useCallback((value: string) => {
+        setRelayRuntimeCandidate(value, null);
     }, [setRelayRuntimeCandidate]);
 
     let body: React.ReactNode = null;
     if (stepId === 'setup_chooser') {
         body = (
             <>
+                {relayDriftBanner ? <RelayDriftActionCard banner={relayDriftBanner} /> : null}
                 <View style={styles.branchList}>
                     <SelectableRow
                         testID={`${props.testID ?? 'setupWizard'}-branch:local`}
@@ -357,14 +466,34 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                         right={<Ionicons name={action === 'local' ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={action === 'local' ? theme.colors.accent.blue : theme.colors.textSecondary} />}
                     />
                     <SelectableRow
+                        testID={`${props.testID ?? 'setupWizard'}-branch:relayLocal`}
+                        variant="selectable"
+                        selected={action === 'relayLocal'}
+                        onPress={() => chooseAction('relayLocal')}
+                        left={<Ionicons name="cloud-upload-outline" size={18} color={action === 'relayLocal' ? theme.colors.accent.blue : theme.colors.textSecondary} />}
+                        title={t('setupOnboarding.relayOnThisComputerTitle')}
+                        subtitle={t('setupOnboarding.relayOnThisComputerSubtitle')}
+                        right={<Ionicons name={action === 'relayLocal' ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={action === 'relayLocal' ? theme.colors.accent.blue : theme.colors.textSecondary} />}
+                    />
+                    <SelectableRow
                         testID={`${props.testID ?? 'setupWizard'}-branch:remote`}
                         variant="selectable"
-                        selected={action === 'remote'}
-                        onPress={() => chooseAction('remote')}
-                        left={<Ionicons name="server-outline" size={18} color={action === 'remote' ? theme.colors.accent.blue : theme.colors.textSecondary} />}
+                        selected={action === 'remote' && remoteSetupIntent === 'remoteMachine'}
+                        onPress={chooseRemoteMachineSetup}
+                        left={<Ionicons name="server-outline" size={18} color={action === 'remote' && remoteSetupIntent === 'remoteMachine' ? theme.colors.accent.blue : theme.colors.textSecondary} />}
                         title={t('settings.machineSetupSshMachineTitle')}
                         subtitle={t('settings.machineSetupSshMachineSubtitle')}
-                        right={<Ionicons name={action === 'remote' ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={action === 'remote' ? theme.colors.accent.blue : theme.colors.textSecondary} />}
+                        right={<Ionicons name={action === 'remote' && remoteSetupIntent === 'remoteMachine' ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={action === 'remote' && remoteSetupIntent === 'remoteMachine' ? theme.colors.accent.blue : theme.colors.textSecondary} />}
+                    />
+                    <SelectableRow
+                        testID={`${props.testID ?? 'setupWizard'}-branch:remoteRelay`}
+                        variant="selectable"
+                        selected={action === 'remote' && remoteSetupIntent === 'remoteRelayHost'}
+                        onPress={chooseRemoteRelayHost}
+                        left={<Ionicons name="cloud-upload-outline" size={18} color={action === 'remote' && remoteSetupIntent === 'remoteRelayHost' ? theme.colors.accent.blue : theme.colors.textSecondary} />}
+                        title={t('settings.machineSetupSshMachineTitle')}
+                        subtitle={`${t('settings.machineSetupSshMachineSubtitle')}\n${t('settings.machineSetupRemoteRelayRuntimeLabel')}`}
+                        right={<Ionicons name={action === 'remote' && remoteSetupIntent === 'remoteRelayHost' ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={action === 'remote' && remoteSetupIntent === 'remoteRelayHost' ? theme.colors.accent.blue : theme.colors.textSecondary} />}
                     />
                     <SelectableRow
                         testID={`${props.testID ?? 'setupWizard'}-branch:tailscale`}
@@ -381,16 +510,24 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             </>
         );
     } else {
+        const providerMachineId = action === 'remote' ? remoteMachineId : localMachineId;
         body = renderSetupStepBody({
             theme,
             styles,
             stepId,
             testIDPrefix,
+            platform: state.context.platform,
+            isDesktopShell: props.isDesktopShell,
+            remoteSetupIntent,
+            activeServerUrl: activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : null,
             relayUrl: relayCandidateUrl,
+            providerMachineId,
+            onLocalSetupSucceeded: handleLocalSetupSucceeded,
             relaySwitchDecision,
             onRelaySwitchDecisionChange: setRelaySwitchDecision,
             onLocalRelayStatusChange: handleLocalRelayStatusChange,
             onRemoteRelayRuntimeCompletedChange: handleRemoteRelayRuntimeCompletedChange,
+            onRelayUrlPasteChange: handleRelayUrlPasteChange,
         });
     }
 

@@ -125,6 +125,8 @@ describe('/restore', () => {
             tree = screen.tree;
             if (!tree) throw new Error('Expected renderer');
 
+            expect(screen.findByTestId('restore-wizard')).toBeTruthy();
+
             const joined = screen.getTextContent();
 
             expect(joined).toContain('GitHub verified');

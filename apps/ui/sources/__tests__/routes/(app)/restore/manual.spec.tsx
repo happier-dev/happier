@@ -67,6 +67,7 @@ async function renderManualRestoreScreen() {
 describe('/restore/manual', () => {
     it('does not auto-capitalize secret key input (supports case-sensitive base64url input)', async () => {
         const screen = await renderManualRestoreScreen();
+        expect(screen.findByTestId('restore-manual-wizard')).toBeTruthy();
         const input = screen.findByTestId('restore-manual-secret-input');
         expect(input).not.toBeNull();
         expect(input?.props?.autoCapitalize).toBe('none');

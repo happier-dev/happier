@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ScrollView, View, useWindowDimensions, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
@@ -8,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { WizardCardLayout } from './WizardCardLayout';
+import { useWizardCardLayoutMetrics, WizardCardLayout } from './WizardCardLayout';
 import { WizardStepDots } from './WizardStepDots';
 
 export type WizardModalShellProps = Readonly<{
@@ -38,7 +38,8 @@ export type WizardModalShellProps = Readonly<{
 
 const stylesheet = StyleSheet.create((theme) => ({
     shell: {
-        flex: 1,
+        flexDirection: 'column',
+        flexShrink: 1,
         minHeight: 0,
     },
     header: {
@@ -72,7 +73,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'flex-end',
     },
     scroll: {
-        flex: 1,
+        flexGrow: 0,
+        flexShrink: 1,
         minHeight: 0,
     },
     content: {
@@ -146,13 +148,59 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function WizardModalShell(props: WizardModalShellProps) {
     useUnistyles();
     const styles = stylesheet;
+    const { height } = useWindowDimensions();
     const showSkip = props.showSkip ?? true;
     const showBack = props.showBack ?? true;
+    const metrics = useWizardCardLayoutMetrics();
+    const [headerHeight, setHeaderHeight] = React.useState(0);
+    const [footerHeight, setFooterHeight] = React.useState(0);
+    const [contentHeight, setContentHeight] = React.useState<number | null>(null);
+
+    const footerPaddingBottom = height < 640 ? 12 : styles.footer.paddingBottom;
+
+    const handleHeaderLayout = React.useCallback((event: LayoutChangeEvent) => {
+        setHeaderHeight(event.nativeEvent.layout.height);
+    }, []);
+
+    const handleFooterLayout = React.useCallback((event: LayoutChangeEvent) => {
+        setFooterHeight(event.nativeEvent.layout.height);
+    }, []);
+
+    const scrollMaxHeight = React.useMemo(() => {
+        if (!metrics) return null;
+        const raw = metrics.maxHeight - headerHeight - footerHeight;
+        return raw > 0 ? raw : 0;
+    }, [footerHeight, headerHeight, metrics]);
+
+    const shouldClampScrollHeight = React.useMemo(() => {
+        if (scrollMaxHeight == null) return false;
+        if (contentHeight == null) return false;
+        return contentHeight > scrollMaxHeight;
+    }, [contentHeight, scrollMaxHeight]);
+
+    const scrollEnabled = React.useMemo(() => {
+        if (contentHeight == null) return true;
+        return shouldClampScrollHeight;
+    }, [contentHeight, shouldClampScrollHeight]);
+
+    const content = (
+        <>
+            {props.title || props.subtitle ? (
+                <View style={styles.titleBlock}>
+                    {props.titleLeading ? <View style={styles.titleLeading}>{props.titleLeading}</View> : null}
+                    {props.title ? <Text style={styles.title}>{props.title}</Text> : null}
+                    {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
+                </View>
+            ) : null}
+
+            <View style={[styles.body, props.contentStyle]}>{props.children}</View>
+        </>
+    );
 
     return (
         <WizardCardLayout testID={props.testID}>
             <View style={styles.shell}>
-                <View style={styles.header}>
+                <View style={styles.header} onLayout={handleHeaderLayout}>
                     <View style={styles.headerSide}>
                         <HeaderLogo />
                     </View>
@@ -177,23 +225,26 @@ export function WizardModalShell(props: WizardModalShellProps) {
                     </View>
                 </View>
 
-                <ScrollView
-                    style={styles.scroll}
-                    contentContainerStyle={styles.content}
-                    showsVerticalScrollIndicator={false}
-                >
-                    {props.title || props.subtitle ? (
-                        <View style={styles.titleBlock}>
-                            {props.titleLeading ? <View style={styles.titleLeading}>{props.titleLeading}</View> : null}
-                            {props.title ? <Text style={styles.title}>{props.title}</Text> : null}
-                            {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
-                        </View>
-                    ) : null}
+                {shouldClampScrollHeight ? (
+                    <ScrollView
+                        style={[styles.scroll, scrollMaxHeight != null ? { maxHeight: scrollMaxHeight } : null]}
+                        contentContainerStyle={styles.content}
+                        showsVerticalScrollIndicator={false}
+                        scrollEnabled={scrollEnabled}
+                        onContentSizeChange={(_, height) => setContentHeight(height)}
+                    >
+                        {content}
+                    </ScrollView>
+                ) : (
+                    <View
+                        style={styles.content}
+                        onLayout={(event) => setContentHeight(event.nativeEvent.layout.height)}
+                    >
+                        {content}
+                    </View>
+                )}
 
-                    <View style={[styles.body, props.contentStyle]}>{props.children}</View>
-                </ScrollView>
-
-                <View style={styles.footer}>
+                <View style={[styles.footer, { paddingBottom: footerPaddingBottom }]} onLayout={handleFooterLayout}>
                     {props.footerHint
                         ? typeof props.footerHint === 'string' || typeof props.footerHint === 'number'
                             ? <Text style={styles.footerHint}>{props.footerHint}</Text>

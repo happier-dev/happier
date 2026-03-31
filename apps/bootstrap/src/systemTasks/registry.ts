@@ -12,9 +12,12 @@ import {
   configureRelay,
   installService,
   pairLocalMachineIfNeeded,
+  readActiveRelayProfile,
   readAuthStatus,
   readDaemonStatus,
+  requestAuthPairing,
   startService,
+  waitForAuthPairing,
   waitForReadyDaemon,
 } from './localDaemonCli.js';
 import { approveLocalRemoteAuthRequestDefault, installRemoteCliDefault, resolveRemoteSshHostTrustDefault, runRemoteBootstrapCommandDefault } from './remoteSshBootstrapTasks.js';
@@ -87,6 +90,7 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
   );
   const daemonServiceStatusHandler = createDaemonServiceStatusHandler();
   const daemonServiceStartHandler = createDaemonServiceStartHandler();
+  const setupRepairThisComputerHandler = createSetupRepairThisComputerHandler();
 
   return systemTasks.createSystemTaskRegistry([
     {
@@ -144,6 +148,10 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
       handler: createSetupThisComputerHandler(),
     },
     {
+      kind: 'setup.repairThisComputer.v1',
+      handler: setupRepairThisComputerHandler,
+    },
+    {
       kind: 'relay.connectBackgroundService.v1',
       handler: async function* (params, context) {
         const parsed = parseRelayConnectBackgroundServiceParams(params);
@@ -194,6 +202,92 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
       handler: remoteBootstrapHandler,
     },
   ]);
+}
+
+function createSetupRepairThisComputerHandler(): systemTasks.SystemTaskExecutionRunner {
+  return async function* (params, context) {
+    const deps = createSetupRepairThisComputerDeps(context.signal);
+    const runner = systemTasks.createExecutionRunnerFromKind(
+      systemTasks.createSetupRepairThisComputerTaskKind(deps),
+    );
+    return yield* runner(params, context);
+  };
+}
+
+function createSetupRepairThisComputerDeps(signal: AbortSignal): systemTasks.SetupRepairThisComputerDeps {
+  let cachedRelayProfile: Awaited<ReturnType<typeof readActiveRelayProfile>> | null = null;
+  let cachedAuthStatus: AuthStatusSnapshot | null = null;
+
+  return {
+    async readActiveRelayProfile() {
+      if (cachedRelayProfile) return cachedRelayProfileToRepairProfile(cachedRelayProfile);
+      cachedRelayProfile = await readActiveRelayProfile();
+      return cachedRelayProfileToRepairProfile(cachedRelayProfile);
+    },
+    async readAuthStatus() {
+      const status = await readCachedAuthStatus();
+      if (!status.authenticated) {
+        return { authenticated: false };
+      }
+      return { authenticated: true, machineId: status.machineId };
+    },
+    async configureRelay(params) {
+      const profile = cachedRelayProfile ?? await readActiveRelayProfile();
+      cachedRelayProfile = profile;
+      await configureRelay({
+        serverUrl: params.relayUrl,
+        webappUrl: params.webappUrl,
+        localServerUrl: params.activeLocalRelayUrl,
+      });
+    },
+    async requestAuthPairing() {
+      return await requestAuthPairing();
+    },
+    async waitForAuthPairing(publicKey) {
+      const result = await waitForAuthPairing(publicKey);
+      const machineId = String(result.machineId ?? '').trim();
+      if (!machineId) {
+        throw new systemTasks.SystemTaskExecutionError(
+          'system_task_failed',
+          'Auth pairing did not return a machine id.',
+        );
+      }
+      return { machineId };
+    },
+    async pairLocalMachineIfNeeded() {
+      const status = await readCachedAuthStatus();
+      const machineId = await pairLocalMachineIfNeeded(status);
+      return machineId ?? '';
+    },
+    async installDaemonService() {
+      await installService();
+    },
+    async startDaemonService() {
+      await startService();
+    },
+    async waitForReadyDaemon() {
+      return await waitForReadyDaemon({
+        readDaemonStatus,
+        signal,
+      });
+    },
+  };
+
+  async function readCachedAuthStatus(): Promise<AuthStatusSnapshot> {
+    if (cachedAuthStatus) return cachedAuthStatus;
+    cachedAuthStatus = await readAuthStatus();
+    return cachedAuthStatus;
+  }
+
+  function cachedRelayProfileToRepairProfile(
+    profile: Awaited<ReturnType<typeof readActiveRelayProfile>>,
+  ): systemTasks.SetupRepairThisComputerRelayProfile {
+    return {
+      serverUrl: profile.serverUrl,
+      webappUrl: profile.webappUrl,
+      activeLocalRelayUrl: profile.localServerUrl,
+    };
+  }
 }
 function createRelayDriftRepairDeps(override?: Partial<RelayDriftRepairDeps>): RelayDriftRepairDeps {
   return {

@@ -28,6 +28,7 @@ import { MachineActivityAccumulator, type MachineActivityUpdate } from './reduce
 import { randomUUID } from '@/platform/randomUUID';
 import { Platform, AppState } from 'react-native';
 import type { ManagedEndpointSupervisor, ManagedEndpointSupervisorState } from '@happier-dev/connection-supervisor';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 import { resolveSentFrom } from './domains/messages/sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord, RawRecordSchema } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
@@ -238,7 +239,7 @@ class Sync {
         private lastObservedEndpointPhase: ManagedEndpointSupervisorState['phase'] | null = null;
         private syncTuning: SyncTuning = loadSyncTuning();
       private resumeInFlight: Promise<void> | null = null;
-      private isForeground = AppState.currentState === 'active';
+      private isForeground = isTauriDesktop() || AppState.currentState === 'active';
       public encryptionCache = new EncryptionCache();
       private sessionsSync: InvalidateSync;
     private messagesSync = new Map<string, InvalidateSync>();
@@ -417,7 +418,7 @@ class Sync {
 
           // Web: AppState events are not always reliable when tabs are backgrounded. Mirror the
           // pause/resume behavior using document visibility.
-          if (Platform.OS === 'web') {
+          if (Platform.OS === 'web' && !isTauriDesktop()) {
               const doc = (globalThis as unknown as { document?: any }).document;
               if (doc && typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
                   const onVisibilityChange = () => {

@@ -412,7 +412,7 @@ describe('LocalTailscaleSecureAccessSection', () => {
                 taskId: 'task_1:secureAccess.tailscale.v1',
                 tsMs: 100,
                 type: 'prompt',
-                stepId: 'serve enable',
+                stepId: 'tailscale.serveEnable',
                 message: 'Approve Tailscale Serve in your tailnet',
                 data: {
                     kind: 'tailscaleServeApproval',
@@ -469,7 +469,7 @@ describe('LocalTailscaleSecureAccessSection', () => {
                 taskId: 'task_1:secureAccess.tailscale.v1',
                 tsMs: 100,
                 type: 'prompt',
-                stepId: 'install',
+                stepId: 'tailscale.install',
                 message: 'Install Tailscale to continue',
                 data: {
                     kind: 'tailscaleInstall',
@@ -527,7 +527,7 @@ describe('LocalTailscaleSecureAccessSection', () => {
                 taskId: 'task_1:secureAccess.tailscale.v1',
                 tsMs: 100,
                 type: 'progress',
-                stepId: 'login',
+                stepId: 'tailscale.login',
                 message: 'Started interactive Tailscale sign-in',
             });
         });

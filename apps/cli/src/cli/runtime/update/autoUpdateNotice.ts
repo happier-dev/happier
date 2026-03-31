@@ -55,8 +55,8 @@ const LONG_FLAGS_WITH_VALUE = new Set([
   '--config',
   '--server',
   '--server-url',
+  '--local-server-url',
   '--webapp-url',
-  '--public-server-url',
 ]);
 
 function getCmdFromArgv(argv: string[]): string {

@@ -69,6 +69,10 @@ vi.mock('@/components/navigation/shell/HomeHeader', () => ({
     HomeHeaderNotAuth: () => null,
 }));
 
+vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
+    PreAuthOnboardingWizardEntry: (props: Record<string, unknown>) => React.createElement('PreAuthOnboardingWizardEntry', props),
+}));
+
 vi.mock('@/components/settings/server/localControl/LocalRelayRuntimeControlSection', () => ({
     LocalRelayRuntimeControlSection: (props: Record<string, unknown>) => React.createElement('LocalRelayRuntimeControlSection', props),
 }));
@@ -143,17 +147,17 @@ describe('/setup route web gating', () => {
         standardCleanup();
     });
 
-    it('shows an access gate notice on browser web before auth', async () => {
+    it('redirects unauthenticated browser-web users to /', async () => {
         const Screen = (await import('@/app/(app)/setup/index')).default;
         const screen = await renderScreen(React.createElement(Screen));
 
-        expect(screen.findByTestId('setup.preAuthNotice')).toBeTruthy();
-        expect(screen.findByTestId('setup.preAuthGoHome')).toBeTruthy();
+        expect(screen.findAllByType('PreAuthOnboardingWizardEntry' as never)).toHaveLength(0);
         expect(screen.findByTestId('setup.desktopOnlyNotice')).toBeNull();
         expect(screen.findByTestId('setup.web.activeRelay')).toBeNull();
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
         expect(screen.findByTestId('setup.continueToAuth')).toBeNull();
         expect(screen.findByTestId('setup.discard')).toBeNull();
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
     });
 
     it('shows only the desktop-only notice when authenticated on browser web and clears pending setup intent', async () => {

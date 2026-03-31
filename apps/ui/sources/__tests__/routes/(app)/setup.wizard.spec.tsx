@@ -27,6 +27,10 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     clearPendingSetupIntent: vi.fn(),
 }));
 
+vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
+    PreAuthOnboardingWizardEntry: (props: Record<string, unknown>) => React.createElement('PreAuthOnboardingWizardEntry', props),
+}));
+
 vi.mock('@/components/onboardingWizard/SetupWizardSurface', () => ({
     SetupWizardSurface: (props: Record<string, unknown>) => React.createElement('SetupWizardSurface', props),
 }));
@@ -59,12 +63,13 @@ describe('/setup/wizard route', () => {
         standardCleanup();
     });
 
-    it('shows the access gate before auth', async () => {
+    it('redirects unauthenticated users to /', async () => {
         const Screen = (await import('@/app/(app)/setup/wizard')).default;
         const screen = await renderScreen(React.createElement(Screen));
 
-        expect(screen.findByTestId('setup.preAuthNotice')).toBeTruthy();
+        expect(screen.findAllByType('PreAuthOnboardingWizardEntry' as never)).toHaveLength(0);
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
     });
 
     it('renders the setup wizard surface after auth', async () => {

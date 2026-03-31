@@ -77,6 +77,10 @@ vi.mock('@/components/settings/machines/MachineSetupFlowScreen', () => ({
     MachineSetupFlowScreen: (props: Record<string, unknown>) => React.createElement('MachineSetupFlowScreen', props),
 }));
 
+vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
+    PreAuthOnboardingWizardEntry: (props: Record<string, unknown>) => React.createElement('PreAuthOnboardingWizardEntry', props),
+}));
+
 vi.mock('@/components/settings/server/localControl/LocalRelayRuntimeControlSection', () => ({
     LocalRelayRuntimeControlSection: (props: Record<string, unknown> & { onStatusChange?: (status: { relayUrl: string }) => void }) => {
         React.useEffect(() => {
@@ -115,8 +119,9 @@ describe('/setup route pre-auth access gate', () => {
         const Screen = (await import('@/app/(app)/setup/index')).default;
         const screen = await renderScreen(React.createElement(Screen));
 
-        expect(screen.findByTestId('setup.preAuthNotice')).toBeTruthy();
-        expect(screen.findByTestId('setup.preAuthGoHome')).toBeTruthy();
+        expect(screen.findByTestId('setup.preAuthNotice')).toBeNull();
+        expect(screen.findByTestId('setup.preAuthGoHome')).toBeNull();
+        expect(screen.findAllByType('PreAuthOnboardingWizardEntry' as never)).toHaveLength(1);
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
         expect(screen.findByTestId('setup.continueWithLocalRelay')).toBeNull();
         expect(setPendingSetupIntentMock).not.toHaveBeenCalled();

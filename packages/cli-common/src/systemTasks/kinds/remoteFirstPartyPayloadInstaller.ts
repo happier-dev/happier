@@ -11,6 +11,7 @@ import {
 } from '../../firstPartyRuntime/index.js';
 
 import type { SystemTaskSshConnectionConfig } from './relayRuntimeKinds.js';
+import { normalizeScpRemotePath } from '../ssh/scpRemotePath.js';
 
 export interface RemoteFirstPartyCommandResult {
   status: number;
@@ -160,7 +161,12 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
 
   try {
     const component = getFirstPartyComponentCatalogEntry(params.componentId);
+    const variant = resolveFirstPartyComponentPublicReleaseVariant({
+      componentId: params.componentId,
+      channel,
+    });
     const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemotePathSegment(params.componentId)}-${sanitizeRemotePathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
+    const stageParentForScp = normalizeScpRemotePath(stageParent);
     await resolvedDeps.runRemoteText({
       ssh: params.ssh,
       knownHostsMode: params.knownHostsMode,
@@ -170,27 +176,16 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
       ssh: params.ssh,
       knownHostsMode: params.knownHostsMode,
       localPath: prepared.payloadRoot,
-      remotePath: stageParent,
+      remotePath: stageParentForScp,
     });
 
     const remotePayloadRoot = `${stageParent}/${sanitizeRemotePathSegment(basename(prepared.payloadRoot))}`;
-    const installerBinaryPath = params.installerBinaryPath
-      ? params.installerBinaryPath
-      : params.componentId === 'happier-cli'
-        ? `${remotePayloadRoot}/${component.binaryRelativePath}`
-        : null;
-    if (!installerBinaryPath) {
-      throw new Error(`Remote installer binary is required to install ${params.componentId}.`);
-    }
-
-    const installPayloadCommand = [
-      `env HAPPIER_HOME_DIR=${remoteHomeDir}`,
-      `${installerBinaryPath} self __install-payload`,
-      `--component ${quoteShellSingleArg(params.componentId)}`,
-      `--payload-root ${remotePayloadRoot}`,
-      `--version ${quoteShellSingleArg(prepared.versionId)}`,
-      `--channel ${quoteShellSingleArg(channel)}`,
-    ].join(' ');
+    const installRoot = `${remoteHomeDir}/${variant.installRootName}`;
+    const versionsDir = `${installRoot}/versions`;
+    const versionDir = `${versionsDir}/${sanitizeRemotePathSegment(prepared.versionId)}`;
+    const currentPath = `${installRoot}/current`;
+    const previousPath = `${installRoot}/previous`;
+    const binaryPath = `${currentPath}/${component.binaryRelativePath}`;
 
     await resolvedDeps.runRemoteText({
       ssh: params.ssh,
@@ -199,18 +194,17 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
         'set -eu',
         `cleanup() { rm -rf ${stageParent}; }`,
         'trap cleanup EXIT',
-        `mkdir -p ${remoteHomeDir}`,
-        `chmod +x ${installerBinaryPath}`,
-        installPayloadCommand,
+        `mkdir -p ${versionsDir}`,
+        `rm -rf ${versionDir}`,
+        `cp -R ${remotePayloadRoot} ${versionDir}`,
+        `if [ -L ${currentPath} ]; then prev="$(readlink ${currentPath} || true)"; if [ -n "$prev" ]; then ln -sfn "$prev" ${previousPath}; fi; fi`,
+        `ln -sfn ${versionDir} ${currentPath}`,
+        `chmod +x ${binaryPath}`,
       ].join('; '),
     });
 
     return {
-      binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({
-        componentId: params.componentId,
-        channel: params.channel,
-        remoteHomeDir,
-      }),
+      binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({ componentId: params.componentId, channel: params.channel, remoteHomeDir }),
       versionId: prepared.versionId,
       source: prepared.source,
     };

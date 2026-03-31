@@ -316,10 +316,16 @@ describe('RootLayout restore navigation', () => {
 
             const screens = screen.findAllByType('StackScreen' as any);
             const restoreIndex = screens.find((s) => s.props?.name === 'restore/index');
-            expect(restoreIndex?.props?.options?.headerTitle).toBe('connect.restoreAccount');
+            expect(restoreIndex?.props?.options?.headerShown).toBe(false);
 
             const showQr = screens.find((s) => s.props?.name === 'restore/show-qr');
-            expect(showQr?.props?.options?.headerTitle).toBe('navigation.linkNewDevice');
+            expect(showQr?.props?.options?.headerShown).toBe(false);
+
+            const manual = screens.find((s) => s.props?.name === 'restore/manual');
+            expect(manual?.props?.options?.headerShown).toBe(false);
+
+            const lostAccess = screens.find((s) => s.props?.name === 'restore/lost-access');
+            expect(lostAccess?.props?.options?.headerShown).toBe(false);
 
             const sessionTerminal = screens.find((s) => s.props?.name === 'session/[id]/terminal');
             expect(sessionTerminal?.props?.options?.headerShown).toBe(false);

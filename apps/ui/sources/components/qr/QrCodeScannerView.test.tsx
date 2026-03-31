@@ -114,6 +114,26 @@ describe('QrCodeScannerView', () => {
         expect(onScan).toHaveBeenCalledTimes(1);
     });
 
+    it('suppresses the internal title/subtitle when embedded', async () => {
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        const screen = await renderScreen(
+            <QrCodeScannerView
+                embedded
+                title="__qr_title__"
+                subtitle="__qr_subtitle__"
+                permissionRequiredMessage="perm"
+                onCancel={vi.fn()}
+                onScan={vi.fn()}
+                testIDPrefix="test"
+            />,
+        );
+
+        const text = screen.getTextContent();
+        expect(text).not.toContain('__qr_title__');
+        expect(text).not.toContain('__qr_subtitle__');
+    });
+
     it('renders a camera scanner on phone-sized web when camera APIs exist', async () => {
         deviceState.platformOs = 'web';
         deviceState.windowWidth = 360;

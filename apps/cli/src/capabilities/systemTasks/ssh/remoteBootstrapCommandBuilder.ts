@@ -27,30 +27,22 @@ function deriveWebappUrl(serverUrl: string, explicitWebappUrl?: string): string 
 function buildRelayArgs(params: Readonly<{
   serverUrl: string;
   webappUrl?: string;
-  publicServerUrl?: string;
 }>): string {
   const args = [
     `--server-url ${safeBashSingleQuote(params.serverUrl)}`,
     `--webapp-url ${safeBashSingleQuote(deriveWebappUrl(params.serverUrl, params.webappUrl))}`,
   ];
-  if (typeof params.publicServerUrl === 'string' && params.publicServerUrl.trim()) {
-    args.push(`--public-server-url ${safeBashSingleQuote(params.publicServerUrl)}`);
-  }
   return args.join(' ');
 }
 
 function buildDaemonServiceEnv(params: Readonly<{
   serverUrl: string;
   webappUrl?: string;
-  publicServerUrl?: string;
 }>): string {
   const env = [
     `HAPPIER_DAEMON_SERVICE_SERVER_URL=${safeBashSingleQuote(params.serverUrl)}`,
     `HAPPIER_DAEMON_SERVICE_WEBAPP_URL=${safeBashSingleQuote(deriveWebappUrl(params.serverUrl, params.webappUrl))}`,
   ];
-  if (typeof params.publicServerUrl === 'string' && params.publicServerUrl.trim()) {
-    env.push(`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${safeBashSingleQuote(params.publicServerUrl)}`);
-  }
   return env.join(' ');
 }
 
@@ -59,7 +51,6 @@ export function buildRemoteBootstrapCommand(params: Readonly<{
   serverUrl: string;
   channel?: string;
   webappUrl?: string;
-  publicServerUrl?: string;
   daemonServiceMode?: 'none' | 'user' | 'system';
   data?: JsonRecord;
 }>): string {

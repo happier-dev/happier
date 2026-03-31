@@ -47,7 +47,7 @@
     "tauri:qa": "yarn -s ensure:workspace:built && node ./scripts/tauriMcpQa.mjs",
     "tauri:mcp:server": "npx -y @hypothesi/tauri-mcp-server",
     "tauri:mcp:cli": "npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp",
-    "tauri:mcp:session:start": "npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9223",
+    "tauri:mcp:session:start": "npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9225",
     "tauri:mcp:wizard:qa": "node ./scripts/qa/tauriOnboardingWizardMcpQa.mjs",
     "tauri:build:dev": "tauri build --config src-tauri/tauri.publicdev.conf.json",
     "tauri:build:preview": "tauri build --config src-tauri/tauri.preview.conf.json",

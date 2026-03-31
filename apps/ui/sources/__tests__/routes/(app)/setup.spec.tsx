@@ -113,20 +113,16 @@ describe('/setup route', () => {
         return button;
     }
 
-    it('shows the setup access gate before auth and does not expose setup controls', async () => {
+    it('redirects unauthenticated users to the onboarding wizard at /', async () => {
         const Screen = (await import('@/app/(app)/setup/index')).default;
         const screen = await renderScreen(React.createElement(Screen));
 
-        expect(screen.findByTestId('onboarding-wizard')).toBeNull();
-        expect(screen.findByTestId('setup.preAuthNotice')).toBeTruthy();
-        expect(screen.findByTestId('setup.preAuthGoHome')).toBeTruthy();
+        expect(screen.findAllByType('PreAuthOnboardingWizardEntry' as never)).toHaveLength(0);
         expect(screen.findByTestId('setup.launchWizard')).toBeNull();
         expect(screen.findByTestId('setup.summary.activeRelay')).toBeNull();
-        expect(screen.findByTestId('setup.continueToAuth')).toBeNull();
-        expect(screen.findByTestId('setup.changeRelay')).toBeNull();
-        expect(screen.findByTestId('setup.discard')).toBeNull();
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
         expect(clearPendingSetupIntentMock).toHaveBeenCalledTimes(1);
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
     });
 
     it('opens the setup wizard from the post-auth control panel', async () => {
@@ -145,14 +141,15 @@ describe('/setup route', () => {
         expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/setup/wizard');
     });
 
-    it('does not show local relay runtime controls before auth even on desktop', async () => {
+    it('does not render setup controls before auth even on desktop', async () => {
         tauriDesktopState.value = true;
         const Screen = (await import('@/app/(app)/setup/index')).default;
         const screen = await renderScreen(React.createElement(Screen));
 
-        expect(screen.findByTestId('setup.preAuthNotice')).toBeTruthy();
+        expect(screen.findAllByType('PreAuthOnboardingWizardEntry' as never)).toHaveLength(0);
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
         expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as never)).toHaveLength(0);
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
     });
 
     it('marks setup as post-auth and surfaces the local setup summary without embedding mutation flows', async () => {

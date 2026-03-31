@@ -98,6 +98,18 @@ function resolveCommonSshArgs(params: Readonly<{
   return args;
 }
 
+function normalizeScpRemotePath(remotePath: string): string {
+  const trimmed = String(remotePath ?? '').trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.startsWith('$HOME/')) {
+    return trimmed.slice('$HOME/'.length);
+  }
+  if (trimmed === '$HOME') {
+    return '.';
+  }
+  return trimmed;
+}
+
 export function buildSshCommand(params: BuildSshCommandParams): SshCommandInvocation {
   const target = String(params.target ?? '').trim();
   if (!target) {
@@ -140,7 +152,7 @@ export function buildScpCommand(params: BuildScpCommandParams): ScpCommandInvoca
     connectTimeoutSeconds: params.connectTimeoutSeconds,
     portFlag: '-P',
   });
-  args.push('-r', localPath, `${target}:${remotePath}`);
+  args.push('-r', localPath, `${target}:${normalizeScpRemotePath(remotePath)}`);
 
   return {
     command: 'scp',

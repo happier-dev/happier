@@ -505,33 +505,25 @@ export default function RootLayout() {
             <Stack.Screen
                 name="restore/index"
                 options={{
-                    headerShown: true,
-                    headerTitle: t('connect.restoreAccount'),
-                    headerBackTitle: t('common.back'),
+                    headerShown: false,
                 }}
             />
             <Stack.Screen
                 name="restore/show-qr"
                 options={{
-                    headerShown: true,
-                    headerTitle: t('navigation.linkNewDevice'),
-                    headerBackTitle: t('common.back'),
+                    headerShown: false,
                 }}
             />
             <Stack.Screen
                 name="restore/manual"
                 options={{
-                    headerShown: true,
-                    headerTitle: t('navigation.restoreWithSecretKey'),
-                    headerBackTitle: t('common.back'),
+                    headerShown: false,
                 }}
             />
             <Stack.Screen
                 name="restore/lost-access"
                 options={{
-                    headerShown: true,
-                    headerTitle: t('connect.lostAccessTitle'),
-                    headerBackTitle: t('common.back'),
+                    headerShown: false,
                 }}
             />
             <Stack.Screen

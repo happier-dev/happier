@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { installRemoteFirstPartyComponent } from './remoteFirstPartyPayloadInstaller.js';
 
 describe('installRemoteFirstPartyComponent', () => {
-  it('uses a $HOME-based remote home dir and executes the installer directly (not via bash)', async () => {
+  it('uses an scp-safe remote path for staging while keeping $HOME-based paths in remote shell commands', async () => {
     const remoteTextCommands: string[] = [];
     const copiedRemotePaths: string[] = [];
 
@@ -38,12 +38,12 @@ describe('installRemoteFirstPartyComponent', () => {
     );
 
     expect(copiedRemotePaths).toEqual([
-      '$HOME/.happier/bootstrap-staging/happier-cli-preview-1-123',
+      '.happier/bootstrap-staging/happier-cli-preview-1-123',
     ]);
     expect(remoteTextCommands.some((command) => command.includes('mkdir -p $HOME/.happier'))).toBe(true);
-    expect(remoteTextCommands.some((command) => command.includes('HAPPIER_HOME_DIR=$HOME/.happier'))).toBe(true);
-    expect(remoteTextCommands.some((command) => command.includes('chmod +x $HOME/.happier'))).toBe(true);
-    expect(remoteTextCommands.some((command) => command.includes(' self __install-payload'))).toBe(true);
+    expect(remoteTextCommands.some((command) => command.includes('/versions/'))).toBe(true);
+    expect(remoteTextCommands.some((command) => command.includes('ln -sfn'))).toBe(true);
+    expect(remoteTextCommands.some((command) => command.includes('chmod +x'))).toBe(true);
     expect(remoteTextCommands.some((command) => command.includes('bash $HOME/.happier'))).toBe(false);
     expect(remoteTextCommands.some((command) => command.includes('pipefail'))).toBe(false);
   });
@@ -110,7 +110,7 @@ describe('installRemoteFirstPartyComponent', () => {
     );
 
     const combined = remoteTextCommands.join('\n');
-    expect(combined).toContain(`--version 'preview-1'"'"'break-quote'`);
-    expect(combined).not.toContain(`--version 'preview-1'break-quote'`);
+    expect(combined).toContain('preview-1-break-quote');
+    expect(combined).not.toContain("preview-1'break-quote");
   });
 });

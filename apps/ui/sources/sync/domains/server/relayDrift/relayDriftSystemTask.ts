@@ -7,7 +7,7 @@ export function buildRelayDriftRepairSystemTaskSpec(params: Readonly<{
 }>): SystemTaskSpec {
     return {
         protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-        kind: 'relay.connectBackgroundService.v1',
+        kind: 'setup.repairThisComputer.v1',
         params: {
             activeRelayUrl: params.activeRelayUrl,
             activeWebappUrl: params.activeWebappUrl,

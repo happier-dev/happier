@@ -34,11 +34,13 @@ import {
     setOnboardingWizardPreAuthResumeIntent,
 } from '@/components/onboardingWizard/wizardResume';
 import { OnboardingWizardSurface } from '@/components/onboardingWizard/OnboardingWizardSurface';
+import type { WizardStepId } from '@/components/onboardingWizard/wizardTypes';
 
 export type PreAuthOnboardingWizardEntryProps = Readonly<{
     testID?: string;
     clearPendingSetupIntentOnMount?: boolean;
     enableFirstLaunchSetupRedirect?: boolean;
+    initialStepId?: WizardStepId;
 }>;
 
 function resolveAuthReturnToRoute(): string {
@@ -281,6 +283,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             layout={isLandscape ? 'landscape' : 'portrait'}
             isDesktopShell={isDesktopShell}
             authEntryOptions={authEntryOptions}
+            initialStepId={props.initialStepId}
             onCreateAccount={createAccount}
             onCreateAccountViaProvider={createAccountViaProvider}
             onLoginWithKeylessProvider={loginWithKeylessProvider}
@@ -289,4 +292,3 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         />
     );
 });
-

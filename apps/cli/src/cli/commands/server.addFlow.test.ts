@@ -315,7 +315,7 @@ describe('happier server add guided flow', () => {
     }
   });
 
-  it('treats legacy --public-server-url as canonical serverUrl and legacy --server-url as localServerUrl', async () => {
+  it('rejects unknown flags (example: --public-server-url)', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-server-add-public-url-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;
     const restoreTty = setTtyMode(false, false);
@@ -324,7 +324,7 @@ describe('happier server add guided flow', () => {
       process.env.HAPPIER_HOME_DIR = home;
       reloadConfiguration();
 
-      await handleServerCommand([
+      await expect(handleServerCommand([
         'add',
         '--name',
         'Company',
@@ -335,11 +335,7 @@ describe('happier server add guided flow', () => {
         '--webapp-url',
         'https://app.company.example',
         '--use',
-      ]);
-
-      const raw = JSON.parse(await readFile(join(home, 'settings.json'), 'utf-8'));
-      expect(raw?.servers?.Company?.serverUrl).toBe('https://company.example.test');
-      expect(raw?.servers?.Company?.localServerUrl).toBe('http://127.0.0.1:53545');
+      ])).rejects.toThrow(/Unknown flag: --public-server-url/);
     } finally {
       restoreTty();
       if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
@@ -350,7 +346,35 @@ describe('happier server add guided flow', () => {
     }
   });
 
-  it('auto-detects public URL from Tailscale Serve when serverUrl is loopback and --public-server-url is omitted', async () => {
+  it('rejects unknown flags for `happier server set` (example: --public-server-url)', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-set-public-url-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await expect(handleServerCommand([
+        'set',
+        '--server-url',
+        'https://company.example.test',
+        '--public-server-url',
+        'https://company.example.test',
+        '--webapp-url',
+        'https://app.company.example',
+      ])).rejects.toThrow(/Unknown flag: --public-server-url/);
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('auto-detects canonical URL from Tailscale Serve when serverUrl is loopback and --local-server-url is omitted', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-server-add-auto-public-url-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;
     const restoreTty = setTtyMode(false, false);

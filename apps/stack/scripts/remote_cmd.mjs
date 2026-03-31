@@ -117,13 +117,13 @@ function usageText() {
     '',
     '  hstack remote server setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
     '    [--mode <user|system>]',
-    '    [--self-host-server-binary <path>]',
+    '    [--server-binary <path>]',
     '    [--env KEY=VALUE]...',
     '    [--json]',
     '',
     '  hstack remote relay setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
     '    [--mode <user|system>]',
-    '    [--self-host-server-binary <path>]',
+    '    [--server-binary <path>]',
     '    [--env KEY=VALUE]...',
     '    [--json]',
     '',
@@ -222,8 +222,18 @@ async function runRemoteServerSetup(argvRaw) {
     throw new Error(`[remote] invalid --mode value: ${mode} (expected user or system)`);
   }
 
-  const selfHostServerBinaryFlag = takeFlagValue(args, '--self-host-server-binary');
-  args = selfHostServerBinaryFlag.rest;
+  const serverBinaryFlag = takeFlagValue(args, '--server-binary');
+  args = serverBinaryFlag.rest;
+  const legacySelfHostServerBinaryFlag = takeFlagValue(args, '--self-host-server-binary');
+  args = legacySelfHostServerBinaryFlag.rest;
+  const serverBinary = (() => {
+    const canonical = String(serverBinaryFlag.value ?? '').trim();
+    const legacy = String(legacySelfHostServerBinaryFlag.value ?? '').trim();
+    if (canonical && legacy && canonical !== legacy) {
+      throw new Error('[remote] conflicting --server-binary and --self-host-server-binary values');
+    }
+    return canonical || legacy;
+  })();
 
   const envValues = collectEnvValues(argv0);
 
@@ -237,7 +247,7 @@ async function runRemoteServerSetup(argvRaw) {
       ssh.value,
       `--channel=${channel === 'publicdev' ? 'dev' : channel}`,
       `--mode=${mode}`,
-      ...(selfHostServerBinaryFlag.value ? ['--self-host-server-binary', selfHostServerBinaryFlag.value] : []),
+      ...(serverBinary ? ['--server-binary', serverBinary] : []),
       ...envValues.flatMap((value) => ['--env', value]),
       ...(json ? ['--json'] : []),
     ],

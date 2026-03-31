@@ -147,11 +147,13 @@ describe('/restore/lost-access', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            tree = (await renderScreen(<Screen />)).tree;
+            const screen = await renderScreen(<Screen />);
+            tree = screen.tree;
             await flushHookEffects();
             if (!tree) {
                 throw new Error('Expected lost access screen renderer');
             }
+            expect(screen.findByTestId('restore-lost-access-wizard')).toBeTruthy();
 
             const triggerProviderReset = findProviderButtonAction(tree);
             await act(async () => {

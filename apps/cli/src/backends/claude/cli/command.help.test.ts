@@ -108,8 +108,9 @@ describe('happier (default claude) help output', () => {
 
       const stdout = output.logs.join('\n');
       expect(stdout).toContain('--server-url');
+      expect(stdout).toContain('--local-server-url');
       expect(stdout).toContain('--webapp-url');
-      expect(stdout).toContain('--public-server-url');
+      expect(stdout).not.toContain('--public-server-url');
       expect(stdout).toContain('--server ');
       expect(stdout).toContain('--profile');
       expect(stdout).toContain('happier profiles list');

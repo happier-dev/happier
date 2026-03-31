@@ -72,7 +72,7 @@ export const lightTheme = {
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
             // Used by the onboarding/setup wizard shell; intentionally much subtler on light theme.
-            scrimWizard: 'rgba(0, 0, 0, 0.03)',
+            scrimWizard: 'rgba(0, 0, 0, 0.01)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
         },
@@ -304,7 +304,7 @@ export const darkTheme = {
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
             // Used by the onboarding/setup wizard shell; slightly subtler than the regular scrim.
-            scrimWizard: 'rgba(0, 0, 0, 0.22)',
+            scrimWizard: 'rgba(0, 0, 0, 0.16)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
         },

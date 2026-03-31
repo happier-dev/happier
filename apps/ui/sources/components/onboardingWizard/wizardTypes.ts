@@ -8,21 +8,23 @@ export type WizardStepId =
     | 'welcome'
     | 'scan_code'
     | 'relay_select'
+    | 'confirm_relay_lock'
+    | 'desktop_handoff'
     | 'relay_enter_url'
+    | 'background_service_handoff'
     | 'auth'
     | 'auth_restore'
     | 'auth_lost_access'
     | 'setup_chooser'
     | 'setup_this_computer'
     | 'host_relay_local'
-    | 'host_relay_remote'
+    | 'remote_ssh_setup'
     | 'confirm_switch_relay'
     | 'secure_access_tailscale'
-    | 'remote_ssh_setup'
     | 'providers_optional'
     | 'done';
 
-export type WizardRelayChoiceId = 'cloud' | 'thisMac' | 'customUrl';
+export type WizardRelayChoiceId = 'cloud' | 'thisComputer' | 'customUrl';
 
 export type WizardRelaySelection = Readonly<{
     choiceId: WizardRelayChoiceId | null;
@@ -39,8 +41,10 @@ export type WizardContext = Readonly<{
     scanStepEnabled: boolean;
     canRunSystemTasks: boolean;
     relaySelection: WizardRelaySelection;
+    relayLockConfirmationPending: boolean;
+    relaySwitchConfirmationPending: boolean;
     authIntent: WizardAuthIntent;
-    setupAction: 'local' | 'remote' | 'tailscale' | null;
+    setupAction: 'local' | 'relayLocal' | 'remote' | 'tailscale' | null;
 }>;
 
 export type WizardStepKind = 'entry' | 'choice' | 'auth' | 'recovery' | 'setup' | 'finish';
@@ -77,6 +81,8 @@ export type WizardAction =
     | Readonly<{ type: 'wizard/setResumeState'; resumeState: WizardResumeState | null }>
     | Readonly<{ type: 'wizard/setParsedScanPayload'; parsedScanPayload: unknown | null }>
     | Readonly<{ type: 'wizard/setRelaySelection'; relaySelection: WizardRelaySelection }>
+    | Readonly<{ type: 'wizard/setRelayLockConfirmationPending'; pending: boolean }>
+    | Readonly<{ type: 'wizard/setRelaySwitchConfirmationPending'; pending: boolean }>
     | Readonly<{ type: 'wizard/setAuthIntent'; authIntent: WizardAuthIntent }>
-    | Readonly<{ type: 'wizard/setSetupAction'; setupAction: 'local' | 'remote' | 'tailscale' | null }>
+    | Readonly<{ type: 'wizard/setSetupAction'; setupAction: 'local' | 'relayLocal' | 'remote' | 'tailscale' | null }>
     | Readonly<{ type: 'wizard/setScanStepEnabled'; enabled: boolean }>;

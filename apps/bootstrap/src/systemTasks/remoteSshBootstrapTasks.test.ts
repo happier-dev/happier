@@ -281,6 +281,38 @@ describe('approveLocalRemoteAuthRequestDefault', () => {
 
         expect(runLocalHappierJsonCommand).toHaveBeenCalledTimes(1);
     });
+
+    it('does not pass legacy --public-server-url when a public relay URL is supplied', async () => {
+        const runLocalHappierJsonCommand = vi.fn(async (params: Readonly<{ args: readonly string[] }>) => {
+            expect(params.args.join(' ')).not.toContain('--public-server-url=');
+            expect(params.args).toEqual([
+                'auth',
+                'approve',
+                '--public-key',
+                'public-key-123',
+                '--json',
+                '--persist',
+                '--server-url=https://public-relay.example.test',
+                '--webapp-url=https://relay.example.test',
+            ]);
+            return { success: true };
+        });
+
+        await approveLocalRemoteAuthRequestDefault({
+            publicKey: 'public-key-123',
+            parsed: {
+                ...createParsedRemoteBootstrapParams(),
+                relay: {
+                    relayUrl: 'https://relay.example.test',
+                    publicRelayUrl: 'https://public-relay.example.test',
+                },
+            },
+        }, {
+            runLocalHappierJsonCommand,
+        });
+
+        expect(runLocalHappierJsonCommand).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('runRemoteBootstrapCommandDefault', () => {
@@ -315,6 +347,49 @@ describe('runRemoteBootstrapCommandDefault', () => {
             const remoteCommand = fakeSsh.readInvocations().at(-1)?.at(-1) ?? '';
             expect(remoteCommand).toContain('$HOME/.happier/cli-preview/current/happier auth status --json');
             expect(remoteCommand).not.toContain('$HOME/.happier/bin/happier');
+        } finally {
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('does not pass legacy --public-server-url when configuring the remote server profile', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n`,
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({ ok: true, data: { ok: true } })}\n`,
+                },
+            ],
+        });
+
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await runRemoteBootstrapCommandDefault({
+                    label: 'server.configure',
+                    parsed: {
+                        ...createParsedRemoteBootstrapParams(),
+                        relay: {
+                            relayUrl: 'https://relay.example.test',
+                            publicRelayUrl: 'https://public-relay.example.test',
+                        },
+                    },
+                    auth: { mode: 'agent' },
+                    knownHostsMode: 'system',
+                });
+            });
+
+            const remoteCommand = fakeSsh.readInvocations().at(-1)?.at(-1) ?? '';
+            expect(remoteCommand).toContain(' server set ');
+            expect(remoteCommand).toContain('--server-url=https://relay.example.test');
+            expect(remoteCommand).not.toContain('--public-server-url=');
         } finally {
             fakeSsh.cleanup();
         }

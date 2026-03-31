@@ -10,11 +10,11 @@ describe('TAILSCALE secure access task contract', () => {
   it('defines the stable task kind and ordered step ids', () => {
     expect(TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND).toBe('secureAccess.tailscale.v1');
     expect(TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_STEP_IDS).toEqual([
-      'detect',
-      'install',
-      'login',
-      'serve enable',
-      'verify url',
+      'tailscale.detect',
+      'tailscale.install',
+      'tailscale.login',
+      'tailscale.serveEnable',
+      'tailscale.verifyUrl',
     ]);
   });
 

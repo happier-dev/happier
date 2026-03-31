@@ -1521,7 +1521,7 @@ export async function startDaemon(): Promise<void> {
         { min: 0, max: 10_000 },
       );
 
-      // Do machine bootstrap in the background so shutdown requests are not blocked by /v1/machines latency.
+      // Do machine registration in the background so shutdown requests are not blocked by /v1/machines latency.
       void (async () => {
         let attempts = 0;
         while (!shutdownInitiated) {

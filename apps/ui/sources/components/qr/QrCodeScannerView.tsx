@@ -102,6 +102,11 @@ export interface QrCodeScannerViewProps {
     onCancel: () => void;
     footer?: React.ReactNode;
     testIDPrefix: string;
+    /**
+     * When true, suppresses the view's own title/subtitle chrome so callers can render
+     * a consistent outer shell (e.g. the onboarding wizard modal) without duplicate headers.
+     */
+    embedded?: boolean;
 }
 
 export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: QrCodeScannerViewProps) {
@@ -159,7 +164,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     if (!canUseCamera) {
         return (
             <View style={styles.permissionsCard}>
-                <Text style={styles.permissionsTitle}>{props.title}</Text>
+                {props.embedded ? null : <Text style={styles.permissionsTitle}>{props.title}</Text>}
                 <Text style={styles.permissionsBody}>{props.unavailableMessage ?? t('modals.qrScannerUnavailable')}</Text>
                 {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
                 <View style={styles.footerButton}>
@@ -186,7 +191,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     if (!permission.granted) {
         return (
             <View style={styles.permissionsCard}>
-                <Text style={styles.permissionsTitle}>{props.title}</Text>
+                {props.embedded ? null : <Text style={styles.permissionsTitle}>{props.title}</Text>}
                 <Text style={styles.permissionsBody}>{props.permissionRequiredMessage}</Text>
                 <View style={styles.footerButton}>
                     <RoundButton
@@ -244,10 +249,14 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                     >
                         <Ionicons name="close" size={22} color={theme.colors.overlay.text} />
                     </Pressable>
-                    <View style={styles.titleBlock} pointerEvents="none">
-                        <Text style={styles.title}>{props.title}</Text>
-                        {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
-                    </View>
+                    {props.embedded ? (
+                        <View style={styles.spacer} pointerEvents="none" />
+                    ) : (
+                        <View style={styles.titleBlock} pointerEvents="none">
+                            <Text style={styles.title}>{props.title}</Text>
+                            {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
+                        </View>
+                    )}
                     <View style={styles.spacer} pointerEvents="none" />
                 </View>
 

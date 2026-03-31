@@ -10,7 +10,7 @@ describe('buildRelayDriftRepairSystemTaskSpec', () => {
             activeLocalRelayUrl: 'http://127.0.0.1:3012',
         })).toEqual({
             protocolVersion: 1,
-            kind: 'relay.connectBackgroundService.v1',
+            kind: 'setup.repairThisComputer.v1',
             params: {
                 activeRelayUrl: 'https://relay.example.test/path',
                 activeWebappUrl: 'https://app.example.test',

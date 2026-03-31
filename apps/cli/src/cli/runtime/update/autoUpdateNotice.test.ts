@@ -214,6 +214,53 @@ describe('maybeAutoUpdateNotice', () => {
     });
   });
 
+  it('does not print an update notice for self commands when argv includes server selection flags with values', () => {
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        const cacheDir = join(homeDir, 'cache');
+        mkdirSync(cacheDir, { recursive: true });
+        const cachePath = join(cacheDir, 'update.json');
+        writeJson(cachePath, {
+          checkedAt: 99_000,
+          latest: '9.9.9',
+          current: '1.0.0',
+          runtimeVersion: null,
+          invokerVersion: '1.0.0',
+          updateAvailable: true,
+          notifiedAt: null,
+        });
+
+        const spawnDetached = vi.fn();
+
+        maybeAutoUpdateNotice({
+          argv: [
+            '--server-url',
+            'https://stack.example.test',
+            '--local-server-url',
+            'http://127.0.0.1:53545',
+            'self',
+            'check',
+          ],
+          isTTY: true,
+          homeDir,
+          cliRootDir: '/repo/apps/cli',
+          env: {},
+          publicReleaseRing: 'stable',
+          nowMs: 100_000,
+          spawnDetached,
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 1_000_000,
+        });
+
+        expect(output.lines).toHaveLength(0);
+        expect(spawnDetached).not.toHaveBeenCalled();
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
   it('does not print an update notice for self commands when argv includes short-flag values', () => {
     withUpdateHomeDir((homeDir) => {
       const output = captureConsoleText();
