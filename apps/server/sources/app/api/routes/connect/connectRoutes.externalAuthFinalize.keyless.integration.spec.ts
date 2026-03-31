@@ -16,7 +16,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 
 
 function createTestApp() {
-    const app = Fastify({ logger: false });
+    const app = Fastify({ logger: false, trustProxy: true });
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
@@ -122,6 +122,68 @@ describe("connectRoutes (external auth finalize keyless) (integration)", () => {
 
         const pending = await db.repeatKey.findUnique({ where: { key: pendingKey } });
         expect(pending).toBeNull();
+
+        await app.close();
+    });
+
+    it("POST /v1/auth/external/:provider/finalize-keyless returns 403 not-eligible when keyless provisioning is denied for public requests", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION: "1",
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_AUTH_PUBLIC_PROVISION_DENY_METHODS: "github",
+            HAPPIER_AUTH_PUBLIC_PROVISION_DENY_MODES: "keyless",
+        });
+
+        const pendingKey = "oauth_pending_keylessPublicBlockedA1";
+        const proof = "proof_secret_public_block";
+        const proofHash = createHash("sha256").update(proof, "utf8").digest("hex");
+        const githubProfile = {
+            id: 345,
+            login: "octocat",
+            avatar_url: "",
+            name: "The Octocat",
+        };
+
+        await db.repeatKey.create({
+            data: {
+                key: pendingKey,
+                value: JSON.stringify({
+                    flow: "auth",
+                    provider: "github",
+                    authMode: "keyless",
+                    proofHash,
+                    profileEnc: privacyKit.encodeBase64(
+                        encryptString(["auth", "external", "github", "pending_keyless", pendingKey, "profile"], JSON.stringify(githubProfile)),
+                    ),
+                    accessTokenEnc: privacyKit.encodeBase64(
+                        encryptString(["auth", "external", "github", "pending_keyless", pendingKey, "token"], "tok_public"),
+                    ),
+                    suggestedUsername: "octocat",
+                    usernameRequired: false,
+                    usernameReason: null,
+                }),
+                expiresAt: new Date(Date.now() + 60_000),
+            },
+        });
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/auth/external/github/finalize-keyless",
+            headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.10" },
+            payload: { pending: pendingKey, proof },
+        });
+
+        expect(res.statusCode).toBe(403);
+        expect(res.json()).toEqual({ error: "not-eligible" });
+        expect((await db.account.findMany({ select: { id: true } })).length).toBe(0);
 
         await app.close();
     });

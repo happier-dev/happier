@@ -29,7 +29,7 @@ import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { initializeServerSentry } from '@/app/monitoring/sentry';
-import { inferAndApplyTailscaleServePublicServerUrl } from '@/app/integrations/tailscale/tailscaleServePublicUrlInference';
+import { resolveCachedCanonicalPublicServerUrl } from '@/app/integrations/publicUrl/publicServerUrlInference';
 import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWorker';
 
 export type ServerFlavor = 'full' | 'light';
@@ -177,7 +177,9 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     await startMetricsServer();
 
     if (role === 'all' || role === 'api') {
-        void inferAndApplyTailscaleServePublicServerUrl(process.env);
+        // Best-effort: infer a canonical public URL so capabilities.server can advertise it.
+        // This is cached and single-flight so startup does not spawn redundant inference processes.
+        void resolveCachedCanonicalPublicServerUrl(process.env).catch(() => null);
         await startApi();
     }
 

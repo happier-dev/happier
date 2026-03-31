@@ -123,12 +123,17 @@ export function createReplyStub() {
     const reply: any = {
         sent: false,
         statusCode: 200,
+        headers: {} as Record<string, string>,
         send: vi.fn((payload: any) => {
             reply.sent = true;
             return payload;
         }),
         code: vi.fn((statusCode: number) => {
             reply.statusCode = statusCode;
+            return reply;
+        }),
+        header: vi.fn((name: string, value: string) => {
+            reply.headers[name] = value;
             return reply;
         }),
     };

@@ -24,6 +24,7 @@ import {
     ExternalOAuthFinalizeAuthRequestSchema,
     ExternalOAuthFinalizeAuthSuccessResponseSchema,
 } from "@happier-dev/protocol";
+import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
 
 export function registerExternalAuthFinalizeRoute(app: Fastify) {
     app.post("/v1/auth/external/:provider/finalize", {
@@ -198,6 +199,18 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
             },
             select: { id: true, accountId: true, showOnProfile: true },
         });
+
+        if (!existingAccount && !alreadyLinked) {
+            const blocked = shouldDenyPublicSignupProvisioningAction({
+                env: process.env,
+                requestIp: request.ip,
+                methodId: providerId,
+                mode: "keyed",
+            });
+            if (blocked) {
+                return reply.code(403).send({ error: "forbidden" });
+            }
+        }
 
         const resetRequested = request.body.reset === true;
         if (alreadyLinked && !resetRequested) {

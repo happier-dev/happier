@@ -15,7 +15,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
 function createTestApp() {
-    const app = Fastify({ logger: false });
+    const app = Fastify({ logger: false, trustProxy: true });
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
@@ -80,6 +80,34 @@ describe("authRoutes (auth policy) (integration)", () => {
 
         expect(res.statusCode).toBe(403);
         expect(res.json()).toEqual({ error: "signup-disabled" });
+
+        await app.close();
+    });
+
+    it("returns 403 signup-disabled when key challenge provisioning is denied for public requests", async () => {
+        harness.resetEnv({
+            AUTH_ANONYMOUS_SIGNUP_ENABLED: "1",
+            HAPPIER_AUTH_PUBLIC_PROVISION_DENY_METHODS: "key_challenge",
+        });
+
+        const { body } = createAuthBody();
+
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            headers: { "x-forwarded-for": "203.0.113.10" },
+            payload: body,
+        });
+
+        expect(res.statusCode).toBe(403);
+        expect(res.json()).toEqual({ error: "signup-disabled" });
+
+        const accounts = await db.account.findMany({ select: { id: true } });
+        expect(accounts.length).toBe(0);
 
         await app.close();
     });

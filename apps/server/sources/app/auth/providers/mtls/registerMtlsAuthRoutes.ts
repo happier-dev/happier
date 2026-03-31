@@ -9,6 +9,7 @@ import { resolveKeylessAutoProvisionEligibility } from "@/app/auth/keyless/resol
 import { resolveKeylessAccountsEnabled } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
 
 type ForwardedMtlsIdentity = NonNullable<ReturnType<typeof resolveMtlsIdentityFromForwardedHeaders>>;
 
@@ -22,6 +23,7 @@ function isMtlsLoginEnabled(env: NodeJS.ProcessEnv): boolean {
 }
 
 async function resolveOrProvisionMtlsAccount(params: {
+    requestIp: unknown;
     identity: ForwardedMtlsIdentity;
 }): Promise<{ accountId: string } | { error: "not-eligible" | "e2ee-required" | "restore-required" }> {
     const mtlsEnv = readAuthMtlsFeatureEnv(process.env);
@@ -46,6 +48,17 @@ async function resolveOrProvisionMtlsAccount(params: {
     }
 
     if (!mtlsEnv.autoProvision) {
+        return { error: "not-eligible" };
+    }
+
+    if (
+        shouldDenyPublicSignupProvisioningAction({
+            env: process.env,
+            requestIp: params.requestIp,
+            methodId: "mtls",
+            mode: "keyless",
+        })
+    ) {
         return { error: "not-eligible" };
     }
 
@@ -316,7 +329,7 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
                 return reply.code(403).send({ error: "not-eligible" });
             }
 
-            const account = await resolveOrProvisionMtlsAccount({ identity });
+            const account = await resolveOrProvisionMtlsAccount({ identity, requestIp: request.ip });
             if ("error" in account) {
                 if (account.error === "restore-required") {
                     const url = new URL(returnTo);
@@ -365,7 +378,7 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
                 return reply.code(403).send({ error: "not-eligible" });
             }
 
-            const account = await resolveOrProvisionMtlsAccount({ identity });
+            const account = await resolveOrProvisionMtlsAccount({ identity, requestIp: request.ip });
             if ("error" in account) {
                 if (account.error === "restore-required") {
                     return reply.code(409).send({ error: "restore-required" });

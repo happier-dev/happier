@@ -2,10 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createEnvReset } from "../../testkit/env";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import {
+    resolveCachedCanonicalPublicServerUrl,
+    resetPublicServerUrlInferenceCacheForTests,
+} from "@/app/integrations/publicUrl/publicServerUrlInference";
 
-const resetEnv = createEnvReset();
+const resetEnv = createEnvReset({
+    ...process.env,
+    HAPPIER_RELAY_ACCESS_INFER_PUBLIC_URL: "0",
+    HAPPIER_TAILSCALE_INFER_PUBLIC_URL: "0",
+});
 
-async function getFeaturesPayload() {
+async function getFeaturesPayload(requestOverrides: Record<string, unknown> = {}) {
     const { featuresRoutes } = await import("./featuresRoutes");
     const route = createRouteTestBuilder({
         method: "GET",
@@ -14,17 +22,19 @@ async function getFeaturesPayload() {
             featuresRoutes(app as any);
         },
     });
-    const { response } = await route.invoke();
-    return response as any;
+    const { response, reply } = await route.invoke(requestOverrides);
+    return { payload: response as any, reply };
 }
 
 describe("featuresRoutes", () => {
     beforeEach(() => {
         vi.resetModules();
+        resetPublicServerUrlInferenceCacheForTests();
         resetEnv();
     });
 
     afterEach(() => {
+        resetPublicServerUrlInferenceCacheForTests();
         resetEnv();
     });
 
@@ -37,7 +47,7 @@ describe("featuresRoutes", () => {
                 GITHUB_REDIRECT_URL: "https://example.com/v1/oauth/github/callback",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.social.friends.enabled).toBe(false);
         });
 
@@ -51,7 +61,7 @@ describe("featuresRoutes", () => {
                 GITHUB_REDIRECT_URI: undefined,
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.social.friends.enabled).toBe(true);
             expect(payload.capabilities.social.friends.allowUsername).toBe(true);
             expect(payload.capabilities.social.friends.requiredIdentityProviderId).toBeNull();
@@ -67,10 +77,32 @@ describe("featuresRoutes", () => {
                 GITHUB_REDIRECT_URI: undefined,
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.social.friends.enabled).toBe(false);
             expect(payload.capabilities.social.friends.allowUsername).toBe(false);
             expect(payload.capabilities.social.friends.requiredIdentityProviderId).toBe("github");
+        });
+    });
+
+    describe("auth provisioning restrictions", () => {
+        it("disables signup methods for matching public requests", async () => {
+            resetEnv({
+                AUTH_ANONYMOUS_SIGNUP_ENABLED: "1",
+                AUTH_SIGNUP_PROVIDERS: "github",
+                GITHUB_CLIENT_ID: "id",
+                GITHUB_CLIENT_SECRET: "secret",
+                GITHUB_REDIRECT_URL: "https://example.com/v1/oauth/github/callback",
+                HAPPIER_AUTH_PUBLIC_PROVISION_DENY_METHODS: "key_challenge,github",
+                HAPPIER_AUTH_PUBLIC_PROVISION_DENY_MODES: "keyed",
+            });
+
+            const { payload } = await getFeaturesPayload({ ip: "203.0.113.10" });
+            expect(payload.capabilities.auth.signup.methods).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ id: "anonymous", enabled: false }),
+                    expect.objectContaining({ id: "github", enabled: false }),
+                ]),
+            );
         });
     });
 
@@ -83,7 +115,7 @@ describe("featuresRoutes", () => {
                 ELEVENLABS_AGENT_ID_PROD: undefined,
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             // Voice settings should remain available (local / BYO voice), even when Happier Voice is misconfigured.
             expect(payload.features.voice.enabled).toBe(true);
             expect(payload.features.voice.happierVoice.enabled).toBe(false);
@@ -100,7 +132,7 @@ describe("featuresRoutes", () => {
                 REVENUECAT_SECRET_KEY: "rc_secret",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.voice.enabled).toBe(true);
             expect(payload.features.voice.happierVoice.enabled).toBe(true);
             expect(payload.capabilities.voice.configured).toBe(true);
@@ -117,7 +149,7 @@ describe("featuresRoutes", () => {
                 REVENUECAT_SECRET_KEY: undefined,
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.voice.enabled).toBe(true);
             expect(payload.features.voice.happierVoice.enabled).toBe(false);
             expect(payload.capabilities.voice.configured).toBe(false);
@@ -134,7 +166,7 @@ describe("featuresRoutes", () => {
                 REVENUECAT_SECRET_KEY: undefined,
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.voice.enabled).toBe(true);
             expect(payload.features.voice.happierVoice.enabled).toBe(true);
             expect(payload.capabilities.voice.configured).toBe(true);
@@ -151,7 +183,7 @@ describe("featuresRoutes", () => {
                 GITHUB_REDIRECT_URI: undefined,
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.oauth.providers.github.enabled).toBe(true);
             expect(payload.capabilities.oauth.providers.github.configured).toBe(false);
         });
@@ -163,7 +195,7 @@ describe("featuresRoutes", () => {
                 GITHUB_REDIRECT_URL: "https://example.com/v1/oauth/github/callback",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.oauth.providers.github.enabled).toBe(true);
             expect(payload.capabilities.oauth.providers.github.configured).toBe(true);
         });
@@ -183,7 +215,7 @@ describe("featuresRoutes", () => {
                 ]),
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.oauth.providers.okta).toEqual(
                 expect.objectContaining({
                     enabled: true,
@@ -204,7 +236,7 @@ describe("featuresRoutes", () => {
                 GITHUB_REDIRECT_URL: "https://example.com/oauth/github/callback",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.auth.recovery.providerReset.enabled).toBe(true);
             expect(payload.capabilities.auth.recovery.providerReset.providers).toContain("github");
         });
@@ -219,13 +251,13 @@ describe("featuresRoutes", () => {
                 GITHUB_REDIRECT_URL: "https://example.com/oauth/github/callback",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.auth.recovery.providerReset.enabled).toBe(false);
             expect(payload.capabilities.auth.recovery.providerReset.providers).toEqual([]);
         });
 
         it("defaults recovery key reminder UI flag to enabled", async () => {
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.auth.ui.recoveryKeyReminder.enabled).toBe(true);
         });
 
@@ -234,14 +266,14 @@ describe("featuresRoutes", () => {
                 HAPPIER_FEATURE_AUTH_UI__RECOVERY_KEY_REMINDER_ENABLED: "0",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.auth.ui.recoveryKeyReminder.enabled).toBe(false);
         });
     });
 
     describe("auth login", () => {
         it("reports key-challenge login enabled by default", async () => {
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.auth.login.keyChallenge.enabled).toBe(true);
             expect(payload.capabilities.auth.login.methods).toEqual(
                 expect.arrayContaining([{ id: "key_challenge", enabled: true }]),
@@ -253,11 +285,44 @@ describe("featuresRoutes", () => {
                 HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.auth.login.keyChallenge.enabled).toBe(false);
             expect(payload.capabilities.auth.login.methods).toEqual(
                 expect.arrayContaining([{ id: "key_challenge", enabled: false }]),
             );
+        });
+
+        it("disables provisioning actions for public requests and sets no-store", async () => {
+            resetEnv({
+                AUTH_ANONYMOUS_SIGNUP_ENABLED: "1",
+                HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
+                HAPPIER_AUTH_PUBLIC_PROVISION_DENY_METHODS: "key_challenge",
+            });
+
+            const { payload, reply } = await getFeaturesPayload({ ip: "203.0.113.10" });
+            const methods = payload?.capabilities?.auth?.methods ?? [];
+            const keyChallenge = methods.find((m: any) => String(m?.id ?? "").toLowerCase() === "key_challenge");
+            const provision = Array.isArray(keyChallenge?.actions)
+                ? keyChallenge.actions.find((a: any) => a?.id === "provision" && a?.mode === "keyed")
+                : null;
+            expect(provision).toEqual(expect.objectContaining({ enabled: false }));
+            expect(reply.headers["Cache-Control"]).toBe("no-store");
+        });
+
+        it("keeps provisioning enabled for private requests", async () => {
+            resetEnv({
+                AUTH_ANONYMOUS_SIGNUP_ENABLED: "1",
+                HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
+                HAPPIER_AUTH_PUBLIC_PROVISION_DENY_METHODS: "key_challenge",
+            });
+
+            const { payload } = await getFeaturesPayload({ ip: "10.0.0.5" });
+            const methods = payload?.capabilities?.auth?.methods ?? [];
+            const keyChallenge = methods.find((m: any) => String(m?.id ?? "").toLowerCase() === "key_challenge");
+            const provision = Array.isArray(keyChallenge?.actions)
+                ? keyChallenge.actions.find((a: any) => a?.id === "provision" && a?.mode === "keyed")
+                : null;
+            expect(provision).toEqual(expect.objectContaining({ enabled: true }));
         });
     });
 
@@ -271,7 +336,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS: "example.com, example.org",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.auth.mtls).toEqual(
                 expect.objectContaining({
                     policy: {
@@ -286,7 +351,7 @@ describe("featuresRoutes", () => {
 
     describe("encryption", () => {
         it("reports required_e2ee by default", async () => {
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.encryption.plaintextStorage.enabled).toBe(false);
             expect(payload.features.encryption.accountOptOut.enabled).toBe(false);
             expect(payload.capabilities.encryption).toMatchObject({
@@ -305,7 +370,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.encryption.plaintextStorage.enabled).toBe(true);
             expect(payload.features.encryption.accountOptOut.enabled).toBe(true);
             expect(payload.capabilities.encryption).toMatchObject({
@@ -324,7 +389,7 @@ describe("featuresRoutes", () => {
                 AUTH_PROVIDERS_CONFIG_JSON: "{ definitely: not-json }",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.auth.misconfig).toEqual(
                 expect.arrayContaining([
                     expect.objectContaining({
@@ -341,7 +406,7 @@ describe("featuresRoutes", () => {
                 AUTH_REQUIRED_LOGIN_PROVIDERS: "okta",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.auth.login.requiredProviders).toEqual(["okta"]);
             expect(payload.capabilities.auth.misconfig).toEqual(
                 expect.arrayContaining([
@@ -364,7 +429,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_FEATURE_BUG_REPORTS__DEFAULT_INCLUDE_DIAGNOSTICS: undefined,
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.bugReports.enabled).toBe(true);
             expect(payload.capabilities.bugReports.providerUrl).toBe("https://reports.happier.dev");
             expect(payload.capabilities.bugReports.defaultIncludeDiagnostics).toBe(true);
@@ -379,7 +444,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_FEATURE_BUG_REPORTS__CONTEXT_WINDOW_MS: "60000",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.bugReports.enabled).toBe(false);
             expect(payload.capabilities.bugReports.providerUrl).toBe("https://reports.enterprise.local");
             expect(payload.capabilities.bugReports.defaultIncludeDiagnostics).toBe(false);
@@ -391,7 +456,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_FEATURE_BUG_REPORTS__PROVIDER_URL: "invalid-provider-url",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.bugReports.enabled).toBe(false);
             expect(payload.capabilities.bugReports.providerUrl).toBeNull();
         });
@@ -403,14 +468,14 @@ describe("featuresRoutes", () => {
                 HAPPIER_FEATURE_AUTOMATIONS__ENABLED: undefined,
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.automations.enabled).toBe(true);
         });
     });
 
     describe("connected services", () => {
         it("defaults connectedServices.enabled to true", async () => {
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.connectedServices.enabled).toBe(true);
         });
 
@@ -418,12 +483,12 @@ describe("featuresRoutes", () => {
             resetEnv({
                 HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: "0",
             });
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.connectedServices.enabled).toBe(false);
         });
 
         it("defaults connectedServices.quotas.enabled to true", async () => {
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.connectedServices.quotas.enabled).toBe(true);
         });
 
@@ -431,7 +496,7 @@ describe("featuresRoutes", () => {
             resetEnv({
                 HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "0",
             });
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.features.connectedServices.quotas.enabled).toBe(false);
         });
     });
@@ -443,9 +508,93 @@ describe("featuresRoutes", () => {
                 HAPPIER_WEBAPP_URL: "https://ui.example.test/",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
             expect(payload.capabilities.server.webappUrl).toBe("https://ui.example.test");
+        });
+
+        it("infers canonicalServerUrl via relay access tailscaleFunnel when HAPPIER_PUBLIC_SERVER_URL is unset", async () => {
+            const { chmod, mkdir, mkdtemp, rm, writeFile } = await import("node:fs/promises");
+            const { tmpdir } = await import("node:os");
+            const { join } = await import("node:path");
+
+            const homeDir = await mkdtemp(join(tmpdir(), "happier-features-home-"));
+            const binDir = await mkdtemp(join(tmpdir(), "happier-features-bin-"));
+            try {
+                const tailscaleBin = join(binDir, "tailscale");
+                await writeFile(
+                    tailscaleBin,
+                    [
+                        "#!/usr/bin/env bash",
+                        "set -euo pipefail",
+                        'if [[ \"${1:-}\" == \"status\" && \"${2:-}\" == \"--json\" ]]; then',
+                        "  cat <<'JSON'",
+                        '{"BackendState":"Running","HaveNodeKey":true,"Self":{"DNSName":"my-machine.tailnet.ts.net"}}',
+                        "JSON",
+                        "  exit 0",
+                        "fi",
+                        "echo \"unexpected args: $*\" >&2",
+                        "exit 1",
+                        "",
+                    ].join("\n"),
+                    "utf8",
+                );
+                await chmod(tailscaleBin, 0o755);
+
+                await mkdir(join(homeDir, ".happier", "relay", "access"), { recursive: true });
+                await writeFile(
+                    join(homeDir, ".happier", "relay", "access", "local.json"),
+                    JSON.stringify({ providerId: "tailscaleFunnel" }),
+                    "utf8",
+                );
+
+                resetEnv({
+                    HOME: homeDir,
+                    HAPPIER_PUBLIC_SERVER_URL: undefined,
+                    HAPPIER_TAILSCALE_BIN: tailscaleBin,
+                    HAPPIER_TAILSCALE_INFER_PUBLIC_URL: "0",
+                    HAPPIER_RELAY_ACCESS_INFER_PUBLIC_URL: "1",
+                });
+
+                await resolveCachedCanonicalPublicServerUrl(process.env);
+
+                const { payload } = await getFeaturesPayload();
+                expect(payload.capabilities.server.canonicalServerUrl).toBe("https://my-machine.tailnet.ts.net");
+            } finally {
+                await rm(homeDir, { recursive: true, force: true });
+                await rm(binDir, { recursive: true, force: true });
+            }
+        });
+
+        it("does not infer canonicalServerUrl during the request when startup cache is cold", async () => {
+            const { mkdtemp, mkdir, rm, writeFile } = await import("node:fs/promises");
+            const { tmpdir } = await import("node:os");
+            const { join } = await import("node:path");
+
+            const homeDir = await mkdtemp(join(tmpdir(), "happier-features-home-"));
+            const previousHome = process.env.HOME;
+            process.env.HOME = homeDir;
+            try {
+                await mkdir(join(homeDir, ".happier", "relay", "access"), { recursive: true });
+                await writeFile(
+                    join(homeDir, ".happier", "relay", "access", "local.json"),
+                    JSON.stringify({ providerId: "cloudflareNamed", hostname: "relay.example.test", token: "secret" }),
+                    "utf8",
+                );
+
+                resetEnv({
+                    HOME: homeDir,
+                    HAPPIER_PUBLIC_SERVER_URL: undefined,
+                    HAPPIER_RELAY_ACCESS_INFER_PUBLIC_URL: "1",
+                    HAPPIER_TAILSCALE_INFER_PUBLIC_URL: "0",
+                });
+
+                const { payload } = await getFeaturesPayload();
+                expect(payload.capabilities.server.canonicalServerUrl).toBeUndefined();
+            } finally {
+                process.env.HOME = previousHome;
+                await rm(homeDir, { recursive: true, force: true });
+            }
         });
 
         it("exposes canonicalServerUrl when only HAPPIER_PUBLIC_SERVER_URL is set", async () => {
@@ -454,7 +603,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_WEBAPP_URL: undefined,
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
             expect(payload.capabilities.server.webappUrl).toBeUndefined();
         });
@@ -465,7 +614,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_WEBAPP_URL: "https://ui.example.test/",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.server.canonicalServerUrl).toBeUndefined();
             expect(payload.capabilities.server.webappUrl).toBe("https://ui.example.test");
         });
@@ -476,7 +625,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_WEBAPP_URL: "https://user:pass@ui.example.test/app/?q=1#frag",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
             expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
             expect(payload.capabilities.server.webappUrl).toBe("https://ui.example.test/app");
         });
@@ -490,7 +639,7 @@ describe("featuresRoutes", () => {
                 HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS: "30",
             });
 
-            const payload = await getFeaturesPayload();
+            const { payload } = await getFeaturesPayload();
 
             expect(payload.capabilities.server.retention).toMatchObject({
                 policyVersion: 1,

@@ -12,7 +12,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 
 
 function createTestApp() {
-    const app = Fastify({ logger: false });
+    const app = Fastify({ logger: false, trustProxy: true });
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
@@ -236,6 +236,62 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
 
         const accounts = await db.account.findMany();
         expect(accounts.length).toBe(0);
+
+        await app.close();
+    });
+
+    it("filters public provisioning modes in the OAuth callback redirect", async () => {
+        applyGithubExternalAuthCallbackEnv(harness, {
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION: "1",
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_AUTH_PUBLIC_PROVISION_DENY_METHODS: "github",
+            HAPPIER_AUTH_PUBLIC_PROVISION_DENY_MODES: "keyless",
+        });
+
+        const ghProfile = {
+            id: 321,
+            login: "octocat",
+            avatar_url: "https://avatars.example.test/octo.png",
+            name: "Octo Cat",
+        };
+
+        const fetchMock = vi.fn(async (url: any) => {
+            if (typeof url === "string" && url.includes("https://github.com/login/oauth/access_token")) {
+                return { ok: true, json: async () => ({ access_token: "tok_2" }) } as any;
+            }
+            if (typeof url === "string" && url.includes("https://api.github.com/user")) {
+                return { ok: true, json: async () => ghProfile } as any;
+            }
+            throw new Error(`Unexpected fetch: ${String(url)}`);
+        });
+        vi.stubGlobal("fetch", fetchMock as any);
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const proofHash = "b".repeat(64);
+        const paramsRes = await app.inject({
+            method: "GET",
+            url: `/v1/auth/external/github/params?proofHash=${encodeURIComponent(proofHash)}`,
+        });
+        expect(paramsRes.statusCode).toBe(200);
+        const paramsUrl = new URL((paramsRes.json() as { url: string }).url);
+        const state = paramsUrl.searchParams.get("state");
+        expect(state).toBeTruthy();
+
+        const res = await app.inject({
+            method: "GET",
+            url: `/v1/oauth/github/callback?code=c2&state=${encodeURIComponent(state!)}`,
+            headers: { "x-forwarded-for": "203.0.113.10" },
+        });
+
+        expect(res.statusCode).toBe(302);
+        const redirect = new URL(res.headers.location as string);
+        expect(redirect.searchParams.get("provisioningModes")).toBe("e2ee");
 
         await app.close();
     });

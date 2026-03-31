@@ -7,6 +7,7 @@ import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { type Fastify } from "../../types";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveEffectiveDefaultAccountEncryptionMode } from "@happier-dev/protocol";
+import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
 
 export function registerKeyChallengeAuthRoute(app: Fastify): void {
     app.post('/v1/auth', {
@@ -113,8 +114,16 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
                 id: true,
             },
         });
-        if (!existingAccount && !authPolicy.anonymousSignupEnabled) {
-            return reply.code(403).send({ error: "signup-disabled" });
+        if (!existingAccount) {
+            const blocked = shouldDenyPublicSignupProvisioningAction({
+                env: process.env,
+                requestIp: request.ip,
+                methodId: "key_challenge",
+                mode: "keyed",
+            });
+            if (blocked || !authPolicy.anonymousSignupEnabled) {
+                return reply.code(403).send({ error: "signup-disabled" });
+            }
         }
 
         if (existingAccount) {

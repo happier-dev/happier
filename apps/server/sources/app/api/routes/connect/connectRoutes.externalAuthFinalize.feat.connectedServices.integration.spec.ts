@@ -16,7 +16,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 
 
 function createTestApp() {
-    const app = Fastify({ logger: false });
+    const app = Fastify({ logger: false, trustProxy: true });
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
@@ -294,6 +294,82 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
         });
         expect(identity?.providerUserId).toBe(String(githubProfile.id));
         expect(identity?.providerLogin).toBe("octocat");
+
+        await app.close();
+    });
+
+    it("POST /v1/auth/external/github/finalize returns 403 forbidden when keyed provisioning is denied for public requests", async () => {
+        applyGithubExternalAuthFinalizeEnv(harness, {
+            HAPPIER_AUTH_PUBLIC_PROVISION_DENY_METHODS: "github",
+            HAPPIER_AUTH_PUBLIC_PROVISION_DENY_MODES: "keyed",
+        });
+
+        const { body, publicKeyHex } = createAuthBody();
+
+        const pending = "oauth_pending_publicBlockedA1";
+        const githubProfile = {
+            id: 223,
+            login: "octocat",
+            avatar_url: "https://avatars.example.test/octo.png",
+            name: "Octo Cat",
+        };
+
+        const tokenEnc = privacyKit.encodeBase64(
+            encryptString(["auth", "external", "github", "pending", pending, publicKeyHex], "tok_public"),
+        );
+        const profileEnc = privacyKit.encodeBase64(
+            encryptString(
+                ["auth", "external", "github", "pending", pending, publicKeyHex, "profile"],
+                JSON.stringify(githubProfile),
+            ),
+        );
+        await db.repeatKey.create({
+            data: {
+                key: pending,
+                value: JSON.stringify({
+                    flow: "auth",
+                    provider: "github",
+                    publicKeyHex,
+                    profileEnc,
+                    accessTokenEnc: tokenEnc,
+                    suggestedUsername: "octocat",
+                    usernameRequired: false,
+                    usernameReason: null,
+                }),
+                expiresAt: new Date(Date.now() + 60_000),
+            },
+        });
+
+        vi.stubGlobal("fetch", (async (url: any) => {
+            if (url === githubProfile.avatar_url) {
+                return {
+                    arrayBuffer: async () =>
+                        ONE_BY_ONE_PNG.buffer.slice(
+                            ONE_BY_ONE_PNG.byteOffset,
+                            ONE_BY_ONE_PNG.byteOffset + ONE_BY_ONE_PNG.byteLength,
+                        ),
+                } as any;
+            }
+            throw new Error(`Unexpected fetch: ${String(url)}`);
+        }) as any);
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/auth/external/github/finalize",
+            headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.10" },
+            payload: {
+                pending,
+                ...body,
+            },
+        });
+
+        expect(res.statusCode).toBe(403);
+        expect(res.json()).toEqual({ error: "forbidden" });
+        expect(await db.account.findFirst({ where: { publicKey: publicKeyHex } })).toBeNull();
 
         await app.close();
     });

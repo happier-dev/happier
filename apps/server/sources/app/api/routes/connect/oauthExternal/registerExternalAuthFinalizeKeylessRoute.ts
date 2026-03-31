@@ -16,6 +16,7 @@ import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatu
 import { resolveKeylessAutoProvisionEligibility } from "@/app/auth/keyless/resolveKeylessAutoProvisionEligibility";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
 
 function sha256Hex(value: string): string {
     return createHash("sha256").update(value, "utf8").digest("hex");
@@ -138,6 +139,17 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
             await db.repeatKey.deleteMany({ where: { key: pendingKey } });
             const token = await auth.createToken(existingIdentity.accountId);
             return reply.send({ success: true, token });
+        }
+
+        const blocked = shouldDenyPublicSignupProvisioningAction({
+            env: process.env,
+            requestIp: request.ip,
+            methodId: providerId,
+            mode: "keyless",
+        });
+        if (blocked) {
+            await db.repeatKey.deleteMany({ where: { key: pendingKey } });
+            return reply.code(403).send({ error: "not-eligible" });
         }
 
         if (!keylessEnv.autoProvision) {

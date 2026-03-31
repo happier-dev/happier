@@ -13,7 +13,7 @@ const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
 
 function createTestApp() {
-    const app = Fastify({ logger: false });
+    const app = Fastify({ logger: false, trustProxy: true });
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
@@ -150,6 +150,50 @@ describe("authRoutes (mTLS) (integration)", () => {
 
         expect(res.statusCode, res.body).toBe(409);
         expect(res.json()).toEqual({ error: "restore-required" });
+
+        await app.close();
+    });
+
+    it("returns not-eligible when public provisioning denylist blocks mTLS auto-provision", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
+            AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
+            AUTH_SIGNUP_PROVIDERS: "",
+
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_MTLS__ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_MTLS__MODE: "forwarded",
+            HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION: "1",
+            HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "1",
+            HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE: "san_email",
+            HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS: "example.com",
+            HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_ISSUERS: "cn=example root ca",
+            HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_EMAIL_HEADER: "x-happier-client-cert-email",
+            HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_FINGERPRINT_HEADER: "x-happier-client-cert-sha256",
+            HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER: "x-happier-client-cert-issuer",
+            HAPPIER_AUTH_PUBLIC_PROVISION_DENY_METHODS: "mtls",
+            HAPPIER_AUTH_PUBLIC_PROVISION_DENY_MODES: "keyless",
+        });
+
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/auth/mtls",
+            headers: {
+                "x-happier-client-cert-email": "alice@example.com",
+                "x-happier-client-cert-sha256": "sha256:abc123",
+                "x-happier-client-cert-issuer": "CN=Example Root CA",
+                "x-forwarded-for": "203.0.113.10",
+            },
+        });
+
+        expect(res.statusCode).toBe(403);
+        expect(res.json()).toEqual({ error: "not-eligible" });
 
         await app.close();
     });

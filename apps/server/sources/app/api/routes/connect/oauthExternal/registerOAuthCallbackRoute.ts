@@ -18,6 +18,7 @@ import { readAuthOauthKeylessFeatureEnv, readEncryptionFeatureEnv } from "@/app/
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
 import {
     buildRedirectUrl,
     resolveOAuthPendingTtlMsFromEnv,
@@ -250,18 +251,28 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                     const availability = resolveKeylessAccountsAvailability(process.env);
 
                     const provisioningModes = (() => {
-                        const modes: string[] = [];
+                        const modes: Array<{ value: "plain" | "e2ee"; mode: "keyed" | "keyless" }> = [];
                         const canProvisionPlain =
                             keylessAllowed &&
                             keylessEnv.autoProvision &&
                             availability.ok &&
                             encryptionEnv.storagePolicy !== "required_e2ee";
-                        if (canProvisionPlain) modes.push("plain");
+                        if (canProvisionPlain) modes.push({ value: "plain", mode: "keyless" });
                         const canProvisionE2ee =
                             keyedAllowed &&
                             encryptionEnv.storagePolicy !== "plaintext_only";
-                        if (canProvisionE2ee) modes.push("e2ee");
-                        return modes.join(",");
+                        if (canProvisionE2ee) modes.push({ value: "e2ee", mode: "keyed" });
+                        return modes
+                            .filter((entry) => {
+                                return !shouldDenyPublicSignupProvisioningAction({
+                                    env: process.env,
+                                    requestIp: request.ip,
+                                    methodId: providerId,
+                                    mode: entry.mode,
+                                });
+                            })
+                            .map((entry) => entry.value)
+                            .join(",");
                     })();
 
                     const redirectParams: Record<string, string> = {
