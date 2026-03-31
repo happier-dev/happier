@@ -1,12 +1,11 @@
 <div align="center">
   <img src="/.github/logotype-dark.png" title="Happier Dev" alt="Happier Dev" width="280" />
 
-  <h3 style="max-width:600px">Open-source mobile, web, and desktop companion for AI coding agents</h3>  
-  **Secure • Collaborative • Self-hostable**
+  ### Open-source mobile, web, and desktop companion for AI coding agents
   
   Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer<br />and continue seamlessly from your phone, browser, or desktop app.
   
-  **End-to-end encrypted. Zero-knowledge.<br />
+  **End-to-end encrypted. Self-hostable.<br />
   Built by developers, for developers.**
 
   <p><img src="/.github/illustration.png" title="Happier Dev" alt="Happier Dev" width="650" /></p>
