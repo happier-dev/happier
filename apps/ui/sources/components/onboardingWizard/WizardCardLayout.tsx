@@ -3,6 +3,7 @@ import { Platform, ScrollView, View, type StyleProp, type ViewStyle } from 'reac
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { layout } from '@/components/ui/layout/layout';
+import { resolveWebBlurTintColor } from '@/components/ui/overlays/resolveWebBlurTintColor';
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
 import { shadowLevelStyle } from '@/shadowElevation';
 
@@ -64,10 +65,22 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
     const metrics: WizardCardLayoutMetrics = React.useMemo(() => ({
         cardWidth,
     }), [cardWidth]);
+    const webBackdropStyle = Platform.OS === 'web' && !wantsFullscreen
+        ? (() => {
+            const tintColor = resolveWebBlurTintColor({ surfaceColor: theme.colors.surface, dark: theme.dark });
+            return ({
+                backdropFilter: 'blur(3px)',
+                backgroundColor: tintColor,
+            } as unknown as ViewStyle);
+        })()
+        : null;
     return (
         <ScrollView
             style={styles.root}
             contentContainerStyle={styles.container}
+            style={[
+                webBackdropStyle,
+            ]}
             showsVerticalScrollIndicator={false}
         >
             <View
