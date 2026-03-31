@@ -54,6 +54,16 @@ function parsePortFromUrl(rawUrl, fallbackPort) {
   }
 }
 
+function appendCacheBustQueryParam(rawUrl, { key = 'happier_tauri_ts', value } = {}) {
+  try {
+    const url = new URL(String(rawUrl ?? '').trim());
+    url.searchParams.set(String(key), String(value ?? ''));
+    return url.toString();
+  } catch {
+    return String(rawUrl ?? '').trim();
+  }
+}
+
 function resolveTauriUiDirForDev({ rootDir, env = process.env } = {}) {
   const inputEnv = env && typeof env === 'object' ? env : process.env;
   const primary = getComponentDir(rootDir, 'happier-ui', inputEnv);
@@ -136,10 +146,20 @@ async function main() {
   const runtimeState = stackName
     ? await readStackRuntimeStateFile(getStackRuntimeStatePath(stackName))
     : null;
-  const devUrl = resolveStackTauriDevUrl({
+  const defaultDevPort = (() => {
+    const forcedExpoPort = Number(envWithStackDefaults.HAPPIER_STACK_EXPO_DEV_PORT ?? '');
+    if (Number.isFinite(forcedExpoPort) && forcedExpoPort > 0) return Math.floor(forcedExpoPort);
+    const forcedTauriPort = Number(envWithStackDefaults.HAPPIER_STACK_TAURI_DEV_PORT ?? '');
+    if (Number.isFinite(forcedTauriPort) && forcedTauriPort > 0) return Math.floor(forcedTauriPort);
+    return 8081;
+  })();
+  const resolvedDevUrl = resolveStackTauriDevUrl({
     runtimeState,
-    defaultPort: Number(process.env.HAPPIER_STACK_TAURI_DEV_PORT ?? 8081),
+    defaultPort: defaultDevPort,
   });
+  const cacheBustRaw = String(envWithStackDefaults.HAPPIER_STACK_TAURI_DEV_URL_CACHE_BUST ?? '').trim();
+  const wantsCacheBust = cacheBustRaw ? cacheBustRaw !== '0' : true;
+  const devUrl = wantsCacheBust ? appendCacheBustQueryParam(resolvedDevUrl, { value: Date.now() }) : resolvedDevUrl;
   const resolveUserHomeDir = () => {
     try {
       return String(os.userInfo()?.homedir ?? os.homedir() ?? '').trim();
