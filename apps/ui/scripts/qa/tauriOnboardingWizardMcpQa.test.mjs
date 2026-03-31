@@ -40,14 +40,14 @@ test('tauri onboarding wizard QA exposes a deterministic capture plan', async ()
     [
       '[data-testid="onboarding-wizard-relay-diagram"]',
       '[data-testid="onboarding-wizard-relay:cloud"]',
-      '[data-testid="onboarding-wizard-relay:thisMac"]',
+      '[data-testid="onboarding-wizard-relay:thisComputer"]',
       '[data-testid="onboarding-wizard-relay:customUrl"]',
-      '[data-testid="onboarding-wizard-relay-url-input"]',
     ],
   );
   assert.equal(payload.plan.steps.find((step) => step.id === 'welcome_back')?.screenshot, '04-welcome-back.png');
   assert.equal(payload.plan.commandRunner.command, 'yarn');
   assert.deepEqual(payload.plan.commandRunner.baseArgs, ['-s', 'tauri:mcp:cli']);
+  assert.deepEqual(payload.plan.timeouts, { selectorWaitMs: 8000, cliSelectorWaitTimeoutMs: 20000, cliInteractTimeoutMs: 20000 });
   assert.equal(payload.plan.driverSession.command, 'yarn');
   assert.deepEqual(payload.plan.driverSession.baseArgs, ['-s', 'tauri:mcp:cli']);
   assert.deepEqual(payload.plan.driverSession.args, ['driver-session', 'start', '--port', '9225']);
@@ -63,6 +63,15 @@ test('tauri onboarding wizard QA can derive fallback MCP ports', async () => {
   assert.equal(ports[0], 9225);
   assert.equal(ports.includes(9226), true);
   assert.equal(ports.includes(9223), true);
+});
+
+test('tauri onboarding wizard QA builds the debug relay selection deep-link', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauriOnboardingWizardMcpQa.mjs');
+  const module = await import(pathToFileURL(scriptPath).href);
+
+  assert.equal(module.buildOnboardingWizardPath(), '/');
+  assert.equal(module.buildOnboardingWizardPath('relay_select'), '/?happier_wizard_step=relay_select');
 });
 
 test('tauri onboarding wizard QA resolves relative outdir against repo root', async () => {

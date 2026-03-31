@@ -7,7 +7,7 @@ The intent is to enable **native desktop QA automation** without affecting produ
 ## Recommendation (what to use)
 
 Use the existing **yarn scripts** (no new dev dependency required):
-- `yarn --cwd apps/ui tauri:qa` → starts the desktop app (stack-owned dev flow) and also runs the MCP server.
+- `yarn --cwd apps/ui tauri:qa` → **canonical one-shot**: starts the desktop app + MCP server, runs the deterministic onboarding wizard QA capture, then exits.
 - `yarn --cwd apps/ui tauri:mcp:server` → runs only the MCP server (useful if your MCP client spawns it).
 
 Avoid adding the MCP server as a dev dependency unless we need offline installs or want to pin a version for CI.
@@ -24,15 +24,29 @@ Avoid adding the MCP server as a dev dependency unless we need offline installs 
 yarn --cwd apps/ui tauri:qa
 ```
 
-`tauri:qa` expects a reachable Expo/Metro dev server (default `http://localhost:8081`). Start one first (for example `yarn --cwd apps/ui start`), or run it via `yarn tui:with-tauri` (which already starts Metro).
+`tauri:qa` expects a reachable Expo/Metro dev server (default `http://localhost:8081`). Start one first (for example `yarn --cwd apps/ui start`).
 
-This will then:
+By default, `tauri:qa` will:
 - ensure internal `@happier-dev/*` workspace packages have their `dist/` outputs built (avoids Metro crashing on missing export entrypoints),
 - ensure the `hsetup` sidecar entrypoint is prepared,
 - start the stack-owned `tauri dev` flow,
 - run `npx -y @hypothesi/tauri-mcp-server` alongside it.
+- run the deterministic onboarding wizard capture (`apps/ui/scripts/qa/tauriOnboardingWizardMcpQa.mjs`, via `yarn --cwd apps/ui tauri:mcp:wizard:qa`),
+- and then shut everything down (one-shot mode).
+
+To keep the app + MCP server running for manual QA, add `--serve`:
+
+```bash
+yarn --cwd apps/ui tauri:qa --serve
+```
+
+`tauri:qa` writes the child process logs under `.project/logs/bootstrap-qa/tauri-qa-*` by default. Add `--tee-logs` if you also want to stream logs to your terminal.
 
 If Metro previously crashed with a "Cannot find module .../dist/..." error, restart the Metro dev server after running `tauri:qa` (the build step fixes the missing files, but a crashed Metro process won't recover by itself).
+
+## Avoid TUI for QA
+
+Prefer `yarn --cwd apps/ui tauri:qa` / `--serve` and the MCP CLI over any stack TUI, to keep logs/artifacts deterministic and to avoid filling up agent context with terminal UI output.
 
 ## MCP client configuration (typical usage)
 
@@ -86,9 +100,10 @@ yarn --cwd apps/ui tauri:mcp:wizard:qa
 ```
 
 This script:
-- assumes the stack-owned `tauri:qa` launcher is already running,
+- assumes the stack-owned `tauri:qa --serve` launcher (or another Tauri dev run) is already running,
 - ensures internal `@happier-dev/*` workspace packages have their `dist/` outputs built (so the wizard can render reliably in Metro/Tauri),
 - opens a Tauri driver session,
+- if the pre-auth landing surface is not available, uses the dev-only wizard deep-link `/?happier_wizard_step=relay_select` to capture relay selection deterministically,
 - captures the current wizard steps in order:
   - `onboarding-wizard` / welcome
   - relay selection (`onboarding-wizard-relay:*`)
@@ -96,6 +111,7 @@ This script:
   - restore / add-device (`restore-*`)
   - lost-access / reset (`lost-access-*`)
   - optional post-auth setup wizard capture when the authenticated runtime exposes it (`setupWizard.*`)
+- exercises each visible relay option row in sequence and stores relay-specific artifacts under `03-relay-<choice>.{png,structure.yml,a11y.yml}` when available,
 - writes artifacts under `.project/logs/bootstrap-qa/tauri-onboarding-wizard-YYYYMMDD-.../`,
 - and appends the evidence paths to `.project/plans/todo/bootstrap/happier-bootstrap-qa-tracking-2026-03-30.md`.
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -50,7 +51,20 @@ function flushPrefixed(stream, prefix, state) {
   state.buffer = '';
 }
 
-function spawnLoggedProcess({ label, command, args, cwd, env }) {
+function resolveQaLogDir({ repoDir, date = new Date() } = {}) {
+  const stamp = date
+    .toISOString()
+    .replace(/[:]/gu, '')
+    .replace(/[.]/gu, '-')
+    .replace(/Z$/u, '');
+  return join(repoDir, '.project', 'logs', 'bootstrap-qa', `tauri-qa-${stamp}`);
+}
+
+async function ensureDir(dirPath) {
+  await mkdir(dirPath, { recursive: true });
+}
+
+function spawnLoggedProcess({ label, command, args, cwd, env, logFilePath, tee = false }) {
   const child = spawn(command, args, {
     cwd,
     env,
@@ -62,11 +76,36 @@ function spawnLoggedProcess({ label, command, args, cwd, env }) {
   const stdoutState = { buffer: '' };
   const stderrState = { buffer: '' };
   const prefix = `[${label}] `;
-  child.stdout?.on('data', (chunk) => writePrefixed(process.stdout, prefix, stdoutState, chunk));
-  child.stderr?.on('data', (chunk) => writePrefixed(process.stderr, prefix, stderrState, chunk));
+  const logStream = logFilePath ? createWriteStream(logFilePath, { flags: 'a' }) : null;
+  const logStdoutState = { buffer: '' };
+  const logStderrState = { buffer: '' };
+
+  child.stdout?.on('data', (chunk) => {
+    if (tee) {
+      writePrefixed(process.stdout, prefix, stdoutState, chunk);
+    }
+    if (logStream) {
+      writePrefixed(logStream, prefix, logStdoutState, chunk);
+    }
+  });
+  child.stderr?.on('data', (chunk) => {
+    if (tee) {
+      writePrefixed(process.stderr, prefix, stderrState, chunk);
+    }
+    if (logStream) {
+      writePrefixed(logStream, prefix, logStderrState, chunk);
+    }
+  });
   child.on('close', () => {
-    flushPrefixed(process.stdout, prefix, stdoutState);
-    flushPrefixed(process.stderr, prefix, stderrState);
+    if (tee) {
+      flushPrefixed(process.stdout, prefix, stdoutState);
+      flushPrefixed(process.stderr, prefix, stderrState);
+    }
+    if (logStream) {
+      flushPrefixed(logStream, prefix, logStdoutState);
+      flushPrefixed(logStream, prefix, logStderrState);
+    }
+    logStream?.end();
   });
 
   return child;
@@ -108,6 +147,28 @@ function parsePortFromUrl(rawUrl, fallbackPort) {
   }
 }
 
+function readBooleanEnv(value, fallback) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+export function resolveTauriMcpQaRunMode({ argv = [], env = process.env } = {}) {
+  const args = Array.isArray(argv) ? argv : [];
+  const keepRunning = args.includes('--serve') || readBooleanEnv(env.HAPPIER_TAURI_QA_KEEP_RUNNING, false);
+  const runWizardEnv = readBooleanEnv(env.HAPPIER_TAURI_QA_RUN_WIZARD, true);
+  const runWizard = !keepRunning && !args.includes('--no-wizard') && runWizardEnv;
+  const teeLogs = args.includes('--tee-logs') || readBooleanEnv(env.HAPPIER_TAURI_QA_TEE_LOGS, false);
+
+  return {
+    keepRunning,
+    runWizard,
+    teeLogs,
+  };
+}
+
 export function createTauriMcpQaExitTracker() {
   const exited = { tauri: null, mcp: null };
   const signalExitCodes = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
@@ -145,7 +206,7 @@ export function createTauriMcpQaExitTracker() {
   };
 }
 
-export async function resolveTauriMcpQaPlan({ env = process.env } = {}) {
+export async function resolveTauriMcpQaPlan({ argv = [], env = process.env } = {}) {
   const stackName = String(env.HAPPIER_STACK_STACK ?? '').trim();
   const runtimeState = stackName ? await readStackRuntimeStateFile(getStackRuntimeStatePath(stackName)) : null;
   const defaultPort = Number(env.HAPPIER_STACK_TAURI_DEV_PORT ?? 8081);
@@ -160,6 +221,8 @@ export async function resolveTauriMcpQaPlan({ env = process.env } = {}) {
     configPath,
     configOverride: tauriConfig,
   });
+  const runMode = resolveTauriMcpQaRunMode({ argv, env });
+  const logDir = resolveQaLogDir({ repoDir: repoRoot });
 
   return {
     cwd: packageRoot,
@@ -167,6 +230,11 @@ export async function resolveTauriMcpQaPlan({ env = process.env } = {}) {
     configPath,
     tauriConfig,
     tauriDev,
+    ...runMode,
+    logDir,
+    wizardQa: {
+      script: 'scripts/qa/tauriOnboardingWizardMcpQa.mjs',
+    },
     mcpServer: {
       command: 'npx',
       args: ['-y', '@hypothesi/tauri-mcp-server'],
@@ -181,11 +249,36 @@ function printUsage() {
     '',
     'options:',
     '  --json   Print the resolved launch plan without starting processes',
+    '  --serve  Keep the app + MCP server running (do not run one-shot wizard QA)',
+    '  --no-wizard  Do not run the one-shot onboarding wizard capture',
+    '  --tee-logs  Also print child process logs to stdout/stderr',
     '',
     'starts:',
     '  - the stack-owned Tauri dev app',
     '  - the MCP server used by Codex/manual QA',
   ].join('\n');
+}
+
+async function runWizardQaCapture({ cwd, env, scriptPath }) {
+  const child = spawn(process.execPath, [scriptPath], {
+    cwd,
+    env,
+    stdio: 'inherit',
+    shell: false,
+  });
+
+  const exitCode = await new Promise((resolve) => {
+    child.once('exit', (code, signal) => {
+      if (signal) {
+        resolve(1);
+        return;
+      }
+      resolve(Number.isFinite(Number(code)) ? Number(code) : 0);
+    });
+    child.once('error', () => resolve(1));
+  });
+
+  return exitCode;
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -197,7 +290,7 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
-  const plan = await resolveTauriMcpQaPlan();
+  const plan = await resolveTauriMcpQaPlan({ argv, env: process.env });
   if (json) {
     const { tauriConfig: _tauriConfig, tauriDev, ...preview } = plan;
     process.stdout.write(
@@ -236,6 +329,7 @@ async function main(argv = process.argv.slice(2)) {
   }
 
   await prepareTauriSidecar({ env: process.env });
+  await ensureDir(plan.logDir);
 
   const children = [];
   const stopChildren = (signal = 'SIGTERM') => {
@@ -267,6 +361,8 @@ async function main(argv = process.argv.slice(2)) {
     args: plan.tauriDev.args,
     cwd: plan.tauriDev.cwd ?? plan.cwd,
     env: plan.tauriDev.env ?? process.env,
+    logFilePath: join(plan.logDir, 'tauri.log'),
+    tee: plan.teeLogs,
   });
   const mcpServer = spawnLoggedProcess({
     label: 'tauri-mcp',
@@ -274,8 +370,25 @@ async function main(argv = process.argv.slice(2)) {
     args: plan.mcpServer.args,
     cwd: plan.cwd,
     env: process.env,
+    logFilePath: join(plan.logDir, 'mcp-server.log'),
+    tee: plan.teeLogs,
   });
   children.push(tauriDev, mcpServer);
+
+  if (plan.runWizard) {
+    // Give the app a moment to boot before the driver-session probe starts.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    const wizardExitCode = await runWizardQaCapture({
+      cwd: plan.cwd,
+      env: process.env,
+      scriptPath: join(plan.cwd, plan.wizardQa.script),
+    });
+
+    cleanup();
+    stopChildren('SIGTERM');
+    process.exit(wizardExitCode);
+  }
 
   const tracker = createTauriMcpQaExitTracker();
   const exitState = await new Promise((resolve) => {

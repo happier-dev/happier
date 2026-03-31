@@ -29,6 +29,10 @@ const defaultTrackerPath = join(
   'happier-bootstrap-qa-tracking-2026-03-30.md',
 );
 
+const selectorWaitMs = 8000;
+const cliSelectorWaitTimeoutMs = 20000;
+const cliInteractTimeoutMs = 20000;
+
 function readString(value, fallback = '') {
   const text = String(value ?? '').trim();
   return text || fallback;
@@ -177,6 +181,14 @@ function buildStepPlan() {
   ];
 }
 
+export function buildOnboardingWizardPath(stepId = null) {
+  const normalized = String(stepId ?? '').trim();
+  if (!normalized) {
+    return '/';
+  }
+  return `/?happier_wizard_step=${encodeURIComponent(normalized)}`;
+}
+
 export function buildTauriOnboardingWizardQaPlan({ env = process.env } = {}) {
   const driverSessionPort = readNumber(
     env.HAPPIER_TAURI_MCP_APP_IDENTIFIER ?? env.HAPPIER_TAURI_MCP_PORT ?? env.HAPPIER_TAURI_APP_PORT,
@@ -198,6 +210,11 @@ export function buildTauriOnboardingWizardQaPlan({ env = process.env } = {}) {
     artifactRoot,
     trackerPath,
     driverSessionPort,
+    timeouts: {
+      selectorWaitMs,
+      cliSelectorWaitTimeoutMs,
+      cliInteractTimeoutMs,
+    },
     commandRunner: {
       command: 'yarn',
       baseArgs: ['-s', 'tauri:mcp:cli'],
@@ -262,11 +279,11 @@ async function waitForAnySelector(step, { appIdentifier, env }) {
           '--value',
           selector,
           '--timeout',
-          '8000',
+          String(selectorWaitMs),
           '--app-identifier',
           String(appIdentifier),
         ],
-        { cwd: packageRoot, env },
+        { cwd: packageRoot, env, timeoutMs: cliSelectorWaitTimeoutMs },
       );
       return selector;
     } catch {
@@ -296,12 +313,19 @@ async function withRetries(label, fn, { attempts = 3, delayMs = 250 } = {}) {
 }
 
 async function captureStep(step, { artifactRoot, appIdentifier, env }) {
-  const screenshotPath = join(artifactRoot, step.screenshot);
-  const structurePath = join(artifactRoot, step.domStructure);
-  const a11yPath = join(artifactRoot, step.domAccessibility);
+  return captureSnapshotArtifacts({
+    screenshotPath: join(artifactRoot, step.screenshot),
+    structurePath: join(artifactRoot, step.domStructure),
+    a11yPath: join(artifactRoot, step.domAccessibility),
+    label: step.id,
+    appIdentifier,
+    env,
+  });
+}
 
+async function captureSnapshotArtifacts({ screenshotPath, structurePath, a11yPath, label, appIdentifier, env }) {
   await withRetries(
-    `screenshot:${step.id}`,
+    `screenshot:${label}`,
     () => runTauriMcpCli(
       [
         'webview-screenshot',
@@ -318,7 +342,7 @@ async function captureStep(step, { artifactRoot, appIdentifier, env }) {
   );
 
   const structure = await withRetries(
-    `dom-structure:${step.id}`,
+    `dom-structure:${label}`,
     () => runTauriMcpCli(
       [
         'webview-dom-snapshot',
@@ -334,7 +358,7 @@ async function captureStep(step, { artifactRoot, appIdentifier, env }) {
   await writeTextArtifact(structurePath, String(structure.stdout ?? ''));
 
   const accessibility = await withRetries(
-    `dom-accessibility:${step.id}`,
+    `dom-accessibility:${label}`,
     () => runTauriMcpCli(
       [
         'webview-dom-snapshot',
@@ -354,6 +378,18 @@ async function captureStep(step, { artifactRoot, appIdentifier, env }) {
     structurePath,
     a11yPath,
   };
+}
+
+async function captureRelayChoiceArtifacts({ artifactRoot, appIdentifier, env, choiceId }) {
+  const slug = String(choiceId ?? '').trim() || 'unknown';
+  return captureSnapshotArtifacts({
+    screenshotPath: join(artifactRoot, `03-relay-${slug}.png`),
+    structurePath: join(artifactRoot, `03-relay-${slug}.structure.yml`),
+    a11yPath: join(artifactRoot, `03-relay-${slug}.a11y.yml`),
+    label: `relay:${slug}`,
+    appIdentifier,
+    env,
+  });
 }
 
 async function captureOptionalStep(step, { artifactRoot, appIdentifier, env }) {
@@ -405,11 +441,11 @@ async function clickSelector(selector, { appIdentifier, env } = {}) {
       '--value',
       normalizedSelector,
       '--timeout',
-      '8000',
+      String(selectorWaitMs),
       '--app-identifier',
       String(appIdentifier),
     ],
-    { cwd: packageRoot, env },
+    { cwd: packageRoot, env, timeoutMs: cliSelectorWaitTimeoutMs },
   );
   await runTauriMcpCli(
     [
@@ -421,7 +457,7 @@ async function clickSelector(selector, { appIdentifier, env } = {}) {
       '--app-identifier',
       String(appIdentifier),
     ],
-    { cwd: packageRoot, env },
+    { cwd: packageRoot, env, timeoutMs: cliInteractTimeoutMs },
   ).catch(() => {});
   await runTauriMcpCli(
     [
@@ -433,7 +469,7 @@ async function clickSelector(selector, { appIdentifier, env } = {}) {
       '--app-identifier',
       String(appIdentifier),
     ],
-    { cwd: packageRoot, env },
+    { cwd: packageRoot, env, timeoutMs: cliInteractTimeoutMs },
   );
 }
 
@@ -468,6 +504,10 @@ async function navigateWebviewToPath(pathname, { appIdentifier, env }) {
     ],
     { cwd: packageRoot, env },
   ).catch(() => {});
+}
+
+async function navigateToWizardStep(stepId, { appIdentifier, env }) {
+  await navigateWebviewToPath(buildOnboardingWizardPath(stepId), { appIdentifier, env });
 }
 
 async function appendTrackerEvidence({ trackerPath, artifactRoot, stepArtifacts, driverSession, driverSessionStatus, backendState }) {
@@ -626,33 +666,71 @@ async function main(argv = process.argv.slice(2)) {
   // screen or a previous route, this gives us a stable starting point.
   await navigateWebviewToPath('/', { appIdentifier: resolvedAppIdentifier, env: process.env });
 
+  const onboardingRootPresent = await isSelectorPresent('[data-testid="onboarding-wizard"]', {
+    appIdentifier: resolvedAppIdentifier,
+    env: process.env,
+    timeoutMs: 2500,
+  });
+  if (!onboardingRootPresent) {
+    await appendWarning(plan.artifactRoot, '- onboarding wizard root not present at /; trying the debug relay selection deep-link and continuing with setup surfaces if needed');
+    await navigateToWizardStep('relay_select', { appIdentifier: resolvedAppIdentifier, env: process.env });
+  }
+
   // 1) Welcome
-  await captureRequired('welcome');
+  if (onboardingRootPresent) {
+    await captureRequired('welcome');
+  }
 
   // 2) Skip -> Auth (best-effort). This validates the skip affordance without relying on copy.
-  if (await isSelectorPresent('[data-testid="onboarding-wizard-skip"]', { appIdentifier: resolvedAppIdentifier, env: process.env })) {
+  if (onboardingRootPresent && await isSelectorPresent('[data-testid="onboarding-wizard-skip"]', { appIdentifier: resolvedAppIdentifier, env: process.env })) {
     try {
       await clickSelector('[data-testid="onboarding-wizard-skip"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
     } catch (error) {
       await appendWarning(plan.artifactRoot, `- skip click failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     await captureBestEffort('auth_skip');
-  } else {
+  } else if (onboardingRootPresent) {
     await appendWarning(plan.artifactRoot, '- skip button not present on welcome surface; unable to validate skip navigation');
   }
 
   // Return to the wizard root to continue the main flow.
-  await navigateWebviewToPath('/', { appIdentifier: resolvedAppIdentifier, env: process.env });
-  await captureRequired('welcome');
+  if (onboardingRootPresent) {
+    await navigateWebviewToPath('/', { appIdentifier: resolvedAppIdentifier, env: process.env });
+    await captureRequired('welcome');
+  }
 
   // 3) Advance to relay (if applicable)
-  try {
-    await clickSelector('[data-testid="onboarding-wizard-primary"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
-  } catch (error) {
-    await appendWarning(plan.artifactRoot, `- welcome primary click failed: ${error instanceof Error ? error.message : String(error)}`);
+  if (onboardingRootPresent) {
+    try {
+      await clickSelector('[data-testid="onboarding-wizard-primary"]', { appIdentifier: resolvedAppIdentifier, env: process.env });
+    } catch (error) {
+      await appendWarning(plan.artifactRoot, `- welcome primary click failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   const relayArtifacts = await captureBestEffort('relay');
+  const relayChoiceSelectors = [
+    { choiceId: 'cloud', selector: '[data-testid="onboarding-wizard-relay:cloud"]' },
+    { choiceId: 'thisComputer', selector: '[data-testid="onboarding-wizard-relay:thisComputer"]' },
+    { choiceId: 'customUrl', selector: '[data-testid="onboarding-wizard-relay:customUrl"]' },
+  ];
+  if (relayArtifacts) {
+    for (const choice of relayChoiceSelectors) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await isSelectorPresent(choice.selector, { appIdentifier: resolvedAppIdentifier, env: process.env, timeoutMs: 1200 })) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await clickSelector(choice.selector, { appIdentifier: resolvedAppIdentifier, env: process.env });
+          // eslint-disable-next-line no-await-in-loop
+          const choiceArtifacts = await captureRelayChoiceArtifacts({ artifactRoot: plan.artifactRoot, appIdentifier: resolvedAppIdentifier, env: process.env, choiceId: choice.choiceId });
+          stepArtifacts[`relay:${choice.choiceId}`] = choiceArtifacts;
+        } catch (error) {
+          // eslint-disable-next-line no-await-in-loop
+          await appendWarning(plan.artifactRoot, `- relay choice ${choice.choiceId} click/capture failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+  }
 
   // 4) Relay -> Back -> Welcome capture (if relay step is present)
   if (relayArtifacts && await isSelectorPresent('[data-testid="onboarding-wizard-back"]', { appIdentifier: resolvedAppIdentifier, env: process.env })) {
@@ -689,6 +767,8 @@ async function main(argv = process.argv.slice(2)) {
     } catch (error) {
       await appendWarning(plan.artifactRoot, `- relay primary click (resume) failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  } else if (!onboardingRootPresent) {
+    await navigateToWizardStep('relay_select', { appIdentifier: resolvedAppIdentifier, env: process.env });
   }
 
   const authArtifacts = await captureBestEffort('auth');
