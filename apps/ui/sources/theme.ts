@@ -71,8 +71,8 @@ export const lightTheme = {
             scrimSoft: 'rgba(0, 0, 0, 0.18)',
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
-            // Used by the onboarding/setup wizard shell; intentionally much subtler on light theme.
-            scrimWizard: 'rgba(0, 0, 0, 0.01)',
+            // Used by the onboarding/setup wizard shell; light-theme uses a bright scrim so the blur reads as “frosted glass”.
+            scrimWizard: 'rgba(255, 255, 255, 0.72)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
         },
