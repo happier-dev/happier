@@ -471,6 +471,21 @@ describe('serverFeaturesClient', () => {
         expect(String(calls[2]?.[0] ?? '')).toContain('https://other.example.test');
     });
 
+    it('returns error status when relay is completely offline (health probe fails with ECONNREFUSED)', async () => {
+        // Simulate a relay that is not running: every fetch — including the /health probe — throws.
+        // This is the "Choose Relay / can't reach relay" scenario that blocks the Tauri app on first launch.
+        globalThis.fetch = vi.fn().mockRejectedValue(
+            new TypeError('Network request failed'),
+        ) as unknown as typeof fetch;
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        // timeoutMs=100 allows the reachability gate to time out quickly in the test.
+        const result = await getServerFeaturesSnapshot({ force: true, timeoutMs: 100 });
+        expect(result.status).toBe('error');
+    });
+
     it('fetches features against the explicit serverId url (not the active server)', async () => {
         const payload = {
             features: {
