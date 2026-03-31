@@ -51,4 +51,24 @@ describe('pendingSetupIntent.web', () => {
             relayUrl: 'https://relay.example.test',
         });
     });
+
+    it('round-trips a remote relay-host intent on web', async () => {
+        const { setPendingSetupIntent, getPendingSetupIntent } = await importFreshWeb();
+
+        setPendingSetupIntent({
+            branch: 'remoteMachine',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.example.test/',
+            machineId: 'machine-remote-1',
+            remoteSetupIntent: 'remoteRelayHost',
+        });
+
+        expect(getPendingSetupIntent()).toEqual({
+            branch: 'remoteMachine',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.example.test',
+            machineId: 'machine-remote-1',
+            remoteSetupIntent: 'remoteRelayHost',
+        });
+    });
 });

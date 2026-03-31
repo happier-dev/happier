@@ -61,6 +61,7 @@ describe('pendingSetupIntent', () => {
             phase: 'awaiting_auth',
             relayUrl: 'https://relay.remote.example.test/',
             machineId: 'machine-remote-1',
+            remoteSetupIntent: 'remoteMachine',
         });
 
         expect(getPendingSetupIntent()).toEqual({
@@ -68,6 +69,30 @@ describe('pendingSetupIntent', () => {
             phase: 'awaiting_auth',
             relayUrl: 'https://relay.remote.example.test',
             machineId: 'machine-remote-1',
+            remoteSetupIntent: 'remoteMachine',
+        });
+
+        clearPendingSetupIntent();
+        expect(getPendingSetupIntent()).toBeNull();
+    });
+
+    it('round-trips a remote relay-host resume intent', async () => {
+        const { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } = await importFresh();
+
+        setPendingSetupIntent({
+            branch: 'remoteMachine',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.remote.example.test/',
+            machineId: 'machine-remote-1',
+            remoteSetupIntent: 'remoteRelayHost',
+        });
+
+        expect(getPendingSetupIntent()).toEqual({
+            branch: 'remoteMachine',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.remote.example.test',
+            machineId: 'machine-remote-1',
+            remoteSetupIntent: 'remoteRelayHost',
         });
 
         clearPendingSetupIntent();

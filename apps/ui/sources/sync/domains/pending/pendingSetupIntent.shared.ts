@@ -11,6 +11,7 @@ export type PendingSetupIntent =
         phase: 'awaiting_auth' | 'post_auth' | 'dismissed';
         relayUrl: string | null;
         machineId: string | null;
+        remoteSetupIntent: 'remoteMachine' | 'remoteRelayHost';
     }>;
 
 type PendingSetupIntentRecord =
@@ -25,6 +26,7 @@ type PendingSetupIntentRecord =
         phase: 'awaiting_auth' | 'post_auth' | 'dismissed';
         relayUrl: string | null;
         machineId: string | null;
+        remoteSetupIntent: 'remoteMachine' | 'remoteRelayHost';
         createdAtMs: number;
     }>;
 
@@ -71,6 +73,7 @@ export function toRecord(value: PendingSetupIntent): PendingSetupIntentRecord | 
             phase: value.phase,
             relayUrl: normalizeRelayUrl(value.relayUrl),
             machineId: normalizeMachineId(value.machineId),
+            remoteSetupIntent: value.remoteSetupIntent,
             createdAtMs: Date.now(),
         };
     }
@@ -102,6 +105,7 @@ export function fromRecord(value: unknown): PendingSetupIntent | null {
             phase: record.phase,
             relayUrl: normalizeRelayUrl(record.relayUrl as string | null | undefined),
             machineId: normalizeMachineId(record.machineId as string | null | undefined),
+            remoteSetupIntent: record.remoteSetupIntent === 'remoteRelayHost' ? 'remoteRelayHost' : 'remoteMachine',
         };
     }
     return null;
