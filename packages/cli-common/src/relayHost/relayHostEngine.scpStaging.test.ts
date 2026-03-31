@@ -337,4 +337,97 @@ describe('RelayHostEngine (remote SSH)', () => {
     expect(commands.some((command) => command.includes('systemctl --user disable --now'))).toBe(true);
     expect(commands.some((command) => command.includes('rm -rf'))).toBe(true);
   });
+
+  it('uses sudo when installing a system service over SSH (non-root friendly)', async () => {
+    let installCommand = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('systemctl') && command.includes('daemon-reload') && command.includes('enable --now')) {
+          installCommand = command;
+        }
+        if (command.includes('echo yes')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '$HOME/.happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    await engine.installOrUpdate({
+      target: {
+        kind: 'ssh',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+      channel: 'dev',
+      mode: 'system',
+    });
+
+    expect(installCommand).toContain('sudo -n systemctl daemon-reload');
+    expect(installCommand).toContain('sudo -n systemctl enable --now');
+  });
+
+  it('surfaces a clear error when systemd user services are unavailable (no bus)', async () => {
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('systemctl --user') && command.includes('enable --now')) {
+          return { status: 1, stdout: '', stderr: 'Failed to connect to bus: No medium found' };
+        }
+        if (command.includes('echo yes')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '$HOME/.happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    await expect(engine.installOrUpdate({
+      target: {
+        kind: 'ssh',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+      channel: 'dev',
+      mode: 'user',
+    })).rejects.toThrow(/systemd user service/i);
+  });
 });
