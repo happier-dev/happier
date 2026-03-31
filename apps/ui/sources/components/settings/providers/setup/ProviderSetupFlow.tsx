@@ -4,8 +4,9 @@ import { ActivityIndicator, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
-import { AGENT_IDS, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { getProviderCliSetupSupportedIds, type AgentId } from '@happier-dev/agents';
 import { getProviderLocalAuthPlugin } from '@/agents/providers/registry/providerLocalAuthRegistry';
+import { getAgentCore } from '@/agents/catalog/catalog';
 import { DesktopOnlySetupNotice } from '@/components/settings/machines/DesktopOnlySetupNotice';
 import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
 import { ActionCard } from '@/components/ui/cards/ActionCard';
@@ -21,13 +22,13 @@ import { ProviderAuthenticationTerminalPane } from '../authentication/ProviderAu
 import { useProviderAuthenticationState } from '../authentication/useProviderAuthenticationState';
 import {
     completeActiveProviderSetupStep,
-    createProviderSetupQueueState,
+    createProviderSetupQueueStateFromInstallSummary,
     skipActiveProviderSetupStep,
     type ProviderSetupQueueState,
 } from './providerSetupQueue';
 import { useProviderCliInstallQueue, type ProviderCliInstallStatus } from './useProviderCliInstallQueue';
 
-const DEFAULT_PROVIDER_IDS = AGENT_IDS.filter((agentId) => agentId !== 'customAcp');
+const DEFAULT_PROVIDER_IDS = getProviderCliSetupSupportedIds();
 
 function resolveProviderStepState(params: Readonly<{
     providerId: AgentId;
@@ -73,9 +74,13 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
 
     const { theme } = useUnistyles();
     const defaultMachineId = usePrimaryMachineFromActiveSelection();
+    const supportedProviderIds = React.useMemo(() => new Set(getProviderCliSetupSupportedIds()), []);
     const providerIds = React.useMemo(
-        () => (props.providerIds?.length ? [...props.providerIds] : [...DEFAULT_PROVIDER_IDS]),
-        [props.providerIds],
+        () => {
+            const sourceProviderIds = props.providerIds?.length ? props.providerIds : DEFAULT_PROVIDER_IDS;
+            return sourceProviderIds.filter((providerId) => supportedProviderIds.has(providerId));
+        },
+        [props.providerIds, supportedProviderIds],
     );
     const serverId = props.serverId ?? getActiveServerId();
     const machineId = props.machineId ?? defaultMachineId;
@@ -216,7 +221,11 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                             if (!confirmed) return;
 
                             const summary = await installQueue.start(selectedProviderIds);
-                            setQueueState(createProviderSetupQueueState(summary.installedProviderIds));
+                            setQueueState(createProviderSetupQueueStateFromInstallSummary({
+                                selectedProviderIds,
+                                installedProviderIds: summary.installedProviderIds,
+                                failedProviderIds: summary.failedProviderIds,
+                            }));
                         },
                     }}
                 />

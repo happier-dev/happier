@@ -181,16 +181,16 @@ describe('MachinesSettingsView', () => {
         const groups = tree.findAllByType('Group' as any);
         expect(groups).toHaveLength(2);
         expect(groups[0]?.props.title).toBe('settings.machines');
-        expect(groups[1]?.props.title).toBe('settings.addMachine');
+        expect(groups[1]?.props.title).toBe('common.actions');
 
         const firstGroupItems = groups[0]!.findAllByType('Item' as any);
         expect(firstGroupItems.map((node: any) => node.props.title)).toContain('Machine A1');
         expect(firstGroupItems.map((node: any) => node.props.title)).not.toContain('settings.machineSetupCurrentMachineTitle');
         expect(firstGroupItems.map((node: any) => node.props.title)).not.toContain('settings.addMachine');
 
-        const setupNoticeItems = groups[1]!.findAllByType('Item' as any);
-        expect(setupNoticeItems.map((node: any) => node.props.title)).toContain('setupOnboarding.webDesktopOnlyTitle');
-        expect(setupNoticeItems.map((node: any) => node.props.subtitle)).toContain('setupOnboarding.webDesktopOnlyBody');
+        const actionItems = groups[1]!.findAllByType('Item' as any);
+        expect(actionItems.map((node: any) => node.props.title)).toContain('setupOnboarding.setupThisComputerTitle');
+        expect(actionItems.map((node: any) => node.props.title)).toContain('settings.addMachine');
     });
 
     it('shows desktop-only setup actions when running inside the Tauri desktop shell', async () => {

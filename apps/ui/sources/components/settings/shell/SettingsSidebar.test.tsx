@@ -106,4 +106,31 @@ describe('SettingsSidebar', () => {
 
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/notifications');
     });
+
+    it('swaps expandable item icons to chevrons on hover', async () => {
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+
+        const row = screen.findByTestId('settings-sidebar.item.groupGeneral');
+        const iconNamesBefore = row.findAllByType('Ionicons').map((node: any) => node.props?.name).filter(Boolean);
+        expect(iconNamesBefore).toContain('settings-outline');
+        expect(iconNamesBefore).not.toContain('chevron-down');
+        expect(iconNamesBefore).not.toContain('chevron-forward');
+
+        await act(async () => {
+            row.props.onHoverIn?.();
+        });
+
+        const rowHovered = screen.findByTestId('settings-sidebar.item.groupGeneral');
+        const iconNamesHovered = rowHovered.findAllByType('Ionicons').map((node: any) => node.props?.name).filter(Boolean);
+        expect(iconNamesHovered).toContain('chevron-down');
+
+        await act(async () => {
+            rowHovered.props.onHoverOut?.();
+        });
+
+        const rowAfter = screen.findByTestId('settings-sidebar.item.groupGeneral');
+        const iconNamesAfter = rowAfter.findAllByType('Ionicons').map((node: any) => node.props?.name).filter(Boolean);
+        expect(iconNamesAfter).toContain('settings-outline');
+    });
 });

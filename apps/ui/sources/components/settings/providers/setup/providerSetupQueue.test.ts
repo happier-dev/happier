@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     completeActiveProviderSetupStep,
     createProviderSetupQueueState,
+    createProviderSetupQueueStateFromInstallSummary,
     failActiveProviderSetupStep,
     markActiveProviderSetupStepFailed,
     skipActiveProviderSetupStep,
@@ -60,6 +61,19 @@ describe('providerSetupQueue', () => {
             completedProviderIds: [],
             failedProviderIds: ['codex'],
             pendingProviderIds: ['claude'],
+        });
+    });
+
+    it('preserves failed providers when seeding the queue from an install summary', () => {
+        expect(createProviderSetupQueueStateFromInstallSummary({
+            selectedProviderIds: ['codex', 'claude', 'gemini'],
+            installedProviderIds: ['codex', 'gemini'],
+            failedProviderIds: ['claude'],
+        })).toEqual({
+            activeProviderId: 'codex',
+            completedProviderIds: [],
+            failedProviderIds: ['claude'],
+            pendingProviderIds: ['gemini'],
         });
     });
 });

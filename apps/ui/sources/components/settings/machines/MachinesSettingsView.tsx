@@ -9,7 +9,6 @@ import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftAct
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { t } from '@/text';
 
-import { DesktopOnlySetupNotice } from './DesktopOnlySetupNotice';
 import { MachineSetupActionsSection } from './MachineSetupActionsSection';
 import { MachinesListSection } from './MachinesListSection';
 import { useMachinesSettingsViewModel } from './machinesSettingsViewModel';
@@ -19,6 +18,12 @@ export const MachinesSettingsView = React.memo(function MachinesSettingsView() {
     const viewModel = useMachinesSettingsViewModel();
     const isDesktop = isTauriDesktop();
     const isBrowserWeb = Platform.OS === 'web' && !isDesktop;
+    const openSetupWizard = React.useCallback((params?: Readonly<{ step?: string; action?: string }>) => {
+        const step = params?.step ? `step=${encodeURIComponent(params.step)}` : '';
+        const action = params?.action ? `action=${encodeURIComponent(params.action)}` : '';
+        const query = [step, action].filter(Boolean).join('&');
+        router.push(`/setup/wizard${query ? `?${query}` : ''}`);
+    }, [router]);
 
     return (
         <ItemList>
@@ -47,12 +52,20 @@ export const MachinesSettingsView = React.memo(function MachinesSettingsView() {
             {isDesktop ? (
                 <MachineSetupActionsSection />
             ) : isBrowserWeb ? (
-                <DesktopOnlySetupNotice
-                    testID="settings.machines.desktopOnlySetupNotice"
-                    groupTitle={t('settings.addMachine')}
-                    title={t('setupOnboarding.webDesktopOnlyTitle')}
-                    subtitle={t('setupOnboarding.webDesktopOnlyBody')}
-                />
+                <ItemGroup title={t('common.actions')}>
+                    <Item
+                        testID="settings.machines.openWizard.setupThisComputer"
+                        title={t('setupOnboarding.setupThisComputerTitle')}
+                        subtitle={t('settings.machineSetupCurrentMachineSubtitle')}
+                        onPress={() => openSetupWizard({ step: 'setup_this_computer', action: 'local' })}
+                    />
+                    <Item
+                        testID="settings.machines.openWizard.addMachine"
+                        title={t('settings.addMachine')}
+                        subtitle={t('settings.machineSetupSshMachineSubtitle')}
+                        onPress={() => openSetupWizard({ step: 'remote_ssh_setup', action: 'remote' })}
+                    />
+                </ItemGroup>
             ) : null}
         </ItemList>
     );

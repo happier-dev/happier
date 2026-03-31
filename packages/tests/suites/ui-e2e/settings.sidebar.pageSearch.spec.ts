@@ -76,14 +76,10 @@ test.describe('ui e2e: settings sidebar', () => {
             await mkdir(screenshotDir, { recursive: true });
         }
 
-        const viewports = wantsScreenshots()
-            ? ([
-                { label: 'desktop', width: 1440, height: 900 },
-                { label: 'tablet', width: 1024, height: 768 },
-            ] as const)
-            : ([
-                { label: 'desktop', width: 1440, height: 900 },
-            ] as const);
+        const viewports = [
+            { label: 'desktop', width: 1440, height: 900 },
+            { label: 'tablet', width: 1024, height: 768 },
+        ] as const;
 
         for (const viewport of viewports) {
             await test.step(`viewport: ${viewport.label}`, async () => {

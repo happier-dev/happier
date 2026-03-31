@@ -1,23 +1,24 @@
 import * as React from 'react';
 
+import { useRouter } from 'expo-router';
+
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { DesktopOnlySetupNotice } from '@/components/settings/machines/DesktopOnlySetupNotice';
-import { MachineSetupFlowScreen } from '@/components/settings/machines/MachineSetupFlowScreen';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
-import { isTauriDesktop } from '@/utils/platform/tauri';
 
 export default function AddMachineRoute() {
-    if (!isTauriDesktop()) {
-        return (
-            <ItemList>
-                <DesktopOnlySetupNotice
-                    testID="settings.machineSetup.desktopOnlyRouteNotice"
-                    groupTitle={t('settings.addMachine')}
-                    title={t('setupOnboarding.webDesktopOnlyTitle')}
-                    subtitle={t('setupOnboarding.webDesktopOnlyBody')}
+    const router = useRouter();
+    return (
+        <ItemList>
+            <ItemGroup title={t('common.actions')}>
+                <Item
+                    testID="settings.machineSetup.openSetupWizard"
+                    title={t('settings.machineSetupSshMachineTitle')}
+                    subtitle={t('settings.machineSetupSshMachineSubtitle')}
+                    onPress={() => router.push('/setup/wizard?action=remote&step=remote_ssh_setup')}
                 />
-            </ItemList>
-        );
-    }
-    return <MachineSetupFlowScreen mode="remoteOnly" />;
+            </ItemGroup>
+        </ItemList>
+    );
 }

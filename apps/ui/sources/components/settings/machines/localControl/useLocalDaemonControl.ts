@@ -17,6 +17,10 @@ type LocalDaemonStatusData = Readonly<{
     daemonRunning: boolean;
     needsAuth: boolean;
     machineId: string | null;
+    daemonServerUrl?: string | null;
+    daemonComparableKey?: string | null;
+    daemonAccountId?: string | null;
+    daemonMachineRegistered?: boolean | null;
 }>;
 
 function readLocalDaemonStatusData(result: SystemTaskResult | null): LocalDaemonStatusData | null {
@@ -34,6 +38,10 @@ function readLocalDaemonStatusData(result: SystemTaskResult | null): LocalDaemon
         daemonRunning: data.daemonRunning === true,
         needsAuth: data.needsAuth === true,
         machineId: typeof data.machineId === 'string' && data.machineId.trim().length > 0 ? data.machineId.trim() : null,
+        daemonServerUrl: typeof data.daemonServerUrl === 'string' && data.daemonServerUrl.trim().length > 0 ? data.daemonServerUrl.trim() : null,
+        daemonComparableKey: typeof data.daemonComparableKey === 'string' && data.daemonComparableKey.trim().length > 0 ? data.daemonComparableKey.trim() : null,
+        daemonAccountId: typeof data.daemonAccountId === 'string' && data.daemonAccountId.trim().length > 0 ? data.daemonAccountId.trim() : null,
+        daemonMachineRegistered: typeof data.daemonMachineRegistered === 'boolean' ? data.daemonMachineRegistered : null,
     };
 }
 

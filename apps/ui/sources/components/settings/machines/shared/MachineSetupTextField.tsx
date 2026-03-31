@@ -39,6 +39,7 @@ export const MachineSetupTextField = React.memo(function MachineSetupTextField(p
     autoCapitalize?: RNTextInputProps['autoCapitalize'];
     autoCorrect?: boolean;
     multiline?: boolean;
+    secureTextEntry?: boolean;
     onChangeText: (value: string) => void;
 }>) {
     const { theme } = useUnistyles();
@@ -53,6 +54,7 @@ export const MachineSetupTextField = React.memo(function MachineSetupTextField(p
                 autoCorrect={props.autoCorrect}
                 keyboardType={props.keyboardType}
                 multiline={props.multiline}
+                secureTextEntry={props.secureTextEntry}
                 placeholder={props.placeholder}
                 placeholderTextColor={props.placeholderTextColor ?? theme.colors.input.placeholder}
                 style={[styles.input, props.inputStyle]}

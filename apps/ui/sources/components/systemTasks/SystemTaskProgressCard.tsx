@@ -134,9 +134,11 @@ async function openDesktopSystemTaskLogs(): Promise<void> {
 export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard(props: Readonly<{
     snapshot: SystemTaskRunState;
     onCancel?: () => void;
-    title?: string;
+    title?: string | null;
+    variant?: 'detailed' | 'checklistOnly';
 }>) {
     const { theme } = useUnistyles();
+    const variant = props.variant ?? 'detailed';
     const canCancel = Boolean(props.onCancel) && (props.snapshot.status === 'running' || props.snapshot.status === 'canceling');
     const stepLabel = resolveSystemTaskStepLabel(props.snapshot.currentStepId);
     const latestMessage = props.snapshot.latestMessage;
@@ -149,29 +151,37 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
         await openDesktopSystemTaskLogs();
     }, [canOpenLogs]);
 
+    const groupTitle = props.title === null
+        ? undefined
+        : (props.title ?? t('settings.machineSetupCurrentMachineTitle'));
+
     return (
         <View testID="system-task-progress-card">
-            <ItemGroup title={props.title ?? t('settings.machineSetupCurrentMachineTitle')}>
-                <Item
-                    testID={`system-task-progress-status-${props.snapshot.status}`}
-                    title={translateStatus(props.snapshot)}
-                    showChevron={false}
-                    mode="info"
-                />
-                <Item
-                    title={t('settings.systemTaskCurrentStepLabel')}
-                    subtitle={renderValue(stepLabel)}
-                    subtitleTestID="system-task-step-label"
-                    showChevron={false}
-                    mode="info"
-                />
-                <Item
-                    title={t('settings.systemTaskLatestUpdateLabel')}
-                    subtitle={renderValue(latestMessage)}
-                    subtitleTestID="system-task-message"
-                    showChevron={false}
-                    mode="info"
-                />
+            <ItemGroup {...(groupTitle ? { title: groupTitle } : {})}>
+                {variant === 'detailed' ? (
+                    <>
+                        <Item
+                            testID={`system-task-progress-status-${props.snapshot.status}`}
+                            title={translateStatus(props.snapshot)}
+                            showChevron={false}
+                            mode="info"
+                        />
+                        <Item
+                            title={t('settings.systemTaskCurrentStepLabel')}
+                            subtitle={renderValue(stepLabel)}
+                            subtitleTestID="system-task-step-label"
+                            showChevron={false}
+                            mode="info"
+                        />
+                        <Item
+                            title={t('settings.systemTaskLatestUpdateLabel')}
+                            subtitle={renderValue(latestMessage)}
+                            subtitleTestID="system-task-message"
+                            showChevron={false}
+                            mode="info"
+                        />
+                    </>
+                ) : null}
                 {checklistSteps.map((step) => {
                     const testId = `system-task-progress-checklist-step-${step.status}-${encodeStepIdForTestId(step.stepId)}`;
                     const showSpinner = step.status === 'active' && props.snapshot.status !== 'failed' && props.snapshot.status !== 'succeeded';

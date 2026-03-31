@@ -5,6 +5,7 @@ import { buildLocalMachineSetupSystemTaskSpec } from './buildLocalMachineSetupSy
 import { getSystemTasksRunner } from './systemTasksRuntime';
 import { useSystemTaskSnapshot } from './useSystemTaskSnapshot';
 import type { SystemTaskRunState, SystemTaskRunner } from './types';
+import type { SystemTaskSpec } from '@happier-dev/protocol';
 
 export type ThisComputerSetupFollowUp = 'auth' | 'approval' | null;
 
@@ -36,11 +37,11 @@ export function useThisComputerSetupTask(options: Readonly<{
     const autoStartAttemptedRef = React.useRef(false);
     const handledResultTaskIdRef = React.useRef<string | null>(null);
 
-    const start = React.useCallback(async () => {
+    const start = React.useCallback(async (specOverride?: SystemTaskSpec) => {
         setIsStarting(true);
         setStartError(null);
         try {
-            const taskId = await runner.start(buildLocalMachineSetupSystemTaskSpec());
+            const taskId = await runner.start(specOverride ?? buildLocalMachineSetupSystemTaskSpec());
             handledResultTaskIdRef.current = null;
             setActiveTaskId(taskId);
             return taskId;

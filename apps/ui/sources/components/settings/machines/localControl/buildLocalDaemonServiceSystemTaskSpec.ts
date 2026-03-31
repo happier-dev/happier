@@ -2,7 +2,9 @@ import { SYSTEM_TASK_PROTOCOL_VERSION, type SystemTaskSpec } from '@happier-dev/
 
 type LocalDaemonServiceTaskKind =
     | 'daemon.service.status.v1'
-    | 'daemon.service.start.v1';
+    | 'daemon.service.start.v1'
+    | 'daemon.service.stop.v1'
+    | 'daemon.service.restart.v1';
 
 const LOCAL_DAEMON_SERVICE_PARAMS = {
     target: { kind: 'local' as const },

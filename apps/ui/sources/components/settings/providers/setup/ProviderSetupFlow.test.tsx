@@ -192,6 +192,26 @@ describe('ProviderSetupFlow', () => {
         expect(capabilitiesState.invoke).toHaveBeenCalledTimes(2);
     });
 
+    it('filters unsupported provider ids from the selectable list', async () => {
+        const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
+        const screen = await renderScreen(React.createElement(ProviderSetupFlow, {
+            providerIds: ['codex', 'claude', 'customAcp'],
+        }));
+
+        expect(screen.findByTestId('provider-setup-option-claude')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-option-codex')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-option-customAcp')).toBeNull();
+    });
+
+    it('defaults to the setup-supported provider set and excludes unsupported providers', async () => {
+        const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
+        const screen = await renderScreen(React.createElement(ProviderSetupFlow, {}));
+
+        expect(screen.findByTestId('provider-setup-option-claude')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-option-codex')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-option-customAcp')).toBeNull();
+    });
+
     it('shows a desktop-only notice on browser web instead of provider setup controls', async () => {
         tauriDesktopState.value = false;
 

@@ -122,8 +122,8 @@ describe('MachineSetupFlowScreen web gating', () => {
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
         expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as never)).toHaveLength(0);
         expect(screen.findAllByType('RemoteSshMachineSetupSection' as never)).toHaveLength(0);
-        expect(screen.findByTestId('settings.machineSetup.desktopOnlyNotice')?.props.title).toBe('setupOnboarding.webDesktopOnlyTitle');
-        expect(screen.findByTestId('settings.machineSetup.desktopOnlyNotice')?.props.subtitle).toBe('setupOnboarding.webDesktopOnlyBody');
+        expect(screen.findByTestId('settings.machineSetup.desktopOnlyNotice')).toBeNull();
+        expect(screen.findByTestId('settings.machineSetup.openSetupWizard')).toBeTruthy();
     });
 
     it('renders desktop-only controls when running inside the Tauri desktop webview', async () => {
@@ -159,7 +159,7 @@ describe('MachineSetupFlowScreen web gating', () => {
             runner,
         }));
 
-        expect(screen.findByTestId('settings.machineSetup.desktopOnlyNotice')).toBeTruthy();
+        expect(screen.findByTestId('settings.machineSetup.openSetupWizard')).toBeTruthy();
         expect(screen.findByTestId('settings.machineSetup.startLocalTask')).toBeNull();
         expect(screen.findByTestId('settings.machineSetup.startRemoteTask')).toBeNull();
         expect(screen.findByTestId('settings.machineSetup.remoteSshTargetInput')).toBeNull();
@@ -175,8 +175,8 @@ describe('MachineSetupFlowScreen web gating', () => {
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
         expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as never)).toHaveLength(0);
         expect(screen.findAllByType('RemoteSshMachineSetupSection' as never)).toHaveLength(0);
-        expect(screen.findByTestId('settings.machineSetup.desktopOnlyNotice')?.props.title).toBe('setupOnboarding.webDesktopOnlyTitle');
-        expect(screen.findByTestId('settings.machineSetup.desktopOnlyNotice')?.props.subtitle).toBe('setupOnboarding.webDesktopOnlyBody');
+        expect(screen.findByTestId('settings.machineSetup.desktopOnlyNotice')).toBeNull();
+        expect(screen.findByTestId('settings.machineSetup.openSetupWizard')).toBeTruthy();
     });
 
     it('does not render ProviderSetupFlow on browser web even when a machine id is provided', async () => {

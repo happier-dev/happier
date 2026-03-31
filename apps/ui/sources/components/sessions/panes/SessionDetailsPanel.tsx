@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 
@@ -220,6 +221,7 @@ function isExecutionRunLauncherResource(value: unknown): value is Readonly<{
 export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const insets = useSafeAreaInsets();
     const pane = useAppPaneScope(props.scopeId);
     const requestClose = props.onRequestClose ?? pane.closeDetails;
     const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
@@ -380,6 +382,8 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         );
     }, [openFileTab, pane, props.scopeId, props.sessionId, renderLoadingFallback, requestClose, styles.empty, styles.emptyText]);
 
+    const headerPaddingTop = Platform.OS === 'ios' && props.onRequestClose ? insets.top + 10 : 10;
+
     return (
         <ViewWithWheel
             ref={rootRef}
@@ -389,7 +393,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                 ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
                 : {})}
         >
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
                 <ScrollView horizontal style={styles.tabsScroll} showsHorizontalScrollIndicator={false}>
                     {tabs.map((tab) => {
                         const isActive = effectiveActiveKey ? tab.key === effectiveActiveKey : false;

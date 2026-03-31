@@ -1,13 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
-import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
-import type { SystemTaskEvent, SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskEvent, SystemTaskRunner, SystemTaskRunState } from '@/components/systemTasks/types';
+import type { SystemTaskSpec } from '@happier-dev/protocol';
 
 const capturedSpecs = vi.hoisted(() => [] as SystemTaskSpec[]);
 
-const promptSnapshot = vi.hoisted(() => ({
+const approvalPromptSnapshot = vi.hoisted(() => ({
     taskId: 'ssh-task-1',
     status: 'running',
     currentStepId: 'ssh.auth.request',
@@ -42,7 +42,7 @@ describe('useRemoteSshBootstrapTask', () => {
             },
             cancel: async () => undefined,
             respond: async () => undefined,
-            getSnapshot: () => promptSnapshot,
+            getSnapshot: () => approvalPromptSnapshot,
             subscribe: () => () => undefined,
         };
 
@@ -54,8 +54,11 @@ describe('useRemoteSshBootstrapTask', () => {
 
         await act(async () => {
             await hook.getCurrent().start({
-                sshTarget: 'dev@example.test',
+                sshUsername: 'dev',
+                sshHost: 'example.test',
+                sshPort: '',
                 sshAuth: 'agent',
+                sshPassword: '',
                 identityFilePath: '',
                 installRelayRuntime: false,
             });
@@ -72,8 +75,11 @@ describe('useRemoteSshBootstrapTask', () => {
 
         await act(async () => {
             await hook.getCurrent().continueAfterPrompt({
-                sshTarget: 'dev@example.test',
+                sshUsername: 'dev',
+                sshHost: 'example.test',
+                sshPort: '',
                 sshAuth: 'agent',
+                sshPassword: '',
                 identityFilePath: '',
                 installRelayRuntime: false,
             });
@@ -81,5 +87,88 @@ describe('useRemoteSshBootstrapTask', () => {
 
         expect(capturedSpecs).toHaveLength(2);
         expect(capturedSpecs[1]?.params).not.toHaveProperty('promptResolution');
+    });
+
+    it('auto-responds to SSH password prompts with the current password draft', async () => {
+        capturedSpecs.length = 0;
+        const respond = vi.fn(async (_taskId: string, answer: unknown) => {
+            expect(answer).toEqual({ password: 'super-secret' });
+        });
+        let currentSnapshot: SystemTaskRunState | null = {
+            taskId: 'ssh-task-password',
+            status: 'running',
+            currentStepId: 'ssh.password',
+            latestMessage: 'Enter SSH password',
+            awaitingInput: true,
+            cancelRequested: false,
+            events: [
+                {
+                    protocolVersion: 1,
+                    taskId: 'ssh-task-password',
+                    tsMs: 1,
+                    type: 'prompt',
+                    message: 'Enter SSH password',
+                    data: {
+                        kind: 'ssh.password',
+                        target: 'dev@example.test',
+                    },
+                },
+            ] as readonly SystemTaskEvent[],
+            result: null,
+        };
+
+        const runner: SystemTaskRunner = {
+            mode: 'tauri',
+            start: async (spec) => {
+                capturedSpecs.push(spec);
+                return 'ssh-task-password';
+            },
+            cancel: async () => undefined,
+            respond: async (taskId, answer) => {
+                await respond(taskId, answer);
+                currentSnapshot = {
+                    taskId: 'ssh-task-password',
+                    status: 'succeeded',
+                    currentStepId: null,
+                    latestMessage: 'Remote bootstrap finished',
+                    awaitingInput: false,
+                    cancelRequested: false,
+                    events: currentSnapshot?.events ?? [],
+                    result: {
+                        protocolVersion: 1,
+                        taskId: 'ssh-task-password',
+                        ok: true,
+                        data: {
+                            machineId: 'machine-password',
+                        },
+                    },
+                };
+            },
+            getSnapshot: () => currentSnapshot,
+            subscribe: () => () => undefined,
+        };
+
+        const { useRemoteSshBootstrapTask } = await import('./useRemoteSshBootstrapTask');
+        const hook = await renderHook(() => useRemoteSshBootstrapTask({
+            runner,
+            relayUrl: 'https://relay.example.test',
+        }), { flushOptions: { cycles: 0 } });
+
+        await act(async () => {
+            await hook.getCurrent().start({
+                sshUsername: 'dev',
+                sshHost: 'example.test',
+                sshPort: '',
+                sshAuth: 'password',
+                sshPassword: 'super-secret',
+                identityFilePath: '',
+                installRelayRuntime: false,
+            });
+        });
+        await hook.rerender();
+
+        expect(hook.getCurrent().prompt?.kind).toBe('ssh.password');
+        expect(respond).toHaveBeenCalledWith('ssh-task-password', { password: 'super-secret' });
+        expect(hook.getCurrent().completedMachineId).toBe('machine-password');
     });
 });

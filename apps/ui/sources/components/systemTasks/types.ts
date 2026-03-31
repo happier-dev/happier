@@ -49,3 +49,5 @@ export type SystemTaskRunner = Readonly<{
     subscribe(taskId: string, listener: () => void): () => void;
     subscribe(taskId: string, onEvent?: (event: SystemTaskEvent) => void, onResult?: (result: SystemTaskResult) => void): () => void;
 }>;
+
+export type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec };

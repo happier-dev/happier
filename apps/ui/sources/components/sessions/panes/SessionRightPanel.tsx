@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
 
@@ -73,9 +74,11 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const insets = useSafeAreaInsets();
     const deviceType = useDeviceType();
     const pane = useAppPaneScope(props.scopeId);
     const scopeState = pane.scopeState;
+    const headerPaddingTop = deviceType === 'phone' ? insets.top + 10 : 10;
 
     const terminalEnabled = useFeatureEnabled('terminal.embeddedPty');
     const dockLocationRaw = useLocalSetting('embeddedTerminalDockLocation');
@@ -144,7 +147,7 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
                 <View style={styles.segmentedContainer}>
                     <SegmentedTabBar
                         tabs={rightPanelTabs}

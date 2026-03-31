@@ -1024,6 +1024,7 @@ describe('MachineSetupFlowScreen', () => {
             phase: 'awaiting_auth',
             relayUrl: 'https://relay.remote.example.test',
             machineId: 'machine-remote-1',
+            remoteSetupIntent: 'remoteMachine',
         });
         expect(routerPushSpy).toHaveBeenCalledWith('/server?url=https%3A%2F%2Frelay.remote.example.test&auto=1');
     });

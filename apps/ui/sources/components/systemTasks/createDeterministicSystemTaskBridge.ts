@@ -208,6 +208,92 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
             },
         ];
     }
+    if (taskKind === 'daemon.service.stop.v1') {
+        return [
+            {
+                delayMs: 30,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 30,
+                    type: 'step',
+                    stepId: 'task.step.prepare',
+                    message: t('settings.systemTaskStepPrepare'),
+                },
+            },
+            {
+                delayMs: 120,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 120,
+                    type: 'progress',
+                    stepId: 'task.step.stop',
+                    message: t('settings.systemTaskStepFinish'),
+                },
+            },
+            {
+                delayMs: 180,
+                type: 'result',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: true,
+                    data: {
+                        serviceInstalled: true,
+                        daemonRunning: false,
+                        needsAuth: false,
+                        machineId: 'machine-local-1',
+                    },
+                },
+            },
+        ];
+    }
+    if (taskKind === 'daemon.service.restart.v1') {
+        return [
+            {
+                delayMs: 30,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 30,
+                    type: 'step',
+                    stepId: 'task.step.prepare',
+                    message: t('settings.systemTaskStepPrepare'),
+                },
+            },
+            {
+                delayMs: 120,
+                type: 'event',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    tsMs: 120,
+                    type: 'progress',
+                    stepId: 'task.step.restart',
+                    message: t('settings.systemTaskStepFinish'),
+                },
+            },
+            {
+                delayMs: 180,
+                type: 'result',
+                payload: {
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: true,
+                    data: {
+                        serviceInstalled: true,
+                        daemonRunning: true,
+                        needsAuth: false,
+                        machineId: 'machine-local-1',
+                    },
+                },
+            },
+        ];
+    }
     if (taskKind === 'setup.repairThisComputer.v1') {
         return [
             {

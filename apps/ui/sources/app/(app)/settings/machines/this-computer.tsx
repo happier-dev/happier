@@ -1,23 +1,28 @@
 import * as React from 'react';
 
+import { useRouter } from 'expo-router';
+
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { DesktopOnlySetupNotice } from '@/components/settings/machines/DesktopOnlySetupNotice';
-import { MachineSetupFlowScreen } from '@/components/settings/machines/MachineSetupFlowScreen';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
+import { LocalDaemonControlSection } from '@/components/settings/machines/localControl/LocalDaemonControlSection';
 import { t } from '@/text';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
 export default function ThisComputerSetupRoute() {
-    if (!isTauriDesktop()) {
-        return (
-            <ItemList>
-                <DesktopOnlySetupNotice
-                    testID="settings.machineSetup.desktopOnlyRouteNotice"
-                    groupTitle={t('settings.machineSetupCurrentMachineTitle')}
-                    title={t('setupOnboarding.webDesktopOnlyTitle')}
-                    subtitle={t('setupOnboarding.webDesktopOnlyBody')}
+    const router = useRouter();
+    const isDesktop = isTauriDesktop();
+    return (
+        <ItemList>
+            <ItemGroup title={t('common.actions')}>
+                <Item
+                    testID="settings.machineSetup.openSetupWizard"
+                    title={t('setupOnboarding.openSetupAction')}
+                    subtitle={t('settings.machineSetupCurrentMachineSubtitle')}
+                    onPress={() => router.push('/setup/wizard?action=local&step=setup_this_computer')}
                 />
-            </ItemList>
-        );
-    }
-    return <MachineSetupFlowScreen mode="localOnly" />;
+            </ItemGroup>
+            {isDesktop ? <LocalDaemonControlSection /> : null}
+        </ItemList>
+    );
 }

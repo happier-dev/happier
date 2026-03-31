@@ -8,12 +8,14 @@ const SYSTEM_TASK_STEP_TRANSLATION_KEYS: Readonly<Record<string, TranslationKey>
     'task.step.finish': 'settings.systemTaskStepFinish',
     finish: 'settings.systemTaskStepFinish',
     'install.runtime': 'settings.systemTaskStepInstallRuntime',
-    'setup.thisComputer.resolveRelay': 'settings.machineSetupStageConnect',
-    'setup.thisComputer.checkAuth': 'settings.machineSetupStageConnect',
-    'setup.thisComputer.configureRelay': 'settings.machineSetupStageConnect',
-    'setup.thisComputer.installService': 'settings.machineSetupStageInstall',
-    'setup.thisComputer.startService': 'settings.machineSetupStageInstall',
-    'setup.thisComputer.verifyService': 'settings.machineSetupStageFinish',
+    'setup.thisComputer.resolveRelay': 'settings.machineSetupStepResolveRelay',
+    'setup.thisComputer.checkAuth': 'settings.machineSetupStepCheckAuth',
+    'setup.thisComputer.configureRelay': 'settings.machineSetupStepConfigureRelay',
+    'setup.thisComputer.auth.request': 'settings.machineSetupStepAuthRequest',
+    'setup.thisComputer.auth.wait': 'settings.machineSetupStepAuthWait',
+    'setup.thisComputer.installService': 'settings.machineSetupStepInstallService',
+    'setup.thisComputer.startService': 'settings.machineSetupStepStartService',
+    'setup.thisComputer.verifyService': 'settings.machineSetupStepVerifyService',
     'relay.connectBackgroundService.prepare': 'server.relayDrift.progressStepPrepare',
     'relay.connectBackgroundService.configureRelay': 'server.relayDrift.progressStepConfigureRelay',
     'relay.connectBackgroundService.authenticate': 'server.relayDrift.progressStepAuthenticate',
@@ -44,6 +46,14 @@ export function resolveSystemTaskStepLabel(stepId: string | null): string | null
         return null;
     }
 
-    const translationKey = SYSTEM_TASK_STEP_TRANSLATION_KEYS[stepId];
-    return translationKey ? t(translationKey) : null;
+    const normalizedStepId = String(stepId).trim();
+    if (!normalizedStepId) {
+        return null;
+    }
+
+    const translationKey = SYSTEM_TASK_STEP_TRANSLATION_KEYS[normalizedStepId];
+    if (translationKey) {
+        return t(translationKey);
+    }
+    return normalizedStepId;
 }

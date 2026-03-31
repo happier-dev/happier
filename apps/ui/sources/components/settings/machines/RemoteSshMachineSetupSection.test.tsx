@@ -176,7 +176,7 @@ describe('RemoteSshMachineSetupSection', () => {
             },
         }));
 
-        const targetInput = screen.findByTestId('settings.machineSetup.remoteSshTargetInput');
+        const targetInput = screen.findByTestId('settings.machineSetup.remoteSshHostInput');
         await renderer.act(async () => {
             targetInput?.props.onChangeText?.('root@example.test');
         });
@@ -208,5 +208,41 @@ describe('RemoteSshMachineSetupSection', () => {
 
         const relayRuntimeToggle = screen.findByTestId('settings.machineSetup.remoteRelayRuntime');
         expect(relayRuntimeToggle?.props.selected).toBe(true);
+    });
+
+    it('requires a password before starting when password auth is selected', async () => {
+        const startSpy = vi.fn(async () => 'task-1');
+        const { RemoteSshMachineSetupSection } = await import('./RemoteSshMachineSetupSection');
+        const screen = await renderScreen(React.createElement(RemoteSshMachineSetupSection, {
+            expanded: true,
+            runner: {
+                mode: 'tauri' as const,
+                start: startSpy,
+                async cancel() {},
+                async respond() {},
+                subscribe() {
+                    return () => {};
+                },
+                getSnapshot() {
+                    return null;
+                },
+            },
+        }));
+
+        const hostInput = screen.findByTestId('settings.machineSetup.remoteSshHostInput');
+        await renderer.act(async () => {
+            hostInput?.props.onChangeText?.('example.test');
+        });
+
+        await screen.pressByTestIdAsync('settings.machineSetup.remoteAuth.password');
+
+        expect(screen.findByTestId('settings.machineSetup.remoteStart')?.props.disabled).toBe(true);
+
+        const passwordInput = screen.findByTestId('settings.machineSetup.remotePasswordInput');
+        await renderer.act(async () => {
+            passwordInput?.props.onChangeText?.('secret');
+        });
+
+        expect(screen.findByTestId('settings.machineSetup.remoteStart')?.props.disabled).toBe(false);
     });
 });

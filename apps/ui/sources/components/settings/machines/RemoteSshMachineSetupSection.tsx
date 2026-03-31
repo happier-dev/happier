@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Animated, Platform, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import type { AttachmentFilePickerHandle, PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
@@ -16,20 +15,15 @@ import { t } from '@/text';
 import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 
 import { DesktopOnlySetupNotice } from './DesktopOnlySetupNotice';
-import { MachineSetupTextField } from './shared/MachineSetupTextField';
+import { SshCredentialsFields } from './shared/SshCredentialsFields';
 import { useRemoteSshBootstrapTask, type RemoteSshBootstrapPrompt } from './useRemoteSshBootstrapTask';
-
-const stylesheet = StyleSheet.create((theme) => ({
-    formContent: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        gap: 16,
-    },
-}));
 
 function buildPromptDescription(prompt: RemoteSshBootstrapPrompt): string {
     if (prompt.kind === 'auth.approveRemoteProvisioning') {
         return prompt.publicKey ?? '';
+    }
+    if (prompt.kind === 'ssh.password') {
+        return prompt.target;
     }
 
     return [
@@ -41,6 +35,9 @@ function buildPromptDescription(prompt: RemoteSshBootstrapPrompt): string {
 }
 
 function resolvePromptPrimaryActionLabel(prompt: RemoteSshBootstrapPrompt): string {
+    if (prompt.kind === 'ssh.password') {
+        return t('common.continue');
+    }
     if (prompt.kind === 'auth.approveRemoteProvisioning') {
         return t('settings.machineSetupRemotePromptApproveAction');
     }
@@ -128,7 +125,6 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
     runner?: SystemTaskRunner;
     onCompletedChange?: (payload: Readonly<{ machineId: string | null; serverId: string | null; relayRuntimeUrl: string | null }>) => void;
 }>) {
-    const styles = stylesheet;
     const isBrowserWeb = Platform.OS === 'web' && !isTauriDesktop();
     const supportsDesktopControls = !isBrowserWeb && (props.runner != null || isTauriDesktop());
     const isDesktop = isTauriDesktop();
@@ -148,12 +144,16 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
         && activeServerSnapshot.activeLocalRelayUrl.trim().length > 0
         ? activeServerSnapshot.activeLocalRelayUrl.trim()
         : null;
-    const [sshTarget, setSshTarget] = React.useState('');
-    const [sshAuth, setSshAuth] = React.useState<'agent' | 'keyfile'>('agent');
+    const [sshUsername, setSshUsername] = React.useState('');
+    const [sshHost, setSshHost] = React.useState('');
+    const [sshPort, setSshPort] = React.useState('');
+    const [sshAuth, setSshAuth] = React.useState<'agent' | 'keyfile' | 'password'>('agent');
     const [identityFilePath, setIdentityFilePath] = React.useState('');
+    const [sshPassword, setSshPassword] = React.useState('');
     const [installRelayRuntime, setInstallRelayRuntime] = React.useState(() => Boolean(props.initialInstallRelayRuntime));
     const {
         activeTaskSnapshot,
+        answerPasswordPrompt,
         cancel,
         completedMachineId,
         continueAfterPrompt,
@@ -185,8 +185,18 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
         }
     }, [dismissPrompt, prompt, resetPromptResolution]);
 
-    const updateSshTarget = React.useCallback((value: string) => {
-        setSshTarget(value);
+    const updateSshUsername = React.useCallback((value: string) => {
+        setSshUsername(value);
+        clearPromptStateForManualChange();
+    }, [clearPromptStateForManualChange]);
+
+    const updateSshHost = React.useCallback((value: string) => {
+        setSshHost(value);
+        clearPromptStateForManualChange();
+    }, [clearPromptStateForManualChange]);
+
+    const updateSshPort = React.useCallback((value: string) => {
+        setSshPort(value);
         clearPromptStateForManualChange();
     }, [clearPromptStateForManualChange]);
 
@@ -194,6 +204,10 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
         setIdentityFilePath(value);
         clearPromptStateForManualChange();
     }, [clearPromptStateForManualChange]);
+
+    const updateSshPassword = React.useCallback((value: string) => {
+        setSshPassword(value);
+    }, []);
 
     const handleIdentityFilePicked = React.useCallback((attachments: readonly PickedAttachment[]) => {
         const pickedPath = attachments
@@ -205,7 +219,7 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
         updateIdentityFilePath(pickedPath);
     }, [updateIdentityFilePath]);
 
-    const updateAuthMode = React.useCallback((value: 'agent' | 'keyfile') => {
+    const updateAuthMode = React.useCallback((value: 'agent' | 'keyfile' | 'password') => {
         setSshAuth(value);
         clearPromptStateForManualChange();
     }, [clearPromptStateForManualChange]);
@@ -226,31 +240,52 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
     const handleStart = React.useCallback(async () => {
         try {
             await start({
-                sshTarget,
+                sshUsername,
+                sshHost,
+                sshPort,
                 sshAuth,
+                sshPassword,
                 identityFilePath,
                 installRelayRuntime,
             });
         } catch (error) {
             Modal.alert(t('common.error'), resolveStartFailureMessage(error));
         }
-    }, [identityFilePath, installRelayRuntime, sshAuth, sshTarget, start]);
+    }, [identityFilePath, installRelayRuntime, sshAuth, sshHost, sshPassword, sshPort, sshUsername, start]);
 
     const handleContinueAfterPrompt = React.useCallback(async () => {
         try {
+            if (prompt?.kind === 'ssh.password') {
+                await answerPasswordPrompt({
+                    sshUsername,
+                    sshHost,
+                    sshPort,
+                    sshAuth,
+                    sshPassword,
+                    identityFilePath,
+                    installRelayRuntime,
+                });
+                return;
+            }
             await continueAfterPrompt({
-                sshTarget,
+                sshUsername,
+                sshHost,
+                sshPort,
                 sshAuth,
+                sshPassword,
                 identityFilePath,
                 installRelayRuntime,
             });
         } catch (error) {
             Modal.alert(t('common.error'), resolveStartFailureMessage(error));
         }
-    }, [continueAfterPrompt, identityFilePath, installRelayRuntime, sshAuth, sshTarget]);
+    }, [answerPasswordPrompt, continueAfterPrompt, identityFilePath, installRelayRuntime, prompt?.kind, sshAuth, sshHost, sshPassword, sshPort, sshUsername]);
 
     const formDisabled = isStarting || (activeTaskSnapshot != null && activeTaskSnapshot.result == null);
-    const startDisabled = formDisabled || !sshTarget.trim() || (sshAuth === 'keyfile' && !identityFilePath.trim());
+    const startDisabled = formDisabled
+        || !sshHost.trim()
+        || (sshAuth === 'keyfile' && !identityFilePath.trim())
+        || (sshAuth === 'password' && !sshPassword.trim());
     const shouldBeVisible = props.expanded || activeTaskSnapshot != null || prompt != null || completedRelayRuntime != null;
     const [shouldRender, setShouldRender] = React.useState<boolean>(shouldBeVisible);
     const progress = React.useRef(new Animated.Value(shouldBeVisible ? 1 : 0)).current;
@@ -301,94 +336,81 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
             }}
             pointerEvents={shouldBeVisible ? 'auto' : 'none'}
         >
-            <ItemGroup>
-                <View style={styles.formContent}>
-                    <MachineSetupTextField
-                        testID="settings.machineSetup.remoteSshTargetInput"
-                        label={t('settings.machineSetupRemoteSshTargetLabel')}
-                        value={sshTarget}
-                        editable={!formDisabled}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        onChangeText={updateSshTarget}
-                    />
-                </View>
-            </ItemGroup>
-
-            <ItemGroup>
-                <Item
-                    testID="settings.machineSetup.remoteAuth.agent"
-                    title={t('settings.machineSetupRemoteSshAgentAuthLabel')}
-                    selected={sshAuth === 'agent'}
-                    onPress={() => updateAuthMode('agent')}
+            {sshAuth === 'keyfile' && Platform.OS !== 'web' ? (
+                <AttachmentFilePicker
+                    ref={identityFilePickerRef}
+                    multiple={false}
+                    onAttachmentsPicked={handleIdentityFilePicked}
                 />
-                <Item
-                    testID="settings.machineSetup.remoteAuth.keyfile"
-                    title={t('settings.machineSetupRemoteSshKeyFileAuthLabel')}
-                    selected={sshAuth === 'keyfile'}
-                    onPress={() => updateAuthMode('keyfile')}
-                />
-            </ItemGroup>
-
-            <ItemGroup>
-                <Item
-                    testID="settings.machineSetup.remoteRelayRuntime"
-                    title={t('settings.machineSetupRemoteRelayRuntimeLabel')}
-                    selected={installRelayRuntime}
-                    onPress={() => {
-                        clearPromptStateForManualChange();
-                        setInstallRelayRuntime((current) => !current);
-                    }}
-                />
-            </ItemGroup>
-
-            {sshAuth === 'keyfile' ? (
-                <>
-                    {Platform.OS !== 'web' ? (
-                        <AttachmentFilePicker
-                            ref={identityFilePickerRef}
-                            multiple={false}
-                            onAttachmentsPicked={handleIdentityFilePicked}
-                        />
-                    ) : null}
-
-                    <ItemGroup>
-                        <View style={styles.formContent}>
-                            <MachineSetupTextField
-                                testID="settings.machineSetup.remoteIdentityFileInput"
-                                label={t('settings.machineSetupRemoteSshIdentityFileLabel')}
-                                value={identityFilePath}
-                                editable={!formDisabled}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                onChangeText={updateIdentityFilePath}
-                            />
-                        </View>
-                    </ItemGroup>
-
-                    <ItemGroup>
-                        {Platform.OS !== 'web' ? (
-                            <Item
-                                testID="settings.machineSetup.remoteChooseIdentityFile"
-                                title={t('common.open')}
-                                disabled={formDisabled}
-                                onPress={() => {
-                                    identityFilePickerRef.current?.openFiles();
-                                }}
-                            />
-                        ) : isDesktop ? (
-                            <Item
-                                testID="settings.machineSetup.remoteChooseIdentityFile"
-                                title={t('common.open')}
-                                disabled={formDisabled}
-                                onPress={() => {
-                                    void chooseIdentityFilePathFromDesktop();
-                                }}
-                            />
-                        ) : null}
-                    </ItemGroup>
-                </>
             ) : null}
+
+            <SshCredentialsFields
+                testIDPrefix="settings.machineSetup.remoteSsh"
+                testIDs={{
+                    sshUsername: 'settings.machineSetup.remoteSshUsernameInput',
+                    sshHost: 'settings.machineSetup.remoteSshHostInput',
+                    sshPort: 'settings.machineSetup.remoteSshPortInput',
+                    sshAuthAgent: 'settings.machineSetup.remoteAuth.agent',
+                    sshAuthKeyfile: 'settings.machineSetup.remoteAuth.keyfile',
+                    sshAuthPassword: 'settings.machineSetup.remoteAuth.password',
+                    sshIdentityFile: 'settings.machineSetup.remoteIdentityFileInput',
+                    sshPassword: 'settings.machineSetup.remotePasswordInput',
+                    chooseIdentityFile: 'settings.machineSetup.remoteChooseIdentityFile',
+                }}
+                disabled={formDisabled}
+                value={{
+                    username: sshUsername,
+                    host: sshHost,
+                    port: sshPort,
+                    authMode: sshAuth,
+                    identityFilePath,
+                    password: sshPassword,
+                }}
+                onChange={(next) => {
+                    if (next.username !== sshUsername) {
+                        updateSshUsername(next.username);
+                    }
+                    if (next.host !== sshHost) {
+                        updateSshHost(next.host);
+                    }
+                    if (next.port !== sshPort) {
+                        updateSshPort(next.port);
+                    }
+                    if (next.authMode !== sshAuth) {
+                        updateAuthMode(next.authMode);
+                    }
+                    if (next.identityFilePath !== identityFilePath) {
+                        updateIdentityFilePath(next.identityFilePath);
+                    }
+                    if (next.password !== sshPassword) {
+                        updateSshPassword(next.password);
+                    }
+                }}
+                onChooseIdentityFile={
+                    sshAuth !== 'keyfile'
+                        ? undefined
+                        : Platform.OS !== 'web'
+                            ? () => identityFilePickerRef.current?.openFiles()
+                            : isDesktop
+                                ? () => {
+                                    void chooseIdentityFilePathFromDesktop();
+                                }
+                                : undefined
+                }
+                afterAuthGroups={(
+                    <ItemGroup>
+                        <Item
+                            testID="settings.machineSetup.remoteRelayRuntime"
+                            title={t('settings.machineSetupRemoteRelayRuntimeLabel')}
+                            selected={installRelayRuntime}
+                            onPress={() => {
+                                clearPromptStateForManualChange();
+                                setInstallRelayRuntime((current) => !current);
+                            }}
+                        />
+                    </ItemGroup>
+                )}
+            />
 
             <ItemGroup>
                 <Item
@@ -411,7 +433,31 @@ export const RemoteSshMachineSetupSection = React.memo(function RemoteSshMachine
                 </View>
             ) : null}
 
-            {prompt ? (
+            {prompt?.kind === 'ssh.password' ? (
+                <ItemGroup>
+                    <Item
+                        testID="settings.machineSetup.remotePasswordPromptCard"
+                        title={prompt.message}
+                        subtitle={buildPromptDescription(prompt)}
+                        showChevron={false}
+                        mode="info"
+                    />
+                    <Item
+                        testID="settings.machineSetup.remotePasswordPromptCard-primary"
+                        title={resolvePromptPrimaryActionLabel(prompt)}
+                        disabled={!sshPassword.trim()}
+                        onPress={() => {
+                            void handleContinueAfterPrompt();
+                        }}
+                    />
+                    <Item
+                        testID="settings.machineSetup.remotePasswordPromptCard-secondary"
+                        title={t('common.cancel')}
+                        destructive
+                        onPress={dismissPrompt}
+                    />
+                </ItemGroup>
+            ) : prompt ? (
                 <ItemGroup>
                     <Item
                         testID="settings.machineSetup.remotePromptCard"

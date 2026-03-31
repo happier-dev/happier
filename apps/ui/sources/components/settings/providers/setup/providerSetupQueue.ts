@@ -18,6 +18,25 @@ export function createProviderSetupQueueState(providerIds: readonly AgentId[]): 
     };
 }
 
+export function createProviderSetupQueueStateFromInstallSummary(params: Readonly<{
+    selectedProviderIds: readonly AgentId[];
+    installedProviderIds: readonly AgentId[];
+    failedProviderIds: readonly AgentId[];
+}>): ProviderSetupQueueState {
+    const installedProviderIdSet = new Set(params.installedProviderIds);
+    const failedProviderIdSet = new Set(params.failedProviderIds);
+    const orderedInstalledProviderIds = params.selectedProviderIds.filter((providerId) => installedProviderIdSet.has(providerId));
+    const orderedFailedProviderIds = params.selectedProviderIds.filter((providerId) => failedProviderIdSet.has(providerId));
+
+    const queueState = createProviderSetupQueueState(orderedInstalledProviderIds);
+    return orderedFailedProviderIds.length > 0
+        ? {
+            ...queueState,
+            failedProviderIds: orderedFailedProviderIds,
+        }
+        : queueState;
+}
+
 export function completeActiveProviderSetupStep(state: ProviderSetupQueueState): ProviderSetupQueueState {
     if (!state.activeProviderId) {
         return state;

@@ -78,7 +78,23 @@ export const MachineSetupFlowScreen = React.memo(function MachineSetupFlowScreen
     const isBrowserWeb = Platform.OS === 'web' && !isTauriDesktop();
     const supportsDesktopControls = props.runner != null || isTauriDesktop();
 
-    if (isBrowserWeb || !supportsDesktopControls) {
+    if (isBrowserWeb) {
+        const step = isRemoteOnly ? 'remote_ssh_setup' : 'setup_this_computer';
+        const action = isRemoteOnly ? 'remote' : 'local';
+        const launcher = (
+            <ItemGroup title={t('common.actions')}>
+                <Item
+                    testID="settings.machineSetup.openSetupWizard"
+                    title={isRemoteOnly ? t('settings.machineSetupSshMachineTitle') : t('setupOnboarding.setupThisComputerTitle')}
+                    subtitle={isRemoteOnly ? t('settings.machineSetupSshMachineSubtitle') : t('settings.machineSetupCurrentMachineSubtitle')}
+                    onPress={() => router.push(`/setup/wizard?action=${encodeURIComponent(action)}&step=${encodeURIComponent(step)}`)}
+                />
+            </ItemGroup>
+        );
+        return props.embedded ? launcher : <ItemList>{launcher}</ItemList>;
+    }
+
+    if (!supportsDesktopControls) {
         const notice = (
             <DesktopOnlySetupNotice
                 testID="settings.machineSetup.desktopOnlyNotice"
@@ -296,6 +312,7 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
             phase: 'awaiting_auth',
             relayUrl: remoteRelayRuntimeUrl,
             machineId: remoteCompletedMachine?.machineId ?? null,
+            remoteSetupIntent: 'remoteMachine',
         });
         router.push(`/server?url=${encodeURIComponent(remoteRelayRuntimeUrl)}&auto=1`);
     }, [remoteCompletedMachine?.machineId, remoteRelayRuntimeUrl]);

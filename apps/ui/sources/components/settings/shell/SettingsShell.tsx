@@ -62,25 +62,25 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
     return (
         <View style={styles.root}>
             <View style={styles.row}>
+                <View style={styles.content}>
+                    {props.children}
+                </View>
+
                 <ResizableDockedPane
                     testID="settings-shell.sidebarPane"
                     widthPx={effectiveSidebarWidthPx}
                     minWidthPx={SETTINGS_NAV_SIDEBAR_MIN_WIDTH_PX}
                     maxWidthPx={SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX}
-                    resizeEdge="right"
+                    resizeEdge="left"
                     onCommitWidthPx={(nextWidthPx) => {
                         setSidebarWidthPx(nextWidthPx);
                         setSidebarWidthBasisPx(windowWidth);
                     }}
                 >
-                    <View style={{ flex: 1, minHeight: 0, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: theme.colors.divider }}>
+                    <View style={{ flex: 1, minHeight: 0, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: theme.colors.divider }}>
                         <SettingsSidebar />
                     </View>
                 </ResizableDockedPane>
-
-                <View style={styles.content}>
-                    {props.children}
-                </View>
             </View>
         </View>
     );

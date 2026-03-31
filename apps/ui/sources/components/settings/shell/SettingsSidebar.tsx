@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,8 +28,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 10,
         paddingHorizontal: 10,
         paddingVertical: 8,
-        backgroundColor: theme.colors.input.background,
+        backgroundColor: theme.colors.surface,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.divider,
         color: theme.colors.text,
+        ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : null),
     },
 }));
 
@@ -138,40 +141,29 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
 
         const iconNode = node.icon ? node.icon({ theme }) : null;
 
-        const leftAccessory = hasChildren ? (
-            <Pressable
-                testID={`settings-sidebar.toggle.${node.id}`}
-                onPress={(event: any) => {
-                    event?.preventDefault?.();
-                    event?.stopPropagation?.();
-                    toggleExpanded(node.id);
-                }}
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-            >
-                <Ionicons
-                    name={expanded ? 'chevron-down' : 'chevron-forward'}
-                    size={12}
-                    color={theme.colors.textSecondary}
-                />
-                {iconNode ?? (
-                    <Ionicons
-                        name="ellipse-outline"
-                        size={10}
-                        color={theme.colors.textSecondary}
-                    />
-                )}
-            </Pressable>
-        ) : iconNode;
+        const resolvedIconNode = iconNode ?? (
+            <Ionicons
+                name="ellipse-outline"
+                size={16}
+                color={theme.colors.textSecondary}
+            />
+        );
 
-        const subtitle = node.subtitleKey ? t(node.subtitleKey) : undefined;
+        const hoveredIconNode = hasChildren ? (
+            <Ionicons
+                name={expanded ? 'chevron-down' : 'chevron-forward'}
+                size={16}
+                color={theme.colors.textSecondary}
+            />
+        ) : undefined;
 
         return (
             <React.Fragment key={node.id}>
                 <Item
                     testID={`settings-sidebar.item.${node.id}`}
                     title={String(t(node.titleKey))}
-                    subtitle={subtitle ? String(subtitle) : undefined}
-                    leftElement={leftAccessory}
+                    leftElement={resolvedIconNode}
+                    leftElementWhenHovered={hoveredIconNode}
                     density="compact"
                     selected={resolved.activePageId === node.id}
                     showChevron={false}

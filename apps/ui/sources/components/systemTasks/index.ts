@@ -1,6 +1,7 @@
 export { buildLocalMachineSetupSystemTaskSpec } from './buildLocalMachineSetupSystemTaskSpec';
 export { createDeterministicSystemTaskBridge } from './createDeterministicSystemTaskBridge';
 export { createSystemTaskRunner, createSystemTasksRunner } from './createSystemTaskRunner';
+export * from './planChecklist';
 export { SystemTaskProgressCard } from './SystemTaskProgressCard';
 export { getSystemTasksRunner, getSystemTasksRunner as getDefaultSystemTaskRunner } from './systemTasksRuntime';
 export { useSystemTaskSnapshot } from './useSystemTaskSnapshot';

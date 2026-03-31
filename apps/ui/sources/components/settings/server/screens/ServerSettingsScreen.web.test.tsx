@@ -63,6 +63,9 @@ vi.mock('@/components/settings/server/RelayDriftActionCard', () => ({
 vi.mock('@/components/settings/server/localControl/LocalRelayRuntimeControlSection', () => ({
     LocalRelayRuntimeControlSection: (props: any) => React.createElement('LocalRelayRuntimeControlSection', props),
 }));
+vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSection', () => ({
+    LocalRelayAccessControlSection: (props: any) => React.createElement('LocalRelayAccessControlSection', props),
+}));
 vi.mock('@/components/settings/server/localControl/LocalTailscaleSecureAccessSection', () => ({
     LocalTailscaleSecureAccessSection: (props: any) => React.createElement('LocalTailscaleSecureAccessSection', props),
 }));
@@ -121,10 +124,12 @@ describe('ServerSettingsScreen web gating', () => {
         const screen = await renderScreen(React.createElement(ServerSettingsScreen));
 
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(0);
+        expect(screen.findAllByType('LocalRelayAccessControlSection' as any)).toHaveLength(0);
         expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
-        const notice = screen.findByTestId('settings.server.localControl.desktopOnlyNotice');
+        const notice = screen.findByTestId('settings.server.openSetupWizard');
         expect(notice).toBeTruthy();
-        expect(notice?.props.title).toBe('setupOnboarding.webDesktopOnlyTitle');
-        expect(notice?.props.subtitle).toBe('setupOnboarding.webDesktopOnlyBody');
+        expect(notice?.props.title).toBe('setupOnboarding.setupNewRelayAction');
+        expect(notice?.props.subtitle).toBe('setupOnboarding.openSetupWizardSubtitle');
+        expect(typeof notice?.props.onPress).toBe('function');
     });
 });

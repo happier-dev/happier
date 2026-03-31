@@ -136,6 +136,78 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         expect(installRow.props.subtitle).toBe('Installing runtime');
     });
 
+    it('supports a checklist-only variant without the verbose status rows', async () => {
+        isTauriDesktopMock.mockReturnValue(false);
+        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
+
+        const events: readonly SystemTaskEvent[] = [
+            {
+                protocolVersion: 1,
+                taskId: 'task_1',
+                tsMs: 100,
+                type: 'started',
+                stepId: 'prepare',
+                message: 'Preparing task',
+            },
+            {
+                protocolVersion: 1,
+                taskId: 'task_1',
+                tsMs: 200,
+                type: 'progress',
+                stepId: 'install.runtime',
+                message: 'Installing runtime',
+            },
+        ];
+
+        const screen = await renderScreen(
+            React.createElement(SystemTaskProgressCard, {
+                snapshot: createSnapshot({ events }),
+                variant: 'checklistOnly',
+            }),
+        );
+
+        expect(screen.findByTestId('system-task-progress-status-running')).toBeNull();
+        expect(screen.findByTestId('system-task-step-label')).toBeNull();
+        expect(screen.findByTestId('system-task-message')).toBeNull();
+
+        const checklistRow = screen.findByTestId('system-task-progress-checklist-step-active-install-runtime');
+        expect(checklistRow).not.toBeNull();
+    });
+
+    it('falls back to the raw step id when no translation key is registered', async () => {
+        isTauriDesktopMock.mockReturnValue(false);
+        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
+
+        const events: readonly SystemTaskEvent[] = [
+            {
+                protocolVersion: 1,
+                taskId: 'task_1',
+                tsMs: 100,
+                type: 'progress',
+                stepId: 'unknown.step.id',
+                message: 'Doing something',
+            },
+        ];
+
+        const screen = await renderScreen(
+            React.createElement(SystemTaskProgressCard, {
+                snapshot: createSnapshot({
+                    currentStepId: 'unknown.step.id',
+                    latestMessage: 'Doing something',
+                    events,
+                }),
+                variant: 'checklistOnly',
+            }),
+        );
+
+        const row = screen.findByTestId('system-task-progress-checklist-step-active-unknown-step-id');
+        expect(row).not.toBeNull();
+        if (!row) {
+            throw new Error('Missing unknown step checklist row');
+        }
+        expect(row.props.title).toBe('unknown.step.id');
+    });
+
     it('shows Open logs only on desktop and invokes the tauri command with an absolute path', async () => {
         isTauriDesktopMock.mockReturnValue(true);
         invokeTauriMock.mockResolvedValueOnce(undefined);
@@ -147,5 +219,14 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         expect(invokeTauriMock).toHaveBeenCalledWith('system_tasks_open_log_path', {
             path: '/home/test/.happier/logs',
         });
+    });
+
+    it('allows the caller to omit the group title by passing title=null', async () => {
+        isTauriDesktopMock.mockReturnValue(false);
+        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
+
+        const screen = await renderScreen(React.createElement(SystemTaskProgressCard, { snapshot: createSnapshot(), title: null }));
+        const group = screen.tree.findByType('ItemGroup' as any);
+        expect(group.props.title).toBeUndefined();
     });
 });

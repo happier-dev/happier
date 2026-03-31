@@ -66,6 +66,9 @@ vi.mock('@/components/settings/server/RelayDriftActionCard', () => ({
 vi.mock('@/components/settings/server/localControl/LocalRelayRuntimeControlSection', () => ({
     LocalRelayRuntimeControlSection: (props: any) => React.createElement('LocalRelayRuntimeControlSection', props),
 }));
+vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSection', () => ({
+    LocalRelayAccessControlSection: (props: any) => React.createElement('LocalRelayAccessControlSection', props),
+}));
 
 vi.mock('@/components/settings/server/localControl/LocalTailscaleSecureAccessSection', () => ({
     LocalTailscaleSecureAccessSection: (props: any) => React.createElement('LocalTailscaleSecureAccessSection', props),
@@ -170,6 +173,7 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
         const screen = await renderScreen(React.createElement(ServerSettingsScreen));
 
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(0);
+        expect(screen.findAllByType('LocalRelayAccessControlSection' as any)).toHaveLength(0);
         expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
         expect(screen.findByTestId('settings.server.localControl.desktopOnlyNotice')).toBeTruthy();
     });

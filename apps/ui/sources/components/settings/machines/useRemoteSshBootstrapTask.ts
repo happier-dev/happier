@@ -20,14 +20,22 @@ export type RemoteSshBootstrapPrompt =
         existingFingerprint: string | null;
     }>
     | Readonly<{
+        kind: 'ssh.password';
+        message: string;
+        target: string;
+    }>
+    | Readonly<{
         kind: 'auth.approveRemoteProvisioning';
         message: string;
         publicKey: string | null;
     }>;
 
 type RemoteSshFormState = Readonly<{
-    sshTarget: string;
-    sshAuth: 'agent' | 'keyfile';
+    sshUsername: string;
+    sshHost: string;
+    sshPort: string;
+    sshAuth: 'agent' | 'keyfile' | 'password';
+    sshPassword: string;
     identityFilePath: string;
     installRelayRuntime: boolean;
 }>;
@@ -82,6 +90,14 @@ function resolveRemotePrompt(snapshot: SystemTaskRunState | null): RemoteSshBoot
         };
     }
 
+    if (kind === 'ssh.password') {
+        return {
+            kind,
+            message: promptEvent.message ?? snapshot.latestMessage ?? '',
+            target: typeof record.target === 'string' ? record.target.trim() : '',
+        };
+    }
+
     return null;
 }
 
@@ -107,6 +123,8 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
     const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
     const [isStarting, setIsStarting] = React.useState(false);
     const [promptResolution, setPromptResolution] = React.useState<RemoteSshPromptResolution>({});
+    const latestFormStateRef = React.useRef<RemoteSshFormState | null>(null);
+    const answeredPasswordPromptTaskIdRef = React.useRef<string | null>(null);
     const rawSnapshot = useSystemTaskSnapshot(runner, activeTaskId);
     const activeTaskSnapshot = React.useMemo(() => normalizeRemoteSnapshot(rawSnapshot), [rawSnapshot]);
     const prompt = React.useMemo(() => resolveRemotePrompt(rawSnapshot), [rawSnapshot]);
@@ -115,13 +133,16 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
         params: RemoteSshFormState,
         nextPromptResolution: RemoteSshPromptResolution,
     ) => {
+        latestFormStateRef.current = params;
         setIsStarting(true);
         try {
             const taskId = await runner.start(buildRemoteSshBootstrapMachineSystemTaskSpec({
                 relayUrl: options.relayUrl,
                 webappUrl: options.webappUrl,
                 publicRelayUrl: options.publicRelayUrl,
-                sshTarget: params.sshTarget,
+                sshUsername: params.sshUsername,
+                sshHost: params.sshHost,
+                sshPort: params.sshPort,
                 sshAuth: params.sshAuth,
                 identityFilePath: params.identityFilePath,
                 installRelayRuntime: params.installRelayRuntime,
@@ -142,6 +163,11 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
         if (!prompt) {
             throw new Error('No prompt is waiting for continuation.');
         }
+        if (prompt.kind === 'ssh.password') {
+            throw new Error('SSH password prompts must be answered via answerPasswordPrompt().');
+        }
+
+        latestFormStateRef.current = params;
 
         const nextPromptResolution: RemoteSshPromptResolution = prompt.kind === 'auth.approveRemoteProvisioning'
             ? {
@@ -167,6 +193,23 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
         return await startWithResolution(params, nextPromptResolution);
     }, [activeTaskId, prompt, promptResolution, rawSnapshot, runner, startWithResolution]);
 
+    const answerPasswordPrompt = React.useCallback(async (params: RemoteSshFormState) => {
+        if (!prompt || prompt.kind !== 'ssh.password') {
+            throw new Error('No SSH password prompt is waiting for a response.');
+        }
+        if (!activeTaskId) {
+            throw new Error('No SSH password prompt task is active.');
+        }
+
+        latestFormStateRef.current = params;
+        const password = String(params.sshPassword ?? '').trim();
+        if (!password) {
+            throw new Error('SSH password is required.');
+        }
+        answeredPasswordPromptTaskIdRef.current = activeTaskId;
+        await runner.respond(activeTaskId, { password });
+    }, [activeTaskId, prompt, runner]);
+
     const cancel = React.useCallback(() => {
         if (!activeTaskId) {
             return;
@@ -181,6 +224,24 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
     const resetPromptResolution = React.useCallback(() => {
         setPromptResolution({});
     }, []);
+
+    React.useEffect(() => {
+        if (!prompt || prompt.kind !== 'ssh.password') {
+            answeredPasswordPromptTaskIdRef.current = null;
+            return;
+        }
+        if (!activeTaskId || answeredPasswordPromptTaskIdRef.current === activeTaskId) {
+            return;
+        }
+        const password = String(latestFormStateRef.current?.sshPassword ?? '').trim();
+        if (!password) {
+            return;
+        }
+        answeredPasswordPromptTaskIdRef.current = activeTaskId;
+        void runner.respond(activeTaskId, { password }).catch(() => {
+            answeredPasswordPromptTaskIdRef.current = null;
+        });
+    }, [activeTaskId, prompt, runner]);
 
     const completedMachineId = React.useMemo(() => {
         if (!activeTaskSnapshot?.result?.ok) {
@@ -199,6 +260,7 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
         isStarting,
         prompt,
         resetPromptResolution,
+        answerPasswordPrompt,
         start,
     };
 }
