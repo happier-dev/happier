@@ -53,7 +53,7 @@ test('exportWebPayloadToArtifactPayloadDir exports via project-local staging dir
 
   rmSync(root, { recursive: true, force: true });
 });
-test('exportWebPayloadToArtifactPayloadDir returns a nested index.html when root is missing', async () => {
+test('exportWebPayloadToArtifactPayloadDir throws when only a nested index.html is produced', async () => {
   const root = createTempDir('stack-web-export-nested-');
   const uiDir = join(root, 'ui');
   const payloadDir = join(root, 'artifact', 'payload');
@@ -67,15 +67,22 @@ test('exportWebPayloadToArtifactPayloadDir returns a nested index.html when root
     writeFileSync(join(outDir, 'client', 'index.html'), '<html>client</html>', 'utf8');
   };
 
-  const entrypoint = await exportWebPayloadToArtifactPayloadDir({
-    uiDir,
-    payloadDir,
-    env: {},
-    expoExecImpl: fakeExpoExec,
-  });
-
-  assert.equal(entrypoint, 'client/index.html');
-  assert.equal(readFileSync(join(payloadDir, 'client', 'index.html'), 'utf8'), '<html>client</html>');
+  await assert.rejects(
+    () =>
+      exportWebPayloadToArtifactPayloadDir({
+        uiDir,
+        payloadDir,
+        env: {},
+        expoExecImpl: fakeExpoExec,
+      }),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /missing/i);
+      assert.match(err.message, /index\.html/i);
+      assert.match(err.message, /client\/index\.html/i);
+      return true;
+    },
+  );
 
   rmSync(root, { recursive: true, force: true });
 });
