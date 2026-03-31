@@ -1,8 +1,7 @@
-import chalk from 'chalk';
-
 import type { CommandContext } from '@/cli/commandRegistry';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
+import { errorFrame } from '@happier-dev/cli-common/output';
 
 import { showRelayHelp } from './relay/help';
 import { runRelaySubcommand } from './relay/subcommands';
@@ -69,7 +68,7 @@ export async function handleRelayCliCommand(context: CommandContext): Promise<vo
       );
       return;
     }
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+    console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
     showRelayHelp();
     if (process.env.DEBUG) console.error(error);
     process.exitCode = typeof process.exitCode === 'number' && process.exitCode > 1 ? process.exitCode : 1;

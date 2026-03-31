@@ -347,6 +347,233 @@ describe('happier relay --json', () => {
         }
     });
 
+    it('accepts --ssh-port for relay host status over ssh', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n` },
+                { status: 0, stdout: `${JSON.stringify({ version: '1.2.3' })}\n` },
+                { status: 0, stdout: 'enabled\nactive\nrunning\n' },
+                { status: 0, stdout: 'yes\n' },
+            ],
+        });
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            expect(commandRegistry.relay).toBeDefined();
+
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: ['relay', 'host', 'status', '--ssh', 'dev@example.test', '--ssh-port', '2222', '--json'],
+                    rawArgv: ['node', 'happier', 'relay', 'host', 'status', '--ssh', 'dev@example.test', '--ssh-port', '2222', '--json'],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_host_status');
+            expect(process.exitCode).toBe(0);
+
+            const invocations = fakeSsh.readInvocations().map((invocation) => invocation.join(' '));
+            expect(invocations.some((invocation) => invocation.includes('-p 2222'))).toBe(true);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('accepts split SSH flags for relay host status over ssh', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n` },
+                { status: 0, stdout: `${JSON.stringify({ version: '1.2.3' })}\n` },
+                { status: 0, stdout: 'enabled\nactive\nrunning\n' },
+                { status: 0, stdout: 'yes\n' },
+            ],
+        });
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            expect(commandRegistry.relay).toBeDefined();
+
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: [
+                        'relay',
+                        'host',
+                        'status',
+                        '--ssh-user',
+                        'dev',
+                        '--ssh-host',
+                        'example.test',
+                        '--ssh-port',
+                        '2222',
+                        '--ssh-auth',
+                        'agent',
+                        '--json',
+                    ],
+                    rawArgv: [
+                        'node',
+                        'happier',
+                        'relay',
+                        'host',
+                        'status',
+                        '--ssh-user',
+                        'dev',
+                        '--ssh-host',
+                        'example.test',
+                        '--ssh-port',
+                        '2222',
+                        '--ssh-auth',
+                        'agent',
+                        '--json',
+                    ],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_host_status');
+            expect(process.exitCode).toBe(0);
+
+            const invocations = fakeSsh.readInvocations().map((invocation) => invocation.join(' '));
+            expect(invocations.some((invocation) => invocation.includes('dev@example.test'))).toBe(true);
+            expect(invocations.some((invocation) => invocation.includes('-p 2222'))).toBe(true);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('supports ssh password auth for relay host status over ssh', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n` },
+                { status: 0, stdout: `${JSON.stringify({ version: '1.2.3' })}\n` },
+                { status: 0, stdout: 'enabled\nactive\nrunning\n' },
+                { status: 0, stdout: 'yes\n' },
+            ],
+        });
+
+        const previousPassword = process.env.HAPPIER_SSH_PASSWORD;
+        process.env.HAPPIER_SSH_PASSWORD = 'super-secret';
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            expect(commandRegistry.relay).toBeDefined();
+
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: ['relay', 'host', 'status', '--ssh', 'dev@example.test', '--ssh-auth', 'password', '--json'],
+                    rawArgv: ['node', 'happier', 'relay', 'host', 'status', '--ssh', 'dev@example.test', '--ssh-auth', 'password', '--json'],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_host_status');
+            expect(parsed.data?.installed).toBe(true);
+            expect(parsed.data?.version).toBe('1.2.3');
+            expect(parsed.data?.service?.active).toBe(true);
+            expect(process.exitCode).toBe(0);
+
+            const invocations = fakeSsh.readInvocations().map((invocation) => invocation.join(' '));
+            expect(invocations.some((invocation) => invocation.includes('BatchMode=no'))).toBe(true);
+            expect(invocations.some((invocation) => invocation.includes('PreferredAuthentications=password'))).toBe(true);
+            expect(invocations.some((invocation) => invocation.includes('super-secret'))).toBe(false);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+            if (previousPassword === undefined) {
+                delete process.env.HAPPIER_SSH_PASSWORD;
+            } else {
+                process.env.HAPPIER_SSH_PASSWORD = previousPassword;
+            }
+        }
+    });
+
+    it('supports split SSH flags with password auth for relay host status over ssh', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n` },
+                { status: 0, stdout: `${JSON.stringify({ version: '1.2.3' })}\n` },
+                { status: 0, stdout: 'enabled\nactive\nrunning\n' },
+                { status: 0, stdout: 'yes\n' },
+            ],
+        });
+
+        const previousPassword = process.env.HAPPIER_SSH_PASSWORD;
+        process.env.HAPPIER_SSH_PASSWORD = 'super-secret';
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            expect(commandRegistry.relay).toBeDefined();
+
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: [
+                        'relay',
+                        'host',
+                        'status',
+                        '--ssh-user',
+                        'dev',
+                        '--ssh-host',
+                        'example.test',
+                        '--ssh-auth',
+                        'password',
+                        '--json',
+                    ],
+                    rawArgv: [
+                        'node',
+                        'happier',
+                        'relay',
+                        'host',
+                        'status',
+                        '--ssh-user',
+                        'dev',
+                        '--ssh-host',
+                        'example.test',
+                        '--ssh-auth',
+                        'password',
+                        '--json',
+                    ],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_host_status');
+            expect(process.exitCode).toBe(0);
+
+            const invocations = fakeSsh.readInvocations().map((invocation) => invocation.join(' '));
+            expect(invocations.some((invocation) => invocation.includes('BatchMode=no'))).toBe(true);
+            expect(invocations.some((invocation) => invocation.includes('super-secret'))).toBe(false);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+            if (previousPassword === undefined) {
+                delete process.env.HAPPIER_SSH_PASSWORD;
+            } else {
+                process.env.HAPPIER_SSH_PASSWORD = previousPassword;
+            }
+        }
+    });
+
     it('writes the trusted host key into the app-managed known hosts path before running ssh', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
@@ -501,6 +728,83 @@ describe('happier relay --json', () => {
         }
     });
 
+    it('prints a JSON envelope for relay host install over split SSH flags', async () => {
+        const payloadRoot = await createTempDir('happier-first-party-payload-split-');
+        writeFileSync(join(payloadRoot, 'happier'), '#!/usr/bin/env bash\necho stub\n', 'utf8');
+        chmodSync(join(payloadRoot, 'happier'), 0o755);
+        writeFileSync(join(payloadRoot, 'happier-server'), '#!/usr/bin/env bash\necho stub\n', 'utf8');
+        chmodSync(join(payloadRoot, 'happier-server'), 0o755);
+        envScope.patch({
+            HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT: payloadRoot,
+            HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID: 'test-split-1',
+        });
+
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n` },
+                { status: 0, stdout: 'yes\n' },
+                { status: 0, stdout: '\n' },
+                { status: 0, stdout: '\n' },
+                { status: 0, stdout: '\n' },
+                { status: 0, stdout: '\n' },
+            ],
+        });
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            expect(commandRegistry.relay).toBeDefined();
+
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: [
+                        'relay',
+                        'host',
+                        'install',
+                        '--ssh-user',
+                        'dev',
+                        '--ssh-host',
+                        'example.test',
+                        '--ssh-port',
+                        '2222',
+                        '--json',
+                    ],
+                    rawArgv: [
+                        'node',
+                        'happier',
+                        'relay',
+                        'host',
+                        'install',
+                        '--ssh-user',
+                        'dev',
+                        '--ssh-host',
+                        'example.test',
+                        '--ssh-port',
+                        '2222',
+                        '--json',
+                    ],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_host_install');
+            expect(parsed.data?.relayUrl).toBe('http://127.0.0.1:3005');
+            expect(process.exitCode).toBe(0);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+            envScope.patch({
+                HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT: undefined,
+                HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID: undefined,
+            });
+            await removeTempDir(payloadRoot);
+        }
+    });
+
     it('rejects the legacy --self-host-server-binary flag (not deployed; no compatibility needed)', async () => {
         const payloadRoot = await createTempDir('happier-first-party-payload-legacy-');
         writeFileSync(join(payloadRoot, 'happier'), '#!/usr/bin/env bash\necho stub\n', 'utf8');
@@ -553,7 +857,7 @@ describe('happier relay --json', () => {
         }
     });
 
-    it('supports the relay install alias over ssh (forwards to relay host install)', async () => {
+    it('rejects the legacy relay install alias over ssh (use relay host install)', async () => {
         const payloadRoot = await createTempDir('happier-first-party-payload-alias-');
         writeFileSync(join(payloadRoot, 'happier'), '#!/usr/bin/env bash\necho stub\n', 'utf8');
         chmodSync(join(payloadRoot, 'happier'), 0o755);
@@ -590,11 +894,10 @@ describe('happier relay --json', () => {
             });
 
             const parsed = JSON.parse(output.logs.join('\n').trim());
-            expect(parsed.ok).toBe(true);
-            expect(parsed.kind).toBe('relay_host_install');
-            expect(parsed.data?.mode).toBe('user');
-            expect(parsed.data?.relayUrl).toBe('http://127.0.0.1:3005');
-            expect(process.exitCode).toBe(0);
+            expect(parsed.ok).toBe(false);
+            expect(parsed.kind).toBe('relay_install');
+            expect(parsed.error?.code).toBe('invalid_arguments');
+            expect(process.exitCode).toBe(1);
         } finally {
             output.restore();
             process.exitCode = prevExitCode;
@@ -657,6 +960,50 @@ describe('happier relay --json', () => {
                 HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID: undefined,
             });
             await removeTempDir(payloadRoot);
+        }
+    });
+
+    it('rejects unsafe --env overrides that contain newlines', async () => {
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            expect(commandRegistry.relay).toBeDefined();
+
+            await commandRegistry.relay({
+                args: [
+                    'relay',
+                    'host',
+                    'install',
+                    '--ssh',
+                    'dev@example.test',
+                    '--env',
+                    'HAPPIER_DB_PROVIDER=sqlite\nHAPPIER_SERVER_HOST=0.0.0.0',
+                    '--json',
+                ],
+                rawArgv: [
+                    'node',
+                    'happier',
+                    'relay',
+                    'host',
+                    'install',
+                    '--ssh',
+                    'dev@example.test',
+                    '--env',
+                    'HAPPIER_DB_PROVIDER=sqlite\nHAPPIER_SERVER_HOST=0.0.0.0',
+                    '--json',
+                ],
+                terminalRuntime: null,
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(false);
+            expect(parsed.kind).toBe('relay_host');
+            expect(parsed.error?.code).toBe('invalid_arguments');
+            expect(process.exitCode).toBe(1);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
         }
     });
 

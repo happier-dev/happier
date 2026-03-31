@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import os from 'node:os';
 
 import { clearCredentials, clearMachineId, readCredentials, readSettings } from '@/persistence';
@@ -6,7 +5,7 @@ import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { stopDaemon } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
-import { bullets, definitionList, errorFrame, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
+import { createOutputBuilder, definitionList, errorFrame, ok, warn } from '@happier-dev/cli-common/output';
 
 import { resolveAuthMethodFlag } from './methodFlag';
 
@@ -34,15 +33,18 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
   }
 
   if (forceAuth) {
-    console.log(warn('Force authentication requested.'));
-    console.log(sectionTitle('This will:'));
-    console.log(bullets([
-      'Clear existing credentials',
-      'Clear machine ID',
-      'Stop daemon if running',
-      'Re-authenticate and register machine',
-    ]));
-    console.log('');
+    const out = createOutputBuilder();
+    out.line(warn('Force authentication requested.'));
+    out.blank();
+    out.section('This will:', (section) => {
+      section.bullets([
+        'Clear existing credentials',
+        'Clear machine ID',
+        'Stop daemon if running',
+        'Re-authenticate and register machine',
+      ]);
+    });
+    console.log(out.render());
 
     try {
       logger.debug('Stopping daemon for force auth...');
@@ -66,28 +68,36 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
     const settings = await readSettings();
 
     if (existingCreds && settings?.machineId) {
-      console.log(ok('Already authenticated'));
-      console.log(definitionList([
+      const out = createOutputBuilder();
+      out.line(ok('Already authenticated'));
+      out.definitionList([
         { label: 'Machine ID', value: settings.machineId },
         { label: 'Host', value: os.hostname() },
-      ], { indent: '  ' }));
-      console.log('  Use \'happier auth login --force\' to re-authenticate');
+      ], { indent: '  ' });
+      out.line('  Use \'happier auth login --force\' to re-authenticate');
+      console.log(out.render());
       return;
     }
 
     if (existingCreds && !settings?.machineId) {
-      console.log(warn('Credentials exist but machine ID is missing'));
-      console.log(`  This can happen if --auth flag was used previously`);
-      console.log(`  Fixing by setting up machine...\n`);
+      const out = createOutputBuilder();
+      out.line(warn('Credentials exist but machine ID is missing'));
+      out.line(`  This can happen if --auth flag was used previously`);
+      out.line(`  Fixing by setting up machine...`);
+      out.blank();
+      console.log(out.render());
     }
   }
 
   try {
     const result = await authAndSetupMachineIfNeeded();
-    console.log(`\n${ok('Authentication successful')}`);
-    console.log(definitionList([
+    const out = createOutputBuilder();
+    out.blank();
+    out.line(ok('Authentication successful'));
+    out.definitionList([
       { label: 'Machine ID', value: result.machineId },
-    ], { indent: '  ' }));
+    ], { indent: '  ' });
+    console.log(out.render());
   } catch (error) {
     console.error(errorFrame('Authentication failed:', [error instanceof Error ? error.message : 'Unknown error']));
     process.exit(1);

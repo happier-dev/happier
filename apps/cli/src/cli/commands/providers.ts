@@ -1,4 +1,10 @@
-import { AGENT_IDS, RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP, getProviderCliRuntimeSpec, type AgentId } from '@happier-dev/agents';
+import {
+    AGENT_IDS,
+    getProviderCliRuntimeSpec,
+    getProviderCliSetupRecommendedIds,
+    getProviderCliSetupSupportedIds,
+    type AgentId,
+} from '@happier-dev/agents';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
@@ -6,31 +12,33 @@ import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInp
 import type { invokeProviderCliInstall as invokeProviderCliInstallDefault } from '@/runtime/managedTools/invokeProviderCliInstall';
 import { resolveProviderCliCommand, type ProviderCliCommandResolution } from '@/runtime/managedTools/providerCliResolution';
 import { AGENTS } from '@/backends/catalog';
-import { bullets, cmd, definitionList, dim, errorFrame, fail, kv, neutral, ok, sectionTitle } from '@happier-dev/cli-common/output';
+import { bullets, cmd, createOutputBuilder, definitionList, dim, errorFrame, fail, kv, neutral, ok, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
 
 function usage(): string {
-    return [
-        `${sectionTitle('happier providers')} - Provider CLI helpers`,
-        '',
-        `${sectionTitle('Usage:')}`,
-        `  ${cmd('happier providers list [--json]')}`,
-        `  ${cmd('happier providers status [--json]')}`,
-        `  ${cmd('happier providers install <providerId> [--dry-run] [--force]')}`,
-        `  ${cmd('happier providers setup [--provider <id> ...] [--providers <id1,id2>] [--dry-run] [--force] [--yes]')}`,
-        '',
-        `${sectionTitle('Notes:')}`,
-        bullets([
+    return renderHelpPage({
+        title: 'happier providers',
+        subtitle: 'Provider CLI helpers',
+        usage: [
+            { label: 'happier providers list [--json]', description: 'List providers and whether they are installed' },
+            { label: 'happier providers status [--json]', description: 'Show provider status for the current environment' },
+            { label: 'happier providers install <providerId> [--dry-run] [--force]', description: 'Install one provider CLI' },
+            { label: 'happier providers setup [--provider <id> ...] [--providers <id1,id2>] [--dry-run] [--force] [--yes]', description: 'Install one or more providers' },
+        ],
+        notes: [
             'Providers are the local tools Happier can run sessions with (Codex, Claude, Gemini, OpenCode, ...).',
             'Installs are binary-safe and do not require Node or a package manager.',
             `For cloud-stored API keys and subscription OAuth, use ${cmd('happier connect')}.`,
             `Non-interactive defaults: ${cmd('happier providers setup --yes')} installs the recommended providers.`,
-        ]),
-        '',
-    ].join('\n');
+        ],
+    });
 }
 
 function isAgentId(value: string): value is AgentId {
     return (AGENT_IDS as readonly string[]).includes(value);
+}
+
+function isSetupSupportedAgentId(value: string): value is AgentId {
+    return (getProviderCliSetupSupportedIds() as readonly string[]).includes(value);
 }
 
 function readRepeatedFlagValues(argv: readonly string[], flag: string): string[] {
@@ -93,17 +101,21 @@ async function invokeProviderCliInstallLazy(
 }
 
 function printHumanStatus(rows: readonly ProviderStatusRow[]): void {
+    const out = createOutputBuilder();
     if (rows.length === 0) {
-        console.log(neutral('(no providers available)'));
+        out.line(neutral('(no providers available)'));
+        console.log(out.render());
         return;
     }
+
     for (const row of rows) {
         const source = row.resolution?.source ? ` ${dim(`(${row.resolution.source})`)}` : '';
-        console.log((row.installed ? ok : neutral)(`${row.title} ${dim(row.id)}${source}`));
+        out.line((row.installed ? ok : neutral)(`${row.title} ${dim(row.id)}${source}`));
         if (row.resolution?.command) {
-            console.log(`  ${kv('Command:', row.resolution.command)}`);
+            out.line(`  ${kv('Command:', row.resolution.command)}`);
         }
     }
+    console.log(out.render());
 }
 
 async function runProvidersInstall(
@@ -130,9 +142,9 @@ async function resolveProvidersSetupSelection(args: readonly string[]): Promise<
     })();
     const combined = [...explicit, ...csv];
     if (combined.length > 0) {
-        const invalid = combined.filter((value) => !isAgentId(value));
+        const invalid = combined.filter((value) => !isSetupSupportedAgentId(value));
         if (invalid.length > 0) {
-            throw new Error(`Unknown provider id(s): ${invalid.join(', ')}`);
+            throw new Error(`Unsupported provider id(s) for setup: ${invalid.join(', ')}`);
         }
         return combined as AgentId[];
     }
@@ -141,18 +153,19 @@ async function resolveProvidersSetupSelection(args: readonly string[]): Promise<
         if (!args.includes('--yes')) {
             throw new Error('Non-interactive mode: pass one or more --provider <id> flags (or --yes to install the recommended defaults).');
         }
-        return [...RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP];
+        return [...getProviderCliSetupRecommendedIds()];
     }
 
     const rows = listProviderStatus(process.env);
-    const recommended = rows.filter((row) => !row.installed).map((row) => row.id);
+    const supported = new Set(getProviderCliSetupSupportedIds());
+    const recommended = rows.filter((row) => supported.has(row.id) && !row.installed).map((row) => row.id);
     const hint = recommended.length > 0 ? ` (suggested: ${recommended.join(', ')})` : '';
     const raw = (await promptInput(`Providers to install (comma-separated ids)${hint}: `)).trim();
     if (!raw) return [];
     const ids = raw.split(',').map((value) => value.trim()).filter(Boolean);
-    const invalid = ids.filter((value) => !isAgentId(value));
+    const invalid = ids.filter((value) => !isSetupSupportedAgentId(value));
     if (invalid.length > 0) {
-        throw new Error(`Unknown provider id(s): ${invalid.join(', ')}`);
+        throw new Error(`Unsupported provider id(s) for setup: ${invalid.join(', ')}`);
     }
     return ids as AgentId[];
 }
@@ -246,14 +259,16 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
         }
 
         const runtimeSpec = getProviderCliRuntimeSpec(providerIdRaw);
+        const out = createOutputBuilder();
         if (flags.dryRun) {
-            console.log(`Dry run: would install ${runtimeSpec.title} via ${result.plan.installMode}.`);
+            out.line(`Dry run: would install ${runtimeSpec.title} via ${result.plan.installMode}.`);
         } else if (result.alreadyInstalled) {
-            console.log(ok(`${runtimeSpec.title} is already installed.`));
+            out.line(ok(`${runtimeSpec.title} is already installed.`));
         } else {
-            console.log(ok(`Installed ${runtimeSpec.title}.`));
+            out.line(ok(`Installed ${runtimeSpec.title}.`));
         }
-        if (result.logPath) console.log(`  ${kv('Install log:', result.logPath)}`);
+        if (result.logPath) out.line(`  ${kv('Install log:', result.logPath)}`);
+        console.log(out.render());
         return;
     }
 
@@ -320,19 +335,23 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
         }
 
         for (const entry of results) {
+            const out = createOutputBuilder();
             if (entry.result.ok) {
                 const runtimeSpec = getProviderCliRuntimeSpec(entry.providerId);
                 if (flags.dryRun) {
-                    console.log(`Dry run: would install ${runtimeSpec.title} via ${entry.result.plan.installMode}.`);
+                    out.line(`Dry run: would install ${runtimeSpec.title} via ${entry.result.plan.installMode}.`);
                 } else if (entry.result.alreadyInstalled) {
-                    console.log(ok(`${runtimeSpec.title} is already installed.`));
+                    out.line(ok(`${runtimeSpec.title} is already installed.`));
                 } else {
-                    console.log(ok(`Installed ${runtimeSpec.title}.`));
+                    out.line(ok(`Installed ${runtimeSpec.title}.`));
                 }
-                if (entry.result.logPath) console.log(`  ${kv('Install log:', entry.result.logPath)}`);
+                if (entry.result.logPath) out.line(`  ${kv('Install log:', entry.result.logPath)}`);
+                console.log(out.render());
             } else {
                 console.error(fail(`Failed to install ${entry.providerId}: ${entry.result.errorMessage}`));
-                if (entry.result.logPath) console.log(`  ${kv('Install log:', entry.result.logPath)}`);
+                if (entry.result.logPath) {
+                    console.log(`  ${kv('Install log:', entry.result.logPath)}`);
+                }
             }
         }
 
@@ -345,9 +364,11 @@ export async function handleProvidersCommand(args: string[]): Promise<void> {
                 return typeof getCloudConnectTarget === 'function';
             });
             if (connectable.length > 0) {
-                console.log('');
-                console.log(sectionTitle('Next'));
-                console.log(bullets(connectable.map((id) => `Connect ${id} credentials in Happier Cloud: ${cmd(`happier connect ${id}`)}`)));
+                const out = createOutputBuilder();
+                out.blank();
+                out.line(sectionTitle('Next'));
+                out.line(bullets(connectable.map((id) => `Connect ${id} credentials in Happier Cloud: ${cmd(`happier connect ${id}`)}`)));
+                console.log(out.render());
             }
         }
 

@@ -13,8 +13,8 @@ describe('handleMachineCommand', () => {
   const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
   afterEach(() => {
-    logSpy.mockReset();
-    errorSpy.mockReset();
+    logSpy.mockClear();
+    errorSpy.mockClear();
     process.exitCode = undefined;
   });
 
@@ -90,6 +90,9 @@ describe('handleMachineCommand', () => {
         }),
         promptInput: async () => {
           throw new Error('prompt should not be used');
+        },
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
         },
         isInteractiveTerminal: () => false,
         sleep: async () => undefined,
@@ -174,6 +177,9 @@ describe('handleMachineCommand', () => {
         promptInput: async () => {
           throw new Error('prompt should not be used');
         },
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
         isInteractiveTerminal: () => false,
         sleep: async () => undefined,
       },
@@ -182,6 +188,168 @@ describe('handleMachineCommand', () => {
     const output = logSpy.mock.calls.flat().join('\n');
     expect(output).toContain('Remote relay URL: https://relay.remote.example.test');
     expect(output).toContain('happier relay set https://relay.remote.example.test --use');
+  });
+
+  it('supports password-based SSH auth and answers the password prompt securely', async () => {
+    const respond = vi.fn(async () => undefined);
+    const promptSecret = vi.fn(async () => 'super-secret');
+    const start = vi.fn(async () => ({ taskId: 'task-password' }));
+    const poll = vi.fn()
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result: null,
+        pendingPrompt: {
+          kind: 'ssh.password',
+          data: {
+            target: 'dev@example.test',
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result: {
+          protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+          taskId: 'task-password',
+          ok: true,
+          data: {
+            machineId: 'machine-password',
+          },
+        } satisfies SystemTaskResult,
+        pendingPrompt: null,
+      });
+
+    await handleMachineCommand(
+      [
+        'setup',
+        '--ssh',
+        'dev@example.test',
+        '--ssh-auth',
+        'password',
+      ],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start,
+          poll,
+          respond,
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => {
+          throw new Error('promptInput should not be used for SSH password auth');
+        },
+        promptSecret,
+        isInteractiveTerminal: () => true,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(start).toHaveBeenCalledWith({
+      spec: {
+        protocolVersion: 1,
+        kind: 'remote.ssh.bootstrapMachine.v1',
+        params: expect.objectContaining({
+          ssh: expect.objectContaining({
+            target: 'dev@example.test',
+            auth: 'password',
+          }),
+        }),
+      },
+    });
+    expect(promptSecret).toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith({
+      taskId: 'task-password',
+      answer: {
+        password: 'super-secret',
+      },
+    });
+  });
+
+  it('accepts split SSH fields while keeping the legacy --ssh target syntax available', async () => {
+    const respond = vi.fn(async () => undefined);
+    const promptSecret = vi.fn(async () => 'super-secret');
+    const start = vi.fn(async () => ({ taskId: 'task-split-ssh' }));
+    const poll = vi.fn()
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result: null,
+        pendingPrompt: {
+          kind: 'ssh.password',
+          data: {
+            target: 'dev@example.test',
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result: {
+          protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+          taskId: 'task-split-ssh',
+          ok: true,
+          data: {
+            machineId: 'machine-split-ssh',
+          },
+        } satisfies SystemTaskResult,
+        pendingPrompt: null,
+      });
+
+    await handleMachineCommand(
+      [
+        'setup',
+        '--ssh-user',
+        'dev',
+        '--ssh-host',
+        'example.test',
+        '--ssh-port',
+        '2222',
+        '--ssh-auth=password',
+      ],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start,
+          poll,
+          respond,
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => {
+          throw new Error('promptInput should not be used for split SSH password auth');
+        },
+        promptSecret,
+        isInteractiveTerminal: () => true,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(start).toHaveBeenCalledWith({
+      spec: {
+        protocolVersion: 1,
+        kind: 'remote.ssh.bootstrapMachine.v1',
+        params: expect.objectContaining({
+          ssh: expect.objectContaining({
+            target: 'dev@example.test',
+            port: 2222,
+            auth: 'password',
+          }),
+        }),
+      },
+    });
+    expect(promptSecret).toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith({
+      taskId: 'task-split-ssh',
+      answer: {
+        password: 'super-secret',
+      },
+    });
   });
 
   it('accepts prefixed relay selection flags before remote machine setup and reuses the selected relay profile', async () => {
@@ -233,6 +401,9 @@ describe('handleMachineCommand', () => {
         }),
         promptInput: async () => {
           throw new Error('prompt should not be used');
+        },
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
         },
         isInteractiveTerminal: () => false,
         sleep: async () => undefined,
@@ -309,6 +480,9 @@ describe('handleMachineCommand', () => {
           webappUrl: 'https://app.example.test',
         }),
         promptInput: async () => 'y',
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
         isInteractiveTerminal: () => true,
         sleep: async () => undefined,
       },
@@ -349,6 +523,9 @@ describe('handleMachineCommand', () => {
         promptInput: async () => {
           throw new Error('prompt should not be used');
         },
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
         isInteractiveTerminal: () => false,
         sleep: async () => undefined,
       },
@@ -378,6 +555,50 @@ describe('handleMachineCommand', () => {
           webappUrl: 'https://app.example.test',
         }),
         promptInput: async () => 'y',
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
+        isInteractiveTerminal: () => false,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(logSpy.mock.calls.flat().join('\n')).toContain('"ok":false');
+    expect(logSpy.mock.calls.flat().join('\n')).toContain('invalid_arguments');
+  });
+
+  it('rejects multi-line --trusted-host-key values', async () => {
+    await handleMachineCommand(
+      [
+        'setup',
+        '--ssh',
+        'dev@example.test',
+        '--known-hosts-path',
+        '/tmp/known_hosts',
+        '--trusted-host-key',
+        'example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA\nbad',
+        '--json',
+      ],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start: vi.fn(async () => ({ taskId: 'task-1' })),
+          poll: vi.fn(async () => ({
+            events: [],
+            nextCursor: 0,
+            result: null,
+            pendingPrompt: null,
+          })),
+          respond: vi.fn(async () => undefined),
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => 'y',
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
         isInteractiveTerminal: () => false,
         sleep: async () => undefined,
       },
@@ -407,6 +628,9 @@ describe('handleMachineCommand', () => {
           webappUrl: 'https://app.example.test',
         }),
         promptInput: async () => 'y',
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
         isInteractiveTerminal: () => false,
         sleep: async () => undefined,
       },
@@ -456,6 +680,9 @@ describe('handleMachineCommand', () => {
         }),
         promptInput: async () => {
           throw new Error('prompt should not be used');
+        },
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
         },
         isInteractiveTerminal: () => false,
         sleep: async () => undefined,

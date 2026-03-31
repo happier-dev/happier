@@ -1,6 +1,5 @@
-import chalk from 'chalk';
-
 import type { AgentId, CodexBackendMode } from '@happier-dev/agents';
+import { errorFrame, warn } from '@happier-dev/cli-common/output';
 
 import type { Credentials } from '@/persistence';
 import { readCredentials } from '@/persistence';
@@ -82,7 +81,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       : { ...parsed, warnings: [] as string[] };
 
     for (const warning of resolved.warnings) {
-      console.error(chalk.yellow(warning));
+      console.error(warn(warning));
     }
 
     const existingSessionId = readOptionalFlagValue(params.context.args, '--existing-session');
@@ -203,7 +202,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       ...extraOptions,
     });
   } catch (error) {
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+    console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
     if (process.env.DEBUG) {
       console.error(error);
     }

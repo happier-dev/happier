@@ -18,6 +18,7 @@ import {
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 import { runRelayHostSubcommand } from './host';
+import { runRelayAccessSubcommand } from './access';
 
 type RelaySetJsonResult = Readonly<{
   serverId: string;
@@ -170,9 +171,6 @@ async function cmdSet(args: string[]): Promise<void> {
 
 export async function runRelaySubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
-    case 'install':
-      await runRelayHostSubcommand(['install', ...args.slice(1)]);
-      return true;
     case 'inspect-target':
       await cmdInspectTarget(args.slice(1));
       return true;
@@ -181,6 +179,9 @@ export async function runRelaySubcommand(subcommand: string, args: string[]): Pr
       return true;
     case 'host':
       await runRelayHostSubcommand(args.slice(1));
+      return true;
+    case 'access':
+      await runRelayAccessSubcommand(args.slice(1));
       return true;
     default:
       return false;

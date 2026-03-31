@@ -1,4 +1,4 @@
-import chalk from 'chalk';
+import { errorFrame, ok } from '@happier-dev/cli-common/output';
 
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
@@ -23,7 +23,7 @@ export async function cmdSessionSetTitle(
       printJsonEnvelope({ ok: false, kind: 'session_set_title', error: { code: 'not_authenticated' } });
       return;
     }
-    console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
+    console.error(errorFrame('Error:', ['Not authenticated. Run "happier auth login" first.']));
     process.exit(1);
   }
 
@@ -54,5 +54,5 @@ export async function cmdSessionSetTitle(
     printJsonEnvelope({ ok: true, kind: 'session_set_title', data: { sessionId: result.sessionId, title } });
     return;
   }
-  console.log(chalk.green('✓'), `title set for ${result.sessionId}`);
+  console.log(ok(`Title set for ${result.sessionId}`));
 }

@@ -4,7 +4,7 @@ import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
-import { RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP } from '@happier-dev/agents';
+import { getProviderCliSetupRecommendedIds } from '@happier-dev/agents';
 
 const invokeProviderCliInstall = vi.fn(async (_params: Readonly<{ agentId: string }>) => ({
   ok: true as const,
@@ -48,7 +48,7 @@ describe('happier providers setup --yes --json', () => {
       expect(parsed.data.providers.length).toBeGreaterThan(0);
 
       const installedIds = invokeProviderCliInstall.mock.calls.map((call) => call[0].agentId);
-      expect(installedIds).toEqual([...RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP]);
+      expect(installedIds).toEqual([...getProviderCliSetupRecommendedIds()]);
     } finally {
       output.restore();
     }
@@ -66,5 +66,11 @@ describe('happier providers setup --yes --json', () => {
     } finally {
       output.restore();
     }
+  });
+
+  it('rejects unsupported provider ids such as customAcp', async () => {
+    await expect(handleProvidersCommand(['setup', '--providers', 'customAcp', '--json'])).rejects.toThrow(
+      /Unsupported provider id\(s\) for setup/i,
+    );
   });
 });

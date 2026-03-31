@@ -1,12 +1,14 @@
 import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { cmd, definitionList, errorFrame, ok } from '@happier-dev/cli-common/output';
+import { cmd, createOutputBuilder, errorFrame, ok } from '@happier-dev/cli-common/output';
+import { buildSshTarget, parseSshTarget } from '@happier-dev/cli-common/systemTasks';
 import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { configuration } from '@/configuration';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
+import { promptSecret } from '@/terminal/prompts/promptSecret';
 import type {
   SystemTaskEvent,
   SystemTaskJsonObject,
@@ -36,6 +38,7 @@ export type MachineCommandDeps = Readonly<{
     publicRelayUrl?: string;
   }>;
   promptInput: (prompt: string) => Promise<string>;
+  promptSecret: (prompt: string) => Promise<string>;
   isInteractiveTerminal: () => boolean;
   sleep: (ms: number) => Promise<void>;
 }>;
@@ -65,6 +68,7 @@ const DEFAULT_DEPS: MachineCommandDeps = {
       : {}),
   }),
   promptInput,
+  promptSecret,
   isInteractiveTerminal,
   sleep: async (ms) => {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -116,6 +120,15 @@ function normalizeRelayRuntimeMode(raw: string | null): 'user' | 'system' {
   return String(raw ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
 }
 
+function normalizeSshAuth(raw: string | null): 'agent' | 'keyfile' | 'password' | null {
+  const text = String(raw ?? '').trim().toLowerCase();
+  if (!text) return null;
+  if (text === 'agent' || text === 'keyfile' || text === 'password') {
+    return text;
+  }
+  throw new Error(`Unsupported SSH auth mode: ${raw}`);
+}
+
 function normalizeTaskChannel(args: readonly string[]): 'stable' | 'preview' | 'dev' {
   const ring = resolvePublicReleaseRingIdFromCliArgs({
     args,
@@ -145,23 +158,59 @@ function buildMachineSetupSpec(params: Readonly<{
   args = channel.rest;
   const ssh = takeFlagValue(args, '--ssh');
   args = ssh.rest;
-  if (!ssh.value) {
-    throw new Error('Missing required flag: --ssh <user@host>');
+  const sshUser = takeFlagValue(args, '--ssh-user');
+  args = sshUser.rest;
+  const sshHost = takeFlagValue(args, '--ssh-host');
+  args = sshHost.rest;
+  const sshPort = takeFlagValue(args, '--ssh-port');
+  args = sshPort.rest;
+  if (!ssh.value && !sshHost.value) {
+    throw new Error('Missing required flag: --ssh <user@host> or --ssh-host <host>.');
   }
-  const normalizedSshTarget = ssh.value.trim();
-  const sshTargetAfterUser = normalizedSshTarget.includes('@')
-    ? normalizedSshTarget.slice(normalizedSshTarget.lastIndexOf('@') + 1)
-    : normalizedSshTarget;
-  if (/\]:\d+$/.test(sshTargetAfterUser)) {
-    throw new Error('SSH target does not support specifying a port in --ssh. Use --ssh-config-file to set Port.');
+  if (ssh.value && (sshUser.value || sshHost.value || sshPort.value)) {
+    throw new Error('Do not combine --ssh with --ssh-user/--ssh-host/--ssh-port.');
   }
-  const sshTargetHostParts = sshTargetAfterUser.split(':');
-  if (sshTargetHostParts.length === 2 && /^\d+$/.test(sshTargetHostParts[1] ?? '')) {
-    throw new Error('SSH target does not support specifying a port in --ssh. Use --ssh-config-file to set Port.');
+  const parsedLegacyTarget = parseSshTarget(ssh.value ?? '');
+  const parsedHostTarget = parseSshTarget(sshHost.value ?? '');
+  const sshTargetUsername = ssh.value
+    ? parsedLegacyTarget.username
+    : (sshUser.value?.trim() || parsedHostTarget.username);
+  const sshTargetHost = ssh.value
+    ? parsedLegacyTarget.host
+    : (parsedHostTarget.host || sshHost.value?.trim() || '');
+  const normalizedSshTarget = buildSshTarget({
+    username: sshTargetUsername,
+    host: sshTargetHost,
+  });
+  if (!normalizedSshTarget) {
+    throw new Error('Missing required SSH host.');
+  }
+  if (ssh.value) {
+    const sshTargetAfterUser = normalizedSshTarget.includes('@')
+      ? normalizedSshTarget.slice(normalizedSshTarget.lastIndexOf('@') + 1)
+      : normalizedSshTarget;
+    if (/\]:\d+$/.test(sshTargetAfterUser)) {
+      throw new Error('SSH target does not support specifying a port in --ssh. Use --ssh-config-file to set Port.');
+    }
+    const sshTargetHostParts = sshTargetAfterUser.split(':');
+    if (sshTargetHostParts.length === 2 && /^\d+$/.test(sshTargetHostParts[1] ?? '')) {
+      throw new Error('SSH target does not support specifying a port in --ssh. Use --ssh-config-file to set Port.');
+    }
+  }
+  const sshPortText = sshPort.value?.trim() ?? '';
+  let normalizedPort: number | undefined;
+  if (sshPortText) {
+    const parsedPort = Number.parseInt(sshPortText, 10);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0) {
+      throw new Error('Missing or invalid value for --ssh-port');
+    }
+    normalizedPort = parsedPort;
   }
 
   const identityFile = takeFlagValue(args, '--identity-file');
   args = identityFile.rest;
+  const sshAuth = takeFlagValue(args, '--ssh-auth');
+  args = sshAuth.rest;
   const sshConfigFile = takeFlagValue(args, '--ssh-config-file');
   args = sshConfigFile.rest;
   const knownHostsPath = takeFlagValue(args, '--known-hosts-path');
@@ -178,7 +227,18 @@ function buildMachineSetupSpec(params: Readonly<{
     throw new Error(`Unknown machine setup arguments: ${args.join(' ')}`);
   }
 
-  const usesKeyfileAuth = Boolean(identityFile.value && identityFile.value.trim());
+  const explicitSshAuth = normalizeSshAuth(sshAuth.value);
+  if (explicitSshAuth === 'password' && identityFile.value?.trim()) {
+    throw new Error('--ssh-auth=password cannot be combined with --identity-file.');
+  }
+  if (explicitSshAuth === 'keyfile' && !identityFile.value?.trim()) {
+    throw new Error('--ssh-auth=keyfile requires --identity-file <path>.');
+  }
+  const sshAuthMode = explicitSshAuth ?? (identityFile.value && identityFile.value.trim() ? 'keyfile' : 'agent');
+  const normalizedTrustedHostKey = trustedHostKey.value?.trim() ?? '';
+  if (normalizedTrustedHostKey && (normalizedTrustedHostKey.includes('\n') || normalizedTrustedHostKey.includes('\r'))) {
+    throw new Error('Invalid --trusted-host-key: expected a single known_hosts line');
+  }
 
   return {
     protocolVersion: 1,
@@ -186,11 +246,12 @@ function buildMachineSetupSpec(params: Readonly<{
     params: {
       ssh: {
         target: normalizedSshTarget,
-        auth: usesKeyfileAuth ? 'keyfile' : 'agent',
-        ...(usesKeyfileAuth ? { identityFile: identityFile.value!.trim() } : {}),
+        ...(typeof normalizedPort === 'number' ? { port: normalizedPort } : {}),
+        auth: sshAuthMode,
+        ...(sshAuthMode === 'keyfile' ? { identityFile: identityFile.value!.trim() } : {}),
         ...(sshConfigFile.value?.trim() ? { sshConfigFile: sshConfigFile.value.trim() } : {}),
         ...(knownHostsPath.value?.trim() ? { knownHostsPath: knownHostsPath.value.trim() } : {}),
-        ...(trustedHostKey.value?.trim() ? { trustedHostKey: trustedHostKey.value.trim() } : {}),
+        ...(normalizedTrustedHostKey ? { trustedHostKey: normalizedTrustedHostKey } : {}),
       },
       relay: {
         relayUrl: params.relaySelection.relayUrl,
@@ -247,8 +308,17 @@ async function resolvePromptAnswer(params: Readonly<{
   interactive: boolean;
   assumeYes: boolean;
   promptInput: (prompt: string) => Promise<string>;
+  promptSecret: (prompt: string) => Promise<string>;
   message: string;
 }>): Promise<unknown> {
+  if (params.prompt.kind === 'ssh.password') {
+    if (!params.interactive) {
+      throw new Error('Non-interactive mode requires an interactive terminal for SSH password auth.');
+    }
+    const password = await params.promptSecret(`${params.message}\nSSH password: `);
+    return { password };
+  }
+
   if (params.assumeYes) {
     if (params.prompt.kind === 'ssh.trustHost' || params.prompt.kind === 'ssh.replaceHostKey') {
       return { trusted: true };
@@ -328,6 +398,7 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
         interactive: deps.isInteractiveTerminal() && !json,
         assumeYes: yes.present,
         promptInput: deps.promptInput,
+        promptSecret: deps.promptSecret,
         message: promptMessage,
       });
       await runner.respond({
@@ -357,7 +428,6 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
         machineId?: unknown;
         relayRuntime?: { relayUrl?: unknown } | null;
       };
-      console.log(ok('Remote machine ready.'));
       const details: Array<{ label: string; value: string }> = [];
       if (typeof data.machineId === 'string' && data.machineId.trim()) {
         details.push({ label: 'Machine ID', value: data.machineId.trim() });
@@ -368,12 +438,15 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
       if (relayRuntimeUrl) {
         details.push({ label: 'Remote relay URL', value: relayRuntimeUrl });
       }
+      const out = createOutputBuilder();
+      out.line(ok('Remote machine ready.'));
       if (details.length > 0) {
-        console.log(definitionList(details, { indent: '  ' }));
+        out.definitionList(details, { indent: '  ' });
       }
       if (relayRuntimeUrl) {
-        console.log(`  Switch this computer to it with: ${cmd(`happier relay set ${relayRuntimeUrl} --use`)}`);
+        out.line(`  Switch this computer to it with: ${cmd(`happier relay set ${relayRuntimeUrl} --use`)}`);
       }
+      console.log(out.render());
       return;
     }
 

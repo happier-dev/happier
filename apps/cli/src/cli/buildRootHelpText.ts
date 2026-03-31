@@ -1,28 +1,26 @@
-import chalk from 'chalk';
+import { bold, helpFormatter } from '@happier-dev/cli-common/output';
 
 import { listRootHelpCommands } from './commandSurfaceManifest';
 
 const HELP_LABEL_WIDTH = 27;
 
-function formatHelpEntry(label: string, description: string): string {
-  return `  ${label.padEnd(HELP_LABEL_WIDTH)} ${description}`;
-}
-
 export function buildRootHelpText(): string {
   const helpEntries = listRootHelpCommands();
+  const usage = helpFormatter.renderRows(
+    helpEntries.map((entry) => ({
+      label: entry.rootHelpLabel ?? '',
+      description: entry.rootHelpDescription ?? '',
+      ...(entry.rootHelpDetail ? { detail: entry.rootHelpDetail } : {}),
+    })),
+    { labelWidth: HELP_LABEL_WIDTH },
+  );
   return `
-${chalk.bold('happier')} - AI CLI On the Go
+${bold('happier')} - AI CLI On the Go
 
-${chalk.bold('Usage:')}
-${helpEntries.map((entry) => {
-    const label = entry.rootHelpLabel ?? '';
-    const description = entry.rootHelpDescription ?? '';
-    const firstLine = formatHelpEntry(label, description);
-    if (!entry.rootHelpDetail) return firstLine;
-    return `${firstLine}\n${formatHelpEntry('', entry.rootHelpDetail)}`;
-  }).join('\n')}
+${bold('Usage:')}
+${usage}
 
-${chalk.bold('Examples:')}
+${bold('Examples:')}
   happier                    Start session
   happier --refresh-settings  Force-refresh account settings before starting
   happier --profile <id-or-name> Start with a backend profile from your settings
@@ -35,7 +33,7 @@ ${chalk.bold('Examples:')}
   happier profiles list      List available backend profiles
   happier doctor             Run diagnostics
 
-${chalk.bold('Server selection (global flags; prefix-only; no persistence):')}
+${bold('Server selection (global flags; prefix-only; no persistence):')}
   happier --server <name-or-id> ...
   happier --server-url <url> [--local-server-url <url>] [--webapp-url <url>] ...
 `;

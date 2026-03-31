@@ -2,29 +2,48 @@ import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { cmd, errorFrame, ok, sectionTitle, kv } from '@happier-dev/cli-common/output';
+import {
+    cmd,
+    createOutputBuilder,
+    errorFrame,
+    ok,
+    renderHelpPage,
+    type HelpPageOptions,
+} from '@happier-dev/cli-common/output';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { readCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 
-function usage(): string {
-    return [
-        `${sectionTitle('happier setup')} - Guided setup`,
-        '',
-        `${sectionTitle('Usage:')}`,
-        `  ${cmd('happier setup [--relay-url <url>] [--provider <id> ...] [--skip-daemon] [--skip-providers] [--yes]')}`,
-        `  ${cmd('happier setup plan [--relay-url <url>] [--json]')}   # prints the planned steps without running them`,
-        '',
-        `${sectionTitle('Description:')}`,
-        '  Sets up this computer for a Relay (relay selection → auth → background service → providers).',
-        '',
-        `${sectionTitle('Examples:')}`,
-        `  ${cmd('happier setup --relay-url https://relay.example.test')}`,
-        `  ${cmd('happier setup --relay-url https://relay.example.test --provider codex --provider claude')}`,
-        `  ${cmd('happier setup plan --relay-url https://relay.example.test')}`,
-        '',
-    ].join('\n');
+function buildSetupHelpPage(): HelpPageOptions {
+    return {
+        title: 'setup',
+        subtitle: 'Guided setup',
+        usage: [
+            {
+                label: cmd('happier setup [--relay-url <url>] [--provider <id> ...] [--skip-daemon] [--skip-providers] [--yes]'),
+                description: 'Runs setup on this computer.',
+            },
+            {
+                label: cmd('happier setup plan [--relay-url <url>] [--json]'),
+                description: 'Prints the planned steps without running them.',
+            },
+        ],
+        sections: [
+            {
+                title: 'Examples:',
+                rows: [
+                    { label: cmd('happier setup --relay-url https://relay.example.test'), description: '' },
+                    { label: cmd('happier setup --relay-url https://relay.example.test --provider codex --provider claude'), description: '' },
+                    { label: cmd('happier setup plan --relay-url https://relay.example.test'), description: '' },
+                ],
+            },
+        ],
+        notes: [
+            'Sets up this computer for a Relay (relay selection → auth → background service → providers).',
+            'In non-interactive environments, pass --yes.',
+        ],
+    };
 }
 
 function argvValue(args: readonly string[], flag: string): string | null {
@@ -205,7 +224,7 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
     const json = wantsJson(args);
     const wantsHelp = args.includes('--help') || args.includes('-h') || args.includes('help');
     if (wantsHelp) {
-        console.log(usage());
+        console.log(renderHelpPage(buildSetupHelpPage()));
         return;
     }
 
@@ -255,13 +274,13 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
             });
             return;
         }
-        console.log(`\n${sectionTitle('Setup plan')}\n`);
-        console.log(kv('Relay:', plan.relayUrl));
-        console.log('');
-        plan.steps.forEach((step, index) => {
-            console.log(`${index + 1}. ${step.display}`);
+        const out = createOutputBuilder();
+        out.section('Setup plan', (section) => {
+            section.definitionList([{ label: 'Relay', value: plan.relayUrl }], { indent: '  ' });
+            section.blank();
+            section.numbered(plan.steps.map((step) => step.display));
         });
-        console.log('');
+        console.log(out.render());
         return;
     }
 
@@ -271,7 +290,9 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
         }
         const confirm = (await promptInputFn('Run setup now? [Y/n] ')).trim().toLowerCase();
         if (confirm.startsWith('n')) {
-            console.log('Aborted.');
+            const out = createOutputBuilder();
+            out.line('Aborted.');
+            console.log(out.render());
             return;
         }
     }
@@ -285,7 +306,9 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
         }
     }
 
-    console.log(ok('Setup complete.'));
+    const out = createOutputBuilder();
+    out.line(ok('Setup complete.'));
+    console.log(out.render());
 }
 
 export async function handleSetupCliCommand(context: CommandContext): Promise<void> {

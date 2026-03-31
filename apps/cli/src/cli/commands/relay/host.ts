@@ -1,9 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { definitionList, ok, sectionTitle } from '@happier-dev/cli-common/output';
+import { createOutputBuilder, ok } from '@happier-dev/cli-common/output';
+import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
+import { promptSecret } from '@/terminal/prompts/promptSecret';
 
 import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
@@ -13,6 +16,8 @@ import {
   installRemoteFirstPartyComponent,
   normalizeRemoteReleaseArch,
   normalizeRemoteReleaseOs,
+  buildSshTarget,
+  parseSshTarget,
   type RelayRuntimeStatusSnapshot,
   type RelayRuntimeTaskParams,
   type SystemTaskSshConnectionConfig,
@@ -33,6 +38,30 @@ type RelayHostInstallJson = Readonly<{
 
 const TEST_FIRST_PARTY_PAYLOAD_ROOT_ENV = 'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT';
 const TEST_FIRST_PARTY_PAYLOAD_VERSION_ID_ENV = 'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID';
+const SSH_PASSWORD_ENV = 'HAPPIER_SSH_PASSWORD';
+
+const ASKPASS_SCRIPT_PATH = join(tmpdir(), 'happier-ssh-askpass.sh');
+
+function ensureAskpassScriptPath(): string {
+  const directory = join(tmpdir(), 'happier');
+  mkdirSync(directory, { recursive: true });
+  if (!existsSync(ASKPASS_SCRIPT_PATH)) {
+    writeFileSync(
+      ASKPASS_SCRIPT_PATH,
+      '#!/bin/sh\nprintf "%s\\n" "$HAPPIER_SSH_PASSWORD"\n',
+      {
+        encoding: 'utf8',
+        mode: 0o700,
+      },
+    );
+  }
+  try {
+    chmodSync(ASKPASS_SCRIPT_PATH, 0o700);
+  } catch {
+    // best effort
+  }
+  return ASKPASS_SCRIPT_PATH;
+}
 
 function takeFlag(args: string[], name: string): { present: boolean; rest: string[] } {
   const rest: string[] = [];
@@ -106,6 +135,9 @@ function parseEnvOverrides(values: readonly string[]): Record<string, string> {
   for (const raw of values) {
     const entry = String(raw ?? '').trim();
     if (!entry) continue;
+    if (/[\r\n\0]/.test(entry)) {
+      throw new Error('Invalid --env value: keys and values must be single-line.');
+    }
     const eq = entry.indexOf('=');
     if (eq < 0) {
       throw new Error(`Invalid --env value (expected KEY=VALUE): ${entry}`);
@@ -114,6 +146,12 @@ function parseEnvOverrides(values: readonly string[]): Record<string, string> {
     const value = entry.slice(eq + 1);
     if (!key) {
       throw new Error(`Invalid --env value (expected KEY=VALUE): ${entry}`);
+    }
+    if (/[\r\n\0]/.test(key) || /[\r\n\0]/.test(value)) {
+      throw new Error('Invalid --env value: keys and values must be single-line.');
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid --env value: unsupported key "${key}".`);
     }
     env[key] = value;
   }
@@ -190,7 +228,7 @@ function buildSshArgs(params: Readonly<{
 
   args.push(
     '-o',
-    'BatchMode=yes',
+    params.ssh.auth === 'password' ? 'BatchMode=no' : 'BatchMode=yes',
     '-o',
     'LogLevel=ERROR',
     '-o',
@@ -223,6 +261,14 @@ function buildSshArgs(params: Readonly<{
       throw new Error('identityFile is required for keyfile auth');
     }
     args.push('-i', params.ssh.identityFile);
+  }
+  if (params.ssh.auth === 'password') {
+    args.push(
+      '-o',
+      'NumberOfPasswordPrompts=1',
+      '-o',
+      'PreferredAuthentications=password,keyboard-interactive',
+    );
   }
 
   args.push(params.ssh.target, 'bash', '-lc', quoteForRemoteBash(params.remoteCommand));
@@ -246,7 +292,7 @@ function buildScpArgs(params: Readonly<{
 
   args.push(
     '-o',
-    'BatchMode=yes',
+    params.ssh.auth === 'password' ? 'BatchMode=no' : 'BatchMode=yes',
     '-o',
     'LogLevel=ERROR',
     '-o',
@@ -280,6 +326,14 @@ function buildScpArgs(params: Readonly<{
     }
     args.push('-i', params.ssh.identityFile);
   }
+  if (params.ssh.auth === 'password') {
+    args.push(
+      '-o',
+      'NumberOfPasswordPrompts=1',
+      '-o',
+      'PreferredAuthentications=password,keyboard-interactive',
+    );
+  }
 
   args.push('-r', params.localPath, `${params.ssh.target}:${params.remotePath}`);
   return args;
@@ -289,8 +343,12 @@ function resolveKnownHostsMode(ssh: SystemTaskSshConnectionConfig): 'app' | 'sys
   return ssh.knownHostsPath ? 'app' : 'system';
 }
 
-function runCommandCapture(command: string, args: readonly string[]): Readonly<{ status: number; stdout: string; stderr: string }> {
-  const out = spawnSync(command, [...args], { encoding: 'utf8' });
+function runCommandCapture(
+  command: string,
+  args: readonly string[],
+  env?: NodeJS.ProcessEnv,
+): Readonly<{ status: number; stdout: string; stderr: string }> {
+  const out = spawnSync(command, [...args], { encoding: 'utf8', ...(env ? { env } : {}) });
   return {
     status: typeof out.status === 'number' ? out.status : 1,
     stdout: String(out.stdout ?? ''),
@@ -298,7 +356,7 @@ function runCommandCapture(command: string, args: readonly string[]): Readonly<{
   };
 }
 
-function buildSshRunner(ssh: SystemTaskSshConnectionConfig) {
+function buildSshRunner(ssh: SystemTaskSshConnectionConfig, password: string | null) {
   const knownHostsMode = resolveKnownHostsMode(ssh);
   const ensureTrustedHostKey = () => {
     if (knownHostsMode !== 'app') return;
@@ -324,11 +382,29 @@ function buildSshRunner(ssh: SystemTaskSshConnectionConfig) {
     knownHostsMode,
     runRemoteText: async (remoteCommand: string) => {
       ensureTrustedHostKey();
-      return runCommandCapture('ssh', buildSshArgs({ ssh, knownHostsMode, remoteCommand }));
+      const env = ssh.auth === 'password'
+        ? {
+            ...process.env,
+            [SSH_PASSWORD_ENV]: String(password ?? ''),
+            SSH_ASKPASS: ensureAskpassScriptPath(),
+            SSH_ASKPASS_REQUIRE: 'force',
+            DISPLAY: process.env.DISPLAY ?? ':0',
+          }
+        : undefined;
+      return runCommandCapture('ssh', buildSshArgs({ ssh, knownHostsMode, remoteCommand }), env);
     },
     copyLocalDirectoryToRemote: async (localPath: string, remotePath: string) => {
       ensureTrustedHostKey();
-      const result = runCommandCapture('scp', buildScpArgs({ ssh, knownHostsMode, localPath, remotePath }));
+      const env = ssh.auth === 'password'
+        ? {
+            ...process.env,
+            [SSH_PASSWORD_ENV]: String(password ?? ''),
+            SSH_ASKPASS: ensureAskpassScriptPath(),
+            SSH_ASKPASS_REQUIRE: 'force',
+            DISPLAY: process.env.DISPLAY ?? ':0',
+          }
+        : undefined;
+      const result = runCommandCapture('scp', buildScpArgs({ ssh, knownHostsMode, localPath, remotePath }), env);
       if (result.status !== 0) {
         throw new Error(result.stderr.trim() || 'SCP failed');
       }
@@ -404,7 +480,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const op = String(args[0] ?? '').trim();
   if (!op) {
-    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--yes] [--json]');
+    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--ssh-user <user> --ssh-host <host>] [--ssh-auth agent|keyfile|password] [--identity-file <path>] [--ssh-port <port>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--yes] [--json]');
   }
 
   let rest = args.slice(1);
@@ -414,6 +490,10 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   rest = modeFlag.rest;
   const sshFlag = takeFlagValue(rest, '--ssh');
   rest = sshFlag.rest;
+  const sshUserFlag = takeFlagValue(rest, '--ssh-user');
+  rest = sshUserFlag.rest;
+  const sshHostFlag = takeFlagValue(rest, '--ssh-host');
+  rest = sshHostFlag.rest;
   const envFlag = takeRepeatedFlagValues(rest, '--env');
   rest = envFlag.rest;
   const serverBinaryFlag = takeFlagValue(rest, '--server-binary');
@@ -428,6 +508,10 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   rest = trustedHostKey.rest;
   const port = takeFlagValue(rest, '--port');
   rest = port.rest;
+  const sshPort = takeFlagValue(rest, '--ssh-port');
+  rest = sshPort.rest;
+  const sshAuth = takeFlagValue(rest, '--ssh-auth');
+  rest = sshAuth.rest;
   const yesFlag = takeFlag(rest, '--yes');
   rest = yesFlag.rest;
   const jsonFlag = takeFlag(rest, '--json');
@@ -440,20 +524,83 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   const channel = normalizeChannel(channelFlag.value);
   const mode = normalizeMode(modeFlag.value);
 
-  const ssh: SystemTaskSshConnectionConfig | null = sshFlag.value
+  if (sshFlag.value && (sshUserFlag.value || sshHostFlag.value)) {
+    throw new Error('Do not combine --ssh with --ssh-user/--ssh-host.');
+  }
+
+  const sshAuthMode = (() => {
+    const raw = String(sshAuth.value ?? '').trim().toLowerCase();
+    if (!raw) {
+      return identityFile.value?.trim() ? 'keyfile' : 'agent';
+    }
+    if (raw === 'agent') return 'agent';
+    if (raw === 'keyfile') return 'keyfile';
+    if (raw === 'password') return 'password';
+    throw new Error(`Invalid --ssh-auth value: ${sshAuth.value}`);
+  })();
+
+  const parsedLegacyTarget = parseSshTarget(sshFlag.value ?? '');
+  const parsedSplitTarget = parseSshTarget(sshHostFlag.value ?? '');
+  const sshTargetUsername = sshFlag.value
+    ? parsedLegacyTarget.username
+    : (sshUserFlag.value?.trim() || parsedSplitTarget.username);
+  const sshTargetHost = sshFlag.value
+    ? parsedLegacyTarget.host
+    : (parsedSplitTarget.host || sshHostFlag.value?.trim() || '');
+  const normalizedSshTarget = buildSshTarget({
+    username: sshTargetUsername,
+    host: sshTargetHost,
+  });
+
+  if (sshUserFlag.value && !sshHostFlag.value && !sshFlag.value) {
+    throw new Error('Missing required flag: --ssh-host <host>.');
+  }
+  if (sshHostFlag.value && !normalizedSshTarget) {
+    throw new Error('Missing required SSH host.');
+  }
+
+  const normalizedPort = (() => {
+    const text = String(sshPort.value ?? port.value ?? '').trim();
+    if (!text) return null;
+    const parsed = Number.parseInt(text, 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error('Missing or invalid value for --ssh-port');
+    }
+    return parsed;
+  })();
+
+  const ssh: SystemTaskSshConnectionConfig | null = (sshFlag.value || sshHostFlag.value)
     ? {
-        target: sshFlag.value.trim(),
-        auth: identityFile.value?.trim() ? 'keyfile' : 'agent',
-        ...(identityFile.value?.trim() ? { identityFile: identityFile.value.trim() } : {}),
+        target: normalizedSshTarget,
+        auth: sshAuthMode,
+        ...(sshAuthMode === 'keyfile'
+          ? { identityFile: identityFile.value?.trim() ? identityFile.value.trim() : '' }
+          : {}),
         ...(sshConfigFile.value?.trim() ? { sshConfigFile: sshConfigFile.value.trim() } : {}),
         ...(knownHostsPath.value?.trim() ? { knownHostsPath: knownHostsPath.value.trim() } : {}),
         ...(trustedHostKey.value?.trim() ? { trustedHostKey: trustedHostKey.value.trim() } : {}),
-        ...(port.value && Number.isFinite(Number(port.value)) ? { port: Number(port.value) } : {}),
+        ...(normalizedPort ? { port: normalizedPort } : {}),
       }
     : null;
 
   if (ssh && !ssh.target) {
-    throw new Error('Missing required flag: --ssh <user@host>');
+    throw new Error('Missing required flag: --ssh <user@host> or --ssh-host <host>.');
+  }
+  if (ssh && ssh.auth === 'keyfile' && (!ssh.identityFile || !ssh.identityFile.trim())) {
+    throw new Error('Missing required flag: --identity-file <path>');
+  }
+
+  let sshPassword: string | null = null;
+  if (ssh && ssh.auth === 'password') {
+    const fromEnv = String(process.env[SSH_PASSWORD_ENV] ?? '').trim();
+    if (fromEnv) {
+      sshPassword = fromEnv;
+    } else if (isInteractiveTerminal()) {
+      sshPassword = (await promptSecret('SSH password: ')).trim();
+    }
+    if (!sshPassword) {
+      throw new Error(`SSH password auth requires ${SSH_PASSWORD_ENV} or an interactive terminal.`);
+    }
   }
 
   const taskParams = resolveRelayRuntimeTaskParams({ channel, mode, ssh });
@@ -463,7 +610,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   if (op === 'status') {
     const engine = ssh
       ? (() => {
-          const runner = buildSshRunner(ssh);
+          const runner = buildSshRunner(ssh, sshPassword);
           const resolveRemoteReleaseTarget = createMemoizedResolveRemoteReleaseTarget(runner);
           return createRelayHostEngine({
             resolveRemoteReleaseTarget: async () => await resolveRemoteReleaseTarget(),
@@ -496,13 +643,16 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    console.log(sectionTitle('Relay host status'));
-    console.log(definitionList([
-      { label: 'url', value: status.relayUrl ?? '(not installed)' },
-      { label: 'installed', value: status.installed ? 'yes' : 'no' },
-      ...(status.version ? [{ label: 'version', value: status.version }] : []),
-      { label: 'service', value: status.service.active ? 'running' : 'stopped' },
-    ], { indent: '  ' }));
+    const out = createOutputBuilder();
+    out.section('Relay host status', (section) => {
+      section.definitionList([
+        { label: 'url', value: status.relayUrl ?? '(not installed)' },
+        { label: 'installed', value: status.installed ? 'yes' : 'no' },
+        ...(status.version ? [{ label: 'version', value: status.version }] : []),
+        { label: 'service', value: status.service.active ? 'running' : 'stopped' },
+      ], { indent: '  ' });
+    });
+    console.log(out.render());
     return;
   }
 
@@ -514,7 +664,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     };
     const result = ssh
       ? (() => {
-          const runner = buildSshRunner(ssh);
+          const runner = buildSshRunner(ssh, sshPassword);
           const resolveRemoteReleaseTarget = createMemoizedResolveRemoteReleaseTarget(runner);
           const override = resolveTestFirstPartyPayloadOverride();
           const engine = createRelayHostEngine({
@@ -601,15 +751,17 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    console.log(ok('Relay host installed'));
-    console.log(`  ${payload.relayUrl}`);
+    const out = createOutputBuilder();
+    out.line(ok('Relay host installed'));
+    out.line(`  ${payload.relayUrl}`);
+    console.log(out.render());
     return;
   }
 
   if (op === 'start' || op === 'stop' || op === 'restart' || op === 'uninstall') {
     const engine = ssh
       ? (() => {
-          const runner = buildSshRunner(ssh);
+          const runner = buildSshRunner(ssh, sshPassword);
           const resolveRemoteReleaseTarget = createMemoizedResolveRemoteReleaseTarget(runner);
           return createRelayHostEngine({
             resolveRemoteReleaseTarget: async () => await resolveRemoteReleaseTarget(),
@@ -635,7 +787,9 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    console.log(ok(`Relay host ${op} requested`));
+    const out = createOutputBuilder();
+    out.line(ok(`Relay host ${op} requested`));
+    console.log(out.render());
     return;
   }
 
