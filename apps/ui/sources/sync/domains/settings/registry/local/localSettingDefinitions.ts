@@ -121,6 +121,26 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Container width basis for sidebar width scaling',
         storageScope: 'local',
     },
+    settingsNavSidebarWidthPx: {
+        schema: z.number(),
+        default: 280,
+        description: 'Preferred settings navigation sidebar width in px',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'bucket',
+            privacy: 'bucketed',
+            identityScope: 'device_user',
+            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('settingsNavSidebarWidthBasisPx', 0.2, 0.35),
+        },
+    },
+    settingsNavSidebarWidthBasisPx: {
+        schema: z.number(),
+        default: 1200,
+        description: 'Container width basis for settings navigation sidebar width scaling',
+        storageScope: 'local',
+    },
     uiMultiPanePanelsEnabled: {
         schema: z.boolean(),
         default: true,

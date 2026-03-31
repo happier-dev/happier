@@ -1,0 +1,98 @@
+import type * as React from 'react';
+import type { UnistylesThemes } from 'react-native-unistyles';
+
+import type { TranslationKey } from '@/text';
+
+export const SETTINGS_PAGE_IDS_V1 = {
+    groupProfileAndAccount: 'groupProfileAndAccount',
+    groupGeneral: 'groupGeneral',
+    groupAiAndAgents: 'groupAiAndAgents',
+    groupSessionsBehavior: 'groupSessionsBehavior',
+    groupFilesAndSourceControl: 'groupFilesAndSourceControl',
+    groupSystem: 'groupSystem',
+
+    general: 'general',
+    account: 'account',
+    secrets: 'secrets',
+    usage: 'usage',
+    machines: 'machines',
+    machinesAdd: 'machinesAdd',
+    machinesThisComputer: 'machinesThisComputer',
+
+    appearance: 'appearance',
+    language: 'language',
+    features: 'features',
+
+    providers: 'providers',
+    subAgent: 'subAgent',
+    profiles: 'profiles',
+    connectedServices: 'connectedServices',
+    mcp: 'mcp',
+    prompts: 'prompts',
+    promptsTemplates: 'promptsTemplates',
+    promptsFolders: 'promptsFolders',
+    promptsStacks: 'promptsStacks',
+    promptsRegistries: 'promptsRegistries',
+    promptsLibrary: 'promptsLibrary',
+    promptsAssets: 'promptsAssets',
+    voice: 'voice',
+    memory: 'memory',
+
+    session: 'session',
+    actions: 'actions',
+    transcript: 'transcript',
+    permissions: 'permissions',
+    toolRendering: 'toolRendering',
+    handoff: 'handoff',
+    automations: 'automations',
+    runs: 'runs',
+
+    sourceControl: 'sourceControl',
+    attachments: 'attachments',
+
+    servers: 'servers',
+    systemStatus: 'systemStatus',
+    notifications: 'notifications',
+    notificationsPush: 'notificationsPush',
+    diagnosis: 'diagnosis',
+    reportIssue: 'reportIssue',
+} as const;
+
+export type SettingsPageId =
+    (typeof SETTINGS_PAGE_IDS_V1)[keyof typeof SETTINGS_PAGE_IDS_V1];
+
+export type SettingsPageGate = Readonly<{
+    featureId?: string;
+    requiresProfiles?: boolean;
+    requiresDevMode?: boolean;
+}>;
+
+export type SettingsPageIconFactory = (params: Readonly<{
+    theme: UnistylesThemes[keyof UnistylesThemes];
+}>) => React.ReactNode;
+
+export type SettingsPageNode = Readonly<{
+    id: SettingsPageId;
+    titleKey: TranslationKey;
+    subtitleKey?: TranslationKey;
+    route?: string;
+    keywords?: readonly string[];
+    icon?: SettingsPageIconFactory;
+    gate?: SettingsPageGate;
+    children?: readonly SettingsPageNode[];
+}>;
+
+export type ResolvedSettingsPageNode = Readonly<{
+    id: SettingsPageId;
+    titleKey: TranslationKey;
+    subtitleKey?: TranslationKey;
+    route?: string;
+    keywords: readonly string[];
+    icon?: SettingsPageIconFactory;
+    children?: readonly ResolvedSettingsPageNode[];
+}>;
+
+export type SettingsPageSearchResult = Readonly<{
+    id: SettingsPageId;
+    route: string;
+}>;

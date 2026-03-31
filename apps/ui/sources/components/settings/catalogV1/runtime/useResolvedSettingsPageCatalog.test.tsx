@@ -1,0 +1,129 @@
+import { describe, expect, it, vi, afterEach } from 'vitest';
+
+import { renderHook } from '@/dev/testkit';
+
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const pathnameState = vi.hoisted(() => ({ value: '/settings' }));
+const featureGateState = vi.hoisted(() => ({
+    enabled: (_featureId: string): boolean => true,
+}));
+const settingsState = vi.hoisted(() => ({
+    useProfiles: false,
+    devModeEnabled: false,
+}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+            select: (options: any) => (options && 'default' in options ? options.default : undefined),
+        },
+    });
+});
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        pathname: () => pathnameState.value,
+    }).module;
+});
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => featureGateState.enabled(featureId),
+}));
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useSetting: (key: string) => {
+            if (key === 'useProfiles') return settingsState.useProfiles;
+            return null;
+        },
+        useLocalSetting: (key: string) => {
+            if (key === 'devModeEnabled') return settingsState.devModeEnabled;
+            return null;
+        },
+    });
+});
+
+function flattenIds(nodes: readonly { id: string; children?: readonly any[] }[]): string[] {
+    const out: string[] = [];
+    const visit = (items: readonly { id: string; children?: readonly any[] }[]) => {
+        for (const item of items) {
+            out.push(item.id);
+            if (item.children) {
+                visit(item.children);
+            }
+        }
+    };
+    visit(nodes);
+    return out;
+}
+
+describe('useResolvedSettingsPageCatalog (V1)', () => {
+    afterEach(() => {
+        pathnameState.value = '/settings';
+        featureGateState.enabled = () => true;
+        settingsState.useProfiles = false;
+        settingsState.devModeEnabled = false;
+    });
+
+    it('filters feature-gated pages out of the visible tree', async () => {
+        featureGateState.enabled = (featureId: string) => featureId !== 'mcp.servers';
+
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        const current = hook.getCurrent();
+        const ids = flattenIds(current.tree);
+        expect(ids).not.toContain('mcp');
+
+        await hook.unmount();
+    });
+
+    it('resolves active page id from the current pathname', async () => {
+        pathnameState.value = '/settings/notifications';
+
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        expect(hook.getCurrent().activePageId).toBe('notifications');
+        await hook.unmount();
+    });
+
+    it('supports keyword search over visible pages', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        const results = hook.getCurrent().search('notif');
+        expect(results.some((result: any) => result.id === 'notifications')).toBe(true);
+
+        await hook.unmount();
+    });
+
+    it('supports fuzzy search for minor typos', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        const results = hook.getCurrent().search('notificatons');
+        expect(results.some((result: any) => result.id === 'notifications')).toBe(true);
+
+        await hook.unmount();
+    });
+});
