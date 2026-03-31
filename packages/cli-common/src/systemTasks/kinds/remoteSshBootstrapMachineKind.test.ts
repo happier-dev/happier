@@ -454,6 +454,89 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     expect(invocations.map((entry) => entry.label)).toContain('relay.runtime.install');
   });
 
+  it('reconfigures the remote CLI and daemon to use the installed relay runtime', async () => {
+    const invocations: Array<Readonly<{ label: string; relayUrl: string }>> = [];
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async () => undefined,
+      approveLocalAuthRequest: async () => undefined,
+      runRemoteCommand: async ({ label, parsed }) => {
+        invocations.push({
+          label,
+          relayUrl: parsed.relay.relayUrl,
+        });
+        if (label === 'auth.status') {
+          return { ok: true, data: { authenticated: false } };
+        }
+        if (label === 'server.configure') {
+          return { ok: true, data: { configured: true } };
+        }
+        if (label === 'auth.request') {
+          return { ok: true, data: { publicKey: 'pub-key', supportsV2: true, webappUrl: 'https://relay.example.test' } };
+        }
+        if (label === 'auth.wait') {
+          return { ok: true, data: { paired: true } };
+        }
+        if (label === 'relay.runtime.install') {
+          return { ok: true, data: { relayUrl: 'http://10.0.0.5:3005' } };
+        }
+        if (label === 'daemon.service.install') {
+          return { ok: true, data: { installed: true } };
+        }
+        if (label === 'daemon.service.start') {
+          return { ok: true, data: { started: true } };
+        }
+        throw new Error(`Unexpected remote command: ${label}`);
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'remote.ssh.bootstrapMachine.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'ssh-relay-runtime-switch',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'https://relay.example.test',
+        },
+        serviceMode: 'user',
+        relayRuntime: {
+          enabled: true,
+          mode: 'user',
+        },
+      },
+    });
+
+    const firstPoll = await waitForPendingPrompt(runner, { taskId: 'ssh-relay-runtime-switch', cursor: 0 });
+    expect(firstPoll.pendingPrompt?.kind).toBe('auth.approveRemoteProvisioning');
+    await runner.respond({
+      taskId: 'ssh-relay-runtime-switch',
+      answer: { approved: true },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'ssh-relay-runtime-switch', cursor: firstPoll.nextCursor });
+    expect(finalPoll.result?.ok).toBe(true);
+
+    expect(invocations).toEqual([
+      { label: 'server.configure', relayUrl: 'https://relay.example.test' },
+      { label: 'auth.status', relayUrl: 'https://relay.example.test' },
+      { label: 'auth.request', relayUrl: 'https://relay.example.test' },
+      { label: 'auth.wait', relayUrl: 'https://relay.example.test' },
+      { label: 'relay.runtime.install', relayUrl: 'https://relay.example.test' },
+      { label: 'server.configure', relayUrl: 'http://10.0.0.5:3005' },
+      { label: 'daemon.service.install', relayUrl: 'http://10.0.0.5:3005' },
+      { label: 'daemon.service.start', relayUrl: 'http://10.0.0.5:3005' },
+    ]);
+  });
+
   it('skips interactive prompts when matching desktop prompt resolutions are provided', async () => {
     const invocations: string[] = [];
     const kind = createRemoteSshBootstrapMachineTaskKind({

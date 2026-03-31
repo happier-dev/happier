@@ -280,28 +280,8 @@ export function createRemoteSshBootstrapMachineTaskKind(
         machineId = typeof authWait.machineId === 'string' ? authWait.machineId : statusMachineId;
       }
 
-      if ((parsedRemote.serviceMode ?? 'user') !== 'none') {
-        requireOk(
-          await deps.runRemoteCommand({
-            label: 'daemon.service.install',
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-          }),
-          'daemon.service.install',
-        );
-        requireOk(
-          await deps.runRemoteCommand({
-            label: 'daemon.service.start',
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-          }),
-          'daemon.service.start',
-        );
-      }
-
       let relayRuntime: Readonly<{ relayUrl: string; mode: 'user' | 'system' }> | undefined;
+      let parsedForDaemon = parsedRemote;
       if (parsedRemote.relayRuntime?.enabled === true) {
         ctx.emit({
           type: 'progress',
@@ -327,6 +307,43 @@ export function createRemoteSshBootstrapMachineTaskKind(
               : parsedRemote.relay.relayUrl,
           mode: parsedRemote.relayRuntime.mode ?? 'user',
         };
+        parsedForDaemon = {
+          ...parsedRemote,
+          relay: {
+            ...parsedRemote.relay,
+            relayUrl: relayRuntime.relayUrl,
+          },
+        };
+        requireOk(
+          await deps.runRemoteCommand({
+            label: 'server.configure',
+            parsed: parsedForDaemon,
+            auth,
+            knownHostsMode,
+          }),
+          'server.configure',
+        );
+      }
+
+      if ((parsedRemote.serviceMode ?? 'user') !== 'none') {
+        requireOk(
+          await deps.runRemoteCommand({
+            label: 'daemon.service.install',
+            parsed: parsedForDaemon,
+            auth,
+            knownHostsMode,
+          }),
+          'daemon.service.install',
+        );
+        requireOk(
+          await deps.runRemoteCommand({
+            label: 'daemon.service.start',
+            parsed: parsedForDaemon,
+            auth,
+            knownHostsMode,
+          }),
+          'daemon.service.start',
+        );
       }
 
       ctx.emit({
