@@ -63,6 +63,9 @@ vi.mock('@/components/settings/machines/RemoteSshMachineSetupSection', () => ({
 vi.mock('./WizardTerminalHandoff', () => ({
     WizardTerminalHandoff: (props: Record<string, unknown>) => React.createElement('WizardTerminalHandoff', props),
 }));
+vi.mock('./ProvidersLogoMultiSelect', () => ({
+    ProvidersLogoMultiSelect: (props: Record<string, unknown>) => React.createElement('ProvidersLogoMultiSelect', props),
+}));
 vi.mock('@/components/settings/providers/setup/ProviderSetupFlow', () => ({
     ProviderSetupFlow: (props: Record<string, unknown>) => React.createElement('ProviderSetupFlow', props),
 }));

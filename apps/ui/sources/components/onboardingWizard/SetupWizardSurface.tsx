@@ -235,13 +235,19 @@ function renderSetupStepBody(params: Readonly<{
             if (requiresDesktop) {
                 return (
                     <View testID="setupWizard-web-providers-handoff" style={params.styles.webRelayHostHandoff}>
+                        <ProvidersLogoMultiSelect
+                            testID="setupWizard-web-providers-select"
+                            providerIds={params.providerSelectionProviderIds}
+                            selectedProviderIds={params.selectedProviderIds}
+                            onToggleProvider={params.onToggleProviderId}
+                        />
                         <WizardTerminalHandoff
                             testID="setupWizard-terminal-handoff"
                             steps={[
                                 {
                                     title: tLoose('settingsProviders.setup.startTitle'),
                                     subtitle: tLoose('settingsProviders.setup.startDescription'),
-                                    code: 'happier providers setup',
+                                    code: params.providersSetupCommand,
                                     scrollTestIDSuffix: 'providers',
                                 },
                             ]}
@@ -341,6 +347,21 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     const [localMachineId, setLocalMachineId] = React.useState<string | null>(null);
     const [remoteMachineId, setRemoteMachineId] = React.useState<string | null>(null);
     const [remoteSetupIntent, setRemoteSetupIntent] = React.useState<RemoteSetupIntent>(initialRemoteIntent);
+    const providerSelectionProviderIds = React.useMemo(() => AGENT_IDS, []);
+    const [selectedProviderIds, setSelectedProviderIds] = React.useState<AgentId[]>([]);
+
+    const onToggleProviderId = React.useCallback((providerId: AgentId) => {
+        setSelectedProviderIds((current) => (
+            current.includes(providerId)
+                ? current.filter((id) => id !== providerId)
+                : [...current, providerId]
+        ));
+    }, []);
+
+    const providersSetupCommand = React.useMemo(() => {
+        if (selectedProviderIds.length === 0) return 'happier providers setup';
+        return `happier providers setup --providers ${selectedProviderIds.join(',')}`;
+    }, [selectedProviderIds]);
 
     React.useEffect(() => {
         if (initialPendingSetupIntent?.phase !== 'awaiting_auth') {
@@ -596,6 +617,10 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
             activeServerUrl: activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : null,
             relayUrl: relayCandidateUrl,
             providerMachineId,
+            providerSelectionProviderIds,
+            selectedProviderIds,
+            onToggleProviderId,
+            providersSetupCommand,
             onLocalSetupSucceeded: handleLocalSetupSucceeded,
             relaySwitchDecision,
             onRelaySwitchDecisionChange: setRelaySwitchDecision,
