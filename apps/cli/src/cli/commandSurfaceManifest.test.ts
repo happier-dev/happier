@@ -7,6 +7,7 @@ describe('CLI command-surface manifest', () => {
     const entries = listRootHelpCommands();
     expect(entries.map((entry) => entry.command)).toEqual([
       null,
+      'setup',
       'auth',
       'mcp',
       'codex',

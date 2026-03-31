@@ -16,6 +16,7 @@ import { handleNotifyCliCommand } from './commands/notify';
 import { handleProfilesCliCommand } from './commands/profiles';
 import { handleRelayCliCommand } from './commands/relay';
 import { handleResumeCliCommand } from './commands/resume';
+import { handleSetupCliCommand } from './commands/setup';
 import { handleSessionCliCommand } from './commands/session/index';
 import { handleServerCliCommand } from './commands/server';
 import { handleSelfCliCommand } from './commands/self';
@@ -50,6 +51,7 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   'acp-catalog': handleConfiguredAcpCatalogCliCommand,
   auth: handleAuthCliCommand,
   'bug-report': handleBugReportCliCommand,
+  setup: handleSetupCliCommand,
   // Backwards-compatible alias for the MCP command namespace.
   // Prefer `happier mcp ...` in docs and help output.
   bridge: handleMcpCliCommand,
