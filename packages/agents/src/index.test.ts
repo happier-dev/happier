@@ -3,11 +3,17 @@ import { describe, expect, it } from 'vitest';
 import {
   CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
   isClaudeLocalPermissionBridgeAgentStateRequest,
+  getProviderCliSetupRecommendedIds,
+  getProviderCliSetupSupportedIds,
 } from './index.js';
 import {
   CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE as CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE_FROM_CLAUDE_INDEX,
   isClaudeLocalPermissionBridgeAgentStateRequest as isClaudeLocalPermissionBridgeAgentStateRequestFromClaudeIndex,
 } from './providers/claude/index.js';
+import {
+  getProviderCliSetupRecommendedIds as getProviderCliSetupRecommendedIdsFromProviderRuntime,
+  getProviderCliSetupSupportedIds as getProviderCliSetupSupportedIdsFromProviderRuntime,
+} from './providers/providerCliRuntime.js';
 
 describe('agents package exports', () => {
   it('re-exports the Claude local permission bridge helper from the package root', () => {
@@ -22,5 +28,10 @@ describe('agents package exports', () => {
       source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE_FROM_CLAUDE_INDEX,
     })).toBe(true);
     expect(isClaudeLocalPermissionBridgeAgentStateRequestFromClaudeIndex({ source: 'other' })).toBe(false);
+  });
+
+  it('re-exports the provider setup helper lists from the package root', () => {
+    expect(getProviderCliSetupSupportedIds()).toEqual(getProviderCliSetupSupportedIdsFromProviderRuntime());
+    expect(getProviderCliSetupRecommendedIds()).toEqual(getProviderCliSetupRecommendedIdsFromProviderRuntime());
   });
 });

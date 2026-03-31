@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { AGENT_IDS } from '../types.js';
 import {
   getProviderCliRuntimeSpec,
+  getProviderCliSetupRecommendedIds,
+  getProviderCliSetupSupportedIds,
   PROVIDER_CLI_RUNTIME_SPECS,
 } from './providerCliRuntime.js';
 
@@ -103,5 +105,34 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
 
   it('covers every built-in provider', () => {
     expect(Object.keys(PROVIDER_CLI_RUNTIME_SPECS).sort()).toEqual([...AGENT_IDS].sort());
+  });
+
+  it('derives the setup-supported provider list from installable runtime specs', () => {
+    expect(getProviderCliSetupSupportedIds()).toEqual([
+      'claude',
+      'codex',
+      'opencode',
+      'gemini',
+      'auggie',
+      'qwen',
+      'kimi',
+      'kilo',
+      'kiro',
+      'pi',
+      'copilot',
+    ]);
+    expect(getProviderCliSetupSupportedIds()).not.toContain('customAcp');
+  });
+
+  it('derives the recommended setup provider list as an ordered subset of the supported providers', () => {
+    expect(getProviderCliSetupRecommendedIds()).toEqual([
+      'claude',
+      'codex',
+      'gemini',
+      'opencode',
+    ]);
+    expect(getProviderCliSetupRecommendedIds().every((providerId) =>
+      getProviderCliSetupSupportedIds().includes(providerId),
+    )).toBe(true);
   });
 });

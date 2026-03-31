@@ -235,8 +235,9 @@ export { normalizeVoiceAgentTurnTranscriptText } from './voice/normalizeVoiceAge
 // Provider CLI runtime surface (used by bundled products like apps/cli via @happier-dev/cli-common).
 export {
   PROVIDER_CLI_RUNTIME_SPECS,
+  getProviderCliSetupRecommendedIds,
+  getProviderCliSetupSupportedIds,
   getProviderCliRuntimeSpec,
-  RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP,
   type ProviderCliInstallCommand,
   type ProviderCliInstallPlatform,
   type ProviderCliManagedInstallSpec,

@@ -1,4 +1,4 @@
-import type { AgentId } from '../types.js';
+import { AGENT_IDS, type AgentId } from '../types.js';
 
 export type ProviderCliSourcePreference = 'system-first' | 'managed-first';
 export type ProviderCliManualInstallKind = 'command' | 'vendor_recipe' | 'none';
@@ -262,4 +262,17 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
 
 export function getProviderCliRuntimeSpec(id: AgentId): ProviderCliRuntimeSpec {
   return PROVIDER_CLI_RUNTIME_SPECS[id];
+}
+
+const PROVIDER_CLI_SETUP_SUPPORTED_IDS: ReadonlyArray<AgentId> = AGENT_IDS.filter(
+  (agentId) => PROVIDER_CLI_RUNTIME_SPECS[agentId].manualInstallKind !== 'none',
+) as ReadonlyArray<AgentId>;
+
+export function getProviderCliSetupSupportedIds(): ReadonlyArray<AgentId> {
+  return [...PROVIDER_CLI_SETUP_SUPPORTED_IDS];
+}
+
+export function getProviderCliSetupRecommendedIds(): ReadonlyArray<AgentId> {
+  const supported = new Set(PROVIDER_CLI_SETUP_SUPPORTED_IDS);
+  return RECOMMENDED_PROVIDER_CLI_IDS_FOR_SETUP.filter((agentId) => supported.has(agentId));
 }
