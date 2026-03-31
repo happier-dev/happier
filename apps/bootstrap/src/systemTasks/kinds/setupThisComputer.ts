@@ -19,6 +19,9 @@ import {
 export interface SetupThisComputerParams {
   surface?: string;
   target?: string;
+  installService?: boolean;
+  startService?: boolean;
+  verifyService?: boolean;
 }
 
 type SetupThisComputerDeps = Readonly<{
@@ -49,7 +52,7 @@ export function createSetupThisComputerHandler(overrides?: Partial<SetupThisComp
     Readonly<{ machineId: string }>,
     void
   > {
-    parseSetupThisComputerParams(params);
+    const parsed = parseSetupThisComputerParams(params);
 
     yield { type: 'progress', stepId: 'setup.thisComputer.resolveRelay' };
     const relay = await deps.readActiveRelay();
@@ -88,25 +91,32 @@ export function createSetupThisComputerHandler(overrides?: Partial<SetupThisComp
       pairedMachineId = await deps.pairLocalMachineIfNeeded(authStatus);
     }
 
-    yield { type: 'progress', stepId: 'setup.thisComputer.installService' };
-    await deps.installService();
-
-    yield { type: 'progress', stepId: 'setup.thisComputer.startService' };
-    await deps.startService();
-
-    yield { type: 'progress', stepId: 'setup.thisComputer.verifyService' };
-    const daemonStatus = await waitForReadyDaemon({
-      readDaemonStatus: deps.readDaemonStatus,
-      signal: context.signal,
-    });
-    if (!daemonStatus.serviceInstalled || !daemonStatus.daemonRunning || daemonStatus.needsAuth) {
-      throw new systemTasks.SystemTaskExecutionError(
-        'daemon_service_not_ready',
-        'Daemon service did not reach a ready state for the selected Relay.',
-      );
+    let daemonStatus: DaemonStatusSnapshot | null = null;
+    if (parsed.installService !== false) {
+      yield { type: 'progress', stepId: 'setup.thisComputer.installService' };
+      await deps.installService();
     }
 
-    const machineId = pairedMachineId ?? daemonStatus.machineId;
+    if (parsed.startService !== false) {
+      yield { type: 'progress', stepId: 'setup.thisComputer.startService' };
+      await deps.startService();
+    }
+
+    if (parsed.verifyService !== false) {
+      yield { type: 'progress', stepId: 'setup.thisComputer.verifyService' };
+      daemonStatus = await waitForReadyDaemon({
+        readDaemonStatus: deps.readDaemonStatus,
+        signal: context.signal,
+      });
+      if (!daemonStatus.serviceInstalled || !daemonStatus.daemonRunning || daemonStatus.needsAuth) {
+        throw new systemTasks.SystemTaskExecutionError(
+          'daemon_service_not_ready',
+          'Daemon service did not reach a ready state for the selected Relay.',
+        );
+      }
+    }
+
+    const machineId = pairedMachineId ?? daemonStatus?.machineId ?? null;
     if (!machineId) {
       throw new systemTasks.SystemTaskExecutionError(
         'machine_id_unavailable',
@@ -122,7 +132,30 @@ export function parseSetupThisComputerParams(params: unknown): SetupThisComputer
   if (params === null || typeof params !== 'object' || Array.isArray(params)) {
     throw new systemTasks.SystemTaskExecutionError('invalid_params', 'Expected setup params to be an object.');
   }
-  return params as SetupThisComputerParams;
+  const record = params as Record<string, unknown>;
+  const parsed: SetupThisComputerParams = {
+    surface: typeof record.surface === 'string' ? record.surface : undefined,
+    target: typeof record.target === 'string' ? record.target : undefined,
+  };
+  if ('installService' in record) {
+    if (typeof record.installService !== 'boolean') {
+      throw new systemTasks.SystemTaskExecutionError('invalid_params', 'Expected installService to be a boolean.');
+    }
+    parsed.installService = record.installService;
+  }
+  if ('startService' in record) {
+    if (typeof record.startService !== 'boolean') {
+      throw new systemTasks.SystemTaskExecutionError('invalid_params', 'Expected startService to be a boolean.');
+    }
+    parsed.startService = record.startService;
+  }
+  if ('verifyService' in record) {
+    if (typeof record.verifyService !== 'boolean') {
+      throw new systemTasks.SystemTaskExecutionError('invalid_params', 'Expected verifyService to be a boolean.');
+    }
+    parsed.verifyService = record.verifyService;
+  }
+  return parsed;
 }
 
 function createSetupThisComputerDeps(overrides?: Partial<SetupThisComputerDeps>): SetupThisComputerDeps {

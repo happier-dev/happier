@@ -14,6 +14,7 @@ import { installOrUpdateRelayRuntimeDefault } from './relayRuntimeTasks.js';
 import { installRemoteFirstPartyComponent, resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyPayloadInstaller.js';
 
 type SshConnectionConfig = SystemTaskSshConnectionConfig;
+type SshConnectionWithPasswordConfig = SshConnectionConfig & Readonly<{ password?: string }>;
 
 function shellQuote(value: string): string {
   const raw = String(value ?? '');
@@ -105,19 +106,16 @@ export async function resolveRemoteSshHostTrustDefault(params: Readonly<{
 
 export async function installRemoteCliDefault(params: Readonly<{
   parsed: RemoteBootstrapMachineParams;
-  auth: Readonly<{ mode: 'agent' } | { mode: 'keyFile'; privateKeyPath: string }>;
+  auth: Readonly<{ mode: 'agent' } | { mode: 'keyFile'; privateKeyPath: string } | { mode: 'password'; password: string }>;
   knownHostsMode: 'app' | 'system';
 }>, deps: Readonly<{
   installRemoteFirstPartyComponent?: typeof installRemoteFirstPartyComponent;
 }> = {}): Promise<void> {
+  const ssh = buildRemoteSshConnection(params.parsed.ssh, params.auth);
   await (deps.installRemoteFirstPartyComponent ?? installRemoteFirstPartyComponent)({
     componentId: 'happier-cli',
     channel: params.parsed.channel,
-    ssh: {
-      ...params.parsed.ssh,
-      auth: params.auth.mode === 'keyFile' ? 'keyfile' : 'agent',
-      ...(params.auth.mode === 'keyFile' ? { identityFile: params.auth.privateKeyPath } : {}),
-    },
+    ssh,
     knownHostsMode: params.knownHostsMode,
   });
 }
@@ -130,8 +128,14 @@ export async function approveLocalRemoteAuthRequestDefault(params: Readonly<{
 }> = {}): Promise<void> {
   const serverUrl = (params.parsed.relay.publicRelayUrl ?? params.parsed.relay.relayUrl).trim();
   const webappUrl = (params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl).trim();
+  const localServerUrl = params.parsed.relay.publicRelayUrl
+    && params.parsed.relay.publicRelayUrl.trim()
+    && params.parsed.relay.publicRelayUrl.trim() !== params.parsed.relay.relayUrl.trim()
+      ? params.parsed.relay.relayUrl.trim()
+      : '';
   const relayArgs = [
     `--server-url=${serverUrl}`,
+    ...(localServerUrl ? [`--local-server-url=${localServerUrl}`] : []),
     `--webapp-url=${webappUrl}`,
   ];
   await (deps.runLocalHappierJsonCommand ?? runLocalHappierJsonCommand)({
@@ -145,30 +149,31 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
     | 'server.configure'
     | 'auth.request'
     | 'auth.wait'
-    | 'daemon.service.install'
-    | 'daemon.service.start'
-    | 'relay.runtime.install';
+  | 'daemon.service.install'
+  | 'daemon.service.start'
+  | 'relay.runtime.install';
   parsed: RemoteBootstrapMachineParams;
-  auth: Readonly<{ mode: 'agent' } | { mode: 'keyFile'; privateKeyPath: string }>;
+  auth: Readonly<{ mode: 'agent' } | { mode: 'keyFile'; privateKeyPath: string } | { mode: 'password'; password: string }>;
   knownHostsMode: 'app' | 'system';
   data?: Record<string, unknown>;
 }>): Promise<Readonly<{ ok: boolean; data: Record<string, unknown> }>> {
-  const ssh: SshConnectionConfig = {
-    ...params.parsed.ssh,
-    auth: params.auth.mode === 'keyFile' ? 'keyfile' : 'agent',
-    ...(params.auth.mode === 'keyFile' ? { identityFile: params.auth.privateKeyPath } : {}),
-  };
+  const ssh = buildRemoteSshConnection(params.parsed.ssh, params.auth);
   const happier = resolveRemoteInstalledFirstPartyBinaryPath({
     componentId: 'happier-cli',
     channel: params.parsed.channel,
   });
+  const localServerUrl = typeof params.data?.localServerUrl === 'string'
+    ? params.data.localServerUrl.trim()
+    : '';
+  const relayUrl = localServerUrl || params.parsed.relay.relayUrl;
+  const webappUrl = localServerUrl || (params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl);
   const relayArgs = [
-    `--server-url=${params.parsed.relay.relayUrl}`,
-    `--webapp-url=${params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl}`,
+    `--server-url=${relayUrl}`,
+    `--webapp-url=${webappUrl}`,
   ];
   const daemonEnv = [
-    `HAPPIER_DAEMON_SERVICE_SERVER_URL=${shellQuote(params.parsed.relay.relayUrl)}`,
-    `HAPPIER_DAEMON_SERVICE_WEBAPP_URL=${shellQuote(params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl)}`,
+    `HAPPIER_DAEMON_SERVICE_SERVER_URL=${shellQuote(relayUrl)}`,
+    `HAPPIER_DAEMON_SERVICE_WEBAPP_URL=${shellQuote(webappUrl)}`,
     ...(params.parsed.relay.publicRelayUrl ? [`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${shellQuote(params.parsed.relay.publicRelayUrl)}`] : []),
   ].join(' ');
 
@@ -239,8 +244,24 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
   };
 }
 
-async function runRemoteJson(
+function buildRemoteSshConnection(
   ssh: SshConnectionConfig,
+  auth: Readonly<{ mode: 'agent' } | { mode: 'keyFile'; privateKeyPath: string } | { mode: 'password'; password: string }>,
+): SshConnectionWithPasswordConfig {
+  return {
+    ...ssh,
+    auth: auth.mode === 'keyFile'
+      ? 'keyfile'
+      : auth.mode === 'password'
+        ? 'password'
+        : 'agent',
+    ...(auth.mode === 'keyFile' ? { identityFile: auth.privateKeyPath } : {}),
+    ...(auth.mode === 'password' ? { password: auth.password } : {}),
+  };
+}
+
+async function runRemoteJson(
+  ssh: SshConnectionWithPasswordConfig,
   remoteCommand: string,
   knownHostsMode: 'app' | 'system',
 ): Promise<unknown> {
@@ -249,7 +270,7 @@ async function runRemoteJson(
 }
 
 async function runRemoteText(
-  ssh: SshConnectionConfig,
+  ssh: SshConnectionWithPasswordConfig,
   remoteCommand: string,
   knownHostsMode: 'app' | 'system',
 ): Promise<Readonly<{ status: number; stdout: string; stderr: string }>> {
@@ -259,6 +280,7 @@ async function runRemoteText(
     auth: {
       kind: ssh.auth,
       identityFile: ssh.identityFile,
+      ...(ssh.auth === 'password' ? { password: ssh.password } : {}),
     },
     knownHosts: knownHostsMode === 'app'
       ? { mode: 'app', path: ssh.knownHostsPath || resolveDefaultKnownHostsPath() }
@@ -268,6 +290,7 @@ async function runRemoteText(
   const result = await runCommandCapture({
     command: invocation.command,
     args: invocation.args,
+    ...(invocation.env ? { env: invocation.env } : {}),
   });
   if (result.status !== 0) {
     throw new Error(redactSshText(result.stderr || result.stdout || `SSH command failed for ${ssh.target}.`));

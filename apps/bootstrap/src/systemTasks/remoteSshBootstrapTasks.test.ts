@@ -293,6 +293,7 @@ describe('approveLocalRemoteAuthRequestDefault', () => {
                 '--json',
                 '--persist',
                 '--server-url=https://public-relay.example.test',
+                '--local-server-url=https://relay.example.test',
                 '--webapp-url=https://relay.example.test',
             ]);
             return { success: true };
@@ -390,6 +391,45 @@ describe('runRemoteBootstrapCommandDefault', () => {
             expect(remoteCommand).toContain(' server set ');
             expect(remoteCommand).toContain('--server-url=https://relay.example.test');
             expect(remoteCommand).not.toContain('--public-server-url=');
+        } finally {
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('uses data.localServerUrl when configuring the remote server profile after installing a relay runtime', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n`,
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({ ok: true, data: { ok: true } })}\n`,
+                },
+            ],
+        });
+
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await runRemoteBootstrapCommandDefault({
+                    label: 'server.configure',
+                    parsed: createParsedRemoteBootstrapParams(),
+                    auth: { mode: 'agent' },
+                    knownHostsMode: 'system',
+                    data: {
+                        localServerUrl: 'http://127.0.0.1:3005',
+                    },
+                });
+            });
+
+            const remoteCommand = fakeSsh.readInvocations().at(-1)?.at(-1) ?? '';
+            expect(remoteCommand).toContain('--server-url=http://127.0.0.1:3005');
+            expect(remoteCommand).not.toContain('--server-url=https://relay.example.test');
         } finally {
             fakeSsh.cleanup();
         }

@@ -21,6 +21,7 @@ import {
 import { normalizeBootstrapChannel, parseFirstJsonObject, runCommandCapture, type CommandExecutionResult } from './taskRuntime.js';
 
 export type SshConnectionConfig = SystemTaskSshConnectionConfig;
+type SshConnectionWithPasswordConfig = SshConnectionConfig & Readonly<{ password?: string }>;
 
 function shellQuote(value: string): string {
   const raw = String(value ?? '');
@@ -133,19 +134,22 @@ function resolveKnownHostsConfig(ssh: SshConnectionConfig, knownHostsMode?: 'app
 }
 
 async function runRemoteTextCapture(ssh: SshConnectionConfig, remoteCommand: string, knownHostsMode?: 'app' | 'system'): Promise<CommandExecutionResult> {
+  const sshWithPassword = ssh as SshConnectionWithPasswordConfig;
   const invocation = buildSshCommand({
-    target: ssh.target,
-    port: ssh.port,
+    target: sshWithPassword.target,
+    port: sshWithPassword.port,
     auth: {
-      kind: ssh.auth,
-      identityFile: ssh.identityFile,
+      kind: sshWithPassword.auth,
+      identityFile: sshWithPassword.identityFile,
+      ...(sshWithPassword.auth === 'password' ? { password: sshWithPassword.password } : {}),
     },
-    knownHosts: resolveKnownHostsConfig(ssh, knownHostsMode),
+    knownHosts: resolveKnownHostsConfig(sshWithPassword, knownHostsMode),
     remoteCommand,
   });
   const result = await runCommandCapture({
     command: invocation.command,
     args: invocation.args,
+    ...(invocation.env ? { env: invocation.env } : {}),
   });
   return result;
 }
@@ -156,20 +160,23 @@ async function copyLocalDirectoryToRemoteCapture(params: Readonly<{
   remotePath: string;
   knownHostsMode?: 'app' | 'system';
 }>): Promise<void> {
+  const ssh = params.ssh as SshConnectionWithPasswordConfig;
   const invocation = buildScpCommand({
-    target: params.ssh.target,
+    target: ssh.target,
     remotePath: params.remotePath,
     localPath: params.localPath,
-    port: params.ssh.port,
+    port: ssh.port,
     auth: {
-      kind: params.ssh.auth,
-      identityFile: params.ssh.identityFile,
+      kind: ssh.auth,
+      identityFile: ssh.identityFile,
+      ...(ssh.auth === 'password' ? { password: ssh.password } : {}),
     },
-    knownHosts: resolveKnownHostsConfig(params.ssh, params.knownHostsMode),
+    knownHosts: resolveKnownHostsConfig(ssh, params.knownHostsMode),
   });
   const result = await runCommandCapture({
     command: invocation.command,
     args: invocation.args,
+    ...(invocation.env ? { env: invocation.env } : {}),
   });
   if (result.status !== 0) {
     throw new Error(redactSshText(result.stderr || result.stdout || `SCP command failed for ${params.ssh.target}.`));

@@ -166,6 +166,14 @@ export async function startService(): Promise<void> {
   await runLocalHappierJsonCommand({ args: ['daemon', 'service', 'start', '--json'] });
 }
 
+export async function stopService(): Promise<void> {
+  await runLocalHappierJsonCommand({ args: ['daemon', 'service', 'stop', '--json'] });
+}
+
+export async function restartService(): Promise<void> {
+  await runLocalHappierJsonCommand({ args: ['daemon', 'service', 'restart', '--json'] });
+}
+
 export async function readDaemonStatus(): Promise<DaemonStatusSnapshot> {
   const parsed = await runLocalHappierJsonCommand({ args: ['daemon', 'status', '--json'] });
   if (!parsed || typeof parsed !== 'object') {

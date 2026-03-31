@@ -1,8 +1,9 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { executeSystemTask } from '@happier-dev/cli-common/systemTasks';
+import { createFakeTailscaleCli } from '@happier-dev/tests/testkit/tailscale/fakeTailscaleCli';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createHsetupSystemTaskRegistry } from './registry.js';
@@ -202,7 +203,7 @@ if (argv[0] === 'server' && argv[1] === 'set' && argv.includes('--json')) {
   process.exit(0);
 }
 
-if (argv[0] === 'daemon' && argv[1] === 'service' && (argv[2] === 'install' || argv[2] === 'start') && argv.includes('--json')) {
+if (argv[0] === 'daemon' && argv[1] === 'service' && (argv[2] === 'install' || argv[2] === 'start' || argv[2] === 'stop' || argv[2] === 'restart') && argv.includes('--json')) {
   printJson({ ok: true, platform: process.platform });
   process.exit(0);
 }
@@ -234,127 +235,6 @@ function restoreEnvVar(key: string, previousValue: string | undefined): void {
     return;
   }
   process.env[key] = previousValue;
-}
-
-function createFakeTailscaleCli(scenario: Readonly<{
-  statusJsons?: readonly Record<string, unknown>[];
-  loginOutputs?: readonly Readonly<{ exitCode?: number; stdout?: string; stderr?: string }>[];
-  serveStatuses?: readonly string[];
-  serveEnableOutputs?: readonly Readonly<{ exitCode?: number; stdout?: string; stderr?: string }>[];
-}>): Readonly<{
-  cliPath: string;
-  cleanup: () => void;
-  readInvocations: () => string[][];
-}> {
-  const rootDir = mkdtempSync(join(tmpdir(), 'hsetup-tailscale-'));
-  const cliPath = join(rootDir, 'fake-tailscale');
-  const statePath = join(rootDir, 'scenario.json');
-  const logPath = join(rootDir, 'invocations.log');
-
-  writeFileSync(statePath, JSON.stringify({
-    statusJsons: scenario.statusJsons ?? [
-      {
-        BackendState: 'Running',
-        AuthURL: '',
-        HaveNodeKey: true,
-        Self: {
-          DNSName: 'relay.tailf00.ts.net.',
-        },
-        CurrentTailnet: {
-          Name: 'example-tailnet',
-        },
-        TailscaleIPs: ['100.64.0.10'],
-      },
-    ],
-    loginOutputs: scenario.loginOutputs ?? [],
-    serveStatuses: scenario.serveStatuses ?? [],
-    serveEnableOutputs: scenario.serveEnableOutputs ?? [],
-  }, null, 2));
-
-  writeFileSync(cliPath, `#!/usr/bin/env node
-const { appendFileSync, readFileSync, writeFileSync } = require('node:fs');
-
-const statePath = process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH;
-const logPath = process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH;
-const argv = process.argv.slice(2);
-appendFileSync(logPath, JSON.stringify(argv) + '\\n');
-
-const state = JSON.parse(readFileSync(statePath, 'utf8'));
-
-function shift(list, fallback) {
-  const values = Array.isArray(list) ? [...list] : [];
-  const next = values.length > 0 ? values.shift() : fallback;
-  return { next, rest: values };
-}
-
-if (argv[0] === 'status' && argv[1] === '--json') {
-  const { next, rest } = shift(state.statusJsons, {
-    BackendState: 'Running',
-    AuthURL: '',
-    HaveNodeKey: true,
-    Self: { DNSName: 'relay.tailf00.ts.net.' },
-    CurrentTailnet: { Name: 'example-tailnet' },
-    TailscaleIPs: ['100.64.0.10'],
-  });
-  state.statusJsons = rest;
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
-  process.stdout.write(JSON.stringify(next) + '\\n');
-  process.exit(0);
-}
-
-if (argv[0] === 'login' && (argv[1] === '--qr' || argv.length === 1)) {
-  const { next, rest } = shift(state.loginOutputs, {
-    exitCode: 0,
-    stdout: 'logged in',
-    stderr: '',
-  });
-  state.loginOutputs = rest;
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
-  if (next.stdout) process.stdout.write(String(next.stdout));
-  if (next.stderr) process.stderr.write(String(next.stderr));
-  process.exit(Number(next.exitCode ?? 0));
-}
-
-if (argv[0] === 'serve' && argv[1] === 'status') {
-  const { next, rest } = shift(state.serveStatuses, '');
-  state.serveStatuses = rest;
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
-  process.stdout.write(String(next ?? ''));
-  process.exit(0);
-}
-
-if (argv[0] === 'serve' && argv[1] === '--bg') {
-  const { next, rest } = shift(state.serveEnableOutputs, {
-    exitCode: 0,
-    stdout: '',
-    stderr: '',
-  });
-  state.serveEnableOutputs = rest;
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
-  if (next.stdout) process.stdout.write(String(next.stdout));
-  if (next.stderr) process.stderr.write(String(next.stderr));
-  process.exit(Number(next.exitCode ?? 0));
-}
-
-process.stderr.write('Unexpected fake tailscale args: ' + argv.join(' ') + '\\n');
-process.exit(1);
-`);
-  chmodSync(cliPath, 0o755);
-  writeFileSync(logPath, '');
-
-  return {
-    cliPath,
-    cleanup() {
-      rmSync(rootDir, { recursive: true, force: true });
-    },
-    readInvocations() {
-      const raw = readFileSync(logPath, 'utf8').trim();
-      if (!raw) {
-        return [];
-      }
-      return raw.split('\n').map((line) => JSON.parse(line) as string[]);
-    },
-  };
 }
 
 async function executeSetupThisComputerTask(): Promise<Awaited<ReturnType<typeof executeSystemTask>>> {
@@ -440,6 +320,63 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['daemon', 'service', 'install', '--json'],
         ['daemon', 'service', 'start', '--json'],
         ['daemon', 'status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);
+      fakeCli.cleanup();
+    }
+  });
+
+  it('can skip background service steps for setup.thisComputer.v1', async () => {
+    const fakeCli = createFakeHappierCli({});
+    const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+    const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_CLI_LOG_PATH;
+    const events: unknown[] = [];
+    try {
+      process.env.HAPPIER_BOOTSTRAP_CLI_PATH = fakeCli.cliPath;
+      process.env.HAPPIER_FAKE_CLI_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
+      process.env.HAPPIER_FAKE_CLI_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'setup.thisComputer.v1',
+          params: {
+            surface: 'desktop.ui',
+            target: 'thisComputer',
+            installService: false,
+            startService: false,
+            verifyService: false,
+          },
+        },
+        taskId: 'task_setup_2',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent(event) {
+          events.push(event);
+        },
+      });
+
+      expect(events).toEqual([
+        expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.resolveRelay' }),
+        expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.checkAuth' }),
+        expect.objectContaining({ type: 'progress', stepId: 'setup.thisComputer.configureRelay' }),
+      ]);
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_setup_2',
+        ok: true,
+        data: {
+          machineId: 'machine-local-1',
+        },
+      });
+      expect(fakeCli.readInvocations()).toEqual([
+        ['server', 'current', '--json'],
+        ['auth', 'status', '--json'],
+        ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
       ]);
     } finally {
       restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
@@ -995,6 +932,200 @@ describe('createHsetupSystemTaskRegistry', () => {
       expect(fakeCli.readInvocations()).toEqual([
         ['daemon', 'status', '--json'],
         ['daemon', 'service', 'start', '--json'],
+        ['daemon', 'status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);
+      fakeCli.cleanup();
+    }
+  });
+
+  it('runs daemon.service.stop.v1 and stops the local daemon service through the canonical CLI wrapper', async () => {
+    const fakeCli = createFakeHappierCli({
+      daemonStatuses: [
+        {
+          server: {
+            serverUrl: 'https://relay.example.test',
+            localServerUrl: null,
+            publicServerUrl: 'https://relay.example.test',
+            webappUrl: 'https://app.example.test',
+          },
+          daemon: {
+            running: true,
+            pid: 4321,
+          },
+          service: {
+            installed: true,
+            running: true,
+          },
+          auth: {
+            authenticated: true,
+            machineRegistered: true,
+            machineId: 'machine-local-1',
+            needsAuth: false,
+          },
+        },
+        {
+          server: {
+            serverUrl: 'https://relay.example.test',
+            localServerUrl: null,
+            publicServerUrl: 'https://relay.example.test',
+            webappUrl: 'https://app.example.test',
+          },
+          daemon: {
+            running: false,
+            pid: null,
+          },
+          service: {
+            installed: true,
+            running: false,
+          },
+          auth: {
+            authenticated: true,
+            machineRegistered: true,
+            machineId: 'machine-local-1',
+            needsAuth: false,
+          },
+        },
+      ],
+    });
+    const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+    const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_CLI_LOG_PATH;
+    try {
+      process.env.HAPPIER_BOOTSTRAP_CLI_PATH = fakeCli.cliPath;
+      process.env.HAPPIER_FAKE_CLI_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
+      process.env.HAPPIER_FAKE_CLI_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'daemon.service.stop.v1',
+          params: {
+            surface: 'desktop.ui',
+            target: { kind: 'local' },
+            mode: 'user',
+          },
+        },
+        taskId: 'task_daemon_stop_1',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent() {},
+      });
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_daemon_stop_1',
+        ok: true,
+        data: {
+          serviceInstalled: true,
+          daemonRunning: false,
+          needsAuth: false,
+          machineId: 'machine-local-1',
+        },
+      });
+      expect(fakeCli.readInvocations()).toEqual([
+        ['daemon', 'status', '--json'],
+        ['daemon', 'service', 'stop', '--json'],
+        ['daemon', 'status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);
+      fakeCli.cleanup();
+    }
+  });
+
+  it('runs daemon.service.restart.v1 and restarts the local daemon service through the canonical CLI wrapper', async () => {
+    const fakeCli = createFakeHappierCli({
+      daemonStatuses: [
+        {
+          server: {
+            serverUrl: 'https://relay.example.test',
+            localServerUrl: null,
+            publicServerUrl: 'https://relay.example.test',
+            webappUrl: 'https://app.example.test',
+          },
+          daemon: {
+            running: true,
+            pid: 4321,
+          },
+          service: {
+            installed: true,
+            running: true,
+          },
+          auth: {
+            authenticated: true,
+            machineRegistered: true,
+            machineId: 'machine-local-1',
+            needsAuth: false,
+          },
+        },
+        {
+          server: {
+            serverUrl: 'https://relay.example.test',
+            localServerUrl: null,
+            publicServerUrl: 'https://relay.example.test',
+            webappUrl: 'https://app.example.test',
+          },
+          daemon: {
+            running: true,
+            pid: 4321,
+          },
+          service: {
+            installed: true,
+            running: true,
+          },
+          auth: {
+            authenticated: true,
+            machineRegistered: true,
+            machineId: 'machine-local-1',
+            needsAuth: false,
+          },
+        },
+      ],
+    });
+    const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+    const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_CLI_LOG_PATH;
+    try {
+      process.env.HAPPIER_BOOTSTRAP_CLI_PATH = fakeCli.cliPath;
+      process.env.HAPPIER_FAKE_CLI_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
+      process.env.HAPPIER_FAKE_CLI_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'daemon.service.restart.v1',
+          params: {
+            surface: 'desktop.ui',
+            target: { kind: 'local' },
+            mode: 'user',
+          },
+        },
+        taskId: 'task_daemon_restart_1',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent() {},
+      });
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_daemon_restart_1',
+        ok: true,
+        data: {
+          serviceInstalled: true,
+          daemonRunning: true,
+          needsAuth: false,
+          machineId: 'machine-local-1',
+        },
+      });
+      expect(fakeCli.readInvocations()).toEqual([
+        ['daemon', 'status', '--json'],
+        ['daemon', 'service', 'restart', '--json'],
         ['daemon', 'status', '--json'],
       ]);
     } finally {
@@ -1834,6 +1965,209 @@ describe('createHsetupSystemTaskRegistry', () => {
       restoreEnvVar('HAPPIER_TAILSCALE_BIN', previousTailscaleBin);
       restoreEnvVar('HAPPIER_TAILSCALE_INSTALL_MODE', previousInstallMode);
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('runs relay.access.configure.v1 and redacts sensitive provider details in the task result', async () => {
+    const store: { config: unknown } = { config: null };
+    const events: unknown[] = [];
+
+    const registry = createHsetupSystemTaskRegistry({
+      relayAccess: {
+        readConfig: async () => store.config as never,
+        writeConfig: async (params) => {
+          store.config = params.config;
+        },
+        getProvider: () => ({
+          descriptor: {
+            id: 'cloudflareNamed',
+            title: 'Cloudflare',
+            exposure: 'public',
+            prerequisites: [],
+          },
+          status: async () => ({
+            state: 'enabled',
+            shareUrl: 'https://relay.example.test',
+            details: {
+              token: 'super-secret',
+              ok: true,
+            },
+          }),
+        }),
+      },
+    });
+
+    const result = await executeSystemTask({
+      spec: {
+        protocolVersion: 1,
+        kind: 'relay.access.configure.v1',
+        params: {
+          target: { kind: 'local' },
+          providerId: 'cloudflareNamed',
+          config: {
+            hostname: 'relay.example.test',
+            token: 'super-secret',
+          },
+        },
+      },
+      taskId: 'task_relay_access_configure_1',
+      registry,
+      now: () => 1700000000000,
+      emitEvent(event) {
+        events.push(event);
+      },
+    });
+
+    expect(events.map((event) => (event as { stepId?: string }).stepId)).toEqual([
+      'relay.access.configure.persist',
+      'relay.access.configure.verify',
+    ]);
+    expect(result).toEqual({
+      protocolVersion: 1,
+      taskId: 'task_relay_access_configure_1',
+      ok: true,
+      data: {
+        configured: true,
+        providerId: 'cloudflareNamed',
+        status: {
+          state: 'enabled',
+          shareUrl: 'https://relay.example.test',
+          details: {
+            ok: true,
+          },
+        },
+      },
+    });
+  });
+
+  it('provides a local command runner for relay.access.configure.v1 when configuring command-backed providers', async () => {
+    const events: unknown[] = [];
+
+    const registry = createHsetupSystemTaskRegistry({
+      relayAccess: {
+        readConfig: async () => null as never,
+        writeConfig: async () => {},
+        getProvider: () => ({
+          descriptor: {
+            id: 'tailscaleServe',
+            title: 'Tailscale Serve',
+            exposure: 'private',
+            prerequisites: [],
+          },
+          configure: async ({ ctx }) => {
+            if (!ctx.runCommand) {
+              return { state: 'error', details: { reason: 'missing_run_command' } };
+            }
+            if (ctx.upstreamUrl !== 'http://127.0.0.1:3005') {
+              return { state: 'error', details: { reason: 'unexpected_upstream_url', upstreamUrl: ctx.upstreamUrl } };
+            }
+            return { state: 'enabled', shareUrl: 'https://relay.example.test' };
+          },
+          status: async ({ ctx }) => {
+            if (!ctx.runCommand) {
+              return { state: 'error', details: { reason: 'missing_run_command' } };
+            }
+            return { state: 'enabled', shareUrl: 'https://relay.example.test' };
+          },
+        }),
+      },
+    });
+
+    const result = await executeSystemTask({
+      spec: {
+        protocolVersion: 1,
+        kind: 'relay.access.configure.v1',
+        params: {
+          target: { kind: 'local' },
+          upstreamUrl: 'http://127.0.0.1:3005',
+          providerId: 'tailscaleServe',
+          config: {
+            providerId: 'tailscaleServe',
+          },
+        },
+      },
+      taskId: 'task_relay_access_configure_local_runner_1',
+      registry,
+      now: () => 1700000000000,
+      emitEvent(event) {
+        events.push(event);
+      },
+    });
+
+    expect(result).toEqual({
+      protocolVersion: 1,
+      taskId: 'task_relay_access_configure_local_runner_1',
+      ok: true,
+      data: {
+        configured: true,
+        providerId: 'tailscaleServe',
+        status: {
+          state: 'enabled',
+          shareUrl: 'https://relay.example.test',
+          details: null,
+        },
+      },
+    });
+  });
+
+  it('persists relay access configuration across registry restarts by default', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'hsetup-relay-access-home-'));
+    const previousHome = process.env.HOME;
+    process.env.HOME = homeDir;
+    try {
+      const registry1 = createHsetupSystemTaskRegistry();
+      const configure = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'relay.access.configure.v1',
+          params: {
+            target: { kind: 'local' },
+            providerId: 'lan',
+            config: {
+              providerId: 'lan',
+              url: 'http://10.0.0.5:3005',
+            },
+          },
+        },
+        taskId: 'task_relay_access_persist_1',
+        registry: registry1,
+        now: () => 1700000000000,
+        emitEvent: () => undefined,
+      });
+      expect(configure.ok).toBe(true);
+
+      const registry2 = createHsetupSystemTaskRegistry();
+      const status = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'relay.access.status.v1',
+          params: {
+            target: { kind: 'local' },
+          },
+        },
+        taskId: 'task_relay_access_persist_2',
+        registry: registry2,
+        now: () => 1700000000000,
+        emitEvent: () => undefined,
+      });
+
+      expect(status).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_relay_access_persist_2',
+        ok: true,
+        data: {
+          configured: true,
+          providerId: 'lan',
+          status: {
+            state: 'enabled',
+            shareUrl: 'http://10.0.0.5:3005',
+            details: null,
+          },
+        },
+      });
+    } finally {
+      process.env.HOME = previousHome;
+      rmSync(homeDir, { recursive: true, force: true });
     }
   });
 });

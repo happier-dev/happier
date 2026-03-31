@@ -1,11 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { systemTasks } from '@happier-dev/cli-common';
+import { relayAccess, systemTasks } from '@happier-dev/cli-common';
+import { TailscaleCommandError } from '@happier-dev/cli-common/tailscale';
+import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/providers';
+import type { RelayAccessExecutionContext } from '@happier-dev/cli-common/relayAccess';
 import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
+
+import { buildScpCommand, buildSshCommand, redactSshText } from '../ssh/index.js';
 
 import { runLocalHappierJsonCommand } from './happierCli.js';
 import { createSecureAccessTailscaleHandler } from './kinds/secureAccessTailscale.js';
-import { createDaemonServiceStartHandler, createDaemonServiceStatusHandler } from './kinds/daemonService.js';
+import {
+  createDaemonServiceRestartHandler,
+  createDaemonServiceStartHandler,
+  createDaemonServiceStatusHandler,
+  createDaemonServiceStopHandler,
+} from './kinds/daemonService.js';
 import { createSetupThisComputerHandler } from './kinds/setupThisComputer.js';
 import {
   type AuthStatusSnapshot,
@@ -22,6 +34,8 @@ import {
 } from './localDaemonCli.js';
 import { approveLocalRemoteAuthRequestDefault, installRemoteCliDefault, resolveRemoteSshHostTrustDefault, runRemoteBootstrapCommandDefault } from './remoteSshBootstrapTasks.js';
 import { checkRelayRuntimeHealthDefault, controlRelayRuntimeDefault, installOrUpdateRelayRuntimeDefault, readRelayRuntimeStatusDefault } from './relayRuntimeTasks.js';
+import { createRelayAccessConfigStore } from './relayAccessConfigStore.js';
+import { runCommandCapture } from './taskRuntime.js';
 
 function stableStringify(value: SystemTaskJsonValue): string {
   if (value === null) return 'null';
@@ -40,12 +54,19 @@ function digestParams(params: SystemTaskJsonValue): string {
   return createHash('sha256').update(stableStringify(params)).digest('hex');
 }
 
+function shellQuote(value: string): string {
+  const raw = String(value ?? '');
+  if (!raw) return "''";
+  return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
+}
+
 type SystemTaskRegistry = ReturnType<typeof systemTasks.createSystemTaskRegistry>;
 
 type HsetupRegistryDeps = Readonly<{
   relayRuntime?: Partial<RelayRuntimeDeps>;
   remoteSshBootstrap?: Partial<RemoteSshBootstrapDeps>;
   relayDriftRepair?: Partial<RelayDriftRepairDeps>;
+  relayAccess?: Partial<RelayAccessDeps>;
 }>;
 
 type RelayRuntimeDeps = Readonly<{
@@ -69,10 +90,18 @@ type RelayDriftRepairDeps = Readonly<{
   }>) => Promise<SystemTaskJsonObject>;
 }>;
 
+type RelayAccessDeps = Readonly<{
+  readConfig: (params: Readonly<{ target: systemTasks.RelayAccessTaskTarget }>) => Promise<relayAccess.RelayAccessConfig | null>;
+  writeConfig: (params: Readonly<{ target: systemTasks.RelayAccessTaskTarget; config: relayAccess.RelayAccessConfig | null }>) => Promise<void>;
+  getProvider: (providerId: relayAccess.RelayAccessProviderId) => relayAccess.RelayAccessProvider;
+  createExecutionContext: (params: Readonly<{ target: systemTasks.RelayAccessTaskTarget; upstreamUrl: string | null }>) => relayAccess.RelayAccessExecutionContext;
+}>;
+
 export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): SystemTaskRegistry {
   const relayRuntimeDeps = createRelayRuntimeDeps(deps.relayRuntime);
   const remoteBootstrapDeps = createRemoteSshBootstrapDeps(deps.remoteSshBootstrap);
   const relayDriftRepairDeps = createRelayDriftRepairDeps(deps.relayDriftRepair);
+  const relayAccessDeps = createRelayAccessDeps(deps.relayAccess);
   const relayRuntimeStatusHandler = systemTasks.createExecutionRunnerFromKind(
     systemTasks.createRelayRuntimeStatusTaskKind(relayRuntimeDeps),
   );
@@ -85,11 +114,40 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
   const relayRuntimeStopHandler = systemTasks.createExecutionRunnerFromKind(
     systemTasks.createRelayRuntimeStopTaskKind(relayRuntimeDeps),
   );
+  const relayAccessStatusHandler = systemTasks.createExecutionRunnerFromKind(
+    systemTasks.createRelayAccessStatusTaskKind({
+      readConfig: relayAccessDeps.readConfig,
+      getProvider: relayAccessDeps.getProvider,
+      createExecutionContext: relayAccessDeps.createExecutionContext,
+    }),
+  );
+  const relayAccessConfigureHandler = systemTasks.createExecutionRunnerFromKind(
+    systemTasks.createRelayAccessConfigureTaskKind({
+      writeConfig: async (params) => {
+        await relayAccessDeps.writeConfig({
+          target: params.target,
+          config: params.config,
+        });
+      },
+      getProvider: relayAccessDeps.getProvider,
+      createExecutionContext: relayAccessDeps.createExecutionContext,
+    }),
+  );
+  const relayAccessDisableHandler = systemTasks.createExecutionRunnerFromKind(
+    systemTasks.createRelayAccessDisableTaskKind({
+      readConfig: relayAccessDeps.readConfig,
+      writeConfig: relayAccessDeps.writeConfig,
+      getProvider: relayAccessDeps.getProvider,
+      createExecutionContext: relayAccessDeps.createExecutionContext,
+    }),
+  );
   const remoteBootstrapHandler = systemTasks.createExecutionRunnerFromKind(
     systemTasks.createRemoteSshBootstrapMachineTaskKind(remoteBootstrapDeps),
   );
   const daemonServiceStatusHandler = createDaemonServiceStatusHandler();
   const daemonServiceStartHandler = createDaemonServiceStartHandler();
+  const daemonServiceStopHandler = createDaemonServiceStopHandler();
+  const daemonServiceRestartHandler = createDaemonServiceRestartHandler();
   const setupRepairThisComputerHandler = createSetupRepairThisComputerHandler();
 
   return systemTasks.createSystemTaskRegistry([
@@ -100,6 +158,14 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
     {
       kind: 'daemon.service.start.v1',
       handler: daemonServiceStartHandler,
+    },
+    {
+      kind: 'daemon.service.stop.v1',
+      handler: daemonServiceStopHandler,
+    },
+    {
+      kind: 'daemon.service.restart.v1',
+      handler: daemonServiceRestartHandler,
     },
     {
       kind: 'system.noop.v1',
@@ -192,6 +258,18 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
     {
       kind: 'relay.runtime.stop.v1',
       handler: relayRuntimeStopHandler,
+    },
+    {
+      kind: 'relay.access.status.v1',
+      handler: relayAccessStatusHandler,
+    },
+    {
+      kind: 'relay.access.configure.v1',
+      handler: relayAccessConfigureHandler,
+    },
+    {
+      kind: 'relay.access.disable.v1',
+      handler: relayAccessDisableHandler,
     },
     {
       kind: 'secureAccess.tailscale.v1',
@@ -466,5 +544,137 @@ function createRemoteSshBootstrapDeps(overrides: HsetupRegistryDeps['remoteSshBo
     installRemoteCli: overrides?.installRemoteCli ?? installRemoteCliDefault,
     approveLocalAuthRequest: overrides?.approveLocalAuthRequest ?? approveLocalRemoteAuthRequestDefault,
     runRemoteCommand: overrides?.runRemoteCommand ?? runRemoteBootstrapCommandDefault,
+  };
+}
+
+function createRelayAccessDeps(overrides?: Partial<RelayAccessDeps>): RelayAccessDeps {
+  const store = createRelayAccessConfigStore({
+    resolveHappyHomeDir: () => resolveHappyHomeDirFromEnvironment(process.env),
+    ssh: {
+      runRemoteText: async ({ ssh, remoteCommand }) => {
+        const invocation = buildSshCommand({
+          target: ssh.target,
+          port: ssh.port,
+          auth: {
+            kind: ssh.auth,
+            identityFile: ssh.identityFile,
+          },
+          knownHosts: ssh.knownHostsPath ? { mode: 'app', path: ssh.knownHostsPath } : { mode: 'system' },
+          remoteCommand,
+        });
+        const result = await runCommandCapture({
+          command: invocation.command,
+          args: invocation.args,
+          ...(invocation.env ? { env: invocation.env } : {}),
+        });
+        return result;
+      },
+      copyLocalFileToRemote: async ({ ssh, localPath, remotePath }) => {
+        const invocation = buildScpCommand({
+          target: ssh.target,
+          port: ssh.port,
+          auth: {
+            kind: ssh.auth,
+            identityFile: ssh.identityFile,
+          },
+          knownHosts: ssh.knownHostsPath ? { mode: 'app', path: ssh.knownHostsPath } : { mode: 'system' },
+          localPath,
+          remotePath,
+        });
+        const result = await runCommandCapture({
+          command: invocation.command,
+          args: invocation.args,
+          ...(invocation.env ? { env: invocation.env } : {}),
+        });
+        if (result.status !== 0) {
+          throw new Error(redactSshText(result.stderr || result.stdout || `SCP command failed for ${ssh.target}.`));
+        }
+      },
+    },
+  });
+
+  const readConfig = overrides?.readConfig ?? store.readConfig;
+  const writeConfig = overrides?.writeConfig ?? store.writeConfig;
+
+  const getProvider = overrides?.getProvider ?? ((providerId) => relayAccess.getRelayAccessProvider(providerId));
+  const createExecutionContext = overrides?.createExecutionContext ?? ((params) => {
+    type RunCommand = NonNullable<RelayAccessExecutionContext['runCommand']>;
+    type RunCommandParams = Parameters<RunCommand>[0];
+    type RunCommandResult = Awaited<ReturnType<RunCommand>>;
+
+    const base = {
+      env: process.env,
+      upstreamUrl: params.upstreamUrl,
+    };
+
+    if (params.target.kind === 'ssh') {
+      const ssh = params.target.ssh;
+      return {
+        ...base,
+        resolveCommandOnPath: (command: string) => command,
+        runCommand: async ({ command, args, env, timeoutMs }: RunCommandParams): Promise<RunCommandResult> => {
+          const remoteCommand = [command, ...args].map(shellQuote).join(' ');
+          const invocation = buildSshCommand({
+            target: ssh.target,
+            port: ssh.port,
+            auth: {
+              kind: ssh.auth,
+              identityFile: ssh.identityFile,
+            },
+            knownHosts: ssh.knownHostsPath
+              ? { mode: 'app', path: ssh.knownHostsPath }
+              : { mode: 'system' },
+            remoteCommand,
+          });
+          const result = await runCommandCapture({
+            command: invocation.command,
+            args: invocation.args,
+            ...(invocation.env ? { env: invocation.env } : {}),
+            ...(timeoutMs ? { timeoutMs } : {}),
+          });
+          const structured = {
+            command,
+            args,
+            exitCode: result.status,
+            stdout: result.stdout,
+            stderr: result.stderr,
+          };
+          if (structured.exitCode !== 0) {
+            throw new TailscaleCommandError(`Remote command failed: ${command}`, structured);
+          }
+          return structured;
+        },
+      };
+    }
+
+    return {
+      ...base,
+      runCommand: async ({ command, args, env, timeoutMs }: RunCommandParams): Promise<RunCommandResult> => {
+        const result = await runCommandCapture({
+          command,
+          args,
+          ...(env ? { env } : {}),
+          ...(timeoutMs ? { timeoutMs } : {}),
+        });
+        const structured = {
+          command,
+          args,
+          exitCode: result.status,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
+        if (structured.exitCode !== 0) {
+          throw new TailscaleCommandError(`Command failed: ${command}`, structured);
+        }
+        return structured;
+      },
+    };
+  });
+
+  return {
+    readConfig,
+    writeConfig,
+    getProvider,
+    createExecutionContext,
   };
 }

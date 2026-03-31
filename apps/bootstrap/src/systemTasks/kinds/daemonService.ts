@@ -4,6 +4,8 @@ import {
   type DaemonStatusSnapshot,
   readDaemonStatus,
   startService,
+  restartService,
+  stopService,
   waitForReadyDaemon,
 } from '../localDaemonCli.js';
 
@@ -42,6 +44,15 @@ function assertDaemonReady(status: DaemonStatusSnapshot): void {
     throw new systemTasks.SystemTaskExecutionError(
       'not_authenticated',
       'Authenticate this computer with the selected Relay before continuing.',
+    );
+  }
+}
+
+function assertDaemonInstalled(status: DaemonStatusSnapshot): void {
+  if (!status.serviceInstalled) {
+    throw new systemTasks.SystemTaskExecutionError(
+      'daemon_service_not_installed',
+      'Daemon service is not installed on this computer yet.',
     );
   }
 }
@@ -95,6 +106,91 @@ export function createDaemonServiceStartHandler() {
       type: 'progress',
       stepId: 'task.step.finish',
       message: 'Daemon service started',
+    };
+
+    return toDaemonServiceResult(readyStatus);
+  };
+}
+
+export function createDaemonServiceStopHandler() {
+  return async function* (
+    params: unknown,
+    _context: Readonly<{ signal: AbortSignal }>,
+  ): AsyncGenerator<Readonly<{ type: 'progress'; stepId: string; message?: string }>, DaemonServiceTaskResult, void> {
+    parseDaemonServiceParams(params);
+    yield {
+      type: 'progress',
+      stepId: 'task.step.prepare',
+      message: 'Inspect daemon service',
+    };
+
+    const currentStatus = await readDaemonStatus();
+    assertDaemonInstalled(currentStatus);
+
+    yield {
+      type: 'progress',
+      stepId: 'task.step.stop',
+      message: 'Stop daemon service',
+    };
+
+    await stopService();
+
+    const stoppedStatus = await readDaemonStatus();
+    if (stoppedStatus.daemonRunning) {
+      throw new systemTasks.SystemTaskExecutionError(
+        'daemon_service_not_stopped',
+        'Daemon service did not stop cleanly.',
+      );
+    }
+
+    yield {
+      type: 'progress',
+      stepId: 'task.step.finish',
+      message: 'Daemon service stopped',
+    };
+
+    return toDaemonServiceResult(stoppedStatus);
+  };
+}
+
+export function createDaemonServiceRestartHandler() {
+  return async function* (
+    params: unknown,
+    context: Readonly<{ signal: AbortSignal }>,
+  ): AsyncGenerator<Readonly<{ type: 'progress'; stepId: string; message?: string }>, DaemonServiceTaskResult, void> {
+    parseDaemonServiceParams(params);
+    yield {
+      type: 'progress',
+      stepId: 'task.step.prepare',
+      message: 'Inspect daemon service',
+    };
+
+    const currentStatus = await readDaemonStatus();
+    assertDaemonInstalled(currentStatus);
+
+    yield {
+      type: 'progress',
+      stepId: 'task.step.restart',
+      message: 'Restart daemon service',
+    };
+
+    await restartService();
+
+    const readyStatus = await waitForReadyDaemon({
+      readDaemonStatus,
+      signal: context.signal,
+    });
+    if (!readyStatus.serviceInstalled || !readyStatus.daemonRunning || readyStatus.needsAuth) {
+      throw new systemTasks.SystemTaskExecutionError(
+        'daemon_service_not_ready',
+        'Daemon service did not reach a ready state.',
+      );
+    }
+
+    yield {
+      type: 'progress',
+      stepId: 'task.step.finish',
+      message: 'Daemon service restarted',
     };
 
     return toDaemonServiceResult(readyStatus);
