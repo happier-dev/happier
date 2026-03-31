@@ -18,7 +18,8 @@ type RemoteHostTrustPromptKind = CanonicalRemoteHostTrustPromptKind | 'sshHostTr
 
 type RemoteSshAuth =
   | Readonly<{ mode: 'agent' }>
-  | Readonly<{ mode: 'keyFile'; privateKeyPath: string }>;
+  | Readonly<{ mode: 'keyFile'; privateKeyPath: string }>
+  | Readonly<{ mode: 'password'; password: string }>;
 
 function isLoopbackHostname(hostname: string): boolean {
   const normalized = String(hostname ?? '').trim().toLowerCase();
@@ -37,6 +38,33 @@ function isLoopbackRelayUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveRelayRuntimeRelayUrlFromInstallResult(
+  installResult: Record<string, unknown>,
+  fallbackRelayUrl: string,
+): string {
+  const relayUrl = typeof installResult.relayUrl === 'string' ? installResult.relayUrl.trim() : '';
+  if (relayUrl) {
+    return relayUrl;
+  }
+
+  const serverUrl = typeof installResult.serverUrl === 'string' ? installResult.serverUrl.trim() : '';
+  if (serverUrl) {
+    return serverUrl;
+  }
+
+  const serverPortRaw = installResult.serverPort;
+  const serverPort = typeof serverPortRaw === 'number'
+    ? serverPortRaw
+    : (typeof serverPortRaw === 'string'
+        ? Number.parseInt(serverPortRaw.trim(), 10)
+        : Number.NaN);
+  if (Number.isInteger(serverPort) && serverPort > 0 && serverPort <= 65535) {
+    return `http://127.0.0.1:${serverPort}`;
+  }
+
+  return fallbackRelayUrl;
 }
 
 export interface RemoteBootstrapMachineParams {
@@ -125,7 +153,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
         ? parsedRaw.relay.publicRelayUrl.trim()
         : '';
       const remoteRelayUrl = publicRelayUrl || parsedRaw.relay.relayUrl;
-      const parsedRemote = remoteRelayUrl && remoteRelayUrl !== parsedRaw.relay.relayUrl
+      let parsedRemote = remoteRelayUrl && remoteRelayUrl !== parsedRaw.relay.relayUrl
         ? {
             ...parsedRaw,
             relay: {
@@ -134,7 +162,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
             },
           }
         : parsedRaw;
-      const parsedLocal = parsedRaw;
+      let parsedLocalForApproval = parsedRaw;
 
       if (isLoopbackRelayUrl(parsedRemote.relay.relayUrl)) {
         throw new SystemTaskExecutionError(
@@ -143,7 +171,10 @@ export function createRemoteSshBootstrapMachineTaskKind(
         );
       }
       const knownHostsMode = parsedRemote.knownHostsMode ?? 'app';
-      const auth = normalizeRemoteSshAuth(parsedRemote.ssh);
+      const auth = await resolveRemoteSshAuth({
+        ctx,
+        parsedRemote,
+      });
 
       ctx.emit({
         type: 'progress',
@@ -177,6 +208,32 @@ export function createRemoteSshBootstrapMachineTaskKind(
         }
       }
 
+      let relayRuntime: Readonly<{ relayUrl: string; mode: 'user' | 'system' }> | undefined;
+      let relayRuntimeLocalServerUrl: string | undefined;
+      if (parsedRemote.relayRuntime?.enabled === true) {
+        ctx.emit({
+          type: 'progress',
+          stepId: 'relay.runtime.install',
+          message: 'Installing relay runtime on the remote machine',
+        });
+
+        const relayInstall = requireOk(
+          await deps.runRemoteCommand({
+            label: 'relay.runtime.install',
+            parsed: parsedRemote,
+            auth,
+            knownHostsMode,
+          }),
+          'relay.runtime.install',
+        );
+
+        relayRuntime = {
+          relayUrl: resolveRelayRuntimeRelayUrlFromInstallResult(relayInstall, parsedRemote.relay.relayUrl),
+          mode: parsedRemote.relayRuntime.mode ?? 'user',
+        };
+        relayRuntimeLocalServerUrl = relayRuntime.relayUrl;
+      }
+
       ctx.emit({
         type: 'progress',
         stepId: 'ssh.installCli',
@@ -190,6 +247,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
             parsed: parsedRemote,
             auth,
             knownHostsMode,
+            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
           }),
           'server.configure',
         );
@@ -205,6 +263,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
             parsed: parsedRemote,
             auth,
             knownHostsMode,
+            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
           }),
           'server.configure',
         );
@@ -237,6 +296,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
             parsed: parsedRemote,
             auth,
             knownHostsMode,
+            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
           }),
           'auth.request',
         );
@@ -257,7 +317,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
         publicKey = ensureNonEmptyString(authRequest.publicKey, 'auth.request.publicKey');
         await deps.approveLocalAuthRequest({
           publicKey,
-          parsed: parsedLocal,
+          parsed: parsedLocalForApproval,
         });
 
         ctx.emit({
@@ -272,7 +332,9 @@ export function createRemoteSshBootstrapMachineTaskKind(
             parsed: parsedRemote,
             auth,
             knownHostsMode,
-            data: { publicKey },
+            data: relayRuntimeLocalServerUrl
+              ? { publicKey, localServerUrl: relayRuntimeLocalServerUrl }
+              : { publicKey },
           }),
           'auth.wait',
         );
@@ -280,72 +342,24 @@ export function createRemoteSshBootstrapMachineTaskKind(
         machineId = typeof authWait.machineId === 'string' ? authWait.machineId : statusMachineId;
       }
 
-      let relayRuntime: Readonly<{ relayUrl: string; mode: 'user' | 'system' }> | undefined;
-      let parsedForDaemon = parsedRemote;
-      if (parsedRemote.relayRuntime?.enabled === true) {
-        ctx.emit({
-          type: 'progress',
-          stepId: 'relay.runtime.install',
-          message: 'Installing relay runtime on the remote machine',
-        });
-
-        const relayInstall = requireOk(
-          await deps.runRemoteCommand({
-            label: 'relay.runtime.install',
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-          }),
-          'relay.runtime.install',
-        );
-
-        relayRuntime = {
-          relayUrl: typeof relayInstall.relayUrl === 'string' && relayInstall.relayUrl.trim()
-            ? relayInstall.relayUrl.trim()
-            : typeof relayInstall.serverUrl === 'string' && relayInstall.serverUrl.trim()
-              ? relayInstall.serverUrl.trim()
-              : parsedRemote.relay.relayUrl,
-          mode: parsedRemote.relayRuntime.mode ?? 'user',
-        };
-
-        parsedForDaemon = {
-          ...parsedRemote,
-          relay: {
-            ...parsedRemote.relay,
-            relayUrl: relayRuntime.relayUrl,
-          },
-        };
-
-        // When we install a relay runtime on the remote machine, prefer switching the remote
-        // CLI/daemon to that relay URL so subsequent operations (daemon install/start) attach to
-        // the freshly-installed relay host by default.
-        requireOk(
-          await deps.runRemoteCommand({
-            label: 'server.configure',
-            parsed: parsedForDaemon,
-            auth,
-            knownHostsMode,
-          }),
-          'server.configure',
-        );
-      }
-
       if ((parsedRemote.serviceMode ?? 'user') !== 'none') {
         requireOk(
           await deps.runRemoteCommand({
             label: 'daemon.service.install',
-            parsed: parsedForDaemon,
+            parsed: parsedRemote,
             auth,
             knownHostsMode,
+            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
           }),
           'daemon.service.install',
         );
         requireOk(
           await deps.runRemoteCommand({
             label: 'daemon.service.start',
-            parsed: parsedForDaemon,
+            parsed: parsedRemote,
             auth,
             knownHostsMode,
+            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
           }),
           'daemon.service.start',
         );
@@ -428,7 +442,40 @@ function normalizeRemoteSshAuth(ssh: SystemTaskSshConnectionConfig): RemoteSshAu
       privateKeyPath: ensureNonEmptyString(ssh.identityFile, 'ssh.identityFile'),
     };
   }
+  if (ssh.auth === 'password') {
+    return {
+      mode: 'password',
+      password: '',
+    };
+  }
   return { mode: 'agent' };
+}
+
+async function resolveRemoteSshAuth(params: Readonly<{
+  ctx: Pick<Parameters<InteractiveSystemTaskKind['run']>[0], 'prompt'>;
+  parsedRemote: RemoteBootstrapMachineParams;
+}>): Promise<RemoteSshAuth> {
+  const auth = normalizeRemoteSshAuth(params.parsedRemote.ssh);
+  if (auth.mode !== 'password') {
+    return auth;
+  }
+
+  const answer = await params.ctx.prompt({
+    kind: 'ssh.password',
+    stepId: 'ssh.password',
+    message: `Enter the SSH password for ${params.parsedRemote.ssh.target}`,
+    data: {
+      target: params.parsedRemote.ssh.target,
+    },
+  }) as Readonly<{ password?: string }> | null;
+  const password = typeof answer?.password === 'string' ? answer.password : '';
+  if (!password) {
+    throw new SystemTaskExecutionError('password_required', 'SSH password auth requires a password.');
+  }
+  return {
+    mode: 'password',
+    password,
+  };
 }
 
 function parseRemoteBootstrapPromptResolution(

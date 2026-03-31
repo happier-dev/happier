@@ -19,4 +19,9 @@ export {
   type InteractiveSystemTaskKindMap,
   type InteractiveSystemTaskPromptRequest,
 } from './interactiveTaskKinds.js';
+export {
+  buildSshTarget,
+  parseSshTarget,
+  type ParsedSshTarget,
+} from './ssh/sshTarget.js';
 export * from './kinds/index.js';

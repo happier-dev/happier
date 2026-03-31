@@ -6,7 +6,7 @@ import { type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
 export interface SystemTaskSshConnectionConfig {
   target: string;
   port?: number;
-  auth: 'agent' | 'keyfile';
+  auth: 'agent' | 'keyfile' | 'password';
   identityFile?: string;
   sshConfigFile?: string;
   knownHostsPath?: string;
@@ -202,7 +202,11 @@ export function parseSystemTaskSshConfig(value: unknown): SystemTaskSshConnectio
     throw new SystemTaskExecutionError('invalid_params', 'Invalid ssh config.');
   }
   const record = value as Record<string, unknown>;
-  const auth = record.auth === 'keyfile' ? 'keyfile' : 'agent';
+  const auth = record.auth === 'keyfile'
+    ? 'keyfile'
+    : record.auth === 'password'
+      ? 'password'
+      : 'agent';
   return {
     target: ensureNonEmptyString(record.target, 'ssh.target'),
     ...(typeof record.port === 'number' ? { port: record.port } : {}),

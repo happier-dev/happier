@@ -34,6 +34,114 @@ async function waitForResult(
 }
 
 describe('createRemoteSshBootstrapMachineTaskKind', () => {
+  it('passes relayRuntime local URL to remote bootstrap commands so the remote CLI/daemon can prefer the locally hosted relay runtime', async () => {
+    let remoteCliInstalled = false;
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async () => {
+        remoteCliInstalled = true;
+      },
+      approveLocalAuthRequest: async ({ parsed }) => {
+        expect(parsed.relay.relayUrl).toBe('http://127.0.0.1:3005');
+        expect(parsed.relay.publicRelayUrl).toBe('https://relay.example.test');
+      },
+      runRemoteCommand: async ({ label, parsed, data }) => {
+        expect(parsed.relay.relayUrl).toBe('https://relay.example.test');
+
+        if (label === 'relay.runtime.install') {
+          return { ok: true, data: { relayUrl: 'http://127.0.0.1:9999', mode: 'user' } };
+        }
+
+        if (label === 'server.configure' || label === 'auth.request' || label === 'auth.wait' || label === 'daemon.service.install' || label === 'daemon.service.start') {
+          expect((data ?? {}).localServerUrl).toBe('http://127.0.0.1:9999');
+        }
+
+        if (label === 'server.configure') {
+          if (!remoteCliInstalled) {
+            throw new Error('remote cli missing');
+          }
+          return { ok: true, data: { configured: true } };
+        }
+
+        if (label === 'auth.status') {
+          return { ok: true, data: { authenticated: false } };
+        }
+
+        if (label === 'auth.request') {
+          return {
+            ok: true,
+            data: {
+              publicKey: 'pub-key',
+              claimSecret: 'secret-value',
+              stateFile: '/tmp/claim-state.json',
+              supportsV2: true,
+              webappUrl: 'https://relay.example.test',
+            },
+          };
+        }
+
+        if (label === 'auth.wait') {
+          return { ok: true, data: { paired: true, machineId: 'remote-machine' } };
+        }
+
+        if (label === 'daemon.service.install') {
+          return { ok: true, data: { installed: true } };
+        }
+
+        if (label === 'daemon.service.start') {
+          return { ok: true, data: { started: true } };
+        }
+
+        throw new Error(`Unexpected remote command: ${label}`);
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: { 'remote.ssh.bootstrapMachine.v1': kind },
+    });
+
+    await runner.start({
+      taskId: 'ssh-task',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'http://127.0.0.1:3005',
+          publicRelayUrl: 'https://relay.example.test',
+          webappUrl: 'http://localhost:3005',
+        },
+        relayRuntime: {
+          enabled: true,
+          mode: 'user',
+        },
+        channel: 'preview',
+        serviceMode: 'user',
+        promptResolution: {
+          authApproval: {
+            publicKey: 'pub-key',
+          },
+        },
+      },
+    });
+
+    const result = await waitForResult(runner, { taskId: 'ssh-task', cursor: 0 });
+    expect(result.result?.ok).toBe(true);
+    if (!result.result || result.result.ok !== true) {
+      throw new Error('Expected remote ssh bootstrap to succeed');
+    }
+    expect(result.result.data).toEqual({
+      publicKey: 'pub-key',
+      machineId: 'remote-machine',
+      relayRuntime: {
+        relayUrl: 'http://127.0.0.1:9999',
+        mode: 'user',
+      },
+    });
+  });
+
   it('prefers relay.publicRelayUrl for remote commands when provided', async () => {
     const kind = createRemoteSshBootstrapMachineTaskKind({
       resolveHostTrust: async () => ({ status: 'trusted' }),
@@ -235,6 +343,65 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     ]);
   });
 
+  it('prompts for SSH passwords without leaking the password into emitted prompt events', async () => {
+    let remoteCliInstalled = false;
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async () => {
+        remoteCliInstalled = true;
+      },
+      approveLocalAuthRequest: async () => undefined,
+      runRemoteCommand: async ({ label }) => {
+        if (label === 'server.configure') {
+          if (!remoteCliInstalled) {
+            throw new Error('remote cli should not be required for password prompt handling');
+          }
+          return { ok: true, data: { configured: true } };
+        }
+        if (label === 'auth.status') {
+          return { ok: true, data: { authenticated: true, machineId: 'machine-password' } };
+        }
+        throw new Error(`Unexpected remote command: ${label}`);
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: { 'remote.ssh.bootstrapMachine.v1': kind },
+    });
+
+    await runner.start({
+      taskId: 'ssh-password-task',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'password',
+        },
+        relay: {
+          relayUrl: 'https://relay.example.test',
+        },
+        serviceMode: 'none',
+      },
+    });
+
+    const firstPoll = await waitForPendingPrompt(runner, { taskId: 'ssh-password-task', cursor: 0 });
+    expect(firstPoll.pendingPrompt).toEqual({
+      kind: 'ssh.password',
+      data: {
+        target: 'dev@example.test',
+      },
+    });
+    expect(JSON.stringify(firstPoll.events)).not.toContain('super-secret');
+
+    await runner.respond({
+      taskId: 'ssh-password-task',
+      answer: { password: 'super-secret' },
+    });
+
+    const result = await waitForResult(runner, { taskId: 'ssh-password-task', cursor: firstPoll.nextCursor });
+    expect(result.result?.ok).toBe(true);
+  });
+
   it('continues when the remote machine is already authenticated', async () => {
     const kind = createRemoteSshBootstrapMachineTaskKind({
       resolveHostTrust: async () => ({
@@ -428,14 +595,18 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
 
     const secondPoll = await waitForPendingPrompt(runner, { taskId: 'ssh-relay-task', cursor: firstPoll.nextCursor });
     expect(secondPoll.pendingPrompt?.kind).toBe('auth.approveRemoteProvisioning');
-    expect(secondPoll.events.map((event) => event.stepId)).toContain('ssh.auth.request');
+    expect(secondPoll.events.map((event) => event.stepId)).toEqual([
+      'relay.runtime.install',
+      'ssh.installCli',
+      'ssh.auth.request',
+      'ssh.auth.approval',
+    ]);
     await runner.respond({ taskId: 'ssh-relay-task', answer: { approved: true } });
 
     const finalPoll = await waitForResult(runner, { taskId: 'ssh-relay-task', cursor: secondPoll.nextCursor });
 
     expect(finalPoll.events.map((event) => event.stepId)).toEqual([
       'ssh.auth.wait',
-      'relay.runtime.install',
       'ssh.complete',
     ]);
     expect(finalPoll.result).toEqual({
@@ -454,11 +625,17 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     expect(invocations.map((entry) => entry.label)).toContain('relay.runtime.install');
   });
 
-  it('switches the remote CLI and daemon to the installed relay runtime when enabled', async () => {
+  it('does not switch the remote CLI/daemon to the installed relay runtime by default', async () => {
     const invocations: Array<Readonly<{ label: string; relayUrl: string }>> = [];
+    const installRemoteCliCalls: Array<Readonly<{ relayUrl: string }>> = [];
+    let serverConfigureAttempts = 0;
     const kind = createRemoteSshBootstrapMachineTaskKind({
       resolveHostTrust: async () => ({ status: 'trusted' }),
-      installRemoteCli: async () => undefined,
+      installRemoteCli: async ({ parsed }) => {
+        installRemoteCliCalls.push({
+          relayUrl: parsed.relay.relayUrl,
+        });
+      },
       approveLocalAuthRequest: async () => undefined,
       runRemoteCommand: async ({ label, parsed }) => {
         invocations.push({
@@ -469,6 +646,9 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
           return { ok: true, data: { authenticated: false } };
         }
         if (label === 'server.configure') {
+          if (serverConfigureAttempts++ === 0) {
+            return { ok: false, data: {} };
+          }
           return { ok: true, data: { configured: true } };
         }
         if (label === 'auth.request') {
@@ -526,14 +706,200 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     expect(finalPoll.result?.ok).toBe(true);
 
     expect(invocations).toEqual([
+      { label: 'relay.runtime.install', relayUrl: 'https://relay.example.test' },
+      { label: 'server.configure', relayUrl: 'https://relay.example.test' },
       { label: 'server.configure', relayUrl: 'https://relay.example.test' },
       { label: 'auth.status', relayUrl: 'https://relay.example.test' },
       { label: 'auth.request', relayUrl: 'https://relay.example.test' },
       { label: 'auth.wait', relayUrl: 'https://relay.example.test' },
-      { label: 'relay.runtime.install', relayUrl: 'https://relay.example.test' },
-      { label: 'server.configure', relayUrl: 'http://10.0.0.5:3005' },
-      { label: 'daemon.service.install', relayUrl: 'http://10.0.0.5:3005' },
-      { label: 'daemon.service.start', relayUrl: 'http://10.0.0.5:3005' },
+      { label: 'daemon.service.install', relayUrl: 'https://relay.example.test' },
+      { label: 'daemon.service.start', relayUrl: 'https://relay.example.test' },
+    ]);
+    expect(installRemoteCliCalls).toEqual([
+      { relayUrl: 'https://relay.example.test' },
+    ]);
+  });
+
+  it('approves remote pairing against the configured relay while keeping the original local relay URL for credentials', async () => {
+    const approvalCalls: Array<Readonly<{ relayUrl: string; publicRelayUrl?: string; webappUrl?: string }>> = [];
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async () => undefined,
+      approveLocalAuthRequest: async ({ parsed }) => {
+        approvalCalls.push({
+          relayUrl: parsed.relay.relayUrl,
+          ...(parsed.relay.publicRelayUrl ? { publicRelayUrl: parsed.relay.publicRelayUrl } : {}),
+          ...(parsed.relay.webappUrl ? { webappUrl: parsed.relay.webappUrl } : {}),
+        });
+      },
+      runRemoteCommand: async ({ label }) => {
+        if (label === 'relay.runtime.install') {
+          return { ok: true, data: { relayUrl: 'https://relay-runtime.example.test' } };
+        }
+        if (label === 'server.configure') {
+          return { ok: true, data: { configured: true } };
+        }
+        if (label === 'auth.status') {
+          return { ok: true, data: { authenticated: false } };
+        }
+        if (label === 'auth.request') {
+          return { ok: true, data: { publicKey: 'pub-key', supportsV2: true, webappUrl: 'https://public-relay.example.test' } };
+        }
+        if (label === 'auth.wait') {
+          return { ok: true, data: { paired: true } };
+        }
+        return { ok: true, data: {} };
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'remote.ssh.bootstrapMachine.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'ssh-relay-runtime-approval',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'http://127.0.0.1:3005',
+          webappUrl: 'http://127.0.0.1:3005',
+          publicRelayUrl: 'https://public-relay.example.test',
+        },
+        relayRuntime: {
+          enabled: true,
+          mode: 'user',
+        },
+        serviceMode: 'none',
+        promptResolution: {
+          authApproval: {
+            publicKey: 'pub-key',
+          },
+        },
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'ssh-relay-runtime-approval', cursor: 0 });
+    expect(finalPoll.result?.ok).toBe(true);
+    expect(approvalCalls).toEqual([
+      {
+        relayUrl: 'http://127.0.0.1:3005',
+        publicRelayUrl: 'https://public-relay.example.test',
+        webappUrl: 'http://127.0.0.1:3005',
+      },
+    ]);
+  });
+
+  it('derives the installed relay runtime URL from serverPort without switching the remote CLI/daemon by default', async () => {
+    const invocations: Array<Readonly<{ label: string; relayUrl: string }>> = [];
+    const installRemoteCliCalls: Array<Readonly<{ relayUrl: string }>> = [];
+    let serverConfigureAttempts = 0;
+
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async ({ parsed }) => {
+        installRemoteCliCalls.push({
+          relayUrl: parsed.relay.relayUrl,
+        });
+      },
+      approveLocalAuthRequest: async () => undefined,
+      runRemoteCommand: async ({ label, parsed }) => {
+        invocations.push({
+          label,
+          relayUrl: parsed.relay.relayUrl,
+        });
+        if (label === 'relay.runtime.install') {
+          return { ok: true, data: { serverPort: 4449 } };
+        }
+        if (label === 'server.configure') {
+          if (serverConfigureAttempts++ === 0) {
+            return { ok: false, data: {} };
+          }
+          return { ok: true, data: { configured: true } };
+        }
+        if (label === 'auth.status') {
+          return { ok: true, data: { authenticated: false } };
+        }
+        if (label === 'auth.request') {
+          return { ok: true, data: { publicKey: 'pub-key', supportsV2: true, webappUrl: 'https://public.example.test' } };
+        }
+        if (label === 'auth.wait') {
+          return { ok: true, data: { paired: true } };
+        }
+        if (label === 'daemon.service.install') {
+          return { ok: true, data: { installed: true } };
+        }
+        if (label === 'daemon.service.start') {
+          return { ok: true, data: { started: true } };
+        }
+        throw new Error(`Unexpected remote command: ${label}`);
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'remote.ssh.bootstrapMachine.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'ssh-relay-runtime-serverPort',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'http://127.0.0.1:3005',
+          webappUrl: 'http://localhost:3005',
+          publicRelayUrl: 'https://public.example.test',
+        },
+        serviceMode: 'user',
+        relayRuntime: {
+          enabled: true,
+          mode: 'user',
+        },
+        promptResolution: {
+          authApproval: {
+            publicKey: 'pub-key',
+          },
+        },
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'ssh-relay-runtime-serverPort', cursor: 0 });
+    expect(finalPoll.result).toEqual({
+      protocolVersion: 1,
+      taskId: 'ssh-relay-runtime-serverPort',
+      ok: true,
+      data: {
+        publicKey: 'pub-key',
+        machineId: null,
+        relayRuntime: {
+          relayUrl: 'http://127.0.0.1:4449',
+          mode: 'user',
+        },
+      },
+    });
+
+    expect(invocations).toEqual([
+      { label: 'relay.runtime.install', relayUrl: 'https://public.example.test' },
+      { label: 'server.configure', relayUrl: 'https://public.example.test' },
+      { label: 'server.configure', relayUrl: 'https://public.example.test' },
+      { label: 'auth.status', relayUrl: 'https://public.example.test' },
+      { label: 'auth.request', relayUrl: 'https://public.example.test' },
+      { label: 'auth.wait', relayUrl: 'https://public.example.test' },
+      { label: 'daemon.service.install', relayUrl: 'https://public.example.test' },
+      { label: 'daemon.service.start', relayUrl: 'https://public.example.test' },
+    ]);
+    expect(installRemoteCliCalls).toEqual([
+      { relayUrl: 'https://public.example.test' },
     ]);
   });
 
@@ -791,5 +1157,61 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
       code: 'invalid_params',
       message: 'Unsupported promptResolution.hostTrust.kind.',
     });
+  });
+
+  it('treats unsupported SSH auth modes as agent auth (no password prompt)', async () => {
+    const observedAuthModes: string[] = [];
+    let serverConfigureAttempts = 0;
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async ({ auth }) => {
+        observedAuthModes.push(auth.mode);
+      },
+      approveLocalAuthRequest: async () => undefined,
+      runRemoteCommand: async ({ label, auth }) => {
+        observedAuthModes.push(auth.mode);
+        if (label === 'server.configure') {
+          if (serverConfigureAttempts++ === 0) {
+            return { ok: false, data: {} };
+          }
+          return { ok: true, data: { configured: true } };
+        }
+        if (label === 'auth.status') {
+          return { ok: true, data: { authenticated: true, machineId: 'machine-remote-1' } };
+        }
+        if (label === 'daemon.service.install') {
+          return { ok: true, data: { installed: true } };
+        }
+        if (label === 'daemon.service.start') {
+          return { ok: true, data: { started: true } };
+        }
+        throw new Error(`Unexpected remote command: ${label}`);
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: {
+        'remote.ssh.bootstrapMachine.v1': kind,
+      },
+    });
+
+    await runner.start({
+      taskId: 'ssh-task-password',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'unsupported',
+        },
+        relay: {
+          relayUrl: 'https://relay.example.test',
+        },
+        serviceMode: 'none',
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'ssh-task-password', cursor: 0 });
+    expect(finalPoll.result?.ok).toBe(true);
+    expect(new Set(observedAuthModes)).toEqual(new Set(['agent']));
   });
 });

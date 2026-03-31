@@ -28,6 +28,24 @@ export {
   type SetupRepairThisComputerRelayProfile,
 } from './setupRepairThisComputerKind.js';
 export {
+  createRelayAccessConfigureTaskKind,
+  createRelayAccessDisableTaskKind,
+  createRelayAccessStatusTaskKind,
+  parseRelayAccessConfigureParams,
+  parseRelayAccessDisableParams,
+  parseRelayAccessStatusParams,
+  redactRelayAccessParams,
+  type RelayAccessConfigureKindDeps,
+  type RelayAccessConfigureTaskParams,
+  type RelayAccessDisableKindDeps,
+  type RelayAccessDisableTaskParams,
+  type RelayAccessStatusKindDeps,
+  type RelayAccessStatusSnapshot,
+  type RelayAccessStatusTaskParams,
+  type RelayAccessTaskSnapshot,
+  type RelayAccessTaskTarget,
+} from './relayAccessKinds.js';
+export {
   installRemoteFirstPartyComponent,
   normalizeRemoteReleaseArch,
   normalizeRemoteReleaseOs,

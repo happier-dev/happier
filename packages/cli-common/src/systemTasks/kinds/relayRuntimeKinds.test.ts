@@ -5,9 +5,20 @@ import {
   createRelayRuntimeStartTaskKind,
   createRelayRuntimeStatusTaskKind,
   createRelayRuntimeStopTaskKind,
+  parseSystemTaskSshConfig,
 } from './relayRuntimeKinds.js';
 
 describe('relay runtime shared system task kinds', () => {
+  it('treats unsupported ssh.auth values as agent auth (no password prompt)', () => {
+    expect(parseSystemTaskSshConfig({
+      target: 'dev@example.test',
+      auth: 'not_supported',
+    })).toEqual({
+      target: 'dev@example.test',
+      auth: 'agent',
+    });
+  });
+
   it('returns the canonical relay runtime status payload', async () => {
     const kind = createRelayRuntimeStatusTaskKind({
       readStatus: async () => ({
