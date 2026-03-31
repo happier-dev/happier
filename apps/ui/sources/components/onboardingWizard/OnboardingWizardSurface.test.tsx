@@ -119,6 +119,7 @@ vi.mock('@/auth/providers/registry', () => ({
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => activeServerSnapshotMock,
     subscribeActiveServer: () => () => {},
+    isActiveServerSelectionExplicit: () => false,
 }));
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getResetToDefaultServerId: () => getResetToDefaultServerIdMock(),
@@ -221,6 +222,7 @@ describe('OnboardingWizardSurface', () => {
         activeServerSnapshotMock.serverId = 'relay-profile';
         activeServerSnapshotMock.serverUrl = '';
         activeServerSnapshotMock.activeLocalRelayUrl = null;
+        getResetToDefaultServerIdMock.mockReturnValue('cloud-profile');
         listServerProfilesMock.mockReturnValue([]);
     });
 
@@ -509,6 +511,58 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findAllByTestId('onboarding-wizard-primary')).toHaveLength(0);
         expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-change-relay')).toBeTruthy();
+    });
+
+    it('shows auth actions on welcome after the user picks a saved relay and returns back to the intro', async () => {
+        activeServerSnapshotMock.serverUrl = '';
+        getResetToDefaultServerIdMock.mockReturnValue('');
+        listServerProfilesMock.mockReturnValue([
+            {
+                id: 'relay-b',
+                name: 'Relay B',
+                serverUrl: 'https://relay-b.example.test',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+                source: 'custom',
+            },
+        ]);
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const relayRow = screen.findByTestId('onboarding-wizard-relay:profile:relay-b')!;
+        await act(async () => {
+            await relayRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const backButton = screen.findByTestId('onboarding-wizard-back')!;
+        await act(async () => {
+            await backButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-welcome-auth')).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
+        expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.login');
     });
 
     it('moves the wizard to relay URL entry when the custom relay option is primary-selected', async () => {
@@ -1109,6 +1163,12 @@ describe('OnboardingWizardSurface', () => {
         const relayRow = screen.findByProps({ testID: 'onboarding-wizard-relay:profile:relay-offline' } as never);
         expect(relayRow?.props.disabled).toBe(true);
         expect(relayRow?.props.secondaryAction?.testID).toBe('onboarding-wizard-relay:profile:relay-offline-retry');
+        const selectableRow = screen.findByProps({
+            testID: 'onboarding-wizard-relay:profile:relay-offline',
+            variant: 'selectable',
+        } as never);
+        expect(selectableRow?.props.title).toBe('Offline Relay');
+        expect(selectableRow?.props.disabled).toBe(false);
 
         const callCountBefore = runtimeFetchMock.mock.calls.length;
         await act(async () => {

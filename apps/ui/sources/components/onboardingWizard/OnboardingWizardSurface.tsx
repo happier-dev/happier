@@ -15,7 +15,7 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 
 import { isSameServerUrl, normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot, isActiveServerSelectionExplicit } from '@/sync/domains/server/serverRuntime';
 import { getResetToDefaultServerId, getServerProfileById, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { isLocalishServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
@@ -138,6 +138,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         alignItems: 'center',
         gap: 10,
+    },
+    authEntryWrapper: {
+        width: '100%',
+        alignItems: 'center',
     },
     diagramContainer: {
         width: '100%',
@@ -278,7 +282,25 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
 
     const stepId = state.currentStepId;
     const progress = getWizardProgress(state.context, stepId);
-    const welcomeHasKnownRelay = stepId === 'welcome' && Boolean(String(getActiveServerSnapshot().serverUrl ?? '').trim());
+    const welcomeHasExplicitRelaySelection = stepId === 'welcome'
+        && (
+            state.history.length > 0
+            || isActiveServerSelectionExplicit()
+            || state.context.relaySelection.choiceId !== 'cloud'
+            || state.context.relaySelection.relayProfileId != null
+        );
+    const welcomeRelayUrl = React.useMemo(() => {
+        if (!welcomeHasExplicitRelaySelection) {
+            return '';
+        }
+        const selectedRelayUrl = state.context.relaySelection.serverUrl ? String(state.context.relaySelection.serverUrl).trim() : '';
+        if (selectedRelayUrl) {
+            return selectedRelayUrl;
+        }
+        const snapshot = getActiveServerSnapshot();
+        return snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
+    }, [state.context.relaySelection.relayProfileId, state.context.relaySelection.choiceId, state.context.relaySelection.serverUrl, state.history.length, welcomeHasExplicitRelaySelection]);
+    const welcomeHasKnownRelay = stepId === 'welcome' && Boolean(welcomeRelayUrl);
     const welcomeHasAuthActions = welcomeHasKnownRelay && (
         props.authEntryOptions.serverAvailability === 'ready'
         || props.authEntryOptions.serverAvailability === 'legacy'
@@ -717,7 +739,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         if (stepId === 'scan_code') return null;
         if (stepId === 'welcome' && !welcomeHasKnownRelay) return null;
         const rawRelayUrl = state.context.relaySelection.serverUrl ? String(state.context.relaySelection.serverUrl).trim() : '';
-        const fallbackRelayUrl = lastKnownSnapshotRelayUrlRef.current;
+        const fallbackRelayUrl = welcomeRelayUrl || lastKnownSnapshotRelayUrlRef.current;
         const resolvedRelayUrl = rawRelayUrl || fallbackRelayUrl;
         if (!resolvedRelayUrl) return null;
         const relayLine =
@@ -728,7 +750,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             testID: `${props.testID ?? 'onboarding-wizard'}-relay-hint`,
             relayLine,
         });
-    }, [renderRelayHint, state.context.relaySelection.choiceId, state.context.relaySelection.serverUrl, stepId, welcomeHasKnownRelay]);
+    }, [renderRelayHint, state.context.relaySelection.choiceId, state.context.relaySelection.serverUrl, stepId, welcomeHasKnownRelay, welcomeRelayUrl]);
 
     const selectedRelayEndpointForReadiness = React.useMemo(() => {
         if (stepId !== 'relay_select') return null;
@@ -761,13 +783,12 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     }, [state.context.authIntent, state.context.relaySelection]);
 
     const handleWelcomeLogin = React.useCallback(() => {
-        const snapshot = getActiveServerSnapshot();
-        const relayUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
+        const relayUrl = welcomeRelayUrl;
         if (relayUrl) {
             setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
         }
         dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' });
-    }, [state.context.authIntent]);
+    }, [state.context.authIntent, welcomeRelayUrl]);
 
     const handleRelaySelectAdvance = React.useCallback(async () => {
         setOnboardingWizardAwaitingAuthResumeIntent(state.context.relaySelection.serverUrl);
@@ -907,18 +928,20 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         if (welcomeHasKnownRelay) {
             body = (
                 <View testID={`${props.testID ?? 'onboarding-wizard'}-welcome-auth`} style={styles.welcomeAuthBody}>
-                    <AuthEntryView
-                        layout={props.layout}
-                        isDesktopShell={false}
-                        options={props.authEntryOptions}
-                        onOpenSetup={() => {}}
-                        onChangeRelay={() => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' })}
-                        onRestore={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' })}
-                        onCreateAccount={props.onCreateAccount}
-                        onCreateAccountViaProvider={props.onCreateAccountViaProvider}
-                        onLoginWithKeylessProvider={props.onLoginWithKeylessProvider}
-                        onLoginWithMtls={props.onLoginWithMtls}
-                    />
+                    <View style={styles.authEntryWrapper}>
+                        <AuthEntryView
+                            layout={props.layout}
+                            isDesktopShell={false}
+                            options={props.authEntryOptions}
+                            onOpenSetup={() => {}}
+                            onChangeRelay={() => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' })}
+                            onRestore={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' })}
+                            onCreateAccount={props.onCreateAccount}
+                            onCreateAccountViaProvider={props.onCreateAccountViaProvider}
+                            onLoginWithKeylessProvider={props.onLoginWithKeylessProvider}
+                            onLoginWithMtls={props.onLoginWithMtls}
+                        />
+                    </View>
                     {welcomeHasAuthActions ? (
                         <View style={styles.scanCtaBlock}>
                             <RoundButton
@@ -1136,18 +1159,20 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     } else if (stepId === 'auth') {
         body = (
             <>
-                <AuthEntryView
-                    layout={props.layout}
-                    isDesktopShell={false}
-                    options={props.authEntryOptions}
-                    onOpenSetup={() => {}}
-                    onChangeRelay={() => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' })}
-                    onRestore={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' })}
-                    onCreateAccount={props.onCreateAccount}
-                    onCreateAccountViaProvider={props.onCreateAccountViaProvider}
-                    onLoginWithKeylessProvider={props.onLoginWithKeylessProvider}
-                    onLoginWithMtls={props.onLoginWithMtls}
-                />
+                <View style={styles.authEntryWrapper}>
+                    <AuthEntryView
+                        layout={props.layout}
+                        isDesktopShell={false}
+                        options={props.authEntryOptions}
+                        onOpenSetup={() => {}}
+                        onChangeRelay={() => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' })}
+                        onRestore={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' })}
+                        onCreateAccount={props.onCreateAccount}
+                        onCreateAccountViaProvider={props.onCreateAccountViaProvider}
+                        onLoginWithKeylessProvider={props.onLoginWithKeylessProvider}
+                        onLoginWithMtls={props.onLoginWithMtls}
+                    />
+                </View>
                 <View style={styles.scanCtaBlock}>
                     <RoundButton
                         testID={`${props.testID ?? 'onboarding-wizard'}-lost-access`}
