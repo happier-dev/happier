@@ -175,11 +175,11 @@ const wizardStepRegistryEntries = [
     },
     {
         id: 'setup_this_computer',
-        titleKey: 'settings.machineSetupCurrentMachineTitle',
+        titleKey: 'setupOnboarding.setupThisComputerTitle',
         subtitleKey: 'settings.machineSetupCurrentMachineSubtitle',
         kind: 'setup',
         surface: 'setup',
-        canSkip: false,
+        canSkip: true,
         visibleWhen: setupVisible('setup_this_computer'),
     },
     {
