@@ -2,82 +2,10 @@ import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { ansiEnabled, cyan, dim, green, red, yellow } from '../ui/ansi.mjs';
- 
-function isTty() {
-  return Boolean(process.stdout.isTTY && process.stderr.isTTY);
-}
- 
-function spinnerFrames() {
-  return ['|', '/', '-', '\\'];
-}
- 
-function colorResult(result) {
-  if (!ansiEnabled()) return String(result);
-  const r = String(result);
-  if (r === '✓') return green(r);
-  if (r === 'x' || r === '✗') return red(r);
-  if (r === '!') return yellow(r);
-  return r;
-}
 
-function colorSpinner(frame) {
-  if (!ansiEnabled()) return String(frame);
-  return cyan(String(frame));
-}
+import { createStepPrinter as createSharedStepPrinter } from '@happier-dev/cli-common/output';
 
-export function createStepPrinter({ enabled = true } = {}) {
-  if (!enabled) {
-    return {
-      start: () => {},
-      stop: () => {},
-      info: () => {},
-    };
-  }
-
-  const tty = enabled && isTty();
-  const frames = spinnerFrames();
-  let timer = null;
-  let idx = 0;
-  let currentLine = '';
- 
-  const write = (s) => process.stdout.write(s);
- 
-  const start = (label) => {
-    if (!tty) {
-      write(`- [${dim('..')}] ${label}\n`);
-      return;
-    }
-    currentLine = `- [${colorSpinner(frames[idx % frames.length])}] ${label}`;
-    write(currentLine);
-    timer = setInterval(() => {
-      idx++;
-      const next = `- [${colorSpinner(frames[idx % frames.length])}] ${label}`;
-      const pad = currentLine.length > next.length ? ' '.repeat(currentLine.length - next.length) : '';
-      currentLine = next;
-      write(`\r${next}${pad}`);
-    }, 120);
-  };
- 
-  const stop = (result, label) => {
-    if (timer) clearInterval(timer);
-    timer = null;
-    if (!tty) {
-      write(`- [${colorResult(result)}] ${label}\n`);
-      return;
-    }
-    const out = `- [${colorResult(result)}] ${label}`;
-    const pad = currentLine.length > out.length ? ' '.repeat(currentLine.length - out.length) : '';
-    currentLine = '';
-    write(`\r${out}${pad}\n`);
-  };
- 
-  const info = (line) => {
-    write(`${line}\n`);
-  };
- 
-  return { start, stop, info };
-}
+export const createStepPrinter = createSharedStepPrinter;
  
 export async function runCommandLogged({
   label,
