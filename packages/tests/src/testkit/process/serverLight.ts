@@ -253,6 +253,8 @@ function resolveServerSharedDepsOutputPaths(rootDir: string): string[] {
     resolve(rootDir, 'packages', 'agents', 'dist', 'index.js'),
     resolve(rootDir, 'packages', 'protocol', 'dist', 'index.js'),
     resolve(rootDir, 'packages', 'cli-common', 'dist', 'tailscale', 'index.js'),
+    resolve(rootDir, 'packages', 'cli-common', 'dist', 'relayAccess', 'index.js'),
+    resolve(rootDir, 'packages', 'cli-common', 'dist', 'systemTasks', 'index.js'),
   ];
 }
 
