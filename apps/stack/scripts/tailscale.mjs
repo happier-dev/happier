@@ -14,6 +14,7 @@ import {
   runTailscaleServeStatus as runSharedTailscaleServeStatus,
   tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
 } from '@happier-dev/cli-common/tailscale';
+import { resolveRelayAccessConfiguredCanonicalPublicServerUrl } from '@happier-dev/cli-common/relayAccess';
 
 /**
  * Manage Tailscale Serve for exposing the local UI/API over HTTPS (secure context).
@@ -181,9 +182,10 @@ async function sleep(ms) {
  * Resolve the best public server URL to present to users / generate links.
  *
  * Priority:
- * 1) explicit HAPPIER_STACK_SERVER_URL override (if non-default)
- * 2) if enabled, prefer existing https://*.ts.net from tailscale serve status
- * 3) fallback to defaultPublicUrl
+ * 1) explicit public URL override (if non-default)
+ * 2) persisted relay-access config with a canonical public URL
+ * 3) if enabled, prefer existing https://*.ts.net from tailscale serve status
+ * 4) fallback to defaultPublicUrl
  *
  * If HAPPIER_STACK_TAILSCALE_SERVE=1, this can also try to enable serve and wait briefly for Tailscale to come up.
  */
@@ -193,13 +195,29 @@ export async function resolvePublicServerUrl({
   envPublicUrl,
   allowEnable = true,
   stackName = 'main',
+  env = process.env,
 }) {
-  const preferTailscalePublicUrl = (process.env.HAPPIER_STACK_TAILSCALE_PREFER_PUBLIC_URL ?? '1') !== '0';
+  const preferTailscalePublicUrl = (env.HAPPIER_STACK_TAILSCALE_PREFER_PUBLIC_URL ?? '1') !== '0';
+  const normalizedEnvPublicUrl = String(envPublicUrl ?? '').trim();
+  const envPublicUrlIsLocalDefault =
+    !!normalizedEnvPublicUrl &&
+    (normalizedEnvPublicUrl === defaultPublicUrl || normalizedEnvPublicUrl === internalServerUrl);
+  const relayAccessPublicUrl =
+    (!normalizedEnvPublicUrl || envPublicUrlIsLocalDefault)
+      ? await resolveRelayAccessConfiguredCanonicalPublicServerUrl(env)
+      : null;
+  const effectiveEnvPublicUrl =
+    (!normalizedEnvPublicUrl || envPublicUrlIsLocalDefault)
+      ? (relayAccessPublicUrl || normalizedEnvPublicUrl || '')
+      : normalizedEnvPublicUrl;
   const userExplicitlySetPublicUrl =
-    !!envPublicUrl && envPublicUrl !== defaultPublicUrl && envPublicUrl !== internalServerUrl;
+    !!effectiveEnvPublicUrl && effectiveEnvPublicUrl !== defaultPublicUrl && effectiveEnvPublicUrl !== internalServerUrl;
 
   if (userExplicitlySetPublicUrl || !preferTailscalePublicUrl) {
-    return { publicServerUrl: envPublicUrl || defaultPublicUrl, source: 'env' };
+    return {
+      publicServerUrl: effectiveEnvPublicUrl || defaultPublicUrl,
+      source: relayAccessPublicUrl ? 'relay-access' : 'env',
+    };
   }
 
   // Non-main stacks:
@@ -213,7 +231,10 @@ export async function resolvePublicServerUrl({
         return { publicServerUrl: existing, source: 'tailscale-status' };
       }
     }
-    return { publicServerUrl: envPublicUrl || defaultPublicUrl, source: envPublicUrl ? 'env' : 'default' };
+    return {
+      publicServerUrl: effectiveEnvPublicUrl || defaultPublicUrl,
+      source: effectiveEnvPublicUrl ? (relayAccessPublicUrl ? 'relay-access' : 'env') : 'default',
+    };
   }
 
   // If serve is already configured, use its HTTPS URL if present.
@@ -222,9 +243,12 @@ export async function resolvePublicServerUrl({
     return { publicServerUrl: existing, source: 'tailscale-status' };
   }
 
-  const enableServe = (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
+  const enableServe = (env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
   if (!enableServe || !allowEnable) {
-    return { publicServerUrl: envPublicUrl || defaultPublicUrl, source: 'default' };
+    return {
+      publicServerUrl: effectiveEnvPublicUrl || defaultPublicUrl,
+      source: effectiveEnvPublicUrl ? (relayAccessPublicUrl ? 'relay-access' : 'env') : 'default',
+    };
   }
 
   // Try enabling serve (best-effort); then wait a bit for Tailscale to be ready/configured.
@@ -237,8 +261,8 @@ export async function resolvePublicServerUrl({
     // ignore and fall back to waiting/polling
   }
 
-  const waitMs = process.env.HAPPIER_STACK_TAILSCALE_WAIT_MS?.trim()
-    ? Number(process.env.HAPPIER_STACK_TAILSCALE_WAIT_MS.trim())
+  const waitMs = env.HAPPIER_STACK_TAILSCALE_WAIT_MS?.trim()
+    ? Number(env.HAPPIER_STACK_TAILSCALE_WAIT_MS.trim())
     : 15000;
   const deadline = Date.now() + (Number.isFinite(waitMs) ? waitMs : 15000);
   while (Date.now() < deadline) {
@@ -249,7 +273,10 @@ export async function resolvePublicServerUrl({
     await sleep(500);
   }
 
-  return { publicServerUrl: envPublicUrl || defaultPublicUrl, source: 'default' };
+  return {
+    publicServerUrl: effectiveEnvPublicUrl || defaultPublicUrl,
+    source: effectiveEnvPublicUrl ? (relayAccessPublicUrl ? 'relay-access' : 'env') : 'default',
+  };
 }
 
 async function main() {

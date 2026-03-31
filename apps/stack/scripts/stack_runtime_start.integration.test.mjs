@@ -66,6 +66,7 @@ test('hstack stack start --runtime --background launches the active runtime snap
 
     const serverRuntimeEnv = JSON.parse(await readFile(fixture.serverEnvCapturePath, 'utf8'));
     assert.equal(serverRuntimeEnv.HAPPIER_SQLITE_AUTO_MIGRATE, '1');
+    assert.equal(serverRuntimeEnv.HAPPIER_PUBLIC_SERVER_URL, serverRuntimeEnv.PUBLIC_URL);
     assert.equal(
       serverRuntimeEnv.HAPPIER_SQLITE_MIGRATIONS_DIR,
       join(fixture.stackDir, 'runtime', 'current', 'server', 'prisma', 'sqlite', 'migrations'),

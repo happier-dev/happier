@@ -193,13 +193,6 @@ async function main() {
   const localInternalServerUrl = resolvedUrls.internalServerUrl;
   const internalServerUrl = serverConnection.internalServerUrl;
   let publicServerUrl = serverConnection.publicServerUrl;
-  if (startServer && stackMode && stackName !== 'main' && !resolvedUrls.envPublicUrl) {
-    const src = String(resolvedUrls.publicServerUrlSource ?? '');
-    const hasStackScopedTailscale = src.startsWith('tailscale-');
-    if (!hasStackScopedTailscale) {
-      publicServerUrl = resolvedUrls.defaultPublicUrl;
-    }
-  }
   // Expo app config: this is what both web + native app use to reach the Happy server.
   // LAN rewrite (for dev-client) is centralized in ensureDevExpoServer.
   const uiApiUrl = startServer ? resolvedUrls.defaultPublicUrl : serverConnection.uiApiUrl;

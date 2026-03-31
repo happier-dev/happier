@@ -32,7 +32,7 @@ import { maybeRunInteractiveStackAuthSetup } from './utils/auth/interactive_stac
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 import { daemonStartGate, formatDaemonAuthRequiredError } from './utils/auth/daemon_gate.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
-import { resolveServerUiEnv } from './utils/server/ui_env.mjs';
+import { buildServerRuntimeEnv } from './utils/server/server_env.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
 import { renderTerminalUsageInstructions } from './utils/stack/terminal_usage_instructions.mjs';
@@ -345,18 +345,16 @@ async function main() {
     await killPortListeners(serverPort, { label: 'server' });
   }
 
-  const serverEnv = {
-    ...baseEnv,
-    PORT: String(serverPort),
-    // Used by server-light for generating public file URLs.
-    PUBLIC_URL: publicServerUrl,
-    // Avoid noisy failures if a previous run left the metrics port busy.
-    // You can override with METRICS_ENABLED=true if you want it.
-    METRICS_ENABLED: baseEnv.METRICS_ENABLED ?? 'false',
-    // Server-side enforcement: if UI serving is enabled (capability), require a valid bundle.
-    ...(serveUi ? { HAPPIER_SERVER_UI_REQUIRED: uiRequired ? '1' : '0' } : {}),
-    ...resolveServerUiEnv({ serveUi, uiBuildDir, uiPrefix, uiBuildDirExists: Boolean(serveUi && uiBuildDirExists && uiIndexExists) }),
-  };
+  const serverEnv = buildServerRuntimeEnv({
+    baseEnv,
+    serverPort,
+    publicServerUrl,
+    serveUi,
+    uiRequired,
+    uiBuildDir,
+    uiPrefix,
+    uiBuildDirExists: Boolean(serveUi && uiBuildDirExists && uiIndexExists),
+  });
   let serverLightAccountCount = null;
   let happierServerAccountCount = null;
   if (serverComponentName === 'happier-server-light') {

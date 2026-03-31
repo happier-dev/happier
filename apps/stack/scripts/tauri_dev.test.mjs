@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 const execFileAsync = promisify(execFile);
@@ -32,6 +32,172 @@ test('tauri_dev --json prints the resolved launch plan without running build hoo
   assert.equal(typeof payload?.devUrl, 'string');
   const normalizedConfigPath = String(payload?.configPath ?? '').trim().replaceAll('\\', '/');
   assert.equal(normalizedConfigPath.endsWith('/apps/ui/src-tauri/tauri.publicdev.conf.json'), true);
+  const url = new URL(String(payload.devUrl));
+  assert.equal(url.searchParams.has('happier_tauri_ts'), true);
+  assert.equal(url.searchParams.has('happier_tauri_launch_id'), true);
+  assert.match(String(url.searchParams.get('happier_tauri_launch_id') ?? ''), /^[0-9a-f-]{36}$/i);
+});
+
+test('tauri_dev --json can disable the cache-busting params when explicitly requested', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
+
+  const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
+    cwd: dirname(scriptsDir),
+    env: {
+      ...process.env,
+      HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
+      HAPPIER_STACK_TAURI_DEV_URL_CACHE_BUST: '0',
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(String(stderr ?? '').trim(), '');
+  const payload = JSON.parse(stdout);
+  assert.equal(payload?.ok, true);
+  const url = new URL(String(payload.devUrl));
+  assert.equal(url.searchParams.has('happier_tauri_ts'), false);
+  assert.equal(url.searchParams.has('happier_tauri_launch_id'), false);
+});
+
+test('tauri_dev prefers the explicit stack expo dev port over stale runtime state ports', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
+  const repoRoot = dirname(scriptsDir);
+
+  const storageRoot = join(tmpdir(), `happier-tauri-dev-storage-${Date.now()}`);
+  const stackName = `tauri-port-preference-${Date.now()}`;
+  const stackBaseDir = join(storageRoot, stackName);
+  const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
+  await mkdir(stackBaseDir, { recursive: true });
+  await writeFile(
+    runtimeStatePath,
+    JSON.stringify(
+      {
+        version: 1,
+        stackName,
+        expo: { webPort: 54321 },
+      },
+      null,
+      2,
+    ),
+    'utf-8',
+  );
+
+  const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
+      HAPPIER_STACK_STORAGE_DIR: storageRoot,
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_EXPO_DEV_PORT: '12345',
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(String(stderr ?? '').trim(), '');
+  const payload = JSON.parse(stdout);
+  assert.equal(payload?.ok, true);
+  assert.equal(payload?.stackName, stackName);
+  assert.equal(payload?.devUrl?.startsWith('http://127.0.0.1:12345'), true);
+  assert.equal(payload?.devUrlSource, 'env');
+  assert.equal(payload?.devUrl?.includes('54321'), false);
+});
+
+test('tauri_dev prefers the pinned expo dev port from the stack env file over stale runtime state ports', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
+  const repoRoot = dirname(scriptsDir);
+
+  const storageRoot = join(tmpdir(), `happier-tauri-dev-storage-envfile-${Date.now()}`);
+  const stackName = `tauri-envfile-preference-${Date.now()}`;
+  const stackBaseDir = join(storageRoot, stackName);
+  const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
+  await mkdir(stackBaseDir, { recursive: true });
+  await writeFile(
+    runtimeStatePath,
+    JSON.stringify(
+      {
+        version: 1,
+        stackName,
+        expo: { webPort: 54321 },
+      },
+      null,
+      2,
+    ),
+    'utf-8',
+  );
+  await writeFile(join(stackBaseDir, 'env'), 'HAPPIER_STACK_EXPO_DEV_PORT=12345\n', 'utf-8');
+
+  const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
+      HAPPIER_STACK_EXPO_DEV_PORT: '0',
+      HAPPIER_STACK_STORAGE_DIR: storageRoot,
+      HAPPIER_STACK_STACK: stackName,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(String(stderr ?? '').trim(), '');
+  const payload = JSON.parse(stdout);
+  assert.equal(payload?.ok, true);
+  assert.equal(payload?.stackName, stackName);
+  assert.equal(payload?.devUrl?.startsWith('http://127.0.0.1:12345'), true);
+  assert.equal(payload?.devUrlSource, 'stackEnvFile');
+  assert.equal(payload?.devUrl?.includes('54321'), false);
+});
+
+test('tauri_dev reads the pinned expo dev port from HAPPIER_STACK_ENV_FILE when provided', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
+  const repoRoot = dirname(scriptsDir);
+
+  const storageRoot = join(tmpdir(), `happier-tauri-dev-storage-explicit-envfile-${Date.now()}`);
+  const stackName = `tauri-explicit-envfile-${Date.now()}`;
+  const stackBaseDir = join(storageRoot, stackName);
+  const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
+  await mkdir(stackBaseDir, { recursive: true });
+  await writeFile(
+    runtimeStatePath,
+    JSON.stringify(
+      {
+        version: 1,
+        stackName,
+        expo: { webPort: 54321 },
+      },
+      null,
+      2,
+    ),
+    'utf-8',
+  );
+
+  const explicitEnvFile = join(tmpdir(), `happier-tauri-dev-explicit-env-${Date.now()}.env`);
+  await writeFile(explicitEnvFile, 'HAPPIER_STACK_EXPO_DEV_PORT=12345\n', 'utf-8');
+
+  const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
+      HAPPIER_STACK_EXPO_DEV_PORT: '0',
+      HAPPIER_STACK_STORAGE_DIR: storageRoot,
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_ENV_FILE: explicitEnvFile,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(String(stderr ?? '').trim(), '');
+  const payload = JSON.parse(stdout);
+  assert.equal(payload?.ok, true);
+  assert.equal(payload?.stackName, stackName);
+  assert.equal(payload?.devUrl?.startsWith('http://127.0.0.1:12345'), true);
+  assert.equal(payload?.devUrlSource, 'stackEnvFile');
+  assert.equal(payload?.devUrl?.includes('54321'), false);
 });
 
 test('tauri_dev fails fast with a clear error when repo dir does not contain src-tauri', async () => {

@@ -1,10 +1,11 @@
 import './utils/env/env.mjs';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 
-import { getComponentDir, getRootDir } from './utils/paths/paths.mjs';
+import { getComponentDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureWorkspacePackagesBuiltForComponent, pmExecBin } from './utils/proc/pm.mjs';
 import { spawnProc } from './utils/proc/proc.mjs';
@@ -17,6 +18,7 @@ import {
   buildStackTauriDevProcessInvocation,
   buildTauriRuntimeEnv,
 } from './utils/dev/tauri_dev.mjs';
+import { parseEnvToObject } from './utils/env/dotenv.mjs';
 
 function buildDefaultStackTauriEnv(env, stackName) {
   const nextEnv = { ...env };
@@ -61,6 +63,46 @@ function appendCacheBustQueryParam(rawUrl, { key = 'happier_tauri_ts', value } =
     return url.toString();
   } catch {
     return String(rawUrl ?? '').trim();
+  }
+}
+
+function resolveTauriDevHost(env = process.env) {
+  const raw = String(env?.HAPPIER_STACK_TAURI_DEV_HOST ?? '').trim();
+  // Default to 127.0.0.1 to avoid localhost/IPv6 resolution issues in Tauri WebViews.
+  return raw || '127.0.0.1';
+}
+
+function replaceUrlHost(rawUrl, host) {
+  try {
+    const url = new URL(String(rawUrl ?? '').trim());
+    url.hostname = String(host ?? '').trim() || url.hostname;
+    return url.toString();
+  } catch {
+    return String(rawUrl ?? '').trim();
+  }
+}
+
+async function maybeReadStackEnvFileObject({ stackName, env = process.env } = {}) {
+  const name = String(stackName ?? '').trim();
+  if (!name) return {};
+
+  const explicitEnvFilePath = String(env?.HAPPIER_STACK_ENV_FILE ?? '').trim();
+  if (explicitEnvFilePath && existsSync(explicitEnvFilePath)) {
+    try {
+      const raw = await readFile(explicitEnvFilePath, 'utf-8');
+      if (String(raw ?? '').trim()) return parseEnvToObject(raw);
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const { envPath } = resolveStackEnvPath(name, env);
+    const raw = await readFile(envPath, 'utf-8');
+    if (!String(raw ?? '').trim()) return {};
+    return parseEnvToObject(raw);
+  } catch {
+    return {};
   }
 }
 
@@ -143,23 +185,65 @@ async function main() {
   const uiLayout = assertTauriUiDirForDev(uiDir);
   const repoRootDir = dirname(dirname(uiDir));
   const stackName = String(envWithStackDefaults.HAPPIER_STACK_STACK ?? '').trim();
+  const stackEnvFile = stackName ? await maybeReadStackEnvFileObject({ stackName, env: envWithStackDefaults }) : {};
+  const resolvedStackExpoPortFromFile = Number(stackEnvFile.HAPPIER_STACK_EXPO_DEV_PORT ?? '');
+  const hasPinnedExpoPortFromFile = Number.isFinite(resolvedStackExpoPortFromFile) && resolvedStackExpoPortFromFile > 0;
   const runtimeState = stackName
     ? await readStackRuntimeStateFile(getStackRuntimeStatePath(stackName))
     : null;
   const defaultDevPort = (() => {
     const forcedExpoPort = Number(envWithStackDefaults.HAPPIER_STACK_EXPO_DEV_PORT ?? '');
     if (Number.isFinite(forcedExpoPort) && forcedExpoPort > 0) return Math.floor(forcedExpoPort);
+    if (hasPinnedExpoPortFromFile) return Math.floor(resolvedStackExpoPortFromFile);
     const forcedTauriPort = Number(envWithStackDefaults.HAPPIER_STACK_TAURI_DEV_PORT ?? '');
     if (Number.isFinite(forcedTauriPort) && forcedTauriPort > 0) return Math.floor(forcedTauriPort);
     return 8081;
   })();
-  const resolvedDevUrl = resolveStackTauriDevUrl({
-    runtimeState,
-    defaultPort: defaultDevPort,
-  });
+  const { resolvedDevUrl, devUrlSource } = (() => {
+    const forcedExpoPort = Number(envWithStackDefaults.HAPPIER_STACK_EXPO_DEV_PORT ?? '');
+    if (Number.isFinite(forcedExpoPort) && forcedExpoPort > 0) {
+      const normalizedForced = Math.floor(forcedExpoPort);
+      if (hasPinnedExpoPortFromFile && normalizedForced === Math.floor(resolvedStackExpoPortFromFile)) {
+        return {
+          resolvedDevUrl: `http://localhost:${normalizedForced}`,
+          devUrlSource: 'stackEnvFile',
+        };
+      }
+      return {
+        resolvedDevUrl: `http://localhost:${normalizedForced}`,
+        devUrlSource: 'env',
+      };
+    }
+    if (hasPinnedExpoPortFromFile) {
+      return {
+        resolvedDevUrl: `http://localhost:${Math.floor(resolvedStackExpoPortFromFile)}`,
+        devUrlSource: 'stackEnvFile',
+      };
+    }
+    return {
+      resolvedDevUrl: resolveStackTauriDevUrl({
+        runtimeState,
+        defaultPort: defaultDevPort,
+      }),
+      devUrlSource: runtimeState ? 'runtimeState' : 'default',
+    };
+  })();
   const cacheBustRaw = String(envWithStackDefaults.HAPPIER_STACK_TAURI_DEV_URL_CACHE_BUST ?? '').trim();
   const wantsCacheBust = cacheBustRaw ? cacheBustRaw !== '0' : true;
-  const devUrl = wantsCacheBust ? appendCacheBustQueryParam(resolvedDevUrl, { value: Date.now() }) : resolvedDevUrl;
+  const devHost = resolveTauriDevHost(envWithStackDefaults);
+  const resolvedDevUrlWithHost = replaceUrlHost(resolvedDevUrl, devHost);
+  const devUrl = wantsCacheBust
+    ? appendCacheBustQueryParam(
+        appendCacheBustQueryParam(resolvedDevUrlWithHost, {
+          key: 'happier_tauri_ts',
+          value: Date.now(),
+        }),
+        {
+          key: 'happier_tauri_launch_id',
+          value: randomUUID(),
+        }
+      )
+    : resolvedDevUrlWithHost;
   const resolveUserHomeDir = () => {
     try {
       return String(os.userInfo()?.homedir ?? os.homedir() ?? '').trim();
@@ -252,6 +336,7 @@ async function main() {
       data: {
         ok: true,
         devUrl,
+        devUrlSource,
         uiDir,
         configPath,
         stackName: stackName || null,
@@ -264,6 +349,11 @@ async function main() {
       },
     });
     return;
+  }
+
+  if (String(runtimeEnv.HAPPIER_STACK_TUI ?? '').trim() === '1') {
+    // eslint-disable-next-line no-console
+    console.log(`[tauri-dev] devUrl=${devUrl} (source=${devUrlSource})`);
   }
 
   if (wantsTauriWaitForExpo(envWithStackDefaults)) {

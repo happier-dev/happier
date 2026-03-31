@@ -10,6 +10,7 @@ import { readStackRuntimeStateFile, recordStackRuntimeUpdate } from '../stack/ru
 import { killProcessGroupOwnedByStack } from '../proc/ownership.mjs';
 import { watchDebounced } from '../proc/watch.mjs';
 import { pickMetroPort, resolveStablePortStart } from '../expo/metro_ports.mjs';
+import { buildServerRuntimeEnv } from '../server/server_env.mjs';
 
 export function resolveStackUiDevPortStart({ env = process.env, stackName }) {
   return resolveStablePortStart({
@@ -48,13 +49,11 @@ export async function startDevServer({
   spawnOptions = {},
   quiet = false,
 }) {
-  const serverEnv = {
-    ...baseEnv,
-    PORT: String(serverPort),
-    PUBLIC_URL: publicServerUrl,
-    // Avoid noisy failures if a previous run left the metrics port busy.
-    METRICS_ENABLED: baseEnv.METRICS_ENABLED ?? 'false',
-  };
+  const serverEnv = buildServerRuntimeEnv({
+    baseEnv,
+    serverPort,
+    publicServerUrl,
+  });
 
   if (serverComponentName === 'happier-server-light') {
     applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir });

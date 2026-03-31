@@ -82,6 +82,7 @@ export async function resolveServerUrls({ env = process.env, serverPort, allowEn
     envPublicUrl,
     allowEnable,
     stackName,
+    env,
   });
   const publicServerUrl = normalizeUrlNoTrailingSlash(
     await preferStackLocalhostUrl(resolved.publicServerUrl, { stackName })

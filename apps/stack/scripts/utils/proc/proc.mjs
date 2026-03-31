@@ -192,7 +192,19 @@ export async function run(cmd, args, options = {}) {
           }, timeoutMs)
         : null;
     proc.on('error', rejectPromise);
-    proc.on('exit', (code) => (code === 0 ? resolvePromise() : rejectPromise(new Error(`${cmd} failed (code=${code})`))));
+    proc.on('exit', (code, signal) => {
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      const sig = signal ?? 'null';
+      const resolvedCode = code ?? 'null';
+      const e = new Error(`${cmd} failed (code=${resolvedCode}, sig=${sig})`);
+      e.code = 'EEXIT';
+      e.exitCode = code;
+      e.signal = signal;
+      rejectPromise(e);
+    });
     proc.on('exit', () => {
       if (t) clearTimeout(t);
     });
