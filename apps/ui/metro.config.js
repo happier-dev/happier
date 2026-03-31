@@ -1,4 +1,5 @@
 const path = require("node:path");
+const fs = require("node:fs");
 const {
   getSentryExpoConfig
 } = require("@sentry/react-native/metro");
@@ -25,6 +26,43 @@ if (process.env.CI || isStackRun) {
     ...(config.watcher || {}),
     useWatchman: false,
   };
+}
+
+function safeReadJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function addInternalWorkspaceWatchFolders() {
+  if (!(process.env.CI || isStackRun)) return;
+
+  const monorepoRoot = path.resolve(__dirname, "../../");
+  const uiPkgPath = path.resolve(__dirname, "package.json");
+  const uiPkg = safeReadJson(uiPkgPath);
+  if (!uiPkg) return;
+
+  const depSources = [uiPkg.dependencies, uiPkg.optionalDependencies, uiPkg.devDependencies];
+  const internal = new Set();
+  for (const src of depSources) {
+    if (!src || typeof src !== "object") continue;
+    for (const name of Object.keys(src)) {
+      if (!String(name).startsWith("@happier-dev/")) continue;
+      internal.add(String(name));
+    }
+  }
+
+  for (const name of internal) {
+    const id = String(name).split("/")[1] || "";
+    if (!id) continue;
+    const pkgDir = path.resolve(monorepoRoot, "packages", id);
+    if (!fs.existsSync(pkgDir)) continue;
+    if (!config.watchFolders.includes(pkgDir)) {
+      config.watchFolders.push(pkgDir);
+    }
+  }
 }
 
 // Add support for .wasm files (required by Skia for all platforms)

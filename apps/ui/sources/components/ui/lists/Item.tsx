@@ -40,12 +40,15 @@ export interface ItemProps {
     detail?: string;
     icon?: React.ReactNode;
     leftElement?: React.ReactNode;
+    leftElementWhenHovered?: React.ReactNode;
     rightElement?: React.ReactNode;
     onPress?: () => void;
     onDoublePress?: () => void;
     onLongPress?: () => void;
     onMouseDownCapture?: (event: unknown) => void;
     onContextMenu?: (event: unknown) => void;
+    onHoverIn?: () => void;
+    onHoverOut?: () => void;
     accessibilityRole?: AccessibilityRole;
     disabled?: boolean;
     loading?: boolean;
@@ -232,12 +235,15 @@ export const Item = React.memo<ItemProps>((props) => {
         detail,
         icon,
         leftElement,
+        leftElementWhenHovered,
         rightElement,
         onPress,
         onDoublePress,
         onLongPress,
         onMouseDownCapture,
         onContextMenu,
+        onHoverIn,
+        onHoverOut,
         accessibilityRole,
         disabled,
         loading,
@@ -398,10 +404,17 @@ export const Item = React.memo<ItemProps>((props) => {
     const titleSizeStyle = isTight ? styles.titleTight : isCompact ? styles.titleCompact : isCozy ? styles.titleCozy : null;
     const subtitleSizeStyle = isTight ? styles.subtitleTight : isCompact ? styles.subtitleCompact : isCozy ? styles.subtitleCozy : null;
     const detailSizeStyle = isTight ? styles.detailTight : isCompact ? styles.detailCompact : isCozy ? styles.detailCozy : null;
+
+    const [isHovered, setIsHovered] = React.useState(false);
+    React.useEffect(() => {
+        // Keep hover state coherent with disabled/loading changes.
+        if (disabled || loading) setIsHovered(false);
+    }, [disabled, loading]);
+
     const leftAccessory = React.useMemo(() => {
-        const candidate = leftElement ?? sizedIcon ?? null;
+        const candidate = (isHovered ? leftElementWhenHovered : null) ?? leftElement ?? sizedIcon ?? null;
         return normalizeNodeForView(candidate);
-    }, [leftElement, sizedIcon]);
+    }, [isHovered, leftElement, leftElementWhenHovered, sizedIcon]);
     const rightAccessory = React.useMemo(() => normalizeNodeForView(rightElement ?? null), [rightElement]);
     const subtitleAccessoryNode = React.useMemo(() => normalizeNodeForView(subtitleAccessory ?? null), [subtitleAccessory]);
     const chevronAccessory = React.useMemo(() => {
@@ -415,12 +428,6 @@ export const Item = React.memo<ItemProps>((props) => {
             />,
         );
     }, [chevronSize, showAccessory, theme.colors.groupped.chevron]);
-
-    const [isHovered, setIsHovered] = React.useState(false);
-    React.useEffect(() => {
-        // Keep hover state coherent with disabled/loading changes.
-        if (disabled || loading) setIsHovered(false);
-    }, [disabled, loading]);
 
     const dividerNode = showDivider ? (
         <View
@@ -637,8 +644,14 @@ export const Item = React.memo<ItemProps>((props) => {
                 } : undefined}
                 onPressIn={handlePressIn}
                 onPressOut={handlePressOut}
-                onHoverIn={isWeb && !disabled && !loading ? () => setIsHovered(true) : undefined}
-                onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
+                onHoverIn={isWeb && !disabled && !loading ? () => {
+                    setIsHovered(true);
+                    onHoverIn?.();
+                } : undefined}
+                onHoverOut={isWeb ? () => {
+                    setIsHovered(false);
+                    onHoverOut?.();
+                } : undefined}
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
                 accessibilityRole={accessibilityRole ?? 'button'}

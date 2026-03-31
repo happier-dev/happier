@@ -56,11 +56,23 @@ export function resolveModalCardDimensions(
 ): ModalCardDimensions {
     const preset = MODAL_CARD_PRESETS[options.size ?? 'md'];
     const horizontalMargin = 80;
-    const availableWidth = Math.max(0, Math.floor(windowDimensions.width - horizontalMargin));
+    const hasWindowWidth = Number.isFinite(windowDimensions.width) && windowDimensions.width > 0;
+    const hasWindowHeight = Number.isFinite(windowDimensions.height) && windowDimensions.height > 0;
+
+    const availableWidth = hasWindowWidth
+        ? Math.max(0, Math.floor(windowDimensions.width - horizontalMargin))
+        : preset.maxWidth;
+
     const width = options.width != null
-        ? Math.min(availableWidth, options.width)
+        ? (hasWindowWidth
+            ? Math.min(availableWidth, options.width)
+            : clamp(options.width, preset.minWidth, preset.maxWidth))
         : clamp(availableWidth, preset.minWidth, preset.maxWidth);
-    const availableHeight = Math.floor(windowDimensions.height * (options.maxHeightRatio ?? preset.heightRatio));
+
+    const availableHeight = hasWindowHeight
+        ? Math.floor(windowDimensions.height * (options.maxHeightRatio ?? preset.heightRatio))
+        : preset.maxHeight;
+
     const maxHeight = clamp(availableHeight, preset.minHeight, preset.maxHeight);
 
     return {

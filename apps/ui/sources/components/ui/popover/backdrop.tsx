@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import type { PopoverBackdropEffect, PopoverPortalOptions, PopoverWindowRect } from './_types';
 
 export function PopoverBackdrop(props: Readonly<{
@@ -244,8 +245,13 @@ function PopoverBackdropEffectLayer(props: Readonly<{
                         style={[
                             style,
                             Platform.OS === 'web'
-                                ? ({ backdropFilter: `blur(${webBlurPx}px)`, backgroundColor: webBlurTint } as any)
-                                : ({ backgroundColor: 'rgba(0,0,0,0.08)' } as any),
+                                ? (createBackdropWebStyle({
+                                    backgroundColor: webBlurTint,
+                                    blurPx: webBlurPx,
+                                }) as unknown as ViewStyle)
+                                : createBackdropNativeStyle({
+                                    backgroundColor: 'rgba(0,0,0,0.08)',
+                                }),
                         ]}
                     />
                 ))}
@@ -270,4 +276,3 @@ function PopoverBackdropEffectLayer(props: Readonly<{
         </>
     );
 }
-

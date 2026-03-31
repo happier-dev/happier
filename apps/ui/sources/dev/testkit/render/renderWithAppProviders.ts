@@ -1,5 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
+import * as safeAreaContext from 'react-native-safe-area-context';
 
 import { registerStandardCleanupTarget, unregisterStandardCleanupTarget } from '../cleanup/standardCleanup';
 import { flushHookEffects, type FlushHookEffectsOptions } from '../hooks/flushHookEffects';
@@ -20,8 +21,25 @@ function applyWrapper(
     element: React.ReactElement,
     wrapper?: React.ComponentType<React.PropsWithChildren>,
 ): React.ReactElement {
-    if (!wrapper) return element;
-    return React.createElement(wrapper, null, element);
+    const safeAreaInsets = { top: 0, left: 0, right: 0, bottom: 0 };
+    const safeAreaModule = safeAreaContext as unknown as Record<string, unknown>;
+    const SafeAreaInsetsContext =
+        safeAreaModule
+        && typeof safeAreaModule === 'object'
+        && 'SafeAreaInsetsContext' in safeAreaModule
+            ? (safeAreaModule as { SafeAreaInsetsContext: unknown }).SafeAreaInsetsContext
+            : null;
+
+    const wrapped = SafeAreaInsetsContext && typeof SafeAreaInsetsContext === 'object' && 'Provider' in SafeAreaInsetsContext
+        ? React.createElement(
+            (SafeAreaInsetsContext as unknown as { Provider: React.ComponentType<any> }).Provider,
+            { value: safeAreaInsets },
+            element,
+        )
+        : element;
+
+    if (!wrapper) return wrapped as unknown as React.ReactElement;
+    return React.createElement(wrapper, null, wrapped);
 }
 
 export async function renderWithAppProviders(

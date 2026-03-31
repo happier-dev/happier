@@ -1,4 +1,5 @@
 import React from 'react';
+import { StyleSheet as ReactNativeStyleSheet } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
@@ -49,6 +50,12 @@ async function renderBaseModalScreen(
     return renderScreen(React.createElement(BaseModal, { visible: true, children: React.createElement('Child'), ...props }), options);
 }
 
+function flattenStyleProp(styleProp: unknown): Record<string, unknown> {
+    const flattened = ReactNativeStyleSheet.flatten(styleProp as never);
+    if (!flattened || typeof flattened !== 'object') return {};
+    return flattened as Record<string, unknown>;
+}
+
 describe('BaseModal (web)', () => {
     it('renders using Radix Dialog instead of react-native Modal', async () => {
         const { BaseModal } = await import('./BaseModal');
@@ -72,11 +79,59 @@ describe('BaseModal (web)', () => {
         expect(screen.findAllByType('DialogTitle' as any).length).toBe(1);
     });
 
+    it('can render scrollable modal content so the modal container owns overflow', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const screen = await renderBaseModalScreen(BaseModal, { scrollable: true });
+
+        const scrollViews = screen.findAllByType('ScrollView' as any);
+        expect(scrollViews).toHaveLength(0);
+
+        const content = screen.findAllByType('DialogContent' as any)?.[0];
+        expect(content?.props.style?.overflowY).toBe('auto');
+    });
+
     it('omits the overlay when showBackdrop is false', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false });
 
         expect(screen.findAllByType('DialogOverlay' as any).length).toBe(0);
+    });
+
+    it('can disable the modal card scale transform so fixed-position children can cover the viewport', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false, disableContentTransform: true });
+
+        const nodesWithScaleTransform = screen.findAll((node) => {
+            const style = (node.props as any)?.style;
+            if (!Array.isArray(style)) return false;
+            const transformStyle = style.find((entry: any) => entry && typeof entry === 'object' && 'transform' in entry);
+            const transform = transformStyle?.transform;
+            if (!Array.isArray(transform)) return false;
+            return transform.some((entry: any) => entry && typeof entry === 'object' && 'scale' in entry);
+        });
+
+        expect(nodesWithScaleTransform.length).toBe(0);
+    });
+
+    it('centers the dialog content container when disableContentTransform is true (so full-screen overlays can extend from the viewport center)', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false, disableContentTransform: true });
+
+        const content = screen.findAllByType('DialogContent' as any)?.[0];
+        expect(content?.props.style?.flexDirection).toBe('column');
+        expect(content?.props.style?.alignItems).toBe('center');
+        expect(content?.props.style?.justifyContent).toBe('center');
+    });
+
+    it('applies a full-viewport scrim/backdrop to the content container when showBackdrop is false (so wizard modals still dim the app)', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false, disableContentTransform: true });
+
+        const content = screen.findAllByType('DialogContent' as any)?.[0];
+        expect(content?.props.style?.position).toBe('fixed');
+        expect(content?.props.style?.inset).toBe(0);
+        expect(content?.props.style?.backdropFilter).toBeTypeOf('string');
+        expect(content?.props.style?.WebkitBackdropFilter).toBeTypeOf('string');
     });
 
     it('prevents outside dismissal when closeOnBackdrop is false', async () => {
@@ -117,12 +172,8 @@ describe('BaseModal (web)', () => {
         expect(content?.props.onClick).toBeTypeOf('function');
 
         const currentTarget = {};
-        const innerTarget = {
-            closest: vi.fn().mockReturnValue({}),
-        };
+        const innerTarget = {};
         content?.props.onClick({ target: innerTarget, currentTarget, preventDefault: () => {}, stopPropagation: () => {} });
-
-        expect(innerTarget.closest).toHaveBeenCalledWith('[data-happy-modal-card-boundary]');
         expect(onClose).toHaveBeenCalledTimes(0);
     });
 
@@ -134,39 +185,12 @@ describe('BaseModal (web)', () => {
         expect(container?.props.pointerEvents).not.toBe('box-none');
     });
 
-    it('does not rely on pointerEvents=\"box-none\" on the wrapper around modal children on web', async () => {
+    it('does not render an extra DOM wrapper around modal children on web', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
 
         const child = screen.findByType('Child' as any);
-        const wrapper = (child as any)?.parent;
-
-        expect(wrapper?.type).toBe('div');
-        expect(wrapper?.props['data-happy-modal-card-boundary']).toBe('');
-    });
-
-    it('dismisses when clicking the centering shell outside the modal card', async () => {
-        const { BaseModal } = await import('./BaseModal');
-
-        const onClose = vi.fn();
-        const screen = await renderBaseModalScreen(BaseModal, { onClose });
-
-        const content = screen.findAllByType('DialogContent' as any)?.[0];
-        expect(content?.props.onClick).toBeTypeOf('function');
-
-        const outsideTarget = {
-            closest: vi.fn().mockReturnValue(null),
-        };
-
-        content?.props.onClick({
-            target: outsideTarget,
-            currentTarget: {},
-            preventDefault: () => {},
-            stopPropagation: () => {},
-        });
-
-        expect(outsideTarget.closest).toHaveBeenCalledWith('[data-happy-modal-card-boundary]');
-        expect(onClose).toHaveBeenCalledTimes(1);
+        expect((child as any)?.parent?.type).not.toBe('div');
     });
 
     it('forces document.body pointer events back to auto while a web modal is visible and restores them on unmount', async () => {

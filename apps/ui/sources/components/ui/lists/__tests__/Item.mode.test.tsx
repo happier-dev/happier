@@ -201,4 +201,37 @@ describe('Item mode prop', () => {
         const afterFlattened = flattenTestStyle(afterStyleFn({ pressed: false }));
         expect(afterFlattened.backgroundColor).toBe(lightTheme.colors.surfacePressed);
     });
+
+    it('forwards web hover events to optional callbacks', async () => {
+        const hoverInSpy = vi.fn();
+        const hoverOutSpy = vi.fn();
+        const { Item } = await import('../Item');
+
+        // `Item` does not currently declare hover callback props in the public type.
+        // Cast narrowly so we can TDD the API addition without weakening production types.
+        const ItemAny = Item as unknown as React.ComponentType<any>;
+
+        const screen = await renderScreen(
+            <ItemAny
+                title="Hover callbacks"
+                testID="item-hover-callbacks"
+                onPress={() => {}}
+                onHoverIn={hoverInSpy}
+                onHoverOut={hoverOutSpy}
+            />
+        );
+
+        const host = findHostNodeByTestID(screen, 'item-hover-callbacks');
+        if (!host) {
+            throw new Error('Expected hover item host node to render');
+        }
+
+        await act(async () => {
+            host.props.onHoverIn();
+            host.props.onHoverOut();
+        });
+
+        expect(hoverInSpy).toHaveBeenCalledTimes(1);
+        expect(hoverOutSpy).toHaveBeenCalledTimes(1);
+    });
 });

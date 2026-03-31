@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import {
     collectUnexpectedRawTextNodes,
     findTestInstanceByTypeContainingText,
@@ -233,5 +234,32 @@ describe('Item', () => {
         const resolved = styleFn({ pressed: false });
         const styles = Array.isArray(resolved) ? resolved : [resolved];
         expect(styles.some((s: any) => s && typeof s === 'object' && s.cursor === 'not-allowed')).toBe(true);
+    });
+
+    it('renders leftElementWhenHovered when the row is hovered (web)', async () => {
+        const { Item } = await import('./Item');
+
+        const screen = await renderScreen(
+            React.createElement(Item as any, {
+                title: 'Title',
+                onPress: () => {},
+                showChevron: false,
+                leftElement: React.createElement('DefaultIcon', { marker: 'default' }),
+                leftElementWhenHovered: React.createElement('HoverIcon', { marker: 'hovered' }),
+            }),
+        );
+
+        expect(findTestInstanceByTypeWithProps(screen, 'DefaultIcon' as any, { marker: 'default' })).toBeTruthy();
+        expect(findTestInstanceByTypeWithProps(screen, 'HoverIcon' as any, { marker: 'hovered' })).toBeUndefined();
+
+        const pressable = findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' });
+        expect(pressable).toBeTruthy();
+        if (!pressable) throw new Error('Pressable not found');
+
+        await act(async () => {
+            pressable.props.onHoverIn?.();
+        });
+
+        expect(findTestInstanceByTypeWithProps(screen, 'HoverIcon' as any, { marker: 'hovered' })).toBeTruthy();
     });
 });

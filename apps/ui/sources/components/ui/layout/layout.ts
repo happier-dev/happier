@@ -9,6 +9,10 @@ import {
 } from '@/utils/platform/viewportClass';
 
 function resolveConstrainedMaxWidth(params: Readonly<{ variant: 'header' | 'content' }>): number {
+    if (Platform.OS === 'web' && params.variant === 'content' && !isTauriDesktop()) {
+        return CONSTRAINED_MAX_WIDTH_PX_BY_VIEWPORT_CLASS.compact;
+    }
+
     if (isRunningOnMac() || isTauriDesktop()) {
         if (params.variant === 'header') return Number.POSITIVE_INFINITY;
         return CONSTRAINED_MAX_WIDTH_PX_BY_VIEWPORT_CLASS.wide;

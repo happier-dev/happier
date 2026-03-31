@@ -59,6 +59,14 @@ function resolveAgentsWorkspaceSource(id: string): string | null {
     );
 }
 
+function resolveCliCommonWorkspaceSource(id: string): string | null {
+    return resolveWorkspacePackageSource(
+        id,
+        '@happier-dev/cli-common',
+        resolve('../../packages/cli-common/src'),
+    );
+}
+
 function resolveConnectionSupervisorWorkspaceSource(id: string): string | null {
     return resolveWorkspacePackageSource(
         id,
@@ -73,6 +81,7 @@ const expoNodeModuleStubsPlugin = {
     resolveId(id: string) {
         return resolveProtocolWorkspaceSource(id)
             ?? resolveAgentsWorkspaceSource(id)
+            ?? resolveCliCommonWorkspaceSource(id)
             ?? resolveConnectionSupervisorWorkspaceSource(id)
             ?? resolveExpoNodeModuleStub(id);
     },
@@ -83,9 +92,9 @@ export default defineConfig({
         __DEV__: false,
     },
     optimizeDeps: {
-        // Workspace packages (like `@happier-dev/protocol`) can change frequently during development.
-        // Excluding them ensures Vitest doesn't keep using stale optimized dependency caches.
-        exclude: ['@happier-dev/protocol', '@happier-dev/agents', '@happier-dev/connection-supervisor'],
+            // Workspace packages (like `@happier-dev/protocol`) can change frequently during development.
+            // Excluding them ensures Vitest doesn't keep using stale optimized dependency caches.
+            exclude: ['@happier-dev/protocol', '@happier-dev/agents', '@happier-dev/cli-common', '@happier-dev/connection-supervisor'],
     },
     test: {
         // Ensure per-file module isolation so test-local `vi.mock(...)` does not leak
@@ -142,6 +151,8 @@ export default defineConfig({
             { find: /^react-native\//, replacement: resolve('./sources/dev/reactNativeInternalStub.ts') },
             // Vitest runs in node; avoid parsing React Native's Flow entrypoint.
             { find: /^react-native$/, replacement: resolve('./sources/dev/reactNativeStub.ts') },
+            // `react-native-safe-area-context` imports native modules that don't exist in node/Vitest.
+            { find: 'react-native-safe-area-context', replacement: resolve('./sources/dev/reactNativeSafeAreaContextStub.ts') },
             // Expo packages commonly depend on `expo-modules-core`, whose exports point to TS sources that import `react-native`.
             // In node/Vitest we stub the minimal surface needed by our tests.
             { find: /expo-modules-core\/src\/index\.ts$/, replacement: resolve('./sources/dev/expoModulesCoreStub.ts') },

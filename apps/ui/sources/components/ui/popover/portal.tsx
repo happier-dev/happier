@@ -32,8 +32,8 @@ export function useNativeOverlayPortalNode(params: Readonly<{
 export function tryRenderWebPortal(params: Readonly<{
     shouldPortalWeb: boolean;
     portalTargetOnWeb: 'body' | 'boundary' | 'modal';
-    modalPortalTarget: HTMLElement | null;
-    getBoundaryDomElement: () => HTMLElement | null;
+    modalPortalTarget: Element | DocumentFragment | null;
+    getBoundaryDomElement: () => Element | DocumentFragment | null;
     content: React.ReactNode;
 }>): React.ReactNode | null {
     if (!params.shouldPortalWeb) return null;
