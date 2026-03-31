@@ -75,6 +75,11 @@ export type RunTailscaleServeEnableResult = Readonly<{
   rawStatus: string;
 }>;
 
+export type RunTailscaleFunnelEnableParams = RunTailscaleParams &
+  Readonly<{
+    upstreamUrl: string;
+  }>;
+
 export type RunTailscaleLoginResult = Readonly<{
   usedQr: boolean;
   result: TailscaleCommandResult;
@@ -383,6 +388,77 @@ export async function runTailscaleServeStatus(
   deps: RunTailscaleDeps = {},
 ): Promise<string> {
   return await runTextCommand({ ...params, args: ['serve', 'status'] }, deps);
+}
+
+export async function runTailscaleFunnelStatus(
+  params: RunTailscaleParams = {},
+  deps: RunTailscaleDeps = {},
+): Promise<string> {
+  return await runTextCommand({ ...params, args: ['funnel', 'status'] }, deps);
+}
+
+export async function runTailscaleFunnelEnable(
+  params: RunTailscaleFunnelEnableParams,
+  deps: RunTailscaleDeps = {},
+): Promise<RunTailscaleServeEnableResult> {
+  const command = await resolveCommand(params, deps);
+  const runner = deps.runCommand ?? runCommand;
+  const env = sanitizeTailscaleEnv(params.env ?? process.env);
+  const timeoutMs = normalizeTimeoutMs(params.timeoutMs, 30_000);
+  const upstreamUrl = String(params.upstreamUrl ?? '').trim();
+  const args = ['funnel', '--bg', upstreamUrl];
+
+  try {
+    await runner({
+      command,
+      args,
+      env,
+      timeoutMs,
+    });
+  } catch (error) {
+    if (!(error instanceof TailscaleCommandError)) {
+      throw error;
+    }
+
+    const rawStatus = collectOutput(error.result);
+    const approvalUrl = extractTailscaleServeApprovalUrl(rawStatus);
+    if (approvalUrl) {
+      return {
+        approvalUrl,
+        httpsUrl: null,
+        rawStatus,
+      };
+    }
+    throw error;
+  }
+
+  const status = await runTailscaleFunnelStatus(
+    {
+      env,
+      tailscaleBin: command,
+      timeoutMs: params.timeoutMs,
+    },
+    {
+      runCommand: runner,
+      resolveTailscaleBin: async () => command,
+    },
+  ).catch(() => '');
+
+  return {
+    approvalUrl: null,
+    httpsUrl: extractTailscaleServeHttpsUrl(status),
+    rawStatus: status,
+  };
+}
+
+export async function runTailscaleFunnelReset(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<void> {
+  const command = await resolveCommand(params, deps);
+  await (deps.runCommand ?? runCommand)({
+    command,
+    args: ['funnel', 'reset'],
+    env: sanitizeTailscaleEnv(params.env ?? process.env),
+    timeoutMs: normalizeTimeoutMs(params.timeoutMs, 15_000),
+  });
 }
 
 export async function runTailscaleServeEnable(

@@ -14,6 +14,9 @@ export {
   resolveTailscaleBin,
   runTailscaleDown,
   runTailscaleLogin,
+  runTailscaleFunnelEnable,
+  runTailscaleFunnelReset,
+  runTailscaleFunnelStatus,
   runTailscaleServeEnable,
   runTailscaleServeReset,
   runTailscaleServeStatus,
@@ -34,6 +37,7 @@ export {
   parseTailscaleStatusSnapshot,
   type TailscaleStatusSnapshot,
 } from './statusSnapshot.js';
+export { resolveTailscaleMachineHttpsUrlFromStatusSnapshot } from './publicUrl.js';
 export {
   createTailscaleSecureAccessTaskSpec,
   TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND,
