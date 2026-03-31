@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import chalk from 'chalk';
 
@@ -23,7 +23,7 @@ type RelayHostStatusJson = Readonly<{
   installed: boolean;
   version: string | null;
   service: RelayRuntimeStatusSnapshot['service'];
-  relayUrl: string;
+  relayUrl: string | null;
   healthy: boolean | null;
 }>;
 
@@ -301,12 +301,34 @@ function runCommandCapture(command: string, args: readonly string[]): Readonly<{
 
 function buildSshRunner(ssh: SystemTaskSshConnectionConfig) {
   const knownHostsMode = resolveKnownHostsMode(ssh);
+  const ensureTrustedHostKey = () => {
+    if (knownHostsMode !== 'app') return;
+    if (!ssh.knownHostsPath || !ssh.trustedHostKey) return;
+    const trustedHostKey = String(ssh.trustedHostKey).trim();
+    if (!trustedHostKey) return;
+    if (trustedHostKey.includes('\n') || trustedHostKey.includes('\r')) {
+      throw new Error('Invalid --trusted-host-key: expected a single known_hosts line');
+    }
+
+    mkdirSync(dirname(ssh.knownHostsPath), { recursive: true });
+    let existing = '';
+    try {
+      existing = readFileSync(ssh.knownHostsPath, 'utf8');
+    } catch {
+      existing = '';
+    }
+    if (existing.includes(trustedHostKey)) return;
+    const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+    writeFileSync(ssh.knownHostsPath, `${existing}${suffix}${trustedHostKey}\n`, 'utf8');
+  };
   return {
     knownHostsMode,
     runRemoteText: async (remoteCommand: string) => {
+      ensureTrustedHostKey();
       return runCommandCapture('ssh', buildSshArgs({ ssh, knownHostsMode, remoteCommand }));
     },
     copyLocalDirectoryToRemote: async (localPath: string, remotePath: string) => {
+      ensureTrustedHostKey();
       const result = runCommandCapture('scp', buildScpArgs({ ssh, knownHostsMode, localPath, remotePath }));
       if (result.status !== 0) {
         throw new Error(result.stderr.trim() || 'SCP failed');
@@ -383,7 +405,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const op = String(args[0] ?? '').trim();
   if (!op) {
-    throw new Error('Usage: happier relay host <install|status|start|stop|restart> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--yes] [--json]');
+    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--yes] [--json]');
   }
 
   let rest = args.slice(1);
@@ -397,8 +419,6 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   rest = envFlag.rest;
   const serverBinaryFlag = takeFlagValue(rest, '--server-binary');
   rest = serverBinaryFlag.rest;
-  const legacyServerBinaryFlag = takeFlagValue(rest, '--self-host-server-binary');
-  rest = legacyServerBinaryFlag.rest;
   const identityFile = takeFlagValue(rest, '--identity-file');
   rest = identityFile.rest;
   const sshConfigFile = takeFlagValue(rest, '--ssh-config-file');
@@ -439,14 +459,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
 
   const taskParams = resolveRelayRuntimeTaskParams({ channel, mode, ssh });
   const env = envFlag.values.length > 0 ? parseEnvOverrides(envFlag.values) : null;
-  const serverBinaryOverride = (() => {
-    const canonical = String(serverBinaryFlag.value ?? '').trim();
-    const legacy = String(legacyServerBinaryFlag.value ?? '').trim();
-    if (canonical && legacy && canonical !== legacy) {
-      throw new Error('Conflicting flags: --server-binary and --self-host-server-binary');
-    }
-    return canonical || legacy || null;
-  })();
+  const serverBinaryOverride = String(serverBinaryFlag.value ?? '').trim() || null;
 
   if (op === 'status') {
     const engine = ssh
@@ -471,8 +484,8 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       installed: snapshot.installed,
       version: snapshot.version,
       service: snapshot.service,
-      relayUrl: snapshot.baseUrl,
-      healthy: snapshot.healthy,
+      relayUrl: snapshot.installed ? snapshot.baseUrl : null,
+      healthy: typeof snapshot.healthy === 'boolean' ? snapshot.healthy : null,
     };
 
     if (json) {
@@ -485,7 +498,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     }
 
     console.log(chalk.bold('Relay host status'));
-    console.log(chalk.gray(`  url: ${status.relayUrl}`));
+    console.log(chalk.gray(`  url: ${status.relayUrl ?? '(not installed)'}`));
     console.log(chalk.gray(`  installed: ${status.installed ? 'yes' : 'no'}`));
     if (status.version) console.log(chalk.gray(`  version: ${status.version}`));
     console.log(chalk.gray(`  service: ${status.service.active ? 'running' : 'stopped'}`));
@@ -592,7 +605,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     return;
   }
 
-  if (op === 'start' || op === 'stop' || op === 'restart') {
+  if (op === 'start' || op === 'stop' || op === 'restart' || op === 'uninstall') {
     const engine = ssh
       ? (() => {
           const runner = buildSshRunner(ssh);
