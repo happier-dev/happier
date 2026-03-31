@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { WizardChoiceRow } from './WizardChoiceRow';
 import type { WizardTerminalHandoffStep } from './WizardTerminalHandoff';
 import { WizardTerminalHandoff } from './WizardTerminalHandoff';
 import { buildCliInstallCommandForCurrentApp } from './wizardCliCommands';
@@ -21,9 +20,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         gap: 18,
         alignItems: 'center',
-    },
-    modePicker: {
-        width: '100%',
     },
     noteBlock: {
         width: '100%',
@@ -78,40 +74,18 @@ export function WebDesktopBackgroundServiceHandoffStep(props: WebDesktopBackgrou
     useUnistyles();
     const styles = stylesheet;
     const cliInstallCommand = React.useMemo(() => buildCliInstallCommandForCurrentApp(), []);
-    const [handoffMode, setHandoffMode] = React.useState<'desktopApp' | 'cli'>('desktopApp');
 
     return (
         <View testID={props.testID} style={styles.root}>
-            <View testID={`${props.testID}-mode`} style={styles.modePicker}>
-                <WizardChoiceRow
-                    testID={`${props.testID}-mode-desktop`}
-                    selected={handoffMode === 'desktopApp'}
-                    icon="desktop-outline"
-                    title={t('setupOnboarding.webDesktopHandoffDesktopAppOption')}
-                    subtitle={t('setupOnboarding.webDesktopHandoffDesktopAppSubtitle')}
-                    onPress={() => setHandoffMode('desktopApp')}
-                />
-                <WizardChoiceRow
-                    testID={`${props.testID}-mode-cli`}
-                    selected={handoffMode === 'cli'}
-                    icon="terminal-outline"
-                    title={t('setupOnboarding.webDesktopHandoffCliOption')}
-                    subtitle={t('setupOnboarding.webDesktopHandoffCliSubtitle')}
-                    onPress={() => setHandoffMode('cli')}
-                />
-            </View>
+            <WizardTerminalHandoff
+                testID={`${props.testID}-terminal`}
+                steps={buildDaemonHandoffSteps({
+                    cliInstallCommand,
+                    relayUrl: props.relayUrl,
+                })}
+            />
 
-            {handoffMode === 'desktopApp' ? (
-                <WebDesktopDownloadCta testIDPrefix={props.testID} />
-            ) : (
-                <WizardTerminalHandoff
-                    testID={`${props.testID}-terminal`}
-                    steps={buildDaemonHandoffSteps({
-                        cliInstallCommand,
-                        relayUrl: props.relayUrl,
-                    })}
-                />
-            )}
+            <WebDesktopDownloadCta testIDPrefix={props.testID} />
 
             <View testID={`${props.testID}-optional`} style={styles.noteBlock}>
                 <Text style={styles.noteTitle}>{t('setupOnboarding.webDesktopOnlyOptionalNextTitle')}</Text>

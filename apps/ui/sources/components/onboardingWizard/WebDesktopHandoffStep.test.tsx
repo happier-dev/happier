@@ -1,8 +1,7 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 describe('WebDesktopHandoffStep', () => {
     afterEach(() => {
@@ -17,12 +16,6 @@ describe('WebDesktopHandoffStep', () => {
 
         expect(screen.findByTestId('web-desktop-handoff')).toBeTruthy();
         expect(screen.findByTestId('web-desktop-handoff-download-desktop')).toBeTruthy();
-
-        const cliModeRow = screen.findByTestId('web-desktop-handoff-mode-cli')!;
-        await act(async () => {
-            await cliModeRow.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findByTestId('web-desktop-handoff-terminal')).toBeTruthy();
 
@@ -40,12 +33,6 @@ describe('WebDesktopHandoffStep', () => {
 
         expect(screen.findByTestId('web-daemon-handoff')).toBeTruthy();
         expect(screen.findByTestId('web-daemon-handoff-download-desktop')).toBeTruthy();
-
-        const cliModeRow = screen.findByTestId('web-daemon-handoff-mode-cli')!;
-        await act(async () => {
-            await cliModeRow.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findByTestId('web-daemon-handoff-terminal')).toBeTruthy();
         expect(screen.findByTestId('web-daemon-handoff-terminal-step-cli-install')).toBeTruthy();

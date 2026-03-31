@@ -26,7 +26,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     section: {
         width: '100%',
-        gap: 10,
+        gap: 2,
     },
     sectionTitle: {
         textAlign: 'center',
@@ -59,7 +59,8 @@ export function WizardTerminalHandoff(props: WizardTerminalHandoffProps) {
                     <CodeBlockView
                         code={step.code}
                         language={step.language ?? 'bash'}
-                        wrap
+                        showHeaderRow={false}
+                        wrap={false}
                         showCopyButton
                         scrollTestID={`${props.testID}-${step.scrollTestIDSuffix}`}
                     />

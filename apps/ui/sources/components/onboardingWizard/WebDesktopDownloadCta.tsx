@@ -16,6 +16,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 10,
         alignItems: 'center',
     },
+    button: {
+        width: '100%',
+        maxWidth: 360,
+    },
     title: {
         textAlign: 'center',
         color: theme.colors.text,
@@ -44,11 +48,11 @@ export function WebDesktopDownloadCta(props: WebDesktopDownloadCtaProps) {
             <Text style={styles.subtitle}>{t('setupOnboarding.webDesktopOnlyDesktopAppSubtitle')}</Text>
             <RoundButton
                 title={t('setupOnboarding.webDesktopOnlyDesktopAppButton')}
-                size="large"
+                size="normal"
+                style={styles.button}
                 onPress={openDownload}
                 testID={`${props.testIDPrefix}-download-desktop`}
             />
         </View>
     );
 }
-
