@@ -58,6 +58,14 @@
       "types": "./dist/relayHost/index.d.ts",
       "default": "./dist/relayHost/index.js"
     },
+    "./relayAccess": {
+      "types": "./dist/relayAccess/index.d.ts",
+      "default": "./dist/relayAccess/index.js"
+    },
+    "./relayAccess/catalog": {
+      "types": "./dist/relayAccess/catalog.d.ts",
+      "default": "./dist/relayAccess/catalog.js"
+    },
     "./output": {
       "types": "./dist/output/index.d.ts",
       "default": "./dist/output/index.js"

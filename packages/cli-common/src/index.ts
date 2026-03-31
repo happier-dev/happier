@@ -7,5 +7,6 @@ export * as tailscale from './tailscale/index.js';
 export * as componentArtifacts from './componentArtifacts/index.js';
 export * as firstPartyRuntime from './firstPartyRuntime/index.js';
 export * as relayHost from './relayHost/index.js';
+export * as relayAccess from './relayAccess/index.js';
 export * as systemTasks from './systemTasks/index.js';
 export * as output from './output/index.js';
