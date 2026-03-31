@@ -7,6 +7,9 @@ mod tray;
 #[cfg(desktop)]
 mod system_tasks;
 
+#[cfg(desktop)]
+mod window_sizing;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -45,6 +48,7 @@ pub fn run() {
             {
                 autostart::register(app)?;
                 tray::register(app)?;
+                window_sizing::register(app)?;
             }
 
             #[cfg(desktop)]
