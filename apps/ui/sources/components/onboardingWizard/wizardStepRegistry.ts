@@ -20,6 +20,8 @@ const onboardingVisible = (stepId: WizardStepId) => (context: WizardContext): bo
         case 'auth_lost_access':
         case 'done':
             return true;
+        case 'host_relay_remote':
+            return context.platform === 'desktop' && context.relaySelection.choiceId === 'remoteComputer';
         case 'relay_enter_url':
             return (
                 (context.relaySelection.choiceId === 'customUrl'
@@ -100,8 +102,8 @@ const wizardStepRegistryEntries = [
     },
     {
         id: 'desktop_handoff',
-        titleKey: 'setupOnboarding.webDesktopOnlyTitle',
-        subtitleKey: 'setupOnboarding.webDesktopOnlyBody',
+        titleKey: 'setupOnboarding.webRelayHostHandoffTitle',
+        subtitleKey: 'setupOnboarding.webRelayHostHandoffBody',
         kind: 'choice',
         surface: 'onboarding',
         canSkip: false,
@@ -192,6 +194,19 @@ const wizardStepRegistryEntries = [
                 return context.canRunSystemTasks && context.relaySelection.choiceId === 'thisComputer';
             }
             return setupVisible('host_relay_local')(context);
+        },
+    },
+    {
+        id: 'host_relay_remote',
+        titleKey: 'setupOnboarding.relayOnRemoteComputerTitle',
+        subtitleKey: 'setupOnboarding.relayOnRemoteComputerSubtitle',
+        kind: 'choice',
+        surface: 'onboarding',
+        canSkip: false,
+        visibleWhen: (context) => {
+            return context.mode === 'onboarding'
+                && context.platform === 'desktop'
+                && context.relaySelection.choiceId === 'remoteComputer';
         },
     },
     {

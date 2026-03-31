@@ -2,9 +2,11 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 
-vi.mock('react-native', installReactNativeWebMock());
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({
@@ -93,6 +95,10 @@ describe('PreAuthOnboardingWizardEntry', () => {
         process.env.EXPO_PUBLIC_DEBUG = '1';
         if (typeof window !== 'undefined') {
             window.history.pushState({}, '', '/?happier_wizard_step=relay_select');
+        } else {
+            (globalThis as unknown as { location?: { search?: string } }).location = {
+                search: '?happier_wizard_step=relay_select',
+            };
         }
     });
 
@@ -109,4 +115,3 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(wizard.props.initialStepId).toBe('relay_select');
     });
 });
-

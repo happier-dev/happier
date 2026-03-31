@@ -250,6 +250,46 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.next');
     });
 
+    it('keeps the welcome relay footer visible even when the wizard relay selection has no URL (falls back to active relay)', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
+
+        const changeRelayButton = screen.findByTestId('onboarding-wizard-change-relay')!;
+        await act(async () => {
+            await changeRelayButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteChoice = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
+        await act(async () => {
+            await remoteChoice.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const backButton = screen.findByTestId('onboarding-wizard-back')!;
+        await act(async () => {
+            await backButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
+    });
+
     afterEach(() => {
         standardCleanup();
     });
@@ -571,7 +611,7 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-relay-url-input')).toBeTruthy();
     });
 
-    it('continues to auth after saving a relay url from the web "On this computer" handoff', async () => {
+    it('guides web users to install the background service after saving a relay url from the web "On this computer" handoff', async () => {
         activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
         activeServerSnapshotMock.activeLocalRelayUrl = null;
 
@@ -618,6 +658,15 @@ describe('OnboardingWizardSurface', () => {
         const saveRelayButton = screen.findByTestId('onboarding-wizard-primary')!;
         await act(async () => {
             await saveRelayButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-background-service-handoff')).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-lost-access')).toBeNull();
+
+        const continueAfterHandoff = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterHandoff.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -873,6 +922,76 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-host-remote-relay')).toBeTruthy();
     });
 
+    it('requires explicit relay switch confirmation before adopting a remote relay hosted over SSH', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
+        await act(async () => {
+            await remoteRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-host-remote-relay')).toBeTruthy();
+
+        const urlInput = screen.findByTestId('onboarding-wizard-remote-relay-url-input')!;
+        await act(async () => {
+            await urlInput.props.onChangeText?.('https://relay.remote.example.test/');
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const adoptButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await adoptButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(upsertActivateAndSwitchServerMock).not.toHaveBeenCalled();
+        expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeTruthy();
+
+        const switchChoice = screen.findByTestId('onboarding-wizard-confirmSwitchRelay.choice:switch')!;
+        await act(async () => {
+            await switchChoice.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const confirmButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await confirmButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(upsertActivateAndSwitchServerMock).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://relay.remote.example.test/',
+            source: 'url',
+            scope: 'device',
+        }));
+        expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
+    });
+
     it('shows the relay footer hint when Happier Cloud is selected', async () => {
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(
@@ -997,6 +1116,48 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
         expect(runtimeFetchMock.mock.calls.length).toBeGreaterThan(callCountBefore);
+    });
+
+    it('does not show a saved relay row as selected when the user selected the “On this computer” option', async () => {
+        activeServerSnapshotMock.activeLocalRelayUrl = 'http://localhost:53288';
+        listServerProfilesMock.mockReturnValue([
+            {
+                id: 'local-relay',
+                name: 'Local Relay',
+                serverUrl: 'http://localhost:53288',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+                source: 'custom',
+            },
+        ]);
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const thisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
+        await act(async () => {
+            await thisComputerRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const localRelayRow = screen.findByProps({ testID: 'onboarding-wizard-relay:profile:local-relay' } as never);
+        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' } as never)?.props.selected).toBe(true);
+        expect(localRelayRow?.props.selected).toBe(false);
     });
 
     it('renders a single-line relay footer and keeps Cloud from showing a custom URL footer', async () => {

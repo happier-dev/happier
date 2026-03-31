@@ -35,6 +35,7 @@ import {
 } from '@/components/onboardingWizard/wizardResume';
 import { OnboardingWizardSurface } from '@/components/onboardingWizard/OnboardingWizardSurface';
 import type { WizardStepId } from '@/components/onboardingWizard/wizardTypes';
+import { getWizardStepDefinition } from '@/components/onboardingWizard/wizardStepRegistry';
 
 export type PreAuthOnboardingWizardEntryProps = Readonly<{
     testID?: string;
@@ -277,13 +278,51 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         })(), { tag: 'PreAuthOnboardingWizardEntry.autoRedirect' });
     }, [authEntryOptions, createAccountViaProvider, loginWithKeylessProvider, loginWithMtls]);
 
+    const resolvedInitialStepId = React.useMemo((): WizardStepId | undefined => {
+        if (props.initialStepId) {
+            return props.initialStepId;
+        }
+        if (Platform.OS !== 'web') {
+            return undefined;
+        }
+        if (!process.env.EXPO_PUBLIC_DEBUG) {
+            return undefined;
+        }
+
+        const location =
+            typeof window !== 'undefined'
+                ? window.location
+                : (globalThis as unknown as { location?: { search?: unknown } }).location;
+        const search = typeof location?.search === 'string' ? location.search : '';
+        const href = typeof (location as { href?: unknown } | null)?.href === 'string'
+            ? String((location as { href?: unknown }).href)
+            : '';
+        const fallbackSearch = !search && href.includes('?') ? href.slice(href.indexOf('?')) : '';
+        const query = search || fallbackSearch;
+        if (!query) {
+            return undefined;
+        }
+        const value = new URLSearchParams(query).get('happier_wizard_step');
+        const candidate = typeof value === 'string' ? value.trim() : '';
+        if (!candidate) {
+            return undefined;
+        }
+
+        try {
+            getWizardStepDefinition(candidate as WizardStepId);
+            return candidate as WizardStepId;
+        } catch {
+            return undefined;
+        }
+    }, [props.initialStepId]);
+
     return (
         <OnboardingWizardSurface
             testID={props.testID ?? 'onboarding-wizard'}
             layout={isLandscape ? 'landscape' : 'portrait'}
             isDesktopShell={isDesktopShell}
             authEntryOptions={authEntryOptions}
-            initialStepId={props.initialStepId}
+            initialStepId={resolvedInitialStepId}
             onCreateAccount={createAccount}
             onCreateAccountViaProvider={createAccountViaProvider}
             onLoginWithKeylessProvider={loginWithKeylessProvider}
