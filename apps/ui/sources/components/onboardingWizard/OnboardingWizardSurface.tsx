@@ -456,15 +456,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
 
         const fixed = choice as WizardChoice;
-        const rawServerUrlForFixedSelection = state.context.relaySelection.serverUrl
-            ? String(state.context.relaySelection.serverUrl).trim()
-            : '';
-        const fixedChoiceSelected = state.context.relaySelection.choiceId === fixed.id;
-        const selected = fixedChoiceSelected && (
-            fixed.id !== 'thisComputer'
-            || !rawServerUrlForFixedSelection
-            || isLocalishServerUrl(rawServerUrlForFixedSelection)
-        );
+        const selected = state.context.relaySelection.choiceId === fixed.id;
         const disabled = Boolean(fixed.disabled) || state.context.relaySelection.locked;
         return (
             <WizardChoiceRow
