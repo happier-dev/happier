@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createExpoRouterMock, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -12,7 +13,7 @@ vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: () => null,
 }));
 vi.mock('@/components/onboardingWizard/SetupWizardSurface', () => ({
-    SetupWizardSurface: () => React.createElement('SetupWizardSurface'),
+    SetupWizardSurface: (props: any) => React.createElement('SetupWizardSurface', props),
 }));
 
 const expoRouterMock = createExpoRouterMock({
@@ -75,16 +76,26 @@ const getPendingSetupIntentMock = vi.hoisted(() => vi.fn(() => ({
     phase: 'awaiting_auth',
     relayUrl: 'https://relay.example.test',
 })));
+const clearPendingSetupIntentMock = vi.hoisted(() => vi.fn());
+const setPendingSetupIntentMock = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     getPendingSetupIntent: () => getPendingSetupIntentMock(),
-    clearPendingSetupIntent: vi.fn(),
-    setPendingSetupIntent: vi.fn(),
+    clearPendingSetupIntent: clearPendingSetupIntentMock,
+    setPendingSetupIntent: setPendingSetupIntentMock,
 }));
 
 describe('/ (welcome) setup continuation', () => {
     beforeEach(() => {
         isAuthenticated = true;
         tauriDesktopState.value = true;
+        getPendingSetupIntentMock.mockReset();
+        getPendingSetupIntentMock.mockReturnValue({
+            branch: 'thisComputer',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.example.test',
+        });
+        clearPendingSetupIntentMock.mockReset();
+        setPendingSetupIntentMock.mockReset();
         localDaemonStatus.value = {
             serviceInstalled: false,
             daemonRunning: false,
@@ -137,6 +148,43 @@ describe('/ (welcome) setup continuation', () => {
         await flushHookEffects({ cycles: 1, turns: 2 });
 
         expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/setup');
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+    });
+
+    it('does not auto-open the setup wizard overlay when the user dismissed it previously (phase=dismissed)', async () => {
+        getPendingSetupIntentMock.mockReturnValue({
+            branch: 'thisComputer',
+            phase: 'dismissed',
+            relayUrl: 'https://relay.example.test',
+        });
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+    });
+
+    it('marks the setup wizard as dismissed on exit so it does not immediately re-open', async () => {
+        setPendingSetupIntentMock.mockImplementation((value: any) => {
+            getPendingSetupIntentMock.mockReturnValue(value);
+        });
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        const wizard = screen.findByType('SetupWizardSurface' as never);
+        expect(wizard).not.toBeNull();
+        expect(typeof wizard.props.onExit).toBe('function');
+
+        act(() => {
+            wizard.props.onExit();
+        });
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(clearPendingSetupIntentMock).not.toHaveBeenCalled();
+        expect(setPendingSetupIntentMock).toHaveBeenCalledWith(expect.objectContaining({ phase: 'dismissed' }));
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
     });
 });

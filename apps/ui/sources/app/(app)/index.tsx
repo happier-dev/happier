@@ -32,6 +32,7 @@ import { SetupWizardSurface } from "@/components/onboardingWizard/SetupWizardSur
 import { useConnectionHealth } from "@/components/navigation/connectionStatus/useConnectionHealth";
 import { useLocalDaemonControl } from "@/components/settings/machines/localControl/useLocalDaemonControl";
 import { useRelayDriftBanner } from "@/components/settings/server/useRelayDriftBanner";
+import { BaseModal } from "@/modal/components/BaseModal";
 
 const stylesheet = StyleSheet.create({
     root: {
@@ -76,10 +77,31 @@ function Authenticated() {
         hasRelayDrift: relayDriftBanner != null,
     });
     const pendingSetupIntent = getPendingSetupIntent();
+    const pendingSetupIntentDismissed = pendingSetupIntent?.phase === 'dismissed';
     const hasPendingSetupContinuation =
         pendingSetupIntent?.phase === 'awaiting_auth'
         || pendingSetupIntent?.phase === 'post_auth';
-    const needsSetupWizard = hasPendingSetupContinuation || postAuthSetupRoute === '/setup';
+    const needsSetupWizard = !pendingSetupIntentDismissed && (hasPendingSetupContinuation || postAuthSetupRoute === '/setup');
+
+    const dismissPendingSetupIntent = React.useCallback(() => {
+        const current = getPendingSetupIntent();
+        if (current) {
+            if (current.phase !== 'dismissed') {
+                setPendingSetupIntent({ ...current, phase: 'dismissed' });
+            }
+            return;
+        }
+        if (postAuthSetupRoute !== '/setup') {
+            return;
+        }
+        const snapshot = getActiveServerSnapshot();
+        const relayUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim().replace(/\/+$/, '') : null;
+        setPendingSetupIntent({
+            branch: 'thisComputer',
+            phase: 'dismissed',
+            relayUrl: relayUrl || null,
+        });
+    }, [postAuthSetupRoute]);
 
     React.useEffect(() => {
         const sid = String(sessionId ?? '').trim();
@@ -107,7 +129,9 @@ function Authenticated() {
         }
         if (!needsSetupWizard) {
             if (postAuthSetupRoute === '/') {
-                clearPendingSetupIntent();
+                if (pendingSetupIntent?.phase !== 'dismissed') {
+                    clearPendingSetupIntent();
+                }
             }
             return;
         }
@@ -134,15 +158,37 @@ function Authenticated() {
         <View style={stylesheet.root}>
             <MainView variant="phone" />
             {setupWizardVisible ? (
-                <View style={stylesheet.overlay}>
-                    <SetupWizardSurface
-                        isDesktopShell={isTauriDesktop()}
-                        onExit={() => {
+                Platform.OS === 'web' ? (
+                    <BaseModal
+                        visible={true}
+                        onClose={() => {
                             setSetupWizardVisible(false);
-                            clearPendingSetupIntent();
+                            dismissPendingSetupIntent();
                         }}
-                    />
-                </View>
+                        showBackdrop={false}
+                        closeOnBackdrop={true}
+                    >
+                        <View style={StyleSheet.absoluteFillObject}>
+                            <SetupWizardSurface
+                                isDesktopShell={isTauriDesktop()}
+                                onExit={() => {
+                                    setSetupWizardVisible(false);
+                                    dismissPendingSetupIntent();
+                                }}
+                            />
+                        </View>
+                    </BaseModal>
+                ) : (
+                    <View style={stylesheet.overlay}>
+                        <SetupWizardSurface
+                            isDesktopShell={isTauriDesktop()}
+                            onExit={() => {
+                                setSetupWizardVisible(false);
+                                dismissPendingSetupIntent();
+                            }}
+                        />
+                    </View>
+                )
             ) : null}
         </View>
     );
