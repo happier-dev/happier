@@ -121,6 +121,13 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Container width basis for sidebar width scaling',
         storageScope: 'local',
     },
+    settingsNavSidebarEnabled: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Enable the settings navigation sidebar on tablet/desktop layouts',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
+    },
     settingsNavSidebarWidthPx: {
         schema: z.number(),
         default: 280,

@@ -15,6 +15,7 @@ const shared = vi.hoisted(() => ({
         uiMultiPanePanelsEnabled: true,
         detailsPaneTabsBehavior: 'preview',
         editorFocusModeEnabled: false,
+        settingsNavSidebarEnabled: true,
         avatarStyle: 'gradient',
         showFlavorIcons: true,
         preferredLanguage: null,
@@ -124,5 +125,19 @@ describe('Appearance settings item density', () => {
         });
 
         expect(shared.settingsState.uiItemDensity).toBe('cozy');
+    });
+
+    it('renders the settings navigation sidebar toggle and updates the local setting', async () => {
+        const mod = await import('@/app/(app)/settings/appearance');
+        const screen = await renderSettingsView(React.createElement(mod.default));
+
+        const switchNode = screen.findByTestId('settings-appearance-settingsNavSidebarEnabled-switch');
+        expect(switchNode?.props?.value).toBe(true);
+
+        await act(async () => {
+            switchNode.props.onValueChange(false);
+        });
+
+        expect(shared.settingsState.settingsNavSidebarEnabled).toBe(false);
     });
 });

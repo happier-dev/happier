@@ -36,6 +36,7 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
     const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
     const [editorFocusModeEnabled, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
+    const [settingsNavSidebarEnabled, setSettingsNavSidebarEnabled] = useLocalSettingMutable('settingsNavSidebarEnabled');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
     const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
     const [openItemDensityMenu, setOpenItemDensityMenu] = React.useState(false);
@@ -253,6 +254,22 @@ export default React.memo(function AppearanceSettingsScreen() {
                         <Switch
                             value={uiMultiPanePanelsEnabled}
                             onValueChange={setUiMultiPanePanelsEnabled}
+                            disabled={!panelsSupported}
+                        />
+                    }
+                    disabled={!panelsSupported}
+                    showChevron={false}
+                />
+                <Item
+                    testID="settings-appearance-settingsNavSidebarEnabled"
+                    title={t('settingsAppearance.settingsNavSidebar')}
+                    subtitle={t('settingsAppearance.settingsNavSidebarDescription')}
+                    icon={<Ionicons name="settings-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-appearance-settingsNavSidebarEnabled-switch"
+                            value={settingsNavSidebarEnabled}
+                            onValueChange={setSettingsNavSidebarEnabled}
                             disabled={!panelsSupported}
                         />
                     }
