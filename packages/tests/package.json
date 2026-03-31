@@ -63,6 +63,12 @@
     "tweetnacl": "^1.0.3",
     "privacy-kit": "^0.0.25"
   },
+  "exports": {
+    "./testkit/tailscale/fakeTailscaleCli": {
+      "types": "./src/testkit/tailscale/fakeTailscaleCli.d.ts",
+      "default": "./src/testkit/tailscale/fakeTailscaleCli.js"
+    }
+  },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "@types/node": ">=20",
