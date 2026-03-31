@@ -26,7 +26,7 @@ export default function SetupWizardRoute() {
         <SetupWizardSurface
             testID="setupWizard.surface"
             isDesktopShell={isTauriDesktop()}
-            onExit={() => router.replace('/setup')}
+            onExit={() => router.replace('/')}
         />
     );
 
@@ -34,7 +34,7 @@ export default function SetupWizardRoute() {
         return (
             <BaseModal
                 visible={true}
-                onClose={() => router.replace('/setup')}
+                onClose={() => router.replace('/')}
                 showBackdrop={false}
                 closeOnBackdrop={true}
             >
