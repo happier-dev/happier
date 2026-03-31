@@ -76,6 +76,15 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                         onPress={props.onChangeRelay}
                     />
                 </View>
+                <View style={styles.actionRow}>
+                    <RoundButton
+                        testID="welcome-retry-server"
+                        size={smallButtonSize}
+                        title={t('common.retry')}
+                        display="inverted"
+                        onPress={props.options.retryServerCheck}
+                    />
+                </View>
             </View>
         </>
     );
