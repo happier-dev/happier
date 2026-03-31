@@ -22,6 +22,10 @@ type DaemonServiceTaskResult = Readonly<{
   daemonRunning: boolean;
   needsAuth: boolean;
   machineId: string | null;
+  daemonServerUrl: string | null;
+  daemonComparableKey: string | null;
+  daemonAccountId: string | null;
+  daemonMachineRegistered: boolean | null;
 }>;
 
 function toDaemonServiceResult(status: DaemonStatusSnapshot): DaemonServiceTaskResult {
@@ -30,6 +34,10 @@ function toDaemonServiceResult(status: DaemonStatusSnapshot): DaemonServiceTaskR
     daemonRunning: status.daemonRunning,
     needsAuth: status.needsAuth,
     machineId: status.machineId,
+    daemonServerUrl: status.daemonServerUrl ?? null,
+    daemonComparableKey: status.daemonComparableKey ?? null,
+    daemonAccountId: status.daemonAccountId ?? null,
+    daemonMachineRegistered: status.daemonMachineRegistered ?? null,
   };
 }
 

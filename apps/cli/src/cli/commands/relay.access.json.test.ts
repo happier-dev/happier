@@ -627,4 +627,49 @@ describe('happier relay access --json', () => {
             fakeSsh.cleanup();
         }
     });
+
+    it('rejects unknown configure arguments', async () => {
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await commandRegistry.relay({
+                args: [
+                    'relay',
+                    'access',
+                    'configure',
+                    '--provider',
+                    'lan',
+                    '--url',
+                    'https://relay.remote.lan.test',
+                    '--unexpected',
+                    'value',
+                    '--json',
+                ],
+                rawArgv: [
+                    'node',
+                    'happier',
+                    'relay',
+                    'access',
+                    'configure',
+                    '--provider',
+                    'lan',
+                    '--url',
+                    'https://relay.remote.lan.test',
+                    '--unexpected',
+                    'value',
+                    '--json',
+                ],
+                terminalRuntime: null,
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(false);
+            expect(parsed.error?.code).toBe('invalid_arguments');
+            expect(process.exitCode).toBe(1);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+        }
+    });
 });

@@ -18,6 +18,10 @@ export type DaemonStatusSnapshot = Readonly<{
   daemonRunning: boolean;
   needsAuth: boolean;
   machineId: string | null;
+  daemonServerUrl: string | null;
+  daemonComparableKey: string | null;
+  daemonAccountId: string | null;
+  daemonMachineRegistered: boolean | null;
 }>;
 
 type AuthRequestSnapshot = Readonly<{
@@ -186,7 +190,13 @@ export async function readDaemonStatus(): Promise<DaemonStatusSnapshot> {
   const record = parsed as {
     daemon?: { running?: unknown };
     service?: { installed?: unknown };
-    auth?: { needsAuth?: unknown; machineId?: unknown };
+    server?: { serverUrl?: unknown; comparableKey?: unknown };
+    auth?: {
+      needsAuth?: unknown;
+      machineId?: unknown;
+      accountId?: unknown;
+      machineRegistered?: unknown;
+    };
   };
 
   return {
@@ -195,6 +205,18 @@ export async function readDaemonStatus(): Promise<DaemonStatusSnapshot> {
     needsAuth: record.auth?.needsAuth === true,
     machineId: typeof record.auth?.machineId === 'string' && record.auth.machineId.trim()
       ? record.auth.machineId.trim()
+      : null,
+    daemonServerUrl: typeof record.server?.serverUrl === 'string' && record.server.serverUrl.trim()
+      ? record.server.serverUrl.trim()
+      : null,
+    daemonComparableKey: typeof record.server?.comparableKey === 'string' && record.server.comparableKey.trim()
+      ? record.server.comparableKey.trim()
+      : null,
+    daemonAccountId: typeof record.auth?.accountId === 'string' && record.auth.accountId.trim()
+      ? record.auth.accountId.trim()
+      : null,
+    daemonMachineRegistered: typeof record.auth?.machineRegistered === 'boolean'
+      ? record.auth.machineRegistered
       : null,
   };
 }

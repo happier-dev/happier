@@ -9,6 +9,7 @@ import { definitionList, ok, sectionTitle, warn } from "@happier-dev/cli-common/
 import { getRelayAccessProvider, relayAccessProviderIds, normalizeRelayAccessCanonicalPublicServerUrl } from "@happier-dev/cli-common/relayAccess";
 import type { RelayAccessConfig, RelayAccessExecutionContext, RelayAccessProviderId } from "@happier-dev/cli-common/relayAccess";
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
+import type { SystemTaskJsonObject } from '@happier-dev/protocol';
 import { getActiveServerProfile } from '@/server/serverProfiles';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 
@@ -18,6 +19,25 @@ type RelayAccessJsonResult = Readonly<{
     shareUrl: string | null;
     state: string;
 }>;
+
+function relayAccessTargetToJson(target: systemTasks.RelayAccessTaskTarget): SystemTaskJsonObject {
+    if (target.kind === 'local') {
+        return { kind: 'local' };
+    }
+
+    const ssh = target.ssh;
+    return {
+        kind: 'ssh',
+        ssh: {
+            target: ssh.target,
+            auth: ssh.auth,
+            ...(typeof ssh.port === 'number' ? { port: ssh.port } : {}),
+            ...(ssh.identityFile ? { identityFile: ssh.identityFile } : {}),
+            ...(ssh.sshConfigFile ? { sshConfigFile: ssh.sshConfigFile } : {}),
+            ...(ssh.knownHostsPath ? { knownHostsPath: ssh.knownHostsPath } : {}),
+        },
+    };
+}
 
 function takeFlag(args: string[], flag: string): Readonly<{ present: boolean; rest: string[] }> {
     const rest: string[] = [];
@@ -116,12 +136,20 @@ async function resolveRelayAccessUpstreamUrl(explicitValue: string | null): Prom
 function parseConfigFromArgs(providerId: RelayAccessProviderId, args: string[]): RelayAccessConfig {
     if (providerId === "lan") {
         const url = takeFlagValue(args, "--url");
+        const rest = url.rest;
+        if (rest.length > 0) {
+            throw new Error(`Unknown relay access configure arguments: ${rest.join(' ')}`);
+        }
         return { providerId: "lan", url: ensureNonEmptyString(url.value, "--url") };
     }
 
     if (providerId === "cloudflareNamed") {
         const hostname = takeFlagValue(args, "--hostname");
-        const token = takeFlagValue(args, "--token");
+        const token = takeFlagValue(hostname.rest, "--token");
+        const rest = token.rest;
+        if (rest.length > 0) {
+            throw new Error(`Unknown relay access configure arguments: ${rest.join(' ')}`);
+        }
         return {
             providerId: "cloudflareNamed",
             hostname: ensureNonEmptyString(hostname.value, "--hostname"),
@@ -129,6 +157,9 @@ function parseConfigFromArgs(providerId: RelayAccessProviderId, args: string[]):
         };
     }
 
+    if (args.length > 0) {
+        throw new Error(`Unknown relay access configure arguments: ${args.join(' ')}`);
+    }
     return { providerId };
 }
 
@@ -342,7 +373,7 @@ async function cmdStatus(args: string[]): Promise<void> {
     });
 
     const snapshot = await kind.run({
-        params: { target },
+        params: { target: relayAccessTargetToJson(target) },
         emit: () => {},
         prompt: async () => {
             throw new Error('Relay access status should not prompt.');
@@ -434,7 +465,7 @@ async function cmdConfigure(args: string[]): Promise<void> {
 
     const snapshot = await kind.run({
         params: {
-            target,
+            target: relayAccessTargetToJson(target),
             upstreamUrl,
             providerId,
             config,
@@ -509,7 +540,7 @@ async function cmdDisable(args: string[]): Promise<void> {
     });
 
     await kind.run({
-        params: { target },
+        params: { target: relayAccessTargetToJson(target) },
         emit: () => {},
         prompt: async () => {
             throw new Error('Relay access disable should not prompt.');

@@ -38,12 +38,20 @@ describe('daemonService lifecycle handlers', () => {
         daemonRunning: true,
         needsAuth: false,
         machineId: 'machine-local-1',
+        daemonServerUrl: 'https://relay.example.test',
+        daemonComparableKey: 'https://relay.example.test',
+        daemonAccountId: 'acct_123',
+        daemonMachineRegistered: true,
       })
       .mockResolvedValueOnce({
         serviceInstalled: true,
         daemonRunning: false,
         needsAuth: false,
         machineId: 'machine-local-1',
+        daemonServerUrl: 'https://relay.example.test',
+        daemonComparableKey: 'https://relay.example.test',
+        daemonAccountId: 'acct_123',
+        daemonMachineRegistered: true,
       });
 
     const handler = createDaemonServiceStopHandler();
@@ -60,6 +68,10 @@ describe('daemonService lifecycle handlers', () => {
       daemonRunning: false,
       needsAuth: false,
       machineId: 'machine-local-1',
+      daemonServerUrl: 'https://relay.example.test',
+      daemonComparableKey: 'https://relay.example.test',
+      daemonAccountId: 'acct_123',
+      daemonMachineRegistered: true,
     });
   });
 
@@ -69,12 +81,20 @@ describe('daemonService lifecycle handlers', () => {
       daemonRunning: true,
       needsAuth: false,
       machineId: 'machine-local-1',
+      daemonServerUrl: 'https://relay.example.test',
+      daemonComparableKey: 'https://relay.example.test',
+      daemonAccountId: 'acct_123',
+      daemonMachineRegistered: true,
     });
     localDaemonCliMock.waitForReadyDaemon.mockResolvedValue({
       serviceInstalled: true,
       daemonRunning: true,
       needsAuth: false,
       machineId: 'machine-local-1',
+      daemonServerUrl: 'https://relay.example.test',
+      daemonComparableKey: 'https://relay.example.test',
+      daemonAccountId: 'acct_123',
+      daemonMachineRegistered: true,
     });
 
     const handler = createDaemonServiceRestartHandler();
@@ -91,6 +111,10 @@ describe('daemonService lifecycle handlers', () => {
       daemonRunning: true,
       needsAuth: false,
       machineId: 'machine-local-1',
+      daemonServerUrl: 'https://relay.example.test',
+      daemonComparableKey: 'https://relay.example.test',
+      daemonAccountId: 'acct_123',
+      daemonMachineRegistered: true,
     });
   });
 });
