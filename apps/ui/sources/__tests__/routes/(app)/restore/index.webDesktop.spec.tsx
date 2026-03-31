@@ -55,7 +55,7 @@ afterEach(() => {
     resetRestoreRouteTestState();
 });
 describe('/restore (web desktop)', () => {
-    it('defaults to the show-QR restore flow when the web environment is not mobile-like', async () => {
+    it('shows the camera scanner on web desktop when camera API is available', async () => {
         vi.stubGlobal('navigator', {
             maxTouchPoints: 0,
             userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
@@ -72,8 +72,8 @@ describe('/restore (web desktop)', () => {
         try {
             screen = await renderScreen(<Screen />);
             await act(async () => {});
-            const qrView = screen.findAllByType('div').filter((node) => node.props['data-testid'] === 'RestoreQrView');
-            expect(qrView).toHaveLength(1);
+            const scannerView = screen.findAllByType('div').filter((node) => node.props['data-testid'] === 'RestoreScanComputerQrView');
+            expect(scannerView).toHaveLength(1);
         } finally {
             await act(async () => {
                 screen?.tree.unmount();

@@ -74,6 +74,7 @@ vi.mock('expo-notifications', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
     FontAwesome: { font: {} },
+    Ionicons: { font: {} },
 }));
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
