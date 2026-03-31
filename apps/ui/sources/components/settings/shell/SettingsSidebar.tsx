@@ -59,7 +59,7 @@ function collectAncestors(id: string, parents: ParentMap): string[] {
     return out;
 }
 
-export const SettingsSidebarV1 = React.memo(function SettingsSidebarV1() {
+export const SettingsSidebar = React.memo(function SettingsSidebar() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const styles = stylesheet;
@@ -140,7 +140,7 @@ export const SettingsSidebarV1 = React.memo(function SettingsSidebarV1() {
 
         const leftAccessory = hasChildren ? (
             <Pressable
-                testID={`settings-sidebar-v1.toggle.${node.id}`}
+                testID={`settings-sidebar.toggle.${node.id}`}
                 onPress={(event: any) => {
                     event?.preventDefault?.();
                     event?.stopPropagation?.();
@@ -168,7 +168,7 @@ export const SettingsSidebarV1 = React.memo(function SettingsSidebarV1() {
         return (
             <React.Fragment key={node.id}>
                 <Item
-                    testID={`settings-sidebar-v1.item.${node.id}`}
+                    testID={`settings-sidebar.item.${node.id}`}
                     title={String(t(node.titleKey))}
                     subtitle={subtitle ? String(subtitle) : undefined}
                     leftElement={leftAccessory}
@@ -201,10 +201,10 @@ export const SettingsSidebarV1 = React.memo(function SettingsSidebarV1() {
     }, [expandedIds, resolved.activePageId, router, theme, toggleExpanded]);
 
     return (
-        <View testID="settings-sidebar-v1" style={styles.root}>
+        <View testID="settings-sidebar" style={styles.root}>
             <View style={styles.searchContainer}>
                 <TextInput
-                    testID="settings-sidebar-v1.searchInput"
+                    testID="settings-sidebar.searchInput"
                     placeholder={t('settingsSearch.placeholder')}
                     placeholderTextColor={theme.colors.input.placeholder}
                     value={query}
@@ -223,7 +223,7 @@ export const SettingsSidebarV1 = React.memo(function SettingsSidebarV1() {
                             return (
                                 <Item
                                     key={result.id}
-                                    testID={`settings-sidebar-v1.searchResult.${result.id}`}
+                                    testID={`settings-sidebar.searchResult.${result.id}`}
                                     title={node ? String(t(node.titleKey)) : String(result.id)}
                                     icon={<Ionicons name="search-outline" size={18} color={theme.colors.textSecondary} />}
                                     density="compact"

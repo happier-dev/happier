@@ -7,7 +7,7 @@ import { resolveScaledPaneWidthPx } from '@/components/appShell/panes/layout/pan
 import { useIsTablet } from '@/utils/platform/responsive';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 
-import { SettingsSidebarV1 } from './SettingsSidebarV1';
+import { SettingsSidebar } from './SettingsSidebar';
 import {
     SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX,
     SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX,
@@ -32,13 +32,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const SettingsShellV1 = React.memo(function SettingsShellV1(props: Readonly<{ children: React.ReactNode }>) {
+export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{ children: React.ReactNode }>) {
     const styles = stylesheet;
     const { width: windowWidth } = useWindowDimensions();
     const isTablet = useIsTablet();
     const { theme } = useUnistyles();
 
-    const enabled = isTablet;
+    const settingsNavSidebarEnabled = useLocalSetting('settingsNavSidebarEnabled');
+    const enabled = isTablet && settingsNavSidebarEnabled !== false;
     const sidebarWidthPx = useLocalSetting('settingsNavSidebarWidthPx') ?? SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX;
     const sidebarWidthBasisPx = useLocalSetting('settingsNavSidebarWidthBasisPx') ?? windowWidth;
     const [, setSidebarWidthPx] = useLocalSettingMutable('settingsNavSidebarWidthPx');
@@ -62,7 +63,7 @@ export const SettingsShellV1 = React.memo(function SettingsShellV1(props: Readon
         <View style={styles.root}>
             <View style={styles.row}>
                 <ResizableDockedPane
-                    testID="settings-shell-v1.sidebarPane"
+                    testID="settings-shell.sidebarPane"
                     widthPx={effectiveSidebarWidthPx}
                     minWidthPx={SETTINGS_NAV_SIDEBAR_MIN_WIDTH_PX}
                     maxWidthPx={SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX}
@@ -73,7 +74,7 @@ export const SettingsShellV1 = React.memo(function SettingsShellV1(props: Readon
                     }}
                 >
                     <View style={{ flex: 1, minHeight: 0, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: theme.colors.divider }}>
-                        <SettingsSidebarV1 />
+                        <SettingsSidebar />
                     </View>
                 </ResizableDockedPane>
 

@@ -23,10 +23,10 @@ function wantsScreenshots(): boolean {
     return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
 }
 
-test.describe('ui e2e: settings sidebar v1', () => {
+test.describe('ui e2e: settings sidebar', () => {
     test.describe.configure({ mode: 'serial' });
 
-    const suiteDir = run.testDir('settings-sidebar-v1-suite');
+    const suiteDir = run.testDir('settings-sidebar-suite');
 
     let server: StartedServer | null = null;
     let ui: StartedUiWeb | null = null;
@@ -50,7 +50,7 @@ test.describe('ui e2e: settings sidebar v1', () => {
                 ...process.env,
                 EXPO_PUBLIC_DEBUG: '1',
                 EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-                EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-sidebar-v1-${run.runId}`,
+                EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-sidebar-${run.runId}`,
             },
         });
 
@@ -94,26 +94,26 @@ test.describe('ui e2e: settings sidebar v1', () => {
                 await expect(page.getByTestId('nav-settings')).toHaveCount(1, { timeout: 60_000 });
 
                 // Nested settings navigation renders inside the main content region.
-                await expect(page.getByTestId('settings-sidebar-v1')).toHaveCount(1, { timeout: 60_000 });
+                await expect(page.getByTestId('settings-sidebar')).toHaveCount(1, { timeout: 60_000 });
 
                 if (wantsScreenshots()) {
-                    await page.screenshot({ path: join(screenshotDir, `settings-sidebar-v1.${viewport.label}.initial.png`), fullPage: true });
+                    await page.screenshot({ path: join(screenshotDir, `settings-sidebar.${viewport.label}.initial.png`), fullPage: true });
                 }
 
-                await page.getByTestId('settings-sidebar-v1.searchInput').fill('notif');
-                await expect(page.getByTestId('settings-sidebar-v1.searchResult.notifications')).toHaveCount(1, { timeout: 60_000 });
+                await page.getByTestId('settings-sidebar.searchInput').fill('notif');
+                await expect(page.getByTestId('settings-sidebar.searchResult.notifications')).toHaveCount(1, { timeout: 60_000 });
 
                 if (wantsScreenshots()) {
-                    await page.screenshot({ path: join(screenshotDir, `settings-sidebar-v1.${viewport.label}.search.png`), fullPage: true });
+                    await page.screenshot({ path: join(screenshotDir, `settings-sidebar.${viewport.label}.search.png`), fullPage: true });
                 }
 
-                await page.getByTestId('settings-sidebar-v1.searchResult.notifications').click();
+                await page.getByTestId('settings-sidebar.searchResult.notifications').click();
 
                 await expect(page).toHaveURL(/\/settings\/notifications/);
                 await expect(page.getByTestId('settings-notifications-screen')).toHaveCount(1, { timeout: 60_000 });
 
                 if (wantsScreenshots()) {
-                    await page.screenshot({ path: join(screenshotDir, `settings-sidebar-v1.${viewport.label}.notifications.png`), fullPage: true });
+                    await page.screenshot({ path: join(screenshotDir, `settings-sidebar.${viewport.label}.notifications.png`), fullPage: true });
                 }
             });
         }

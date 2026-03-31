@@ -80,7 +80,7 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-describe('SettingsSidebarV1', () => {
+describe('SettingsSidebar', () => {
     afterEach(() => {
         pathnameState.value = '/settings';
         routerPushSpy.mockReset();
@@ -88,21 +88,21 @@ describe('SettingsSidebarV1', () => {
     });
 
     it('navigates to a page when pressing a nav item', async () => {
-        const { SettingsSidebarV1 } = await import('./SettingsSidebarV1');
-        const screen = await renderScreen(React.createElement(SettingsSidebarV1));
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
 
-        await screen.pressByTestIdAsync('settings-sidebar-v1.item.notifications');
+        await screen.pressByTestIdAsync('settings-sidebar.item.notifications');
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/notifications');
     });
 
     it('supports page search and navigates when selecting a result', async () => {
-        const { SettingsSidebarV1 } = await import('./SettingsSidebarV1');
-        const screen = await renderScreen(React.createElement(SettingsSidebarV1));
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
 
         await act(async () => {
-            screen.changeTextByTestId('settings-sidebar-v1.searchInput', 'notif');
+            screen.changeTextByTestId('settings-sidebar.searchInput', 'notif');
         });
-        await screen.pressByTestIdAsync('settings-sidebar-v1.searchResult.notifications');
+        await screen.pressByTestIdAsync('settings-sidebar.searchResult.notifications');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/notifications');
     });
