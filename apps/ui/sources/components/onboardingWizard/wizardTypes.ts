@@ -14,6 +14,7 @@ export type WizardStepId =
     | 'background_service_handoff'
     | 'host_relay_local'
     | 'host_relay_remote'
+    | 'relay_access'
     | 'auth'
     | 'auth_restore'
     | 'auth_lost_access'

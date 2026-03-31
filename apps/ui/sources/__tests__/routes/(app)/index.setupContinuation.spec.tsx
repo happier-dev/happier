@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createExpoRouterMock, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
@@ -15,6 +16,13 @@ vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
 vi.mock('@/components/onboardingWizard/SetupWizardSurface', () => ({
     SetupWizardSurface: (props: any) => React.createElement('SetupWizardSurface', props),
 }));
+vi.mock('@/modal/components/BaseModal', () => ({
+    BaseModal: (props: any) => React.createElement('BaseModal', props, props.children),
+}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ Platform: { OS: 'web' } });
+});
 
 const expoRouterMock = createExpoRouterMock({
     router: { push: vi.fn(), replace: vi.fn() },
@@ -45,8 +53,9 @@ vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => null,
 }));
 
+const connectionHealthState = vi.hoisted(() => ({ value: 0 as number }));
 vi.mock('@/components/navigation/connectionStatus/useConnectionHealth', () => ({
-    useConnectionHealth: () => ({ onlineCount: 0 }),
+    useConnectionHealth: () => ({ onlineCount: connectionHealthState.value }),
 }));
 
 const localDaemonStatus = vi.hoisted(() => ({
@@ -71,13 +80,13 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: vi.fn(async () => ({ status: 'ready', features: { capabilities: { auth: { methods: [] } } } })),
 }));
 
-const getPendingSetupIntentMock = vi.hoisted(() => vi.fn(() => ({
+const getPendingSetupIntentMock = vi.hoisted(() => vi.fn<() => PendingSetupIntent | null>(() => ({
     branch: 'thisComputer',
     phase: 'awaiting_auth',
     relayUrl: 'https://relay.example.test',
 })));
 const clearPendingSetupIntentMock = vi.hoisted(() => vi.fn());
-const setPendingSetupIntentMock = vi.hoisted(() => vi.fn());
+const setPendingSetupIntentMock = vi.hoisted(() => vi.fn<(value: PendingSetupIntent) => void>());
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     getPendingSetupIntent: () => getPendingSetupIntentMock(),
     clearPendingSetupIntent: clearPendingSetupIntentMock,
@@ -88,6 +97,7 @@ describe('/ (welcome) setup continuation', () => {
     beforeEach(() => {
         isAuthenticated = true;
         tauriDesktopState.value = true;
+        connectionHealthState.value = 0;
         getPendingSetupIntentMock.mockReset();
         getPendingSetupIntentMock.mockReturnValue({
             branch: 'thisComputer',
@@ -130,6 +140,33 @@ describe('/ (welcome) setup continuation', () => {
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(1);
     });
 
+    it('opens the setup wizard in a scrollable full-screen modal on web', async () => {
+        tauriDesktopState.value = false;
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        const modal = screen.findByType('BaseModal' as never);
+        const surface = screen.findByType('SetupWizardSurface' as never);
+        expect(surface.props.useOuterScrollContainer).toBe(true);
+        expect(modal.props.scrollable).toBe(true);
+        expect(modal.props.disableContentTransform).toBe(true);
+        expect(modal.props.showBackdrop).toBe(true);
+    });
+
+    it('skips the post-auth setup wizard on web when another machine is already online (clears pending continuation)', async () => {
+        tauriDesktopState.value = false;
+        connectionHealthState.value = 1;
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+        expect(clearPendingSetupIntentMock).toHaveBeenCalledTimes(1);
+    });
+
     it('does not open the setup wizard overlay when the setup wizard was skipped before authentication', async () => {
         getPendingSetupIntentMock.mockReturnValue({
             branch: 'thisComputer',
@@ -165,8 +202,25 @@ describe('/ (welcome) setup continuation', () => {
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
     });
 
+    it('auto-opens the setup wizard overlay on desktop when this machine is not configured and no pending setup intent exists', async () => {
+        getPendingSetupIntentMock.mockReturnValue(null);
+        localDaemonStatus.value = {
+            serviceInstalled: false,
+            daemonRunning: false,
+            needsAuth: true,
+            machineId: null,
+        };
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(1);
+        expect(setPendingSetupIntentMock).toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth' }));
+    });
+
     it('marks the setup wizard as dismissed on exit so it does not immediately re-open', async () => {
-        setPendingSetupIntentMock.mockImplementation((value: any) => {
+        setPendingSetupIntentMock.mockImplementation((value) => {
             getPendingSetupIntentMock.mockReturnValue(value);
         });
 
@@ -185,6 +239,35 @@ describe('/ (welcome) setup continuation', () => {
 
         expect(clearPendingSetupIntentMock).not.toHaveBeenCalled();
         expect(setPendingSetupIntentMock).toHaveBeenCalledWith(expect.objectContaining({ phase: 'dismissed' }));
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
+    });
+
+    it('auto-opens the setup wizard overlay on desktop when the current machine is not configured and there is no pending setup intent', async () => {
+        getPendingSetupIntentMock.mockReturnValue(null);
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 3 });
+
+        expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(1);
+        expect(setPendingSetupIntentMock).toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth', branch: 'thisComputer' }));
+    });
+
+    it('does not auto-open the setup wizard overlay on web when at least one machine is online and there is no pending setup intent', async () => {
+        tauriDesktopState.value = false;
+        connectionHealthState.value = 1;
+        getPendingSetupIntentMock.mockReturnValue(null);
+        localDaemonStatus.value = {
+            serviceInstalled: false,
+            daemonRunning: false,
+            needsAuth: true,
+            machineId: null,
+        };
+
+        const Screen = (await import('@/app/(app)/index')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushHookEffects({ cycles: 1, turns: 3 });
+
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
     });
 });

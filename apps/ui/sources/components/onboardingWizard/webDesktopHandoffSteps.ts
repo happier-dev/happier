@@ -1,5 +1,6 @@
 import { t } from '@/text';
 
+import { buildHappierSetupCommand } from './wizardCliCommands';
 import type { WizardTerminalHandoffStep } from './WizardTerminalHandoff';
 
 export function buildWebDesktopRelayHostHandoffSteps(input: Readonly<{
@@ -42,3 +43,26 @@ export function buildWebDesktopRelayHostHandoffSteps(input: Readonly<{
     return steps;
 }
 
+export function buildWebDesktopBackgroundServiceHandoffSteps(input: Readonly<{
+    cliInstallCommand: string;
+    relayUrl: string;
+}>): readonly WizardTerminalHandoffStep[] {
+    return [
+        {
+            title: t('setupOnboarding.webDesktopOnlyCliTitle'),
+            subtitle: t('setupOnboarding.webDesktopOnlyCliSubtitle'),
+            code: input.cliInstallCommand,
+            scrollTestIDSuffix: 'cli-install',
+        },
+        {
+            title: t('setupOnboarding.webDesktopOnlySetupCommandTitle'),
+            subtitle: t('setupOnboarding.webDesktopOnlySetupCommandSubtitle'),
+            code: buildHappierSetupCommand({
+                relayUrl: input.relayUrl,
+                skipProviders: true,
+                yes: true,
+            }),
+            scrollTestIDSuffix: 'setup',
+        },
+    ];
+}

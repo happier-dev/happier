@@ -28,15 +28,14 @@ export type PostAuthSetupRouteInputs = Readonly<{
 }>;
 
 export function resolvePostAuthSetupRoute(params: PostAuthSetupRouteInputs): '/' | '/setup' {
-    if (!params.isDesktopShell) {
-        return (params.onlineMachineCount ?? 0) >= 1 ? '/' : '/setup';
-    }
-
-    if (!params.currentMachineIsConfiguredAndHealthy) {
-        return '/setup';
-    }
-
-    return params.hasRelayDrift ? '/setup' : '/';
+    // Post-auth should always return the user to the app home (`/`) and continue
+    // any remaining setup as a wizard overlay, not by routing into settings-like
+    // control panel screens.
+    //
+    // Web vs desktop differences (skip rules, drift repair prompts, etc) are
+    // handled by the overlay visibility logic, not by changing routes here.
+    void params;
+    return '/';
 }
 
 export function resolveWizardAuthReturnToRoute(): string {

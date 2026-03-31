@@ -1,11 +1,13 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 
 import { WizardModalShell } from './WizardModalShell';
+import { WizardChoiceRow } from './WizardChoiceRow';
 
 const expoRouterMock = vi.hoisted(() => {
     const push = vi.fn();
@@ -92,6 +94,11 @@ vi.mock('react-native', async (importOriginal) => {
     };
 });
 
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
 vi.mock('expo-router', () => expoRouterMock.module);
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     setPendingSetupIntent: (value: PendingSetupIntent) => setPendingSetupIntentMock(value),
@@ -150,8 +157,11 @@ vi.mock('@/components/onboardingWizard/restore/LostAccessEmbedded', () => ({
 vi.mock('@/components/onboardingWizard/WelcomeProvidersShowcase', () => ({
     WelcomeProvidersShowcase: () => null,
 }));
-vi.mock('@/components/onboardingWizard/WebDesktopHandoffStep', () => ({
-    WebDesktopHandoffStep: (props: Record<string, unknown>) => React.createElement('WebDesktopHandoffStep', props),
+vi.mock('@/components/onboardingWizard/WebDesktopRelayHostHandoffContent', () => ({
+    WebDesktopRelayHostHandoffContent: (props: Record<string, unknown>) => React.createElement('WebDesktopRelayHostHandoffContent', props),
+}));
+vi.mock('@/components/onboardingWizard/WebDesktopBackgroundServiceHandoffContent', () => ({
+    WebDesktopBackgroundServiceHandoffContent: (props: Record<string, unknown>) => React.createElement('WebDesktopBackgroundServiceHandoffContent', props),
 }));
 vi.mock('@/components/account/auth/AuthEntryView', () => ({
     AuthEntryView: (props: Record<string, unknown>) => React.createElement('AuthEntryView', props),
@@ -163,6 +173,9 @@ vi.mock('@/components/settings/server/localControl/LocalRelayRuntimeControlSecti
         }, [props.onStatusChange]);
         return React.createElement('LocalRelayRuntimeControlSection', props);
     },
+}));
+vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSection', () => ({
+    LocalRelayAccessControlSection: (props: Record<string, unknown>) => React.createElement('LocalRelayAccessControlSection', props),
 }));
 vi.mock('@/components/ui/lists/SelectableRow', () => ({
     SelectableRow: (props: Record<string, unknown>) => React.createElement('SelectableRow', props),
@@ -177,7 +190,15 @@ vi.mock('@/modal', () => ({
 }));
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+    return createTextModuleMock({
+        translate: (key: string, params?: Record<string, unknown>) => {
+            if (!params) return key;
+            const values = Object.values(params)
+                .map((value) => String(value))
+                .join(' ');
+            return values ? `${key} ${values}` : key;
+        },
+    });
 });
 
 const baseAuthOptions = {
@@ -250,6 +271,36 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.next');
+    });
+
+    it('only marks Happier Cloud as recommended in the relay selection list', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const cloud = screen.findByProps({ testID: 'onboarding-wizard-relay:cloud' } as never);
+        const thisComputer = screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' } as never);
+        const customUrl = screen.findByProps({ testID: 'onboarding-wizard-relay:customUrl' } as never);
+
+        expect(cloud?.props.badge).toBe('setupOnboarding.recommendedBadge');
+        expect(thisComputer?.props.badge).toBeUndefined();
+        expect(customUrl?.props.badge).toBeUndefined();
     });
 
     it('keeps the welcome relay footer visible even when the wizard relay selection has no URL (falls back to active relay)', async () => {
@@ -665,7 +716,10 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-relay-url-input')).toBeTruthy();
     });
 
-    it('guides web users to install the background service after saving a relay url from the web "On this computer" handoff', async () => {
+    it('returns web users to auth after saving a relay url from the web "On this computer" handoff', async () => {
+        vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+
         activeServerSnapshotMock.serverUrl = 'https://api.happier.dev';
         activeServerSnapshotMock.activeLocalRelayUrl = null;
 
@@ -713,18 +767,10 @@ describe('OnboardingWizardSurface', () => {
         await act(async () => {
             await saveRelayButton.props.onPress?.();
         });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        expect(screen.findByTestId('onboarding-wizard-background-service-handoff')).toBeTruthy();
-        expect(screen.findByTestId('onboarding-wizard-lost-access')).toBeNull();
-
-        const continueAfterHandoff = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await continueAfterHandoff.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
+        await flushHookEffects({ cycles: 4, turns: 4 });
 
         expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
+        expect(screen.findByTestId('onboarding-wizard-background-service-handoff')).toBeNull();
     });
 
     it('skips relay URL entry when a custom relay has already been resolved', async () => {
@@ -860,6 +906,14 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(upsertActivateAndSwitchServerMock).not.toHaveBeenCalled();
+        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+
+        const continueAfterAccess = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterAccess.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
         expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeTruthy();
 
         const switchChoice = screen.findByTestId('onboarding-wizard-confirmSwitchRelay.choice:switch')!;
@@ -876,6 +930,59 @@ describe('OnboardingWizardSurface', () => {
 
         expect(upsertActivateAndSwitchServerMock).toHaveBeenCalledWith(expect.objectContaining({ serverUrl: 'http://localhost:31337' }));
         expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
+    });
+
+    it('shows relay access configuration before prompting to switch to the hosted relay', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const onThisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
+        await act(async () => {
+            await onThisComputerRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueToHost = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueToHost.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByType('LocalRelayRuntimeControlSection' as never)).toBeTruthy();
+
+        const continueAfterHosted = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterHosted.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeNull();
+
+        const continueAfterAccess = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterAccess.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeTruthy();
     });
 
     it('routes web users selecting "On this computer" to the desktop handoff guidance step', async () => {
@@ -970,6 +1077,127 @@ describe('OnboardingWizardSurface', () => {
         const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
         await act(async () => {
             await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-host-remote-relay')).toBeTruthy();
+    });
+
+    it('renders remote relay host CLI commands with SSH, port, and identity-file flags derived from the SSH form', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
+        await act(async () => {
+            await remoteRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-host-remote-relay')).toBeTruthy();
+
+        await act(async () => {
+            screen.changeTextByTestId('onboarding-wizard-remote-ssh-username', 'dev');
+            screen.changeTextByTestId('onboarding-wizard-remote-ssh-host', 'relay.remote.example.test');
+            screen.changeTextByTestId('onboarding-wizard-remote-ssh-port', '2222');
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const keyfileAuth = screen.findByTestId('onboarding-wizard-remote-ssh-auth:keyfile')!;
+        await act(async () => {
+            await keyfileAuth.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        await act(async () => {
+            screen.changeTextByTestId('onboarding-wizard-remote-identity-file', '/tmp/id_rsa');
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const codeBlock = screen.root.findAll((node) => {
+            const props = node.props as Record<string, unknown>;
+            return props.scrollTestID === 'onboarding-wizard-remote-relay-handoff-remote-relay-install';
+        })[0] as unknown as { props: { code: string } } | undefined;
+
+        expect(codeBlock?.props.code).toContain('happier relay host install');
+        expect(codeBlock?.props.code).toContain('--ssh-user dev');
+        expect(codeBlock?.props.code).toContain('--ssh-host relay.remote.example.test');
+        expect(codeBlock?.props.code).toContain('--ssh-port 2222');
+        expect(codeBlock?.props.code).toContain('--ssh-auth keyfile');
+        expect(codeBlock?.props.code).toContain('--identity-file /tmp/id_rsa');
+    });
+
+    it('keeps the remote relay hosting flow on the SSH setup step even when a remote relay URL has been entered', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
+        await act(async () => {
+            await remoteRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-host-remote-relay')).toBeTruthy();
+
+        const urlInput = screen.findByTestId('onboarding-wizard-remote-relay-url-input')!;
+        await act(async () => {
+            await urlInput.props.onChangeText?.('https://relay.remote.example.test/');
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const backButton = screen.findByTestId('onboarding-wizard-back')!;
+        await act(async () => {
+            await backButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-relay-diagram')).toBeTruthy();
+
+        const continueAfterBack = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueAfterBack.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -1168,7 +1396,7 @@ describe('OnboardingWizardSurface', () => {
             variant: 'selectable',
         } as never);
         expect(selectableRow?.props.title).toBe('Offline Relay');
-        expect(selectableRow?.props.disabled).toBe(false);
+        expect(selectableRow?.props.disabled).toBe(true);
 
         const callCountBefore = runtimeFetchMock.mock.calls.length;
         await act(async () => {
@@ -1304,7 +1532,7 @@ describe('OnboardingWizardSurface', () => {
 
         const offlineRow = screen.findByProps({ testID: 'onboarding-wizard-relay:profile:relay-offline' } as never);
         expect(offlineRow?.props.selected).toBe(true);
-        expect(offlineRow?.props.disabled).toBe(true);
+        expect(offlineRow?.props.disabled).toBe(false);
 
         const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
         expect(continueButton.props.disabled).toBe(true);
@@ -1320,6 +1548,191 @@ describe('OnboardingWizardSurface', () => {
 
         const continueButtonAfter = screen.findByTestId('onboarding-wizard-primary')!;
         expect(continueButtonAfter.props.disabled).toBe(false);
+    });
+
+    it('keeps a prefilled local relay selected instead of auto-switching to This computer when it is unreachable', async () => {
+        activeServerSnapshotMock.serverUrl = 'http://localhost:53288';
+        activeServerSnapshotMock.activeLocalRelayUrl = 'http://localhost:53288';
+        const previousFetchImpl = runtimeFetchMock.getMockImplementation();
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes('http://localhost:53288') && url.endsWith('/health')) {
+                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+            }
+            return previousFetchImpl
+                ? previousFetchImpl(input, init)
+                : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        });
+        listServerProfilesMock.mockReturnValue([]);
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const localRelayRow = screen.findByProps({ testID: 'onboarding-wizard-relay:profile:active' } as never);
+        expect(localRelayRow?.props.selected).toBe(true);
+        expect(localRelayRow?.props.disabled).toBe(false);
+        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' } as never)?.props.selected).toBe(false);
+        expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
+        expect(screen.getTextContent()).toContain('setupOnboarding.currentRelayDescription');
+
+        runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    });
+
+    it('keeps the active local relay selected instead of auto-switching to This computer when it is unreachable', async () => {
+        activeServerSnapshotMock.serverUrl = 'http://localhost:53288';
+        activeServerSnapshotMock.activeLocalRelayUrl = 'http://localhost:53288';
+        listServerProfilesMock.mockReturnValue([
+            {
+                id: 'local-relay',
+                name: 'Local Relay',
+                serverUrl: 'http://localhost:53288',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+                source: 'custom',
+            },
+            {
+                id: 'relay-ok',
+                name: 'Online Relay',
+                serverUrl: 'https://relay-ok.example.test',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+                source: 'custom',
+            },
+        ]);
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:profile:local-relay' } as never)?.props.selected).toBe(true);
+        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' } as never)?.props.selected).toBe(false);
+        expect(screen.getTextContent()).toContain('http://localhost:53288');
+    });
+
+    it('disables continuing when the canonical cloud relay is unreachable and offers a retry affordance', async () => {
+        const previousFetchImpl = runtimeFetchMock.getMockImplementation();
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes('https://api.happier.dev') && url.endsWith('/health')) {
+                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+            }
+            return previousFetchImpl
+                ? previousFetchImpl(input, init)
+                : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        });
+
+        activeServerSnapshotMock.serverUrl = '';
+        listServerProfilesMock.mockReturnValue([]);
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const cloudRow = screen.findByTestId('onboarding-wizard-relay:cloud')!;
+        await act(async () => {
+            await cloudRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('onboarding-wizard-skip')?.props.disabled).toBe(true);
+
+        const cloudChoice = screen.root.findAll((node) => {
+            const props = node.props as Record<string, unknown>;
+            return props.testID === 'onboarding-wizard-relay:cloud' && props.icon === 'cloud-outline';
+        })[0] as unknown as ReactTestInstance | undefined;
+
+        expect(cloudChoice?.props.badge).toBe('common.unavailable');
+        expect(cloudChoice?.props.secondaryAction?.testID).toBe('onboarding-wizard-relay:cloud-retry');
+
+        runtimeFetchMock.mockImplementation(
+            previousFetchImpl
+                ?? (async (input: RequestInfo | URL) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })),
+        );
+    });
+
+    it('allows continuing to the web desktop handoff when hosting a relay on this computer, even if the current relay is unreachable', async () => {
+        const previousFetchImpl = runtimeFetchMock.getMockImplementation();
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes('http://localhost:59331') && url.endsWith('/health')) {
+                return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+            }
+            return previousFetchImpl ? previousFetchImpl(input, init) : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        });
+
+        activeServerSnapshotMock.serverUrl = 'http://localhost:59331';
+        listServerProfilesMock.mockReturnValue([]);
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const hostRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
+        await act(async () => {
+            await hostRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueButtonAfter = screen.findByTestId('onboarding-wizard-primary')!;
+        expect(continueButtonAfter.props.disabled).toBe(false);
+
+        runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
     });
 
     it('switches to the canonical Happier Cloud profile before continuing to auth', async () => {

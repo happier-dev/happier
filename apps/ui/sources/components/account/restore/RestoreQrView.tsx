@@ -64,15 +64,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     sectionLead: {
         fontSize: 15,
         color: theme.colors.textSecondary,
-        marginTop: 18,
-        marginBottom: 14,
+        marginTop: 12,
+        marginBottom: 10,
         textAlign: 'center',
         lineHeight: 21,
         ...Typography.default(),
     },
     embeddedSectionLead: {
         marginTop: 0,
-        marginBottom: 10,
+        marginBottom: 8,
     },
     qrBlock: {
         alignItems: 'center',
@@ -84,12 +84,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 6,
     },
     footer: {
-        marginTop: 18,
+        marginTop: 12,
         alignItems: 'center',
         width: '100%',
     },
     embeddedFooter: {
-        marginTop: 10,
+        marginTop: 8,
     },
     footerButton: {
         width: '100%',

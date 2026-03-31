@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 
 const expoRouterMock = vi.hoisted(() => {
@@ -40,6 +40,10 @@ const activeServerSnapshotMock = vi.hoisted(() => ({
     generation: 1,
 }));
 
+const setupThisComputerWizardStepMock = vi.hoisted(() => ({
+    forceBackHidden: false,
+}));
+
 vi.mock('expo-router', () => expoRouterMock.module);
 vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
@@ -48,17 +52,24 @@ vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
         getActiveServerSnapshot: () => activeServerSnapshotMock,
     };
 });
-vi.mock('@/components/settings/machines/MachineSetupFlowScreen', () => ({
-    MachineSetupFlowScreen: (props: Record<string, unknown>) => React.createElement('MachineSetupFlowScreen', props),
+vi.mock('./SetupThisComputerWizardStep', () => ({
+    SetupThisComputerWizardStep: (props: Record<string, unknown>) => {
+        React.useEffect(() => {
+            if (!setupThisComputerWizardStepMock.forceBackHidden) return;
+            const onWizardBackChange = props.onWizardBackChange as undefined | ((next: { hidden?: boolean }) => void);
+            onWizardBackChange?.({ hidden: true });
+        }, [props]);
+        return React.createElement('SetupThisComputerWizardStep', props);
+    },
 }));
 vi.mock('@/components/settings/machines/localControl/LocalDaemonControlSection', () => ({
     LocalDaemonControlSection: (props: Record<string, unknown>) => React.createElement('LocalDaemonControlSection', props),
 }));
-vi.mock('@/components/settings/server/localControl/LocalRelayRuntimeControlSection', () => ({
-    LocalRelayRuntimeControlSection: (props: Record<string, unknown>) => React.createElement('LocalRelayRuntimeControlSection', props),
+vi.mock('./relayHostLocalChecklist/RelayHostLocalChecklistStep', () => ({
+    RelayHostLocalChecklistStep: (props: Record<string, unknown>) => React.createElement('RelayHostLocalChecklistStep', props),
 }));
-vi.mock('@/components/settings/machines/RemoteSshMachineSetupSection', () => ({
-    RemoteSshMachineSetupSection: (props: Record<string, unknown>) => React.createElement('RemoteSshMachineSetupSection', props),
+vi.mock('./remoteSshChecklist/RemoteSshChecklistStep', () => ({
+    RemoteSshChecklistStep: (props: Record<string, unknown>) => React.createElement('RemoteSshChecklistStep', props),
 }));
 vi.mock('./WizardTerminalHandoff', () => ({
     WizardTerminalHandoff: (props: Record<string, unknown>) => React.createElement('WizardTerminalHandoff', props),
@@ -68,6 +79,11 @@ vi.mock('./ProvidersLogoMultiSelect', () => ({
 }));
 vi.mock('@/components/settings/providers/setup/ProviderSetupFlow', () => ({
     ProviderSetupFlow: (props: Record<string, unknown>) => React.createElement('ProviderSetupFlow', props),
+}));
+vi.mock('@/modal/portal/ModalPortalTarget', () => ({
+    ModalPortalTargetProvider: (props: Record<string, unknown>) =>
+        React.createElement(React.Fragment, null, props.children as React.ReactNode),
+    useModalPortalTarget: () => null,
 }));
 const relayDriftBannerMock = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock('@/components/settings/server/useRelayDriftBanner', () => ({
@@ -79,12 +95,16 @@ vi.mock('@/components/settings/server/RelayDriftActionCard', () => ({
 vi.mock('@/components/settings/server/localControl/LocalTailscaleSecureAccessSection', () => ({
     LocalTailscaleSecureAccessSection: (props: Record<string, unknown>) => React.createElement('LocalTailscaleSecureAccessSection', props),
 }));
+vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSection', () => ({
+    LocalRelayAccessControlSection: (props: Record<string, unknown>) => React.createElement('LocalRelayAccessControlSection', props),
+}));
 const activeServerSwitchMocks = vi.hoisted(() => ({
     upsertActivateAndSwitchServer: vi.fn(async () => true),
 }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => activeServerSwitchMocks);
 
 const pendingSetupIntentMocks = vi.hoisted(() => ({
+    getPendingSetupIntent: vi.fn(),
     setPendingSetupIntent: vi.fn(),
 }));
 vi.mock('@/sync/domains/pending/pendingSetupIntent', async () => {
@@ -93,6 +113,7 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', async () => {
     );
     return {
         ...actual,
+        getPendingSetupIntent: pendingSetupIntentMocks.getPendingSetupIntent,
         setPendingSetupIntent: pendingSetupIntentMocks.setPendingSetupIntent,
     };
 });
@@ -103,14 +124,21 @@ vi.mock('@/text', async () => {
     });
 });
 
+vi.mock('react-native-safe-area-context', () => ({
+    SafeAreaInsetsContext: React.createContext({ top: 0, bottom: 0, left: 0, right: 0 }),
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
 describe('SetupWizardSurface', () => {
     beforeEach(() => {
         expoRouterMock.spies.push.mockReset();
         expoRouterMock.spies.replace.mockReset();
         activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
         activeServerSwitchMocks.upsertActivateAndSwitchServer.mockClear();
+        pendingSetupIntentMocks.getPendingSetupIntent.mockReset();
         pendingSetupIntentMocks.setPendingSetupIntent.mockClear();
         relayDriftBannerMock.value = null;
+        setupThisComputerWizardStepMock.forceBackHidden = false;
     });
 
     afterEach(() => {
@@ -132,6 +160,78 @@ describe('SetupWizardSurface', () => {
         });
 
         expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/setup');
+    });
+
+    it('hides the back button when the active step requests it', async () => {
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+        }));
+
+        const remoteBranch = screen.findByTestId('setupWizard-branch:remote');
+        expect(remoteBranch).toBeTruthy();
+        await act(async () => {
+            const handler = remoteBranch?.props.action ?? remoteBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByType('RemoteSshChecklistStep' as never)).toBeTruthy();
+        await act(async () => {
+            const step = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
+                props: { onWizardBackChange?: (next: { hidden?: boolean }) => void };
+            };
+            step.props.onWizardBackChange?.({ hidden: true });
+            await flushHookEffects();
+        });
+        expect(screen.findByTestId('setupWizard.surface-back')).toBeFalsy();
+    });
+
+    it('persists the remote machine branch as soon as it is selected', async () => {
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+        }));
+
+        const remoteBranch = screen.findByTestId('setupWizard-branch:remote');
+        await act(async () => {
+            const handler = remoteBranch?.props.action ?? remoteBranch?.props.onPress;
+            await handler?.();
+        });
+
+        expect(pendingSetupIntentMocks.setPendingSetupIntent).toHaveBeenCalledWith(expect.objectContaining({
+            branch: 'remoteMachine',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.example.test',
+            machineId: null,
+            remoteSetupIntent: 'remoteMachine',
+        }));
+    });
+
+    it('persists the remote relay-host branch as soon as it is selected', async () => {
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+        }));
+
+        const remoteRelayBranch = screen.findByTestId('setupWizard-branch:remoteRelay');
+        await act(async () => {
+            const handler = remoteRelayBranch?.props.action ?? remoteRelayBranch?.props.onPress;
+            await handler?.();
+        });
+
+        expect(pendingSetupIntentMocks.setPendingSetupIntent).toHaveBeenCalledWith(expect.objectContaining({
+            branch: 'remoteMachine',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://relay.example.test',
+            machineId: null,
+            remoteSetupIntent: 'remoteRelayHost',
+        }));
     });
 
     it('surfaces a relay drift repair banner inside the wizard chooser when present', async () => {
@@ -167,7 +267,13 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByType('MachineSetupFlowScreen' as never)).toBeTruthy();
+        const localSetup = screen.findByType('SetupThisComputerWizardStep' as never);
+        expect(localSetup).toBeTruthy();
+        expect((localSetup.props as { autoStart?: unknown }).autoStart).toBeUndefined();
+
+        await act(async () => {
+            await (localSetup.props.onSucceeded as any)?.('machine-1');
+        });
 
         const continueFromLocalSetup = screen.findByTestId('setupWizard.surface-primary');
         await act(async () => {
@@ -197,11 +303,11 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const localSetup = screen.findByType('MachineSetupFlowScreen' as never) as unknown as {
-            props: { onLocalSetupSucceeded?: (machineId: string | null) => void };
+        const localSetup = screen.findByType('SetupThisComputerWizardStep' as never) as unknown as {
+            props: { onSucceeded?: (machineId: string | null) => void };
         };
         await act(async () => {
-            localSetup.props.onLocalSetupSucceeded?.('mach-local');
+            localSetup.props.onSucceeded?.('mach-local');
         });
 
         const continueFromLocalSetup = screen.findByTestId('setupWizard.surface-primary');
@@ -234,7 +340,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByType('LocalRelayRuntimeControlSection' as never)).toBeTruthy();
+        expect(screen.findByType('RelayHostLocalChecklistStep' as never)).toBeTruthy();
     });
 
     it('guides web users to continue setup in the terminal or desktop app', async () => {
@@ -262,8 +368,50 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByTestId('setupWizard-terminal-handoff')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard-web-machine-setup-handoff-terminal')).toBeTruthy();
         expect(screen.findAllByType('LocalDaemonControlSection' as never)).toHaveLength(0);
+
+        const handoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
+            props: { steps?: Array<{ code?: unknown }> };
+        };
+        const codes = (handoff.props.steps ?? [])
+            .map((step) => (typeof step.code === 'string' ? step.code : ''))
+            .join('\n');
+        expect(codes).toContain('happier setup --relay-url https://relay.example.test');
+        expect(codes).not.toContain('happier auth login');
+        expect(codes).not.toContain('happier daemon install');
+        expect(codes).toContain('curl -fsSL');
+
+        vi.resetModules();
+    });
+
+    it('guides native users to continue setup on a desktop instead of starting system tasks locally', async () => {
+        vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'ios' } }));
+
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: false,
+        }));
+
+        const localBranch = screen.findByTestId('setupWizard-branch:local');
+        expect(localBranch).toBeTruthy();
+
+        await act(async () => {
+            const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        expect(continueButton).toBeTruthy();
+
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByTestId('setupWizard-web-machine-setup-handoff-terminal')).toBeTruthy();
+        expect(screen.findAllByType('SetupThisComputerWizardStep' as never)).toHaveLength(0);
 
         vi.resetModules();
     });
@@ -292,7 +440,7 @@ describe('SetupWizardSurface', () => {
         });
 
         expect(screen.findByTestId('setupWizard-terminal-handoff')).toBeTruthy();
-        expect(screen.findAllByType('RemoteSshMachineSetupSection' as never)).toHaveLength(0);
+        expect(screen.findAllByType('RemoteSshChecklistStep' as never)).toHaveLength(0);
 
         const handoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
             props: { steps?: Array<{ code?: unknown }> };
@@ -300,6 +448,10 @@ describe('SetupWizardSurface', () => {
         const sshStep = handoff.props.steps?.find((step) => typeof step.code === 'string' && step.code.includes('happier machine setup --ssh'));
         expect(sshStep).toBeTruthy();
         expect(String(sshStep?.code)).not.toContain('--install-relay-runtime');
+
+        const setupPrereqStep = handoff.props.steps?.find((step) => typeof step.code === 'string' && String(step.code).startsWith('happier setup'));
+        expect(setupPrereqStep).toBeTruthy();
+        expect(String(setupPrereqStep?.code)).not.toContain('--skip-daemon');
 
         vi.resetModules();
     });
@@ -339,6 +491,123 @@ describe('SetupWizardSurface', () => {
         vi.resetModules();
     });
 
+    it('allows web users to fill SSH credentials and reflects them in the CLI handoff command', async () => {
+        vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: false,
+        }));
+
+        const remoteRelayBranch = screen.findByTestId('setupWizard-branch:remoteRelay');
+        await act(async () => {
+            const handler = remoteRelayBranch?.props.action ?? remoteRelayBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+
+        const usernameInput = screen.findByTestId('setupWizard-web-remote-ssh-sshUsernameInput');
+        const hostInput = screen.findByTestId('setupWizard-web-remote-ssh-sshHostInput');
+        const portInput = screen.findByTestId('setupWizard-web-remote-ssh-sshPortInput');
+        if (!usernameInput || !hostInput || !portInput) {
+            throw new Error('Expected SSH fields to be rendered for the remote setup handoff.');
+        }
+
+        await act(async () => {
+            usernameInput.props.onChangeText?.('dev');
+            hostInput.props.onChangeText?.('example.test');
+            portInput.props.onChangeText?.('2222');
+        });
+
+        const handoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
+            props: { steps?: Array<{ code?: unknown }> };
+        };
+        const sshStep = handoff.props.steps?.find((step) => typeof step.code === 'string' && step.code.includes('happier machine setup'));
+        expect(sshStep).toBeTruthy();
+        expect(String(sshStep?.code)).toContain('--ssh-user dev');
+        expect(String(sshStep?.code)).toContain('--ssh-host example.test');
+        expect(String(sshStep?.code)).toContain('--ssh-port 2222');
+        expect(String(sshStep?.code)).toContain('--ssh-auth agent');
+
+        vi.resetModules();
+    });
+
+    it('includes password auth in the web remote SSH handoff without retaining the password itself', async () => {
+        vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: false,
+        }));
+
+        const remoteRelayBranch = screen.findByTestId('setupWizard-branch:remoteRelay');
+        await act(async () => {
+            const handler = remoteRelayBranch?.props.action ?? remoteRelayBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+
+        await act(async () => {
+            screen.changeTextByTestId('setupWizard-web-remote-ssh-sshUsernameInput', 'dev');
+            screen.changeTextByTestId('setupWizard-web-remote-ssh-sshHostInput', 'relay.example.test');
+            screen.changeTextByTestId('setupWizard-web-remote-ssh-sshPortInput', '2222');
+        });
+
+        const passwordAuth = screen.findByTestId('setupWizard-web-remote-ssh-sshAuthPassword')!;
+        await act(async () => {
+            await passwordAuth.props.onPress?.();
+        });
+
+        await act(async () => {
+            screen.changeTextByTestId('setupWizard-web-remote-ssh-sshPasswordInput', 'super-secret');
+        });
+
+        const handoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
+            props: { steps?: Array<{ code?: unknown }> };
+        };
+        const sshStep = handoff.props.steps?.find((step) => typeof step.code === 'string' && step.code.includes('happier machine setup'));
+        expect(sshStep).toBeTruthy();
+        expect(String(sshStep?.code)).toContain('--ssh-user dev');
+        expect(String(sshStep?.code)).toContain('--ssh-host relay.example.test');
+        expect(String(sshStep?.code)).toContain('--ssh-port 2222');
+        expect(String(sshStep?.code)).toContain('--ssh-auth password');
+        expect(String(sshStep?.code)).not.toContain('--identity-file');
+
+        const backButton = screen.findByTestId('setupWizard.back') ?? screen.findByTestId('setupWizard.surface-back');
+        await act(async () => {
+            await backButton?.props.action?.();
+            await backButton?.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteRelayBranchAgain = screen.findByTestId('setupWizard-branch:remoteRelay');
+        await act(async () => {
+            const handler = remoteRelayBranchAgain?.props.action ?? remoteRelayBranchAgain?.props.onPress;
+            await handler?.();
+        });
+        const continueAgain = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAgain?.props.action ?? continueAgain?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByTestId('setupWizard-web-remote-ssh-sshPasswordInput')?.props.value).toBe('');
+
+        vi.resetModules();
+    });
+
     it('guides web users to continue provider setup in the terminal or desktop app', async () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
@@ -361,7 +630,7 @@ describe('SetupWizardSurface', () => {
         });
 
         // setup_this_computer handoff (already covered elsewhere)
-        expect(screen.findByTestId('setupWizard-terminal-handoff')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard-web-machine-setup-handoff')).toBeTruthy();
 
         // advance to providers step
         const continueToProviders = screen.findByTestId('setupWizard.surface-primary');
@@ -370,7 +639,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByTestId('setupWizard-terminal-handoff')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard-web-providers-handoff')).toBeTruthy();
         expect(screen.findAllByType('ProviderSetupFlow' as never)).toHaveLength(0);
         const providersHandoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
             props: { steps?: Array<{ code?: unknown }> };
@@ -381,6 +650,59 @@ describe('SetupWizardSurface', () => {
         expect(codes).toContain('happier providers setup');
         expect(codes).not.toContain('happier auth login');
         expect(codes).not.toContain('curl -fsSL');
+
+        const providersSelect = screen.findByType('ProvidersLogoMultiSelect' as never) as unknown as {
+            props: { providerIds?: readonly string[]; onToggleProvider?: (providerId: string) => void };
+        };
+        await act(async () => {
+            providersSelect.props.onToggleProvider?.('claude');
+            providersSelect.props.onToggleProvider?.('codex');
+        });
+
+        const updatedProvidersHandoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
+            props: { steps?: Array<{ code?: unknown }> };
+        };
+        const updatedCodes = (updatedProvidersHandoff.props.steps ?? [])
+            .map((step) => (typeof step.code === 'string' ? step.code : ''))
+            .join('\n');
+        expect(updatedCodes).toContain('happier providers setup --providers claude,codex');
+
+        vi.resetModules();
+    });
+
+    it('shows only setup-supported providers in the web provider selector', async () => {
+        vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: false,
+        }));
+
+        const localBranch = screen.findByTestId('setupWizard-branch:local');
+        await act(async () => {
+            const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+
+        await act(async () => {
+            const handler = screen.findByTestId('setupWizard.surface-primary')?.props.action
+                ?? screen.findByTestId('setupWizard.surface-primary')?.props.onPress;
+            await handler?.();
+        });
+
+        const providersSelect = screen.findByType('ProvidersLogoMultiSelect' as never) as unknown as {
+            props: { providerIds?: readonly string[] };
+        };
+        expect(providersSelect.props.providerIds).toContain('claude');
+        expect(providersSelect.props.providerIds).toContain('codex');
+        expect(providersSelect.props.providerIds).not.toContain('customAcp');
 
         vi.resetModules();
     });
@@ -431,7 +753,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const remoteSshSection = screen.findByType('RemoteSshMachineSetupSection' as never) as unknown as {
+        const remoteSshSection = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
             props: { initialInstallRelayRuntime?: unknown };
         };
         expect(remoteSshSection.props.initialInstallRelayRuntime).toBe(true);
@@ -505,6 +827,14 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
+        expect(screen.findByTestId('setupWizard-web-relay-access-handoff')).toBeTruthy();
+
+        const continueAfterRelayAccess = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAfterRelayAccess?.props.action ?? continueAfterRelayAccess?.props.onPress;
+            await handler?.();
+        });
+
         expect(screen.findByTestId('setupWizard-confirmSwitchRelay')).toBeTruthy();
 
         vi.resetModules();
@@ -528,7 +858,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const localRelaySection = screen.findByType('LocalRelayRuntimeControlSection' as never) as unknown as {
+        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
             props: { onStatusChange?: (status: unknown) => void };
         };
 
@@ -541,6 +871,59 @@ describe('SetupWizardSurface', () => {
         const proceedAfterRelayHosting = screen.findByTestId('setupWizard.surface-primary');
         await act(async () => {
             const handler = proceedAfterRelayHosting?.props.action ?? proceedAfterRelayHosting?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+
+        const continueAfterRelayAccess = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAfterRelayAccess?.props.action ?? continueAfterRelayAccess?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByTestId('setupWizard-confirmSwitchRelay')).toBeTruthy();
+    });
+
+    it('inserts a relay access step before switching to a newly hosted relay', async () => {
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+        }));
+
+        const relayBranch = screen.findByTestId('setupWizard-branch:relayLocal');
+        await act(async () => {
+            const handler = relayBranch?.props.action ?? relayBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueToHost = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueToHost?.props.action ?? continueToHost?.props.onPress;
+            await handler?.();
+        });
+
+        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
+            props: { onStatusChange?: (status: unknown) => void };
+        };
+        await act(async () => {
+            localRelaySection.props.onStatusChange?.({
+                relayUrl: 'https://local-relay.example.test',
+            });
+        });
+
+        const continueAfterHosted = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAfterHosted?.props.action ?? continueAfterHosted?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+        expect(screen.findByTestId('setupWizard-confirmSwitchRelay')).toBeNull();
+
+        const continueAfterAccess = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAfterAccess?.props.action ?? continueAfterAccess?.props.onPress;
             await handler?.();
         });
 
@@ -565,7 +948,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const localRelaySection = screen.findByType('LocalRelayRuntimeControlSection' as never) as unknown as {
+        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
             props: { onStatusChange?: (status: unknown) => void };
         };
 
@@ -578,6 +961,12 @@ describe('SetupWizardSurface', () => {
         const proceedAfterRelayHosting = screen.findByTestId('setupWizard.surface-primary');
         await act(async () => {
             const handler = proceedAfterRelayHosting?.props.action ?? proceedAfterRelayHosting?.props.onPress;
+            await handler?.();
+        });
+
+        const continueAfterRelayAccess = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAfterRelayAccess?.props.action ?? continueAfterRelayAccess?.props.onPress;
             await handler?.();
         });
 
@@ -616,7 +1005,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const localRelaySection = screen.findByType('LocalRelayRuntimeControlSection' as never) as unknown as {
+        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
             props: { onStatusChange?: (status: unknown) => void };
         };
 
@@ -629,6 +1018,12 @@ describe('SetupWizardSurface', () => {
         const proceedAfterRelayHosting = screen.findByTestId('setupWizard.surface-primary');
         await act(async () => {
             const handler = proceedAfterRelayHosting?.props.action ?? proceedAfterRelayHosting?.props.onPress;
+            await handler?.();
+        });
+
+        const continueAfterRelayAccess = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAfterRelayAccess?.props.action ?? continueAfterRelayAccess?.props.onPress;
             await handler?.();
         });
 
@@ -669,7 +1064,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByType('RemoteSshMachineSetupSection' as never)).toBeTruthy();
+        expect(screen.findByType('RemoteSshChecklistStep' as never)).toBeTruthy();
     });
 
     it('requires an explicit relay switch confirmation when remote relay hosting completes', async () => {
@@ -690,21 +1085,29 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const remoteSection = screen.findByType('RemoteSshMachineSetupSection' as never) as unknown as {
-            props: { onCompletedChange?: (payload: { machineId: string | null; serverId: string | null; relayRuntimeUrl: string | null }) => void };
+        const remoteSection = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
+            props: { onCompleted?: (payload: { machineId: string | null; relayRuntimeUrl: string | null; mode: string }) => void };
         };
 
         await act(async () => {
-            remoteSection.props.onCompletedChange?.({
+            remoteSection.props.onCompleted?.({
                 machineId: 'mach-1',
-                serverId: 'relay-profile',
                 relayRuntimeUrl: 'https://remote-relay.example.test',
+                mode: 'remoteRelayHost',
             });
         });
 
         const proceedAfterRemote = screen.findByTestId('setupWizard.surface-primary');
         await act(async () => {
             const handler = proceedAfterRemote?.props.action ?? proceedAfterRemote?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
+
+        const continueAfterRelayAccess = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueAfterRelayAccess?.props.action ?? continueAfterRelayAccess?.props.onPress;
             await handler?.();
         });
 
@@ -728,8 +1131,31 @@ describe('SetupWizardSurface', () => {
             phase: 'awaiting_auth',
             relayUrl: 'https://remote-relay.example.test',
             machineId: 'mach-1',
+            remoteSetupIntent: 'remoteRelayHost',
         }));
         expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
+    });
+
+    it('restores the remote relay-host branch when resuming from a pending intent', async () => {
+        pendingSetupIntentMocks.setPendingSetupIntent.mockImplementation(() => undefined);
+        pendingSetupIntentMocks.getPendingSetupIntent.mockReturnValue({
+            branch: 'remoteMachine',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://remote-relay.example.test',
+            machineId: 'mach-1',
+            remoteSetupIntent: 'remoteRelayHost',
+        });
+
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+        }));
+
+        expect(screen.findByType('RemoteSshChecklistStep' as never)).toBeTruthy();
+        const remoteSection = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
+            props: { initialInstallRelayRuntime?: unknown };
+        };
+        expect(remoteSection.props.initialInstallRelayRuntime).toBe(true);
     });
 
     it('propagates the remote machine id to ProviderSetupFlow after remote SSH bootstrap completes', async () => {
@@ -750,15 +1176,15 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const remoteSection = screen.findByType('RemoteSshMachineSetupSection' as never) as unknown as {
-            props: { onCompletedChange?: (payload: { machineId: string | null; serverId: string | null; relayRuntimeUrl: string | null }) => void };
+        const remoteSection = screen.findByType('RemoteSshChecklistStep' as never) as unknown as {
+            props: { onCompleted?: (payload: { machineId: string | null; relayRuntimeUrl: string | null; mode: string }) => void };
         };
 
         await act(async () => {
-            remoteSection.props.onCompletedChange?.({
+            remoteSection.props.onCompleted?.({
                 machineId: 'mach-remote',
-                serverId: 'relay-profile',
                 relayRuntimeUrl: null,
+                mode: 'remoteMachine',
             });
         });
 

@@ -3,19 +3,24 @@ import { Platform, ScrollView, View, useWindowDimensions, type StyleProp, type V
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { layout } from '@/components/ui/layout/layout';
-import { resolveWebBlurTintColor } from '@/components/ui/overlays/resolveWebBlurTintColor';
+import { tryRenderWebPortal } from '@/components/ui/popover/portal';
+import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
+import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { shadowLevelStyle } from '@/shadowElevation';
 
 export type WizardCardLayoutProps = Readonly<{
     children: React.ReactNode;
     testID?: string;
     presentation?: 'auto' | 'card' | 'fullscreen';
+    scrollable?: boolean;
+    showScrim?: boolean;
     style?: StyleProp<ViewStyle>;
 }>;
 
 type WizardCardLayoutMetrics = Readonly<{
     cardWidth: number;
+    wantsFullscreen: boolean;
 }>;
 
 const WizardCardLayoutMetricsContext = React.createContext<WizardCardLayoutMetrics | null>(null);
@@ -24,32 +29,36 @@ export function useWizardCardLayoutMetrics(): WizardCardLayoutMetrics | null {
     return React.useContext(WizardCardLayoutMetricsContext);
 }
 
-const stylesheet = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create((theme, _runtime) => ({
     root: {
         flex: 1,
-        backgroundColor: theme.colors.overlay.scrimWizard,
-        ...Platform.select({
-            web: {
-                // Ensure the wizard scrim covers the entire viewport even when rendered
-                // inside other modal shells that size to content.
-                minHeight: '100vh',
-                height: '100vh',
-                width: '100%',
-            },
-            default: {},
-        }),
+        width: '100%',
+        alignSelf: 'stretch',
     },
     rootFullscreen: {
         flex: 1,
         backgroundColor: theme.colors.surface,
-        ...Platform.select({
-            web: {
-                minHeight: '100vh',
-                height: '100vh',
-                width: '100%',
-            },
-            default: {},
-        }),
+        width: '100%',
+        alignSelf: 'stretch',
+    },
+    rootOuterScroll: {
+        width: '100%',
+        alignSelf: 'stretch',
+    },
+    rootOuterScrollFullscreen: {
+        backgroundColor: theme.colors.surface,
+        width: '100%',
+        alignSelf: 'stretch',
+    },
+    scrim: {
+        ...StyleSheet.absoluteFillObject,
+        position: 'absolute',
+        backgroundColor: theme.colors.overlay.scrimWizard,
+    },
+    scroll: {
+        flex: 1,
+        width: '100%',
+        alignSelf: 'stretch',
     },
     container: {
         alignItems: 'center',
@@ -65,12 +74,24 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 0,
         flexGrow: 1,
     },
+    outerScrollContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 24,
+    },
+    outerScrollContainerFullscreen: {
+        alignItems: 'stretch',
+        justifyContent: 'flex-start',
+        paddingHorizontal: 0,
+        paddingVertical: 0,
+    },
     cardBase: {
         alignSelf: 'center',
         overflow: 'hidden',
         flexDirection: 'column',
         flexGrow: 0,
-        flexShrink: 1,
+        flexShrink: 0,
         minHeight: 0,
     },
     card: {
@@ -88,60 +109,131 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { width: windowWidth } = useWindowDimensions();
+    const modalPortalTarget = useModalPortalTarget();
+    const [portalRetryNonce, bumpPortalRetryNonce] = React.useReducer((value: number) => value + 1, 0);
     const dimensions = useModalCardDimensions({
         size: 'md',
         width: 500,
     });
     const presentation = props.presentation ?? 'auto';
-    const wantsFullscreen = presentation === 'fullscreen' || (presentation === 'auto' && windowWidth <= 430);
+    const hasKnownWindowWidth = Number.isFinite(windowWidth) && windowWidth > 0;
+    const wantsFullscreen = presentation === 'fullscreen'
+        || (presentation === 'auto' && hasKnownWindowWidth && windowWidth <= 430);
     const cardWidth = wantsFullscreen ? windowWidth : Math.min(dimensions.width, layout.maxWidth);
+    const shouldUseInternalScrollView = props.scrollable ?? true;
     const metrics: WizardCardLayoutMetrics = React.useMemo(() => ({
         cardWidth,
-    }), [cardWidth]);
-    const webBackdropStyle = Platform.OS === 'web' && !wantsFullscreen
-        ? (() => {
-            const tintColor = resolveWebBlurTintColor({ surfaceColor: theme.colors.surface, dark: theme.dark });
-            return ({ backdropFilter: 'blur(6px)', backgroundColor: tintColor } as unknown as ViewStyle);
-        })()
+        wantsFullscreen,
+    }), [cardWidth, wantsFullscreen]);
+    const shouldUseWebFixedOverlay = Platform.OS === 'web' && modalPortalTarget == null;
+    const portalRetryCountRef = React.useRef(0);
+    const webBackdropStyle = Platform.OS === 'web' && !wantsFullscreen && modalPortalTarget == null
+        ? (createBackdropWebStyle({
+            backgroundColor: theme.colors.overlay.scrimWizard,
+            blurPx: 12,
+        }) as unknown as ViewStyle)
         : null;
-    const webFixedViewportStyle = Platform.OS === 'web'
-        ? ({
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-        } as unknown as ViewStyle)
-        : null;
-    return (
-        <ScrollView
+    const shouldRenderScrim = !wantsFullscreen && props.showScrim !== false;
+
+    const webFixedFillStyle =
+        shouldUseWebFixedOverlay
+            ? ({ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100000 } as any)
+            : null;
+
+    const webFixedScrimStyle =
+        shouldUseWebFixedOverlay
+            ? ({ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 } as any)
+            : null;
+
+    const rootBaseStyle = shouldUseInternalScrollView
+        ? (wantsFullscreen ? styles.rootFullscreen : styles.root)
+        : (wantsFullscreen ? styles.rootOuterScrollFullscreen : styles.rootOuterScroll);
+
+    const rootStyle = [
+        rootBaseStyle,
+        shouldUseInternalScrollView
+            ? null
+            : (wantsFullscreen ? styles.outerScrollContainerFullscreen : styles.outerScrollContainer),
+        webFixedFillStyle,
+    ];
+
+    const card = (
+        <View
+            testID={props.testID ? `${props.testID}-card` : undefined}
+            {...(Platform.OS === 'web'
+                ? ({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)
+                : null)}
             style={[
-                wantsFullscreen ? styles.rootFullscreen : styles.root,
-                webBackdropStyle,
-                webFixedViewportStyle,
+                styles.cardBase,
+                wantsFullscreen ? styles.cardFullscreen : styles.card,
+                wantsFullscreen ? { borderRadius: 0 } : null,
+                props.style,
+                wantsFullscreen
+                    ? { width: '100%', maxWidth: '100%' }
+                    : { width: cardWidth, maxWidth: cardWidth },
             ]}
-            contentContainerStyle={wantsFullscreen ? styles.containerFullscreen : styles.container}
-            showsVerticalScrollIndicator={false}
         >
-            <View
-                testID={props.testID ? `${props.testID}-card` : undefined}
-                {...(Platform.OS === 'web'
-                    ? ({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)
-                    : null)}
-                style={[
-                    styles.cardBase,
-                    wantsFullscreen ? styles.cardFullscreen : styles.card,
-                    wantsFullscreen ? { borderRadius: 0 } : null,
-                    props.style,
-                    wantsFullscreen
-                        ? { width: '100%', maxWidth: '100%' }
-                        : { width: cardWidth, maxWidth: cardWidth },
-                ]}
-            >
-                <WizardCardLayoutMetricsContext.Provider value={metrics}>
-                    {props.children}
-                </WizardCardLayoutMetricsContext.Provider>
-            </View>
-        </ScrollView>
+            <WizardCardLayoutMetricsContext.Provider value={metrics}>
+                {props.children}
+            </WizardCardLayoutMetricsContext.Provider>
+        </View>
     );
+
+    const content = (
+        <View style={rootStyle}>
+            {shouldRenderScrim ? (
+                <View
+                        testID={props.testID ? `${props.testID}-scrim` : undefined}
+                        style={[
+                            styles.scrim,
+                            webFixedScrimStyle,
+                            webBackdropStyle ?? createBackdropNativeStyle({
+                                backgroundColor: theme.colors.overlay.scrimWizard,
+                            }),
+                        ]}
+                    />
+            ) : null}
+            {shouldUseInternalScrollView ? (
+                <ScrollView
+                    style={styles.scroll}
+                    contentContainerStyle={wantsFullscreen ? styles.containerFullscreen : styles.container}
+                    showsVerticalScrollIndicator={false}
+                >
+                    {card}
+                </ScrollView>
+            ) : (
+                card
+            )}
+        </View>
+    );
+
+    const shouldPortalWeb = Platform.OS === 'web' && modalPortalTarget == null && portalRetryNonce >= 0;
+    const webPortal = tryRenderWebPortal({
+        shouldPortalWeb,
+        portalTargetOnWeb: 'body',
+        modalPortalTarget,
+        getBoundaryDomElement: () => null,
+        content,
+    });
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        if (!shouldPortalWeb) return;
+        if (webPortal != null) return;
+
+        // Retry a few times post-mount. Some web runtimes (SSR/hydration, early init) can render before the
+        // DOM/portal target is ready, causing the first `createPortal(...)` attempt to fail.
+        //
+        // Schedule retries with a timer/frame to avoid tight re-render loops if portal creation keeps failing.
+        const retryBudget = 8;
+        if (portalRetryCountRef.current >= retryBudget) return;
+        portalRetryCountRef.current += 1;
+
+        if (typeof setTimeout === 'function') {
+            const timer = setTimeout(() => bumpPortalRetryNonce(), 0);
+            return () => clearTimeout(timer);
+        }
+    }, [shouldPortalWeb, webPortal]);
+
+    return webPortal ?? content;
 }

@@ -10,9 +10,6 @@ import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftB
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
-import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
-import { resolvePostAuthSetupRoute } from '@/components/onboardingWizard/wizardResume';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { t } from '@/text';
@@ -21,27 +18,7 @@ import { isTauriDesktop } from '@/utils/platform/tauri';
 
 function BrowserWebSetupRoute() {
     const snapshot = React.useSyncExternalStore(subscribeActiveServer, getActiveServerSnapshot, getActiveServerSnapshot);
-    const connectionHealth = useConnectionHealth();
     const relayUrl = String(snapshot.serverUrl ?? '').trim().replace(/\/+$/, '') || null;
-    const shouldRouteToApp = resolvePostAuthSetupRoute({
-        isDesktopShell: false,
-        onlineMachineCount: connectionHealth.onlineCount,
-        currentMachineIsConfiguredAndHealthy: false,
-        hasRelayDrift: false,
-    }) === '/';
-
-    React.useEffect(() => {
-        if (!shouldRouteToApp) {
-            clearPendingSetupIntent();
-            return;
-        }
-        clearPendingSetupIntent();
-        router.replace('/');
-    }, [shouldRouteToApp]);
-
-    if (shouldRouteToApp) {
-        return null;
-    }
 
     return (
         <ItemList>
@@ -87,18 +64,7 @@ function PostAuthSetupRoute() {
         } as const;
     }, [pending]);
     const snapshot = React.useSyncExternalStore(subscribeActiveServer, getActiveServerSnapshot, getActiveServerSnapshot);
-    const localDaemonControl = useLocalDaemonControl();
     const relayDriftBanner = useRelayDriftBanner();
-    const shouldRouteToApp = resolvePostAuthSetupRoute({
-        isDesktopShell: true,
-        onlineMachineCount: null,
-        currentMachineIsConfiguredAndHealthy:
-            localDaemonControl.status?.serviceInstalled === true
-            && localDaemonControl.status?.daemonRunning === true
-            && localDaemonControl.status?.needsAuth !== true
-            && Boolean(localDaemonControl.status?.machineId),
-        hasRelayDrift: relayDriftBanner != null,
-    }) === '/';
     const relayUrl = (String(snapshot.serverUrl ?? effectivePending?.relayUrl ?? '').trim().replace(/\/+$/, '') || t('status.unknown'));
     const thisComputerSummary = relayDriftBanner?.title
         ?? (effectivePending?.branch === 'remoteMachine'
@@ -123,22 +89,10 @@ function PostAuthSetupRoute() {
         });
     }, []);
 
-    React.useEffect(() => {
-        if (!shouldRouteToApp) {
-            return;
-        }
-        clearPendingSetupIntent();
-        router.replace('/');
-    }, [shouldRouteToApp]);
-
     const handleDiscard = React.useCallback(() => {
         clearPendingSetupIntent();
         router.replace('/');
     }, []);
-
-    if (shouldRouteToApp) {
-        return null;
-    }
 
     return (
         <ItemList>

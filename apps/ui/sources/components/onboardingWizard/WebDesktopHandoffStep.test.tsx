@@ -24,20 +24,19 @@ describe('WebDesktopHandoffStep', () => {
         expect(screen.findByTestId('web-desktop-handoff-terminal-step-relay-status')).toBeTruthy();
     });
 
-    it('includes guided desktop handoff steps for installing the background service (daemon)', async () => {
+    it('includes a single setup command for the background-service handoff', async () => {
         const { WebDesktopBackgroundServiceHandoffStep } = await import('./WebDesktopBackgroundServiceHandoffStep');
         const screen = await renderScreen(React.createElement(WebDesktopBackgroundServiceHandoffStep, {
-            testID: 'web-daemon-handoff',
+            testID: 'web-background-service-handoff',
             relayUrl: 'https://relay.example.test',
         }));
 
-        expect(screen.findByTestId('web-daemon-handoff')).toBeTruthy();
-        expect(screen.findByTestId('web-daemon-handoff-download-desktop')).toBeTruthy();
-
-        expect(screen.findByTestId('web-daemon-handoff-terminal')).toBeTruthy();
-        expect(screen.findByTestId('web-daemon-handoff-terminal-step-cli-install')).toBeTruthy();
-        expect(screen.findByTestId('web-daemon-handoff-terminal-step-relay-set')).toBeTruthy();
-        expect(screen.findByTestId('web-daemon-handoff-terminal-step-daemon-install')).toBeTruthy();
-        expect(screen.findByTestId('web-daemon-handoff-terminal-step-daemon-start')).toBeTruthy();
+        expect(screen.findByTestId('web-background-service-handoff')).toBeTruthy();
+        expect(screen.findByTestId('web-background-service-handoff-download-desktop')).toBeTruthy();
+        expect(screen.findByTestId('web-background-service-handoff-terminal-step-setup')).toBeTruthy();
+        expect(screen.findByTestId('web-background-service-handoff-terminal-step-cli-install')).toBeTruthy();
+        expect(screen.findByTestId('web-background-service-handoff-terminal-step-daemon-install')).toBeNull();
+        expect(screen.findByTestId('web-background-service-handoff-terminal-step-daemon-start')).toBeNull();
     });
+
 });

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_IDS as SHARED_AGENT_IDS } from '@happier-dev/agents';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 
 import { AGENTS_UI } from './registryUi';
+import { getAgentIconSvgXml } from './registryUi';
 
 function sortedKeys(value: Record<string, unknown>): string[] {
     return Object.keys(value).sort();
@@ -11,5 +13,17 @@ function sortedKeys(value: Record<string, unknown>): string[] {
 describe('agents/registryUi', () => {
     it('covers the full canonical provider universe (no UI-only drift)', () => {
         expect(sortedKeys(AGENTS_UI)).toEqual([...SHARED_AGENT_IDS].sort());
+    });
+
+    it('uses the Agent Client Protocol logo for custom ACP providers', () => {
+        const theme = createThemeFixture({
+            colors: {
+                text: '#123456',
+            },
+        }) as Parameters<typeof getAgentIconSvgXml>[1];
+        const svgXml = getAgentIconSvgXml('customAcp', theme) ?? '';
+        expect(svgXml).toContain('agent-client-protocol-logo');
+        expect(svgXml).toContain('fill="#123456"');
+        expect(svgXml).not.toContain('fill="#000000"');
     });
 });

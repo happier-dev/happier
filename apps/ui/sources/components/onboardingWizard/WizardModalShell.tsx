@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
@@ -7,6 +8,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
 import { WizardCardLayout } from './WizardCardLayout';
 import { WizardStepDots } from './WizardStepDots';
@@ -63,6 +65,7 @@ export type WizardModalShellProps = Readonly<{
     footerHint?: React.ReactNode;
     testID?: string;
     contentStyle?: StyleProp<ViewStyle>;
+    scrollable?: boolean;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -175,9 +178,16 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function WizardModalShell(props: WizardModalShellProps) {
     useUnistyles();
     const styles = stylesheet;
+    const { width: windowWidth } = useWindowDimensions();
+    const insets = useSafeAreaInsets();
+    const modalPortalTarget = useModalPortalTarget();
     const showSkip = props.showSkip ?? true;
     const showBack = props.showBack ?? true;
     const skipDisabled = props.skipDisabled ?? false;
+    const wantsFullscreen = Number.isFinite(windowWidth) && windowWidth > 0 && windowWidth <= 430;
+    const shouldDisableInternalScrim = Platform.OS === 'web' && modalPortalTarget != null;
+    const headerPaddingTop = wantsFullscreen ? insets.top + 12 : 18;
+    const footerPaddingBottom = wantsFullscreen ? insets.bottom + 16 : styles.footer.paddingBottom;
 
     const content = (
         <>
@@ -194,9 +204,13 @@ export function WizardModalShell(props: WizardModalShellProps) {
     );
 
     return (
-        <WizardCardLayout testID={props.testID}>
-            <View testID={props.testID} style={styles.shell}>
-                <View style={styles.header}>
+            <WizardCardLayout
+                testID={props.testID}
+                scrollable={props.scrollable ?? !shouldDisableInternalScrim}
+                showScrim={shouldDisableInternalScrim ? false : true}
+            >
+                <View testID={props.testID} style={styles.shell}>
+                <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
                     <View style={styles.headerSide}>
                         <HeaderLogo />
                     </View>
@@ -226,7 +240,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
                     {content}
                 </View>
 
-                <View style={styles.footer}>
+                <View style={[styles.footer, { paddingBottom: footerPaddingBottom }]}>
                     {props.footerHint
                         ? typeof props.footerHint === 'string' || typeof props.footerHint === 'number'
                             ? <Text style={styles.footerHint}>{props.footerHint}</Text>

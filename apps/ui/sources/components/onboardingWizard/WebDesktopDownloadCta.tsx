@@ -8,6 +8,7 @@ import { t } from '@/text';
 
 export type WebDesktopDownloadCtaProps = Readonly<{
     testIDPrefix: string;
+    showSubtitle?: boolean;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -18,7 +19,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     button: {
         width: '100%',
-        maxWidth: 360,
+        maxWidth: 220,
     },
     title: {
         textAlign: 'center',
@@ -38,6 +39,7 @@ export function WebDesktopDownloadCta(props: WebDesktopDownloadCtaProps) {
     useUnistyles();
     const styles = stylesheet;
     const downloadUrl = 'https://happier.dev/download';
+    const showSubtitle = props.showSubtitle ?? true;
     const openDownload = React.useCallback(() => {
         void Linking.openURL(downloadUrl).catch(() => {});
     }, [downloadUrl]);
@@ -45,10 +47,11 @@ export function WebDesktopDownloadCta(props: WebDesktopDownloadCtaProps) {
     return (
         <View testID={`${props.testIDPrefix}-download-cta`} style={styles.root}>
             <Text style={styles.title}>{t('setupOnboarding.webDesktopOnlyDesktopAppTitle')}</Text>
-            <Text style={styles.subtitle}>{t('setupOnboarding.webDesktopOnlyDesktopAppSubtitle')}</Text>
+            {showSubtitle ? <Text style={styles.subtitle}>{t('setupOnboarding.webDesktopOnlyDesktopAppSubtitle')}</Text> : null}
             <RoundButton
                 title={t('setupOnboarding.webDesktopOnlyDesktopAppButton')}
-                size="normal"
+                size="small"
+                display="inverted"
                 style={styles.button}
                 onPress={openDownload}
                 testID={`${props.testIDPrefix}-download-desktop`}

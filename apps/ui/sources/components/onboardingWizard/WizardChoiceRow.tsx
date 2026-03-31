@@ -53,7 +53,7 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const iconColor = props.selected ? theme.colors.accent.blue : theme.colors.textSecondary;
-    const rowDisabled = Boolean(props.disabled) && !props.secondaryAction;
+    const rowDisabled = Boolean(props.disabled);
     const onPress = props.disabled ? (() => {}) : props.onPress;
     const disabledContainerStyle = Boolean(props.disabled) && props.secondaryAction
         ? ({ opacity: 0.5 } as const)

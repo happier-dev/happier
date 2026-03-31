@@ -21,12 +21,12 @@ export type WizardTerminalHandoffProps = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         width: '100%',
-        gap: 16,
+        gap: 12,
         alignItems: 'center',
     },
     section: {
         width: '100%',
-        gap: 2,
+        gap: 4,
     },
     sectionTitle: {
         textAlign: 'center',

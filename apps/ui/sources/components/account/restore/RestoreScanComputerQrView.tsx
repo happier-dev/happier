@@ -48,7 +48,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         fontSize: 18,
         color: theme.colors.text,
-        marginBottom: 10,
+        marginBottom: 6,
         textAlign: 'center',
         ...Typography.default('semiBold'),
     },
@@ -60,7 +60,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
     statusCard: {
-        marginTop: 18,
+        marginTop: 12,
         borderWidth: 1,
         borderColor: theme.colors.divider,
         borderRadius: 14,
@@ -85,13 +85,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.mono(),
     },
     footer: {
-        marginTop: 18,
+        marginTop: 12,
         alignItems: 'center',
         width: '100%',
         gap: 12,
     },
     embeddedFooter: {
-        marginTop: 14,
+        marginTop: 10,
     },
     footerButton: {
         width: '100%',

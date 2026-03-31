@@ -50,7 +50,7 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
 
 describe('SetupWizardRoute', () => {
     beforeEach(() => {
-        installReactNativeWebMock();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
         expoRouterMock.spies.replace.mockReset();
     });
 
@@ -67,5 +67,16 @@ describe('SetupWizardRoute', () => {
 
         expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
     });
-});
 
+    it('opens the setup wizard inside a scrollable full-screen modal on web', async () => {
+        const Route = (await import('./wizard')).default;
+        const screen = await renderScreen(<Route />);
+
+        const modal = screen.findByType('BaseModal' as any);
+        const surface = screen.findByType('SetupWizardSurface' as any);
+        expect(surface.props.useOuterScrollContainer).toBe(true);
+        expect(modal.props.scrollable).toBe(true);
+        expect(modal.props.disableContentTransform).toBe(true);
+        expect(modal.props.showBackdrop).toBe(false);
+    });
+});

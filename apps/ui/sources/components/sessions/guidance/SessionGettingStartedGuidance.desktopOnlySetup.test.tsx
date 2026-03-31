@@ -82,13 +82,13 @@ vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
 installSessionGuidanceCommonModuleMocks();
 
 describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
-    it('hides the Open setup CTA on non-Tauri surfaces', async () => {
+    it('shows the Open setup CTA on web surfaces', async () => {
         tauriState.desktop = false;
         vi.resetModules();
         const { SessionGettingStartedGuidance } = await import('./SessionGettingStartedGuidance');
 
         const tree: renderer.ReactTestRenderer = (await renderScreen(<SessionGettingStartedGuidance variant="sidebar" />)).tree;
-        expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).toThrow();
+        expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).not.toThrow();
     });
 
     it('shows the Open setup CTA on Tauri desktop', async () => {

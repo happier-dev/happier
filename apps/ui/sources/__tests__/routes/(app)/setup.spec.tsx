@@ -210,6 +210,7 @@ describe('/setup route', () => {
             phase: 'awaiting_auth',
             relayUrl: 'https://relay.remote.example.test',
             machineId: 'machine-remote-1',
+            remoteSetupIntent: 'remoteMachine',
         });
 
         const Screen = (await import('@/app/(app)/setup/index')).default;
@@ -230,6 +231,7 @@ describe('/setup route', () => {
             phase: 'post_auth',
             relayUrl: 'https://relay.remote.example.test',
             machineId: 'machine-remote-1',
+            remoteSetupIntent: 'remoteMachine',
         });
     });
 

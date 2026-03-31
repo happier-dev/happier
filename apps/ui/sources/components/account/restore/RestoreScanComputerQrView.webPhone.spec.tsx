@@ -73,7 +73,7 @@ let lastScannerProps: any = null;
 vi.mock('@/components/qr/QrCodeScannerView', () => ({
     QrCodeScannerView: (props: any) => {
         lastScannerProps = props;
-        return React.createElement('div', { 'data-testid': 'QrCodeScannerView' });
+        return React.createElement('div', { 'data-testid': 'QrCodeScannerView' }, props.footer ?? null);
     },
 }));
 
@@ -88,6 +88,8 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         const screen = await renderScreen(<RestoreScanComputerQrView />);
 
         expect(screen.findByProps({ 'data-testid': 'QrCodeScannerView' })).toBeTruthy();
+        expect(screen.findByTestId('restore-open-manual')).toBeTruthy();
+        expect(screen.findByTestId('restore-show-qr-instead')).toBeTruthy();
         expect(lastScannerProps?.testIDPrefix).toBe('restore-scan');
     });
 });

@@ -6,14 +6,13 @@ import { installSessionGuidanceCommonModuleMocks } from './sessionGuidanceTestHe
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const clipboardMocks = vi.hoisted(() => ({
-  setStringAsync: vi.fn(async (_text: string) => {}),
-}));
 const mockEnv = vi.hoisted(() => ({
   iconsRenderAsText: false,
 }));
 
-vi.mock('expo-clipboard', () => clipboardMocks);
+vi.mock('expo-clipboard', () => ({
+  setStringAsync: vi.fn(async (_text: string) => {}),
+}));
 
 vi.mock('expo-constants', () => ({
   default: { expoConfig: null, manifest: null },
@@ -60,7 +59,7 @@ vi.mock('@/config', () => ({
 }));
 
 describe('SessionGettingStartedGuidanceView', () => {
-  it('keeps manual terminal follow-up focused on auth and daemon setup when setup is available', async () => {
+  it('hides terminal follow-up when setup is available', async () => {
     const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
     const onOpenSetup = vi.fn();
     const screen = await renderScreen(
@@ -80,11 +79,9 @@ describe('SessionGettingStartedGuidanceView', () => {
     const content = screen.getTextContent();
     expect(screen.findByTestId('session-getting-started-setup-primary-card')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-cli-follow-up')).toBeNull();
-    expect(screen.findByTestId('session-getting-started-show-manual')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-show-manual')).toBeNull();
     expect(content).not.toContain('happier server add');
     expect(content).not.toContain('happier daemon install');
-
-    expect(screen.findByTestId('session-getting-started-copy-all')).toBeNull();
     expect(screen.findByTestId('session-getting-started-scroll')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-logo')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-kind-connect_machine')).not.toBeNull();
@@ -92,28 +89,6 @@ describe('SessionGettingStartedGuidanceView', () => {
 
     await screen.pressByTestIdAsync('session-getting-started-open-setup');
     expect(onOpenSetup).toHaveBeenCalledTimes(1);
-
-    await screen.pressByTestIdAsync('session-getting-started-show-manual');
-
-    const expandedContent = screen.getTextContent();
-    expect(screen.findByTestId('session-getting-started-cli-follow-up')).not.toBeNull();
-    expect(screen.findByTestId('session-getting-started-step-server_setup')).not.toBeNull();
-    expect(screen.findByTestId('session-getting-started-step-auth_login')).not.toBeNull();
-    expect(screen.findByTestId('session-getting-started-step-daemon_install')).not.toBeNull();
-    expect(screen.findByTestId('session-getting-started-step-create_session')).not.toBeNull();
-    expect(expandedContent).toContain('happier server add');
-    expect(expandedContent).toContain('https://api.company.example');
-    expect(expandedContent).not.toContain('$ npm i -g @happier-dev/cli');
-    expect(expandedContent).toContain('curl -fsSL https://happier.dev/install | bash');
-    expect(expandedContent).not.toContain('npm i -g @happier-dev/cli');
-    expect(expandedContent).toContain('happier daemon install');
-    expect(expandedContent).not.toContain('daemon service install');
-    expect(expandedContent).toContain('happier codex');
-    expect(expandedContent).toContain('happier opencode');
-
-    clipboardMocks.setStringAsync.mockClear();
-    await screen.pressByTestIdAsync('session-getting-started-copy-auth_login');
-    expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith('happier auth login');
   });
 
   it('does not emit raw text nodes under View when copy icons render as text on web', async () => {

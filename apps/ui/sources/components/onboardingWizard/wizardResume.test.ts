@@ -34,7 +34,7 @@ describe('wizardResume', () => {
         expect(resolveWizardAuthReturnToRoute()).toBe('/');
     });
 
-    it('routes browser sessions into the app once at least one machine is online', async () => {
+    it('routes browser sessions back into the app after auth (wizard continues as an overlay)', async () => {
         const { resolvePostAuthSetupRoute } = await import('./wizardResume');
 
         expect(resolvePostAuthSetupRoute({
@@ -49,10 +49,10 @@ describe('wizardResume', () => {
             onlineMachineCount: 0,
             currentMachineIsConfiguredAndHealthy: false,
             hasRelayDrift: false,
-        })).toBe('/setup');
+        })).toBe('/');
     });
 
-    it('routes desktop sessions into the app only when the current machine is healthy and aligned', async () => {
+    it('routes desktop sessions back into the app after auth (wizard continues as an overlay)', async () => {
         const { resolvePostAuthSetupRoute } = await import('./wizardResume');
 
         expect(resolvePostAuthSetupRoute({
@@ -67,14 +67,14 @@ describe('wizardResume', () => {
             onlineMachineCount: 2,
             currentMachineIsConfiguredAndHealthy: false,
             hasRelayDrift: false,
-        })).toBe('/setup');
+        })).toBe('/');
 
         expect(resolvePostAuthSetupRoute({
             isDesktopShell: true,
             onlineMachineCount: 2,
             currentMachineIsConfiguredAndHealthy: true,
             hasRelayDrift: true,
-        })).toBe('/setup');
+        })).toBe('/');
     });
 
     it('persists onboarding resume phases through the canonical pending setup intent', async () => {

@@ -47,4 +47,5 @@ describe('resolveBootCredentials', () => {
         await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'default-token', secret: 'default-secret' });
         expect(getCredentialsMock).toHaveBeenCalledTimes(1);
     });
+
 });

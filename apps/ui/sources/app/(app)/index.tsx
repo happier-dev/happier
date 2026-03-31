@@ -1,6 +1,7 @@
 import { useAuth } from "@/auth/context/AuthContext";
-import { Platform, Linking, StyleSheet, View } from 'react-native';
+import { Platform, Linking, View } from 'react-native';
 import * as React from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 import { encodeBase64 } from "@/encryption/base64";
 import { authGetToken } from "@/auth/flows/getToken";
 import { router, useRouter, useLocalSearchParams } from "expo-router";
@@ -13,6 +14,7 @@ import { TokenStorage } from "@/auth/storage/tokenStorage";
 import sodium from '@/encryption/libsodium.lib';
 import { getAuthProvider } from "@/auth/providers/registry";
 import { Modal } from "@/modal";
+import { BaseModal } from "@/modal/components/BaseModal";
 import { getPendingTerminalConnect } from "@/sync/domains/pending/pendingTerminalConnect";
 import { isSafeExternalAuthUrl } from "@/auth/providers/externalAuthUrl";
 import { fireAndForget } from "@/utils/system/fireAndForget";
@@ -32,7 +34,6 @@ import { SetupWizardSurface } from "@/components/onboardingWizard/SetupWizardSur
 import { useConnectionHealth } from "@/components/navigation/connectionStatus/useConnectionHealth";
 import { useLocalDaemonControl } from "@/components/settings/machines/localControl/useLocalDaemonControl";
 import { useRelayDriftBanner } from "@/components/settings/server/useRelayDriftBanner";
-import { BaseModal } from "@/modal/components/BaseModal";
 
 const stylesheet = StyleSheet.create({
     root: {
@@ -66,22 +67,33 @@ function Authenticated() {
     const sessionId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? (params.id[0] ?? null) : null;
     const messageId = typeof params.messageId === 'string' ? params.messageId : Array.isArray(params.messageId) ? (params.messageId[0] ?? null) : null;
     const jumpChildId = typeof params.jumpChildId === 'string' ? params.jumpChildId : Array.isArray(params.jumpChildId) ? (params.jumpChildId[0] ?? null) : null;
+    const currentMachineIsConfiguredAndHealthy =
+        localDaemonControl.status?.serviceInstalled === true
+        && localDaemonControl.status?.daemonRunning === true
+        && localDaemonControl.status?.needsAuth !== true
+        && Boolean(localDaemonControl.status?.machineId);
+    const hasRelayDrift = relayDriftBanner != null;
     const postAuthSetupRoute = resolvePostAuthSetupRoute({
         isDesktopShell: isTauriDesktop(),
         onlineMachineCount: connectionHealth.onlineCount,
-        currentMachineIsConfiguredAndHealthy:
-            localDaemonControl.status?.serviceInstalled === true
-            && localDaemonControl.status?.daemonRunning === true
-            && localDaemonControl.status?.needsAuth !== true
-            && Boolean(localDaemonControl.status?.machineId),
-        hasRelayDrift: relayDriftBanner != null,
+        currentMachineIsConfiguredAndHealthy,
+        hasRelayDrift,
     });
     const pendingSetupIntent = getPendingSetupIntent();
     const pendingSetupIntentDismissed = pendingSetupIntent?.phase === 'dismissed';
     const hasPendingSetupContinuation =
         pendingSetupIntent?.phase === 'awaiting_auth'
         || pendingSetupIntent?.phase === 'post_auth';
-    const needsSetupWizard = !pendingSetupIntentDismissed && (hasPendingSetupContinuation || postAuthSetupRoute === '/setup');
+    const shouldSkipSetupWizardBecauseAnotherMachineIsOnline =
+        isTauriDesktop() !== true
+        && (connectionHealth.onlineCount ?? 0) > 0;
+    const shouldAutoOpenSetupWizard = isTauriDesktop()
+        ? (!currentMachineIsConfiguredAndHealthy || hasRelayDrift)
+        : (connectionHealth.onlineCount ?? 0) === 0;
+    const needsSetupWizard =
+        pendingSetupIntentDismissed !== true
+        && shouldSkipSetupWizardBecauseAnotherMachineIsOnline !== true
+        && (hasPendingSetupContinuation || shouldAutoOpenSetupWizard);
 
     const dismissPendingSetupIntent = React.useCallback(() => {
         const current = getPendingSetupIntent();
@@ -91,7 +103,7 @@ function Authenticated() {
             }
             return;
         }
-        if (postAuthSetupRoute !== '/setup') {
+        if (!shouldAutoOpenSetupWizard) {
             return;
         }
         const snapshot = getActiveServerSnapshot();
@@ -101,7 +113,7 @@ function Authenticated() {
             phase: 'dismissed',
             relayUrl: relayUrl || null,
         });
-    }, [postAuthSetupRoute]);
+    }, [shouldAutoOpenSetupWizard]);
 
     React.useEffect(() => {
         const sid = String(sessionId ?? '').trim();
@@ -141,7 +153,7 @@ function Authenticated() {
                 ...pendingSetupIntent,
                 phase: 'post_auth',
             });
-        } else if (!pendingSetupIntent && postAuthSetupRoute === '/setup') {
+        } else if (!pendingSetupIntent && shouldAutoOpenSetupWizard) {
             const snapshot = getActiveServerSnapshot();
             const relayUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim().replace(/\/+$/, '') : null;
             setPendingSetupIntent({
@@ -152,7 +164,12 @@ function Authenticated() {
         }
 
         setSetupWizardVisible(true);
-    }, [needsSetupWizard, pendingSetupIntent, postAuthSetupRoute, sessionId, setupWizardVisible]);
+    }, [needsSetupWizard, pendingSetupIntent, postAuthSetupRoute, sessionId, setupWizardVisible, shouldAutoOpenSetupWizard]);
+
+    const handleSetupWizardExit = React.useCallback(() => {
+        setSetupWizardVisible(false);
+        dismissPendingSetupIntent();
+    }, [dismissPendingSetupIntent]);
 
     return (
         <View style={stylesheet.root}>
@@ -160,32 +177,24 @@ function Authenticated() {
             {setupWizardVisible ? (
                 Platform.OS === 'web' ? (
                     <BaseModal
-                        visible={true}
-                        onClose={() => {
-                            setSetupWizardVisible(false);
-                            dismissPendingSetupIntent();
-                        }}
-                        showBackdrop={false}
-                        closeOnBackdrop={true}
+                        visible
+                        scrollable
+                        showBackdrop
+                        closeOnBackdrop={false}
+                        disableContentTransform
+                        onClose={handleSetupWizardExit}
                     >
-                        <View style={StyleSheet.absoluteFillObject}>
-                            <SetupWizardSurface
-                                isDesktopShell={isTauriDesktop()}
-                                onExit={() => {
-                                    setSetupWizardVisible(false);
-                                    dismissPendingSetupIntent();
-                                }}
-                            />
-                        </View>
+                        <SetupWizardSurface
+                            isDesktopShell={isTauriDesktop()}
+                            useOuterScrollContainer={true}
+                            onExit={handleSetupWizardExit}
+                        />
                     </BaseModal>
                 ) : (
                     <View style={stylesheet.overlay}>
                         <SetupWizardSurface
                             isDesktopShell={isTauriDesktop()}
-                            onExit={() => {
-                                setSetupWizardVisible(false);
-                                dismissPendingSetupIntent();
-                            }}
+                            onExit={handleSetupWizardExit}
                         />
                     </View>
                 )

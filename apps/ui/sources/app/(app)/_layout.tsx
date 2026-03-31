@@ -27,6 +27,7 @@ import {
 import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
 import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
+import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDaemonLifecycleRuntime';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
@@ -228,6 +229,7 @@ export default function RootLayout() {
             <ActivityBadgeRuntime />
             <ActivityLocalNotificationRuntime />
             <DesktopTrayRuntime />
+            <DesktopTrayDaemonLifecycleRuntime />
             {debugRouterEnabled && Platform.OS === 'web' ? (
                 <View
                     testID="debug-router-pathname"

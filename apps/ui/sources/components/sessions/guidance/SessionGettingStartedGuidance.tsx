@@ -330,14 +330,8 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
     const steps = buildSteps(model);
     const showLogo = props.variant === 'primaryPane' || props.variant === 'newSessionBlocking';
     const showSetupPrimaryCard = (model.kind === 'connect_machine' || model.kind === 'start_daemon') && Boolean(model.onOpenSetup);
-    const [showManualSteps, setShowManualSteps] = React.useState(!showSetupPrimaryCard);
-
-    React.useEffect(() => {
-        setShowManualSteps(!showSetupPrimaryCard);
-    }, [model.kind, model.serverUrl, model.targetLabel, showSetupPrimaryCard]);
-
-    const showCliFollowUp = steps.length > 0 && (!showSetupPrimaryCard || showManualSteps);
-    const showCliFollowUpTitle = showSetupPrimaryCard && showCliFollowUp;
+    const showCliFollowUp = steps.length > 0 && !showSetupPrimaryCard;
+    const showCliFollowUpTitle = false;
 
     return (
         <ScrollView
@@ -369,21 +363,6 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                             size="normal"
                         />
                     </View>
-                    {steps.length > 0 ? (
-                        <View style={styles.buttonWrapper}>
-                            <RoundButton
-                                testID="session-getting-started-show-manual"
-                                title={showManualSteps
-                                    ? t('sessionGettingStarted.manualDisclosure.hide')
-                                    : t('sessionGettingStarted.manualDisclosure.show')}
-                                onPress={() => {
-                                    setShowManualSteps((current) => !current);
-                                }}
-                                size="normal"
-                                display="inverted"
-                            />
-                        </View>
-                    ) : null}
                 </View>
             ) : (
                 <>
@@ -487,9 +466,9 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
 function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: SessionGettingStartedGuidanceVariant }>): React.ReactElement {
     const router = useRouter();
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
-    const canOpenSetup = isTauriDesktop();
+    const canOpenSetup = Platform.OS === 'web' || isTauriDesktop();
     const onOpenSetup = React.useCallback(() => {
-        router.push('/setup' as any);
+        router.push('/setup/wizard?action=local&step=setup_this_computer' as any);
     }, [router]);
 
     const onStartNewSession = React.useCallback(() => {

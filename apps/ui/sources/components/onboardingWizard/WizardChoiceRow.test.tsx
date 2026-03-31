@@ -36,7 +36,7 @@ describe('WizardChoiceRow', () => {
         expect(onPress).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps the row press disabled while allowing the secondary action button to remain interactive', async () => {
+    it('keeps the row disabled while allowing the secondary action button to remain interactive', async () => {
         const { WizardChoiceRow } = await import('./WizardChoiceRow');
         const onPress = vi.fn();
         const onRetry = vi.fn();
@@ -58,11 +58,16 @@ describe('WizardChoiceRow', () => {
         }));
 
         const row = screen.findByType(SelectableRow as never);
-        expect(row.props.disabled).toBe(false);
+        expect(row.props.disabled).toBe(true);
 
         await act(async () => {
             await screen.pressByTestIdAsync('wizard-choice');
         });
         expect(onPress).toHaveBeenCalledTimes(0);
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('wizard-choice-retry');
+        });
+        expect(onRetry).toHaveBeenCalledTimes(1);
     });
 });
