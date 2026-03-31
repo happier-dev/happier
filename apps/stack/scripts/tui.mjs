@@ -46,6 +46,7 @@ import { reconcileDaemonPaneAfterDaemonStarts } from './utils/tui/daemon_pane_re
 import { buildScriptPtyArgs } from './utils/tui/script_pty_command.mjs';
 import { resolveTuiChildTerminationPlan } from './utils/tui/child_termination_plan.mjs';
 import { installTuiStdinErrorGuard } from './utils/tui/stdin_error_guard.mjs';
+import { resolveTuiChildEnv } from './utils/tui/resolve_child_env.mjs';
 import { checkDaemonState } from './daemon.mjs';
 import { getObservedStackDaemon } from './utils/stack/runtime_daemon_state.mjs';
 
@@ -577,7 +578,8 @@ async function main() {
   // In TUI mode, we intentionally do not forward keyboard input to the child process (stdin is ignored),
   // so any interactive prompts inside the child would deadlock.
   // Mark the child env so dependency installers can auto-approve safe prompts (Corepack yarn downloads).
-  const childEnv = buildTauriPaneEnv({ env: process.env });
+  const stackEnvFromFile = stackEnvPath ? await readEnvObject(stackEnvPath) : {};
+  const childEnv = resolveTuiChildEnv({ stackEnvFromFile, processEnv: process.env });
   let child = null;
 
   const spawnForwardedChild = () => {
