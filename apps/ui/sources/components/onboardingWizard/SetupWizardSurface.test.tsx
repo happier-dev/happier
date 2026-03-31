@@ -336,6 +336,78 @@ describe('SetupWizardSurface', () => {
         vi.resetModules();
     });
 
+    it('guides web users to continue provider setup in the terminal or desktop app', async () => {
+        vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: false,
+        }));
+
+        const localBranch = screen.findByTestId('setupWizard-branch:local');
+        await act(async () => {
+            const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+
+        // setup_this_computer handoff (already covered elsewhere)
+        expect(screen.findByTestId('setupWizard-terminal-handoff')).toBeTruthy();
+
+        // advance to providers step
+        const continueToProviders = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueToProviders?.props.action ?? continueToProviders?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByTestId('setupWizard-terminal-handoff')).toBeTruthy();
+        expect(screen.findAllByType('ProviderSetupFlow' as never)).toHaveLength(0);
+        const providersHandoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
+            props: { steps?: Array<{ code?: unknown }> };
+        };
+        const codes = (providersHandoff.props.steps ?? [])
+            .map((step) => (typeof step.code === 'string' ? step.code : ''))
+            .join('\n');
+        expect(codes).toContain('happier providers setup');
+        expect(codes).not.toContain('happier auth login');
+        expect(codes).not.toContain('curl -fsSL');
+
+        vi.resetModules();
+    });
+
+    it('allows users to skip the setup-this-computer step after authentication', async () => {
+        vi.resetModules();
+        vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
+
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: false,
+        }));
+
+        const localBranch = screen.findByTestId('setupWizard-branch:local');
+        await act(async () => {
+            const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+
+        expect(screen.findByTestId('setupWizard.surface-skip')).toBeTruthy();
+
+        vi.resetModules();
+    });
+
     it('preselects relay runtime install when remote relay hosting is chosen on desktop', async () => {
         vi.resetModules();
 

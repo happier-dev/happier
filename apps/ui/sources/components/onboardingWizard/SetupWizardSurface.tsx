@@ -18,6 +18,7 @@ import { getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pen
 import { upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { t, tLoose } from '@/text';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { AGENT_IDS, type AgentId } from '@/agents/registry/registryCore';
 
 import { createWizardState, wizardReducer } from './wizardReducer';
 import { canSkipWizardStep, getWizardProgress } from './wizardSelectors';
@@ -27,9 +28,10 @@ import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from './ConfirmSwitc
 import { SecureAccessTailscaleStep } from './SecureAccessTailscaleStep';
 import { getWizardStepDefinition } from './wizardStepRegistry';
 import { WizardTerminalHandoff } from './WizardTerminalHandoff';
-import { buildAuthLoginCommandForServerUrl, buildCliInstallCommandForCurrentApp } from './wizardCliCommands';
+import { buildAuthLoginCommandForServerUrl, buildCliInstallCommandForCurrentApp, buildHappierSetupCommand } from './wizardCliCommands';
 import { buildWebDesktopRelayHostHandoffSteps } from './webDesktopHandoffSteps';
 import { WebDesktopDownloadCta } from './WebDesktopDownloadCta';
+import { ProvidersLogoMultiSelect } from './ProvidersLogoMultiSelect';
 
 export type SetupWizardSurfaceProps = Readonly<{
     testID?: string;
@@ -91,6 +93,10 @@ function renderSetupStepBody(params: Readonly<{
     activeServerUrl: string | null;
     relayUrl: string | null;
     providerMachineId: string | null;
+    providerSelectionProviderIds: readonly AgentId[];
+    selectedProviderIds: readonly AgentId[];
+    onToggleProviderId: (providerId: AgentId) => void;
+    providersSetupCommand: string;
     onLocalSetupSucceeded: (machineId: string | null) => void;
     relaySwitchDecision: RelaySwitchDecision;
     onRelaySwitchDecisionChange: (decision: RelaySwitchDecision) => void;
@@ -103,33 +109,32 @@ function renderSetupStepBody(params: Readonly<{
         case 'setup_this_computer':
             if (requiresDesktop) {
                 const cliInstallCommand = buildCliInstallCommandForCurrentApp();
-                const authLoginCommand = params.activeServerUrl
-                    ? buildAuthLoginCommandForServerUrl(params.activeServerUrl)
-                    : 'happier auth login --persist --method web';
+                const setupCommand = buildHappierSetupCommand({
+                    relayUrl: params.activeServerUrl,
+                    skipProviders: true,
+                    yes: true,
+                });
                 return (
-                    <WizardTerminalHandoff
-                        testID="setupWizard-terminal-handoff"
-                        steps={[
-                            {
-                                title: t('sessionGettingStarted.steps.installCli.title'),
-                                subtitle: t('sessionGettingStarted.steps.installCli.description'),
-                                code: cliInstallCommand,
-                                scrollTestIDSuffix: 'cli-install',
-                            },
-                            {
-                                title: t('sessionGettingStarted.steps.authLogin.title'),
-                                subtitle: t('sessionGettingStarted.steps.authLogin.description'),
-                                code: authLoginCommand,
-                                scrollTestIDSuffix: 'auth-login',
-                            },
-                            {
-                                title: t('sessionGettingStarted.steps.daemonInstall.title'),
-                                subtitle: t('sessionGettingStarted.steps.daemonInstall.description'),
-                                code: 'happier daemon install',
-                                scrollTestIDSuffix: 'daemon-install',
-                            },
-                        ]}
-                    />
+                    <View testID="setupWizard-web-machine-setup-handoff" style={params.styles.webRelayHostHandoff}>
+                        <WizardTerminalHandoff
+                            testID="setupWizard-terminal-handoff"
+                            steps={[
+                                {
+                                    title: t('sessionGettingStarted.steps.installCli.title'),
+                                    subtitle: t('sessionGettingStarted.steps.installCli.description'),
+                                    code: cliInstallCommand,
+                                    scrollTestIDSuffix: 'cli-install',
+                                },
+                                {
+                                    title: t('setupOnboarding.webDesktopOnlySetupCommandTitle'),
+                                    subtitle: t('setupOnboarding.webDesktopOnlySetupCommandSubtitle'),
+                                    code: setupCommand,
+                                    scrollTestIDSuffix: 'setup',
+                                },
+                            ]}
+                        />
+                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-machine" />
+                    </View>
                 );
             }
             return (
@@ -145,14 +150,14 @@ function renderSetupStepBody(params: Readonly<{
                 const cliInstallCommand = buildCliInstallCommandForCurrentApp();
                 return (
                     <View testID="setupWizard-web-relay-host-handoff" style={params.styles.webRelayHostHandoff}>
-                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-relay" />
                         <WizardTerminalHandoff
                             testID="setupWizard-terminal-handoff"
                             steps={buildWebDesktopRelayHostHandoffSteps({
                                 cliInstallCommand,
-                                includeDaemonInstall: true,
+                                includeDaemonInstall: false,
                             })}
                         />
+                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-relay" />
                         <View style={params.styles.urlBlock}>
                             <TextInput
                                 testID="setupWizard-relay-url-input"
@@ -172,9 +177,12 @@ function renderSetupStepBody(params: Readonly<{
         case 'remote_ssh_setup':
             if (requiresDesktop) {
                 const cliInstallCommand = buildCliInstallCommandForCurrentApp();
-                const authLoginCommand = params.activeServerUrl
-                    ? buildAuthLoginCommandForServerUrl(params.activeServerUrl)
-                    : 'happier auth login --persist --method web';
+                const setupCommand = buildHappierSetupCommand({
+                    relayUrl: params.activeServerUrl,
+                    skipDaemon: true,
+                    skipProviders: true,
+                    yes: true,
+                });
                 const sshCommand =
                     params.remoteSetupIntent === 'remoteRelayHost'
                         ? 'happier machine setup --ssh user@host --install-relay-runtime --yes'
@@ -190,10 +198,10 @@ function renderSetupStepBody(params: Readonly<{
                                 scrollTestIDSuffix: 'cli-install',
                             },
                             {
-                                title: t('sessionGettingStarted.steps.authLogin.title'),
-                                subtitle: t('sessionGettingStarted.steps.authLogin.description'),
-                                code: authLoginCommand,
-                                scrollTestIDSuffix: 'auth-login',
+                                title: t('setupOnboarding.webDesktopOnlySetupCommandTitle'),
+                                subtitle: t('setupOnboarding.webDesktopOnlySetupRemotePrereqsSubtitle'),
+                                code: setupCommand,
+                                scrollTestIDSuffix: 'setup',
                             },
                             {
                                 title: t('settings.machineSetupSshMachineTitle'),
@@ -224,13 +232,31 @@ function renderSetupStepBody(params: Readonly<{
             );
         }
         case 'providers_optional':
+            if (requiresDesktop) {
+                return (
+                    <View testID="setupWizard-web-providers-handoff" style={params.styles.webRelayHostHandoff}>
+                        <WizardTerminalHandoff
+                            testID="setupWizard-terminal-handoff"
+                            steps={[
+                                {
+                                    title: tLoose('settingsProviders.setup.startTitle'),
+                                    subtitle: tLoose('settingsProviders.setup.startDescription'),
+                                    code: 'happier providers setup',
+                                    scrollTestIDSuffix: 'providers',
+                                },
+                            ]}
+                        />
+                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-providers" />
+                    </View>
+                );
+            }
             return <ProviderSetupFlow machineId={params.providerMachineId} />;
         case 'secure_access_tailscale':
             if (requiresDesktop) {
                 return (
                     <View testID="setupWizard-web-tailscale-handoff" style={params.styles.branchList}>
-                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-tailscale" />
                         <Text style={params.styles.branchHint}>{t('setupOnboarding.webDesktopOnlyBody')}</Text>
+                        <WebDesktopDownloadCta testIDPrefix="setupWizard-web-tailscale" />
                     </View>
                 );
             }
