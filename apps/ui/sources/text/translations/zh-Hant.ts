@@ -5243,6 +5243,7 @@ settingsSession: {
         preAuthContinueHint: '繼續後，Happier 會帶你回到所選中繼的登入流程，然後回到這裡完成設定。',
 		        currentRelayTitle: '目前選擇的中繼',
 		        selectedRelayFooterLabel: '中繼',
+		        selectedRelayFooterLine: ({ relay }: { relay: string }) => `中繼：${relay}`,
 		        currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `中繼：${relayUrl}`,
 	        accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `你的帳號將位於 ${relayUrl}。`,
 	        savedRelaysTitle: '已儲存的中繼',

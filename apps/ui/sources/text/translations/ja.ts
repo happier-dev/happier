@@ -7333,6 +7333,7 @@ settingsSession: {
           preAuthContinueHint: '続行すると、選択した Relay でサインインする画面に戻り、その後この画面に戻ってセットアップを完了します。',
 		    currentRelayTitle: '選択中の Relay',
 		    selectedRelayFooterLabel: 'Relay',
+		    selectedRelayFooterLine: ({ relay }: { relay: string }) => `Relay：${relay}`,
 		    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Relay：${relayUrl}`,
 	    accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `アカウントは ${relayUrl} に保存されます。`,
 	    savedRelaysTitle: '保存済みの Relay',

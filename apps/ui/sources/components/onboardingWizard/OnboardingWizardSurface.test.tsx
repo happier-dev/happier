@@ -837,6 +837,42 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-relay:remoteComputer')).toBeTruthy();
     });
 
+    it('branches remote relay hosting into a dedicated SSH setup step instead of continuing to auth immediately', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
+        await act(async () => {
+            await remoteRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await continueButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(screen.findByTestId('onboarding-wizard-host-remote-relay')).toBeTruthy();
+    });
+
     it('shows the relay footer hint when Happier Cloud is selected', async () => {
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(
@@ -963,7 +999,7 @@ describe('OnboardingWizardSurface', () => {
         expect(runtimeFetchMock.mock.calls.length).toBeGreaterThan(callCountBefore);
     });
 
-    it('hides the relay URL footer when Happier Cloud is selected', async () => {
+    it('renders a single-line relay footer and keeps Cloud from showing a custom URL footer', async () => {
         activeServerSnapshotMock.serverUrl = 'https://relay-b.example.test';
         listServerProfilesMock.mockReturnValue([
             {
@@ -999,6 +1035,9 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-relay-hint-line')).toBeTruthy();
+        expect(screen.findByTestId('onboarding-wizard-relay-hint-label')).toBeNull();
+        expect(screen.findByTestId('onboarding-wizard-relay-hint-value')).toBeNull();
         expect(screen.findByTestId('onboarding-wizard-relay-hint-url')).toBeNull();
     });
 

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { layout } from '@/components/ui/layout/layout';
@@ -14,7 +14,6 @@ export type WizardCardLayoutProps = Readonly<{
 
 type WizardCardLayoutMetrics = Readonly<{
     cardWidth: number;
-    maxHeight: number;
 }>;
 
 const WizardCardLayoutMetricsContext = React.createContext<WizardCardLayoutMetrics | null>(null);
@@ -26,11 +25,14 @@ export function useWizardCardLayoutMetrics(): WizardCardLayoutMetrics | null {
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
+        backgroundColor: theme.colors.overlay.scrimWizard,
+    },
+    container: {
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 20,
         paddingVertical: 24,
-        backgroundColor: theme.colors.overlay.scrimWizard,
+        minHeight: '100%',
     },
     card: {
         alignSelf: 'center',
@@ -61,10 +63,13 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
     const cardWidth = Math.min(dimensions.width, layout.maxWidth);
     const metrics: WizardCardLayoutMetrics = React.useMemo(() => ({
         cardWidth,
-        maxHeight: dimensions.maxHeight,
-    }), [cardWidth, dimensions.maxHeight]);
+    }), [cardWidth]);
     return (
-        <View style={styles.root}>
+        <ScrollView
+            style={styles.root}
+            contentContainerStyle={styles.container}
+            showsVerticalScrollIndicator={false}
+        >
             <View
                 testID={props.testID}
                 style={[
@@ -73,7 +78,6 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
                     {
                         width: cardWidth,
                         maxWidth: cardWidth,
-                        maxHeight: dimensions.maxHeight,
                     },
                 ]}
             >
@@ -81,6 +85,6 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
                     {props.children}
                 </WizardCardLayoutMetricsContext.Provider>
             </View>
-        </View>
+        </ScrollView>
     );
 }

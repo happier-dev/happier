@@ -6713,6 +6713,7 @@ settingsSession: {
           preAuthContinueHint: '继续后，Happier 会带你返回所选中继的登录流程，然后回到这里完成设置。',
 	    currentRelayTitle: '当前选择的中继',
 	    selectedRelayFooterLabel: '中继',
+	    selectedRelayFooterLine: ({ relay }: { relay: string }) => `中继：${relay}`,
 	    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `中继：${relayUrl}`,
     accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `你的账户将位于 ${relayUrl}。`,
     savedRelaysTitle: '已保存的中继',

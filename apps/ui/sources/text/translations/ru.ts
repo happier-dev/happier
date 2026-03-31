@@ -7005,6 +7005,7 @@ settingsSession: {
     preAuthContinueHint: "После продолжения Happier вернёт вас на экран входа для выбранного Relay, а затем вернётся сюда, чтобы завершить настройку.",
 	    currentRelayTitle: "Выбранный Relay",
 	    selectedRelayFooterLabel: "Relay",
+	    selectedRelayFooterLine: ({ relay }: { relay: string }) => `Relay: ${relay}`,
 	    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Relay: ${relayUrl}`,
     accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `Ваш аккаунт будет на ${relayUrl}.`,
     savedRelaysTitle: "Сохранённые Relay",
