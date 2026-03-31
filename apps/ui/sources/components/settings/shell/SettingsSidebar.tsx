@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -150,11 +150,21 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
         );
 
         const hoveredIconNode = hasChildren ? (
-            <Ionicons
-                name={expanded ? 'chevron-down' : 'chevron-forward'}
-                size={16}
-                color={theme.colors.textSecondary}
-            />
+            <Pressable
+                testID={`settings-sidebar.toggle.${node.id}`}
+                onPress={(event: any) => {
+                    event?.preventDefault?.();
+                    event?.stopPropagation?.();
+                    toggleExpanded(node.id);
+                }}
+                style={{ flex: 1, width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}
+            >
+                <Ionicons
+                    name={expanded ? 'chevron-down' : 'chevron-forward'}
+                    size={18}
+                    color={theme.colors.textSecondary}
+                />
+            </Pressable>
         ) : undefined;
 
         return (
@@ -162,7 +172,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                 <Item
                     testID={`settings-sidebar.item.${node.id}`}
                     title={String(t(node.titleKey))}
-                    leftElement={resolvedIconNode}
+                    icon={resolvedIconNode}
                     leftElementWhenHovered={hoveredIconNode}
                     density="compact"
                     selected={resolved.activePageId === node.id}
