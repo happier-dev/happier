@@ -1,7 +1,6 @@
-import chalk from 'chalk';
-
 import { reloadConfiguration } from '@/configuration';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { definitionList, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 import {
   getActiveServerProfile,
   listServerProfiles,
@@ -93,13 +92,15 @@ async function cmdInspectTarget(args: string[]): Promise<void> {
     return;
   }
 
-  console.log(chalk.bold('Resolved relay target'));
-  console.log(chalk.gray(`  ${payload.active.name} (${payload.active.id})`));
-  console.log(chalk.gray(`  server: ${payload.active.serverUrl}`));
-  if (payload.active.localServerUrl && payload.active.localServerUrl !== payload.active.serverUrl) {
-    console.log(chalk.gray(`  local: ${payload.active.localServerUrl}`));
-  }
-  console.log(chalk.gray(`  webapp: ${payload.active.webappUrl}`));
+  console.log(sectionTitle('Resolved relay target'));
+  console.log(definitionList([
+    { label: 'Name', value: `${payload.active.name} (${payload.active.id})` },
+    { label: 'Server', value: payload.active.serverUrl },
+    ...(payload.active.localServerUrl && payload.active.localServerUrl !== payload.active.serverUrl
+      ? [{ label: 'Local', value: payload.active.localServerUrl }]
+      : []),
+    { label: 'Webapp', value: payload.active.webappUrl },
+  ], { indent: '  ' }));
 }
 
 async function cmdSet(args: string[]): Promise<void> {
@@ -158,13 +159,13 @@ async function cmdSet(args: string[]): Promise<void> {
   }
 
   if (used) {
-    console.log(chalk.green(`✓ Active relay: ${upserted.name} (${upserted.id})`));
+    console.log(ok(`Active relay: ${upserted.name} (${upserted.id})`));
   } else if (changed) {
-    console.log(chalk.green(`✓ Saved relay: ${upserted.name} (${upserted.id})`));
+    console.log(ok(`Saved relay: ${upserted.name} (${upserted.id})`));
   } else {
-    console.log(chalk.gray(`= Relay unchanged: ${upserted.name} (${upserted.id})`));
+    console.log(warn(`Relay unchanged: ${upserted.name} (${upserted.id})`));
   }
-  console.log(chalk.gray(`  ${upserted.serverUrl}`));
+  console.log(`  ${upserted.serverUrl}`);
 }
 
 export async function runRelaySubcommand(subcommand: string, args: string[]): Promise<boolean> {

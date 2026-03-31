@@ -2,9 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import chalk from 'chalk';
-
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { definitionList, ok, sectionTitle } from '@happier-dev/cli-common/output';
 
 import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
@@ -497,11 +496,13 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    console.log(chalk.bold('Relay host status'));
-    console.log(chalk.gray(`  url: ${status.relayUrl ?? '(not installed)'}`));
-    console.log(chalk.gray(`  installed: ${status.installed ? 'yes' : 'no'}`));
-    if (status.version) console.log(chalk.gray(`  version: ${status.version}`));
-    console.log(chalk.gray(`  service: ${status.service.active ? 'running' : 'stopped'}`));
+    console.log(sectionTitle('Relay host status'));
+    console.log(definitionList([
+      { label: 'url', value: status.relayUrl ?? '(not installed)' },
+      { label: 'installed', value: status.installed ? 'yes' : 'no' },
+      ...(status.version ? [{ label: 'version', value: status.version }] : []),
+      { label: 'service', value: status.service.active ? 'running' : 'stopped' },
+    ], { indent: '  ' }));
     return;
   }
 
@@ -600,8 +601,8 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    console.log(chalk.green('✓ Relay host installed'));
-    console.log(chalk.gray(`  ${payload.relayUrl}`));
+    console.log(ok('Relay host installed'));
+    console.log(`  ${payload.relayUrl}`);
     return;
   }
 
@@ -634,7 +635,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    console.log(chalk.green(`✓ Relay host ${op} requested`));
+    console.log(ok(`Relay host ${op} requested`));
     return;
   }
 

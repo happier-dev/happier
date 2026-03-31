@@ -1,5 +1,3 @@
-import chalk from 'chalk';
-
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 import { checkIfDaemonRunningAndCleanupStaleState, listDaemonSessions, stopDaemon, stopDaemonSession } from '@/daemon/controlClient';
@@ -23,6 +21,7 @@ import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningW
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { cmd, errorFrame, kv, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 
 export async function handleDaemonCliCommand(context: CommandContext): Promise<void> {
   const args = context.args;
@@ -30,19 +29,19 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
 
   if (daemonSubcommand === 'service') {
     const serviceAction = args[2];
-      if (serviceAction === 'list') {
-        const json = args.includes('--json');
-        const userHomeDir = (process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR ?? '').trim() || homedir();
-        const happierHomeDir = (process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR ?? '').trim() || configuration.happyHomeDir;
-        const settings = await readSettings();
-        const servers = settings.servers ?? {};
-        const entries = Object.values(servers);
+    if (serviceAction === 'list') {
+      const json = args.includes('--json');
+      const userHomeDir = (process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR ?? '').trim() || homedir();
+      const happierHomeDir = (process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR ?? '').trim() || configuration.happyHomeDir;
+      const settings = await readSettings();
+      const servers = settings.servers ?? {};
+      const entries = Object.values(servers);
       if (entries.length === 0) {
         if (json) {
           process.stdout.write(`${JSON.stringify({ entries: [] })}\n`);
           return;
         }
-        console.log('(no server profiles configured)');
+        console.log(neutral('(no server profiles configured)'));
         return;
       }
 
@@ -75,13 +74,14 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       }
 
       if (normalizedEntries.length === 0) {
-        console.log('(no daemon services installed)');
+        console.log(neutral('(no daemon services installed)'));
         return;
       }
 
       for (const entry of normalizedEntries) {
-        console.log(`${entry.name} (${entry.serverId})`);
-        console.log(`  ${entry.installed ? 'installed' : 'not installed'}: ${entry.path}`);
+        console.log(ok(`${entry.name} (${entry.serverId})`));
+        console.log(`  ${kv('Installed:', entry.path)}`);
+        if (entry.platform) console.log(`  ${kv('Platform:', entry.platform)}`);
       }
       return;
     }
@@ -95,15 +95,13 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       const sessions = await listDaemonSessions();
 
       if (sessions.length === 0) {
-        console.log(
-          'No active sessions this daemon is aware of (they might have been started by a previous version of the daemon)',
-        );
+        console.log(neutral('No active sessions this daemon is aware of (they might have been started by a previous version of the daemon)'));
       } else {
-        console.log('Active sessions:');
+        console.log(sectionTitle('Active sessions'));
         console.log(JSON.stringify(sessions, null, 2));
       }
     } catch {
-      console.log('No daemon running');
+      console.log(warn('No daemon running'));
     }
     return;
   }
@@ -111,15 +109,15 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   if (daemonSubcommand === 'stop-session') {
     const sessionId = args[2];
     if (!sessionId) {
-      console.error('Session ID required');
+      console.error(errorFrame('Error:', ['Session ID required']));
       process.exit(1);
     }
 
     try {
       const success = await stopDaemonSession(sessionId);
-      console.log(success ? 'Session stopped' : 'Failed to stop session');
+      console.log(success ? ok('Session stopped') : warn('Failed to stop session'));
     } catch {
-      console.log('No daemon running');
+      console.log(warn('No daemon running'));
     }
     return;
   }
@@ -137,22 +135,22 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     });
 
     if (started) {
-      console.log('Daemon started successfully');
-      console.log(`  Server: ${configuration.serverUrl}`);
-      console.log(`  Server ID: ${configuration.activeServerId}`);
+      console.log(ok('Daemon started successfully'));
+      console.log(`  ${kv('Server:', configuration.serverUrl)}`);
+      console.log(`  ${kv('Server ID:', configuration.activeServerId)}`);
       try {
         const creds = await readCredentials();
         const payload = creds?.token ? decodeJwtPayload(creds.token) : null;
         const sub = typeof payload?.sub === 'string' ? payload.sub : '';
-        if (sub) console.log(`  Account: ${sub}`);
+        if (sub) console.log(`  ${kv('Account:', sub)}`);
       } catch {
         // ignore
       }
     } else {
-      console.error('Failed to start daemon');
+      console.error(errorFrame('Failed to start daemon', []));
       const latestDaemonLog = await getLatestDaemonLog().catch(() => null);
       if (latestDaemonLog?.path) {
-        console.error(`Latest daemon log: ${latestDaemonLog.path}`);
+        console.error(`  ${kv('Latest daemon log:', latestDaemonLog.path)}`);
       }
       process.exit(1);
     }
@@ -248,10 +246,10 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       const statuses = await listDaemonStatusesForAllKnownServers();
       for (const entry of statuses) {
         const state = entry.daemon.running ? `running (pid ${entry.daemon.pid ?? '—'})` : 'not running';
-        console.log(`${entry.name} (${entry.serverId})`);
-        if (entry.serverUrl) console.log(`  Server: ${entry.serverUrl}`);
-        console.log(`  Daemon: ${state}`);
-        if (entry.daemon.staleStateFile) console.log(`  Note: stale state file: ${entry.daemonStatePath}`);
+        console.log(sectionTitle(`${entry.name} (${entry.serverId})`));
+        if (entry.serverUrl) console.log(`  ${kv('Server:', entry.serverUrl)}`);
+        console.log(`  ${kv('Daemon:', state)}`);
+        if (entry.daemon.staleStateFile) console.log(`  ${kv('Note:', `stale state file: ${entry.daemonStatePath}`)}`);
         console.log('');
       }
       process.exit(0);
@@ -263,7 +261,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   if (daemonSubcommand === 'logs') {
     const latest = await getLatestDaemonLog();
     if (!latest) {
-      console.log('No daemon logs found');
+      console.log(neutral('No daemon logs found'));
     } else {
       console.log(latest.path);
     }
@@ -274,7 +272,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     try {
       await runDaemonServiceCliCommand({ argv: ['install', ...args.slice(2)] });
     } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+      console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
       process.exit(1);
     }
     return;
@@ -284,36 +282,35 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     try {
       await runDaemonServiceCliCommand({ argv: ['uninstall', ...args.slice(2)] });
     } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+      console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
       process.exit(1);
     }
     return;
   }
 
-  console.log(`
-${chalk.bold('happier daemon')} - Daemon management
-
-${chalk.bold('Usage:')}
-  happier daemon start              Start the daemon (detached)
-  happier daemon stop               Stop the daemon (sessions stay alive)
-  happier daemon stop --kill-sessions  Stop the daemon and its tracked sessions
-  happier daemon stop --all         Stop daemons for all configured servers
-  happier daemon status             Show daemon status
-  happier daemon status --all       Show daemon status for all configured servers
-  happier daemon list               List active sessions
-  happier daemon install            Install daemon as a user service (macOS/Linux)
-  happier daemon uninstall          Uninstall daemon user service (macOS/Linux)
-  happier daemon service            Manage daemon as a user service
-  happier daemon service list       List installed daemon services by server profile
-
-  Prefix with --server/--server-url to target a specific server profile for this invocation.
-  Example: happier --server company daemon service install
-
-  If you want to kill all happier related processes run 
-  ${chalk.cyan('happier doctor clean')}
-
-${chalk.bold('Note:')} The daemon runs in the background and manages Happier sessions.
-
-${chalk.bold('To clean up runaway processes:')} Use ${chalk.cyan('happier doctor clean')}
-`);
+  console.log([
+    `${sectionTitle('happier daemon')} - Daemon management`,
+    '',
+    sectionTitle('Usage:'),
+    `  ${cmd('happier daemon start')}                 Start the daemon (detached)`,
+    `  ${cmd('happier daemon stop')}                  Stop the daemon (sessions stay alive)`,
+    `  ${cmd('happier daemon stop --kill-sessions')}  Stop the daemon and its tracked sessions`,
+    `  ${cmd('happier daemon stop --all')}            Stop daemons for all configured servers`,
+    `  ${cmd('happier daemon status')}                Show daemon status`,
+    `  ${cmd('happier daemon status --all')}          Show daemon status for all configured servers`,
+    `  ${cmd('happier daemon list')}                  List active sessions`,
+    `  ${cmd('happier daemon install')}               Install daemon as a user service (macOS/Linux)`,
+    `  ${cmd('happier daemon uninstall')}             Uninstall daemon user service (macOS/Linux)`,
+    `  ${cmd('happier daemon service')}               Manage daemon as a user service`,
+    `  ${cmd('happier daemon service list')}          List installed daemon services by server profile`,
+    '',
+    '  Prefix with --server/--server-url to target a specific server profile for this invocation.',
+    `  Example: ${cmd('happier --server company daemon service install')}`,
+    '',
+    `  If you want to kill all happier related processes run ${cmd('happier doctor clean')}`,
+    '',
+    `${sectionTitle('Note:')} The daemon runs in the background and manages Happier sessions.`,
+    `${sectionTitle('To clean up runaway processes:')} Use ${cmd('happier doctor clean')}`,
+    '',
+  ].join('\n'));
 }

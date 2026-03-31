@@ -1,10 +1,10 @@
-import chalk from 'chalk';
 import os from 'node:os';
 
 import { readCredentials, readSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient';
 import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
+import { definitionList, fail, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 
 export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   const json = wantsJson(argv);
@@ -17,12 +17,12 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   }
 
   if (!json) {
-    console.log(chalk.bold('\nAuthentication Status\n'));
+    console.log(`\n${sectionTitle('Authentication Status')}\n`);
   }
 
   if (!credentials) {
-    console.log(chalk.red('✗ Not authenticated'));
-    console.log(chalk.gray('  Run "happier auth login" to authenticate'));
+    console.log(fail('Not authenticated'));
+    console.log('  Run "happier auth login" to authenticate');
     return;
   }
 
@@ -53,22 +53,24 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
     return;
   }
 
-  console.log(chalk.green('✓ Authenticated'));
+  console.log(ok('Authenticated'));
 
   if (machineRegistered) {
-    console.log(chalk.green('✓ Machine registered'));
-    console.log(chalk.gray(`  Machine ID: ${machineId!.trim()}`));
-    console.log(chalk.gray(`  Host: ${os.hostname()}`));
+    console.log(ok('Machine registered'));
+    console.log(definitionList([
+      { label: 'Machine ID', value: machineId!.trim() },
+      { label: 'Host', value: os.hostname() },
+    ], { indent: '  ' }));
   } else {
-    console.log(chalk.yellow('⚠️  Machine not registered'));
-    console.log(chalk.gray('  Run "happier auth login --force" to fix this'));
+    console.log(warn('Machine not registered'));
+    console.log('  Run "happier auth login --force" to fix this');
   }
 
-  console.log(chalk.gray(`\n  Data directory: ${configuration.happyHomeDir}`));
+  console.log(`\n  Data directory: ${configuration.happyHomeDir}`);
 
   if (daemonRunning) {
-    console.log(chalk.green('✓ Daemon running'));
+    console.log(ok('Daemon running'));
   } else {
-    console.log(chalk.gray('✗ Daemon not running'));
+    console.log(fail('Daemon not running'));
   }
 }

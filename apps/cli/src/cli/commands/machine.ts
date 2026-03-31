@@ -1,8 +1,7 @@
-import chalk from 'chalk';
-
 import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { cmd, definitionList, errorFrame, ok } from '@happier-dev/cli-common/output';
 import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { configuration } from '@/configuration';
@@ -358,16 +357,22 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
         machineId?: unknown;
         relayRuntime?: { relayUrl?: unknown } | null;
       };
-      console.log(chalk.green('Remote machine ready.'));
+      console.log(ok('Remote machine ready.'));
+      const details: Array<{ label: string; value: string }> = [];
       if (typeof data.machineId === 'string' && data.machineId.trim()) {
-        console.log(`Machine ID: ${data.machineId.trim()}`);
+        details.push({ label: 'Machine ID', value: data.machineId.trim() });
       }
       const relayRuntimeUrl = typeof data.relayRuntime?.relayUrl === 'string'
         ? data.relayRuntime.relayUrl.trim()
         : '';
       if (relayRuntimeUrl) {
-        console.log(`Remote relay URL: ${relayRuntimeUrl}`);
-        console.log(chalk.gray(`Switch this computer to it with: happier relay set ${relayRuntimeUrl} --use`));
+        details.push({ label: 'Remote relay URL', value: relayRuntimeUrl });
+      }
+      if (details.length > 0) {
+        console.log(definitionList(details, { indent: '  ' }));
+      }
+      if (relayRuntimeUrl) {
+        console.log(`  Switch this computer to it with: ${cmd(`happier relay set ${relayRuntimeUrl} --use`)}`);
       }
       return;
     }
@@ -409,7 +414,7 @@ export async function handleMachineCommand(args: string[], deps: Partial<Machine
       return;
     }
 
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+    console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
     showMachineHelp();
     if (process.env.DEBUG) {
       console.error(error);

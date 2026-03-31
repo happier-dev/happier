@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import { randomBytes } from 'node:crypto';
 import { readCredentials } from '@/persistence';
 import { ApiClient } from '@/api/api';
@@ -6,6 +5,7 @@ import type { CloudConnectTarget, CloudConnectTargetStatus } from '@/cloud/conne
 import { AGENTS } from '@/backends/catalog';
 import { promptInput } from '@/terminal/prompts/promptInput';
 import { buildConnectedServiceCredentialRecord, sealConnectedServiceCredentialCiphertext, type ConnectedServiceId } from '@happier-dev/protocol';
+import { banner, bullets, cmd, dim, errorFrame, gray, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConnectArgs';
@@ -44,11 +44,11 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
     if (!visibleTarget) {
       const hiddenTarget = targetById.get(normalized);
       if (hiddenTarget && hiddenTarget.status === 'experimental' && !includeExperimental) {
-        console.error(chalk.yellow(`Connect target '${hiddenTarget.id}' is experimental and not enabled by default.`));
-        console.error(chalk.gray(`Run: happier connect --all ${hiddenTarget.id}`));
+        console.error(warn(`Connect target '${hiddenTarget.id}' is experimental and not enabled by default.`));
+        console.error(`  ${dim(`Run: ${cmd(`happier connect --all ${hiddenTarget.id}`)}`)}`);
         process.exit(1);
       }
-      console.error(chalk.red(`Unknown connect target: ${subcommand}`));
+      console.error(errorFrame('Error:', [`Unknown connect target: ${subcommand}`]));
       showConnectHelp(visibleTargets, { includeExperimental });
       process.exit(1);
     }
@@ -70,43 +70,46 @@ function showConnectHelp(targets: ReadonlyArray<CloudConnectTarget>, opts: Reado
     const targetLines = targets.length > 0
       ? targets.map((t) => formatTargetLine(t)).join('\n')
       : '  (no connect targets registered)';
-    console.log(`
-${chalk.bold('happier connect')} - Connect AI vendor subscriptions and API keys to Happier cloud
-
-${chalk.bold('Usage:')}
-${targetLines}
-  happier connect status       Show connection status for all vendors
-  happier connect help         Show this help message
-  happier connect --all ...    Include experimental providers
-  happier connect <target> --profile <id>      Store under a specific profile (default: default)
-  happier connect <target> --paste             Headless mode: paste redirect URL
-  happier connect <target> --device            Use device-code auth (Codex)
-  happier connect codex --api-key              Store an OpenAI API key
-  happier connect claude --api-key             Store an Anthropic API key (not Claude subscription)
-  happier connect claude --setup-token         Store a Claude setup-token (default for claude)
-  happier connect claude --oauth               Store Claude subscription OAuth (advanced)
-  happier connect <target> --no-open           Do not attempt to open a browser
-  happier connect <target> --timeout <seconds> Override OAuth timeout
-
-${chalk.bold('Description:')}
-  The connect command allows you to securely store your connected-service credentials
-  in Happier cloud. This enables you to use these services through Happier
-  without exposing credentials locally.
-
-${chalk.bold('Examples:')}
-  happier connect ${targets[0]?.id ?? 'gemini'}
-  happier connect status
-
-${chalk.bold('Notes:')} 
-  • You must be authenticated with Happier first (run 'happier auth login')
-  • Credentials are encrypted and stored securely in Happier cloud
-  • You can manage your stored keys at app.happier.dev
-  ${opts.includeExperimental ? '' : '• Some providers are experimental; use --all to show them'}
-`);
+    console.log([
+      `${sectionTitle('happier connect')} - Connect AI vendor subscriptions and API keys to Happier cloud`,
+      '',
+      sectionTitle('Usage:'),
+      targetLines,
+      `  ${cmd('happier connect status')}       Show connection status for all vendors`,
+      `  ${cmd('happier connect help')}         Show this help message`,
+      `  ${cmd('happier connect --all ...')}    Include experimental providers`,
+      `  ${cmd('happier connect <target> --profile <id>')}      Store under a specific profile (default: default)`,
+      `  ${cmd('happier connect <target> --paste')}             Headless mode: paste redirect URL`,
+      `  ${cmd('happier connect <target> --device')}            Use device-code auth (Codex)`,
+      `  ${cmd('happier connect codex --api-key')}              Store an OpenAI API key`,
+      `  ${cmd('happier connect claude --api-key')}             Store an Anthropic API key (not Claude subscription)`,
+      `  ${cmd('happier connect claude --setup-token')}         Store a Claude setup-token (default for claude)`,
+      `  ${cmd('happier connect claude --oauth')}               Store Claude subscription OAuth (advanced)`,
+      `  ${cmd('happier connect <target> --no-open')}           Do not attempt to open a browser`,
+      `  ${cmd('happier connect <target> --timeout <seconds>')} Override OAuth timeout`,
+      '',
+      sectionTitle('Description:'),
+      '  The connect command allows you to securely store your connected-service credentials',
+      '  in Happier cloud. This enables you to use these services through Happier',
+      '  without exposing credentials locally.',
+      '',
+      sectionTitle('Examples:'),
+      `  ${cmd(`happier connect ${targets[0]?.id ?? 'gemini'}`)}`,
+      `  ${cmd('happier connect status')}`,
+      '',
+      sectionTitle('Notes:'),
+      bullets([
+        `You must be authenticated with Happier first (run ${cmd('happier auth login')})`,
+        'Credentials are encrypted and stored securely in Happier cloud',
+        'You can manage your stored keys at app.happier.dev',
+        opts.includeExperimental ? null : 'Some providers are experimental; use --all to show them',
+      ]),
+      '',
+    ].join('\n'));
 }
 
 function formatTargetLine(target: CloudConnectTarget): string {
-  const statusSuffix = target.status === 'wired' ? '' : chalk.gray(' (experimental)');
+  const statusSuffix = target.status === 'wired' ? '' : gray(' (experimental)');
   return `  happier connect ${target.id.padEnd(12)} ${target.vendorDisplayName}${statusSuffix}`;
 }
 
@@ -115,13 +118,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function handleConnectVendor(target: CloudConnectTarget, options: ConnectParsedOptions): Promise<void> {
-    console.log(chalk.bold(`\n🔌 Connecting ${target.vendorDisplayName} to Happier cloud\n`));
+    console.log(`\n${banner(`Connecting ${target.vendorDisplayName}`, { subtitle: 'Happier cloud' })}\n`);
 
     // Check if authenticated
     const credentials = await readCredentials();
     if (!credentials) {
-        console.log(chalk.yellow('⚠️  Not authenticated with Happier'));
-        console.log(chalk.gray('  Please run "happier auth login" first'));
+        console.log(warn('Not authenticated with Happier'));
+        console.log(`  ${dim(`Please run ${cmd('happier auth login')} first`)}`);
         process.exit(1);
     }
 
@@ -276,13 +279,13 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
  * Show connection status for all vendors
  */
 async function handleConnectStatus(targets: ReadonlyArray<CloudConnectTarget>): Promise<void> {
-    console.log(chalk.bold('\n🔌 Connection Status\n'));
+    console.log(`\n${sectionTitle('Connection status')}\n`);
 
     // Check if authenticated
     const credentials = await readCredentials();
     if (!credentials) {
-        console.log(chalk.yellow('⚠️  Not authenticated with Happier'));
-        console.log(chalk.gray('  Please run "happier auth login" first'));
+        console.log(warn('Not authenticated with Happier'));
+        console.log(`  ${dim(`Please run ${cmd('happier auth login')} first`)}`);
         process.exit(1);
     }
 
@@ -294,7 +297,7 @@ async function handleConnectStatus(targets: ReadonlyArray<CloudConnectTarget>): 
         const serviceIds: ConnectedServiceId[] = resolveConnectTargetServiceIds(target.id);
 
         if (serviceIds.length === 0) {
-          console.log(`  ${chalk.gray('○')}  ${target.vendorDisplayName}: ${chalk.gray('not supported')}`);
+          console.log(`  ${neutral(`${target.vendorDisplayName}: not supported`)}`);
           continue;
         }
 
@@ -307,26 +310,24 @@ async function handleConnectStatus(targets: ReadonlyArray<CloudConnectTarget>): 
         if (connected.length === 0) {
           const needsReauth = allProfiles.length > 0;
           const label = needsReauth ? 'needs re-auth' : 'not connected';
-          const icon = needsReauth ? chalk.yellow('⚠️') : chalk.gray('○');
-          const color = needsReauth ? chalk.yellow(label) : chalk.gray(label);
-          console.log(`  ${icon}  ${target.vendorDisplayName}: ${color}`);
+          console.log(`  ${(needsReauth ? warn : neutral)(`${target.vendorDisplayName}: ${label}`)}`);
           continue;
         }
 
         const primary = connected[0]!;
-        const userInfo = primary.providerEmail ? chalk.gray(` (${primary.providerEmail})`) : '';
-        console.log(`  ${chalk.green('✓')}  ${target.vendorDisplayName}: ${chalk.green('connected')}${userInfo}`);
+        const userInfo = primary.providerEmail ? gray(` (${primary.providerEmail})`) : '';
+        console.log(`  ${ok(`${target.vendorDisplayName}: connected`)}${userInfo}`);
       } catch (error) {
         if (process.env.DEBUG) {
-          console.error(chalk.gray(`[debug] failed to check ${target.vendorDisplayName} connection:`), error);
+          console.error(gray(`[debug] failed to check ${target.vendorDisplayName} connection:`), error);
         }
-        console.log(`  ${chalk.yellow('?')}  ${target.vendorDisplayName}: ${chalk.yellow('unknown (check failed)')}`);
+        console.log(`  ${warn(`${target.vendorDisplayName}: unknown (check failed)`)}`);
       }
     }
 
     console.log('');
-    console.log(chalk.gray('To connect a vendor, run: happier connect <vendor>'));
-    console.log(chalk.gray('Example: happier connect gemini'));
+    console.log(dim(`To connect a vendor, run: ${cmd('happier connect <vendor>')}`));
+    console.log(dim(`Example: ${cmd('happier connect gemini')}`));
     console.log('');
 }
 
@@ -334,7 +335,7 @@ export async function handleConnectCliCommand(context: CommandContext): Promise<
   try {
     await handleConnectCommand(context.args.slice(1));
   } catch (error) {
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+    console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
     if (process.env.DEBUG) {
       console.error(error);
     }

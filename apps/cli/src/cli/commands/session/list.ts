@@ -1,5 +1,3 @@
-import chalk from 'chalk';
-
 import type { Credentials } from '@/persistence';
 import { readIntFlagValue, readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
@@ -7,6 +5,7 @@ import { renderSessionListTable } from '@/ui/renderSessionListTable';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
+import { cmd, errorFrame, gray, yellow } from '@happier-dev/cli-common/output';
 
 export async function cmdSessionList(
   argv: string[],
@@ -32,7 +31,7 @@ export async function cmdSessionList(
       printJsonEnvelope({ ok: false, kind: 'session_list', error: { code: 'not_authenticated' } });
       return;
     }
-    console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
+    console.error(errorFrame('Error:', [`Not authenticated. Run ${cmd('happier auth login')} first.`]));
     process.exit(1);
   }
 
@@ -91,9 +90,9 @@ export async function cmdSessionList(
     for (const row of rows) {
       const systemSuffix =
         includeSystem && row.isSystem
-          ? ` ${chalk.yellow(`[system${row.systemPurpose ? `:${row.systemPurpose}` : ''}]`)}`
+          ? ` ${yellow(`[system${row.systemPurpose ? `:${row.systemPurpose}` : ''}]`)}`
           : '';
-      console.log(`${row.id}${systemSuffix}${row.tag ? ` ${chalk.gray(row.tag)}` : ''}${row.path ? ` ${chalk.gray(row.path)}` : ''}`);
+      console.log(`${row.id}${systemSuffix}${row.tag ? ` ${gray(row.tag)}` : ''}${row.path ? ` ${gray(row.path)}` : ''}`);
     }
     if (rows.length === 0) {
       for (const session of sessions) {

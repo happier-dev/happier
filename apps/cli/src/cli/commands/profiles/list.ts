@@ -1,5 +1,3 @@
-import chalk from 'chalk';
-
 import { AGENT_IDS } from '@happier-dev/agents';
 import {
   DEFAULT_BUILT_IN_BACKEND_PROFILES,
@@ -8,6 +6,7 @@ import {
   isProfileCompatibleWithAgent,
   type AIBackendProfile,
 } from '@happier-dev/protocol';
+import { cyan, dim, emphasis, gray, kv, sectionTitle } from '@happier-dev/cli-common/output';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -43,30 +42,30 @@ function mapProfileToListItem(profile: AIBackendProfile): ProfilesListItem {
 }
 
 function printProfilesHuman(profiles: ReadonlyArray<ProfilesListItem>, authenticated: boolean): void {
-  console.log(chalk.bold(`Backend profiles (${profiles.length})`));
+  console.log(sectionTitle(`Backend profiles (${profiles.length})`));
   for (const profile of profiles) {
-    const suffix = profile.isBuiltIn ? chalk.gray('built-in') : chalk.cyan('custom');
-    console.log(`- ${chalk.bold(profile.id)} (${profile.name}) ${chalk.gray(`[${suffix}]`)}`);
-    if (profile.description) console.log(`  ${profile.description}`);
+    const suffix = profile.isBuiltIn ? gray('built-in') : cyan('custom');
+    console.log(`- ${emphasis(profile.id)} (${profile.name}) ${gray(`[${suffix}]`)}`);
+    if (profile.description) console.log(`  ${dim(profile.description)}`);
     if (profile.supportedAgentIds.length > 0) {
-      console.log(`  Agents: ${profile.supportedAgentIds.join(', ')}`);
+      console.log(`  ${kv('Agents:', profile.supportedAgentIds.join(', '))}`);
     }
     if (profile.requiredSecretEnvVarNames.length > 0) {
-      console.log(`  Required secrets: ${profile.requiredSecretEnvVarNames.join(', ')}`);
+      console.log(`  ${kv('Required secrets:', profile.requiredSecretEnvVarNames.join(', '))}`);
     }
     if (profile.requiredConfigEnvVarNames.length > 0) {
-      console.log(`  Required config: ${profile.requiredConfigEnvVarNames.join(', ')}`);
+      console.log(`  ${kv('Required config:', profile.requiredConfigEnvVarNames.join(', '))}`);
     }
     if (profile.requiresMachineLoginTargetKey) {
-      console.log(`  Requires machine login target: ${profile.requiresMachineLoginTargetKey}`);
+      console.log(`  ${kv('Requires machine login target:', profile.requiresMachineLoginTargetKey)}`);
     }
     if (profile.requiresMachineLogin) {
-      console.log(`  Requires machine login: ${profile.requiresMachineLogin}`);
+      console.log(`  ${kv('Requires machine login:', profile.requiresMachineLogin)}`);
     }
   }
 
   if (!authenticated) {
-    console.log(chalk.gray('Log in to see custom profiles.'));
+    console.log(dim('Log in to see custom profiles.'));
   }
 }
 

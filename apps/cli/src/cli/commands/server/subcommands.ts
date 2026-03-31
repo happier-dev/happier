@@ -1,5 +1,3 @@
-import chalk from 'chalk';
-
 import { configuration, reloadConfiguration } from '@/configuration';
 import {
   addServerProfile,
@@ -31,6 +29,15 @@ import {
   isLoopbackHttpServerUrl,
 } from '@/server/serverUrlClassification';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import {
+  bullets,
+  cmd,
+  errorFrame,
+  kv,
+  neutral,
+  ok,
+  sectionTitle,
+} from '@happier-dev/cli-common/output';
 
 export async function runServerSubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
@@ -131,18 +138,18 @@ async function cmdList(args: string[]): Promise<void> {
     return;
   }
   if (profiles.length === 0) {
-    console.log(chalk.gray('(no server profiles configured)'));
+    console.log(neutral('(no server profiles configured)'));
     return;
   }
 
   for (const p of profiles.sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0))) {
-    const marker = p.id === active.id ? chalk.green('✓') : ' ';
-    console.log(`${marker} ${chalk.bold(p.name)} (${p.id})`);
-    console.log(`    ${chalk.gray('server:')} ${p.serverUrl}`);
+    const isActive = p.id === active.id;
+    console.log((isActive ? ok : neutral)(`${p.name} (${p.id})`));
+    console.log(`    ${kv('Server:', p.serverUrl)}`);
     if (p.localServerUrl && p.localServerUrl !== p.serverUrl) {
-      console.log(`    ${chalk.gray('local:')} ${p.localServerUrl}`);
+      console.log(`    ${kv('Local:', p.localServerUrl)}`);
     }
-    console.log(`    ${chalk.gray('webapp:')} ${p.webappUrl}`);
+    console.log(`    ${kv('Webapp:', p.webappUrl)}`);
   }
 }
 
@@ -156,14 +163,14 @@ async function cmdCurrent(args: string[]): Promise<void> {
     });
     return;
   }
-  console.log(chalk.bold('Active server'));
-  console.log(`${chalk.gray('name:')}   ${active.name}`);
-  console.log(`${chalk.gray('id:')}     ${active.id}`);
-  console.log(`${chalk.gray('server:')} ${active.serverUrl}`);
+  console.log(sectionTitle('Active server'));
+  console.log(kv('Name:', active.name));
+  console.log(kv('ID:', active.id));
+  console.log(kv('Server:', active.serverUrl));
   if (active.localServerUrl && active.localServerUrl !== active.serverUrl) {
-    console.log(`${chalk.gray('local:')} ${active.localServerUrl}`);
+    console.log(kv('Local:', active.localServerUrl));
   }
-  console.log(`${chalk.gray('webapp:')} ${active.webappUrl}`);
+  console.log(kv('Webapp:', active.webappUrl));
 }
 
 async function cmdAdd(args: string[]): Promise<void> {
@@ -321,20 +328,22 @@ async function cmdAdd(args: string[]): Promise<void> {
   }
 
   if (shouldUse) reloadConfiguration();
-  console.log(chalk.green(`✓ Saved server profile: ${created.name} (${created.id})`));
+  console.log(ok(`Saved server profile: ${created.name} (${created.id})`));
   const prefix = `happier --server ${created.id}`;
   if (shouldUse) {
-    console.log(chalk.gray(`  Active server is now: ${created.serverUrl}`));
+    console.log(`  ${kv('Active server is now:', created.serverUrl)}`);
     if (created.localServerUrl && created.localServerUrl !== created.serverUrl) {
-      console.log(chalk.gray(`  Local API URL: ${created.localServerUrl}`));
+      console.log(`  ${kv('Local API URL:', created.localServerUrl)}`);
     }
   }
 
   if (!interactive || shouldUse) {
     console.log('');
-    console.log(chalk.bold('Next steps (optional)'));
-    console.log(chalk.gray(`  Start daemon: ${prefix} daemon start`));
-    console.log(chalk.gray(`  Install background service: ${prefix} daemon service install`));
+    console.log(sectionTitle('Next steps (optional)'));
+    console.log(bullets([
+      `Start daemon: ${cmd(`${prefix} daemon start`)}`,
+      `Install background service: ${cmd(`${prefix} daemon service install`)}`,
+    ]));
   }
 
   if (installService) {
@@ -355,8 +364,8 @@ async function cmdUse(args: string[]): Promise<void> {
     printJsonEnvelope({ ok: true, kind: 'server_use', data: { active: summarizeProfile(active) } });
     return;
   }
-  console.log(chalk.green(`✓ Active server: ${active.name} (${active.id})`));
-  console.log(chalk.gray(`  ${active.serverUrl}`));
+  console.log(ok(`Active server: ${active.name} (${active.id})`));
+  console.log(`  ${active.serverUrl}`);
 }
 
 async function cmdRemove(args: string[]): Promise<void> {
@@ -374,8 +383,8 @@ async function cmdRemove(args: string[]): Promise<void> {
     });
     return;
   }
-  console.log(chalk.green(`✓ Removed server profile: ${out.removed.name} (${out.removed.id})`));
-  console.log(chalk.gray(`  Active server: ${out.active.name} (${out.active.id})`));
+  console.log(ok(`Removed server profile: ${out.removed.name} (${out.removed.id})`));
+  console.log(`  ${kv('Active server:', `${out.active.name} (${out.active.id})`)}`);
 }
 
 async function cmdTest(args: string[]): Promise<void> {
@@ -396,15 +405,18 @@ async function cmdTest(args: string[]): Promise<void> {
     return;
   }
   if (!result.ok) {
-    console.error(chalk.red(`✗ Server test failed: ${profile.serverUrl}`));
-    console.error(chalk.gray(`  url: ${result.url}`));
-    if (result.status) console.error(chalk.gray(`  status: ${result.status}`));
-    console.error(chalk.gray(`  error: ${result.error}`));
+    console.error(errorFrame(`Server test failed: ${profile.serverUrl}`, [
+      `url: ${result.url}`,
+      ...(result.status ? [`status: ${result.status}`] : []),
+      `error: ${result.error}`,
+    ]));
     process.exit(1);
   }
-  console.log(chalk.green(`✓ Server reachable: ${profile.serverUrl}`));
-  console.log(chalk.gray(`  url: ${result.url}`));
-  if (result.version) console.log(chalk.gray(`  version: ${result.version}`));
+  console.log(ok(`Server reachable: ${profile.serverUrl}`));
+  console.log(bullets([
+    `url: ${result.url}`,
+    ...(result.version ? [`version: ${result.version}`] : []),
+  ]));
 }
 
 async function cmdSet(args: string[]): Promise<void> {
@@ -474,6 +486,6 @@ async function cmdSet(args: string[]): Promise<void> {
     printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });
     return;
   }
-  console.log(chalk.green(`✓ Active server: ${created.name} (${created.id})`));
-  console.log(chalk.gray(`  ${created.serverUrl}`));
+  console.log(ok(`Active server: ${created.name} (${created.id})`));
+  console.log(`  ${created.serverUrl}`);
 }

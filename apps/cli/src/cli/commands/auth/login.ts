@@ -6,6 +6,7 @@ import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { stopDaemon } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
+import { bullets, definitionList, errorFrame, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 
 import { resolveAuthMethodFlag } from './methodFlag';
 
@@ -19,7 +20,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
   try {
     method = resolveAuthMethodFlag(args);
   } catch (error) {
-    console.error(chalk.red(error instanceof Error ? error.message : 'Invalid --method flag'));
+    console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Invalid --method flag']));
     process.exit(1);
   }
   if (method) process.env.HAPPIER_AUTH_METHOD = method;
@@ -33,26 +34,29 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
   }
 
   if (forceAuth) {
-    console.log(chalk.yellow('Force authentication requested.'));
-    console.log(chalk.gray('This will:'));
-    console.log(chalk.gray('  • Clear existing credentials'));
-    console.log(chalk.gray('  • Clear machine ID'));
-    console.log(chalk.gray('  • Stop daemon if running'));
-    console.log(chalk.gray('  • Re-authenticate and register machine\n'));
+    console.log(warn('Force authentication requested.'));
+    console.log(sectionTitle('This will:'));
+    console.log(bullets([
+      'Clear existing credentials',
+      'Clear machine ID',
+      'Stop daemon if running',
+      'Re-authenticate and register machine',
+    ]));
+    console.log('');
 
     try {
       logger.debug('Stopping daemon for force auth...');
       await stopDaemon();
-      console.log(chalk.gray('✓ Stopped daemon'));
+      console.log(ok('Stopped daemon'));
     } catch (error) {
       logger.debug('Daemon was not running or failed to stop:', error);
     }
 
     await clearCredentials();
-    console.log(chalk.gray('✓ Cleared credentials'));
+    console.log(ok('Cleared credentials'));
 
     await clearMachineId();
-    console.log(chalk.gray('✓ Cleared machine ID'));
+    console.log(ok('Cleared machine ID'));
 
     console.log('');
   }
@@ -62,26 +66,30 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
     const settings = await readSettings();
 
     if (existingCreds && settings?.machineId) {
-      console.log(chalk.green('✓ Already authenticated'));
-      console.log(chalk.gray(`  Machine ID: ${settings.machineId}`));
-      console.log(chalk.gray(`  Host: ${os.hostname()}`));
-      console.log(chalk.gray(`  Use 'happier auth login --force' to re-authenticate`));
+      console.log(ok('Already authenticated'));
+      console.log(definitionList([
+        { label: 'Machine ID', value: settings.machineId },
+        { label: 'Host', value: os.hostname() },
+      ], { indent: '  ' }));
+      console.log('  Use \'happier auth login --force\' to re-authenticate');
       return;
     }
 
     if (existingCreds && !settings?.machineId) {
-      console.log(chalk.yellow('⚠️  Credentials exist but machine ID is missing'));
-      console.log(chalk.gray('  This can happen if --auth flag was used previously'));
-      console.log(chalk.gray('  Fixing by setting up machine...\n'));
+      console.log(warn('Credentials exist but machine ID is missing'));
+      console.log(`  This can happen if --auth flag was used previously`);
+      console.log(`  Fixing by setting up machine...\n`);
     }
   }
 
   try {
     const result = await authAndSetupMachineIfNeeded();
-    console.log(chalk.green('\n✓ Authentication successful'));
-    console.log(chalk.gray(`  Machine ID: ${result.machineId}`));
+    console.log(`\n${ok('Authentication successful')}`);
+    console.log(definitionList([
+      { label: 'Machine ID', value: result.machineId },
+    ], { indent: '  ' }));
   } catch (error) {
-    console.error(chalk.red('Authentication failed:'), error instanceof Error ? error.message : 'Unknown error');
+    console.error(errorFrame('Authentication failed:', [error instanceof Error ? error.message : 'Unknown error']));
     process.exit(1);
   }
 }

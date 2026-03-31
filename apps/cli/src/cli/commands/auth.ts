@@ -1,6 +1,5 @@
-import chalk from 'chalk';
-
 import type { CommandContext } from '@/cli/commandRegistry';
+import { errorFrame } from '@happier-dev/cli-common/output';
 
 import { showAuthHelp } from './auth/help';
 import { handleAuthApprove } from './auth/approve';
@@ -42,7 +41,7 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
       await handleAuthStatus(args.slice(1));
       return;
     default:
-      console.error(chalk.red(`Unknown auth subcommand: ${subcommand}`));
+      console.error(errorFrame('Error:', [`Unknown auth subcommand: ${subcommand}`]));
       showAuthHelp();
       process.exit(1);
   }
@@ -52,7 +51,7 @@ export async function handleAuthCliCommand(context: CommandContext): Promise<voi
   try {
     await handleAuthCommand(context.args.slice(1));
   } catch (error) {
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+    console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
     if (process.env.DEBUG) {
       console.error(error);
     }
