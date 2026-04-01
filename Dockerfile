@@ -268,7 +268,9 @@ COPY apps/server ./apps/server
 COPY packages/agents ./packages/agents
 COPY packages/cli-common ./packages/cli-common
 COPY packages/protocol ./packages/protocol
+COPY packages/release-runtime ./packages/release-runtime
 RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @happier-dev/agents postinstall:real
+RUN yarn workspace @happier-dev/release-runtime postinstall:real
 RUN yarn workspace @happier-dev/server postinstall:real
 RUN yarn workspace @happier-dev/server build
 
@@ -282,6 +284,7 @@ COPY --from=server-builder --chown=node:node /repo/node_modules /repo/node_modul
 COPY --from=server-builder --chown=node:node /repo/packages/agents /repo/packages/agents
 COPY --from=server-builder --chown=node:node /repo/packages/cli-common /repo/packages/cli-common
 COPY --from=server-builder --chown=node:node /repo/packages/protocol /repo/packages/protocol
+COPY --from=server-builder --chown=node:node /repo/packages/release-runtime /repo/packages/release-runtime
 COPY --from=server-builder --chown=node:node /repo/apps/server /repo/apps/server
 COPY --from=server-builder /repo/apps/server/scripts/run-server.sh /usr/local/bin/run-server
 RUN chmod +x /usr/local/bin/run-server
