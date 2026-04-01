@@ -9,6 +9,14 @@ const config = getSentryExpoConfig(__dirname, {
   isCSSEnabled: true,
 });
 
+// Cache bust knob: bump Metro's cache version without changing CLI invocation.
+// Useful when the stack starts Expo without `--clear`, or when Tauri/Metro appears to serve stale bundles.
+const cacheBust = String(process.env.HAPPIER_UI_METRO_CACHE_VERSION_BUST ?? '').trim();
+if (cacheBust) {
+  const baseVersion = String(config.cacheVersion ?? '1.0').trim() || '1.0';
+  config.cacheVersion = `${baseVersion}-${cacheBust}`;
+}
+
 // Metro defaults to Watchman (and, when unavailable, falls back to the native `find` crawler). In large monorepos,
 // both Watchman and the native `find` crawler can be unreliable in non-interactive "stack/runtime build" contexts:
 // - Watchman can hang for ~1 minute per `watch-project` (or fail on sandboxed runners)
@@ -17,7 +25,26 @@ const config = getSentryExpoConfig(__dirname, {
 // In CI/e2e and stack builds, prefer Metro's Node filesystem crawler (slower but deterministic).
 const isStackRun = Boolean((process.env.HAPPIER_STACK_STACK ?? '').toString().trim());
 
-if (process.env.CI || isStackRun) {
+function parseEnvBool(raw) {
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (!v) return null;
+  if (v === '1' || v === 'true' || v === 'yes') return true;
+  if (v === '0' || v === 'false' || v === 'no') return false;
+  return null;
+}
+
+const watchmanOverride = parseEnvBool(process.env.HAPPIER_UI_METRO_USE_WATCHMAN);
+
+// Metro defaults to Watchman. In large monorepos Watchman can hang during `watch-project` or enter recrawl
+// storms ("MustScanSubDirs UserDropped"), delaying Metro startup before bundling begins.
+//
+// - In CI, always force Watchman off for deterministic startup.
+// - For local dev, prefer reliability: default Watchman off, allow explicit opt-in per machine.
+const isCiRun = Boolean(process.env.CI);
+const shouldEnableWatchman = !isCiRun && watchmanOverride === true;
+const shouldDisableWatchman = isCiRun || watchmanOverride !== true;
+
+if (shouldDisableWatchman) {
   config.resolver.useWatchman = false;
   // `metro-file-map`'s watcher selection is driven by `watcher.useWatchman`, not
   // `resolver.useWatchman`. Set both to avoid "Failed to start watch mode"
@@ -25,6 +52,12 @@ if (process.env.CI || isStackRun) {
   config.watcher = {
     ...(config.watcher || {}),
     useWatchman: false,
+  };
+} else if (shouldEnableWatchman) {
+  config.resolver.useWatchman = true;
+  config.watcher = {
+    ...(config.watcher || {}),
+    useWatchman: true,
   };
 }
 
@@ -43,6 +76,10 @@ function addInternalWorkspaceWatchFolders() {
   const uiPkgPath = path.resolve(__dirname, "package.json");
   const uiPkg = safeReadJson(uiPkgPath);
   if (!uiPkg) return;
+
+  if (!Array.isArray(config.watchFolders)) {
+    config.watchFolders = [];
+  }
 
   const depSources = [uiPkg.dependencies, uiPkg.optionalDependencies, uiPkg.devDependencies];
   const internal = new Set();
@@ -90,11 +127,13 @@ const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
 const workspaceNodeModulesBlockList =
   /[\\/]apps[\\/](?!ui[\\/])[^\\/]+[\\/]node_modules[\\/]|[\\/]packages[\\/][^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
-config.resolver.blockList = Array.isArray(existingBlockList)
+  config.resolver.blockList = Array.isArray(existingBlockList)
   ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
   : existingBlockList
     ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
     : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList];
+
+addInternalWorkspaceWatchFolders();
 
 const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFolders : [];
 config.watchFolders = existingWatchFolders.filter(
@@ -104,13 +143,47 @@ config.watchFolders = existingWatchFolders.filter(
 const rootNodeModules = path.resolve(__dirname, "../../node_modules");
 const appNodeModules = path.resolve(__dirname, "node_modules");
 
+// Metro requires that all resolved module files live under either `projectRoot` or `watchFolders` so it can compute
+// SHA-1 hashes for caching. In Yarn workspaces, many deps are hoisted to the monorepo root `node_modules/**`.
+//
+// Default: include the monorepo root `node_modules/**` so hoisted dependencies (e.g. `fbjs`) never fail with
+// "Failed to get the SHA-1".
+//
+// If Watchman is unstable on a machine, the recommended path is to disable Watchman
+// (`HAPPIER_UI_METRO_USE_WATCHMAN=0`) rather than excluding hoisted deps from watch roots.
+const watchRootNodeModulesSetting = parseEnvBool(process.env.HAPPIER_UI_METRO_WATCH_MONOREPO_ROOT_NODE_MODULES);
+if (watchRootNodeModulesSetting === false) {
+  config.watchFolders = config.watchFolders.filter((folder) => folder !== rootNodeModules);
+}
+
+function resolveHoistedExpoPackageWatchFolders(nodeModulesRoot) {
+  const root = String(nodeModulesRoot ?? '').trim();
+  if (!root) return [];
+  if (String(process.env.HAPPIER_UI_METRO_WATCH_HOISTED_EXPO_PACKAGES ?? '1').trim() === '0') return [];
+
+  try {
+    const entries = fs.readdirSync(root, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry?.isDirectory?.())
+      .map((entry) => String(entry.name ?? '').trim())
+      .filter((name) => name === 'expo' || name.startsWith('expo-'))
+      .map((name) => path.resolve(root, name));
+  } catch {
+    return [];
+  }
+}
+
 // Expo packages can be hoisted into the monorepo root `node_modules/**` and ship TypeScript entrypoints.
 // Metro needs these files in its watch set to compute SHA-1 hashes during export/build, but we still want
 // to avoid watching the entire monorepo `node_modules/**` tree.
-const watchedHoistedNodeModuleRoots = [
-  path.resolve(rootNodeModules, "expo-modules-core"),
-  path.resolve(rootNodeModules, "expo-system-ui"),
-];
+const shouldWatchHoistedNodeModuleChildren = !config.watchFolders.includes(rootNodeModules);
+const watchedHoistedNodeModuleRoots = shouldWatchHoistedNodeModuleChildren
+  ? [
+      path.resolve(rootNodeModules, "expo-modules-core"),
+      path.resolve(rootNodeModules, "expo-system-ui"),
+      ...resolveHoistedExpoPackageWatchFolders(rootNodeModules),
+    ]
+  : [];
 for (const folder of watchedHoistedNodeModuleRoots) {
   if (!config.watchFolders.includes(folder)) {
     config.watchFolders.push(folder);
@@ -159,6 +232,27 @@ function isExpoModuleOrigin(originModulePath, suffixes) {
   });
 }
 
+function isFileBlockedByMetro(blockList, filePath) {
+  if (!blockList || !filePath) return false;
+  if (blockList instanceof RegExp) return blockList.test(filePath);
+  if (Array.isArray(blockList)) return blockList.some((item) => item instanceof RegExp && item.test(filePath));
+  return false;
+}
+
+function resolveExplicitRelativeImportFromOrigin({ originModulePath, moduleName, blockList }) {
+  if (typeof originModulePath !== 'string' || originModulePath.length === 0) return null;
+  if (typeof moduleName !== 'string' || moduleName.length === 0) return null;
+  if (!moduleName.startsWith('.')) return null;
+
+  const ext = path.extname(moduleName);
+  if (!ext) return null;
+
+  const candidate = path.resolve(path.dirname(originModulePath), moduleName);
+  if (isFileBlockedByMetro(blockList, candidate)) return null;
+  if (!fs.existsSync(candidate)) return null;
+  return candidate;
+}
+
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   // Fix event-target-shim/index import - exports define "." not "./index"
@@ -170,6 +264,17 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // Metro can crash when resolution throws inside a large monorepo watch crawl; normalize to the exported subpath.
   if (moduleName === "@noble/hashes/crypto.js") {
     resolvedModuleName = "@noble/hashes/crypto";
+  }
+
+  if (process.env.CI || isStackRun) {
+    const explicit = resolveExplicitRelativeImportFromOrigin({
+      originModulePath: context?.originModulePath,
+      moduleName: resolvedModuleName,
+      blockList: config.resolver.blockList,
+    });
+    if (explicit) {
+      return { type: "sourceFile", filePath: explicit };
+    }
   }
 
   // Per-tab web QA opt-out: allow disabling Fast Refresh/HMR on specific browser tabs (via sessionStorage),
