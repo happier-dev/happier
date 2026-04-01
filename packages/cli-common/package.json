@@ -8,70 +8,92 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./links": {
       "types": "./dist/links.d.ts",
+      "import": "./dist/links.js",
       "default": "./dist/links.js"
     },
     "./update": {
       "types": "./dist/update/index.d.ts",
+      "import": "./dist/update/index.js",
       "default": "./dist/update/index.js"
     },
     "./workspaces": {
       "types": "./dist/workspaces/index.d.ts",
+      "import": "./dist/workspaces/index.js",
       "default": "./dist/workspaces/index.js"
     },
     "./service": {
       "types": "./dist/service/index.d.ts",
+      "import": "./dist/service/index.js",
       "default": "./dist/service/index.js"
     },
     "./providers": {
       "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js",
       "default": "./dist/providers/index.js"
     },
     "./providers/managedJavaScriptRuntime": {
       "types": "./dist/providers/managedJavaScriptRuntime.d.ts",
+      "import": "./dist/providers/managedJavaScriptRuntime.js",
       "default": "./dist/providers/managedJavaScriptRuntime.js"
     },
     "./tailscale": {
       "types": "./dist/tailscale/index.d.ts",
+      "import": "./dist/tailscale/index.js",
       "default": "./dist/tailscale/index.js"
     },
     "./tailscale/taskContract": {
       "types": "./dist/tailscale/taskContract.d.ts",
+      "import": "./dist/tailscale/taskContract.js",
       "default": "./dist/tailscale/taskContract.js"
     },
     "./process": {
       "types": "./dist/process/index.d.ts",
+      "import": "./dist/process/index.js",
       "default": "./dist/process/index.js"
     },
     "./componentArtifacts": {
       "types": "./dist/componentArtifacts/index.d.ts",
+      "import": "./dist/componentArtifacts/index.js",
       "default": "./dist/componentArtifacts/index.js"
     },
     "./firstPartyRuntime": {
       "types": "./dist/firstPartyRuntime/index.d.ts",
+      "import": "./dist/firstPartyRuntime/index.js",
       "default": "./dist/firstPartyRuntime/index.js"
     },
     "./relayHost": {
       "types": "./dist/relayHost/index.d.ts",
+      "import": "./dist/relayHost/index.js",
       "default": "./dist/relayHost/index.js"
     },
     "./relayAccess": {
       "types": "./dist/relayAccess/index.d.ts",
+      "import": "./dist/relayAccess/index.js",
       "default": "./dist/relayAccess/index.js"
     },
     "./relayAccess/catalog": {
       "types": "./dist/relayAccess/catalog.d.ts",
+      "import": "./dist/relayAccess/catalog.js",
       "default": "./dist/relayAccess/catalog.js"
+    },
+    "./ssh": {
+      "types": "./dist/ssh/index.d.ts",
+      "import": "./dist/ssh/index.js",
+      "default": "./dist/ssh/index.js"
     },
     "./output": {
       "types": "./dist/output/index.d.ts",
+      "import": "./dist/output/index.js",
       "default": "./dist/output/index.js"
     },
     "./systemTasks": {
       "types": "./dist/systemTasks/index.d.ts",
+      "import": "./dist/systemTasks/index.js",
       "default": "./dist/systemTasks/index.js"
     }
   },

@@ -11,6 +11,17 @@ export {
   type SystemTaskSshConnectionConfig,
 } from './relayRuntimeKinds.js';
 export {
+  createDaemonServiceRestartTaskKind,
+  createDaemonServiceStartTaskKind,
+  createDaemonServiceStatusTaskKind,
+  createDaemonServiceStopTaskKind,
+  parseDaemonServiceTaskParams,
+  type DaemonServiceKindDeps,
+  type DaemonServiceStatusSnapshot,
+  type DaemonServiceTaskParams,
+  type DaemonServiceTaskResult,
+} from './daemonServiceKinds.js';
+export {
   createRemoteSshBootstrapMachineTaskKind,
   parseRemoteBootstrapMachineParams,
   redactRemoteBootstrapPayload,
@@ -18,6 +29,12 @@ export {
   type RemoteHostTrustResolution,
   type RemoteSshBootstrapMachineDeps,
 } from './remoteSshBootstrapMachineKind.js';
+export {
+  createRemoteSshManageHostTaskKind,
+  redactRemoteSshManageHostPayload,
+  type RemoteSshManageHostAction,
+  type RemoteSshManageHostDeps,
+} from './remoteSshManageHostKind.js';
 export {
   createSetupRepairThisComputerTaskKind,
   parseSetupRepairThisComputerParams,

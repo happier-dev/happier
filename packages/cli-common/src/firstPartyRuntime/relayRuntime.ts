@@ -98,7 +98,7 @@ function buildRelayRuntimeUrl(params: Readonly<{
   port: number;
   path: string;
 }>): string {
-  const path = String(params.path ?? '').trim() || '/v1/version';
+  const path = String(params.path ?? '').trim() || '/health';
   return `http://${params.host}:${params.port}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
@@ -172,7 +172,7 @@ export function resolveRelayRuntimeDefaults(params: Readonly<{
       serviceName: appendChannelSuffix('happier-server', channel),
       serverHost: '127.0.0.1',
       serverPort: 3005,
-      healthPath: '/v1/version',
+      healthPath: '/health',
     };
   }
 
@@ -195,7 +195,7 @@ export function resolveRelayRuntimeDefaults(params: Readonly<{
     serviceName: appendChannelSuffix('happier-server', channel),
     serverHost: '127.0.0.1',
     serverPort: 3005,
-    healthPath: '/v1/version',
+    healthPath: '/health',
   };
 }
 
@@ -253,7 +253,7 @@ export async function checkRelayRuntimeHealth(params: Readonly<{
   const host = String(params.host ?? '').trim() || '127.0.0.1';
   const port = Number.isFinite(params.port) ? Math.floor(params.port) : 3005;
   const timeoutMs = Number.isFinite(params.timeoutMs) ? Math.max(1, Math.floor(params.timeoutMs)) : 30_000;
-  const url = buildRelayRuntimeUrl({ host, port, path: params.path ?? '/v1/version' });
+  const url = buildRelayRuntimeUrl({ host, port, path: params.path ?? '/health' });
 
   const sleep = async (ms: number): Promise<void> => {
     if (ms <= 0) return;

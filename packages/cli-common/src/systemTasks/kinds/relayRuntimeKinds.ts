@@ -8,6 +8,7 @@ export interface SystemTaskSshConnectionConfig {
   port?: number;
   auth: 'agent' | 'keyfile' | 'password';
   identityFile?: string;
+  password?: string;
   sshConfigFile?: string;
   knownHostsPath?: string;
   trustedHostKey?: string;
@@ -212,6 +213,7 @@ export function parseSystemTaskSshConfig(value: unknown): SystemTaskSshConnectio
     ...(typeof record.port === 'number' ? { port: record.port } : {}),
     auth,
     ...(typeof record.identityFile === 'string' ? { identityFile: record.identityFile } : {}),
+    ...(typeof record.password === 'string' ? { password: record.password } : {}),
     ...(typeof record.sshConfigFile === 'string' ? { sshConfigFile: record.sshConfigFile } : {}),
     ...(typeof record.knownHostsPath === 'string' ? { knownHostsPath: record.knownHostsPath } : {}),
     ...(typeof record.trustedHostKey === 'string' ? { trustedHostKey: record.trustedHostKey } : {}),

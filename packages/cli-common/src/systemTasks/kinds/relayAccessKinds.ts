@@ -119,7 +119,14 @@ export function createRelayAccessConfigureTaskKind(deps: RelayAccessConfigureKin
           stepId: 'relay.access.configure.apply',
           message: 'Applying relay access configuration',
         });
-        await provider.configure({ config: parsed.config, ctx: executionContext });
+        const configureResult = await provider.configure({ config: parsed.config, ctx: executionContext });
+        if (configureResult.state === 'needs_auth' || configureResult.state === 'error') {
+          return {
+            configured: true,
+            providerId: parsed.providerId,
+            status: normalizeRelayAccessStatus(configureResult),
+          };
+        }
       }
 
       ctx.emit({

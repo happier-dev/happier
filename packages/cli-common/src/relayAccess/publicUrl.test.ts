@@ -43,7 +43,7 @@ describe('relayAccess publicUrl', () => {
         }
     });
 
-    it('reads the persisted tailscaleFunnel config and resolves the canonical public url (via tailscale status)', async () => {
+    it('reads the persisted tailscaleFunnel config and resolves the canonical public url from funnel status', async () => {
         const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import('../tailscale/index.js');
         vi.mocked(runTailscaleStatusJson).mockResolvedValue({
             backendState: 'Running',
@@ -54,7 +54,7 @@ describe('relayAccess publicUrl', () => {
             loggedIn: true,
         });
         vi.mocked(runTailscaleFunnelStatus).mockResolvedValue(
-            'https://my-machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005',
+            'https://relay.example.test\n|-- / proxy http://127.0.0.1:3005',
         );
 
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-relay-access-'));
@@ -67,36 +67,10 @@ describe('relayAccess publicUrl', () => {
             );
 
             await expect(
-                resolveRelayAccessConfiguredCanonicalPublicServerUrl({ HOME: homeDir }),
-            ).resolves.toBe('https://my-machine.tailnet.ts.net');
-        } finally {
-            await rm(homeDir, { recursive: true, force: true });
-        }
-    });
-
-    it('reads the persisted tailscaleFunnel config and resolves the canonical public url from tailscale status alone', async () => {
-        const { runTailscaleStatusJson } = await import('../tailscale/index.js');
-        vi.mocked(runTailscaleStatusJson).mockResolvedValue({
-            backendState: 'Running',
-            authUrl: null,
-            dnsName: 'my-machine.tailnet.ts.net',
-            tailnetName: 'tailnet.ts.net',
-            tailscaleIps: [],
-            loggedIn: true,
-        });
-
-        const homeDir = await mkdtemp(join(tmpdir(), 'happier-relay-access-'));
-        try {
-            await mkdir(join(homeDir, '.happier', 'relay', 'access'), { recursive: true });
-            await writeFile(
-                join(homeDir, '.happier', 'relay', 'access', 'local.json'),
-                JSON.stringify({ providerId: 'tailscaleFunnel' }),
-                'utf8',
-            );
-
-            await expect(
-                resolveRelayAccessConfiguredCanonicalPublicServerUrl({ HOME: homeDir }),
-            ).resolves.toBe('https://my-machine.tailnet.ts.net');
+            resolveRelayAccessConfiguredCanonicalPublicServerUrl({ HOME: homeDir }),
+            ).resolves.toBe('https://relay.example.test');
+            expect(runTailscaleFunnelStatus).toHaveBeenCalledTimes(1);
+            expect(runTailscaleStatusJson).toHaveBeenCalledTimes(1);
         } finally {
             await rm(homeDir, { recursive: true, force: true });
         }

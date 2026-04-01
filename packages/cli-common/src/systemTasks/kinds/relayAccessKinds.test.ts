@@ -186,6 +186,69 @@ describe('relay access shared system task kinds', () => {
     });
   });
 
+  it('configure kind preserves approval responses from provider.configure without forcing a status refresh', async () => {
+    const createExecutionContext = vi.fn((params: { upstreamUrl: string | null; target: unknown }) => ({
+      env: process.env,
+      upstreamUrl: params.upstreamUrl,
+    }));
+    const provider: RelayAccessProvider = {
+      descriptor: {
+        id: 'tailscaleServe',
+        title: 'Tailscale Serve',
+        exposure: 'private',
+        prerequisites: [],
+      },
+      configure: async () => ({
+        state: 'needs_auth',
+        details: {
+          approvalUrl: 'https://login.tailscale.com/f/serve?node=node-123',
+        },
+      }),
+      status: () => {
+        throw new Error('relay access status should not run when configure already returned an approval response');
+      },
+    };
+
+    const writeConfig = vi.fn(async () => undefined);
+
+    const kind = createRelayAccessConfigureTaskKind({
+      writeConfig,
+      getProvider: () => provider,
+      createExecutionContext,
+    });
+
+    const result = await kind.run({
+      params: {
+        target: { kind: 'local' },
+        upstreamUrl: 'http://127.0.0.1:3005',
+        providerId: 'tailscaleServe',
+        config: { providerId: 'tailscaleServe' },
+      },
+      emit: () => {},
+      prompt: async () => {
+        throw new Error('relay access configure should not prompt');
+      },
+    });
+
+    expect(writeConfig).toHaveBeenCalledWith({
+      target: { kind: 'local' },
+      config: {
+        providerId: 'tailscaleServe',
+      },
+    });
+    expect(result).toEqual({
+      configured: true,
+      providerId: 'tailscaleServe',
+      status: {
+        state: 'needs_auth',
+        shareUrl: null,
+        details: {
+          approvalUrl: 'https://login.tailscale.com/f/serve?node=node-123',
+        },
+      },
+    });
+  });
+
   it('disable kind clears persisted config and returns a disabled snapshot', async () => {
     const createExecutionContext = vi.fn((params: { upstreamUrl: string | null; target: unknown }) => ({
       env: process.env,

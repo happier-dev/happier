@@ -3,6 +3,134 @@ import { describe, expect, it } from 'vitest';
 import { createRelayHostEngine } from './relayHostEngine.js';
 
 describe('RelayHostEngine (remote SSH)', () => {
+  it('restarts the systemd service on install so updated unit/env changes take effect', async () => {
+    let serviceInstallCommand = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('systemctl') && command.includes('daemon-reload') && command.includes('enable')) {
+          serviceInstallCommand = command;
+        }
+        if (command.includes('echo yes')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '$HOME/.happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    await engine.installOrUpdate({
+      target: {
+        kind: 'ssh',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+      channel: 'dev',
+      mode: 'user',
+    });
+
+    expect(serviceInstallCommand).toContain('systemctl --user daemon-reload');
+    expect(serviceInstallCommand).toContain('systemctl --user enable');
+    expect(serviceInstallCommand).toContain('systemctl --user restart');
+    expect(serviceInstallCommand).not.toContain('enable --now');
+  });
+
+  it('uses server.env to report the configured baseUrl (instead of defaults)', async () => {
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('cat') && command.includes('self-host-state.json')) {
+          return { status: 0, stdout: '{"version":"0.1.2"}\n', stderr: '' };
+        }
+        if (command.includes('cat') && command.includes('server.env')) {
+          return { status: 0, stdout: 'PORT=24851\\nHAPPIER_SERVER_HOST=0.0.0.0\\n', stderr: '' };
+        }
+        if (command.includes('systemctl') && command.includes('show')) {
+          return {
+            status: 0,
+            stdout: 'ActiveState=active\\nSubState=running\\nUnitFileState=enabled\\n',
+            stderr: '',
+          };
+        }
+        if (command.includes('[ -f') && command.includes('happier-server')) {
+          return { status: 0, stdout: 'yes\\n', stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async () => ({ binaryPath: '$HOME/.happier/happier-server/current/happier-server', versionId: 'publicdev-1' }),
+    });
+
+    const status = await engine.readStatus({
+      target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
+      channel: 'dev',
+      mode: 'system',
+    });
+
+    expect(status.baseUrl).toBe('http://127.0.0.1:24851');
+  });
+
+  it('returns the configured relayUrl from installOrUpdate (including env overrides such as PORT)', async () => {
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('echo yes')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '$HOME/.happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    const result = await engine.installOrUpdate({
+      target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
+      channel: 'dev',
+      mode: 'user',
+      env: {
+        PORT: '24851',
+      },
+    });
+
+    expect(result.relayUrl).toBe('http://127.0.0.1:24851');
+  });
+
   it('parses systemd service state from key=value output (order-independent)', async () => {
     const engine = createRelayHostEngine({
       now: () => 123,
@@ -339,6 +467,7 @@ describe('RelayHostEngine (remote SSH)', () => {
   });
 
   it('uses sudo when installing a system service over SSH (non-root friendly)', async () => {
+    let setupCommand = '';
     let installCommand = '';
 
     const engine = createRelayHostEngine({
@@ -352,7 +481,10 @@ describe('RelayHostEngine (remote SSH)', () => {
         if (command.includes('printf') && command.includes('$PATH')) {
           return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
         }
-        if (command.includes('systemctl') && command.includes('daemon-reload') && command.includes('enable --now')) {
+        if (command.includes('mkdir -p') && command.includes('server.env') && command.includes('self-host-state.json')) {
+          setupCommand = command;
+        }
+        if (command.includes('systemctl') && command.includes('daemon-reload') && command.includes('restart')) {
           installCommand = command;
         }
         if (command.includes('echo yes')) {
@@ -383,8 +515,13 @@ describe('RelayHostEngine (remote SSH)', () => {
       mode: 'system',
     });
 
-    expect(installCommand).toContain('sudo -n systemctl daemon-reload');
-    expect(installCommand).toContain('sudo -n systemctl enable --now');
+    expect(setupCommand).toContain('sudo -n');
+    expect(setupCommand).toContain('${SUDO_PREFIX}mkdir -p');
+    expect(setupCommand).toContain('${SUDO_PREFIX}cp');
+    expect(installCommand).toContain('sudo -n');
+    expect(installCommand).toContain('${SUDO_PREFIX}systemctl daemon-reload');
+    expect(installCommand).toContain('${SUDO_PREFIX}systemctl enable');
+    expect(installCommand).toContain('${SUDO_PREFIX}systemctl restart');
   });
 
   it('surfaces a clear error when systemd user services are unavailable (no bus)', async () => {
@@ -399,7 +536,7 @@ describe('RelayHostEngine (remote SSH)', () => {
         if (command.includes('printf') && command.includes('$PATH')) {
           return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
         }
-        if (command.includes('systemctl --user') && command.includes('enable --now')) {
+        if (command.includes('systemctl --user') && command.includes('restart')) {
           return { status: 1, stdout: '', stderr: 'Failed to connect to bus: No medium found' };
         }
         if (command.includes('echo yes')) {
@@ -429,5 +566,109 @@ describe('RelayHostEngine (remote SSH)', () => {
       channel: 'dev',
       mode: 'user',
     })).rejects.toThrow(/systemd user service/i);
+  });
+
+  it('uninstalls a system-mode remote relay runtime using sudo when needed', async () => {
+    let controlCommand = '';
+    let cleanupCommand = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('systemctl') && command.includes('disable --now')) {
+          controlCommand = command;
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        if (command.includes('rm -rf') && command.includes('/opt/happier')) {
+          cleanupCommand = command;
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('echo yes')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '/opt/happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    await engine.control({
+      target: {
+        kind: 'ssh',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+      channel: 'dev',
+      mode: 'system',
+      action: 'uninstall',
+    });
+
+    expect(controlCommand).toContain('sudo -n');
+    expect(cleanupCommand).toContain('sudo -n');
+  });
+
+  it('uninstalls a system-mode launchd service using sudo when needed', async () => {
+    let controlCommand = '';
+    let cleanupCommand = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'darwin', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('launchctl') && command.includes('unload -w')) {
+          controlCommand = command;
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        if (command.includes('rm -rf') && command.includes('/opt/happier')) {
+          cleanupCommand = command;
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/Users/remote-user\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '/opt/happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    await engine.control({
+      target: {
+        kind: 'ssh',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+      channel: 'dev',
+      mode: 'system',
+      action: 'uninstall',
+    });
+
+    expect(controlCommand).toContain('sudo -n');
+    expect(controlCommand).toContain('launchctl unload -w');
+    expect(cleanupCommand).toContain('sudo -n');
   });
 });

@@ -65,7 +65,7 @@ describe('normalizeRelayRuntimeStatus', () => {
       health: {
         portOpen: true,
         pingOk: true,
-        url: 'http://127.0.0.1:3005/v1/version',
+        url: 'http://127.0.0.1:3005/health',
       },
     })).toEqual({
       installed: true,
@@ -81,7 +81,7 @@ describe('normalizeRelayRuntimeStatus', () => {
         reachable: true,
         portOpen: true,
         pingOk: true,
-        url: 'http://127.0.0.1:3005/v1/version',
+        url: 'http://127.0.0.1:3005/health',
       },
     });
 
@@ -97,7 +97,7 @@ describe('normalizeRelayRuntimeStatus', () => {
       health: {
         portOpen: false,
         pingOk: false,
-        url: 'http://127.0.0.1:3005/v1/version',
+        url: 'http://127.0.0.1:3005/health',
       },
     })).toEqual({
       installed: false,
@@ -113,18 +113,34 @@ describe('normalizeRelayRuntimeStatus', () => {
         reachable: false,
         portOpen: false,
         pingOk: false,
-        url: 'http://127.0.0.1:3005/v1/version',
+        url: 'http://127.0.0.1:3005/health',
       },
     });
   });
 });
 
 describe('checkRelayRuntimeHealth', () => {
+  it('defaults to the /health path when probing the runtime', async () => {
+    await expect(checkRelayRuntimeHealth({
+      host: '127.0.0.1',
+      port: 3005,
+      timeoutMs: 5_000,
+      probePortOpen: async () => true,
+      fetchJson: async ({ url }) => {
+        expect(url).toBe('http://127.0.0.1:3005/health');
+        return { ok: true, status: 200, body: { status: 'ok' } };
+      },
+    })).resolves.toMatchObject({
+      reachable: true,
+      url: 'http://127.0.0.1:3005/health',
+    });
+  });
+
   it('requires both the port probe and the app ping to succeed', async () => {
     await expect(checkRelayRuntimeHealth({
       host: '127.0.0.1',
       port: 3005,
-      path: '/v1/version',
+      path: '/health',
       timeoutMs: 5_000,
       probePortOpen: async () => true,
       fetchJson: async () => ({ ok: true, status: 200, body: { version: '1.2.3' } }),
@@ -132,7 +148,7 @@ describe('checkRelayRuntimeHealth', () => {
       reachable: true,
       portOpen: true,
       pingOk: true,
-      url: 'http://127.0.0.1:3005/v1/version',
+      url: 'http://127.0.0.1:3005/health',
       statusCode: 200,
       version: '1.2.3',
     });
@@ -140,7 +156,7 @@ describe('checkRelayRuntimeHealth', () => {
     await expect(checkRelayRuntimeHealth({
       host: '127.0.0.1',
       port: 3005,
-      path: '/v1/version',
+      path: '/health',
       timeoutMs: 1,
       probePortOpen: async () => true,
       fetchJson: async () => ({ ok: false, status: 503, body: null }),
@@ -148,7 +164,7 @@ describe('checkRelayRuntimeHealth', () => {
       reachable: false,
       portOpen: true,
       pingOk: false,
-      url: 'http://127.0.0.1:3005/v1/version',
+      url: 'http://127.0.0.1:3005/health',
       statusCode: 503,
       version: null,
     });
@@ -161,7 +177,7 @@ describe('checkRelayRuntimeHealth', () => {
       const healthPromise = checkRelayRuntimeHealth({
         host: '127.0.0.1',
         port: 3005,
-        path: '/v1/version',
+        path: '/health',
         timeoutMs: 1_000,
         probePortOpen: async () => {
           probeAttempts += 1;

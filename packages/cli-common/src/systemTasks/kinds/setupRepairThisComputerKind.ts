@@ -1,5 +1,6 @@
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import type { InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
+import { runSetupMachineRecipe } from '../recipes/setupMachineRecipe.js';
 
 export type SetupRepairThisComputerRelayProfile = Readonly<{
   serverUrl: string;
@@ -130,47 +131,105 @@ export function createSetupRepairThisComputerTaskKind(
       await deps.configureRelay({ relayUrl, webappUrl, activeLocalRelayUrl });
 
       const authStatus = await deps.readAuthStatus();
-      let machineId: string | null = authStatus.authenticated ? authStatus.machineId : null;
+      const initialRecipeAuthStatus = await resolveRepairRecipeAuthStatus({ authStatus, ctx, deps });
 
-      if (!authStatus.authenticated) {
-        ctx.emit({ type: 'progress', stepId: 'setup.repairThisComputer.authenticate', message: 'Waiting for pairing approval' });
-        const pairing = await deps.requestAuthPairing();
-        const publicKey = String(pairing.publicKey ?? '').trim();
-        if (!publicKey) {
-          throw new SystemTaskExecutionError('system_task_failed', 'Missing auth request public key.');
-        }
+      const relayProfileForRecipe = {
+        serverUrl: relayUrl,
+        webappUrl,
+        localServerUrl: activeLocalRelayUrl,
+      };
 
-        const answer = await ctx.prompt({
-          kind: 'authRequest',
-          stepId: 'setup.repairThisComputer.authRequest',
-          message: 'Approve pairing request',
-          data: {
-            kind: 'authRequest',
-            publicKey,
-            relayUrl,
-            webappUrl,
+      const recipeResult = await runSetupMachineRecipe({
+        relayProfile: relayProfileForRecipe,
+        initialAuthStatus: initialRecipeAuthStatus,
+        executor: {
+          configureRelay: async () => undefined,
+          readAuthStatus: async () => {
+            const latest = await deps.readAuthStatus();
+            return {
+              authenticated: latest.authenticated === true,
+              machineId: latest.authenticated === true && latest.machineId?.trim() ? latest.machineId.trim() : null,
+            };
           },
-        }) as { approved?: boolean };
+          requestAuthPairing: async () => {
+            const request = await deps.requestAuthPairing();
+            const publicKey = String(request.publicKey ?? '').trim();
+            if (!publicKey) {
+              throw new SystemTaskExecutionError('system_task_failed', 'Missing auth request public key.');
+            }
+            return {
+              ...request,
+              publicKey,
+            };
+          },
+          waitForAuthPairing: async (publicKey: string) => {
+            const result = await deps.waitForAuthPairing(publicKey);
+            const machineId = typeof result.machineId === 'string' && result.machineId.trim()
+              ? result.machineId.trim()
+              : null;
+            return { machineId };
+          },
+          installDaemonService: async () => {
+            await deps.installDaemonService();
+          },
+          startDaemonService: async () => {
+            await deps.startDaemonService();
+          },
+          waitForReadyDaemon: async () => {
+            const ready = await deps.waitForReadyDaemon();
+            return {
+              serviceInstalled: ready.serviceInstalled,
+              daemonRunning: ready.daemonRunning,
+              needsAuth: ready.needsAuth,
+              machineId: ready.machineId,
+            };
+          },
+        },
+        steps: {
+          configureRelay: false,
+          installService: true,
+          startService: true,
+          verifyService: true,
+        },
+        stepIds: {
+          installService: 'setup.repairThisComputer.installService',
+          startService: 'setup.repairThisComputer.startService',
+          verifyService: 'setup.repairThisComputer.waitForReady',
+        },
+        signal: ctx.signal,
+        emit(event) {
+          ctx.emit({
+            type: 'progress',
+            stepId: event.stepId,
+            ...(event.message ? { message: event.message } : {}),
+          });
+        },
+        approvePairingRequest: authStatus.authenticated
+          ? undefined
+          : async (params) => {
+            const answer = await ctx.prompt({
+              kind: 'authRequest',
+              stepId: 'setup.repairThisComputer.authRequest',
+              message: 'Approve pairing request',
+              data: {
+                kind: 'authRequest',
+                publicKey: params.publicKey,
+                relayUrl,
+                webappUrl,
+              },
+            }) as { approved?: boolean };
 
-        if (answer?.approved !== true) {
-          throw new SystemTaskExecutionError('approval_declined', 'Pairing request was not approved.');
-        }
+            if (answer?.approved !== true) {
+              throw new SystemTaskExecutionError('approval_declined', 'Pairing request was not approved.');
+            }
+          },
+        daemonReadinessErrorMessage: 'Daemon service did not reach a ready state for the selected Relay.',
+      });
 
-        const pairingResult = await deps.waitForAuthPairing(publicKey);
-        machineId = String(pairingResult.machineId ?? '').trim() || null;
-      } else {
-        ctx.emit({ type: 'progress', stepId: 'setup.repairThisComputer.verifyMachine', message: 'Verifying machine identity' });
-        machineId = await deps.pairLocalMachineIfNeeded().then((id) => String(id ?? '').trim() || null);
-      }
-
-      ctx.emit({ type: 'progress', stepId: 'setup.repairThisComputer.installService', message: 'Installing background service' });
-      await deps.installDaemonService();
-      ctx.emit({ type: 'progress', stepId: 'setup.repairThisComputer.startService', message: 'Starting background service' });
-      await deps.startDaemonService();
-
-      ctx.emit({ type: 'progress', stepId: 'setup.repairThisComputer.waitForReady', message: 'Waiting for service readiness' });
-      const ready = await deps.waitForReadyDaemon();
-      if (!ready.serviceInstalled || !ready.daemonRunning || ready.needsAuth || !ready.machineId) {
+      const daemonMachineId = typeof recipeResult.daemonStatus?.machineId === 'string' && recipeResult.daemonStatus.machineId.trim()
+        ? recipeResult.daemonStatus.machineId.trim()
+        : null;
+      if (!daemonMachineId) {
         throw new SystemTaskExecutionError(
           'daemon_service_not_ready',
           'Daemon service did not reach a ready state for the selected Relay.',
@@ -178,7 +237,35 @@ export function createSetupRepairThisComputerTaskKind(
       }
 
       ctx.emit({ type: 'progress', stepId: 'setup.repairThisComputer.finish', message: 'Repair complete' });
-      return { machineId: ready.machineId };
+      return { machineId: daemonMachineId };
     },
+  };
+}
+
+async function resolveRepairRecipeAuthStatus(params: Readonly<{
+  authStatus: SetupRepairThisComputerAuthStatus;
+  ctx: Readonly<{ emit: (event: Readonly<{ type: string; stepId?: string; message?: string }>) => void }>;
+  deps: SetupRepairThisComputerDeps;
+}>): Promise<Readonly<{ authenticated: boolean; machineId: string | null }>> {
+  if (!params.authStatus.authenticated) {
+    params.ctx.emit({
+      type: 'progress',
+      stepId: 'setup.repairThisComputer.authenticate',
+      message: 'Waiting for pairing approval',
+    });
+    return { authenticated: false, machineId: null };
+  }
+
+  params.ctx.emit({
+    type: 'progress',
+    stepId: 'setup.repairThisComputer.verifyMachine',
+    message: 'Verifying machine identity',
+  });
+
+  const resolvedMachineId = await params.deps.pairLocalMachineIfNeeded().then((id) => String(id ?? '').trim() || null);
+
+  return {
+    authenticated: true,
+    machineId: resolvedMachineId ?? params.authStatus.machineId ?? '__unknown_machine__',
   };
 }

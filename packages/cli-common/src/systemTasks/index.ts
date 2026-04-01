@@ -2,6 +2,9 @@ export {
   createExecutionRunnerFromKind,
 } from './createExecutionRunnerFromKind.js';
 export {
+  createAsyncGeneratorFromEventProducer,
+} from './createAsyncGeneratorFromEventProducer.js';
+export {
   SystemTaskExecutionError,
   createSystemTaskRegistry,
   executeSystemTask,
@@ -24,4 +27,38 @@ export {
   parseSshTarget,
   type ParsedSshTarget,
 } from './ssh/sshTarget.js';
+
+export {
+  DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
+  ensureLocalFirstPartyComponentCommand,
+  resolveExplicitOrInstalledLocalFirstPartyCommand,
+  createLocalHappierJsonExecutor,
+  type HappierJsonExecutor,
+  type HappierTextResult,
+  type RunHappierOptions,
+} from './executors/happierJsonExecutor.js';
+
+export {
+  createOpenSshHappierJsonExecutor,
+  type OpenSshAuth,
+  type OpenSshRunRemoteText,
+} from './executors/openSshHappierJsonExecutor.js';
+
+export {
+  createSetupMachineRecipeExecutorFromHappierJsonExecutor,
+  type SetupMachineRecipeExecutorOptions,
+} from './executors/setupMachineRecipeExecutor.js';
+
+export {
+  runSetupMachineRecipe,
+  type SetupMachineAuthStatus,
+  type SetupMachineDaemonStatus,
+  type SetupMachineRecipeExecutor,
+  type SetupMachineRecipeEvent,
+  type SetupMachineRecipeResult,
+  type SetupMachineRecipeStepIds,
+  type SetupMachineRecipeSteps,
+  type SetupMachineRelayProfile,
+} from './recipes/setupMachineRecipe.js';
+
 export * from './kinds/index.js';

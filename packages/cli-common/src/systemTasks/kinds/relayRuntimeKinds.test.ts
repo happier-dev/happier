@@ -19,6 +19,18 @@ describe('relay runtime shared system task kinds', () => {
     });
   });
 
+  it('parses password ssh auth with the password payload preserved', () => {
+    expect(parseSystemTaskSshConfig({
+      target: 'dev@example.test',
+      auth: 'password',
+      password: 'super-secret',
+    })).toEqual({
+      target: 'dev@example.test',
+      auth: 'password',
+      password: 'super-secret',
+    });
+  });
+
   it('returns the canonical relay runtime status payload', async () => {
     const kind = createRelayRuntimeStatusTaskKind({
       readStatus: async () => ({

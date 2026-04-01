@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { resolveTailscaleMachineHttpsUrlFromStatusSnapshot, runTailscaleStatusJson } from '../tailscale/index.js';
 import { resolveHappyHomeDirFromEnvironment } from '../providers/resolveHappyHomeDir.js';
 
 import { getRelayAccessProvider } from './registry.js';
@@ -32,21 +31,11 @@ function normalizeHttpUrl(raw: unknown): string | null {
     return parsed.toString().replace(/\/+$/, '');
 }
 
-async function resolveRelayAccessStatusShareUrl(config: RelayAccessConfig): Promise<string | null> {
-    return await resolveRelayAccessStatusShareUrlWithEnv(config, process.env);
-}
-
 async function resolveRelayAccessStatusShareUrlWithEnv(config: RelayAccessConfig, env: NodeJS.ProcessEnv): Promise<string | null> {
-  try {
-    if (config.providerId === 'tailscaleFunnel') {
-      const status = await runTailscaleStatusJson({ env }, {}).catch(() => null);
-      if (status) {
-        return resolveTailscaleMachineHttpsUrlFromStatusSnapshot(status);
-      }
-    }
-    const provider = getRelayAccessProvider(config.providerId);
-    const status = await provider.status({ config, ctx: { env, upstreamUrl: null } });
-    return resolveRelayAccessStatusShareUrlFromStatus(status);
+    try {
+        const provider = getRelayAccessProvider(config.providerId);
+        const status = await provider.status({ config, ctx: { env, upstreamUrl: null } });
+        return resolveRelayAccessStatusShareUrlFromStatus(status);
     } catch {
         return null;
     }

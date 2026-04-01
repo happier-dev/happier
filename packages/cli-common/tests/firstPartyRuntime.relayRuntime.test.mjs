@@ -19,7 +19,7 @@ test('relay runtime status normalization understands systemd active+enabled stat
     health: {
       portOpen: true,
       pingOk: true,
-      url: 'http://127.0.0.1:3005/v1/version',
+      url: 'http://127.0.0.1:3005/health',
     },
   });
 
@@ -47,7 +47,7 @@ test('relay runtime status normalization reads Windows scheduled-task state', ()
     health: {
       portOpen: true,
       pingOk: true,
-      url: 'http://127.0.0.1:3005/v1/version',
+      url: 'http://127.0.0.1:3005/health',
     },
   });
 
@@ -57,7 +57,7 @@ test('relay runtime status normalization reads Windows scheduled-task state', ()
   assert.equal(status.service.stateLabel, 'Running');
 });
 
-test('relay runtime health check requires an ok JSON payload from the version endpoint', async () => {
+test('relay runtime health check requires an ok JSON payload from the /health endpoint', async () => {
   assert.equal(typeof firstPartyRuntime.checkRelayRuntimeHealth, 'function');
 
   const healthy = await firstPartyRuntime.checkRelayRuntimeHealth({
@@ -67,12 +67,18 @@ test('relay runtime health check requires an ok JSON payload from the version en
     probePortOpen: async ({ host, port, timeoutMs }) => {
       assert.equal(host, '127.0.0.1');
       assert.equal(port, 4040);
-      assert.equal(timeoutMs, 5_000);
+      assert.equal(typeof timeoutMs, 'number');
+      assert.equal(Number.isFinite(timeoutMs), true);
+      assert.equal(timeoutMs > 0, true);
+      assert.equal(timeoutMs <= 1_000, true);
       return true;
     },
     fetchJson: async ({ url, timeoutMs }) => {
-      assert.equal(url, 'http://127.0.0.1:4040/v1/version');
-      assert.equal(timeoutMs, 5_000);
+      assert.equal(url, 'http://127.0.0.1:4040/health');
+      assert.equal(typeof timeoutMs, 'number');
+      assert.equal(Number.isFinite(timeoutMs), true);
+      assert.equal(timeoutMs > 0, true);
+      assert.equal(timeoutMs <= 1_000, true);
       return {
         ok: true,
         status: 200,
@@ -85,7 +91,7 @@ test('relay runtime health check requires an ok JSON payload from the version en
     reachable: true,
     portOpen: true,
     pingOk: true,
-    url: 'http://127.0.0.1:4040/v1/version',
+    url: 'http://127.0.0.1:4040/health',
     statusCode: 200,
     version: '1.2.3',
   });
@@ -109,5 +115,5 @@ test('relay runtime defaults resolve stable system install paths on Linux', () =
   assert.equal(defaults.serviceName, 'happier-server');
   assert.equal(defaults.serverHost, '127.0.0.1');
   assert.equal(defaults.serverPort, 3005);
-  assert.equal(defaults.healthPath, '/v1/version');
+  assert.equal(defaults.healthPath, '/health');
 });

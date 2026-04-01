@@ -2,6 +2,9 @@ import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/pro
 
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { redactSensitiveSystemTaskJsonValue, type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
+import { runSetupMachineRecipe, type SetupMachineRecipeExecutor } from '../recipes/setupMachineRecipe.js';
+import { materializeSshIdentityPrivateKeyToTempFile } from '../ssh/materializeSshIdentityPrivateKeyToTempFile.js';
+import { createSetupMachineRecipeExecutorFromRemoteCommandRunner } from '../executors/remoteSetupMachineRecipeExecutor.js';
 import {
   parseSystemTaskSshConfig,
   type RelayRuntimeTaskParams,
@@ -16,10 +19,14 @@ type RemoteCommandResult = Readonly<{
 type CanonicalRemoteHostTrustPromptKind = 'ssh.trustHost' | 'ssh.replaceHostKey';
 type RemoteHostTrustPromptKind = CanonicalRemoteHostTrustPromptKind | 'sshHostTrust';
 
-type RemoteSshAuth =
+export type RemoteSshAuth =
   | Readonly<{ mode: 'agent' }>
   | Readonly<{ mode: 'keyFile'; privateKeyPath: string }>
   | Readonly<{ mode: 'password'; password: string }>;
+
+export type RemoteSshBootstrapHappierJsonExecutor = Readonly<{
+  runHappierJson: (params: Readonly<{ args: readonly string[] }>) => Promise<RemoteCommandResult>;
+}>;
 
 function isLoopbackHostname(hostname: string): boolean {
   const normalized = String(hostname ?? '').trim().toLowerCase();
@@ -67,19 +74,39 @@ function resolveRelayRuntimeRelayUrlFromInstallResult(
   return fallbackRelayUrl;
 }
 
+function deriveWebappUrl(serverUrl: string, explicitWebappUrl?: string): string {
+  if (typeof explicitWebappUrl === 'string' && explicitWebappUrl.trim()) {
+    return explicitWebappUrl.trim();
+  }
+  try {
+    return new URL(serverUrl).origin;
+  } catch {
+    return serverUrl;
+  }
+}
+
+function shouldIgnoreLocalApprovalError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  if (!message) return false;
+  return /not authenticated/i.test(message);
+}
+
 export interface RemoteBootstrapMachineParams {
   ssh: SystemTaskSshConnectionConfig;
+  identityPrivateKey?: string;
   relay: Readonly<{
     relayUrl: string;
     webappUrl?: string;
     publicRelayUrl?: string;
   }>;
+  requireLocalApproval?: boolean;
   channel?: 'stable' | 'preview' | 'dev';
   serviceMode?: 'user' | 'none';
   knownHostsMode?: 'app' | 'system';
   relayRuntime?: Readonly<{
     enabled: boolean;
     mode?: 'user' | 'system';
+    switchRelayUrl?: boolean;
     env?: Record<string, string>;
     selfHostRelayBinaryOverride?: string;
   }>;
@@ -120,6 +147,12 @@ export type RemoteSshBootstrapMachineDeps = Readonly<{
     publicKey: string;
     parsed: RemoteBootstrapMachineParams;
   }>) => Promise<void>;
+  createHappierJsonExecutor?: (params: Readonly<{
+    parsed: RemoteBootstrapMachineParams;
+    auth: RemoteSshAuth;
+    knownHostsMode: 'app' | 'system';
+    localServerUrl?: string;
+  }>) => RemoteSshBootstrapHappierJsonExecutor;
   runRemoteCommand: (params: Readonly<{
     label:
       | 'auth.status'
@@ -148,39 +181,44 @@ export function createRemoteSshBootstrapMachineTaskKind(
 }>> {
   return {
     async run(ctx) {
-      const parsedRaw = parseRemoteBootstrapMachineParams(ctx.params);
-      const publicRelayUrl = typeof parsedRaw.relay.publicRelayUrl === 'string'
-        ? parsedRaw.relay.publicRelayUrl.trim()
-        : '';
-      const remoteRelayUrl = publicRelayUrl || parsedRaw.relay.relayUrl;
-      let parsedRemote = remoteRelayUrl && remoteRelayUrl !== parsedRaw.relay.relayUrl
-        ? {
-            ...parsedRaw,
-            relay: {
-              ...parsedRaw.relay,
-              relayUrl: remoteRelayUrl,
-            },
-          }
-        : parsedRaw;
-      let parsedLocalForApproval = parsedRaw;
+      let cleanupTempIdentityFile: (() => Promise<void>) | null = null;
+      try {
+        const parsedRaw = parseRemoteBootstrapMachineParams(ctx.params);
+        const publicRelayUrl = typeof parsedRaw.relay.publicRelayUrl === 'string'
+          ? parsedRaw.relay.publicRelayUrl.trim()
+          : '';
+        const remoteRelayUrl = publicRelayUrl || parsedRaw.relay.relayUrl;
+        let parsedRemote = remoteRelayUrl && remoteRelayUrl !== parsedRaw.relay.relayUrl
+          ? {
+              ...parsedRaw,
+              relay: {
+                ...parsedRaw.relay,
+                relayUrl: remoteRelayUrl,
+              },
+            }
+          : parsedRaw;
+        let parsedLocalForApproval = parsedRaw;
 
-      if (isLoopbackRelayUrl(parsedRemote.relay.relayUrl)) {
-        throw new SystemTaskExecutionError(
-          'relay_url_unreachable',
-          'Remote setup cannot use a loopback Relay URL. Provide relay.publicRelayUrl.',
-        );
-      }
-      const knownHostsMode = parsedRemote.knownHostsMode ?? 'app';
-      const auth = await resolveRemoteSshAuth({
-        ctx,
-        parsedRemote,
-      });
+        const relayRuntimeEnabled = parsedRemote.relayRuntime?.enabled === true;
+        if (isLoopbackRelayUrl(parsedRemote.relay.relayUrl) && !relayRuntimeEnabled) {
+          throw new SystemTaskExecutionError(
+            'relay_url_unreachable',
+            'Remote setup cannot use a loopback Relay URL. Provide relay.publicRelayUrl.',
+          );
+        }
+        const knownHostsMode = parsedRemote.knownHostsMode ?? 'app';
+        const authResolution = await resolveRemoteSshAuth({
+          ctx,
+          parsedRemote,
+        });
+        cleanupTempIdentityFile = authResolution.cleanup;
+        const auth = authResolution.auth;
 
-      ctx.emit({
-        type: 'progress',
-        stepId: 'ssh.trust',
-        message: 'Verifying SSH host trust',
-      });
+        ctx.emit({
+          type: 'progress',
+          stepId: 'ssh.trust',
+          message: 'Verifying SSH host trust',
+        });
 
       const trustResolution = await deps.resolveHostTrust({
         ssh: parsedRemote.ssh,
@@ -232,7 +270,23 @@ export function createRemoteSshBootstrapMachineTaskKind(
           mode: parsedRemote.relayRuntime.mode ?? 'user',
         };
         relayRuntimeLocalServerUrl = relayRuntime.relayUrl;
+
+        if (parsedRemote.relayRuntime.switchRelayUrl === true && publicRelayUrl) {
+          const canonicalRemoteRelayUrl = parsedRemote.relay.relayUrl;
+          parsedLocalForApproval = {
+            ...parsedLocalForApproval,
+            relay: {
+              ...parsedLocalForApproval.relay,
+              relayUrl: relayRuntime.relayUrl,
+              ...(canonicalRemoteRelayUrl && canonicalRemoteRelayUrl !== relayRuntime.relayUrl
+                ? { publicRelayUrl: canonicalRemoteRelayUrl }
+                : {}),
+            },
+          };
+        }
       }
+
+      const webappUrl = deriveWebappUrl(parsedRemote.relay.relayUrl, parsedRemote.relay.webappUrl);
 
       ctx.emit({
         type: 'progress',
@@ -240,130 +294,75 @@ export function createRemoteSshBootstrapMachineTaskKind(
         message: 'Ensuring Happier is installed on the remote machine',
       });
 
-      try {
-        requireOk(
-          await deps.runRemoteCommand({
-            label: 'server.configure',
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
-          }),
-          'server.configure',
-        );
-      } catch {
-        await deps.installRemoteCli({
-          parsed: parsedRemote,
-          auth,
-          knownHostsMode,
-        });
-        requireOk(
-          await deps.runRemoteCommand({
-            label: 'server.configure',
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
-          }),
-          'server.configure',
-        );
-      }
+      const relayProfile = {
+        serverUrl: parsedRemote.relay.relayUrl,
+        webappUrl,
+        localServerUrl: relayRuntimeLocalServerUrl ?? null,
+      } as const;
 
-      const authStatus = requireOk(
-        await deps.runRemoteCommand({
-          label: 'auth.status',
-          parsed: parsedRemote,
-          auth,
-          knownHostsMode,
-        }),
-        'auth.status',
-      );
+      const recipeExecutor: SetupMachineRecipeExecutor = createSetupMachineRecipeExecutorFromRemoteCommandRunner({
+        parsed: parsedRemote,
+        auth,
+        knownHostsMode,
+        ...(relayRuntimeLocalServerUrl ? { localServerUrl: relayRuntimeLocalServerUrl } : {}),
+        serviceMode: parsedRemote.serviceMode ?? 'user',
+        installRemoteCli: deps.installRemoteCli,
+        runRemoteCommand: deps.runRemoteCommand,
+        ...(deps.createHappierJsonExecutor ? { createHappierJsonExecutor: deps.createHappierJsonExecutor } : {}),
+      });
 
-      const statusMachineId = typeof authStatus.machineId === 'string' ? authStatus.machineId : null;
-      let publicKey: string | null = null;
-      let machineId: string | null = statusMachineId;
-
-      if (authStatus.authenticated !== true) {
-        ctx.emit({
-          type: 'progress',
-          stepId: 'ssh.auth.request',
-          message: 'Requesting remote machine pairing',
-        });
-
-        const authRequest = requireOk(
-          await deps.runRemoteCommand({
-            label: 'auth.request',
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
-          }),
-          'auth.request',
-        );
-
-        const approvalPayload = redactRemoteBootstrapPayload(authRequest);
-        if (!shouldAutoApproveAuthRequest(parsedRemote, approvalPayload)) {
-          const approval = await ctx.prompt({
-            kind: 'auth.approveRemoteProvisioning',
-            stepId: 'ssh.auth.approval',
-            message: 'Approve remote machine pairing',
-            data: approvalPayload,
-          }) as { approved?: boolean };
-          if (approval?.approved !== true) {
-            throw new SystemTaskExecutionError('approval_declined', 'Remote machine pairing was not approved');
+      const recipeResult = await runSetupMachineRecipe({
+        relayProfile,
+        executor: recipeExecutor,
+        steps: {
+          installService: (parsedRemote.serviceMode ?? 'user') !== 'none',
+          startService: (parsedRemote.serviceMode ?? 'user') !== 'none',
+          verifyService: false,
+        },
+        stepIds: {
+          authRequest: 'ssh.auth.request',
+          authWait: 'ssh.auth.wait',
+        },
+        signal: ctx.signal,
+        emit: (event) => {
+          ctx.emit({
+            type: 'progress',
+            stepId: event.stepId,
+            ...(event.message ? { message: event.message } : {}),
+          });
+        },
+        approvePairingRequest: async ({ publicKey, requestPayload }) => {
+          const approvalPayload = redactRemoteBootstrapPayload(requestPayload);
+          if (!shouldAutoApproveAuthRequest(parsedRemote, approvalPayload)) {
+            const approval = await ctx.prompt({
+              kind: 'auth.approveRemoteProvisioning',
+              stepId: 'ssh.auth.approval',
+              message: 'Approve remote machine pairing',
+              data: approvalPayload,
+            }) as { approved?: boolean };
+            if (approval?.approved !== true) {
+              throw new SystemTaskExecutionError('approval_declined', 'Remote machine pairing was not approved');
+            }
           }
-        }
 
-        publicKey = ensureNonEmptyString(authRequest.publicKey, 'auth.request.publicKey');
-        await deps.approveLocalAuthRequest({
-          publicKey,
-          parsed: parsedLocalForApproval,
-        });
-
-        ctx.emit({
-          type: 'progress',
-          stepId: 'ssh.auth.wait',
-          message: 'Waiting for remote machine pairing confirmation',
-        });
-
-        const authWait = requireOk(
-          await deps.runRemoteCommand({
-            label: 'auth.wait',
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-            data: relayRuntimeLocalServerUrl
-              ? { publicKey, localServerUrl: relayRuntimeLocalServerUrl }
-              : { publicKey },
-          }),
-          'auth.wait',
-        );
-
-        machineId = typeof authWait.machineId === 'string' ? authWait.machineId : statusMachineId;
-      }
-
-      if ((parsedRemote.serviceMode ?? 'user') !== 'none') {
-        requireOk(
-          await deps.runRemoteCommand({
-            label: 'daemon.service.install',
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
-          }),
-          'daemon.service.install',
-        );
-        requireOk(
-          await deps.runRemoteCommand({
-            label: 'daemon.service.start',
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-            ...(relayRuntimeLocalServerUrl ? { data: { localServerUrl: relayRuntimeLocalServerUrl } } : {}),
-          }),
-          'daemon.service.start',
-        );
-      }
+          try {
+            await deps.approveLocalAuthRequest({
+              publicKey,
+              parsed: parsedLocalForApproval,
+            });
+          } catch (error) {
+            if (parsedRemote.requireLocalApproval === true && shouldIgnoreLocalApprovalError(error)) {
+              throw new SystemTaskExecutionError(
+                'local_approval_required',
+                'Remote setup requires local approval, but this CLI is not authenticated.',
+              );
+            }
+            if (!shouldIgnoreLocalApprovalError(error)) {
+              throw error;
+            }
+          }
+        },
+      });
 
       ctx.emit({
         type: 'progress',
@@ -371,11 +370,14 @@ export function createRemoteSshBootstrapMachineTaskKind(
         message: 'Remote bootstrap finished',
       });
 
-      return {
-        ...(publicKey ? { publicKey } : {}),
-        machineId,
-        ...(relayRuntime ? { relayRuntime } : {}),
-      };
+        return {
+          ...(recipeResult.publicKey ? { publicKey: recipeResult.publicKey } : {}),
+          machineId: recipeResult.machineId,
+          ...(relayRuntime ? { relayRuntime } : {}),
+        };
+      } finally {
+        await cleanupTempIdentityFile?.().catch(() => {});
+      }
     },
   };
 }
@@ -394,22 +396,35 @@ export function parseRemoteBootstrapMachineParams(params: unknown): RemoteBootst
   const relayRuntime = relayRuntimeRaw && typeof relayRuntimeRaw === 'object' && !Array.isArray(relayRuntimeRaw)
     ? relayRuntimeRaw as Record<string, unknown>
     : null;
+  const relayRuntimeEnabled = relayRuntime?.enabled === true;
+  const ssh = parseSystemTaskSshConfig(value.ssh);
+  const sshRecord = value.ssh && typeof value.ssh === 'object' && !Array.isArray(value.ssh)
+    ? (value.ssh as Record<string, unknown>)
+    : null;
+  const identityPrivateKey = sshRecord && typeof sshRecord.identityPrivateKey === 'string'
+    ? sshRecord.identityPrivateKey.trim()
+    : '';
 
   return {
-    ssh: parseSystemTaskSshConfig(value.ssh),
+    ssh,
+    ...(identityPrivateKey ? { identityPrivateKey } : {}),
     relay: {
       relayUrl: ensureNonEmptyString(relayRecord.relayUrl, 'relay.relayUrl'),
       ...(typeof relayRecord.webappUrl === 'string' ? { webappUrl: relayRecord.webappUrl } : {}),
       ...(typeof relayRecord.publicRelayUrl === 'string' ? { publicRelayUrl: relayRecord.publicRelayUrl } : {}),
     },
+    requireLocalApproval: value.requireLocalApproval === true,
     channel: value.channel === 'preview' || value.channel === 'dev' ? value.channel : 'stable',
     serviceMode: value.serviceMode === 'none' ? 'none' : 'user',
     knownHostsMode: value.knownHostsMode === 'system' ? 'system' : 'app',
     ...(relayRuntime
       ? {
           relayRuntime: {
-            enabled: relayRuntime.enabled === true,
+            enabled: relayRuntimeEnabled,
             mode: relayRuntime.mode === 'system' ? 'system' : 'user',
+            switchRelayUrl: relayRuntimeEnabled
+              ? (relayRuntime.switchRelayUrl === false ? false : true)
+              : false,
             ...(relayRuntime.env && typeof relayRuntime.env === 'object' && !Array.isArray(relayRuntime.env)
               ? {
                   env: Object.fromEntries(
@@ -436,46 +451,75 @@ export function redactRemoteBootstrapPayload(params: Record<string, unknown>): S
 }
 
 function normalizeRemoteSshAuth(ssh: SystemTaskSshConnectionConfig): RemoteSshAuth {
-  if (ssh.auth === 'keyfile') {
-    return {
-      mode: 'keyFile',
-      privateKeyPath: ensureNonEmptyString(ssh.identityFile, 'ssh.identityFile'),
-    };
-  }
-  if (ssh.auth === 'password') {
-    return {
-      mode: 'password',
-      password: '',
-    };
-  }
+  if (ssh.auth === 'keyfile') return { mode: 'keyFile', privateKeyPath: '' };
+  if (ssh.auth === 'password') return { mode: 'password', password: '' };
   return { mode: 'agent' };
 }
 
 async function resolveRemoteSshAuth(params: Readonly<{
   ctx: Pick<Parameters<InteractiveSystemTaskKind['run']>[0], 'prompt'>;
   parsedRemote: RemoteBootstrapMachineParams;
-}>): Promise<RemoteSshAuth> {
+}>): Promise<Readonly<{ auth: RemoteSshAuth; cleanup: (() => Promise<void>) | null }>> {
   const auth = normalizeRemoteSshAuth(params.parsedRemote.ssh);
-  if (auth.mode !== 'password') {
-    return auth;
+
+  if (auth.mode === 'password') {
+    const passwordFromParams = typeof params.parsedRemote.ssh.password === 'string'
+      ? params.parsedRemote.ssh.password.trim()
+      : '';
+    if (passwordFromParams) {
+      return {
+        auth: { mode: 'password', password: passwordFromParams },
+        cleanup: null,
+      };
+    }
+
+    const answer = await params.ctx.prompt({
+      kind: 'ssh.password',
+      stepId: 'ssh.password',
+      message: `Enter the SSH password for ${params.parsedRemote.ssh.target}`,
+      data: {
+        target: params.parsedRemote.ssh.target,
+      },
+    }) as Readonly<{ password?: string }> | null;
+    const password = typeof answer?.password === 'string' ? answer.password : '';
+    if (!password) {
+      throw new SystemTaskExecutionError('password_required', 'SSH password auth requires a password.');
+    }
+    return {
+      auth: { mode: 'password', password },
+      cleanup: null,
+    };
   }
 
-  const answer = await params.ctx.prompt({
-    kind: 'ssh.password',
-    stepId: 'ssh.password',
-    message: `Enter the SSH password for ${params.parsedRemote.ssh.target}`,
-    data: {
-      target: params.parsedRemote.ssh.target,
-    },
-  }) as Readonly<{ password?: string }> | null;
-  const password = typeof answer?.password === 'string' ? answer.password : '';
-  if (!password) {
-    throw new SystemTaskExecutionError('password_required', 'SSH password auth requires a password.');
+  if (auth.mode === 'keyFile') {
+    const identityFile = typeof params.parsedRemote.ssh.identityFile === 'string'
+      ? params.parsedRemote.ssh.identityFile.trim()
+      : '';
+    if (identityFile) {
+      return {
+        auth: { mode: 'keyFile', privateKeyPath: identityFile },
+        cleanup: null,
+      };
+    }
+
+    const privateKeyMaterial = typeof params.parsedRemote.identityPrivateKey === 'string'
+      ? params.parsedRemote.identityPrivateKey.trim()
+      : '';
+    if (!privateKeyMaterial) {
+      throw new SystemTaskExecutionError('invalid_params', 'Missing ssh.identityFile for keyfile auth.');
+    }
+
+    const materialized = await materializeSshIdentityPrivateKeyToTempFile({
+      privateKey: privateKeyMaterial,
+      prefix: 'happier-ssh-bootstrap-',
+    });
+    return {
+      auth: { mode: 'keyFile', privateKeyPath: materialized.identityFilePath },
+      cleanup: materialized.cleanup,
+    };
   }
-  return {
-    mode: 'password',
-    password,
-  };
+
+  return { auth: { mode: 'agent' }, cleanup: null };
 }
 
 function parseRemoteBootstrapPromptResolution(

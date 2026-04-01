@@ -204,10 +204,12 @@ export function planServiceAction(params: Readonly<{
     const unitName = `${label}.service`;
     if (action === 'install') {
       commands.push({ cmd: 'systemctl', args: [...prefix, 'daemon-reload'] });
-      commands.push({
-        cmd: 'systemctl',
-        args: persistent ? [...prefix, 'enable', '--now', unitName] : [...prefix, 'start', unitName],
-      });
+      if (persistent) {
+        commands.push({ cmd: 'systemctl', args: [...prefix, 'enable', unitName] });
+      }
+      // Always restart after install so updated unit/env changes take effect even when the service is already running.
+      // `systemctl enable --now` does not restart existing services.
+      commands.push({ cmd: 'systemctl', args: [...prefix, 'restart', unitName] });
       return { writes, commands };
     }
     if (action === 'uninstall') {

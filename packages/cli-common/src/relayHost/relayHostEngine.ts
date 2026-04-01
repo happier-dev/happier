@@ -165,14 +165,15 @@ function resolveRelayDefaultsForRemote(params: Readonly<{
   });
 }
 
-function buildRemoteInstallBinaryShimCommand(params: Readonly<{ sourcePath: string; destPath: string }>): string {
+function buildRemoteInstallBinaryShimCommand(params: Readonly<{ sourcePath: string; destPath: string; privilegedPrefix?: string }>): string {
   const source = quoteRemoteShellArg(params.sourcePath);
   const dest = quoteRemoteShellArg(params.destPath);
+  const privilegedPrefix = params.privilegedPrefix ?? '';
   return [
     'set -eu',
-    `rm -f ${dest}`,
-    `(ln -s ${source} ${dest} 2>/dev/null || cp ${source} ${dest})`,
-    `chmod +x ${dest} 2>/dev/null || true`,
+    `${privilegedPrefix}rm -f ${dest}`,
+    `(${privilegedPrefix}ln -s ${source} ${dest} 2>/dev/null || ${privilegedPrefix}cp ${source} ${dest})`,
+    `${privilegedPrefix}chmod +x ${dest} 2>/dev/null || true`,
   ].join('; ');
 }
 
@@ -332,6 +333,29 @@ function buildRemoteReadJsonFileCommand(path: string): string {
   return `if [ -f ${quoted} ]; then cat ${quoted}; else echo ''; fi`;
 }
 
+function buildRemoteReadTextFileCommand(params: Readonly<{ path: string; privilegedPrefix?: string }>): string {
+  const quoted = quoteRemoteShellArg(params.path);
+  const prefix = String(params.privilegedPrefix ?? '').trim();
+  const cat = prefix ? `${prefix}cat` : 'cat';
+  return `if [ -f ${quoted} ]; then ${cat} ${quoted} 2>/dev/null || true; else echo ''; fi`;
+}
+
+function resolveConfiguredRelayBaseUrl(params: Readonly<{ fallbackBaseUrl: string; envText: string }>): string {
+  const raw = String(params.envText ?? '').trim();
+  if (!raw) return params.fallbackBaseUrl;
+
+  const parsed = parseEnvText(raw);
+  const portRaw = typeof parsed.PORT === 'string' ? parsed.PORT.trim() : '';
+  const port = portRaw ? Number.parseInt(portRaw, 10) : Number.NaN;
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    return params.fallbackBaseUrl;
+  }
+
+  const hostRaw = typeof parsed.HAPPIER_SERVER_HOST === 'string' ? parsed.HAPPIER_SERVER_HOST.trim() : '';
+  const host = hostRaw && hostRaw !== '0.0.0.0' ? hostRaw : '127.0.0.1';
+  return `http://${host}:${port}`;
+}
+
 function tryParseJsonObject(text: string): Record<string, unknown> | null {
   const raw = String(text ?? '').trim();
   if (!raw) return null;
@@ -416,23 +440,28 @@ function buildRemoteControlCommand(params: Readonly<{ backend: ServiceBackend; s
     return `systemctl --user ${params.action} ${quoteRemoteShellArg(svc)}`;
   }
   if (params.backend === 'systemd-system') {
+    const sudoSetup = "SUDO_PREFIX=''; if [ \"$(id -u)\" -ne 0 ]; then SUDO_PREFIX=\"sudo -n \"; fi; ";
     if (params.action === 'uninstall') {
-      return `systemctl disable --now ${quoteRemoteShellArg(svc)} 2>/dev/null || true; systemctl daemon-reload`;
+      return `${sudoSetup}${'${SUDO_PREFIX}'}systemctl disable --now ${quoteRemoteShellArg(svc)} 2>/dev/null || true; ${'${SUDO_PREFIX}'}systemctl daemon-reload`;
     }
-    return `systemctl ${params.action} ${quoteRemoteShellArg(svc)}`;
+    return `${sudoSetup}${'${SUDO_PREFIX}'}systemctl ${params.action} ${quoteRemoteShellArg(svc)}`;
   }
   if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
+    const sudoSetup = params.backend === 'launchd-system'
+      ? "SUDO_PREFIX=''; if [ \"$(id -u)\" -ne 0 ]; then SUDO_PREFIX=\"sudo -n \"; fi; "
+      : '';
+    const privilegedPrefix = params.backend === 'launchd-system' ? '${SUDO_PREFIX}' : '';
     if (params.action === 'uninstall') {
-      return `launchctl unload -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))} 2>/dev/null || true; launchctl remove ${quoteRemoteShellArg(params.serviceName)} 2>/dev/null || true`;
+      return `${sudoSetup}${privilegedPrefix}launchctl unload -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))} 2>/dev/null || true; ${privilegedPrefix}launchctl remove ${quoteRemoteShellArg(params.serviceName)} 2>/dev/null || true`;
     }
     if (params.action === 'stop') {
-      return `launchctl unload -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))}`;
+      return `${sudoSetup}${privilegedPrefix}launchctl unload -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))}`;
     }
     if (params.action === 'restart') {
       const plistPath = resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system');
-      return `launchctl unload -w ${quoteRemoteShellArg(plistPath)} 2>/dev/null || true; launchctl load -w ${quoteRemoteShellArg(plistPath)}`;
+      return `${sudoSetup}${privilegedPrefix}launchctl unload -w ${quoteRemoteShellArg(plistPath)} 2>/dev/null || true; ${privilegedPrefix}launchctl load -w ${quoteRemoteShellArg(plistPath)}`;
     }
-    return `launchctl load -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))}`;
+    return `${sudoSetup}${privilegedPrefix}launchctl load -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))}`;
   }
   throw new Error(`Unsupported remote backend: ${params.backend}`);
 }
@@ -539,15 +568,23 @@ function buildRemoteRelayRuntimeCleanupCommand(params: Readonly<{
   configDir: string;
   dataDir: string;
   logDir: string;
+  useSudo?: boolean;
 }>): string {
+  const privilegedPrefix = params.useSudo ? '${SUDO_PREFIX}' : '';
   return [
     'set -eu',
-    `rm -f ${quoteRemoteShellArg(params.definitionPath)}`,
-    `rm -f ${quoteRemoteShellArg(posixPath.join(params.binDir, 'happier-server'))}`,
-    `rm -rf ${quoteRemoteShellArg(params.installRoot)}`,
-    `rm -rf ${quoteRemoteShellArg(params.configDir)}`,
-    `rm -rf ${quoteRemoteShellArg(params.dataDir)}`,
-    `rm -rf ${quoteRemoteShellArg(params.logDir)}`,
+    ...(params.useSudo
+      ? [
+          "SUDO_PREFIX=''",
+          'if [ "$(id -u)" -ne 0 ]; then SUDO_PREFIX="sudo -n "; fi',
+        ]
+      : []),
+    `${privilegedPrefix}rm -f ${quoteRemoteShellArg(params.definitionPath)}`,
+    `${privilegedPrefix}rm -f ${quoteRemoteShellArg(posixPath.join(params.binDir, 'happier-server'))}`,
+    `${privilegedPrefix}rm -rf ${quoteRemoteShellArg(params.installRoot)}`,
+    `${privilegedPrefix}rm -rf ${quoteRemoteShellArg(params.configDir)}`,
+    `${privilegedPrefix}rm -rf ${quoteRemoteShellArg(params.dataDir)}`,
+    `${privilegedPrefix}rm -rf ${quoteRemoteShellArg(params.logDir)}`,
   ].join('; ');
 }
 
@@ -586,18 +623,28 @@ async function installRemoteService(params: Readonly<{
   const remoteDefinitionPath = params.definitionPath;
   const remoteStagedDefinitionPath = `${staged.remoteRoot}/service-definition`;
   const installCommands: string[] = [];
+  const privilegedPrefix = params.backend === 'systemd-system' || params.backend === 'launchd-system'
+    ? '${SUDO_PREFIX}'
+    : '';
   installCommands.push('set -eu');
-  installCommands.push(`mkdir -p ${quoteRemoteShellArg(dirname(remoteDefinitionPath))}`);
-  installCommands.push(`cp ${quoteRemoteShellArg(remoteStagedDefinitionPath)} ${quoteRemoteShellArg(remoteDefinitionPath)}`);
+  if (privilegedPrefix) {
+    installCommands.push("SUDO_PREFIX=''");
+    installCommands.push('if [ "$(id -u)" -ne 0 ]; then SUDO_PREFIX="sudo -n "; fi');
+  }
+  installCommands.push(`${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(dirname(remoteDefinitionPath))}`);
+  installCommands.push(`${privilegedPrefix}cp ${quoteRemoteShellArg(remoteStagedDefinitionPath)} ${quoteRemoteShellArg(remoteDefinitionPath)}`);
 
   if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
     const prefix = params.backend === 'systemd-user' ? '--user ' : '';
-    installCommands.push(`systemctl ${prefix}daemon-reload`);
-    installCommands.push(`systemctl ${prefix}enable --now ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
+    installCommands.push(`${privilegedPrefix}systemctl ${prefix}daemon-reload`);
+    // Restart after install so updated unit/env changes take effect even when the service is already running.
+    // `systemctl enable --now` does not restart existing services.
+    installCommands.push(`${privilegedPrefix}systemctl ${prefix}enable ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
+    installCommands.push(`${privilegedPrefix}systemctl ${prefix}restart ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
   } else if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
     const plist = quoteRemoteShellArg(remoteDefinitionPath);
-    installCommands.push(`launchctl unload -w ${plist} 2>/dev/null || true`);
-    installCommands.push(`launchctl load -w ${plist}`);
+    installCommands.push(`${privilegedPrefix}launchctl unload -w ${plist} 2>/dev/null || true`);
+    installCommands.push(`${privilegedPrefix}launchctl load -w ${plist}`);
   } else {
     throw new Error(`Unsupported remote backend: ${params.backend}`);
   }
@@ -610,6 +657,10 @@ async function installRemoteService(params: Readonly<{
     remoteCommand: installCommands.join('; '),
   });
   if (result.status !== 0) {
+    const stderr = String(result.stderr ?? '').trim();
+    if ((params.backend === 'systemd-user') && /failed to connect to bus/i.test(stderr)) {
+      throw new Error('Systemd user service is unavailable. Ensure the host has a user systemd session (e.g. enable lingering) or use system mode.');
+    }
     throw new Error(result.stderr.trim() || 'Failed to install relay service');
   }
 }
@@ -681,12 +732,18 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       };
     })();
     const installed = Boolean(version) || existsSync(installBinaryPath);
+    const envPath = join(defaults.configDir, 'server.env');
+    const envText = existsSync(envPath) ? await readFile(envPath, 'utf8').catch(() => '') : '';
+    const baseUrl = resolveConfiguredRelayBaseUrl({
+      fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+      envText,
+    });
 
     return {
       installed,
       version,
       service,
-      baseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+      baseUrl,
       healthy: service.active === true,
     };
   }
@@ -786,6 +843,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const channel = normalizeChannel(params.parsed.channel);
     const defaults = resolveRelayDefaultsForRemote({ platform, channel, mode });
     const statePath = `${defaults.installRoot}/self-host-state.json`;
+    const envPath = `${defaults.configDir}/server.env`;
 
     const stateResult = await deps.runRemoteText({
       ssh: params.ssh,
@@ -818,11 +876,24 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       remoteCommand: buildRemoteProbeExistsCommand({ path: installBinaryPath, kind: 'file' }),
     }).then((result) => String(result.stdout ?? '').trim() === 'yes').catch(() => false);
 
+    const privilegedPrefix = backend === 'systemd-system' || backend === 'launchd-system'
+      ? 'sudo -n '
+      : '';
+    const envText = await deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode,
+      remoteCommand: buildRemoteReadTextFileCommand({ path: envPath, privilegedPrefix }),
+    }).then((result) => String(result.stdout ?? '')).catch(() => '');
+    const baseUrl = resolveConfiguredRelayBaseUrl({
+      fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+      envText,
+    });
+
     return {
       installed: Boolean(version) || binaryExists,
       version,
       service,
-      baseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+      baseUrl,
       healthy: service.active === true,
     };
   }
@@ -944,20 +1015,30 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const remoteEnvPath = `${staged.remoteRoot}/server.env`;
     const remoteStatePath = `${staged.remoteRoot}/self-host-state.json`;
 
+    const privilegedPrefix = backend === 'systemd-system' || backend === 'launchd-system'
+      ? '${SUDO_PREFIX}'
+      : '';
+
     const setupCommands = [
       'set -eu',
-      `mkdir -p ${quoteRemoteShellArg(defaults.installRoot)}`,
-      `mkdir -p ${quoteRemoteShellArg(defaults.binDir)}`,
-      `mkdir -p ${quoteRemoteShellArg(defaults.configDir)}`,
-      `mkdir -p ${quoteRemoteShellArg(defaults.dataDir)}`,
-      `mkdir -p ${quoteRemoteShellArg(filesDir)}`,
-      `mkdir -p ${quoteRemoteShellArg(dbDir)}`,
-      `mkdir -p ${quoteRemoteShellArg(defaults.logDir)}`,
-      `mkdir -p ${quoteRemoteShellArg(`${defaults.installRoot}/bin`)}`,
-      buildRemoteInstallBinaryShimCommand({ sourcePath: remoteServer.binaryPath, destPath: installServerBinaryPath }),
-      buildRemoteInstallBinaryShimCommand({ sourcePath: installServerBinaryPath, destPath: shimPath }),
-      `cp ${quoteRemoteShellArg(remoteEnvPath)} ${quoteRemoteShellArg(configEnvPath)}`,
-      `cp ${quoteRemoteShellArg(remoteStatePath)} ${quoteRemoteShellArg(statePath)}`,
+      ...(privilegedPrefix
+        ? [
+            "SUDO_PREFIX=''",
+            'if [ "$(id -u)" -ne 0 ]; then SUDO_PREFIX="sudo -n "; fi',
+          ]
+        : []),
+      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.installRoot)}`,
+      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.binDir)}`,
+      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.configDir)}`,
+      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.dataDir)}`,
+      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(filesDir)}`,
+      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(dbDir)}`,
+      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.logDir)}`,
+      `${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(`${defaults.installRoot}/bin`)}`,
+      buildRemoteInstallBinaryShimCommand({ sourcePath: remoteServer.binaryPath, destPath: installServerBinaryPath, privilegedPrefix }),
+      buildRemoteInstallBinaryShimCommand({ sourcePath: installServerBinaryPath, destPath: shimPath, privilegedPrefix }),
+      `${privilegedPrefix}cp ${quoteRemoteShellArg(remoteEnvPath)} ${quoteRemoteShellArg(configEnvPath)}`,
+      `${privilegedPrefix}cp ${quoteRemoteShellArg(remoteStatePath)} ${quoteRemoteShellArg(statePath)}`,
       staged.cleanupRemoteCommand,
     ].join('; ');
 
@@ -980,8 +1061,14 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       serviceName: defaults.serviceName,
     });
 
+    const portRaw = renderedEnv.parsed.PORT;
+    const parsedPort = typeof portRaw === 'string' ? Number.parseInt(portRaw.trim(), 10) : Number.NaN;
+    const port = Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535
+      ? parsedPort
+      : defaults.serverPort;
+
     return {
-      relayUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+      relayUrl: `http://127.0.0.1:${port}`,
       mode,
     };
   }
@@ -1029,6 +1116,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       configDir: defaults.configDir,
       dataDir: defaults.dataDir,
       logDir: defaults.logDir,
+      useSudo: backend === 'systemd-system' || backend === 'launchd-system',
     });
     const cleanupResult = await deps.runRemoteText({
       ssh: params.ssh,
