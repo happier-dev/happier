@@ -10,9 +10,12 @@ async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
 }
 
-async function writeYarnWorkspaceBuildStub({ binDir, outputPath }) {
+async function writeYarnWorkspaceBuildStub({ binDir, outputPath, delaySecondsByPackage = {} }) {
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
+  const delayCliCommon = Number(delaySecondsByPackage?.cliCommon ?? 0);
+  const delayProtocol = Number(delaySecondsByPackage?.protocol ?? 0);
+  const delayAgents = Number(delaySecondsByPackage?.agents ?? 0);
   await writeFile(
     yarnPath,
     [
@@ -28,6 +31,7 @@ async function writeYarnWorkspaceBuildStub({ binDir, outputPath }) {
       '# Simulate `yarn -s build` creating dist outputs for workspace packages.',
       'if [[ "${1:-}" == "-s" && "${2:-}" == "build" ]]; then',
       '  if [[ "$(pwd)" == */packages/protocol ]]; then',
+      delayProtocol > 0 ? `    sleep ${delayProtocol}` : '    true',
       '    mkdir -p dist',
       "    printf '%s\\n' 'export const ok = true;' > dist/index.js",
       "    printf '%s\\n' \"import './machineTransfer/transferStream.js';\" >> dist/index.js",
@@ -40,12 +44,14 @@ async function writeYarnWorkspaceBuildStub({ binDir, outputPath }) {
       '    exit 0',
       '  fi',
       '  if [[ "$(pwd)" == */packages/agents ]]; then',
+      delayAgents > 0 ? `    sleep ${delayAgents}` : '    true',
       '    mkdir -p dist',
       "    printf '%s\\n' 'export const ok = true;' > dist/index.js",
       "    printf '%s\\n' 'export declare const ok: boolean;' > dist/index.d.ts",
       '    exit 0',
       '  fi',
       '  if [[ "$(pwd)" == */packages/cli-common ]]; then',
+      delayCliCommon > 0 ? `    sleep ${delayCliCommon}` : '    true',
       '    mkdir -p dist',
       "    printf '%s\\n' 'export const ok = true;' > dist/index.js",
       "    printf '%s\\n' 'export declare const ok: boolean;' > dist/index.d.ts",
@@ -224,6 +230,63 @@ test('ensureWorkspacePackagesBuiltForComponent walks the full internal workspace
   assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'index.js'), 'utf-8')), true);
   assert.equal(Boolean(await readFile(join(agentsDir, 'dist', 'index.js'), 'utf-8')), true);
   assert.equal(Boolean(await readFile(join(cliCommonDir, 'dist', 'index.js'), 'utf-8')), true);
+});
+
+test('ensureWorkspacePackagesBuiltForComponent does not run concurrent builds for the same workspace package', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-concurrency-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), {
+    name: '@happier-dev/app',
+    private: true,
+    dependencies: {
+      '@happier-dev/cli-common': '0.0.0',
+    },
+  });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const cliCommonDir = join(root, 'packages', 'cli-common');
+  await mkdir(cliCommonDir, { recursive: true });
+  await writeJson(join(cliCommonDir, 'package.json'), {
+    name: '@happier-dev/cli-common',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+  await writeJson(join(cliCommonDir, 'tsconfig.json'), { compilerOptions: { outDir: 'dist' } });
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnWorkspaceBuildStub({
+    binDir,
+    outputPath,
+    // Make the build slow enough that two concurrent callers would otherwise both decide to rebuild.
+    delaySecondsByPackage: { cliCommon: 1 },
+  });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await Promise.all([
+    ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env }),
+    ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env }),
+  ]);
+
+  const out = await readFile(outputPath, 'utf-8');
+  const occurrences = out.split('\n').filter((l) => l.includes('/packages/cli-common :: -s build')).length;
+  assert.equal(occurrences, 1);
 });
 
 test('ensureWorkspacePackagesBuiltForComponent rebuilds internal workspaces when exported entrypoints have missing local imports', async (t) => {
