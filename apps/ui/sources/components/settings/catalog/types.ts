@@ -3,7 +3,8 @@ import type { UnistylesThemes } from 'react-native-unistyles';
 
 import type { TranslationKey } from '@/text';
 
-export const SETTINGS_PAGE_IDS_V1 = {
+export const SETTINGS_PAGE_IDS = {
+    settings: 'settings',
     groupProfileAndAccount: 'groupProfileAndAccount',
     groupGeneral: 'groupGeneral',
     groupAiAndAgents: 'groupAiAndAgents',
@@ -11,13 +12,13 @@ export const SETTINGS_PAGE_IDS_V1 = {
     groupFilesAndSourceControl: 'groupFilesAndSourceControl',
     groupSystem: 'groupSystem',
 
-    general: 'general',
     account: 'account',
     secrets: 'secrets',
     usage: 'usage',
     machines: 'machines',
     machinesAdd: 'machinesAdd',
     machinesThisComputer: 'machinesThisComputer',
+    remoteHosts: 'remoteHosts',
 
     appearance: 'appearance',
     language: 'language',
@@ -59,7 +60,7 @@ export const SETTINGS_PAGE_IDS_V1 = {
 } as const;
 
 export type SettingsPageId =
-    (typeof SETTINGS_PAGE_IDS_V1)[keyof typeof SETTINGS_PAGE_IDS_V1];
+    (typeof SETTINGS_PAGE_IDS)[keyof typeof SETTINGS_PAGE_IDS];
 
 export type SettingsPageGate = Readonly<{
     featureId?: string;

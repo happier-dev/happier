@@ -10,27 +10,35 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { useResolvedSettingsPageCatalog } from '@/components/settings/catalogV1/runtime/useResolvedSettingsPageCatalog';
-import type { ResolvedSettingsPageNode } from '@/components/settings/catalogV1/types';
+import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
+import type { ResolvedSettingsPageNode } from '@/components/settings/catalog/types';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.surface,
         paddingTop: 10,
     },
     searchContainer: {
         paddingHorizontal: 10,
         paddingBottom: 8,
     },
-    searchInput: {
+    searchBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
         borderRadius: 10,
-        paddingHorizontal: 10,
+        paddingHorizontal: 12,
         paddingVertical: 8,
         backgroundColor: theme.colors.surface,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.divider,
+    },
+    searchInput: {
+        flex: 1,
+        padding: 0,
+        margin: 0,
+        minHeight: 20,
         color: theme.colors.text,
         ...(Platform.select({
             web: {
@@ -44,6 +52,9 @@ const stylesheet = StyleSheet.create((theme) => ({
             },
             default: {},
         }) as object),
+    },
+    settingsPagesContainer: {
+        backgroundColor: theme.colors.surface,
     },
 }));
 
@@ -84,10 +95,19 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
 
     const defaultExpanded = React.useMemo(() => {
         const expanded = new Set<string>();
-        // Expand all top-level groups by default so the sidebar is immediately useful.
-        for (const node of resolved.tree) {
-            expanded.add(node.id);
-        }
+        // Expand the top-level and first-level groups by default so the sidebar is immediately useful.
+        // This keeps settings categories visible without forcing the user to click multiple times.
+        const visit = (items: readonly ResolvedSettingsPageNode[], depth: number) => {
+            for (const node of items) {
+                if (depth <= 1) {
+                    expanded.add(node.id);
+                }
+                if (node.children) {
+                    visit(node.children, depth + 1);
+                }
+            }
+        };
+        visit(resolved.tree, 0);
         if (resolved.activePageId) {
             for (const ancestor of collectAncestors(resolved.activePageId, parents)) {
                 expanded.add(ancestor);
@@ -155,7 +175,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
         const resolvedIconNode = iconNode ?? (
             <Ionicons
                 name="ellipse-outline"
-                size={18}
+                size={14}
                 color={theme.colors.textSecondary}
             />
         );
@@ -178,7 +198,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
         const hoveredIconNode = hasChildren ? iconPressable(
             <Ionicons
                 name={expanded ? 'chevron-down' : 'chevron-forward'}
-                size={16}
+                size={14}
                 color={theme.colors.textSecondary}
             />
         ) : undefined;
@@ -227,21 +247,24 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
     return (
         <View testID="settings-sidebar" style={styles.root}>
             <View style={styles.searchContainer}>
-                <TextInput
-                    testID="settings-sidebar.searchInput"
-                    placeholder={t('settingsSearch.placeholder')}
-                    placeholderTextColor={theme.colors.input.placeholder}
-                    value={query}
-                    onChangeText={setQuery}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    style={styles.searchInput}
-                />
+                <View style={styles.searchBar}>
+                    <Ionicons name="search-outline" size={14} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
+                    <TextInput
+                        testID="settings-sidebar.searchInput"
+                        placeholder={t('settingsSearch.placeholder')}
+                        placeholderTextColor={theme.colors.input.placeholder}
+                        value={query}
+                        onChangeText={setQuery}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        style={styles.searchInput}
+                    />
+                </View>
             </View>
 
             <ItemList style={{ paddingTop: 0 }}>
                 {normalizedQuery ? (
-                    <ItemGroup>
+                    <View style={styles.settingsPagesContainer}>
                         {results.map((result) => {
                             const node = routeNodes.find((candidate) => candidate.id === result.id);
                             return (
@@ -249,8 +272,9 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                                     key={result.id}
                                     testID={`settings-sidebar.searchResult.${result.id}`}
                                     title={node ? String(t(node.titleKey)) : String(result.id)}
-                                    icon={<Ionicons name="search-outline" size={18} color={theme.colors.textSecondary} />}
+                                    icon={<Ionicons name="search-outline" size={14} color={theme.colors.textSecondary} />}
                                     density="compact"
+                                    showChevron={false}
                                     onPress={() => {
                                         setQuery('');
                                         router.push(result.route as any);
@@ -258,11 +282,11 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                                 />
                             );
                         })}
-                    </ItemGroup>
+                    </View>
                 ) : (
-                    <ItemGroup>
+                    <View style={styles.settingsPagesContainer}>
                         {resolved.tree.map((node) => renderTreeNode(node, 0))}
-                    </ItemGroup>
+                    </View>
                 )}
             </ItemList>
         </View>

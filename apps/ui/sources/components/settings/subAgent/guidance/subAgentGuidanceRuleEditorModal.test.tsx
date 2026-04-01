@@ -127,7 +127,6 @@ function SubAgentGuidanceRuleEditorModalHarness(
             subtitle={card?.subtitle}
             actions={card?.actions}
             footer={card?.footer}
-            layout={card?.layout ?? 'fit'}
             dimensions={card?.dimensions}
 	        >
 	            <props.component {...props} setChrome={setChrome} />

@@ -6,6 +6,7 @@ export const SETTINGS_ROUTES = {
     machines: '/settings/machines',
     machinesAdd: '/settings/machines/add',
     machinesThisComputer: '/settings/machines/this-computer',
+    remoteHosts: '/settings/remote-hosts',
     appearance: '/settings/appearance',
     language: '/settings/language',
     features: '/settings/features',
@@ -39,5 +40,3 @@ export const SETTINGS_ROUTES = {
     reportIssue: '/settings/report-issue',
     runs: '/runs',
 } as const;
-
-export const SETTINGS_ROUTES_V1 = SETTINGS_ROUTES;

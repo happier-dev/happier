@@ -44,18 +44,17 @@ vi.mock('@/components/settings/acpCatalog/AcpCatalogSettingsSections', () => ({
     AcpCatalogSettingsSections: () => React.createElement('AcpCatalogSettingsSections'),
 }));
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
-    return {
-        ...actual,
-        AGENT_IDS: ['codex', 'customAcp', 'kiro'],
-        getAgentCore: (agentId: string) => ({
-            displayNameKey: `agent.${agentId}`,
-            availability: { experimental: agentId === 'kiro' },
-            ui: { agentPickerIconName: 'code-slash-outline' },
-        }),
-    };
-});
+vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: ['codex', 'customAcp', 'kiro'],
+    getAgentCore: (agentId: string) => ({
+        displayNameKey: `agent.${agentId}`,
+        availability: { experimental: agentId === 'kiro' },
+        ui: { agentPickerIconName: 'code-slash-outline' },
+    }),
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => undefined,
+}));
 
 afterEach(() => {
     resetSessionSettingsEntryState();

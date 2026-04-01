@@ -97,7 +97,6 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
     leading,
     title: chromeTitle,
     subtitle: chromeSubtitle,
-    layout: 'fill' as const,
   }), [chromeSubtitle, chromeTitle, leading]);
 
   useModalCardChrome(props.setChrome, chrome);

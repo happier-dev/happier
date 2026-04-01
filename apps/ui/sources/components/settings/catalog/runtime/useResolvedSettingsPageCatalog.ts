@@ -6,7 +6,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
-import { SETTINGS_PAGE_CATALOG_V1, flattenSettingsPageCatalogV1 } from '../pageCatalog';
+import { SETTINGS_PAGE_CATALOG, flattenSettingsPageCatalog } from '../pageCatalog';
 import type { ResolvedSettingsPageNode, SettingsPageId, SettingsPageNode, SettingsPageSearchResult } from '../types';
 
 type ResolvedCatalog = Readonly<{
@@ -135,6 +135,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
     const promptsLibraryEnabled = useFeatureEnabled('prompts.library');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
+    const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
 
     const featureSnapshot = React.useMemo(() => {
         return {
@@ -147,6 +148,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
             'attachments.uploads': attachmentsUploadsEnabled,
             'prompts.library': promptsLibraryEnabled,
             'mcp.servers': mcpServersEnabled,
+            'remoteHosts.management': remoteHostsManagementEnabled,
         } as const;
     }, [
         attachmentsUploadsEnabled,
@@ -155,13 +157,14 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
         mcpServersEnabled,
         memorySearchEnabled,
         promptsLibraryEnabled,
+        remoteHostsManagementEnabled,
         sourceControlEnabled,
         usageReportingEnabled,
         voiceEnabled,
     ]);
 
     const tree = React.useMemo(() => {
-        return resolveTree(SETTINGS_PAGE_CATALOG_V1, {
+        return resolveTree(SETTINGS_PAGE_CATALOG, {
             useProfiles,
             devModeEnabled,
             features: featureSnapshot,
@@ -208,5 +211,5 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
 }
 
 export const __testables = {
-    flattenSettingsPageCatalogV1,
+    flattenSettingsPageCatalog,
 };

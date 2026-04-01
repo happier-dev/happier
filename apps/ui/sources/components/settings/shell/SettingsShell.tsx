@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ResizableDockedPane } from '@/components/ui/panels/ResizableDockedPane';
 import { resolveScaledPaneWidthPx } from '@/components/appShell/panes/layout/paneSizing';
-import { useIsTablet } from '@/utils/platform/responsive';
+import { resolveViewportMinEdgePx, VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX } from '@/utils/platform/viewportClass';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 
 import { SettingsSidebar } from './SettingsSidebar';
@@ -34,12 +34,12 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{ children: React.ReactNode }>) {
     const styles = stylesheet;
-    const { width: windowWidth } = useWindowDimensions();
-    const isTablet = useIsTablet();
+    const { width: windowWidth, height: windowHeight } = useWindowDimensions();
     const { theme } = useUnistyles();
 
     const settingsNavSidebarEnabled = useLocalSetting('settingsNavSidebarEnabled');
-    const enabled = isTablet && settingsNavSidebarEnabled !== false;
+    const isTabletViewport = resolveViewportMinEdgePx({ width: windowWidth, height: windowHeight }) >= VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX.tabletMin;
+    const enabled = isTabletViewport && settingsNavSidebarEnabled !== false;
     const sidebarWidthPx = useLocalSetting('settingsNavSidebarWidthPx') ?? SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX;
     const sidebarWidthBasisPx = useLocalSetting('settingsNavSidebarWidthBasisPx') ?? windowWidth;
     const [, setSidebarWidthPx] = useLocalSettingMutable('settingsNavSidebarWidthPx');

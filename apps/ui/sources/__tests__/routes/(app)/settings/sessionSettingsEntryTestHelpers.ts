@@ -156,6 +156,7 @@ export function installSessionSettingsEntryModuleMocks(
     vi.mock('@/constants/Typography', () => ({
         Typography: {
             default: () => ({}),
+            mono: () => ({}),
         },
     }));
 

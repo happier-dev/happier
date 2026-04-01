@@ -61,6 +61,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
     const promptsLibraryEnabled = useFeatureEnabled('prompts.library');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
+    const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
     const [showRateUs, setShowRateUs] = React.useState(false);
     const useProfiles = useSetting('useProfiles');
@@ -355,6 +356,13 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.orange} />}
                     onPress={() => pushRoute('/(app)/settings/machines')}
                 />
+                {showDesktopSettings && remoteHostsManagementEnabled ? (
+                    <Item
+                        title={t('settings.remoteHostsTitle')}
+                        icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.orange} />}
+                        onPress={() => pushRoute('/(app)/settings/remote-hosts')}
+                    />
+                ) : null}
             </ItemGroup>
 
             {/* General */}

@@ -58,7 +58,6 @@ describe('BugReportDiagnosticsPreviewModal', () => {
         expect(setChrome).toHaveBeenCalledWith(
             expect.objectContaining({
                 kind: 'card',
-                layout: 'fill',
             }),
         );
     });

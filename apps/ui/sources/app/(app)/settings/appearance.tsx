@@ -261,13 +261,14 @@ export default React.memo(function AppearanceSettingsScreen() {
                     showChevron={false}
                 />
                 <Item
-                    testID="settings-appearance-settingsNavSidebarEnabled"
+                    testID="settings-appearance-settings-nav-sidebar-enabled"
                     title={t('settingsAppearance.settingsNavSidebar')}
                     subtitle={t('settingsAppearance.settingsNavSidebarDescription')}
                     icon={<Ionicons name="settings-outline" size={29} color={theme.colors.accent.blue} />}
+                    onPress={panelsSupported ? () => setSettingsNavSidebarEnabled(!settingsNavSidebarEnabled) : undefined}
                     rightElement={
                         <Switch
-                            testID="settings-appearance-settingsNavSidebarEnabled-switch"
+                            testID="settings-appearance-settings-nav-sidebar-enabled.switch"
                             value={settingsNavSidebarEnabled}
                             onValueChange={setSettingsNavSidebarEnabled}
                             disabled={!panelsSupported}

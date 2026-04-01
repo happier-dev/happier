@@ -76,7 +76,7 @@ function flattenIds(nodes: readonly { id: string; children?: readonly any[] }[])
     return out;
 }
 
-describe('useResolvedSettingsPageCatalog (V1)', () => {
+describe('useResolvedSettingsPageCatalog', () => {
     afterEach(() => {
         pathnameState.value = '/settings';
         featureGateState.enabled = () => true;
@@ -107,6 +107,16 @@ describe('useResolvedSettingsPageCatalog (V1)', () => {
         await hook.unmount();
     });
 
+    it('treats /settings as the Settings home page (not General)', async () => {
+        pathnameState.value = '/settings';
+
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        expect(hook.getCurrent().activePageId).toBe('settings');
+        await hook.unmount();
+    });
+
     it('supports keyword search over visible pages', async () => {
         const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
         const hook = await renderHook(() => useResolvedSettingsPageCatalog());
@@ -125,5 +135,19 @@ describe('useResolvedSettingsPageCatalog (V1)', () => {
         expect(results.some((result: any) => result.id === 'notifications')).toBe(true);
 
         await hook.unmount();
+    });
+
+    it('includes remote hosts when remoteHosts.management is enabled, and filters it when disabled', async () => {
+        featureGateState.enabled = () => true;
+
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const enabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(enabledHook.getCurrent().tree)).toContain('remoteHosts');
+        await enabledHook.unmount();
+
+        featureGateState.enabled = (featureId: string) => featureId !== 'remoteHosts.management';
+        const disabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(disabledHook.getCurrent().tree)).not.toContain('remoteHosts');
+        await disabledHook.unmount();
     });
 });

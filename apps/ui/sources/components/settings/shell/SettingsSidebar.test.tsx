@@ -95,6 +95,29 @@ describe('SettingsSidebar', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/notifications');
     });
 
+    it('exposes the Settings home page as the first/top-level entry', async () => {
+        pathnameState.value = '/settings/account';
+
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+
+        await screen.pressByTestIdAsync('settings-sidebar.item.settings');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings');
+    });
+
+    it('treats Settings as the parent node and can collapse/expand the rest of the tree', async () => {
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+
+        expect(screen.findByTestId('settings-sidebar.item.groupGeneral')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('settings-sidebar.toggle.settings');
+        expect(screen.findByTestId('settings-sidebar.item.groupGeneral')).toBeNull();
+
+        await screen.pressByTestIdAsync('settings-sidebar.toggle.settings');
+        expect(screen.findByTestId('settings-sidebar.item.groupGeneral')).toBeTruthy();
+    });
+
     it('supports page search and navigates when selecting a result', async () => {
         const { SettingsSidebar } = await import('./SettingsSidebar');
         const screen = await renderScreen(React.createElement(SettingsSidebar));
@@ -102,16 +125,36 @@ describe('SettingsSidebar', () => {
         await act(async () => {
             screen.changeTextByTestId('settings-sidebar.searchInput', 'notif');
         });
+
+        const row = screen.findByTestId('settings-sidebar.searchResult.notifications') as any;
+        expect(row).toBeTruthy();
+        const iconNames = row.findAllByType('Ionicons').map((node: any) => node.props?.name).filter(Boolean);
+        expect(iconNames).toContain('search-outline');
+        expect(iconNames).not.toContain('chevron-forward');
+
         await screen.pressByTestIdAsync('settings-sidebar.searchResult.notifications');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/notifications');
+    });
+
+    it('finds the appearance page when searching for sidebar', async () => {
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+
+        await act(async () => {
+            screen.changeTextByTestId('settings-sidebar.searchInput', 'sidebar');
+        });
+
+        await screen.pressByTestIdAsync('settings-sidebar.searchResult.appearance');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/appearance');
     });
 
     it('swaps expandable item icons to chevrons on hover', async () => {
         const { SettingsSidebar } = await import('./SettingsSidebar');
         const screen = await renderScreen(React.createElement(SettingsSidebar));
 
-        const row = screen.findByTestId('settings-sidebar.item.groupGeneral');
+        const row = screen.findByTestId('settings-sidebar.item.groupGeneral') as any;
+        expect(row).toBeTruthy();
         const iconNamesBefore = row.findAllByType('Ionicons').map((node: any) => node.props?.name).filter(Boolean);
         expect(iconNamesBefore).toContain('settings-outline');
         expect(iconNamesBefore).not.toContain('chevron-down');
@@ -121,7 +164,8 @@ describe('SettingsSidebar', () => {
             row.props.onHoverIn?.();
         });
 
-        const rowHovered = screen.findByTestId('settings-sidebar.item.groupGeneral');
+        const rowHovered = screen.findByTestId('settings-sidebar.item.groupGeneral') as any;
+        expect(rowHovered).toBeTruthy();
         const iconNamesHovered = rowHovered.findAllByType('Ionicons').map((node: any) => node.props?.name).filter(Boolean);
         expect(iconNamesHovered).toContain('chevron-down');
 
@@ -129,7 +173,8 @@ describe('SettingsSidebar', () => {
             rowHovered.props.onHoverOut?.();
         });
 
-        const rowAfter = screen.findByTestId('settings-sidebar.item.groupGeneral');
+        const rowAfter = screen.findByTestId('settings-sidebar.item.groupGeneral') as any;
+        expect(rowAfter).toBeTruthy();
         const iconNamesAfter = rowAfter.findAllByType('Ionicons').map((node: any) => node.props?.name).filter(Boolean);
         expect(iconNamesAfter).toContain('settings-outline');
     });

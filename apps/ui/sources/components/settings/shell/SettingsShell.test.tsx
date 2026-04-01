@@ -5,22 +5,14 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const isTabletState = vi.hoisted(() => ({ value: true }));
+const windowDimsState = vi.hoisted(() => ({ width: 1600, height: 900 }));
 const localSettingsState = vi.hoisted(() => ({
     values: new Map<string, unknown>([
-        ['settingsNavSidebarWidthPx', 320],
+        ['settingsNavSidebarWidthPx', 220],
         ['settingsNavSidebarWidthBasisPx', 1200],
         ['settingsNavSidebarEnabled', true],
     ]),
 }));
-
-vi.mock('@/utils/platform/responsive', async () => {
-    const actual = await vi.importActual<typeof import('@/utils/platform/responsive')>('@/utils/platform/responsive');
-    return {
-        ...actual,
-        useIsTablet: () => isTabletState.value,
-    };
-});
 
 vi.mock('@/components/ui/panels/ResizableDockedPane', () => ({
     ResizableDockedPane: (props: any) => React.createElement('ResizableDockedPane', props, props.children),
@@ -34,7 +26,7 @@ vi.mock('react-native', async () => {
             OS: 'web',
             select: (options: any) => (options && 'default' in options ? options.default : undefined),
         },
-        useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+        useWindowDimensions: () => ({ width: windowDimsState.width, height: windowDimsState.height, scale: 2, fontScale: 1 }),
     });
 });
 
@@ -81,12 +73,14 @@ vi.mock('expo-clipboard', () => ({ setStringAsync: async () => {} }));
 
 describe('SettingsShell', () => {
     afterEach(() => {
-        isTabletState.value = true;
+        windowDimsState.width = 1600;
+        windowDimsState.height = 900;
         localSettingsState.values.set('settingsNavSidebarEnabled', true);
     });
 
     it('renders children without the sidebar on non-tablet layouts', async () => {
-        isTabletState.value = false;
+        windowDimsState.width = 390;
+        windowDimsState.height = 844;
         const { SettingsShell } = await import('./SettingsShell');
         const screen = await renderScreen(
             React.createElement(SettingsShell, null, React.createElement('Child', { testID: 'child' }))

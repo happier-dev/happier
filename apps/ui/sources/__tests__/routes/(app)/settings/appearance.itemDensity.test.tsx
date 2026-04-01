@@ -131,11 +131,13 @@ describe('Appearance settings item density', () => {
         const mod = await import('@/app/(app)/settings/appearance');
         const screen = await renderSettingsView(React.createElement(mod.default));
 
-        const switchNode = screen.findByTestId('settings-appearance-settingsNavSidebarEnabled-switch');
-        expect(switchNode?.props?.value).toBe(true);
+        const row = screen.findRow('settings-appearance-settings-nav-sidebar-enabled') as any;
+        expect(row).toBeTruthy();
+        expect(row.props?.rightElement).toBeTruthy();
+        expect(row.props.rightElement.props?.value).toBe(true);
 
         await act(async () => {
-            switchNode.props.onValueChange(false);
+            row.props.rightElement.props.onValueChange(false);
         });
 
         expect(shared.settingsState.settingsNavSidebarEnabled).toBe(false);

@@ -201,7 +201,6 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
             ? t('subAgentGuidance.ruleEditor.header.newRule')
             : t('subAgentGuidance.ruleEditor.header.editRule'),
         testID: 'sub-agent-guidance-rule-editor-modal',
-        layout: 'fill' as const,
         dimensions: { width: 640, maxHeightRatio: 0.92, size: 'lg' as const },
         footer,
     }), [footer, mode]);
