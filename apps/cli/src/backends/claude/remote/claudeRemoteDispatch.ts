@@ -41,7 +41,7 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     const first = await opts.nextMessage();
     if (!first) return;
 
-    let consumedBeyondFirst = false;
+    const bufferedAfterFirst: Array<{ message: string; mode: EnhancedMode }> = [];
     let didStartSession = false;
     let didEmitMessage = false;
     let didEmitAssistantMessage = false;
@@ -71,14 +71,27 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     };
 
     const baseOpts = { ...opts, onSessionFound, onMessage };
-    const createNextMessage = (): NextMessage => {
+    const createAgentSdkNextMessage = (): NextMessage => {
         let usedFirst = false;
         return async () => {
             if (!usedFirst) {
                 usedFirst = true;
                 return first;
             }
-            consumedBeyondFirst = true;
+            const next = await opts.nextMessage();
+            if (next) bufferedAfterFirst.push(next);
+            return next;
+        };
+    };
+    const createLegacyReplayNextMessage = (): NextMessage => {
+        const replay = [first, ...bufferedAfterFirst];
+        let index = 0;
+        return async () => {
+            if (index < replay.length) {
+                const next = replay[index];
+                index += 1;
+                return next;
+            }
             return opts.nextMessage();
         };
     };
@@ -91,13 +104,12 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     if (first.mode.claudeRemoteAgentSdkEnabled !== false) {
         try {
             baseOpts.onRunnerSelected?.('agentSdk');
-            await resolvedAgentSdk({ ...baseOpts, nextMessage: createNextMessage() } as any);
+            await resolvedAgentSdk({ ...baseOpts, nextMessage: createAgentSdkNextMessage() } as any);
             return;
         } catch (error) {
             const shouldFallbackBecauseExitCodeOne = isClaudeAgentSdkProcessExitCodeOne(error);
             if (
-                !consumedBeyondFirst
-                && (
+                (
                     // Authentication errors are only safe to fall back from when the Agent SDK failed
                     // before establishing/claiming a session id. Once a session is started, switching
                     // runners can confuse session metadata and lead to duplicated/invalid resumes.
@@ -109,7 +121,7 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
                 )
             ) {
                 baseOpts.onRunnerSelected?.('legacy');
-                await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
+                await resolvedLegacy({ ...baseOpts, nextMessage: createLegacyReplayNextMessage() } as any);
                 return;
             }
             throw error;
@@ -117,5 +129,5 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     }
 
     baseOpts.onRunnerSelected?.('legacy');
-    await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
+    await resolvedLegacy({ ...baseOpts, nextMessage: createLegacyReplayNextMessage() } as any);
 }

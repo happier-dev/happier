@@ -247,6 +247,44 @@ describe('claudeRemoteDispatch', () => {
         expect(mockLegacy).toHaveBeenCalledTimes(0);
     });
 
+    it('replays buffered messages when Agent SDK consumes multiple messages and exits with code 1 before any assistant output', async () => {
+        const receivedByLegacy: string[] = [];
+        const mockLegacy = vi.fn(async (params: any) => {
+            while (true) {
+                const next = await params.nextMessage();
+                if (!next) break;
+                receivedByLegacy.push(next.message);
+            }
+        });
+        const mockAgentSdk = vi.fn(async (params: any) => {
+            await params.nextMessage(); // first
+            await params.nextMessage(); // second
+            throw new Error('Claude Code process exited with code 1');
+        });
+        const onRunnerSelected = vi.fn();
+
+        const messages = [
+            { message: 'm1', mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any },
+            { message: 'm2', mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any },
+        ];
+        let index = 0;
+        await claudeRemoteDispatch(
+            {
+                onRunnerSelected,
+                nextMessage: async () => {
+                    const next = index < messages.length ? messages[index] : null;
+                    index++;
+                    return next;
+                },
+            } as any,
+            { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+        );
+
+        expect(onRunnerSelected).toHaveBeenNthCalledWith(1, 'agentSdk');
+        expect(onRunnerSelected).toHaveBeenNthCalledWith(2, 'legacy');
+        expect(receivedByLegacy).toEqual(['m1', 'm2']);
+    });
+
     it('still routes to Agent SDK runner when enabled even if --mcp-config flags are present (runner parses and maps to mcpServers)', async () => {
         const mockLegacy = vi.fn(async () => {});
         const mockAgentSdk = vi.fn(async () => {});
