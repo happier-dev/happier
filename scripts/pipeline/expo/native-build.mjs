@@ -507,24 +507,29 @@ async function main() {
       const exportedOutJsonAbs = path.join(exportDirAbs, outJsonName);
 
       const expoAppSlug = String(process.env.EXPO_APP_SLUG ?? '').trim();
-      const expoAppScheme = String(process.env.EXPO_APP_SCHEME ?? '').trim();
-      const expoAppName = String(process.env.EXPO_APP_NAME ?? '').trim();
-      const expoAppBundleId = String(process.env.EXPO_APP_BUNDLE_ID ?? '').trim();
-      const sentryAuthToken = String(process.env.SENTRY_AUTH_TOKEN ?? '').trim();
+	      const expoAppScheme = String(process.env.EXPO_APP_SCHEME ?? '').trim();
+	      const expoAppName = String(process.env.EXPO_APP_NAME ?? '').trim();
+	      const expoAppBundleId = String(process.env.EXPO_APP_BUNDLE_ID ?? '').trim();
+	      const sentryAuthToken = String(process.env.SENTRY_AUTH_TOKEN ?? '').trim();
 
-      const staged = dryRun ? null : stageRepoForDagger({ repoRoot });
-      const daggerRepoArg = dryRun ? '.' : staged?.stagedRepoDir;
+	      const staged = dryRun ? null : stageRepoForDagger({ repoRoot });
+	      const daggerRepoArg = dryRun ? '.' : staged?.stagedRepoDir;
 
-      try {
-        if (!dryRun) {
-          fs.mkdirSync(exportDirAbs, { recursive: true });
-        }
+	      try {
+	        if (!dryRun) {
+	          fs.mkdirSync(exportDirAbs, { recursive: true });
+	        }
 
-        run(
-          opts,
-          'dagger',
-          [
-            '--progress',
+          // Dagger secret args use `env://NAME` indirections. Ensure the dagger CLI process
+          // environment contains the referenced vars so they don't resolve as Missing.
+          const daggerEnv = { ...process.env, EXPO_TOKEN: expoToken };
+          if (sentryAuthToken) daggerEnv.SENTRY_AUTH_TOKEN = sentryAuthToken;
+
+	        run(
+	          opts,
+	          'dagger',
+	          [
+	            '--progress',
             'plain',
             '-m',
             './dagger',
@@ -551,15 +556,15 @@ async function main() {
 	            ...(expoAppSlug ? ['--expo-app-slug', expoAppSlug] : []),
             ...(expoAppScheme ? ['--expo-app-scheme', expoAppScheme] : []),
             ...(expoAppName ? ['--expo-app-name', expoAppName] : []),
-            ...(expoAppBundleId ? ['--expo-app-bundle-id', expoAppBundleId] : []),
-          ],
-          { cwd: repoRoot, stdio: 'inherit' },
-        );
-      } finally {
-        if (staged) {
-          staged.cleanup();
-        }
-      }
+	            ...(expoAppBundleId ? ['--expo-app-bundle-id', expoAppBundleId] : []),
+	          ],
+	          { cwd: repoRoot, stdio: 'inherit', env: daggerEnv },
+	        );
+	      } finally {
+	        if (staged) {
+	          staged.cleanup();
+	        }
+	      }
 
 	      if (!dryRun) {
 	        if (!fs.existsSync(artifactAbs)) fail(`Missing build artifact at: ${artifactAbs}`);
