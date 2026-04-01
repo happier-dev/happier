@@ -266,6 +266,7 @@ ENV HAPPIER_EMBEDDED_POLICY_ENV=$HAPPIER_EMBEDDED_POLICY_ENV
 COPY .github/feature-policy ./.github/feature-policy
 COPY apps/server ./apps/server
 COPY packages/agents ./packages/agents
+COPY packages/cli-common ./packages/cli-common
 COPY packages/protocol ./packages/protocol
 RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @happier-dev/agents postinstall:real
 RUN yarn workspace @happier-dev/server postinstall:real
@@ -279,6 +280,7 @@ ENV PORT=3005
 ENV RUN_MIGRATIONS=1
 COPY --from=server-builder --chown=node:node /repo/node_modules /repo/node_modules
 COPY --from=server-builder --chown=node:node /repo/packages/agents /repo/packages/agents
+COPY --from=server-builder --chown=node:node /repo/packages/cli-common /repo/packages/cli-common
 COPY --from=server-builder --chown=node:node /repo/packages/protocol /repo/packages/protocol
 COPY --from=server-builder --chown=node:node /repo/apps/server /repo/apps/server
 COPY --from=server-builder /repo/apps/server/scripts/run-server.sh /usr/local/bin/run-server
