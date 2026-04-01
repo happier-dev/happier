@@ -2,9 +2,12 @@
 
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { getReleaseRingCatalogEntry, normalizeReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 const require = createRequire(import.meta.url);
+// Use CommonJS resolution so `@happier-dev/release-runtime/releaseRings` can be loaded
+// from `releaseRings.cjs` even when `dist/` is not built (for example in EAS/Dagger
+// local builds where postinstall is scoped).
+const { getReleaseRingCatalogEntry, normalizeReleaseRingId } = require('@happier-dev/release-runtime/releaseRings');
 const { getAppEnvironmentConfig, normalizeAppEnvironmentId } = require('../../../apps/ui/appVariantConfig.cjs');
 
 /** @typedef {'internaldev' | 'internalpreview' | 'publicdev' | 'preview' | 'production'} MobileReleaseEnvironment */
