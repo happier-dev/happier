@@ -89,6 +89,7 @@ import {
   shouldSkipLegacyMessageChunkMirror,
 } from './updates/legacyMessageChunkMirrorDedup';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
+import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 function makeAbortError(message: string): Error {
   const err = new Error(message);
@@ -533,6 +534,7 @@ export class AcpBackend implements AgentBackend {
   private process: ChildProcess | null = null;
   private stderrAppender: BoundedTextFileAppender | null = null;
   private readonly summarizeStderrForLogs = createAcpStderrLogSummarizer();
+  private readonly sessionUpdateShapeLogger = createEventShapeLoggerForLog({ logger, scope: 'acp-backend' });
   private connection: ClientSideConnection | null = null;
   private acpSessionId: string | null = null;
   private disposed = false;
@@ -1588,6 +1590,10 @@ export class AcpBackend implements AgentBackend {
 
     const handleOneUpdate = (update: SessionUpdate): void => {
       const sessionUpdateType = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
+      this.sessionUpdateShapeLogger.log(
+        `inbound:${this.options.agentName}:${sessionUpdateType ?? 'unknown'}`,
+        update,
+      );
       if (
         sessionUpdateType === 'agent_message_chunk'
         || (update.messageChunk && typeof update.messageChunk.textDelta === 'string' && update.messageChunk.textDelta.length > 0)

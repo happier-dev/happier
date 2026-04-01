@@ -27,6 +27,7 @@ import type { PermissionResult } from '@/backends/claude/sdk/types';
 import type { JsRuntime } from '@/backends/claude/runClaude';
 import { createSubprocessStderrAppender, resolveSubprocessArtifactsDir } from '@/agent/runtime/subprocessArtifacts';
 import { join } from 'node:path';
+import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import { buildClaudeAgentSdkHooks } from './agentSdk/buildClaudeAgentSdkHooks';
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
 import { parseExplicitSpawnEnvKeysFromProcessEnv } from './agentSdk/explicitSpawnEnvKeysMarker';
@@ -577,6 +578,8 @@ export async function claudeRemoteAgentSdk(opts: {
         }
     };
 
+    const shapeLogger = createEventShapeLoggerForLog({ logger, scope: 'claude-agent-sdk' });
+
     // Agent SDK expects objects (SDKUserMessage). It JSON-stringifies them before writing to stdin.
     const messages = new PushableAsyncIterable<SDKUserMessage>();
     opts.setUserMessageSender?.((message: SDKUserMessage) => messages.push(message));
@@ -703,6 +706,30 @@ export async function claudeRemoteAgentSdk(opts: {
             { sessionId: string; parentToolUseId: string | null; text: string; thinking: string; lastUuid: string | null }
         >();
         let didPublishAssistantTextThisTurn = false;
+        const turnDiagnostics = {
+            streamEventCount: 0,
+            assistantMessageCount: 0,
+            userMessageCount: 0,
+            resultMessageCount: 0,
+            systemMessageCount: 0,
+            unknownMessageCount: 0,
+            streamedTextDeltaChars: 0,
+            streamedThinkingDeltaChars: 0,
+            streamedToolUseDeltaChars: 0,
+            didPublishAssistantTextThisTurn: false,
+        };
+        const resetTurnDiagnostics = () => {
+            turnDiagnostics.streamEventCount = 0;
+            turnDiagnostics.assistantMessageCount = 0;
+            turnDiagnostics.userMessageCount = 0;
+            turnDiagnostics.resultMessageCount = 0;
+            turnDiagnostics.systemMessageCount = 0;
+            turnDiagnostics.unknownMessageCount = 0;
+            turnDiagnostics.streamedTextDeltaChars = 0;
+            turnDiagnostics.streamedThinkingDeltaChars = 0;
+            turnDiagnostics.streamedToolUseDeltaChars = 0;
+            turnDiagnostics.didPublishAssistantTextThisTurn = false;
+        };
         const seen = { toolUseIds: new Set<string>(), toolResultIds: new Set<string>() };
         let lastCheckpointId: string | null = null;
         const checkpointIds: string[] = [];
@@ -742,6 +769,7 @@ export async function claudeRemoteAgentSdk(opts: {
         const markAssistantTextPublished = (text: string | null | undefined) => {
             if (typeof text !== 'string' || text.trim().length === 0) return;
             didPublishAssistantTextThisTurn = true;
+            turnDiagnostics.didPublishAssistantTextThisTurn = true;
         };
 
         const buildBufferedStreamEventAssistantMessageKey = (message: unknown) => {
@@ -1005,6 +1033,11 @@ export async function claudeRemoteAgentSdk(opts: {
             awaitingNextTurnStart = true;
             updateThinking(false);
             await flushStreamedTranscriptWriter('turn-end');
+            logger.debug('[claudeRemoteAgentSdk] Turn summary', {
+                ...turnDiagnostics,
+                didPublishAssistantTextThisTurn,
+            });
+            resetTurnDiagnostics();
             if (params?.completionEvent) {
                 opts.onCompletionEvent?.(params.completionEvent);
             }
@@ -1051,6 +1084,26 @@ export async function claudeRemoteAgentSdk(opts: {
         }
 
         for await (const message of response as any) {
+            const inboundType = (() => {
+                if (!message || typeof message !== 'object') return 'unknown';
+                const raw = (message as any).type;
+                return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : 'unknown';
+            })();
+            shapeLogger.log(`inbound:${inboundType}`, message);
+            if (inboundType === 'stream_event') {
+                turnDiagnostics.streamEventCount += 1;
+            } else if (inboundType === 'assistant') {
+                turnDiagnostics.assistantMessageCount += 1;
+            } else if (inboundType === 'user') {
+                turnDiagnostics.userMessageCount += 1;
+            } else if (inboundType === 'result') {
+                turnDiagnostics.resultMessageCount += 1;
+            } else if (inboundType === 'system') {
+                turnDiagnostics.systemMessageCount += 1;
+            } else {
+                turnDiagnostics.unknownMessageCount += 1;
+            }
+
             if (message && typeof message === 'object' && (message as any).type === 'stream_event') {
                 const clearFinalizeGuardForNextTurnStart = () => {
                     // Claude can emit the next turn's assistant output exclusively via stream_event
@@ -1101,6 +1154,7 @@ export async function claudeRemoteAgentSdk(opts: {
                     clearFinalizeGuardForNextTurnStart();
                     const buffered = ensureBufferedStreamEventAssistantMessage(message);
                     buffered.thinking += thinkingStart;
+                    turnDiagnostics.streamedThinkingDeltaChars += thinkingStart.length;
                     streamedTranscriptWriter?.appendThinkingDelta(thinkingStart, { sidechainId: normalizeSidechainIdForStream(message) });
                     continue;
                 }
@@ -1113,9 +1167,11 @@ export async function claudeRemoteAgentSdk(opts: {
                     if (!streamingToolResult) {
                         const buffered = ensureBufferedStreamEventAssistantMessage(message);
                         buffered.text += textStart;
+                        turnDiagnostics.streamedTextDeltaChars += textStart.length;
                         streamedTranscriptWriter?.appendAssistantDelta(textStart, { sidechainId: normalizeSidechainIdForStream(message) });
                     } else {
                         streamingToolResult.content += textStart;
+                        turnDiagnostics.streamedToolUseDeltaChars += textStart.length;
                     }
                     continue;
                 }
@@ -1127,6 +1183,7 @@ export async function claudeRemoteAgentSdk(opts: {
                     const streamingToolUse = streamingToolUses.get(key);
                     if (streamingToolUse) {
                         streamingToolUse.inputJson += toolUseInputDelta;
+                        turnDiagnostics.streamedToolUseDeltaChars += toolUseInputDelta.length;
                         continue;
                     }
                 }
@@ -1136,6 +1193,7 @@ export async function claudeRemoteAgentSdk(opts: {
                     clearFinalizeGuardForNextTurnStart();
                     const buffered = ensureBufferedStreamEventAssistantMessage(message);
                     buffered.thinking += thinkingDelta;
+                    turnDiagnostics.streamedThinkingDeltaChars += thinkingDelta.length;
                     streamedTranscriptWriter?.appendThinkingDelta(thinkingDelta, { sidechainId: normalizeSidechainIdForStream(message) });
                     continue;
                 }
@@ -1148,9 +1206,11 @@ export async function claudeRemoteAgentSdk(opts: {
                     if (!streamingToolResult) {
                         const buffered = ensureBufferedStreamEventAssistantMessage(message);
                         buffered.text += textDelta;
+                        turnDiagnostics.streamedTextDeltaChars += textDelta.length;
                         streamedTranscriptWriter?.appendAssistantDelta(textDelta, { sidechainId: normalizeSidechainIdForStream(message) });
                     } else {
                         streamingToolResult.content += textDelta;
+                        turnDiagnostics.streamedToolUseDeltaChars += textDelta.length;
                     }
                     continue;
                 }
@@ -1324,6 +1384,10 @@ export async function claudeRemoteAgentSdk(opts: {
                             getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
                             `${init.session_id}.jsonl`,
                         );
+                        logger.debug('[claudeRemoteAgentSdk] Session initialized', {
+                            claudeSessionId: init.session_id,
+                            transcriptPath,
+                        });
                         opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
                         if (isCompactCommand) {
                             opts.onCompletionEvent?.('Compaction completed');

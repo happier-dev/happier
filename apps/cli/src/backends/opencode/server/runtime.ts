@@ -11,6 +11,7 @@ import { buildChangeTitleInstruction, shouldAppendChangeTitleInstruction } from 
 import { isChangeTitleToolNameAlias } from '@happier-dev/protocol';
 import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
+import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 import type { OpenCodeGlobalEvent, OpenCodeModelRef, OpenCodePermissionRequest, OpenCodeQuestionRequest, OpenCodeSession } from './types';
 import { createOpenCodeServerRuntimeClient, type OpenCodeServerRuntimeClient } from './client';
@@ -123,6 +124,7 @@ export function createOpenCodeServerRuntime(params: {
   const provider: ACPProvider = 'opencode';
   const createClient = deps.createClient ?? createOpenCodeServerRuntimeClient;
   const env = params.env ?? process.env;
+  const shapeLogger = createEventShapeLoggerForLog({ logger, scope: 'opencode-server' });
 
   let client: OpenCodeServerRuntimeClient | null = null;
   let sessionId: string | null = null;
@@ -1612,6 +1614,7 @@ export function createOpenCodeServerRuntime(params: {
     const payload = evt.payload;
     const type = normalizeString(payload.type);
     const props = payload.properties;
+    shapeLogger.log(`event:${type || 'unknown'}`, payload);
 
     if (type === 'message.part.updated' || type === 'message.part.created') {
       const part = asRecord(asRecord(props)?.part);

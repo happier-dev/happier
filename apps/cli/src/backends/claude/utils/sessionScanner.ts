@@ -10,6 +10,7 @@ import { resolveClaudeSubagentJsonlPath } from '../remote/sidechains/resolveClau
 import { normalizeClaudeToolUseNamesInRawJsonLines } from './normalizeClaudeToolUseNames';
 import { createClaudeTeamInboxCollector } from './teamInbox/claudeTeamInboxCollector';
 import { readClaudeSessionJsonlMessages } from './readClaudeSessionJsonlMessages';
+import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 export type SessionScannerSessionInfo = {
     sessionId: string;
@@ -34,6 +35,7 @@ export async function createSessionScanner(opts: {
     /** How long to wait (ms) before warning that the transcript file is missing. Set <= 0 to disable. */
     transcriptMissingWarningMs?: number
 }) {
+    const shapeLogger = createEventShapeLoggerForLog({ logger, scope: 'claude-jsonl' });
 
     // Best-effort project directory resolution (fallback).
     // When available, we prefer the Claude hook's transcriptPath-derived directory instead.
@@ -105,6 +107,7 @@ export async function createSessionScanner(opts: {
                 // If we can't key it (unexpected type), still emit; downstream should dedupe by uuid.
             }
             try {
+                shapeLogger.log('emit:sidechain-import', body);
                 opts.onMessage(body);
             } catch (err) {
                 logger.debug('[SESSION_SCANNER] onMessage callback threw (sidechain import):', err);
@@ -136,6 +139,7 @@ export async function createSessionScanner(opts: {
                 // ignore
             }
             try {
+                shapeLogger.log('emit:team-inbox', body);
                 opts.onMessage(body);
             } catch (err) {
                 logger.debug('[SESSION_SCANNER] onMessage callback threw (team inbox):', err);
@@ -298,8 +302,10 @@ export async function createSessionScanner(opts: {
                         continue;
                     }
                     if (action?.type === 'rewrite') {
+                        shapeLogger.log('emit:rewritten-task-notification', action.message);
                         opts.onMessage(action.message);
                     } else {
+                        shapeLogger.log(`emit:${String((file as any)?.type ?? 'unknown')}`, file);
                         opts.onMessage(file);
                     }
                     sent++; // count only emitted messages
