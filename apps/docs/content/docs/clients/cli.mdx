@@ -84,6 +84,40 @@ Advanced:
 
 User guide: [Features → Device linking & restore](/docs/features/device-linking-and-restore)
 
+## Bootstrap & setup (one-command)
+
+If you want a guided “do the right thing” setup flow from the terminal (Relay selection, sign-in if needed, daemon service install), use:
+
+```bash
+happier setup --relay-url https://YOUR_RELAY_URL
+```
+
+Useful flags:
+
+- `--skip-daemon` (don’t install/enable the background service)
+- `--skip-providers` (don’t run provider setup)
+- `--provider <id>` (preselect providers to set up)
+- `--yes` (auto-accept prompts for non-interactive runs)
+
+Dry-run the plan (prints what would happen):
+
+```bash
+happier setup plan --relay-url https://YOUR_RELAY_URL
+```
+
+Provider-only setup:
+
+```bash
+happier providers setup
+```
+
+Self-hosted Relay runtime (managed service):
+
+```bash
+happier relay host install --mode system
+happier relay host status
+```
+
 ### Remote machine pairing (SSH, automated)
 
 If you want to run Happier on a **remote machine** (VPS, home server, dev box) but approve/authenticate it from a machine where you're already signed in:
