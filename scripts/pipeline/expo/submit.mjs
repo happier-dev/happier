@@ -24,6 +24,17 @@ function fail(message) {
 }
 
 /**
+ * @param {unknown} value
+ * @param {string} name
+ */
+function parseBool(value, name) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  fail(`${name} must be 'true' or 'false' (got: ${value})`);
+}
+
+/**
  * @param {string} cmd
  * @param {Record<string, string>} env
  * @returns {boolean}
@@ -255,10 +266,12 @@ function main() {
     options: {
       environment: { type: 'string' },
       platform: { type: 'string' },
+      id: { type: 'string', default: '' },
       path: { type: 'string', default: '' },
       profile: { type: 'string', default: '' },
       interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
+      wait: { type: 'string', default: 'true' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -276,11 +289,18 @@ function main() {
     fail(`--platform must be 'ios', 'android', or 'all' (got: ${platformRaw})`);
   }
 
+  const submitIdRaw = String(values.id ?? '').trim();
   const submitPathRaw = String(values.path ?? '').trim();
   const requestedProfile = String(values.profile ?? '').trim();
   const submitProfile = normalizeMobileReleaseProfile(requestedProfile) || requestedProfile || environment;
   if (submitPathRaw && platformRaw === 'all') {
     fail("--platform 'all' cannot be used with --path (submit per-platform with explicit paths).");
+  }
+  if (submitIdRaw && submitPathRaw) {
+    fail('Pass only one of --id or --path (not both).');
+  }
+  if (submitIdRaw && platformRaw === 'all') {
+    fail("--platform 'all' cannot be used with --id (submit per-platform with explicit ids).");
   }
 
   const dryRun = values['dry-run'] === true;
@@ -301,6 +321,7 @@ function main() {
 
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
+  const waitForSubmit = parseBool(values.wait, '--wait');
 
   const platforms = platformRaw === 'all' ? ['ios', 'android'] : [platformRaw];
   console.log(`[pipeline] expo submit: environment=${formatMobileReleaseEnvironment(environment)} platform=${platformRaw}`);
@@ -355,8 +376,13 @@ function main() {
   let hadFailure = false;
   for (const platform of platforms) {
     const baseArgs = ['--yes', `eas-cli@${easCliVersion}`, 'submit', '--platform', platform, '--profile', submitProfile];
-    const submitArgs = submitPathAbs ? [...baseArgs, '--path', submitPathAbs] : [...baseArgs, '--latest'];
+    const submitArgs = submitIdRaw
+      ? [...baseArgs, '--id', submitIdRaw]
+      : submitPathAbs
+        ? [...baseArgs, '--path', submitPathAbs]
+        : [...baseArgs, '--latest'];
     if (nonInteractive) submitArgs.push('--non-interactive');
+    submitArgs.push(waitForSubmit ? '--wait' : '--no-wait');
 
     const appEnv = String(process.env.APP_ENV ?? '').trim() || formatMobileReleaseEnvironment(environment);
     const result = run(opts, 'npx', submitArgs, {
