@@ -4,6 +4,8 @@ import { join } from "node:path";
 
 import { wantsJson, printJsonEnvelope } from "@/cli/output/jsonEnvelope";
 import { buildSshCommand, safeBashSingleQuote, type SshAuth } from '@/capabilities/systemTasks/ssh/sshTransport';
+import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
+import { promptSecret } from '@/terminal/prompts/promptSecret';
 import { resolveHappyHomeDirFromEnvironment } from "@happier-dev/cli-common/providers";
 import { definitionList, ok, sectionTitle, warn } from "@happier-dev/cli-common/output";
 import { getRelayAccessProvider, relayAccessProviderIds, normalizeRelayAccessCanonicalPublicServerUrl } from "@happier-dev/cli-common/relayAccess";
@@ -204,7 +206,69 @@ async function readPersistedConfig(): Promise<RelayAccessConfig | null> {
     return parsePersistedConfigFromJson(raw);
 }
 
-function normalizeRelayAccessSshAuth(ssh: systemTasks.SystemTaskSshConnectionConfig): SshAuth {
+function normalizeRelayAccessSshAuthValue(value: string | null, identityFile: string | null): systemTasks.SystemTaskSshConnectionConfig['auth'] {
+    const raw = String(value ?? '').trim();
+    if (raw === 'agent' || raw === 'keyfile' || raw === 'password') {
+        return raw;
+    }
+    if (!raw) {
+        return identityFile ? 'keyfile' : 'agent';
+    }
+    throw new Error(`Invalid SSH auth mode: ${raw}`);
+}
+
+async function resolveRelayAccessSshPassword(sshTarget: string): Promise<string> {
+    const envPassword = String(process.env.HAPPIER_SSH_PASSWORD ?? '').trim();
+    if (envPassword) {
+        return envPassword;
+    }
+    if (!isInteractiveTerminal()) {
+        throw new Error('Password SSH auth requires an interactive terminal or HAPPIER_SSH_PASSWORD.');
+    }
+    return (await promptSecret(`SSH password for ${sshTarget}: `)).trim();
+}
+
+async function resolveRelayAccessSshTarget(args: string[]): Promise<Readonly<{ target: systemTasks.RelayAccessTaskTarget; rest: string[] }>> {
+    let rest = [...args];
+    const ssh = takeFlagValue(rest, '--ssh');
+    rest = ssh.rest;
+    const sshConfigFile = takeFlagValue(rest, '--ssh-config-file');
+    rest = sshConfigFile.rest;
+    const sshAuth = takeFlagValue(rest, '--ssh-auth');
+    rest = sshAuth.rest;
+    const identityFile = takeFlagValue(rest, '--identity-file');
+    rest = identityFile.rest;
+
+    if (!ssh.value && (sshConfigFile.value || sshAuth.value || identityFile.value)) {
+        throw new Error('Missing required flag: --ssh (when using SSH-specific options).');
+    }
+
+    if (!ssh.value) {
+        return {
+            target: { kind: 'local' },
+            rest,
+        };
+    }
+
+    const auth = normalizeRelayAccessSshAuthValue(sshAuth.value, identityFile.value);
+    const sshTarget = ensureNonEmptyString(ssh.value, '--ssh');
+    const normalizedTarget: systemTasks.SystemTaskSshConnectionConfig = {
+        target: sshTarget,
+        auth,
+        ...(sshConfigFile.value?.trim() ? { sshConfigFile: sshConfigFile.value.trim() } : {}),
+        ...(identityFile.value?.trim() ? { identityFile: identityFile.value.trim() } : {}),
+    };
+
+    return {
+        target: {
+            kind: 'ssh',
+            ssh: normalizedTarget,
+        },
+        rest,
+    };
+}
+
+async function resolveRelayAccessSshAuth(ssh: systemTasks.SystemTaskSshConnectionConfig): Promise<SshAuth> {
     if (ssh.auth === 'agent') {
         return { mode: 'agent' };
     }
@@ -215,19 +279,21 @@ function normalizeRelayAccessSshAuth(ssh: systemTasks.SystemTaskSshConnectionCon
         }
         return { mode: 'keyFile', privateKeyPath: identityFile };
     }
-    throw new Error('Password SSH auth is not supported by this command yet.');
+    const password = await resolveRelayAccessSshPassword(ssh.target);
+    return { mode: 'password', password };
 }
 
 function runSshCapture(
     ssh: systemTasks.SystemTaskSshConnectionConfig,
+    auth: SshAuth,
     remoteCommand: string,
 ): Readonly<{ status: number; stdout: string; stderr: string }> {
-    const { command, args } = buildSshCommand({
+    const { command, args, env } = buildSshCommand({
         sshBin: 'ssh',
         target: ssh.target,
         remoteCommand: ['bash', '-lc', safeBashSingleQuote(remoteCommand)],
         knownHostsMode: 'system',
-        auth: normalizeRelayAccessSshAuth(ssh),
+        auth,
         port: ssh.port,
         connectTimeoutSec: 10,
         serverAliveIntervalSec: 15,
@@ -236,7 +302,7 @@ function runSshCapture(
         ...(ssh.knownHostsPath ? { knownHostsPath: ssh.knownHostsPath } : {}),
     });
 
-    const out = spawnSync(command, args, { encoding: 'utf8' });
+    const out = spawnSync(command, args, { encoding: 'utf8', ...(env ? { env } : {}) });
     return {
         status: typeof out.status === 'number' ? out.status : 1,
         stdout: String(out.stdout ?? ''),
@@ -244,10 +310,11 @@ function runSshCapture(
     };
 }
 
-async function readRelayAccessConfig(params: Readonly<{ target: systemTasks.RelayAccessTaskTarget }>): Promise<RelayAccessConfig | null> {
+async function readRelayAccessConfig(params: Readonly<{ target: systemTasks.RelayAccessTaskTarget; auth?: SshAuth }>): Promise<RelayAccessConfig | null> {
     if (params.target.kind === 'ssh') {
         const result = runSshCapture(
             params.target.ssh,
+            params.auth ?? await resolveRelayAccessSshAuth(params.target.ssh),
             "test -f ~/.happier/relay/access/local.json && cat ~/.happier/relay/access/local.json || true",
         );
         if (result.status !== 0) {
@@ -261,10 +328,14 @@ async function readRelayAccessConfig(params: Readonly<{ target: systemTasks.Rela
     return await readPersistedConfig();
 }
 
-async function writeRelayAccessConfig(params: Readonly<{ target: systemTasks.RelayAccessTaskTarget; config: RelayAccessConfig | null }>): Promise<void> {
+async function writeRelayAccessConfig(params: Readonly<{ target: systemTasks.RelayAccessTaskTarget; config: RelayAccessConfig | null; auth?: SshAuth }>): Promise<void> {
     if (params.target.kind === 'ssh') {
         if (!params.config) {
-            const result = runSshCapture(params.target.ssh, 'rm -f ~/.happier/relay/access/local.json');
+            const result = runSshCapture(
+                params.target.ssh,
+                params.auth ?? await resolveRelayAccessSshAuth(params.target.ssh),
+                'rm -f ~/.happier/relay/access/local.json',
+            );
             if (result.status !== 0) {
                 throw new Error(result.stderr.trim() || 'SSH command failed');
             }
@@ -278,7 +349,11 @@ async function writeRelayAccessConfig(params: Readonly<{ target: systemTasks.Rel
             payload.trimEnd(),
             'HAPPIER_RELAY_ACCESS_EOF',
         ].join('\n');
-        const result = runSshCapture(params.target.ssh, remoteCommand);
+        const result = runSshCapture(
+            params.target.ssh,
+            params.auth ?? await resolveRelayAccessSshAuth(params.target.ssh),
+            remoteCommand,
+        );
         if (result.status !== 0) {
             throw new Error(result.stderr.trim() || 'SSH command failed');
         }
@@ -294,7 +369,7 @@ async function writeRelayAccessConfig(params: Readonly<{ target: systemTasks.Rel
     await writeFile(path, `${JSON.stringify(params.config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
-function createRelayAccessExecutionContext(params: Readonly<{ target: systemTasks.RelayAccessTaskTarget; upstreamUrl: string | null }>): RelayAccessExecutionContext {
+function createRelayAccessExecutionContext(params: Readonly<{ target: systemTasks.RelayAccessTaskTarget; upstreamUrl: string | null; auth?: SshAuth }>): RelayAccessExecutionContext {
     if (params.target.kind !== 'ssh') {
         return {
             env: process.env,
@@ -311,7 +386,7 @@ function createRelayAccessExecutionContext(params: Readonly<{ target: systemTask
             const command = String(request.command ?? '').trim();
             const args = Array.isArray(request.args) ? request.args.map((value) => String(value)) : [];
             const shellCommand = [command, ...args].map((token) => safeBashSingleQuote(token)).join(' ');
-            const result = runSshCapture(ssh, shellCommand);
+            const result = runSshCapture(ssh, params.auth ?? await resolveRelayAccessSshAuth(ssh), shellCommand);
             const exitCode = result.status;
             if (exitCode !== 0) {
                 throw new Error(result.stderr.trim() || `Remote command failed: ${command}`);
@@ -327,7 +402,11 @@ function createRelayAccessExecutionContext(params: Readonly<{ target: systemTask
         resolveCommandOnPath: async (command) => {
             const name = String(command ?? '').trim();
             if (!name) return null;
-            const result = runSshCapture(ssh, `command -v ${safeBashSingleQuote(name)} || true`);
+            const result = runSshCapture(
+                ssh,
+                params.auth ?? await resolveRelayAccessSshAuth(ssh),
+                `command -v ${safeBashSingleQuote(name)} || true`,
+            );
             if (result.status !== 0) return null;
             const resolved = result.stdout.trim().split(/\r?\n/u)[0]?.trim() ?? '';
             return resolved || null;
@@ -340,36 +419,22 @@ async function cmdStatus(args: string[]): Promise<void> {
     const jsonFlag = takeFlag(rest, '--json');
     rest = jsonFlag.rest;
     const json = jsonFlag.present || wantsJson(args);
-    const ssh = takeFlagValue(rest, '--ssh');
-    rest = ssh.rest;
-    const sshConfigFile = takeFlagValue(rest, '--ssh-config-file');
-    rest = sshConfigFile.rest;
-    if (!ssh.value && sshConfigFile.value) {
-        throw new Error('Missing required flag: --ssh (when using --ssh-config-file).');
-    }
-
-    const target: systemTasks.RelayAccessTaskTarget = ssh.value
-        ? {
-            kind: 'ssh',
-            ssh: {
-                target: ensureNonEmptyString(ssh.value, '--ssh'),
-                auth: 'agent',
-                ...(sshConfigFile.value?.trim() ? { sshConfigFile: sshConfigFile.value.trim() } : {}),
-            },
-        }
-        : { kind: 'local' };
+    const resolvedTarget = await resolveRelayAccessSshTarget(rest);
+    const target = resolvedTarget.target;
+    rest = resolvedTarget.rest;
     if (rest.length > 0) {
         throw new Error(`Unknown relay access status arguments: ${rest.join(' ')}`);
     }
+    const sshAuth = target.kind === 'ssh' ? await resolveRelayAccessSshAuth(target.ssh) : null;
 
     let capturedConfig: RelayAccessConfig | null = null;
     const kind = systemTasks.createRelayAccessStatusTaskKind({
         readConfig: async (params) => {
-            capturedConfig = await readRelayAccessConfig(params);
+            capturedConfig = await readRelayAccessConfig({ ...params, auth: sshAuth ?? undefined });
             return capturedConfig;
         },
         getProvider: (providerId) => getRelayAccessProvider(providerId),
-        createExecutionContext: (params) => createRelayAccessExecutionContext(params),
+        createExecutionContext: (params) => createRelayAccessExecutionContext({ ...params, auth: sshAuth ?? undefined }),
     });
 
     const snapshot = await kind.run({
@@ -426,20 +491,10 @@ async function cmdConfigure(args: string[]): Promise<void> {
     const jsonFlag = takeFlag(rest, '--json');
     rest = jsonFlag.rest;
     const json = jsonFlag.present || wantsJson(args);
-    const ssh = takeFlagValue(rest, '--ssh');
-    rest = ssh.rest;
-    const sshConfigFile = takeFlagValue(rest, '--ssh-config-file');
-    rest = sshConfigFile.rest;
-    const target: systemTasks.RelayAccessTaskTarget = ssh.value
-        ? {
-            kind: 'ssh',
-            ssh: {
-                target: ensureNonEmptyString(ssh.value, '--ssh'),
-                auth: 'agent',
-                ...(sshConfigFile.value?.trim() ? { sshConfigFile: sshConfigFile.value.trim() } : {}),
-            },
-        }
-        : { kind: 'local' };
+    const resolvedTarget = await resolveRelayAccessSshTarget(rest);
+    const target = resolvedTarget.target;
+    rest = resolvedTarget.rest;
+    const sshAuth = target.kind === 'ssh' ? await resolveRelayAccessSshAuth(target.ssh) : null;
 
     const upstream = takeFlagValue(rest, '--upstream-url');
     rest = upstream.rest;
@@ -457,10 +512,10 @@ async function cmdConfigure(args: string[]): Promise<void> {
     const kind = systemTasks.createRelayAccessConfigureTaskKind({
         writeConfig: async (params) => {
             capturedConfig = params.config;
-            await writeRelayAccessConfig({ target: params.target, config: params.config });
+            await writeRelayAccessConfig({ target: params.target, config: params.config, auth: sshAuth ?? undefined });
         },
         getProvider: (providerIdInner) => getRelayAccessProvider(providerIdInner),
-        createExecutionContext: (params) => createRelayAccessExecutionContext(params),
+        createExecutionContext: (params) => createRelayAccessExecutionContext({ ...params, auth: sshAuth ?? undefined }),
     });
 
     const snapshot = await kind.run({
@@ -509,34 +564,21 @@ async function cmdDisable(args: string[]): Promise<void> {
     const jsonFlag = takeFlag(rest, '--json');
     rest = jsonFlag.rest;
     const json = jsonFlag.present || wantsJson(args);
-    const ssh = takeFlagValue(rest, '--ssh');
-    rest = ssh.rest;
-    const sshConfigFile = takeFlagValue(rest, '--ssh-config-file');
-    rest = sshConfigFile.rest;
-    if (!ssh.value && sshConfigFile.value) {
-        throw new Error('Missing required flag: --ssh (when using --ssh-config-file).');
-    }
-    const target: systemTasks.RelayAccessTaskTarget = ssh.value
-        ? {
-            kind: 'ssh',
-            ssh: {
-                target: ensureNonEmptyString(ssh.value, '--ssh'),
-                auth: 'agent',
-                ...(sshConfigFile.value?.trim() ? { sshConfigFile: sshConfigFile.value.trim() } : {}),
-            },
-        }
-        : { kind: 'local' };
+    const resolvedTarget = await resolveRelayAccessSshTarget(rest);
+    const target = resolvedTarget.target;
+    rest = resolvedTarget.rest;
+    const sshAuth = target.kind === 'ssh' ? await resolveRelayAccessSshAuth(target.ssh) : null;
     if (rest.length > 0) {
         throw new Error(`Unknown relay access disable arguments: ${rest.join(' ')}`);
     }
 
     const kind = systemTasks.createRelayAccessDisableTaskKind({
-        readConfig: async (params) => await readRelayAccessConfig(params),
+        readConfig: async (params) => await readRelayAccessConfig({ ...params, auth: sshAuth ?? undefined }),
         writeConfig: async (params) => {
-            await writeRelayAccessConfig({ target: params.target, config: params.config });
+            await writeRelayAccessConfig({ target: params.target, config: params.config, auth: sshAuth ?? undefined });
         },
         getProvider: (providerId) => getRelayAccessProvider(providerId),
-        createExecutionContext: (params) => createRelayAccessExecutionContext(params),
+        createExecutionContext: (params) => createRelayAccessExecutionContext({ ...params, auth: sshAuth ?? undefined }),
     });
 
     await kind.run({

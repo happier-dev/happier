@@ -18,7 +18,7 @@ export async function probeServerVersion(serverUrlRaw: string): Promise<ProbeSer
     return { ok: false, url: '', status: null, error: 'missing_server_url' };
   }
 
-  const url = `${serverUrl}/v1/version`;
+  const url = `${serverUrl}/health`;
   const timeoutMs = resolveTimeoutMs();
 
   try {

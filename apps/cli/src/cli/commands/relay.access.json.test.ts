@@ -12,10 +12,12 @@ import { addServerProfile } from '@/server/serverProfiles';
 
 function createFakeSsh(scenario: Readonly<{
     outputs?: readonly Readonly<{ status?: number; stdout?: string; stderr?: string }>[];
+    expectedPassword?: string;
 }>): Readonly<{
     binDir: string;
     cleanup: () => void;
     readInvocations: () => string[][];
+    readEnvSnapshots: () => ReadonlyArray<Readonly<Record<string, string | null>>>;
 }> {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-relay-access-fake-ssh-'));
     const binDir = join(rootDir, 'bin');
@@ -34,7 +36,32 @@ const { appendFileSync, readFileSync, writeFileSync } = require('node:fs');
 const statePath = process.env.HAPPIER_FAKE_SSH_STATE_PATH;
 const logPath = process.env.HAPPIER_FAKE_SSH_LOG_PATH;
 const argv = process.argv.slice(2);
-appendFileSync(logPath, JSON.stringify(argv) + '\\n');
+const recordEnv = process.env.HAPPIER_FAKE_SSH_RECORD_ENV === '1';
+appendFileSync(logPath, JSON.stringify({
+  argv,
+  env: recordEnv ? {
+    HAPPIER_SSH_PASSWORD: process.env.HAPPIER_SSH_PASSWORD ?? null,
+    SSH_ASKPASS: process.env.SSH_ASKPASS ?? null,
+    SSH_ASKPASS_REQUIRE: process.env.SSH_ASKPASS_REQUIRE ?? null,
+    DISPLAY: process.env.DISPLAY ?? null,
+  } : null,
+}) + '\\n');
+
+const expectedPassword = ${JSON.stringify(scenario.expectedPassword ?? null)};
+if (expectedPassword !== null) {
+  if (process.env.HAPPIER_SSH_PASSWORD !== expectedPassword) {
+    process.stderr.write('missing or mismatched HAPPIER_SSH_PASSWORD\\n');
+    process.exit(42);
+  }
+  if (process.env.SSH_ASKPASS_REQUIRE !== 'force') {
+    process.stderr.write('missing SSH_ASKPASS_REQUIRE\\n');
+    process.exit(43);
+  }
+  if (!process.env.SSH_ASKPASS || !process.env.SSH_ASKPASS.includes('happier-ssh-askpass')) {
+    process.stderr.write('missing SSH_ASKPASS\\n');
+    process.exit(44);
+  }
+}
 
 const state = JSON.parse(readFileSync(statePath, 'utf8'));
 const outputs = Array.isArray(state.outputs) ? state.outputs : [];
@@ -57,10 +84,24 @@ process.exit(Number(next.status ?? 0));
         },
         readInvocations() {
             const raw = readFileSync(logPath, 'utf8').trim();
-            return raw ? raw.split('\n').map((line) => JSON.parse(line) as string[]) : [];
+            return raw
+                ? raw.split('\n').map((line) => {
+                    const parsed = JSON.parse(line) as { argv?: string[] };
+                    return Array.isArray(parsed.argv) ? parsed.argv : [];
+                })
+                : [];
         },
-    };
-}
+	        readEnvSnapshots() {
+	            const raw = readFileSync(logPath, 'utf8').trim();
+	            return raw
+	                ? raw.split('\n').map((line) => {
+	                    const parsed = JSON.parse(line) as { env?: Readonly<Record<string, string | null>> };
+	                    return parsed.env ?? {};
+	                })
+	                : [];
+	        },
+	    };
+	}
 
 function createFakeTailscale(scenario: Readonly<{
     statusJson?: unknown;
@@ -92,6 +133,10 @@ if (argv[0] === 'status' && argv[1] === '--json') {
 
 if (argv[0] === 'serve' && argv[1] === 'status') {
   process.stdout.write(${JSON.stringify(String(scenario.serveStatusText ?? ''))});
+  process.exit(0);
+}
+
+if (argv[0] === 'serve' && argv.includes('--bg')) {
   process.exit(0);
 }
 
@@ -299,6 +344,7 @@ describe('happier relay access --json', () => {
             const invocations = fakeTailscale.readInvocations();
             expect(invocations).toEqual([
                 ['serve', '--bg', 'http://127.0.0.1:3005'],
+                ['serve', 'status'],
                 ['status', '--json'],
             ]);
         } finally {
@@ -349,6 +395,7 @@ describe('happier relay access --json', () => {
             const invocations = fakeTailscale.readInvocations();
             expect(invocations).toEqual([
                 ['serve', '--bg', 'http://127.0.0.1:3005'],
+                ['serve', 'status'],
                 ['status', '--json'],
             ]);
         } finally {
@@ -534,6 +581,51 @@ describe('happier relay access --json', () => {
         }
     });
 
+    it('supports password auth when reading relay access config over ssh', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+            ],
+        });
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        const previousPassword = process.env.HAPPIER_SSH_PASSWORD;
+        process.exitCode = undefined;
+        process.env.HAPPIER_SSH_PASSWORD = 'super-secret-password';
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: ['relay', 'access', 'status', '--ssh', 'dev@example.test', '--ssh-auth', 'password', '--json'],
+                    rawArgv: ['node', 'happier', 'relay', 'access', 'status', '--ssh', 'dev@example.test', '--ssh-auth', 'password', '--json'],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_access_status');
+            expect(parsed.data?.configured).toBe(true);
+            expect(parsed.data?.providerId).toBe('lan');
+            expect(parsed.data?.state).toBe('enabled');
+            expect(parsed.data?.shareUrl).toBe('https://relay.remote.lan.test');
+            expect(output.logs.join('\n')).not.toContain('super-secret-password');
+
+            const invocations = fakeSsh.readInvocations();
+            expect(invocations.length).toBe(1);
+            expect(invocations[0]?.includes('dev@example.test')).toBe(true);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            if (previousPassword === undefined) {
+                delete process.env.HAPPIER_SSH_PASSWORD;
+            } else {
+                process.env.HAPPIER_SSH_PASSWORD = previousPassword;
+            }
+            fakeSsh.cleanup();
+        }
+    });
+
     it('supports --ssh-config-file when reading relay access config over ssh', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
@@ -625,6 +717,73 @@ describe('happier relay access --json', () => {
             output.restore();
             process.exitCode = prevExitCode;
             fakeSsh.cleanup();
+        }
+    });
+
+    it('supports password auth over ssh without leaking the password into argv', async () => {
+        const fakeSsh = createFakeSsh({
+            expectedPassword: 'super-secret',
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+            ],
+        });
+
+        const previousPassword = process.env.HAPPIER_SSH_PASSWORD;
+        process.env.HAPPIER_SSH_PASSWORD = 'super-secret';
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: [
+                        'relay',
+                        'access',
+                        'status',
+                        '--ssh',
+                        'dev@example.test',
+                        '--ssh-auth',
+                        'password',
+                        '--json',
+                    ],
+                    rawArgv: [
+                        'node',
+                        'happier',
+                        'relay',
+                        'access',
+                        'status',
+                        '--ssh',
+                        'dev@example.test',
+                        '--ssh-auth',
+                        'password',
+                        '--json',
+                    ],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_access_status');
+            expect(parsed.data?.configured).toBe(true);
+            expect(parsed.data?.providerId).toBe('lan');
+            expect(output.logs.join('\n')).not.toContain('super-secret');
+
+            const invocations = fakeSsh.readInvocations();
+            expect(invocations.length).toBe(1);
+            const args = invocations[0] ?? [];
+            expect(args.join(' ')).toContain('BatchMode=no');
+            expect(args.join(' ')).not.toContain('super-secret');
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+            if (previousPassword === undefined) {
+                delete process.env.HAPPIER_SSH_PASSWORD;
+            } else {
+                process.env.HAPPIER_SSH_PASSWORD = previousPassword;
+            }
         }
     });
 

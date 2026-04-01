@@ -123,6 +123,7 @@ describe('handleMachineCommand', () => {
           relayRuntime: {
             enabled: true,
             mode: 'system',
+            switchRelayUrl: true,
           },
         },
       },
@@ -131,6 +132,54 @@ describe('handleMachineCommand', () => {
       JSON.stringify(event),
       JSON.stringify(result),
     ]);
+  });
+
+  it('supports --require-local-approval to ensure the remote machine is paired via the current CLI credentials', async () => {
+    const start = vi.fn(async () => ({ taskId: 'task-require-local' }));
+    const poll = vi.fn().mockResolvedValue({
+      events: [],
+      nextCursor: 1,
+      result: {
+        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+        taskId: 'task-require-local',
+        ok: true,
+        data: {},
+      } satisfies SystemTaskResult,
+      pendingPrompt: null,
+    });
+
+    await handleMachineCommand(
+      ['setup', '--ssh', 'dev@example.test', '--require-local-approval', '--json'],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start,
+          poll,
+          respond: vi.fn(async () => undefined),
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => {
+          throw new Error('prompt should not be used');
+        },
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
+        isInteractiveTerminal: () => false,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(start).toHaveBeenCalledWith({
+      spec: expect.objectContaining({
+        kind: 'remote.ssh.bootstrapMachine.v1',
+        params: expect.objectContaining({
+          requireLocalApproval: true,
+        }),
+      }),
+    });
   });
 
   it('prints explicit relay switching guidance after installing a remote relay runtime', async () => {

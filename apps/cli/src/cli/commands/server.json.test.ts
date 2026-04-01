@@ -244,10 +244,10 @@ describe('happier server --json', () => {
     }) as any);
     try {
       server = createServer((req, res) => {
-        if (req.method === 'GET' && req.url === '/v1/version') {
+        if (req.method === 'GET' && req.url === '/health') {
           res.statusCode = 200;
           res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ version: '1.2.3' }));
+          res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
           return;
         }
         res.statusCode = 404;
@@ -267,7 +267,7 @@ describe('happier server --json', () => {
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_test');
       expect(parsed.data?.ok).toBe(true);
-      expect(parsed.data?.version).toBe('1.2.3');
+      expect(parsed.data?.version).toBeNull();
       expect(process.exitCode).toBe(0);
     } finally {
       exitSpy.mockRestore();
@@ -290,7 +290,7 @@ describe('happier server --json', () => {
     }) as any);
     try {
       server = createServer((req, res) => {
-        if (req.method === 'GET' && req.url === '/v1/version') {
+        if (req.method === 'GET' && req.url === '/health') {
           res.statusCode = 500;
           res.setHeader('content-type', 'text/plain');
           res.end('nope');

@@ -7,6 +7,7 @@ import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createOutputBuilder, ok } from '@happier-dev/cli-common/output';
 import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
+import { ensureSshAskpassScriptPath, SSH_PASSWORD_ENV } from '@/capabilities/systemTasks/ssh/sshAskpass';
 
 import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
@@ -38,30 +39,6 @@ type RelayHostInstallJson = Readonly<{
 
 const TEST_FIRST_PARTY_PAYLOAD_ROOT_ENV = 'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT';
 const TEST_FIRST_PARTY_PAYLOAD_VERSION_ID_ENV = 'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_VERSION_ID';
-const SSH_PASSWORD_ENV = 'HAPPIER_SSH_PASSWORD';
-
-const ASKPASS_SCRIPT_PATH = join(tmpdir(), 'happier-ssh-askpass.sh');
-
-function ensureAskpassScriptPath(): string {
-  const directory = join(tmpdir(), 'happier');
-  mkdirSync(directory, { recursive: true });
-  if (!existsSync(ASKPASS_SCRIPT_PATH)) {
-    writeFileSync(
-      ASKPASS_SCRIPT_PATH,
-      '#!/bin/sh\nprintf "%s\\n" "$HAPPIER_SSH_PASSWORD"\n',
-      {
-        encoding: 'utf8',
-        mode: 0o700,
-      },
-    );
-  }
-  try {
-    chmodSync(ASKPASS_SCRIPT_PATH, 0o700);
-  } catch {
-    // best effort
-  }
-  return ASKPASS_SCRIPT_PATH;
-}
 
 function takeFlag(args: string[], name: string): { present: boolean; rest: string[] } {
   const rest: string[] = [];
@@ -386,7 +363,7 @@ function buildSshRunner(ssh: SystemTaskSshConnectionConfig, password: string | n
         ? {
             ...process.env,
             [SSH_PASSWORD_ENV]: String(password ?? ''),
-            SSH_ASKPASS: ensureAskpassScriptPath(),
+            SSH_ASKPASS: ensureSshAskpassScriptPath(),
             SSH_ASKPASS_REQUIRE: 'force',
             DISPLAY: process.env.DISPLAY ?? ':0',
           }
@@ -399,7 +376,7 @@ function buildSshRunner(ssh: SystemTaskSshConnectionConfig, password: string | n
         ? {
             ...process.env,
             [SSH_PASSWORD_ENV]: String(password ?? ''),
-            SSH_ASKPASS: ensureAskpassScriptPath(),
+            SSH_ASKPASS: ensureSshAskpassScriptPath(),
             SSH_ASKPASS_REQUIRE: 'force',
             DISPLAY: process.env.DISPLAY ?? ':0',
           }

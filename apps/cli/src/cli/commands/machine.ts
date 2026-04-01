@@ -223,6 +223,8 @@ function buildMachineSetupSpec(params: Readonly<{
   args = relayRuntimeMode.rest;
   const installRelayRuntime = takeFlag(args, '--install-relay-runtime');
   args = installRelayRuntime.rest;
+  const requireLocalApproval = takeFlag(args, '--require-local-approval');
+  args = requireLocalApproval.rest;
   if (args.length > 0) {
     throw new Error(`Unknown machine setup arguments: ${args.join(' ')}`);
   }
@@ -258,6 +260,7 @@ function buildMachineSetupSpec(params: Readonly<{
         webappUrl: params.relaySelection.webappUrl,
         ...(params.relaySelection.publicRelayUrl ? { publicRelayUrl: params.relaySelection.publicRelayUrl } : {}),
       },
+      ...(requireLocalApproval.present ? { requireLocalApproval: true } : {}),
       channel: normalizeTaskChannel([
         ...(preview.present ? ['--preview'] : []),
         ...(dev.present ? ['--dev'] : []),
@@ -270,6 +273,7 @@ function buildMachineSetupSpec(params: Readonly<{
             relayRuntime: {
               enabled: true,
               mode: normalizeRelayRuntimeMode(relayRuntimeMode.value),
+              switchRelayUrl: true,
             },
           }
         : {}),

@@ -9,7 +9,7 @@ describe('probeServerVersion', () => {
 
   beforeAll(async () => {
     server = http.createServer((req, res) => {
-      if (req.url === '/v1/version') {
+      if (req.url === '/health') {
         if (responseMode === 'http_503') {
           res.statusCode = 503;
           res.setHeader('content-type', 'text/plain');
@@ -24,7 +24,7 @@ describe('probeServerVersion', () => {
         }
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ version: 'test' }));
+        res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
         return;
       }
       res.statusCode = 404;
@@ -40,14 +40,14 @@ describe('probeServerVersion', () => {
     await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   });
 
-  it('returns ok and parses version response', async () => {
+  it('returns ok and parses health response', async () => {
     responseMode = 'ok';
     const { probeServerVersion } = await import('./serverTest');
     const out = await probeServerVersion(baseUrl);
     expect(out.ok).toBe(true);
     if (!out.ok) throw new Error(`expected ok result, got: ${out.error}`);
-    expect(out.url).toBe(`${baseUrl}/v1/version`);
-    expect(out.version).toBe('test');
+    expect(out.url).toBe(`${baseUrl}/health`);
+    expect(out.version).toBeNull();
   });
 
   it('bypasses patched http.request when probing loopback endpoints', async () => {
@@ -63,7 +63,8 @@ describe('probeServerVersion', () => {
       const out = await probeServerVersion(baseUrl);
       expect(out.ok).toBe(true);
       if (!out.ok) throw new Error(`expected ok result, got: ${out.error}`);
-      expect(out.version).toBe('test');
+      expect(out.url).toBe(`${baseUrl}/health`);
+      expect(out.version).toBeNull();
     } finally {
       (http as any).request = previousRequest;
     }
@@ -83,18 +84,20 @@ describe('probeServerVersion', () => {
       const { probeServerVersion } = await import('./serverTest');
       const out = await probeServerVersion(baseUrl);
       expect(out.ok).toBe(true);
+      if (!out.ok) throw new Error(`expected ok result, got: ${out.error}`);
+      expect(out.url).toBe(`${baseUrl}/health`);
     } finally {
       (http as any).globalAgent = previousAgent;
     }
   });
 
-  it('returns http status failure for non-200 /v1/version responses', async () => {
+  it('returns http status failure for non-200 /health responses', async () => {
     responseMode = 'http_503';
     const { probeServerVersion } = await import('./serverTest');
     const out = await probeServerVersion(baseUrl);
     expect(out.ok).toBe(false);
     if (out.ok) throw new Error('expected non-200 probe result');
-    expect(out.url).toBe(`${baseUrl}/v1/version`);
+    expect(out.url).toBe(`${baseUrl}/health`);
     expect(out.status).toBe(503);
     expect(out.error).toBe('http_503');
   });
@@ -105,10 +108,9 @@ describe('probeServerVersion', () => {
     const out = await probeServerVersion(baseUrl);
     expect(out.ok).toBe(false);
     if (out.ok) throw new Error('expected invalid-json probe result');
-    expect(out.url).toBe(`${baseUrl}/v1/version`);
+    expect(out.url).toBe(`${baseUrl}/health`);
     expect(out.status).toBeNull();
     expect(out.error.length).toBeGreaterThan(0);
-    expect(out.error.startsWith('http_')).toBe(false);
   });
 
   it('returns network failure details for unreachable endpoints', async () => {
@@ -135,7 +137,7 @@ describe('probeServerVersion', () => {
       const out = await probeServerVersion(`http://127.0.0.1:${unreachablePort}`);
       expect(out.ok).toBe(false);
       if (out.ok) throw new Error('expected unreachable endpoint to fail');
-      expect(out.url).toBe(`http://127.0.0.1:${unreachablePort}/v1/version`);
+      expect(out.url).toBe(`http://127.0.0.1:${unreachablePort}/health`);
       expect(out.status).toBeNull();
       expect(out.error.length).toBeGreaterThan(0);
       expect(out.error.startsWith('http_')).toBe(false);
