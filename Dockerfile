@@ -168,9 +168,11 @@ COPY apps/ui ./apps/ui
 COPY packages/agents ./packages/agents
 COPY packages/connection-supervisor ./packages/connection-supervisor
 COPY packages/protocol ./packages/protocol
+COPY packages/release-runtime ./packages/release-runtime
 COPY packages/transfers ./packages/transfers
 
 RUN yarn workspace @happier-dev/protocol postinstall:real \
+    && yarn workspace @happier-dev/release-runtime postinstall:real \
     && yarn workspace @happier-dev/agents postinstall:real \
     && yarn workspace @happier-dev/connection-supervisor postinstall:real \
     && yarn workspace @happier-dev/transfers postinstall:real
