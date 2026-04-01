@@ -29,6 +29,11 @@ function isClaudeAgentSdkAuthenticationError(error: unknown): boolean {
     return false;
 }
 
+function isClaudeAgentSdkProcessExitCodeOne(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('Claude Code process exited with code 1');
+}
+
 export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage }>(
     opts: T & { onRunnerSelected?: ((runner: ClaudeRemoteRunnerKind) => void) | null },
     deps?: Partial<ClaudeRemoteDispatchDependencies>,
@@ -38,6 +43,8 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
 
     let consumedBeyondFirst = false;
     let didStartSession = false;
+    let didEmitMessage = false;
+    let didEmitAssistantMessage = false;
 
     const originalOnSessionFound = (opts as any).onSessionFound as unknown;
     const onSessionFound = (...args: any[]) => {
@@ -47,7 +54,23 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
         }
     };
 
-    const baseOpts = { ...opts, onSessionFound };
+    const originalOnMessage = (opts as any).onMessage as unknown;
+    const onMessage = (...args: any[]) => {
+        didEmitMessage = true;
+        const firstArg = args[0];
+        if (firstArg && typeof firstArg === 'object') {
+            const messageType = (firstArg as any).type;
+            const role = (firstArg as any)?.message?.role ?? (firstArg as any)?.role;
+            if (messageType === 'assistant' || role === 'assistant') {
+                didEmitAssistantMessage = true;
+            }
+        }
+        if (typeof originalOnMessage === 'function') {
+            (originalOnMessage as any)(...args);
+        }
+    };
+
+    const baseOpts = { ...opts, onSessionFound, onMessage };
     const createNextMessage = (): NextMessage => {
         let usedFirst = false;
         return async () => {
@@ -63,13 +86,28 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     const resolvedLegacy = deps?.claudeRemote ?? claudeRemote;
     const resolvedAgentSdk = deps?.claudeRemoteAgentSdk ?? claudeRemoteAgentSdk;
 
-    if (first.mode.claudeRemoteAgentSdkEnabled === true) {
+    // Back-compat: older clients/daemons may not include this provider-scoped flag on the queued prompt.
+    // Default is enabled (see provider settings defaults + DEFAULT_CLAUDE_REMOTE_META_STATE).
+    if (first.mode.claudeRemoteAgentSdkEnabled !== false) {
         try {
             baseOpts.onRunnerSelected?.('agentSdk');
             await resolvedAgentSdk({ ...baseOpts, nextMessage: createNextMessage() } as any);
             return;
         } catch (error) {
-            if (!consumedBeyondFirst && !didStartSession && isClaudeAgentSdkAuthenticationError(error)) {
+            const shouldFallbackBecauseExitCodeOne = isClaudeAgentSdkProcessExitCodeOne(error);
+            if (
+                !consumedBeyondFirst
+                && (
+                    // Authentication errors are only safe to fall back from when the Agent SDK failed
+                    // before establishing/claiming a session id. Once a session is started, switching
+                    // runners can confuse session metadata and lead to duplicated/invalid resumes.
+                    (!didStartSession && !didEmitMessage && isClaudeAgentSdkAuthenticationError(error))
+                    // Claude Code sometimes exits with status 1 (e.g. resume failures, transient crashes)
+                    // after already emitting a session id, but before producing any assistant messages.
+                    // In that case we still prefer a best-effort fallback so the user isn't stuck.
+                    || (shouldFallbackBecauseExitCodeOne && !didEmitAssistantMessage)
+                )
+            ) {
                 baseOpts.onRunnerSelected?.('legacy');
                 await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
                 return;
