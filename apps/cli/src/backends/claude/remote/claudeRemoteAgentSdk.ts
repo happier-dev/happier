@@ -1537,22 +1537,20 @@ export async function claudeRemoteAgentSdk(opts: {
                         }
                     }
 
-	                    if (subtype === 'init') {
-	                        if (system.session_id) {
-	                            const transcriptPath = join(
-	                                getProjectPath(opts.path, claudeConfigDir),
-	                                `${system.session_id}.jsonl`,
-	                            );
-	                            logger.debug('[claudeRemoteAgentSdk] Session initialized', {
-	                                claudeSessionId: system.session_id,
-	                                transcriptPath,
-	                            });
-	                            recordSessionFound(system.session_id, { transcript_path: transcriptPath, transcriptPath });
-	                            if (isCompactCommand) {
-	                                opts.onCompletionEvent?.('Compaction completed');
-	                                isCompactCommand = false;
-	                                await finalizeCurrentTurn();
-	                            }
+                    if (subtype === 'init' && system.session_id) {
+                        const transcriptPath = join(
+                            getProjectPath(opts.path, claudeConfigDir),
+                            `${system.session_id}.jsonl`,
+                        );
+                        logger.debug('[claudeRemoteAgentSdk] Session initialized', {
+                            claudeSessionId: system.session_id,
+                            transcriptPath,
+                        });
+                        recordSessionFound(system.session_id, { transcript_path: transcriptPath, transcriptPath });
+                        if (isCompactCommand) {
+                            opts.onCompletionEvent?.('Compaction completed');
+                            isCompactCommand = false;
+                            await finalizeCurrentTurn();
                         }
                     }
                 }
