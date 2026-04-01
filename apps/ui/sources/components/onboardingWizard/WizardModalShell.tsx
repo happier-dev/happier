@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { Platform, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
+import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 
 import { WizardCardLayout } from './WizardCardLayout';
 import { WizardStepDots } from './WizardStepDots';
@@ -164,7 +164,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: 8,
+        gap: 10,
         flexWrap: 'wrap',
     },
     footerButton: {
@@ -179,15 +179,24 @@ export function WizardModalShell(props: WizardModalShellProps) {
     useUnistyles();
     const styles = stylesheet;
     const { width: windowWidth } = useWindowDimensions();
-    const insets = useSafeAreaInsets();
-    const modalPortalTarget = useModalPortalTarget();
+    const rawInsets = useChromeSafeAreaInsets();
+    const isInsideModalBoundary = useIsInsideModalBoundary();
+    const insets = React.useMemo(() => {
+        // On native, BaseModal already applies safe-area padding at the overlay container level.
+        // Avoid double-applying insets inside the wizard chrome.
+        if (Platform.OS !== 'web' && isInsideModalBoundary) {
+            return { top: 0, bottom: 0, left: 0, right: 0 } as const;
+        }
+        return rawInsets;
+    }, [isInsideModalBoundary, rawInsets]);
     const showSkip = props.showSkip ?? true;
     const showBack = props.showBack ?? true;
     const skipDisabled = props.skipDisabled ?? false;
     const wantsFullscreen = Number.isFinite(windowWidth) && windowWidth > 0 && windowWidth <= 430;
-    const shouldDisableInternalScrim = Platform.OS === 'web' && modalPortalTarget != null;
-    const headerPaddingTop = wantsFullscreen ? insets.top + 12 : 18;
-    const footerPaddingBottom = wantsFullscreen ? insets.bottom + 16 : styles.footer.paddingBottom;
+    const shouldDisableInternalScrim = isInsideModalBoundary;
+    const shouldUseInternalScrollHost = props.scrollable ?? !isInsideModalBoundary;
+    const headerPaddingTop = (wantsFullscreen ? 12 : 18) + insets.top;
+    const footerPaddingBottom = (wantsFullscreen ? 16 : styles.footer.paddingBottom) + insets.bottom;
 
     const content = (
         <>
@@ -206,7 +215,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
     return (
             <WizardCardLayout
                 testID={props.testID}
-                scrollable={props.scrollable ?? !shouldDisableInternalScrim}
+                scrollable={shouldUseInternalScrollHost}
                 showScrim={shouldDisableInternalScrim ? false : true}
             >
                 <View testID={props.testID} style={styles.shell}>

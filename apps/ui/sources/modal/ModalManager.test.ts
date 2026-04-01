@@ -177,7 +177,6 @@ describe('Modal.prompt', () => {
                 kind: 'card',
                 title: 'Browse provider sessions',
                 subtitle: 'Pick a session',
-                layout: 'fill',
                 dimensions: {
                     size: 'lg',
                 },

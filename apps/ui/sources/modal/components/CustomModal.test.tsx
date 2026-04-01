@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
 import { ModalCardFrame } from './card/ModalCardFrame';
+import { useModalCardChrome } from './card/useModalCardChrome';
 import type { CustomModalInjectedProps, CustomModalConfig } from '../types';
 
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -62,6 +63,17 @@ function PatchChromeModal(props: CustomModalInjectedProps & Readonly<{ label: st
     return React.createElement('PatchChromeModal', props);
 }
 
+function UnmemoizedNodeChromeModal(props: CustomModalInjectedProps & Readonly<{ label: string }>) {
+    const chrome = {
+        kind: 'card' as const,
+        title: React.createElement('ChromeTitle', { style: { opacity: 1 } }, 'Hello'),
+        subtitle: 'World',
+    };
+
+    useModalCardChrome(props.setChrome, chrome);
+    return React.createElement('UnmemoizedNodeChromeModal', props);
+}
+
 function LegacyOnRequestCloseModal(
     props: CustomModalInjectedProps & Readonly<{ label: string; onRequestClose: () => void }>,
 ) {
@@ -108,7 +120,6 @@ describe('CustomModal', () => {
                 actions: chromeActions,
                 footer: chromeFooter,
                 closeButtonTestID: 'chrome-close',
-                layout: 'fill',
                 dimensions: {
                     size: 'lg',
                 },
@@ -123,7 +134,6 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.actions).toBe(chromeActions);
         expect(modalCardFrame.props.footer).toBe(chromeFooter);
         expect(modalCardFrame.props.closeButtonTestID).toBe('chrome-close');
-        expect(modalCardFrame.props.layout).toBe('fill');
         expect(screen.findByType(ChromeModal).props.label).toBe('browse');
 
         act(() => {
@@ -143,7 +153,6 @@ describe('CustomModal', () => {
 
         const modalCardFrame = screen.findByType(ModalCardFrame);
         expect(modalCardFrame.props.title).toBe('Self chrome');
-        expect(modalCardFrame.props.layout).toBe('fit');
         expect(screen.findByType(SelfChromeModal).props.label).toBe('self');
     });
 
@@ -158,7 +167,6 @@ describe('CustomModal', () => {
                 subtitle: 'Base subtitle',
                 actions: React.createElement('BaseActions'),
                 testID: 'base-test',
-                layout: 'fill',
                 dimensions: { size: 'lg' },
             },
         });
@@ -167,8 +175,19 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.title).toBe('Base title');
         expect(modalCardFrame.props.subtitle).toBe('Base subtitle');
         expect(modalCardFrame.props.actions?.type).toBe('BaseActions');
-        expect(modalCardFrame.props.layout).toBe('fill');
         expect(modalCardFrame.props.footer?.type).toBe('PatchedFooter');
+    });
+
+    it('does not loop when chrome nodes are referentially unstable', async () => {
+        const screen = await renderCustomModal({
+            type: 'custom',
+            component: UnmemoizedNodeChromeModal,
+            props: { label: 'unstable' },
+        });
+
+        const modalCardFrame = screen.findByType(ModalCardFrame);
+        expect(modalCardFrame.props.subtitle).toBe('World');
+        expect(modalCardFrame.props.title?.type).toBe('ChromeTitle');
     });
 
     it('does not invoke legacy `props.onRequestClose` when dismissing', async () => {

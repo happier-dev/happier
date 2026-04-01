@@ -2,7 +2,10 @@ import * as React from 'react';
 
 export type ModalPortalTarget = Element | DocumentFragment | null;
 
-const ModalPortalTargetContext = React.createContext<ModalPortalTarget>(null);
+const NO_MODAL_PORTAL_PROVIDER = Symbol('happier.modalPortalTarget.noProvider');
+type ModalPortalTargetContextValue = ModalPortalTarget | typeof NO_MODAL_PORTAL_PROVIDER;
+
+const ModalPortalTargetContext = React.createContext<ModalPortalTargetContextValue>(NO_MODAL_PORTAL_PROVIDER);
 
 export function ModalPortalTargetProvider(props: {
     target: ModalPortalTarget;
@@ -16,6 +19,10 @@ export function ModalPortalTargetProvider(props: {
 }
 
 export function useModalPortalTarget(): ModalPortalTarget {
-    return React.useContext(ModalPortalTargetContext);
+    const value = React.useContext(ModalPortalTargetContext);
+    return value === NO_MODAL_PORTAL_PROVIDER ? null : value;
 }
 
+export function useHasModalPortalTargetProvider(): boolean {
+    return React.useContext(ModalPortalTargetContext) !== NO_MODAL_PORTAL_PROVIDER;
+}

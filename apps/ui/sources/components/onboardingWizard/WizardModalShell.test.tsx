@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { Text } from '@/components/ui/text/Text';
-import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -84,13 +84,11 @@ describe('WizardModalShell', () => {
 
     it('disables the internal WizardCardLayout scrim when nested in a BaseModal (avoids double-dimming; BaseModal owns the backdrop)', async () => {
         const { WizardModalShell } = await import('./WizardModalShell');
-        const portalTarget = ({ nodeType: 1 } as any);
 
         const screen = await renderScreen(
             React.createElement(
-                ModalPortalTargetProvider,
+                ModalBoundaryProvider,
                 {
-                    target: portalTarget,
                     children: React.createElement(WizardModalShell, {
                         testID: 'wizard-shell',
                         stepIndex: 0,
@@ -108,15 +106,38 @@ describe('WizardModalShell', () => {
         expect(layout.props.showScrim).toBe(false);
     });
 
-    it('lets the outer modal container own scrolling when nested in a BaseModal', async () => {
+    it('disables the internal WizardCardLayout scrim when nested in a BaseModal even on the first render', async () => {
         const { WizardModalShell } = await import('./WizardModalShell');
-        const portalTarget = ({ nodeType: 1 } as any);
 
         const screen = await renderScreen(
             React.createElement(
-                ModalPortalTargetProvider,
+                ModalBoundaryProvider,
                 {
-                    target: portalTarget,
+                    children: React.createElement(WizardModalShell, {
+                        testID: 'wizard-shell',
+                        stepIndex: 0,
+                        stepCount: 1,
+                        title: 'Title',
+                        subtitle: 'Subtitle',
+                        onPrimary: () => {},
+                        children: React.createElement('View', { testID: 'wizard-shell-body' }),
+                    }),
+                },
+            ),
+        );
+
+        const layout = screen.findByType('WizardCardLayout' as never);
+        expect(layout.props.showScrim).toBe(false);
+        expect(layout.props.scrollable).toBe(false);
+    });
+
+    it('delegates scrolling to the outer modal overlay when nested in a BaseModal (avoids nested scroll hosts)', async () => {
+        const { WizardModalShell } = await import('./WizardModalShell');
+
+        const screen = await renderScreen(
+            React.createElement(
+                ModalBoundaryProvider,
+                {
                     children: React.createElement(WizardModalShell, {
                         testID: 'wizard-shell',
                         stepIndex: 0,

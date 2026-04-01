@@ -6,9 +6,10 @@ import {
     KeyboardAvoidingView,
     Platform,
     ScrollView,
+    type ViewStyle,
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { requireRadixDialog, requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
@@ -16,6 +17,7 @@ import { t } from '@/text';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 
 const isWeb = String(Platform.OS) === 'web';
+const WEB_MODAL_CARD_BOUNDARY_SELECTOR = '[data-happy-modal-card-boundary]';
 
 // On web, stop events from propagating to expo-router's modal overlay
 // which intercepts clicks when it applies pointer-events: none to body
@@ -97,14 +99,37 @@ function installWebModalBodyPointerEventsBypass(): () => void {
     };
 }
 
+type ClosestCapableEventTarget = EventTarget & {
+    closest: (selector: string) => Element | null;
+};
+
+function isClosestCapableEventTarget(target: EventTarget | null): target is ClosestCapableEventTarget {
+    return typeof target === 'object'
+        && target !== null
+        && 'closest' in target
+        && typeof (target as { closest?: unknown }).closest === 'function';
+}
+
+function isInsideWebModalCardBoundary(target: EventTarget | null): boolean {
+    if (target == null) return false;
+
+    if (isClosestCapableEventTarget(target)) {
+        return target.closest(WEB_MODAL_CARD_BOUNDARY_SELECTOR) != null;
+    }
+
+    if (typeof Node !== 'undefined' && target instanceof Node) {
+        return target.parentElement?.closest(WEB_MODAL_CARD_BOUNDARY_SELECTOR) != null;
+    }
+
+    return false;
+}
+
 interface BaseModalProps {
     visible: boolean;
     onClose?: () => void;
     children: React.ReactNode;
     closeOnBackdrop?: boolean;
     showBackdrop?: boolean;
-    scrollable?: boolean;
-    disableContentTransform?: boolean;
     zIndexBase?: number;
 }
 
@@ -114,12 +139,10 @@ export function BaseModal({
     children,
     closeOnBackdrop = true,
     showBackdrop = true,
-    scrollable = false,
-    disableContentTransform = false,
     zIndexBase,
 }: BaseModalProps) {
     const { theme } = useUnistyles();
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const baseZ = zIndexBase ?? 100000;
     const [modalPortalTarget, setModalPortalTarget] = React.useState<HTMLElement | null>(null);
@@ -180,26 +203,12 @@ export function BaseModal({
             }),
         };
 
-        const wantsFullscreenOverlay = disableContentTransform;
-        const contentBackdropStyle: React.CSSProperties | null =
-            !showBackdrop && wantsFullscreenOverlay
-                ? createBackdropWebStyle({
-                    backgroundColor: theme.colors.overlay.scrimWizard as unknown as string,
-                    blurPx: 12,
-                })
-                : null;
-
         const contentStyle: React.CSSProperties = {
             position: 'fixed',
             inset: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center',
             outline: 'none',
             zIndex: baseZ + 1,
-            ...(scrollable ? { overflowY: 'auto' } : null),
-            ...(contentBackdropStyle ?? null),
+            overflowY: 'auto',
         };
 
         const visuallyHiddenStyle: React.CSSProperties = {
@@ -222,6 +231,25 @@ export function BaseModal({
             height: 0,
             overflow: 'visible',
         };
+
+        const autoPlacementContainerStyle = {
+            // Auto-placement:
+            // - content <= viewport ⇒ container height is 100% ⇒ centered
+            // - content > viewport  ⇒ container height grows with content ⇒ naturally top-aligned
+            minHeight: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+        } as unknown as ViewStyle;
+
+        const webModalCardBoundaryStyle = {
+            display: 'contents',
+        } as unknown as ViewStyle;
 
         return (
             <Dialog.Root
@@ -248,9 +276,9 @@ export function BaseModal({
                               onClick={(e) => {
                                   e.stopPropagation();
                                   if (!closeOnBackdrop || !onClose) return;
-                                  // The dialog content spans the viewport; treat clicks on the shell itself as backdrop clicks,
-                                  // while preserving interactions within the modal content.
-                                  if (e.target !== e.currentTarget) return;
+                                  // Close when the click lands outside the modal card boundary.
+                                  // The dialog content spans the viewport, so clicks on that shell are treated as backdrop clicks.
+                                  if (isInsideWebModalCardBoundary(e.target)) return;
 
                                   e.preventDefault();
                                   e.stopPropagation();
@@ -264,6 +292,7 @@ export function BaseModal({
                             {/* Host for web portals (e.g. popovers) that must live inside the dialog subtree. */}
                             <div
                                 data-happy-modal-portal-host=""
+                                data-happy-modal-card-boundary=""
                                 ref={setModalPortalHostRef}
                                 style={portalHostStyle}
                             />
@@ -271,49 +300,22 @@ export function BaseModal({
                                 <ModalBoundaryProvider>
                                     <KeyboardAvoidingView
                                         pointerEvents="auto"
-                                        style={[
-                                            styles.container,
-                                            scrollable && isWeb ? styles.containerWebScrollHost : null,
-                                            wantsFullscreenOverlay ? styles.containerFullscreenOverlay : null,
-                                        ]}
+                                        style={[styles.container, autoPlacementContainerStyle]}
                                         behavior={undefined}
                                     >
-                                        {/*
-                                          NOTE:
-                                          On web, any ancestor with a CSS transform establishes a containing block for
-                                          `position: fixed` descendants. Some full-viewport overlays (e.g. onboarding wizards)
-                                          intentionally render fixed-position scrims inside the modal subtree. Allow opting
-                                          out of the scale transform so those scrims can cover the full viewport.
-                                        */}
                                         <Animated.View
                                             pointerEvents="auto"
                                             style={[
                                                 styles.content,
-                                                scrollable && isWeb ? styles.contentWebScrollHost : null,
-                                                wantsFullscreenOverlay ? styles.contentFullscreenOverlay : null,
                                                 {
                                                     opacity: fadeAnim,
-                                                    ...(disableContentTransform
-                                                        ? {}
-                                                        : {
-                                                            transform: [{
-                                                                scale: fadeAnim.interpolate({
-                                                                    inputRange: [0, 1],
-                                                                    outputRange: [0.9, 1]
-                                                                })
-                                                            }]
-                                                        }),
                                                 }
                                             ]}
                                         >
                                             <View
                                                 pointerEvents="auto"
-                                                style={[
-                                                    { width: '100%', alignItems: 'center' },
-                                                    wantsFullscreenOverlay
-                                                        ? { flex: 1, alignItems: 'stretch', minHeight: 0 }
-                                                        : null,
-                                                ]}
+                                                {...({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)}
+                                                style={webModalCardBoundaryStyle as unknown as any}
                                             >
                                                 {children}
                                             </View>
@@ -372,54 +374,21 @@ export function BaseModal({
                         styles.content,
                         {
                             opacity: fadeAnim,
-                            ...(disableContentTransform
-                                ? {}
-                                : {
-                                    transform: [{
-                                        scale: fadeAnim.interpolate({
-                                            inputRange: [0, 1],
-                                            outputRange: [0.9, 1]
-                                        })
-                                    }]
-                                }),
                         }
                     ]}
                 >
                     <ModalBoundaryProvider>
-                        {scrollable ? (
-                            <ScrollView
-                                style={[
-                                    styles.scrollContainer,
-                                    disableContentTransform ? styles.scrollContainerFullscreen : null,
-                                ]}
-                                contentContainerStyle={[
-                                    styles.scrollContent,
-                                    disableContentTransform ? styles.scrollContentFullscreen : null,
-                                ]}
-                                showsVerticalScrollIndicator={false}
-                                keyboardShouldPersistTaps="handled"
-                            >
-                                <View
-                                    pointerEvents="auto"
-                                    style={[
-                                        { width: '100%', alignItems: 'center' },
-                                        disableContentTransform ? { flex: 1, alignItems: 'stretch', minHeight: 0 } : null,
-                                    ]}
-                                >
-                                    {children}
-                                </View>
-                            </ScrollView>
-                        ) : (
-                            <View
-                                pointerEvents="auto"
-                                style={[
-                                    { width: '100%', alignItems: 'center' },
-                                    disableContentTransform ? { flex: 1, alignItems: 'stretch', minHeight: 0 } : null,
-                                ]}
-                            >
+                        <ScrollView
+                            style={styles.scrollContainer}
+                            contentContainerStyle={styles.scrollContent}
+                            showsVerticalScrollIndicator={false}
+                            keyboardShouldPersistTaps="handled"
+                            centerContent={true}
+                        >
+                            <View pointerEvents="auto" style={styles.scrollContentInner}>
                                 {children}
                             </View>
-                        )}
+                        </ScrollView>
                     </ModalBoundaryProvider>
                 </Animated.View>
             </KeyboardAvoidingView>
@@ -440,15 +409,6 @@ const styles = StyleSheet.create(() => ({
           // On web, ensure modal can receive pointer events when body has pointer-events: none
           ...Platform.select({ web: { pointerEvents: 'auto' as const } })
       },
-    containerWebScrollHost: {
-        flex: 0,
-        flexGrow: 1,
-        minHeight: '100%',
-    },
-    containerFullscreenOverlay: {
-        justifyContent: 'flex-start',
-        alignItems: 'stretch',
-    },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'transparent',
@@ -457,30 +417,23 @@ const styles = StyleSheet.create(() => ({
         zIndex: 1,
         // On web, some modal children use percentage widths; ensure they center reliably.
         width: '100%',
-        flex: 1,
         alignItems: 'center',
-    },
-    contentWebScrollHost: {
-        flex: 0,
-        flexGrow: 1,
-    },
-    contentFullscreenOverlay: {
-        alignItems: 'stretch',
+        ...Platform.select({
+            web: {},
+            default: { flex: 1 },
+        }),
     },
     scrollContainer: {
         width: '100%',
         flex: 1,
         alignSelf: 'stretch',
     },
-    scrollContainerFullscreen: {
-        alignItems: 'stretch',
-    },
     scrollContent: {
         flexGrow: 1,
-        justifyContent: 'center',
-    },
-    scrollContentFullscreen: {
-        justifyContent: 'flex-start',
         alignItems: 'stretch',
+    },
+    scrollContentInner: {
+        width: '100%',
+        alignItems: 'center',
     },
 });

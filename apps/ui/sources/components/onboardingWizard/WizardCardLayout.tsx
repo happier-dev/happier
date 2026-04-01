@@ -8,6 +8,7 @@ import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { preloadReactDOM } from '@/utils/web/reactDomCjs';
 
 export type WizardCardLayoutProps = Readonly<{
     children: React.ReactNode;
@@ -42,10 +43,12 @@ const stylesheet = StyleSheet.create((theme, _runtime) => ({
         alignSelf: 'stretch',
     },
     rootOuterScroll: {
+        flex: 1,
         width: '100%',
         alignSelf: 'stretch',
     },
     rootOuterScrollFullscreen: {
+        flex: 1,
         backgroundColor: theme.colors.surface,
         width: '100%',
         alignSelf: 'stretch',
@@ -125,9 +128,12 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
         cardWidth,
         wantsFullscreen,
     }), [cardWidth, wantsFullscreen]);
-    const shouldUseWebFixedOverlay = Platform.OS === 'web' && modalPortalTarget == null;
+    // When the wizard renders as a standalone overlay, it must escape any transformed ancestors so its
+    // scrim can cover the full viewport. Use `showScrim=false` as the signal that an outer BaseModal
+    // owns the backdrop and fullscreen positioning.
+    const shouldUseWebFixedOverlay = Platform.OS === 'web' && props.showScrim !== false;
     const portalRetryCountRef = React.useRef(0);
-    const webBackdropStyle = Platform.OS === 'web' && !wantsFullscreen && modalPortalTarget == null
+    const webBackdropStyle = Platform.OS === 'web' && !wantsFullscreen && shouldUseWebFixedOverlay
         ? (createBackdropWebStyle({
             backgroundColor: theme.colors.overlay.scrimWizard,
             blurPx: 12,
@@ -207,7 +213,7 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
         </View>
     );
 
-    const shouldPortalWeb = Platform.OS === 'web' && modalPortalTarget == null && portalRetryNonce >= 0;
+    const shouldPortalWeb = Platform.OS === 'web' && props.showScrim !== false && portalRetryNonce >= 0;
     const webPortal = tryRenderWebPortal({
         shouldPortalWeb,
         portalTargetOnWeb: 'body',
@@ -216,10 +222,18 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
         content,
     });
 
+    const reactDomPreloadAttemptedRef = React.useRef(false);
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
         if (!shouldPortalWeb) return;
         if (webPortal != null) return;
+
+        if (!reactDomPreloadAttemptedRef.current) {
+            reactDomPreloadAttemptedRef.current = true;
+            void preloadReactDOM()
+                .then(() => bumpPortalRetryNonce())
+                .catch(() => {});
+        }
 
         // Retry a few times post-mount. Some web runtimes (SSR/hydration, early init) can render before the
         // DOM/portal target is ready, causing the first `createPortal(...)` attempt to fail.

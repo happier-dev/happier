@@ -12,6 +12,10 @@ installModalComponentCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (options: Record<string, unknown>) => options?.web ?? options?.default,
+            },
             useWindowDimensions: () => ({
                 width: windowState.width,
                 height: windowState.height,
@@ -25,7 +29,7 @@ installModalComponentCommonModuleMocks({
 });
 
 describe('ModalCardFrame', () => {
-    it('renders a flexing body wrapper even when layout is fit (so scrollable content can clamp to maxHeight)', async () => {
+    it('renders a flexing body wrapper (so the overlay scroll host can handle overflow)', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
@@ -129,13 +133,19 @@ describe('ModalCardFrame', () => {
                 expect.objectContaining({
                     width: 840,
                     maxWidth: 840,
-                    maxHeight: 527,
+                }),
+            ]),
+        );
+        expect(container.props.style).toEqual(
+            expect.not.arrayContaining([
+                expect.objectContaining({
+                    maxHeight: expect.anything(),
                 }),
             ]),
         );
     });
 
-    it('fills the clamped height and enables a flexing body wrapper when layout is fill', async () => {
+    it('does not hard-clamp height (the overlay scroll host owns overflow)', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
@@ -149,7 +159,6 @@ describe('ModalCardFrame', () => {
                     children: React.createElement('Child'),
                     title: 'Modal title',
                     size: 'lg',
-                    layout: 'fill',
                     testID: 'modal-card-frame',
                 },
             ),
@@ -160,9 +169,9 @@ describe('ModalCardFrame', () => {
             throw new Error('expected modal card frame to exist');
         }
         expect(container.props.style).toEqual(
-            expect.arrayContaining([
+            expect.not.arrayContaining([
                 expect.objectContaining({
-                    height: 527,
+                    height: expect.anything(),
                 }),
             ]),
         );
@@ -181,5 +190,27 @@ describe('ModalCardFrame', () => {
                 }),
             ]),
         );
+    });
+
+    it('marks the card container as a modal card boundary on web (so backdrop clicks can dismiss without swallowing inner clicks)', async () => {
+        const { renderScreen } = await import('@/dev/testkit');
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+
+        const screen = await renderScreen(
+            React.createElement(
+                ModalCardFrame,
+                {
+                    children: React.createElement('Child'),
+                    title: 'Modal title',
+                    testID: 'modal-card-frame',
+                },
+            ),
+        );
+
+        const container = screen.findByTestId('modal-card-frame');
+        if (container == null) {
+            throw new Error('expected modal card frame to exist');
+        }
+        expect((container.props as any).dataSet?.happyModalCardBoundary).toBe('true');
     });
 });

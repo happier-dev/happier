@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
@@ -16,7 +16,6 @@ type ModalCardFrameProps = Readonly<{
     footer?: React.ReactNode;
     onClose?: () => void;
     size?: ModalCardSizePreset;
-    layout?: 'fit' | 'fill';
     testID?: string;
     titleTestID?: string;
     subtitleTestID?: string;
@@ -47,7 +46,6 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function ModalCardFrame(props: ModalCardFrameProps) {
     useUnistyles();
     const styles = stylesheet;
-    const layout: 'fit' | 'fill' = props.layout ?? 'fit';
     const dimensions = useModalCardDimensions({
         ...props.dimensions,
         size: props.size ?? props.dimensions?.size,
@@ -62,14 +60,14 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     return (
         <View
             testID={props.testID}
+            {...(Platform.OS === 'web'
+                ? ({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)
+                : null)}
             style={[
                 styles.container,
                 {
                     width: dimensions.width,
                     maxWidth: dimensions.width,
-                    ...(layout === 'fill'
-                        ? { height: dimensions.maxHeight }
-                        : { maxHeight: dimensions.maxHeight }),
                 },
                 props.style,
             ]}

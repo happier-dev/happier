@@ -57,6 +57,16 @@ function flattenStyleProp(styleProp: unknown): Record<string, unknown> {
 }
 
 describe('BaseModal (web)', () => {
+    it('uses an auto-placement content container (centers when short; top when overflowing)', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const screen = await renderBaseModalScreen(BaseModal);
+
+        const container = screen.findAllByType('KeyboardAvoidingView' as any)?.[0];
+        const style = flattenStyleProp(container?.props?.style);
+        expect(style.minHeight).toBe('100%');
+        expect(style.justifyContent).toBe('center');
+    });
+
     it('renders using Radix Dialog instead of react-native Modal', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
@@ -72,6 +82,18 @@ describe('BaseModal (web)', () => {
         expect(screen.findAllByType('DismissableLayerBranch' as any).length).toBe(1);
     });
 
+    it('marks the web portal host as a modal card boundary (so portaled popovers don’t trigger backdrop dismissal)', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const screen = await renderBaseModalScreen(BaseModal);
+
+        const portalHosts = screen.findAll((node) => {
+            const props = node.props as any;
+            return props && typeof props === 'object' && 'data-happy-modal-portal-host' in props;
+        });
+        expect(portalHosts).toHaveLength(1);
+        expect((portalHosts[0] as any).props['data-happy-modal-card-boundary']).toBeDefined();
+    });
+
     it('renders a DialogTitle for accessibility', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
@@ -79,9 +101,9 @@ describe('BaseModal (web)', () => {
         expect(screen.findAllByType('DialogTitle' as any).length).toBe(1);
     });
 
-    it('can render scrollable modal content so the modal container owns overflow', async () => {
+    it('renders a scrollable modal overlay container so the overlay owns overflow (no nested scroll hosts by default)', async () => {
         const { BaseModal } = await import('./BaseModal');
-        const screen = await renderBaseModalScreen(BaseModal, { scrollable: true });
+        const screen = await renderBaseModalScreen(BaseModal);
 
         const scrollViews = screen.findAllByType('ScrollView' as any);
         expect(scrollViews).toHaveLength(0);
@@ -97,9 +119,9 @@ describe('BaseModal (web)', () => {
         expect(screen.findAllByType('DialogOverlay' as any).length).toBe(0);
     });
 
-    it('can disable the modal card scale transform so fixed-position children can cover the viewport', async () => {
+    it('does not rely on a scale transform animation (avoids fixed-position containing-block bugs on web)', async () => {
         const { BaseModal } = await import('./BaseModal');
-        const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false, disableContentTransform: true });
+        const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false });
 
         const nodesWithScaleTransform = screen.findAll((node) => {
             const style = (node.props as any)?.style;
@@ -111,27 +133,6 @@ describe('BaseModal (web)', () => {
         });
 
         expect(nodesWithScaleTransform.length).toBe(0);
-    });
-
-    it('centers the dialog content container when disableContentTransform is true (so full-screen overlays can extend from the viewport center)', async () => {
-        const { BaseModal } = await import('./BaseModal');
-        const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false, disableContentTransform: true });
-
-        const content = screen.findAllByType('DialogContent' as any)?.[0];
-        expect(content?.props.style?.flexDirection).toBe('column');
-        expect(content?.props.style?.alignItems).toBe('center');
-        expect(content?.props.style?.justifyContent).toBe('center');
-    });
-
-    it('applies a full-viewport scrim/backdrop to the content container when showBackdrop is false (so wizard modals still dim the app)', async () => {
-        const { BaseModal } = await import('./BaseModal');
-        const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false, disableContentTransform: true });
-
-        const content = screen.findAllByType('DialogContent' as any)?.[0];
-        expect(content?.props.style?.position).toBe('fixed');
-        expect(content?.props.style?.inset).toBe(0);
-        expect(content?.props.style?.backdropFilter).toBeTypeOf('string');
-        expect(content?.props.style?.WebkitBackdropFilter).toBeTypeOf('string');
     });
 
     it('prevents outside dismissal when closeOnBackdrop is false', async () => {
@@ -147,7 +148,7 @@ describe('BaseModal (web)', () => {
         expect(preventDefault).toHaveBeenCalled();
     });
 
-    it('dismisses when clicking the backdrop area (pointer down on the content container itself)', async () => {
+    it('dismisses when clicking outside the modal card boundary (backdrop click)', async () => {
         const { BaseModal } = await import('./BaseModal');
 
         const onClose = vi.fn();
@@ -156,13 +157,13 @@ describe('BaseModal (web)', () => {
         const content = screen.findAllByType('DialogContent' as any)?.[0];
         expect(content?.props.onClick).toBeTypeOf('function');
 
-        const target = {};
-        content?.props.onClick({ target, currentTarget: target, preventDefault: () => {}, stopPropagation: () => {} });
+        const target = { closest: () => null };
+        content?.props.onClick({ target, currentTarget: {}, preventDefault: () => {}, stopPropagation: () => {} });
 
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it('does not dismiss when clicking inside the modal content', async () => {
+    it('does not dismiss when clicking inside the modal card boundary', async () => {
         const { BaseModal } = await import('./BaseModal');
 
         const onClose = vi.fn();
@@ -172,7 +173,7 @@ describe('BaseModal (web)', () => {
         expect(content?.props.onClick).toBeTypeOf('function');
 
         const currentTarget = {};
-        const innerTarget = {};
+        const innerTarget = { closest: () => ({}) };
         content?.props.onClick({ target: innerTarget, currentTarget, preventDefault: () => {}, stopPropagation: () => {} });
         expect(onClose).toHaveBeenCalledTimes(0);
     });

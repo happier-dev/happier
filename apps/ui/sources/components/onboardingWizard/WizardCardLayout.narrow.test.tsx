@@ -53,6 +53,14 @@ describe('WizardCardLayout (narrow viewport)', () => {
             throw new Error('Expected WizardCardLayout card container to be present.');
         }
 
+        const root = (card as any).parent as { props?: Record<string, unknown> } | null;
+        if (!root) {
+            throw new Error('Expected WizardCardLayout root container to be present.');
+        }
+
+        const flattenedRoot = flattenStyleProp(root.props?.style);
+        expect(flattenedRoot.backgroundColor).toBeTruthy();
+
         const flattenedCard = flattenStyleProp(card.props.style as unknown);
         expect(flattenedCard.borderRadius).toBe(0);
         expect(flattenedCard.maxWidth).toBe('100%');

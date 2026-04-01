@@ -10,6 +10,55 @@ interface CustomModalProps {
     zIndexBase?: number;
 }
 
+const MAX_CHROME_NODE_COMPARE_DEPTH = 8;
+const MAX_CHROME_NODE_COMPARE_ARRAY_LENGTH = 200;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (!value || typeof value !== 'object') return false;
+    const proto = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+}
+
+function areChromeNodeValuesEqual(a: unknown, b: unknown, depth: number): boolean {
+    if (Object.is(a, b)) return true;
+    if (depth >= MAX_CHROME_NODE_COMPARE_DEPTH) return false;
+    if (typeof a !== typeof b) return false;
+    if (a == null || b == null) return false;
+
+    if (Array.isArray(a)) {
+        if (!Array.isArray(b)) return false;
+        if (a.length !== b.length) return false;
+        if (a.length > MAX_CHROME_NODE_COMPARE_ARRAY_LENGTH) return false;
+        for (let i = 0; i < a.length; i += 1) {
+            if (!areChromeNodeValuesEqual(a[i], b[i], depth + 1)) return false;
+        }
+        return true;
+    }
+
+    if (React.isValidElement(a)) {
+        if (!React.isValidElement(b)) return false;
+
+        if (a.type !== b.type) return false;
+        if (a.key !== b.key) return false;
+
+        return areChromeNodeValuesEqual(a.props, b.props, depth + 1);
+    }
+
+    if (isPlainObject(a)) {
+        if (!isPlainObject(b)) return false;
+        const aKeys = Object.keys(a);
+        const bKeys = Object.keys(b);
+        if (aKeys.length !== bKeys.length) return false;
+        for (const key of aKeys) {
+            if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+            if (!areChromeNodeValuesEqual(a[key], b[key], depth + 1)) return false;
+        }
+        return true;
+    }
+
+    return false;
+}
+
 function areDimensionOptionsEqual(
     a: Record<string, unknown> | null | undefined,
     b: Record<string, unknown> | null | undefined,
@@ -30,16 +79,15 @@ function areChromeConfigsEqual(
     if (a.kind !== b.kind) return false;
 
     if (a.kind === 'card' && b.kind === 'card') {
-        return a.title === b.title
-            && a.subtitle === b.subtitle
-            && a.leading === b.leading
-            && a.actions === b.actions
-            && a.footer === b.footer
+        return areChromeNodeValuesEqual(a.title, b.title, 0)
+            && areChromeNodeValuesEqual(a.subtitle, b.subtitle, 0)
+            && areChromeNodeValuesEqual(a.leading, b.leading, 0)
+            && areChromeNodeValuesEqual(a.actions, b.actions, 0)
+            && areChromeNodeValuesEqual(a.footer, b.footer, 0)
             && a.testID === b.testID
             && a.titleTestID === b.titleTestID
             && a.subtitleTestID === b.subtitleTestID
             && a.closeButtonTestID === b.closeButtonTestID
-            && a.layout === b.layout
             && areDimensionOptionsEqual(
                 (a.dimensions ?? null) as Record<string, unknown> | null,
                 (b.dimensions ?? null) as Record<string, unknown> | null,
@@ -78,7 +126,6 @@ function mergeChromeConfig(
             titleTestID: override.titleTestID !== undefined ? override.titleTestID : base.titleTestID,
             subtitleTestID: override.subtitleTestID !== undefined ? override.subtitleTestID : base.subtitleTestID,
             closeButtonTestID: override.closeButtonTestID !== undefined ? override.closeButtonTestID : base.closeButtonTestID,
-            layout: override.layout !== undefined ? override.layout : base.layout,
             dimensions: mergedDimensions,
         };
     }
@@ -131,7 +178,6 @@ export function CustomModal({ config, onClose, showBackdrop = true, zIndexBase }
                     titleTestID={chrome.titleTestID}
                     subtitleTestID={chrome.subtitleTestID}
                     closeButtonTestID={chrome.closeButtonTestID}
-                    layout={chrome.layout ?? 'fit'}
                     dimensions={chrome.dimensions}
                     onClose={handleClose}
                 >
