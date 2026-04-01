@@ -8,6 +8,12 @@ test('dev-box Dockerfile includes CLI workspace deps (avoid fetching internal @h
   const dockerfilePath = path.join(repoRoot, 'docker', 'dev-box', 'Dockerfile');
   const raw = fs.readFileSync(dockerfilePath, 'utf8');
 
+  // The CLI build scripts reference shared helpers under scripts/workspaces/*.
+  assert.ok(
+    raw.includes('COPY scripts/workspaces ./scripts/workspaces'),
+    'expected dev-box Dockerfile to copy scripts/workspaces for cli build',
+  );
+
   // The CLI depends on these internal workspaces. If they are not present in the build context during
   // `yarn install`, Yarn will try to fetch them from the public npm registry and fail.
   for (const pkg of ['packages/connection-supervisor', 'packages/transfers']) {

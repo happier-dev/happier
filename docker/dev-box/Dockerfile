@@ -42,6 +42,7 @@ COPY packages/release-runtime ./packages/release-runtime
 COPY packages/transfers ./packages/transfers
 COPY apps/cli ./apps/cli
 COPY apps/stack ./apps/stack
+COPY scripts/workspaces ./scripts/workspaces
 
 RUN yarn workspace @happier-dev/protocol postinstall:real \
 	  && yarn workspace @happier-dev/agents postinstall:real \
