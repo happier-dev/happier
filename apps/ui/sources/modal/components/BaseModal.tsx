@@ -240,7 +240,7 @@ export function BaseModal({
                               onTouchStart={stopPropagation}
                           />
                       ) : null}
-                      <DismissableLayerBranch asChild>
+                      <DismissableLayerBranch style={{ display: 'contents' }}>
                           <Dialog.Content
                               aria-describedby={undefined}
                               style={contentStyle}

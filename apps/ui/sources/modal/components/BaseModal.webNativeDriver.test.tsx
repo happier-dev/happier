@@ -19,6 +19,7 @@ installModalComponentCommonModuleMocks({
             Animated: {
                 Value: function Value(this: any, initial: number) {
                     this.__value = initial;
+                    this.interpolate = () => this;
                 },
                 timing: (_value: any, config: any) => {
                     capturedTimingConfigs.push(config);
@@ -31,8 +32,16 @@ installModalComponentCommonModuleMocks({
 });
 
 vi.mock('@/utils/web/radixCjs', () => ({
-  requireRadixDialog: () => ({ Root: ({ children }: any) => React.createElement('Root', null, children) }),
-  requireRadixDismissableLayer: () => ({ Branch: ({ children }: any) => React.createElement('Branch', null, children) }),
+  requireRadixDialog: () => ({
+    Root: ({ children, ...rest }: any) => React.createElement('Root', rest, children),
+    Portal: ({ children, ...rest }: any) => React.createElement('Portal', rest, children),
+    Overlay: ({ children, ...rest }: any) => React.createElement('Overlay', rest, children),
+    Content: ({ children, ...rest }: any) => React.createElement('Content', rest, children),
+    Title: ({ children, ...rest }: any) => React.createElement('Title', rest, children),
+  }),
+  requireRadixDismissableLayer: () => ({
+    Branch: ({ children, ...rest }: any) => React.createElement('Branch', rest, children),
+  }),
 }));
 
 vi.mock('@/modal/portal/ModalPortalTarget', () => ({
@@ -42,6 +51,20 @@ vi.mock('@/modal/portal/ModalPortalTarget', () => ({
 describe('BaseModal (web native driver)', () => {
   beforeEach(() => {
     capturedTimingConfigs = [];
+  });
+
+  it('does not use Radix DismissableLayer.Branch asChild on web (avoids ref churn loops)', async () => {
+    const { BaseModal } = await import('./BaseModal');
+
+    const rendered = await renderScreen(
+      <BaseModal visible={true}>
+        <div />
+      </BaseModal>,
+    );
+
+    const branch = rendered.findByType('Branch');
+    expect(branch.props.asChild).toBeUndefined();
+    expect(branch.props.style).toMatchObject({ display: 'contents' });
   });
 
   it('does not use native driver on web (avoids Animated warnings)', async () => {
