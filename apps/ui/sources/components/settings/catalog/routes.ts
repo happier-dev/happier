@@ -1,4 +1,4 @@
-export const SETTINGS_ROUTES_V1 = {
+export const SETTINGS_ROUTES = {
     general: '/settings',
     account: '/settings/account',
     secrets: '/settings/secrets',
@@ -39,3 +39,5 @@ export const SETTINGS_ROUTES_V1 = {
     reportIssue: '/settings/report-issue',
     runs: '/runs',
 } as const;
+
+export const SETTINGS_ROUTES_V1 = SETTINGS_ROUTES;

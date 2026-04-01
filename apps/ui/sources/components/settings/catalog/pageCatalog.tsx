@@ -82,7 +82,7 @@ export const SETTINGS_PAGE_CATALOG_V1: readonly SettingsPageNode[] = [
                 titleKey: 'settings.appearance',
                 subtitleKey: 'settings.appearanceSubtitle',
                 route: SETTINGS_ROUTES_V1.appearance,
-                keywords: ['appearance', 'theme', 'font', 'ui'],
+                keywords: ['appearance', 'theme', 'font', 'ui', 'sidebar'],
                 icon: ({ theme }) => <Ionicons name="color-palette-outline" size={18} color={theme.colors.textSecondary} />,
             },
             {
