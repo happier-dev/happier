@@ -340,4 +340,4 @@ MIT License — see [LICENSE](LICENCE) for details.
 
 Not affiliated with or endorsed by Anthropic, OpenAI, or Google.
 
-Code faster. Code together. Be Happier.
+[Code faster. Code together. Be Happier.](https://guides.happier.dev/)
