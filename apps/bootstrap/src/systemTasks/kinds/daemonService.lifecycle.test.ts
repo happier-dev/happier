@@ -16,10 +16,10 @@ import {
 } from './daemonService.js';
 
 async function collectResult(
-  handler: (params: unknown, context: Readonly<{ signal: AbortSignal }>) => AsyncGenerator<unknown, unknown, void>,
+  handler: (params: unknown, context: Readonly<{ taskId: string; signal: AbortSignal; now: () => number }>) => AsyncGenerator<unknown, unknown, void>,
   params: unknown,
 ) {
-  const iterator = handler(params, { signal: new AbortController().signal });
+  const iterator = handler(params, { taskId: 'test-task', signal: new AbortController().signal, now: Date.now });
   const events: unknown[] = [];
   for (;;) {
     const next = await iterator.next();

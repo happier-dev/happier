@@ -1,4 +1,3 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import {
   extractFirstScannedSshKnownHostLine,
   resolveSshKnownHostTrust,
@@ -6,38 +5,24 @@ import {
   RemoteHostTrustResolution,
   SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
+import {
+  buildSshKeyscanInvocation,
+  normalizeKnownHostsText,
+  readKnownHostsText,
+  runRemoteTextSync,
+  safeBashSingleQuote,
+  type OpenSshAuth,
+  writeKnownHostsText,
+} from '@happier-dev/cli-common/ssh';
 
 import { runLocalHappierJsonCommand } from './happierCli.js';
-import { buildSshCommand, redactSshText } from '../ssh/index.js';
+import { redactSshText } from '../ssh/index.js';
 import { extractSshHost, normalizeBootstrapChannel, parseFirstJsonObject, resolveDefaultKnownHostsPath, runCommandCapture } from './taskRuntime.js';
 import { installOrUpdateRelayRuntimeDefault } from './relayRuntimeTasks.js';
 import { installRemoteFirstPartyComponent, resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyPayloadInstaller.js';
 
 type SshConnectionConfig = SystemTaskSshConnectionConfig;
 type SshConnectionWithPasswordConfig = SshConnectionConfig & Readonly<{ password?: string }>;
-
-function shellQuote(value: string): string {
-  const raw = String(value ?? '');
-  if (!raw) return "''";
-  return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
-}
-
-function normalizeKnownHostsText(text: string): string {
-  const normalized = String(text ?? '').trim();
-  return normalized ? `${normalized}\n` : '';
-}
-
-async function writeKnownHostsText(path: string, text: string): Promise<void> {
-  const normalizedPath = String(path ?? '').trim();
-  if (!normalizedPath) {
-    return;
-  }
-  const slashIndex = Math.max(normalizedPath.lastIndexOf('/'), normalizedPath.lastIndexOf('\\'));
-  if (slashIndex > 0) {
-    await mkdir(normalizedPath.slice(0, slashIndex), { recursive: true });
-  }
-  await writeFile(normalizedPath, normalizeKnownHostsText(text), 'utf8');
-}
 
 export async function resolveRemoteSshHostTrustDefault(params: Readonly<{
   ssh: SshConnectionConfig;
@@ -49,19 +34,15 @@ export async function resolveRemoteSshHostTrustDefault(params: Readonly<{
 
   const knownHostsPath = params.ssh.knownHostsPath || resolveDefaultKnownHostsPath();
   const host = extractSshHost(params.ssh.target);
-  const existingText = await readFile(knownHostsPath, 'utf8').catch(() => '');
+  const existingText = await readKnownHostsText(knownHostsPath);
 
-  const keyscan = await runCommandCapture({
-    command: 'ssh-keyscan',
-    args: [
-      '-T',
-      '5',
-      ...(params.ssh.port ? ['-p', String(params.ssh.port)] : []),
-      '-t',
-      'ed25519',
-      host,
-    ],
+  const keyscanInvocation = buildSshKeyscanInvocation({
+    host,
+    port: params.ssh.port,
+    timeoutSec: 5,
+    keyType: 'ed25519',
   });
+  const keyscan = await runCommandCapture(keyscanInvocation);
   if (keyscan.status !== 0 || !keyscan.stdout.trim()) {
     throw new Error(redactSshText(keyscan.stderr || 'Failed to resolve SSH host key.'));
   }
@@ -172,20 +153,22 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
     `--webapp-url=${webappUrl}`,
   ];
   const daemonEnv = [
-    `HAPPIER_DAEMON_SERVICE_SERVER_URL=${shellQuote(relayUrl)}`,
-    `HAPPIER_DAEMON_SERVICE_WEBAPP_URL=${shellQuote(webappUrl)}`,
-    ...(params.parsed.relay.publicRelayUrl ? [`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${shellQuote(params.parsed.relay.publicRelayUrl)}`] : []),
+    `HAPPIER_DAEMON_SERVICE_SERVER_URL=${safeBashSingleQuote(relayUrl)}`,
+    `HAPPIER_DAEMON_SERVICE_WEBAPP_URL=${safeBashSingleQuote(webappUrl)}`,
+    ...(params.parsed.relay.publicRelayUrl
+      ? [`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${safeBashSingleQuote(params.parsed.relay.publicRelayUrl)}`]
+      : []),
   ].join(' ');
 
   let command = '';
   if (params.label === 'auth.status') {
     command = `${happier} auth status --json`;
   } else if (params.label === 'server.configure') {
-    command = `${happier} server set ${relayArgs.map(shellQuote).join(' ')} --json`;
+    command = `${happier} server set ${relayArgs.map(safeBashSingleQuote).join(' ')} --json`;
   } else if (params.label === 'auth.request') {
-    command = `${happier} auth request --json --persist ${relayArgs.map(shellQuote).join(' ')}`;
+    command = `${happier} auth request --json --persist ${relayArgs.map(safeBashSingleQuote).join(' ')}`;
   } else if (params.label === 'auth.wait') {
-    command = `${happier} auth wait --public-key ${shellQuote(String(params.data?.publicKey ?? ''))} --json --persist ${relayArgs.map(shellQuote).join(' ')}`;
+    command = `${happier} auth wait --public-key ${safeBashSingleQuote(String(params.data?.publicKey ?? ''))} --json --persist ${relayArgs.map(safeBashSingleQuote).join(' ')}`;
   } else if (params.label === 'daemon.service.install') {
     command = `${daemonEnv} ${happier} daemon service install --mode=${params.parsed.serviceMode === 'none' ? 'user' : params.parsed.serviceMode ?? 'user'} --json`;
   } else if (params.label === 'daemon.service.start') {
@@ -274,26 +257,22 @@ async function runRemoteText(
   remoteCommand: string,
   knownHostsMode: 'app' | 'system',
 ): Promise<Readonly<{ status: number; stdout: string; stderr: string }>> {
-  const invocation = buildSshCommand({
+  const auth: OpenSshAuth = ssh.auth === 'keyfile'
+    ? { mode: 'keyFile', privateKeyPath: String(ssh.identityFile ?? '') }
+    : ssh.auth === 'password'
+      ? { mode: 'password', password: String(ssh.password ?? '') }
+      : { mode: 'agent' };
+
+  return runRemoteTextSync({
     target: ssh.target,
     port: ssh.port,
-    auth: {
-      kind: ssh.auth,
-      identityFile: ssh.identityFile,
-      ...(ssh.auth === 'password' ? { password: ssh.password } : {}),
-    },
-    knownHosts: knownHostsMode === 'app'
-      ? { mode: 'app', path: ssh.knownHostsPath || resolveDefaultKnownHostsPath() }
-      : { mode: 'system' },
+    sshConfigFile: ssh.sshConfigFile,
+    knownHostsMode,
+    knownHostsPath: knownHostsMode === 'app'
+      ? (ssh.knownHostsPath || resolveDefaultKnownHostsPath())
+      : undefined,
+    auth,
     remoteCommand,
+    errorPrefix: `SSH command failed for ${ssh.target}`,
   });
-  const result = await runCommandCapture({
-    command: invocation.command,
-    args: invocation.args,
-    ...(invocation.env ? { env: invocation.env } : {}),
-  });
-  if (result.status !== 0) {
-    throw new Error(redactSshText(result.stderr || result.stdout || `SSH command failed for ${ssh.target}.`));
-  }
-  return result;
 }

@@ -1,17 +1,23 @@
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
 import {
-  extractTailscaleServeHttpsUrl,
   resolveTailscaleInstallStrategy,
   runTailscaleLogin,
-  runTailscaleServeEnable,
-  runTailscaleServeStatus,
   runTailscaleStatusJson,
-  tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
   type RunTailscaleLoginResult,
-  type RunTailscaleServeEnableResult,
   type TailscaleSecureAccessTaskResult,
   type TailscaleStatusSnapshot,
 } from '@happier-dev/cli-common/tailscale';
+import {
+  createRelayAccessConfigureTaskKind,
+  type RelayAccessTaskTarget,
+} from '@happier-dev/cli-common/systemTasks';
+import {
+  getRelayAccessProvider,
+  type RelayAccessConfig,
+  type RelayAccessExecutionContext,
+  type RelayAccessProvider,
+  type RelayAccessProviderId,
+} from '@happier-dev/cli-common/relayAccess';
 
 import { ensureTailscaleInstalled, type EnsureTailscaleInstalledResult } from '../../integrations/tailscale/ensureTailscaleInstalled.js';
 
@@ -34,7 +40,11 @@ type SecureAccessTailscaleDeps = Readonly<{
   inspectState: (params: SecureAccessTailscaleParams) => Promise<SecureAccessTailscaleState>;
   ensureInstalled: (params: Readonly<{ signal?: AbortSignal }>) => Promise<EnsureTailscaleInstalledResult>;
   loginInteractive: () => Promise<RunTailscaleLoginResult>;
-  enableServe: (params: Readonly<{ upstreamUrl: string; servePath: string }>) => Promise<RunTailscaleServeEnableResult>;
+  relayAccess: Readonly<{
+    getProvider: (providerId: RelayAccessProviderId) => RelayAccessProvider;
+    writeConfig: (params: Readonly<{ target: RelayAccessTaskTarget; config: RelayAccessConfig | null }>) => Promise<void>;
+    createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => RelayAccessExecutionContext;
+  }>;
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   now: () => number;
 }>;
@@ -258,18 +268,37 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       message: 'Enabling Tailscale Serve for secure access',
     };
 
-    const enable = await deps.enableServe({
-      upstreamUrl: parsed.upstreamUrl,
-      servePath: parsed.servePath,
+    const secureAccessResult = await createRelayAccessConfigureTaskKind({
+      writeConfig: async (params) => {
+        await deps.relayAccess.writeConfig({
+          target: params.target,
+          config: params.config,
+        });
+      },
+      getProvider: deps.relayAccess.getProvider,
+      createExecutionContext: deps.relayAccess.createExecutionContext,
+    }).run({
+      params: {
+        target: { kind: 'local' },
+        upstreamUrl: parsed.upstreamUrl,
+        providerId: 'tailscaleServe',
+        config: { providerId: 'tailscaleServe' },
+      },
+      emit: () => undefined,
+      prompt: async () => {
+        throw new systemTasks.SystemTaskExecutionError('prompt_required', 'Relay access configuration does not require prompts.');
+      },
     });
-    if (enable.approvalUrl) {
+
+    const approvalUrl = resolveApprovalUrlFromRelayAccessDetails(secureAccessResult.status.details);
+    if (approvalUrl) {
       yield {
         type: 'prompt',
         stepId: 'tailscale.serveEnable',
         message: 'Approve Tailscale Serve in your tailnet',
         data: {
           kind: 'tailscaleServeApproval',
-          url: enable.approvalUrl,
+          url: approvalUrl,
         },
       };
 
@@ -314,7 +343,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
           serveEnabled: false,
           shareableHttpsUrl: null,
           requiresApproval: {
-            url: enable.approvalUrl,
+            url: approvalUrl,
           },
         };
       }
@@ -338,8 +367,9 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       };
     }
 
-    const shareableHttpsUrl = appendServePathToHttpsUrl(enable.httpsUrl, parsed.servePath)
-      ?? (await deps.inspectState(parsed)).shareableHttpsUrl;
+    const shareableHttpsUrl = secureAccessResult.status.shareUrl
+      ? appendServePathToHttpsUrl(secureAccessResult.status.shareUrl, parsed.servePath)
+      : (await deps.inspectState(parsed)).shareableHttpsUrl;
     if (!shareableHttpsUrl) {
       throw new systemTasks.SystemTaskExecutionError(
         'tailscale_serve_url_unavailable',
@@ -368,11 +398,20 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
 }
 
 function createSecureAccessTailscaleDeps(overrides?: Partial<SecureAccessTailscaleDeps>): SecureAccessTailscaleDeps {
+  const relayAccess = overrides?.relayAccess ?? {
+    getProvider: (providerId: RelayAccessProviderId) => getRelayAccessProvider(providerId),
+    writeConfig: async () => undefined,
+    createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => ({
+      env: process.env,
+      upstreamUrl: params.upstreamUrl,
+    }),
+  };
+
   return {
-    inspectState: overrides?.inspectState ?? inspectSecureAccessTailscaleState,
+    inspectState: overrides?.inspectState ?? ((params) => inspectSecureAccessTailscaleState(params, relayAccess)),
     ensureInstalled: overrides?.ensureInstalled ?? (async (params) => await ensureTailscaleInstalled(params)),
     loginInteractive: overrides?.loginInteractive ?? (async () => await runTailscaleLogin()),
-    enableServe: overrides?.enableServe ?? (async (params) => await runTailscaleServeEnable(params)),
+    relayAccess,
     sleep: overrides?.sleep ?? defaultSleep,
     now: overrides?.now ?? Date.now,
   };
@@ -428,6 +467,7 @@ async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 async function inspectSecureAccessTailscaleState(
   params: SecureAccessTailscaleParams,
+  relayAccess: SecureAccessTailscaleDeps['relayAccess'],
 ): Promise<SecureAccessTailscaleState> {
   let status: TailscaleStatusSnapshot;
   try {
@@ -453,18 +493,30 @@ async function inspectSecureAccessTailscaleState(
     };
   }
 
-  const serveStatus = await runTailscaleServeStatus().catch(() => '');
-  const upstream = String(params.upstreamUrl ?? '').trim();
-  const httpsBaseUrl = upstream
-    ? tailscaleServeHttpsUrlForInternalServerUrlFromStatus(serveStatus, upstream)
-    : extractTailscaleServeHttpsUrl(serveStatus);
+  const relayAccessProvider = relayAccess.getProvider('tailscaleServe');
+  const relayAccessStatus = await relayAccessProvider.status({
+    config: { providerId: 'tailscaleServe' },
+    ctx: relayAccess.createExecutionContext({
+      target: { kind: 'local' },
+      upstreamUrl: params.upstreamUrl,
+    }),
+  });
 
   return {
     installed: true,
     loggedIn: true,
     authUrl: status.authUrl,
-    shareableHttpsUrl: appendServePathToHttpsUrl(httpsBaseUrl, params.servePath),
+    shareableHttpsUrl: appendServePathToHttpsUrl(relayAccessStatus.shareUrl ?? null, params.servePath),
   };
+}
+
+function resolveApprovalUrlFromRelayAccessDetails(details: unknown): string | null {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) {
+    return null;
+  }
+  const record = details as Record<string, unknown>;
+  const approvalUrl = typeof record.approvalUrl === 'string' ? record.approvalUrl.trim() : '';
+  return approvalUrl || null;
 }
 
 function parseSecureAccessTailscaleParams(params: unknown): SecureAccessTailscaleParams {

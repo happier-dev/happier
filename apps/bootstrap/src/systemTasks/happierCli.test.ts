@@ -4,30 +4,20 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { preparePayloadMock, installPayloadMock, resolveInstalledPathsMock, runCommandCaptureMock } = vi.hoisted(() => ({
-  preparePayloadMock: vi.fn(),
-  installPayloadMock: vi.fn(),
-  resolveInstalledPathsMock: vi.fn((params: Readonly<{
-    processEnv?: NodeJS.ProcessEnv;
-  }>) => ({
-    installRoot: join(String(params.processEnv?.HAPPIER_HOME_DIR ?? ''), 'cli'),
-    currentPath: join(String(params.processEnv?.HAPPIER_HOME_DIR ?? ''), 'cli', 'current'),
-    previousPath: join(String(params.processEnv?.HAPPIER_HOME_DIR ?? ''), 'cli', 'previous'),
-    versionsDir: join(String(params.processEnv?.HAPPIER_HOME_DIR ?? ''), 'cli', 'versions'),
-    binaryPath: String(params.processEnv?.HAPPIER_HOME_DIR ?? '')
-      ? join(String(params.processEnv?.HAPPIER_HOME_DIR ?? ''), 'cli', 'current', 'happier')
-      : join(tmpdir(), 'nonexistent', 'happier'),
-    nodeEntrypointPath: null,
-    shimPaths: [],
-  })),
+const { runCommandCaptureMock, ensureLocalFirstPartyComponentCommandMock } = vi.hoisted(() => ({
   runCommandCaptureMock: vi.fn(),
+  ensureLocalFirstPartyComponentCommandMock: vi.fn(),
 }));
 
-vi.mock('@happier-dev/cli-common/firstPartyRuntime', () => ({
-  prepareFirstPartyComponentPayloadFromGitHubRelease: preparePayloadMock,
-  installVersionedPayload: installPayloadMock,
-  resolveInstalledFirstPartyComponentPaths: resolveInstalledPathsMock,
-}));
+vi.mock('@happier-dev/cli-common/systemTasks', async () => {
+  const actual = await vi.importActual<typeof import('@happier-dev/cli-common/systemTasks')>(
+    '@happier-dev/cli-common/systemTasks',
+  );
+  return {
+    ...actual,
+    ensureLocalFirstPartyComponentCommand: ensureLocalFirstPartyComponentCommandMock,
+  };
+});
 
 vi.mock('./taskRuntime.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./taskRuntime.js')>();
@@ -112,36 +102,9 @@ describe('resolveLocalHappierCommand', () => {
 
 describe('runLocalHappierJsonCommand', () => {
   it('acquires the managed happier cli on demand before running local bootstrap commands', async () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'hsetup-cli-install-'));
-    const happyHomeDir = join(rootDir, '.happier-home');
-    const payloadRoot = join(rootDir, 'payload');
-    const installedBinaryPath = join(payloadRoot, 'happier');
+    const cliPath = '/tmp/happier-managed';
 
-    try {
-      mkdirSync(payloadRoot, { recursive: true });
-      writeFileSync(
-        installedBinaryPath,
-        '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"authenticated":true,"machineId":"machine-auto-installed"}}\'\n',
-        'utf8',
-      );
-      chmodSync(installedBinaryPath, 0o755);
-      mkdirSync(join(payloadRoot, 'package-dist'), { recursive: true });
-      writeFileSync(join(payloadRoot, 'package-dist', 'index.mjs'), 'export default "machine-auto-installed";\n', 'utf8');
-
-      preparePayloadMock.mockResolvedValue({
-        versionId: '1.2.3',
-        payloadRoot,
-        cleanup: async () => {},
-      });
-      installPayloadMock.mockImplementation(async (params: Readonly<{
-        processEnv?: NodeJS.ProcessEnv;
-      }>) => {
-        const installRoot = join(String(params.processEnv?.HAPPIER_HOME_DIR ?? happyHomeDir), 'cli');
-        const currentPath = join(installRoot, 'current');
-        mkdirSync(currentPath, { recursive: true });
-        writeFileSync(join(currentPath, 'happier'), '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"authenticated":true,"machineId":"machine-auto-installed"}}\'\n', 'utf8');
-        chmodSync(join(currentPath, 'happier'), 0o755);
-      });
+    ensureLocalFirstPartyComponentCommandMock.mockResolvedValue(cliPath);
       runCommandCaptureMock.mockResolvedValue({
         status: 0,
         stdout: '{"ok":true,"data":{"authenticated":true,"machineId":"machine-auto-installed"}}\n',
@@ -152,7 +115,7 @@ describe('runLocalHappierJsonCommand', () => {
         args: ['auth', 'status', '--json'],
         processEnv: {
           ...process.env,
-          HAPPIER_HOME_DIR: happyHomeDir,
+          HAPPIER_HOME_DIR: '/tmp/fake-home',
         },
       })).resolves.toMatchObject({
         ok: true,
@@ -161,9 +124,13 @@ describe('runLocalHappierJsonCommand', () => {
           machineId: 'machine-auto-installed',
         },
       });
-    } finally {
-      rmSync(rootDir, { recursive: true, force: true });
-    }
+
+      expect(ensureLocalFirstPartyComponentCommandMock).toHaveBeenCalledWith(expect.objectContaining({
+        componentId: 'happier-cli',
+      }));
+      expect(runCommandCaptureMock).toHaveBeenCalledWith(expect.objectContaining({
+        command: cliPath,
+      }));
   });
 
   it('treats a signal-terminated happier process as a failed command', async () => {

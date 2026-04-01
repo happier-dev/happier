@@ -829,12 +829,16 @@ describe('createHsetupSystemTaskRegistry', () => {
         protocolVersion: 1,
         taskId: 'task_daemon_status_1',
         ok: true,
-        data: {
+        data: expect.objectContaining({
           serviceInstalled: true,
           daemonRunning: true,
           needsAuth: false,
           machineId: 'machine-local-1',
-        },
+          daemonServerUrl: 'https://relay.example.test',
+          daemonMachineRegistered: true,
+          daemonAccountId: null,
+          daemonComparableKey: null,
+        }),
       });
       expect(fakeCli.readInvocations()).toContainEqual(['daemon', 'status', '--json']);
     } finally {
@@ -922,12 +926,16 @@ describe('createHsetupSystemTaskRegistry', () => {
         protocolVersion: 1,
         taskId: 'task_daemon_start_1',
         ok: true,
-        data: {
+        data: expect.objectContaining({
           serviceInstalled: true,
           daemonRunning: true,
           needsAuth: false,
           machineId: 'machine-local-1',
-        },
+          daemonServerUrl: 'https://relay.example.test',
+          daemonMachineRegistered: true,
+          daemonAccountId: null,
+          daemonComparableKey: null,
+        }),
       });
       expect(fakeCli.readInvocations()).toEqual([
         ['daemon', 'status', '--json'],
@@ -1019,12 +1027,16 @@ describe('createHsetupSystemTaskRegistry', () => {
         protocolVersion: 1,
         taskId: 'task_daemon_stop_1',
         ok: true,
-        data: {
+        data: expect.objectContaining({
           serviceInstalled: true,
           daemonRunning: false,
           needsAuth: false,
           machineId: 'machine-local-1',
-        },
+          daemonServerUrl: 'https://relay.example.test',
+          daemonMachineRegistered: true,
+          daemonAccountId: null,
+          daemonComparableKey: null,
+        }),
       });
       expect(fakeCli.readInvocations()).toEqual([
         ['daemon', 'status', '--json'],
@@ -1116,12 +1128,16 @@ describe('createHsetupSystemTaskRegistry', () => {
         protocolVersion: 1,
         taskId: 'task_daemon_restart_1',
         ok: true,
-        data: {
+        data: expect.objectContaining({
           serviceInstalled: true,
           daemonRunning: true,
           needsAuth: false,
           machineId: 'machine-local-1',
-        },
+          daemonServerUrl: 'https://relay.example.test',
+          daemonMachineRegistered: true,
+          daemonAccountId: null,
+          daemonComparableKey: null,
+        }),
       });
       expect(fakeCli.readInvocations()).toEqual([
         ['daemon', 'status', '--json'],
@@ -1461,6 +1477,73 @@ describe('createHsetupSystemTaskRegistry', () => {
     });
   });
 
+  it('returns prompt_required when remote.ssh.manageHost.v1 needs host trust', async () => {
+    const events: unknown[] = [];
+    const result = await executeSystemTask({
+      spec: {
+        protocolVersion: 1,
+        kind: 'remote.ssh.manageHost.v1',
+        params: {
+          action: 'testConnection',
+          ssh: {
+            target: 'dev@example.test',
+            auth: 'agent',
+          },
+        },
+      },
+      taskId: 'task_remote_manage_1',
+      registry: createHsetupSystemTaskRegistry({
+        remoteSshBootstrap: {
+          async resolveHostTrust() {
+            return {
+              status: 'prompt',
+              promptKind: 'sshHostTrust',
+              promptMessage: 'Trust the remote SSH host key',
+              promptData: {
+                host: 'example.test',
+                fingerprint: 'SHA256:test',
+                knownHostKey: 'example.test ssh-ed25519 AAAAB3NzaC1yc2EAAAADAQABAAABAQ',
+              },
+              accept: async () => undefined,
+            };
+          },
+        },
+      }),
+      now: () => 1700000000000,
+      emitEvent(event) {
+        events.push(event);
+      },
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: 'progress',
+        stepId: 'ssh.trust',
+        message: 'Verifying SSH host trust',
+      }),
+      expect.objectContaining({
+        type: 'prompt',
+        stepId: 'ssh.hostTrust',
+        message: 'Trust the remote SSH host key',
+        data: {
+          kind: 'ssh.trustHost',
+          host: 'example.test',
+          fingerprint: 'SHA256:test',
+          knownHostKey: 'example.test ssh-ed25519 AAAAB3NzaC1yc2EAAAADAQABAAABAQ',
+        },
+      }),
+    ]);
+    expect(result).toEqual({
+      protocolVersion: 1,
+      taskId: 'task_remote_manage_1',
+      ok: false,
+      error: {
+        code: 'prompt_required',
+        message: 'Trust the remote SSH host key',
+      },
+    });
+  });
+
   it('completes remote.ssh.bootstrapMachine.v1 when desktop prompt resolutions are provided up front', async () => {
     const events: unknown[] = [];
     const result = await executeSystemTask({
@@ -1603,6 +1686,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       ]);
       expect(fakeCli.readInvocations()).toEqual([
         ['status', '--json'],
+        ['status', '--json'],
         ['serve', 'status'],
       ]);
     } finally {
@@ -1724,8 +1808,10 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['status', '--json'],
         ['login', '--qr'],
         ['status', '--json'],
+        ['status', '--json'],
         ['serve', 'status'],
         ['serve', '--bg', 'http://127.0.0.1:3005'],
+        ['status', '--json'],
         ['status', '--json'],
         ['serve', 'status'],
       ]);
@@ -1820,7 +1906,7 @@ describe('createHsetupSystemTaskRegistry', () => {
           requiresApproval: null,
         },
       });
-      expect(fakeCli.readInvocations().filter((invocation) => invocation[0] === 'status' && invocation[1] === '--json')).toHaveLength(3);
+      expect(fakeCli.readInvocations().filter((invocation) => invocation[0] === 'status' && invocation[1] === '--json')).toHaveLength(4);
       expect(events).toEqual([
         expect.objectContaining({ type: 'progress', stepId: 'tailscale.detect' }),
         expect.objectContaining({

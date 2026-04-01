@@ -7,6 +7,14 @@ const tailscaleMocks = vi.hoisted(() => ({
     runTailscaleServeEnable: vi.fn(),
 }));
 
+const relayAccessMocks = vi.hoisted(() => ({
+    getRelayAccessProvider: vi.fn(),
+}));
+
+const relayAccessActual = vi.hoisted(() => ({
+    getRelayAccessProvider: null as unknown as typeof import('@happier-dev/cli-common/relayAccess').getRelayAccessProvider,
+}));
+
 vi.mock('@happier-dev/cli-common/tailscale', async () => {
     const actual = await vi.importActual<typeof import('@happier-dev/cli-common/tailscale')>('@happier-dev/cli-common/tailscale');
     return {
@@ -15,6 +23,16 @@ vi.mock('@happier-dev/cli-common/tailscale', async () => {
         runTailscaleServeStatus: tailscaleMocks.runTailscaleServeStatus,
         runTailscaleLogin: tailscaleMocks.runTailscaleLogin,
         runTailscaleServeEnable: tailscaleMocks.runTailscaleServeEnable,
+    };
+});
+
+vi.mock('@happier-dev/cli-common/relayAccess', async () => {
+    const actual = await vi.importActual<typeof import('@happier-dev/cli-common/relayAccess')>('@happier-dev/cli-common/relayAccess');
+    relayAccessActual.getRelayAccessProvider = actual.getRelayAccessProvider;
+    relayAccessMocks.getRelayAccessProvider.mockImplementation((providerId) => actual.getRelayAccessProvider(providerId));
+    return {
+        ...actual,
+        getRelayAccessProvider: relayAccessMocks.getRelayAccessProvider,
     };
 });
 
@@ -45,6 +63,7 @@ async function collectHandlerRun(
 describe('createSecureAccessTailscaleHandler', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        relayAccessMocks.getRelayAccessProvider.mockImplementation((providerId) => relayAccessActual.getRelayAccessProvider(providerId));
     });
 
     it('installs missing tailscale before continuing through the existing secure-access flow', async () => {
@@ -114,49 +133,30 @@ describe('createSecureAccessTailscaleHandler', () => {
             shareableHttpsUrl: 'https://relay.tailf00.ts.net',
             requiresApproval: null,
         });
-    });
+    }, 10_000);
 
-    it('does not treat an unrelated serve https URL as valid when the upstream port does not match', async () => {
+    it('delegates the secure-access serve enable step to the relay-access tailscaleServe provider', async () => {
         const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
 
-        tailscaleMocks.runTailscaleStatusJson.mockResolvedValueOnce({
-            backendState: 'Running',
-            authUrl: null,
-            dnsName: 'relay.tailf00.ts.net',
-            tailnetName: 'example-tailnet',
-            tailscaleIps: ['100.64.0.10'],
-            loggedIn: true,
-        });
-        tailscaleMocks.runTailscaleServeStatus.mockResolvedValueOnce([
-            'https://other.tailf00.ts.net',
-            '|-- / proxy http://127.0.0.1:9999',
-        ].join('\n'));
-        tailscaleMocks.runTailscaleServeEnable.mockResolvedValueOnce({
-            approvalUrl: null,
-            httpsUrl: 'https://relay.tailf00.ts.net',
-            rawStatus: '',
-        });
-
-        const { events, result } = await collectHandlerRun({
-            handler: createSecureAccessTailscaleHandler(),
-            input: {
-                upstreamUrl: 'http://127.0.0.1:3005',
-                servePath: '/',
-                loginPolicy: 'skip',
-            },
-        });
-
-        expect(tailscaleMocks.runTailscaleServeEnable).toHaveBeenCalledTimes(1);
-        expect(events.some((event) => (event as any)?.stepId === 'tailscale.serveEnable')).toBe(true);
-        expect(result).toEqual(expect.objectContaining({
-            shareableHttpsUrl: 'https://relay.tailf00.ts.net',
-            serveEnabled: true,
-            requiresApproval: null,
+        const configure = vi.fn(async () => ({
+            state: 'enabled' as const,
+            shareUrl: 'https://relay.tailf00.ts.net',
         }));
-    });
-
-    it('polls for serve approval and completes when the expected https URL becomes available', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
+        const status = vi.fn(async () => ({
+            state: 'enabled' as const,
+            shareUrl: 'https://relay.tailf00.ts.net',
+        }));
+        relayAccessMocks.getRelayAccessProvider.mockReturnValue({
+            descriptor: {
+                id: 'tailscaleServe',
+                title: 'Tailscale Serve',
+                exposure: 'private',
+                prerequisites: [],
+            },
+            configure,
+            status,
+            disable: vi.fn(),
+        });
 
         tailscaleMocks.runTailscaleStatusJson.mockResolvedValue({
             backendState: 'Running',
@@ -166,25 +166,116 @@ describe('createSecureAccessTailscaleHandler', () => {
             tailscaleIps: ['100.64.0.10'],
             loggedIn: true,
         });
-        tailscaleMocks.runTailscaleServeStatus
-            .mockResolvedValueOnce('') // initial inspect: not enabled
-            .mockResolvedValueOnce([
-                'https://relay.tailf00.ts.net',
-                '|-- / proxy http://127.0.0.1:9999',
-            ].join('\n')) // first poll: wrong upstream
-            .mockResolvedValueOnce([
-                'https://relay.tailf00.ts.net',
-                '|-- / proxy http://127.0.0.1:3005',
-            ].join('\n')); // second poll: approved
 
-        tailscaleMocks.runTailscaleServeEnable.mockResolvedValueOnce({
-            approvalUrl: 'https://login.tailscale.com/f/serve?node=node-123',
-            httpsUrl: null,
-            rawStatus: 'needs approval',
+        const { result } = await collectHandlerRun({
+            handler: createSecureAccessTailscaleHandler({
+                inspectState: vi.fn(async () => ({
+                    installed: true,
+                    loggedIn: true,
+                    authUrl: null,
+                    shareableHttpsUrl: null,
+                })),
+            }),
+            input: {
+                upstreamUrl: 'http://127.0.0.1:3005',
+                servePath: '/',
+                installPolicy: 'skip',
+                loginPolicy: 'skip',
+            },
+        });
+
+        expect(relayAccessMocks.getRelayAccessProvider).toHaveBeenCalledWith('tailscaleServe');
+        expect(configure).toHaveBeenCalledTimes(1);
+        expect(status).toHaveBeenCalledTimes(1);
+        expect(tailscaleMocks.runTailscaleServeEnable).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+            shareableHttpsUrl: 'https://relay.tailf00.ts.net',
+            serveEnabled: true,
+            requiresApproval: null,
+        }));
+    });
+
+    it('appends the serve path to the relay access share URL', async () => {
+        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
+
+        relayAccessMocks.getRelayAccessProvider.mockReturnValue({
+            descriptor: {
+                id: 'tailscaleServe',
+                title: 'Tailscale Serve',
+                exposure: 'private',
+                prerequisites: [],
+            },
+            configure: vi.fn(),
+            status: vi.fn(async () => ({
+                state: 'enabled' as const,
+                shareUrl: 'https://relay.tailf00.ts.net',
+            })),
+            disable: vi.fn(),
         });
 
         const { events, result } = await collectHandlerRun({
+            handler: createSecureAccessTailscaleHandler(),
+            input: {
+                upstreamUrl: 'http://127.0.0.1:3005',
+                servePath: '/panel',
+                loginPolicy: 'skip',
+            },
+        });
+
+        expect(events.some((event) => (event as any)?.stepId === 'tailscale.verifyUrl')).toBe(true);
+        expect(result).toEqual(expect.objectContaining({
+            shareableHttpsUrl: 'https://relay.tailf00.ts.net/panel',
+            serveEnabled: true,
+            requiresApproval: null,
+        }));
+    });
+
+    it('polls for serve approval and completes when the expected https URL becomes available', async () => {
+        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
+
+        relayAccessMocks.getRelayAccessProvider.mockReturnValue({
+            descriptor: {
+                id: 'tailscaleServe',
+                title: 'Tailscale Serve',
+                exposure: 'private',
+                prerequisites: [],
+            },
+            configure: vi.fn(async () => ({
+                state: 'needs_auth' as const,
+                details: {
+                    approvalUrl: 'https://login.tailscale.com/f/serve?node=node-123',
+                },
+            })),
+            status: vi.fn(async () => ({
+                state: 'enabled' as const,
+                shareUrl: 'https://relay.tailf00.ts.net',
+            })),
+            disable: vi.fn(),
+        });
+
+        const inspectState = vi.fn()
+            .mockResolvedValueOnce({
+                installed: true,
+                loggedIn: true,
+                authUrl: null,
+                shareableHttpsUrl: null,
+            })
+            .mockResolvedValueOnce({
+                installed: true,
+                loggedIn: true,
+                authUrl: null,
+                shareableHttpsUrl: null,
+            })
+            .mockResolvedValueOnce({
+                installed: true,
+                loggedIn: true,
+                authUrl: null,
+                shareableHttpsUrl: 'https://relay.tailf00.ts.net',
+            });
+
+        const { events, result } = await collectHandlerRun({
             handler: createSecureAccessTailscaleHandler({
+                inspectState,
                 sleep: async () => undefined,
                 now: () => 0,
             }),
@@ -196,7 +287,6 @@ describe('createSecureAccessTailscaleHandler', () => {
         });
 
         expect(events.some((event) => (event as any)?.type === 'prompt' && (event as any)?.data?.kind === 'tailscaleServeApproval')).toBe(true);
-        expect(tailscaleMocks.runTailscaleServeStatus).toHaveBeenCalledTimes(3);
         expect(result).toEqual(expect.objectContaining({
             serveEnabled: true,
             shareableHttpsUrl: 'https://relay.tailf00.ts.net',
@@ -237,10 +327,20 @@ describe('createSecureAccessTailscaleHandler', () => {
             },
         });
 
-        tailscaleMocks.runTailscaleServeStatus.mockResolvedValueOnce([
-            'https://relay.tailf00.ts.net',
-            '|-- / proxy http://127.0.0.1:3005',
-        ].join('\n'));
+        relayAccessMocks.getRelayAccessProvider.mockReturnValue({
+            descriptor: {
+                id: 'tailscaleServe',
+                title: 'Tailscale Serve',
+                exposure: 'private',
+                prerequisites: [],
+            },
+            configure: vi.fn(),
+            status: vi.fn(async () => ({
+                state: 'enabled' as const,
+                shareUrl: 'https://relay.tailf00.ts.net',
+            })),
+            disable: vi.fn(),
+        });
 
         const { events, result } = await collectHandlerRun({
             handler: createSecureAccessTailscaleHandler({

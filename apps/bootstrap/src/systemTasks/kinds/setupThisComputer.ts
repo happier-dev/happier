@@ -1,20 +1,11 @@
 import { systemTasks } from '@happier-dev/cli-common';
-
 import {
-  type ActiveRelayProfile,
-  type AuthStatusSnapshot,
-  type DaemonStatusSnapshot,
-  configureRelay,
-  installService,
-  pairLocalMachineIfNeeded,
-  readActiveRelayProfile,
-  readAuthStatus,
-  readDaemonStatus,
-  requestAuthPairing,
-  startService,
-  waitForAuthPairing,
-  waitForReadyDaemon,
-} from '../localDaemonCli.js';
+  createAsyncGeneratorFromEventProducer,
+  createLocalHappierJsonExecutor,
+  createSetupMachineRecipeExecutorFromHappierJsonExecutor,
+  runSetupMachineRecipe,
+  type SetupMachineRecipeResult,
+} from '@happier-dev/cli-common/systemTasks';
 
 export interface SetupThisComputerParams {
   surface?: string;
@@ -24,21 +15,7 @@ export interface SetupThisComputerParams {
   verifyService?: boolean;
 }
 
-type SetupThisComputerDeps = Readonly<{
-  readActiveRelay: () => Promise<ActiveRelayProfile>;
-  readAuthStatus: () => Promise<AuthStatusSnapshot>;
-  requestAuthPairing: () => Promise<Readonly<{ publicKey: string }>>;
-  waitForAuthPairing: (publicKey: string) => Promise<Readonly<{ machineId: string | null }>>;
-  pairLocalMachineIfNeeded: (authStatus: AuthStatusSnapshot) => Promise<string | null>;
-  configureRelay: (profile: ActiveRelayProfile) => Promise<void>;
-  installService: () => Promise<void>;
-  startService: () => Promise<void>;
-  readDaemonStatus: () => Promise<DaemonStatusSnapshot>;
-}>;
-
-export function createSetupThisComputerHandler(overrides?: Partial<SetupThisComputerDeps>) {
-  const deps = createSetupThisComputerDeps(overrides);
-
+export function createSetupThisComputerHandler() {
   return async function* (
     params: unknown,
     context: Readonly<{ signal: AbortSignal }>,
@@ -54,69 +31,35 @@ export function createSetupThisComputerHandler(overrides?: Partial<SetupThisComp
   > {
     const parsed = parseSetupThisComputerParams(params);
 
+    const executor = createLocalHappierJsonExecutor();
     yield { type: 'progress', stepId: 'setup.thisComputer.resolveRelay' };
-    const relay = await deps.readActiveRelay();
+    const relay = await readActiveRelayProfile(executor);
 
     yield { type: 'progress', stepId: 'setup.thisComputer.checkAuth' };
-    const authStatus = await deps.readAuthStatus();
+    const recipeExecutor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({ executor });
+    const authStatus = await recipeExecutor.readAuthStatus();
 
-    yield { type: 'progress', stepId: 'setup.thisComputer.configureRelay' };
-    await deps.configureRelay(relay);
+    const recipeResult = yield* runSetupMachineRecipeAsEvents({
+      relayProfile: relay,
+      executor: recipeExecutor,
+      initialAuthStatus: authStatus,
+      steps: {
+        installService: parsed.installService,
+        startService: parsed.startService,
+        verifyService: parsed.verifyService,
+      },
+      stepIds: {
+        configureRelay: 'setup.thisComputer.configureRelay',
+        authWait: 'setup.thisComputer.auth.wait',
+        installService: 'setup.thisComputer.installService',
+        startService: 'setup.thisComputer.startService',
+        verifyService: 'setup.thisComputer.verifyService',
+      },
+      signal: context.signal,
+      daemonReadinessErrorMessage: 'Daemon service did not reach a ready state for the selected Relay.',
+    });
 
-    let pairedMachineId: string | null = null;
-    if (!authStatus.authenticated) {
-      const request = await deps.requestAuthPairing();
-      yield {
-        type: 'prompt',
-        stepId: 'setup.thisComputer.auth.request',
-        message: 'Approve this computer in Happier to continue',
-        data: {
-          kind: 'authRequest',
-          publicKey: request.publicKey,
-          relayUrl: relay.serverUrl,
-          webappUrl: relay.webappUrl,
-        },
-      };
-
-      yield { type: 'progress', stepId: 'setup.thisComputer.auth.wait' };
-      const wait = await deps.waitForAuthPairing(request.publicKey);
-      pairedMachineId = wait.machineId;
-      if (!pairedMachineId) {
-        throw new systemTasks.SystemTaskExecutionError(
-          'machine_id_unavailable',
-          'Authenticated Relay session did not expose a machineId for this computer.',
-        );
-      }
-    } else {
-      pairedMachineId = await deps.pairLocalMachineIfNeeded(authStatus);
-    }
-
-    let daemonStatus: DaemonStatusSnapshot | null = null;
-    if (parsed.installService !== false) {
-      yield { type: 'progress', stepId: 'setup.thisComputer.installService' };
-      await deps.installService();
-    }
-
-    if (parsed.startService !== false) {
-      yield { type: 'progress', stepId: 'setup.thisComputer.startService' };
-      await deps.startService();
-    }
-
-    if (parsed.verifyService !== false) {
-      yield { type: 'progress', stepId: 'setup.thisComputer.verifyService' };
-      daemonStatus = await waitForReadyDaemon({
-        readDaemonStatus: deps.readDaemonStatus,
-        signal: context.signal,
-      });
-      if (!daemonStatus.serviceInstalled || !daemonStatus.daemonRunning || daemonStatus.needsAuth) {
-        throw new systemTasks.SystemTaskExecutionError(
-          'daemon_service_not_ready',
-          'Daemon service did not reach a ready state for the selected Relay.',
-        );
-      }
-    }
-
-    const machineId = pairedMachineId ?? daemonStatus?.machineId ?? null;
+    const machineId = recipeResult.machineId;
     if (!machineId) {
       throw new systemTasks.SystemTaskExecutionError(
         'machine_id_unavailable',
@@ -126,6 +69,53 @@ export function createSetupThisComputerHandler(overrides?: Partial<SetupThisComp
 
     return { machineId };
   };
+}
+
+type SetupThisComputerEvent = Readonly<{
+  type: 'progress' | 'prompt';
+  stepId: string;
+  message?: string;
+  data?: Record<string, string | boolean>;
+}>;
+
+async function* runSetupMachineRecipeAsEvents(params: Readonly<{
+  relayProfile: Parameters<typeof runSetupMachineRecipe>[0]['relayProfile'];
+  executor: Parameters<typeof runSetupMachineRecipe>[0]['executor'];
+  initialAuthStatus: Parameters<typeof runSetupMachineRecipe>[0]['initialAuthStatus'];
+  steps: Parameters<typeof runSetupMachineRecipe>[0]['steps'];
+  stepIds: Parameters<typeof runSetupMachineRecipe>[0]['stepIds'];
+  signal: AbortSignal;
+  daemonReadinessErrorMessage: string;
+}>): AsyncGenerator<SetupThisComputerEvent, SetupMachineRecipeResult, void> {
+  return yield* createAsyncGeneratorFromEventProducer((emit) => runSetupMachineRecipe({
+    relayProfile: params.relayProfile,
+    executor: params.executor,
+    initialAuthStatus: params.initialAuthStatus,
+    steps: params.steps,
+    stepIds: params.stepIds,
+    signal: params.signal,
+    emit(event) {
+      emit({
+        type: 'progress',
+        stepId: event.stepId,
+        ...(event.message ? { message: event.message } : {}),
+      });
+    },
+    approvePairingRequest: async (inner) => {
+      emit({
+        type: 'prompt',
+        stepId: 'setup.thisComputer.auth.request',
+        message: 'Approve this computer in Happier to continue',
+        data: {
+          kind: 'authRequest',
+          publicKey: inner.publicKey,
+          relayUrl: params.relayProfile.serverUrl,
+          webappUrl: params.relayProfile.webappUrl,
+        },
+      });
+    },
+    daemonReadinessErrorMessage: params.daemonReadinessErrorMessage,
+  }));
 }
 
 export function parseSetupThisComputerParams(params: unknown): SetupThisComputerParams {
@@ -158,16 +148,30 @@ export function parseSetupThisComputerParams(params: unknown): SetupThisComputer
   return parsed;
 }
 
-function createSetupThisComputerDeps(overrides?: Partial<SetupThisComputerDeps>): SetupThisComputerDeps {
-  return {
-    readActiveRelay: overrides?.readActiveRelay ?? readActiveRelayProfile,
-    readAuthStatus: overrides?.readAuthStatus ?? readAuthStatus,
-    requestAuthPairing: overrides?.requestAuthPairing ?? requestAuthPairing,
-    waitForAuthPairing: overrides?.waitForAuthPairing ?? waitForAuthPairing,
-    pairLocalMachineIfNeeded: overrides?.pairLocalMachineIfNeeded ?? pairLocalMachineIfNeeded,
-    configureRelay: overrides?.configureRelay ?? configureRelay,
-    installService: overrides?.installService ?? installService,
-    startService: overrides?.startService ?? startService,
-    readDaemonStatus: overrides?.readDaemonStatus ?? readDaemonStatus,
-  };
+async function readActiveRelayProfile(executor: ReturnType<typeof createLocalHappierJsonExecutor>): Promise<Readonly<{
+  serverUrl: string;
+  webappUrl: string;
+  localServerUrl: string | null;
+}>> {
+  const parsed = await executor.runHappierJson(['server', 'current', '--json']);
+  const active = parsed && typeof parsed === 'object'
+    ? (parsed as { data?: { active?: Record<string, unknown> } }).data?.active
+    : null;
+
+  const serverUrl = typeof active?.serverUrl === 'string' ? active.serverUrl.trim() : '';
+  const webappUrl = typeof active?.webappUrl === 'string' && active.webappUrl.trim()
+    ? active.webappUrl.trim()
+    : serverUrl;
+  const localServerUrl = typeof active?.localServerUrl === 'string' && active.localServerUrl.trim()
+    ? active.localServerUrl.trim()
+    : null;
+
+  if (!serverUrl || !webappUrl) {
+    throw new systemTasks.SystemTaskExecutionError(
+      'relay_configuration_unavailable',
+      'Could not resolve the currently selected Relay configuration.',
+    );
+  }
+
+  return { serverUrl, webappUrl, localServerUrl };
 }

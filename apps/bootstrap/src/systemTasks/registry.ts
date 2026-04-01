@@ -33,6 +33,7 @@ import {
   waitForReadyDaemon,
 } from './localDaemonCli.js';
 import { approveLocalRemoteAuthRequestDefault, installRemoteCliDefault, resolveRemoteSshHostTrustDefault, runRemoteBootstrapCommandDefault } from './remoteSshBootstrapTasks.js';
+import { installRemoteCliForManageHostDefault, runRemoteDaemonServiceCommandDefault, runRemoteRelayRuntimeCommandDefault, testRemoteSshConnectionDefault } from './remoteSshManageHostTasks.js';
 import { checkRelayRuntimeHealthDefault, controlRelayRuntimeDefault, installOrUpdateRelayRuntimeDefault, readRelayRuntimeStatusDefault } from './relayRuntimeTasks.js';
 import { createRelayAccessConfigStore } from './relayAccessConfigStore.js';
 import { runCommandCapture } from './taskRuntime.js';
@@ -143,6 +144,9 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
   );
   const remoteBootstrapHandler = systemTasks.createExecutionRunnerFromKind(
     systemTasks.createRemoteSshBootstrapMachineTaskKind(remoteBootstrapDeps),
+  );
+  const remoteManageHostHandler = systemTasks.createExecutionRunnerFromKind(
+    systemTasks.createRemoteSshManageHostTaskKind(createRemoteSshManageHostDeps(deps.remoteSshBootstrap)),
   );
   const daemonServiceStatusHandler = createDaemonServiceStatusHandler();
   const daemonServiceStartHandler = createDaemonServiceStartHandler();
@@ -273,11 +277,17 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
     },
     {
       kind: 'secureAccess.tailscale.v1',
-      handler: createSecureAccessTailscaleHandler(),
+      handler: createSecureAccessTailscaleHandler({
+        relayAccess: relayAccessDeps,
+      }),
     },
     {
       kind: 'remote.ssh.bootstrapMachine.v1',
       handler: remoteBootstrapHandler,
+    },
+    {
+      kind: 'remote.ssh.manageHost.v1',
+      handler: remoteManageHostHandler,
     },
   ]);
 }
@@ -547,6 +557,16 @@ function createRemoteSshBootstrapDeps(overrides: HsetupRegistryDeps['remoteSshBo
   };
 }
 
+function createRemoteSshManageHostDeps(overrides: HsetupRegistryDeps['remoteSshBootstrap']): systemTasks.RemoteSshManageHostDeps {
+  return {
+    resolveHostTrust: overrides?.resolveHostTrust ?? resolveRemoteSshHostTrustDefault,
+    testConnection: testRemoteSshConnectionDefault,
+    installRemoteCli: installRemoteCliForManageHostDefault,
+    runDaemonServiceCommand: runRemoteDaemonServiceCommandDefault,
+    runRelayRuntimeCommand: runRemoteRelayRuntimeCommandDefault,
+  };
+}
+
 function createRelayAccessDeps(overrides?: Partial<RelayAccessDeps>): RelayAccessDeps {
   const store = createRelayAccessConfigStore({
     resolveHappyHomeDir: () => resolveHappyHomeDirFromEnvironment(process.env),
@@ -558,6 +578,7 @@ function createRelayAccessDeps(overrides?: Partial<RelayAccessDeps>): RelayAcces
           auth: {
             kind: ssh.auth,
             identityFile: ssh.identityFile,
+            ...(ssh.auth === 'password' ? { password: ssh.password } : {}),
           },
           knownHosts: ssh.knownHostsPath ? { mode: 'app', path: ssh.knownHostsPath } : { mode: 'system' },
           remoteCommand,
@@ -576,6 +597,7 @@ function createRelayAccessDeps(overrides?: Partial<RelayAccessDeps>): RelayAcces
           auth: {
             kind: ssh.auth,
             identityFile: ssh.identityFile,
+            ...(ssh.auth === 'password' ? { password: ssh.password } : {}),
           },
           knownHosts: ssh.knownHostsPath ? { mode: 'app', path: ssh.knownHostsPath } : { mode: 'system' },
           localPath,
@@ -614,16 +636,17 @@ function createRelayAccessDeps(overrides?: Partial<RelayAccessDeps>): RelayAcces
         resolveCommandOnPath: (command: string) => command,
         runCommand: async ({ command, args, env, timeoutMs }: RunCommandParams): Promise<RunCommandResult> => {
           const remoteCommand = [command, ...args].map(shellQuote).join(' ');
-          const invocation = buildSshCommand({
-            target: ssh.target,
-            port: ssh.port,
-            auth: {
-              kind: ssh.auth,
-              identityFile: ssh.identityFile,
-            },
-            knownHosts: ssh.knownHostsPath
-              ? { mode: 'app', path: ssh.knownHostsPath }
-              : { mode: 'system' },
+            const invocation = buildSshCommand({
+              target: ssh.target,
+              port: ssh.port,
+              auth: {
+                kind: ssh.auth,
+                identityFile: ssh.identityFile,
+                ...(ssh.auth === 'password' ? { password: ssh.password } : {}),
+              },
+              knownHosts: ssh.knownHostsPath
+                ? { mode: 'app', path: ssh.knownHostsPath }
+                : { mode: 'system' },
             remoteCommand,
           });
           const result = await runCommandCapture({

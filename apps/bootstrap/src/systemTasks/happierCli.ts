@@ -1,70 +1,23 @@
-import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-
 import { systemTasks } from '@happier-dev/cli-common';
-
 import {
+  DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
   ensureLocalFirstPartyComponentCommand,
   resolveExplicitOrInstalledLocalFirstPartyCommand,
-} from './localFirstPartyCommand.js';
+} from '@happier-dev/cli-common/systemTasks';
+
 import { parseFirstJsonObject, runCommandCapture } from './taskRuntime.js';
-
-const DEFAULT_ENV_VAR_NAMES = [
-  'HAPPIER_BOOTSTRAP_CLI_PATH',
-  'HAPPIER_BOOTSTRAP_HAPPIER_PATH',
-] as const;
-
-function resolveRepoLocalHappierCommand(processEnv: NodeJS.ProcessEnv): string | null {
-  const explicitRepoRoot = String(
-    processEnv.HAPPIER_STACK_REPO_DIR ??
-      processEnv.HAPPIER_STACK_CLI_ROOT_DIR ??
-      ''
-  ).trim();
-  const startDir = explicitRepoRoot || process.cwd();
-  if (!startDir) {
-    return null;
-  }
-
-  let cursor = resolve(startDir);
-  while (cursor) {
-    const candidates = [
-      join(cursor, 'apps', 'cli', 'bin', 'happier.mjs'),
-      join(cursor, 'packages', 'cli', 'bin', 'happier.mjs'),
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        return candidate;
-      }
-    }
-
-    const parent = dirname(cursor);
-    if (!parent || parent === cursor) {
-      break;
-    }
-    cursor = parent;
-  }
-
-  return null;
-}
 
 export function resolveLocalHappierCommand(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
   envVarNames?: readonly string[];
 }> = {}): string {
   const processEnv = params.processEnv ?? process.env;
-  const explicitOrInstalled = resolveExplicitOrInstalledLocalFirstPartyCommand({
+  const resolved = resolveExplicitOrInstalledLocalFirstPartyCommand({
     componentId: 'happier-cli',
     processEnv,
-    envVarNames: params.envVarNames ?? DEFAULT_ENV_VAR_NAMES,
+    envVarNames: params.envVarNames ?? DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
   });
-  if (explicitOrInstalled) {
-    return explicitOrInstalled;
-  }
-
-  const repoLocal = resolveRepoLocalHappierCommand(processEnv);
-  if (repoLocal) {
-    return repoLocal;
-  }
+  if (resolved) return resolved;
 
   return 'happier';
 }
@@ -78,7 +31,7 @@ export async function runLocalHappierJsonCommand(params: Readonly<{
   const command = await ensureLocalFirstPartyComponentCommand({
     componentId: 'happier-cli',
     processEnv,
-    envVarNames: DEFAULT_ENV_VAR_NAMES,
+    envVarNames: DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
   });
 
   const result = await runCommandCapture({

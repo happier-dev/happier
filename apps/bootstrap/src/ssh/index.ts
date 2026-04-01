@@ -1,6 +1,11 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import {
+  buildOpenScpCommand,
+  buildOpenSshCommand,
+  redactSshText,
+  safeBashSingleQuote,
+  type OpenSshAuth,
+  type OpenSshKnownHostsMode,
+} from '@happier-dev/cli-common/ssh';
 
 export interface SshAuthConfig {
   kind: 'agent' | 'keyfile' | 'password';
@@ -44,99 +49,26 @@ export interface ScpCommandInvocation {
   env?: NodeJS.ProcessEnv;
 }
 
-function quoteForRemoteBash(command: string): string {
-  const raw = String(command ?? '');
-  if (!raw) return "''";
-  return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
-}
-
-const ASKPASS_SCRIPT_PATH = join(tmpdir(), 'happier-ssh-askpass.sh');
-
-function ensureAskpassScriptPath(): string {
-  const directory = join(tmpdir(), 'happier');
-  mkdirSync(directory, { recursive: true });
-  if (!existsSync(ASKPASS_SCRIPT_PATH)) {
-    writeFileSync(
-      ASKPASS_SCRIPT_PATH,
-      '#!/bin/sh\nprintf "%s\\n" "$HAPPIER_SSH_PASSWORD"\n',
-      {
-        encoding: 'utf8',
-        mode: 0o700,
-      },
-    );
-  }
-  try {
-    chmodSync(ASKPASS_SCRIPT_PATH, 0o700);
-  } catch {
-    // best effort
-  }
-  return ASKPASS_SCRIPT_PATH;
-}
-
-function resolveCommonSshArgs(params: Readonly<{
-  port?: number;
-  auth: SshAuthConfig;
-  knownHosts: SshKnownHostsConfig;
-  connectTimeoutSeconds?: number;
-  portFlag: '-p' | '-P';
-}>): string[] {
+function resolveAuth(params: Readonly<{ auth: SshAuthConfig }>): OpenSshAuth {
   const auth = params.auth ?? { kind: 'agent' };
-  if (auth.kind === 'keyfile' && !String(auth.identityFile ?? '').trim()) {
-    throw new Error('identityFile is required for keyfile auth');
-  }
-  if (auth.kind === 'password' && !String(auth.password ?? '').trim()) {
-    throw new Error('password is required for password auth');
-  }
-
-  const timeoutSeconds = Number.isFinite(params.connectTimeoutSeconds)
-    ? Math.max(1, Math.floor(params.connectTimeoutSeconds as number))
-    : 10;
-
-  const args = [
-    ...(params.port ? [params.portFlag, String(Math.floor(params.port))] : []),
-    '-o',
-    auth.kind === 'password' ? 'BatchMode=no' : 'BatchMode=yes',
-    '-o',
-    'LogLevel=ERROR',
-    '-o',
-    `ConnectTimeout=${timeoutSeconds}`,
-    '-o',
-    'ServerAliveInterval=15',
-    '-o',
-    'ServerAliveCountMax=3',
-  ];
-
-  if (params.knownHosts.mode === 'app') {
-    const knownHostsPath = String(params.knownHosts.path ?? '').trim();
-    if (!knownHostsPath) {
-      throw new Error('known hosts path is required when using app-managed known hosts');
-    }
-    args.push(
-      '-o',
-      'GlobalKnownHostsFile=/dev/null',
-      '-o',
-      `UserKnownHostsFile=${knownHostsPath}`,
-    );
-  }
-
-  args.push(
-    '-o',
-    'StrictHostKeyChecking=yes',
-  );
-
+  if (auth.kind === 'agent') return { mode: 'agent' };
   if (auth.kind === 'keyfile') {
-    args.push('-i', String(auth.identityFile));
+    return { mode: 'keyFile', privateKeyPath: String(auth.identityFile ?? '') };
   }
-  if (auth.kind === 'password') {
-    args.push(
-      '-o',
-      'NumberOfPasswordPrompts=1',
-      '-o',
-      'PreferredAuthentications=password,keyboard-interactive',
-    );
-  }
+  return { mode: 'password', password: String(auth.password ?? '') };
+}
 
-  return args;
+function resolveKnownHosts(params: Readonly<{ knownHosts: SshKnownHostsConfig }>): Readonly<{
+  knownHostsMode: OpenSshKnownHostsMode;
+  knownHostsPath?: string;
+}> {
+  if (params.knownHosts.mode === 'system') {
+    return { knownHostsMode: 'system' };
+  }
+  return {
+    knownHostsMode: 'app',
+    knownHostsPath: String(params.knownHosts.path ?? ''),
+  };
 }
 
 function normalizeScpRemotePath(remotePath: string): string {
@@ -156,31 +88,25 @@ export function buildSshCommand(params: BuildSshCommandParams): SshCommandInvoca
   if (!target) {
     throw new Error('ssh target is required');
   }
-  const args = resolveCommonSshArgs({
+  const auth = resolveAuth({ auth: params.auth });
+  const knownHosts = resolveKnownHosts({ knownHosts: params.knownHosts });
+  const invocation = buildOpenSshCommand({
+    sshBin: 'ssh',
+    target,
     port: params.port,
-    auth: params.auth,
-    knownHosts: params.knownHosts,
-    connectTimeoutSeconds: params.connectTimeoutSeconds,
-    portFlag: '-p',
+    auth,
+    ...knownHosts,
+    remoteCommand: ['bash', '-lc', safeBashSingleQuote(String(params.remoteCommand ?? ''))],
+    connectTimeoutSec: params.connectTimeoutSeconds,
+    serverAliveIntervalSec: 15,
+    serverAliveCountMax: 3,
   });
-
-  const env = params.auth.kind === 'password'
-    ? {
-        ...process.env,
-        HAPPIER_SSH_PASSWORD: String(params.auth.password ?? ''),
-        SSH_ASKPASS: ensureAskpassScriptPath(),
-        SSH_ASKPASS_REQUIRE: 'force',
-        DISPLAY: process.env.DISPLAY ?? ':0',
-      }
-    : undefined;
-
-  args.push(target, 'bash', '-lc', quoteForRemoteBash(String(params.remoteCommand ?? '')));
 
   return {
     command: 'ssh',
-    args,
-    ...(env ? { env } : {}),
-  };
+    args: invocation.args,
+    ...(invocation.env ? { env: invocation.env } : {}),
+  } satisfies SshCommandInvocation;
 }
 
 export function buildScpCommand(params: BuildScpCommandParams): ScpCommandInvocation {
@@ -196,35 +122,26 @@ export function buildScpCommand(params: BuildScpCommandParams): ScpCommandInvoca
   if (!localPath) {
     throw new Error('local path is required');
   }
-
-  const args = resolveCommonSshArgs({
+  const auth = resolveAuth({ auth: params.auth });
+  const knownHosts = resolveKnownHosts({ knownHosts: params.knownHosts });
+  const invocation = buildOpenScpCommand({
+    scpBin: 'scp',
+    target,
     port: params.port,
-    auth: params.auth,
-    knownHosts: params.knownHosts,
-    connectTimeoutSeconds: params.connectTimeoutSeconds,
-    portFlag: '-P',
+    auth,
+    ...knownHosts,
+    localPath,
+    remotePath: normalizeScpRemotePath(remotePath),
+    connectTimeoutSec: params.connectTimeoutSeconds,
+    serverAliveIntervalSec: 15,
+    serverAliveCountMax: 3,
   });
-  args.push('-r', localPath, `${target}:${normalizeScpRemotePath(remotePath)}`);
-
-  const env = params.auth.kind === 'password'
-    ? {
-        ...process.env,
-        HAPPIER_SSH_PASSWORD: String(params.auth.password ?? ''),
-        SSH_ASKPASS: ensureAskpassScriptPath(),
-        SSH_ASKPASS_REQUIRE: 'force',
-        DISPLAY: process.env.DISPLAY ?? ':0',
-      }
-    : undefined;
 
   return {
     command: 'scp',
-    args,
-    ...(env ? { env } : {}),
-  };
+    args: invocation.args,
+    ...(invocation.env ? { env: invocation.env } : {}),
+  } satisfies ScpCommandInvocation;
 }
 
-export function redactSshText(text: string): string {
-  return String(text ?? '')
-    .replace(/Identity file\s+\S+/gi, 'Identity file [redacted-path]')
-    .replace(/password:\s*[^\s]+/gi, 'password: [redacted-secret]');
-}
+export { redactSshText };
