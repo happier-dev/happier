@@ -73,10 +73,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown>) => React.createElement('Item', props),
 }));
 
-vi.mock('@/components/settings/machines/MachineSetupFlowScreen', () => ({
-    MachineSetupFlowScreen: (props: Record<string, unknown>) => React.createElement('MachineSetupFlowScreen', props),
-}));
-
 vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: (props: Record<string, unknown>) => React.createElement('PreAuthOnboardingWizardEntry', props),
 }));
@@ -114,20 +110,15 @@ describe('/setup route pre-auth access gate', () => {
         standardCleanup();
     });
 
-    it('does not offer local relay setup controls before auth', async () => {
+    it('redirects pre-auth users back to /', async () => {
         tauriDesktopState.value = true;
         const Screen = (await import('@/app/(app)/setup/index')).default;
         const screen = await renderScreen(React.createElement(Screen));
 
-        expect(screen.findByTestId('setup.preAuthNotice')).toBeNull();
-        expect(screen.findByTestId('setup.preAuthGoHome')).toBeNull();
-        expect(screen.findAllByType('PreAuthOnboardingWizardEntry' as never)).toHaveLength(1);
-        expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
-        expect(screen.findByTestId('setup.continueWithLocalRelay')).toBeNull();
         expect(setPendingSetupIntentMock).not.toHaveBeenCalled();
         expect(upsertServerProfileMock).not.toHaveBeenCalled();
         expect(setActiveServerIdMock).not.toHaveBeenCalled();
-        expect(expoRouterMock.spies.replace).not.toHaveBeenCalled();
-        expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as never)).toHaveLength(0);
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
+        expect(screen.findAllByType('PreAuthOnboardingWizardEntry' as never)).toHaveLength(0);
     });
 });

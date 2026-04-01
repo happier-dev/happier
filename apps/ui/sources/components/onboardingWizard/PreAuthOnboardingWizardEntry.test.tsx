@@ -16,6 +16,10 @@ vi.mock('expo-router', () => ({
     }),
 }));
 
+vi.mock('@/modal/components/BaseModal', () => ({
+    BaseModal: (props: any) => React.createElement('BaseModal', props, props.children),
+}));
+
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
         isAuthenticated: false,
@@ -77,7 +81,7 @@ vi.mock('@/sync/domains/server/readConfiguredServerUrlEnv', () => ({
     readConfiguredServerUrlEnv: () => '',
 }));
 
-vi.mock('@/components/onboardingWizard/OnboardingWizardSurface', () => ({
+vi.mock('@/components/onboardingWizard/surfaces/OnboardingWizardSurface', () => ({
     OnboardingWizardSurface: (props: Record<string, unknown>) => React.createElement('OnboardingWizardSurface', props),
 }));
 
@@ -113,5 +117,12 @@ describe('PreAuthOnboardingWizardEntry', () => {
 
         const wizard = screen.findByType('OnboardingWizardSurface' as never);
         expect(wizard.props.initialStepId).toBe('relay_select');
+    });
+
+    it('wraps the onboarding wizard in a BaseModal on web so the backdrop covers the full viewport', async () => {
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        expect(screen.findByType('BaseModal' as never)).toBeTruthy();
     });
 });

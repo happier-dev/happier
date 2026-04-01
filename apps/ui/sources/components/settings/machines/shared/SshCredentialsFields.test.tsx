@@ -90,6 +90,30 @@ describe('SshCredentialsFields', () => {
         }));
     });
 
+    it('renders the wizard layout without settings-style item groups', async () => {
+        const onChange = vi.fn();
+        const { SshCredentialsFields } = await import('./SshCredentialsFields');
+        const screen = await renderScreen(React.createElement(SshCredentialsFields, {
+            testIDPrefix: 'ssh-fields',
+            layoutVariant: 'wizard',
+            value: {
+                username: 'dev',
+                host: 'example.test',
+                port: '2222',
+                authMode: 'password',
+                identityFilePath: '',
+                password: 'super-secret',
+            },
+            onChange,
+        }));
+
+        expect(screen.findAllByType('Group' as never)).toHaveLength(0);
+        expect(screen.findByTestId('ssh-fields-sshUsernameInput')).toBeTruthy();
+        expect(screen.findByTestId('ssh-fields-sshHostInput')).toBeTruthy();
+        expect(screen.findByTestId('ssh-fields-sshPortInput')).toBeTruthy();
+        expect(screen.findByTestId('ssh-fields-sshPasswordInput')).toBeTruthy();
+    });
+
     it('can hide unsupported SSH auth modes', async () => {
         const onChange = vi.fn();
         const { SshCredentialsFields } = await import('./SshCredentialsFields');

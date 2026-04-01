@@ -1,23 +1,19 @@
 import * as React from 'react';
 import { Stack } from 'expo-router';
 
-import { t } from '@/text';
+const setupIndexScreenOptions = { headerShown: false } as const;
+const setupWizardScreenOptions = { headerShown: false } as const;
 
 export default function SetupLayout() {
     return (
         <Stack>
             <Stack.Screen
                 name="index"
-                options={{
-                    headerShown: false,
-                    title: t('setupOnboarding.screenTitle'),
-                }}
+                options={setupIndexScreenOptions}
             />
             <Stack.Screen
                 name="wizard"
-                options={{
-                    headerShown: false,
-                }}
+                options={setupWizardScreenOptions}
             />
         </Stack>
     );

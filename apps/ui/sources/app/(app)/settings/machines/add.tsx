@@ -14,9 +14,9 @@ export default function AddMachineRoute() {
             <ItemGroup title={t('common.actions')}>
                 <Item
                     testID="settings.machineSetup.openSetupWizard"
-                    title={t('settings.machineSetupSshMachineTitle')}
+                    title={t('setupOnboarding.setupNewMachineAction')}
                     subtitle={t('settings.machineSetupSshMachineSubtitle')}
-                    onPress={() => router.push('/setup/wizard?action=remote&step=remote_ssh_setup')}
+                    onPress={() => router.push('/setup/wizard?action=remote&step=remote_ssh_setup&scope=machine')}
                 />
             </ItemGroup>
         </ItemList>

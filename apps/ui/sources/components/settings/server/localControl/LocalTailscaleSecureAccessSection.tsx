@@ -2,12 +2,15 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { router } from 'expo-router';
 import type { SystemTaskResult } from '@happier-dev/protocol';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { SystemTaskProgressCard, getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
@@ -106,8 +109,11 @@ function resolveStatusSubtitle(params: Readonly<{
 export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailscaleSecureAccessSection(props: Readonly<{
     runner?: SystemTaskRunner;
     upstreamUrl: string | null;
+    presentation?: 'settings' | 'wizard';
 }>) {
     const runner = props.runner ?? getDefaultSystemTaskRunner();
+    const presentation = props.presentation ?? 'settings';
+    const { theme } = useUnistyles();
     const activeServerSnapshot = getActiveServerSnapshot();
     const [bridgeUnavailable, setBridgeUnavailable] = React.useState(false);
     const [taskId, setTaskId] = React.useState<string | null>(null);
@@ -229,6 +235,113 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
         }
         router.push('/settings/add-phone');
     }, [shareableHttpsUrl]);
+
+    if (presentation === 'wizard') {
+        const statusSubtitle = isUnavailable
+            ? t('settings.systemTaskBridgeUnavailable')
+            : resolveStatusSubtitle({
+                installUrl,
+                loginActionUrl,
+                approvalUrl,
+                hasUpstreamUrl,
+                resultData: lastResult,
+                snapshot,
+            });
+
+        return (
+            <>
+                <View style={{ width: '100%', gap: 12 }}>
+                    <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                        {t('settings.localTailscale.footer')}
+                    </Text>
+                    <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                        {statusSubtitle}
+                    </Text>
+                    {shareableHttpsUrl ? (
+                        <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                            {shareableHttpsUrl}
+                        </Text>
+                    ) : null}
+
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
+                        {shareableHttpsUrl ? (
+                            <RoundButton
+                                testID="settings.localTailscale.copyShareableUrl"
+                                size="small"
+                                display="inverted"
+                                title={t('common.copy')}
+                                onPress={copyShareableUrl}
+                                disabled={isUnavailable}
+                            />
+                        ) : null}
+                        {shareableHttpsUrl ? (
+                            <RoundButton
+                                testID="settings.localTailscale.addPhone"
+                                size="small"
+                                display="inverted"
+                                title={t('settings.addYourPhone')}
+                                onPress={handleAddThisPhone}
+                                disabled={isUnavailable}
+                            />
+                        ) : null}
+                        <RoundButton
+                            testID="settings.localTailscale.enable"
+                            size="small"
+                            display="inverted"
+                            title={(shareableHttpsUrl || isAwaitingPrompt) ? t('settings.localTailscale.refreshAction') : t('settings.localTailscale.enableAction')}
+                            onPress={() => {
+                                void start();
+                            }}
+                            disabled={(!isAwaitingPrompt && isBusy) || !hasUpstreamUrl || isUnavailable}
+                        />
+                        {approvalUrl ? (
+                            <RoundButton
+                                testID="settings.localTailscale.openApproval"
+                                size="small"
+                                display="inverted"
+                                title={t('settings.localTailscale.openApprovalAction')}
+                                onPress={openApproval}
+                                disabled={isUnavailable}
+                            />
+                        ) : null}
+                        {installUrl ? (
+                            <RoundButton
+                                testID="settings.localTailscale.openInstall"
+                                size="small"
+                                display="inverted"
+                                title={t('settings.localTailscale.openInstallAction')}
+                                onPress={openInstallDocs}
+                                disabled={isUnavailable}
+                            />
+                        ) : null}
+                        {loginActionUrl ? (
+                            <RoundButton
+                                testID="settings.localTailscale.openLogin"
+                                size="small"
+                                display="inverted"
+                                title={t('settings.localTailscale.openLoginAction')}
+                                onPress={openLoginAction}
+                                disabled={isUnavailable}
+                            />
+                        ) : null}
+                    </View>
+
+                    {lastErrorMessage ? (
+                        <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                            {lastErrorMessage}
+                        </Text>
+                    ) : null}
+                </View>
+                {decoratedSnapshot && decoratedSnapshot.result == null ? (
+                    <SystemTaskProgressCard
+                        title={t('settings.localTailscale.progressTitle')}
+                        snapshot={decoratedSnapshot}
+                        onCancel={cancel}
+                    />
+                ) : null}
+            </>
+        );
+    }
 
     return (
         <>

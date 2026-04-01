@@ -159,58 +159,15 @@ describe('/setup route web gating', () => {
         const screen = await renderScreen(React.createElement(Screen));
 
         expect(screen.findAllByType('PreAuthOnboardingWizardEntry' as never)).toHaveLength(0);
-        expect(screen.findByTestId('setup.desktopOnlyNotice')).toBeNull();
-        expect(screen.findByTestId('setup.web.activeRelay')).toBeNull();
-        expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
-        expect(screen.findByTestId('setup.continueToAuth')).toBeNull();
-        expect(screen.findByTestId('setup.discard')).toBeNull();
         expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
     });
 
-    it('shows only the desktop-only notice when authenticated on browser web and clears pending setup intent', async () => {
+    it('redirects authenticated browser-web users to /setup/wizard', async () => {
         isAuthenticated = true;
-        getPendingSetupIntentMock.mockReturnValue({
-            branch: 'thisComputer',
-            phase: 'post_auth',
-            relayUrl: 'https://relay.example.test',
-        });
-        relayDriftBannerMock.mockReturnValue({
-            kind: 'warning',
-            title: 'Your background service is connected to a different Relay',
-            description: 'App: relay-a · Background service: relay-b',
-            actionLabel: 'Connect background service to this Relay',
-            onPress: vi.fn(),
-            isRepairStarting: false,
-            repairTaskSnapshot: null,
-            onCancelRepair: vi.fn(),
-        });
 
         const Screen = (await import('@/app/(app)/setup/index')).default;
-        const screen = await renderScreen(React.createElement(Screen));
+        await renderScreen(React.createElement(Screen));
 
-        expect(screen.findByTestId('setup.desktopOnlyNotice')).toBeTruthy();
-        expect(screen.findByTestId('setup.web.activeRelay')).toBeTruthy();
-        expect(screen.findByTestId('setup.launchWizard')).toBeTruthy();
-        expect(screen.findByTestId('setup.postAuth')).toBeNull();
-        expect(screen.findByTestId('setup.summary.activeRelay')).toBeNull();
-        expect(screen.findByTestId('setup.summary.thisComputer')).toBeNull();
-        expect(screen.findByTestId('setup.summary.nextAction')).toBeNull();
-        expect(screen.findByTestId('setup.webRelayDriftNotice')).toBeNull();
-        expect(screen.findAllByType('MachineSetupFlowScreen' as never)).toHaveLength(0);
-        expect(screen.findAllByType('RelayDriftActionCard' as never)).toHaveLength(0);
-        expect(clearPendingSetupIntentMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('routes browser web users into the app when the account already has an online machine', async () => {
-        isAuthenticated = true;
-        connectionHealthMock.onlineCount = 1;
-
-        const Screen = (await import('@/app/(app)/setup/index')).default;
-        const screen = await renderScreen(React.createElement(Screen));
-
-        expect(screen.findByTestId('setup.desktopOnlyNotice')).toBeNull();
-        expect(screen.findByTestId('setup.web.activeRelay')).toBeNull();
-        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
-        expect(clearPendingSetupIntentMock).toHaveBeenCalledTimes(1);
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/setup/wizard');
     });
 });

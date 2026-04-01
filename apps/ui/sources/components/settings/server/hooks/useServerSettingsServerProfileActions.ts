@@ -3,8 +3,9 @@ import * as React from 'react';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { removeServerProfile, renameServerProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { renameServerProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
+import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
 
 import type { ServerAuthStatus } from './useServerAuthStatusByServerId';
 
@@ -65,17 +66,8 @@ export function useServerSettingsServerProfileActions(params: Readonly<{
             { confirmText: t('common.remove'), destructive: true }
         );
         if (!confirmed) return;
-
-        // Removing a server should clear its local credentials; otherwise re-adding the same URL can
-        // resurrect an old token unexpectedly (confusing and potentially unsafe).
-        // Do this before removing the profile so TokenStorage can still resolve the serverId scope.
         try {
-            await TokenStorage.removeCredentialsForServerUrl(profile.serverUrl);
-        } catch {
-            // Best-effort only.
-        }
-        try {
-            removeServerProfile(profile.id);
+            await removeServerProfileUiAction({ profileId: profile.id, serverUrl: profile.serverUrl });
         } catch (err) {
             Modal.alert(t('common.error'), String((err as any)?.message ?? err));
             return;

@@ -5,8 +5,15 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const StrictView = (props: { children?: React.ReactNode }) => {
+        const children = React.Children.toArray(props.children);
+        if (children.some((child) => typeof child === 'string' || typeof child === 'number')) {
+            throw new Error('Text strings must be rendered within a <Text>');
+        }
+        return React.createElement('View', props, props.children);
+    };
     return createReactNativeWebMock({
-        View: 'View',
+        View: StrictView,
         Pressable: 'Pressable',
         ScrollView: 'ScrollView',
     });
@@ -146,7 +153,7 @@ describe('PlanChecklistCard', () => {
 
         const icons = screen.findAllByType('Ionicons' as never);
         expect(icons.some((icon) => icon.props.name === 'checkmark-circle')).toBe(false);
-        expect(icons.some((icon) => icon.props.name === 'checkbox-outline')).toBe(true);
+        expect(icons.some((icon) => icon.props.name === 'ellipse-outline')).toBe(true);
     });
 
     it('renders satisfied selected items as done even when the row remains selectable', async () => {
@@ -218,6 +225,38 @@ describe('PlanChecklistCard', () => {
         expect(logBlocks).toHaveLength(2);
         expect(logBlocks[0].props.code).toContain('Installing CLI');
         expect(logBlocks[1].props.code).toContain('launchctl failed');
+
+        expect(screen.getTextContent()).toContain('Install failed');
+        expect(screen.getTextContent()).toContain('launchctl error');
+    });
+
+    it('allows expanding rows during execution by pressing the row', async () => {
+        const { PlanChecklistCard } = await import('./PlanChecklistCard');
+        const toggleExpanded = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(PlanChecklistCard, {
+                testID: 'plan-checklist',
+                phase: 'execute',
+                items: [
+                    createItem({ id: 'install_cli', title: 'Install CLI' }),
+                ],
+                selectedIds: ['install_cli'],
+                executionById: {
+                    install_cli: {
+                        status: 'running',
+                        logs: [{ ts: 10, level: 'info', message: 'Installing CLI' }],
+                    },
+                },
+                expandedIds: [],
+                onToggleExpanded: toggleExpanded,
+            }),
+        );
+
+        expect(screen.findByTestId('plan-checklist-row-install_cli-status-slot')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('plan-checklist-row-install_cli');
+        expect(toggleExpanded).toHaveBeenCalledWith('install_cli');
     });
 
     it('supports legacy alias props for expandedId and details content', async () => {

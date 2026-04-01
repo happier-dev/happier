@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import type { SetupThisComputerWizardPrimaryState } from './SetupThisComputerChecklistStep';
 
 const preflightMock = vi.hoisted(() => ({
     value: {
@@ -139,6 +141,23 @@ describe('SetupThisComputerChecklistStep', () => {
         expect(screen.getTextContent()).toContain('Connecting to relay');
     });
 
+    it('includes the tailscale recommendation when the active relay is tailnet-based', async () => {
+        const { SetupThisComputerChecklistStep } = await import('./SetupThisComputerChecklistStep');
+
+        preflightMock.value = {
+            ...preflightMock.value,
+            activeRelayUrl: 'https://relay.example.ts.net',
+        };
+        taskHookMock.value.activeTaskSnapshot = null;
+
+        const screen = await renderScreen(
+            <SetupThisComputerChecklistStep testID="setup-this-computer" />,
+        );
+
+        expect(screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.installTailscale')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('setupOnboarding.recommendedBadge');
+    });
+
     it('advances without starting the system task when this computer is already ready', async () => {
         const { SetupThisComputerChecklistStep } = await import('./SetupThisComputerChecklistStep');
         const onRequestAdvance = vi.fn();
@@ -163,23 +182,64 @@ describe('SetupThisComputerChecklistStep', () => {
         taskHookMock.value.activeTaskSnapshot = null;
         taskHookMock.value.start.mockClear();
 
-        let primary: { label: string; disabled: boolean; onPress: () => void | Promise<void> } | null = null;
+        const primaryRef: { current: SetupThisComputerWizardPrimaryState | null } = { current: null };
         await renderScreen(
             <SetupThisComputerChecklistStep
                 testID="setup-this-computer"
                 onRequestAdvance={onRequestAdvance}
                 onWizardPrimaryChange={(state) => {
-                    primary = state;
+                    primaryRef.current = state;
                 }}
             />,
         );
 
-        expect(primary?.label).toBe('common.continue');
-        expect(primary?.disabled).toBe(false);
+        expect(primaryRef.current?.label).toBe('common.continue');
+        expect(primaryRef.current?.disabled).toBe(false);
 
-        await primary?.onPress?.();
+        await act(async () => {
+            await primaryRef.current?.onPress?.();
+        });
 
         expect(taskHookMock.value.start).not.toHaveBeenCalled();
         expect(onRequestAdvance).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables the wizard primary CTA after starting execution until the task snapshot is available', async () => {
+        const { SetupThisComputerChecklistStep } = await import('./SetupThisComputerChecklistStep');
+
+        preflightMock.value = {
+            ...preflightMock.value,
+            activeRelayUrl: 'https://relay.example.test',
+            serviceInstalled: false,
+            daemonRunning: false,
+            machineId: null,
+            needsAuth: true,
+            pairingRequired: true,
+        };
+        taskHookMock.value.activeTaskSnapshot = null;
+        taskHookMock.value.start.mockClear();
+
+        const primaryRef: { current: SetupThisComputerWizardPrimaryState | null } = { current: null };
+        const screen = await renderScreen(
+            <SetupThisComputerChecklistStep
+                testID="setup-this-computer"
+                onWizardPrimaryChange={(state) => {
+                    primaryRef.current = state;
+                }}
+            />,
+        );
+
+        expect(primaryRef.current?.label).toBe('common.continue');
+        expect(primaryRef.current?.disabled).toBe(false);
+
+        await act(async () => {
+            await primaryRef.current?.onPress?.();
+        });
+
+        expect(taskHookMock.value.start).toHaveBeenCalledTimes(1);
+        expect(primaryRef.current?.disabled).toBe(true);
+
+        const statusIcons = screen.findAllByType('Ionicons' as never).map((icon) => icon.props.name);
+        expect(statusIcons).toContain('ellipse-outline');
     });
 });

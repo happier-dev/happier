@@ -119,7 +119,7 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
 }));
 
 describe('useServerSettingsScreenController (server validation timeout)', () => {
-    it('passes an AbortSignal and installs a probe timeout when validating /v1/version', async () => {
+    it('passes an AbortSignal and installs a probe timeout when validating /health', async () => {
         const prev = process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_PROBE_TIMEOUT_MS;
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_PROBE_TIMEOUT_MS = '1234';
 

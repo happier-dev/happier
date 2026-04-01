@@ -21,6 +21,7 @@ export type ThisComputerChecklistItemId =
     | 'setup.thisComputer.resolveRelay'
     | 'setup.thisComputer.checkAuth'
     | 'setup.thisComputer.configureRelay'
+    | 'setup.thisComputer.installTailscale'
     | 'setup.thisComputer.auth.request'
     | 'setup.thisComputer.auth.wait'
     | 'setup.thisComputer.installService'

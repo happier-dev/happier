@@ -1,55 +1,52 @@
 import * as React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
-import { AuthEntryView } from '@/components/account/auth/AuthEntryView';
-import { TextInput } from '@/components/ui/text/Text';
 import { Text } from '@/components/ui/text/Text';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 
 import { isSameServerUrl, normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerSnapshot, isActiveServerSelectionExplicit } from '@/sync/domains/server/serverRuntime';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
-import { getResetToDefaultServerId, getServerProfileById, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { listServerProfiles, removeServerProfile } from '@/sync/domains/server/serverProfiles';
+import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
+import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { isLocalishServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
+import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
-import { resolveKnownLocalRelayUrl } from '@/components/settings/server/localControl/resolveKnownLocalRelayUrl';
-import { LocalRelayRuntimeControlSection } from '@/components/settings/server/localControl/LocalRelayRuntimeControlSection';
-import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
-import type { useLocalRelayRuntimeControl } from '@/components/settings/server/localControl/useLocalRelayRuntimeControl';
+import type { RelayHostLocalChecklistRuntimeStatus } from '../relayHostLocalChecklist/types';
 
-import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
-import { RestoreIndexEmbedded } from '@/components/onboardingWizard/restore/RestoreIndexEmbedded';
-import { LostAccessEmbedded } from '@/components/onboardingWizard/restore/LostAccessEmbedded';
-
-import { RelayDiagram } from './RelayDiagram';
-import { WizardLogotype } from './WizardLogotype';
-import { WelcomeProvidersShowcase } from './WelcomeProvidersShowcase';
-import { WizardTerminalHandoff } from './WizardTerminalHandoff';
-import { WizardChoiceRow } from './WizardChoiceRow';
+import { WizardLogotype } from '../WizardLogotype';
+import { WizardChoiceRow } from '../WizardChoiceRow';
 import { WebDesktopRelayHostHandoffContent } from '@/components/onboardingWizard/WebDesktopRelayHostHandoffContent';
 import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboardingWizard/WebDesktopBackgroundServiceHandoffContent';
-import { canSkipWizardStep, getWizardProgress } from './wizardSelectors';
-import { createWizardState, wizardReducer } from './wizardReducer';
-import type { WizardRelaySelection, WizardStepId } from './wizardTypes';
-import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from './ConfirmSwitchRelayStep';
-import { parseOnboardingScanPayload } from './scanPayload';
-import { WizardModalShell } from './WizardModalShell';
-import { useEndpointReadinessMap } from './useEndpointReadinessMap';
+import { resolveWizardCapabilities } from '../capabilities/resolveWizardCapabilities';
+import { canSkipWizardStep, getWizardProgress } from '../wizardSelectors';
+import { createWizardState, wizardReducer } from '../wizardReducer';
+import type { WizardPlatform, WizardRelaySelection, WizardStepId } from '../wizardTypes';
+import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from '../ConfirmSwitchRelayStep';
+import { parseOnboardingScanPayload } from '../scanPayload';
+import { WizardModalShell } from '../WizardModalShell';
+import { useEndpointReadinessMap } from '../useEndpointReadinessMap';
 import {
     setOnboardingWizardAwaitingAuthResumeIntent,
-} from './wizardResume';
-import { getWizardStepDefinition } from './wizardStepRegistry';
-import { buildCliInstallCommandForCurrentApp, buildRemoteRelayHostInstallCommand, buildRemoteRelayHostStatusCommand } from './wizardCliCommands';
-import { WizardSshCredentialsFields } from '@/components/onboardingWizard/ssh/WizardSshCredentialsFields';
+} from '../wizardResume';
+import { getWizardStepDefinition } from '../wizardStepRegistry';
+import { renderOnboardingWizardStepBody } from './OnboardingWizardSurface.renderWizardStepBody';
+import { onboardingWizardSurfaceStylesheet } from './OnboardingWizardSurface.styles';
+import {
+    buildDefaultRelaySelection,
+    isWebMixedContentBlockedEndpoint,
+    resolveCanonicalCloudRelayProfile,
+    resolveRelayProfileIdForServerUrl,
+    resolveTrueLocalRelayRuntimeBindUrl,
+} from './onboardingWizardRelaySelectionHelpers';
 
 export type OnboardingWizardSurfaceProps = Readonly<{
     testID?: string;
@@ -64,6 +61,27 @@ export type OnboardingWizardSurfaceProps = Readonly<{
     onLoginWithMtls: () => Promise<void> | void;
     onChangeRelayViaServerConfig: () => void;
 }>;
+
+type WizardPrimaryOverride = Readonly<{
+    label: React.ReactNode;
+    disabled: boolean;
+    onPress: (() => void) | (() => Promise<void>);
+}>;
+
+type WizardBackOverride = Readonly<{
+    hidden?: boolean;
+    label?: React.ReactNode;
+    onPress?: () => void;
+}>;
+
+type WizardSkipOverride = Readonly<{
+    hidden?: boolean;
+    label?: React.ReactNode;
+    disabled?: boolean;
+    onPress?: () => void;
+}>;
+
+type ScopedOverride<T> = Readonly<{ __stepId: WizardStepId }> & T;
 
 type WizardChoice = Readonly<{
     id: 'cloud' | 'thisComputer' | 'remoteComputer' | 'customUrl';
@@ -82,83 +100,6 @@ type WizardProfileChoice = Readonly<{
     disabled?: boolean;
 }>;
 
-const stylesheet = StyleSheet.create((theme) => ({
-    urlBlock: {
-        width: '100%',
-        gap: 10,
-    },
-    urlInput: {
-        width: '100%',
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
-        borderRadius: 12,
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        color: theme.colors.text,
-    },
-    urlHint: {
-        color: theme.colors.textSecondary,
-    },
-    relayHintBlock: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 2,
-    },
-    relayHintLine: {
-        ...Typography.default(),
-        fontSize: 12,
-        lineHeight: 16,
-        color: theme.colors.textSecondary,
-        textAlign: 'center',
-    },
-    relayGroupTitle: {
-        ...Typography.default('semiBold'),
-        fontSize: 13,
-        lineHeight: 18,
-        color: theme.colors.textSecondary,
-        textAlign: 'center',
-        marginBottom: 6,
-    },
-    scanCtaBlock: {
-        width: '100%',
-        maxWidth: 360,
-        alignSelf: 'center',
-    },
-    remoteRelayHostBlock: {
-        width: '100%',
-        gap: 16,
-    },
-    welcomeBody: {
-        width: '100%',
-        alignItems: 'center',
-        gap: 16,
-    },
-    welcomeAuthBody: {
-        width: '100%',
-        alignItems: 'center',
-        gap: 10,
-    },
-    authEntryWrapper: {
-        width: '100%',
-        alignItems: 'center',
-    },
-    diagramContainer: {
-        width: '100%',
-        alignItems: 'center',
-        justifyContent: 'center',
-        alignSelf: 'center',
-    },
-    labelContainer: {
-    },
-    label: {
-        fontSize: 16,
-        textAlign: 'center',
-        ...Typography.default('semiBold'),
-        color: theme.colors.text,
-    },
-}));
-
 function resolveCanScanQr(params: Readonly<{ width: number; height: number; platform: string }>): boolean {
     if (isRunningOnMac()) return false;
     if (params.platform !== 'web') return true;
@@ -166,83 +107,31 @@ function resolveCanScanQr(params: Readonly<{ width: number; height: number; plat
     return isWebMobileLikeQrScannerHost({ width: params.width, height: params.height });
 }
 
-function buildDefaultRelaySelection(): WizardRelaySelection {
-    const snapshot = getActiveServerSnapshot();
-    const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
-    const canonicalCloudProfile = resolveCanonicalCloudRelayProfile();
-    const canonicalCloudUrl = canonicalCloudProfile?.serverUrl ?? '';
-    const savedProfiles = listServerProfiles()
-        .map((profile) => ({
-            id: profile.id,
-            serverUrl: normalizeServerUrl(profile.serverUrl) ?? profile.serverUrl,
-        }))
-        .filter((profile) => profile.serverUrl && (!canonicalCloudUrl || !isSameServerUrl(profile.serverUrl, canonicalCloudUrl)));
-
-    if (serverUrl) {
-        const matchingProfile = savedProfiles.find((profile) => isSameServerUrl(profile.serverUrl, serverUrl));
-        if (matchingProfile) {
-            return {
-                choiceId: 'customUrl',
-                serverUrl,
-                relayProfileId: matchingProfile.id,
-                locked: false,
-            };
-        }
-    }
-
-    if (serverUrl) {
-        const matchesCloud = canonicalCloudUrl ? isSameServerUrl(serverUrl, canonicalCloudUrl) : false;
-        const isExplicitLocalSelection = isLocalishServerUrl(serverUrl) && isActiveServerSelectionExplicit();
-        if (isExplicitLocalSelection) {
-            return {
-                choiceId: 'thisComputer',
-                serverUrl,
-                relayProfileId: null,
-                locked: false,
-            };
-        }
-        return {
-            choiceId: matchesCloud ? 'cloud' : 'customUrl',
-            serverUrl,
-            relayProfileId: matchesCloud ? null : 'active',
-            locked: false,
-        };
-    }
-
-    return {
-        choiceId: 'cloud',
-        serverUrl: canonicalCloudUrl || null,
-        relayProfileId: null,
-        locked: false,
-    };
-}
-
-function resolveCanonicalCloudRelayProfile(): Readonly<{ serverId: string; serverUrl: string }> | null {
-    const defaultServerId = getResetToDefaultServerId();
-    if (!defaultServerId) return null;
-    const profile = getServerProfileById(defaultServerId);
-    const serverUrl = profile?.serverUrl ? normalizeServerUrl(profile.serverUrl) : '';
-    if (!profile || !serverUrl) return null;
-    return {
-        serverId: profile.id,
-        serverUrl,
-    };
-}
-
 export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     const { theme } = useUnistyles();
-    const styles = stylesheet;
+    const styles = onboardingWizardSurfaceStylesheet;
     const { width, height } = useWindowDimensions();
+    const wizardPlatform: WizardPlatform = props.isDesktopShell ? 'desktop' : (Platform.OS === 'web' ? 'web' : 'native');
+    const wizardCapabilities = React.useMemo(
+        () => resolveWizardCapabilities({ platform: wizardPlatform, isDesktopShell: props.isDesktopShell }),
+        [props.isDesktopShell, wizardPlatform],
+    );
+    const setupPolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);
     const canonicalCloudProfile = resolveCanonicalCloudRelayProfile();
     const canonicalCloudUrl = canonicalCloudProfile?.serverUrl ?? '';
     const snapshotRelayUrl = React.useMemo(() => {
         const snapshot = getActiveServerSnapshot();
-        return snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
+        const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
+        if (serverUrl) return serverUrl;
+        const localUrl = snapshot.activeLocalRelayUrl ? String(snapshot.activeLocalRelayUrl).trim() : '';
+        return localUrl;
     }, []);
     const lastKnownSnapshotRelayUrlRef = React.useRef<string>(snapshotRelayUrl);
     React.useEffect(() => {
         const snapshot = getActiveServerSnapshot();
-        const url = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
+        const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
+        const localUrl = snapshot.activeLocalRelayUrl ? String(snapshot.activeLocalRelayUrl).trim() : '';
+        const url = serverUrl || localUrl;
         if (url) {
             lastKnownSnapshotRelayUrlRef.current = url;
         }
@@ -254,14 +143,11 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     );
 
     const [urlDraft, setUrlDraft] = React.useState('');
-    const [remoteSshUsernameDraft, setRemoteSshUsernameDraft] = React.useState('');
-    const [remoteSshHostDraft, setRemoteSshHostDraft] = React.useState('');
-    const [remoteSshPortDraft, setRemoteSshPortDraft] = React.useState('');
-    const [remoteSshAuth, setRemoteSshAuth] = React.useState<'agent' | 'keyfile' | 'password'>('agent');
-    const [remoteIdentityFilePathDraft, setRemoteIdentityFilePathDraft] = React.useState('');
-    const [remoteSshPasswordDraft, setRemoteSshPasswordDraft] = React.useState('');
     const [relaySwitchDecision, setRelaySwitchDecision] = React.useState<RelaySwitchDecision>('switch');
-    type LocalRelayRuntimeStatus = ReturnType<typeof useLocalRelayRuntimeControl>['status'];
+    const [wizardPrimaryOverride, setWizardPrimaryOverride] = React.useState<ScopedOverride<WizardPrimaryOverride> | null>(null);
+    const [wizardBackOverride, setWizardBackOverride] = React.useState<ScopedOverride<WizardBackOverride> | null>(null);
+    const [wizardSkipOverride, setWizardSkipOverride] = React.useState<ScopedOverride<WizardSkipOverride> | null>(null);
+    type LocalRelayRuntimeStatus = RelayHostLocalChecklistRuntimeStatus | null;
     const [localRelayRuntimeStatus, setLocalRelayRuntimeStatus] = React.useState<LocalRelayRuntimeStatus>(null);
     const [state, dispatch] = React.useReducer(
         wizardReducer,
@@ -297,6 +183,32 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     );
 
     const stepId = state.currentStepId;
+
+    React.useEffect(() => {
+        if (stepId !== 'relay_enter_url') {
+            return;
+        }
+        if (urlDraft.trim().length > 0) {
+            return;
+        }
+        const selectedRelayUrl = typeof state.context.relaySelection.serverUrl === 'string'
+            ? state.context.relaySelection.serverUrl.trim()
+            : '';
+        if (!selectedRelayUrl) return;
+        setUrlDraft(selectedRelayUrl);
+    }, [stepId, state.context.relaySelection.serverUrl, urlDraft]);
+    const activePrimaryOverride = wizardPrimaryOverride?.__stepId === stepId ? wizardPrimaryOverride : null;
+    const activeBackOverride = wizardBackOverride?.__stepId === stepId ? wizardBackOverride : null;
+    const activeSkipOverride = wizardSkipOverride?.__stepId === stepId ? wizardSkipOverride : null;
+    const handleWizardPrimaryChange = React.useCallback((next: WizardPrimaryOverride | null) => {
+        setWizardPrimaryOverride(next ? { __stepId: stepId, ...next } : null);
+    }, [stepId]);
+    const handleWizardBackChange = React.useCallback((next: WizardBackOverride | null) => {
+        setWizardBackOverride(next ? { __stepId: stepId, ...next } : null);
+    }, [stepId]);
+    const handleWizardSkipChange = React.useCallback((next: WizardSkipOverride | null) => {
+        setWizardSkipOverride(next ? { __stepId: stepId, ...next } : null);
+    }, [stepId]);
     const progress = getWizardProgress(state.context, stepId);
     const welcomeHasExplicitRelaySelection = stepId === 'welcome'
         && (
@@ -325,28 +237,47 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
 
     // Note: capability is captured at init time; if device size changes, we tolerate it until reload.
 
-    const relayChoices: readonly WizardChoice[] = React.useMemo(() => ([
-        {
-            id: 'cloud',
-            title: t('setupOnboarding.relayCloudTitle'),
-            subtitle: t('setupOnboarding.relayCloudSubtitle'),
-            icon: 'cloud-outline' as React.ComponentProps<typeof Ionicons>['name'],
-            badge: t('setupOnboarding.recommendedBadge'),
-        },
-        {
-            id: 'thisComputer',
-            title: t('setupOnboarding.relayOnThisComputerTitle'),
-            subtitle: t('setupOnboarding.relayOnThisComputerSubtitle'),
-            icon: 'laptop-outline' as React.ComponentProps<typeof Ionicons>['name'],
-            disabled: Platform.OS !== 'web' && !props.isDesktopShell,
-        },
-        ...(props.isDesktopShell ? [{
-            id: 'remoteComputer' as const,
-            title: t('setupOnboarding.relayOnRemoteComputerTitle'),
-            subtitle: t('setupOnboarding.relayOnRemoteComputerSubtitle'),
-            icon: 'desktop-outline' as React.ComponentProps<typeof Ionicons>['name'],
-        }] : []),
-    ]), [props.isDesktopShell]);
+    const relayChoices: readonly WizardChoice[] = React.useMemo(() => {
+        const thisComputerTitleKey = wizardCapabilities.thisComputerLabelVariant === 'your'
+            ? 'setupOnboarding.relayOnYourComputerTitle'
+            : 'setupOnboarding.relayOnThisComputerTitle';
+        const thisComputerSubtitleKey = wizardCapabilities.thisComputerLabelVariant === 'your'
+            ? 'setupOnboarding.relayOnYourComputerSubtitle'
+            : 'setupOnboarding.relayOnThisComputerSubtitle';
+
+        const choices: WizardChoice[] = [];
+
+        if (setupPolicy.relay.allowHappierCloud) {
+            choices.push({
+                id: 'cloud',
+                title: t('setupOnboarding.relayCloudTitle'),
+                subtitle: t('setupOnboarding.relayCloudSubtitle'),
+                icon: 'cloud-outline' as React.ComponentProps<typeof Ionicons>['name'],
+                badge: t('setupOnboarding.recommendedBadge'),
+            });
+        }
+
+        if (setupPolicy.relay.allowLocalRelayHost) {
+            choices.push({
+                id: 'thisComputer',
+                title: t(thisComputerTitleKey),
+                subtitle: t(thisComputerSubtitleKey),
+                icon: 'laptop-outline' as React.ComponentProps<typeof Ionicons>['name'],
+                disabled: false,
+            });
+        }
+
+        if (wizardCapabilities.allowRemoteSshRelayChoice) {
+            choices.push({
+                id: 'remoteComputer' as const,
+                title: t('setupOnboarding.relayOnRemoteComputerTitle'),
+                subtitle: t('setupOnboarding.relayOnRemoteComputerSubtitle'),
+                icon: 'desktop-outline' as React.ComponentProps<typeof Ionicons>['name'],
+            });
+        }
+
+        return choices;
+    }, [setupPolicy.relay.allowHappierCloud, setupPolicy.relay.allowLocalRelayHost, wizardCapabilities]);
 
     const profileChoices = React.useMemo((): WizardProfileChoice[] => {
         const canonicalCloudProfile = resolveCanonicalCloudRelayProfile();
@@ -386,19 +317,57 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         return profiles;
     }, [state.context.relaySelection.serverUrl]);
 
+    const canonicalCloudReadinessEndpoint = React.useMemo(() => {
+        if (!canonicalCloudUrl) return null;
+        return normalizeServerUrl(canonicalCloudUrl) ?? canonicalCloudUrl;
+    }, [canonicalCloudUrl]);
+
+    const activeServerSnapshotForLocalBind = getActiveServerSnapshot();
+    const trueLocalRelayRuntimeBindUrl = React.useMemo(() => {
+        return resolveTrueLocalRelayRuntimeBindUrl({
+            activeServerUrl: activeServerSnapshotForLocalBind.serverUrl ?? null,
+            activeLocalRelayUrl: activeServerSnapshotForLocalBind.activeLocalRelayUrl ?? null,
+        });
+    }, [activeServerSnapshotForLocalBind.activeLocalRelayUrl, activeServerSnapshotForLocalBind.serverUrl]);
+
     const { readinessByEndpoint: relayReadinessByEndpoint, retryEndpoint } = useEndpointReadinessMap({
         endpoints: stepId === 'relay_select'
             ? [
                 ...profileChoices.map((profile) => profile.serverUrl),
-                ...(canonicalCloudUrl ? [canonicalCloudUrl] : []),
+                ...(canonicalCloudReadinessEndpoint ? [canonicalCloudReadinessEndpoint] : []),
+                ...(trueLocalRelayRuntimeBindUrl ? [trueLocalRelayRuntimeBindUrl] : []),
             ]
             : [],
         enabled: stepId === 'relay_select',
-        timeoutMs: 900,
+        timeoutMs: readServerReachabilityProbeTimeoutMs(),
     });
 
+    const handleRemoveRelayProfile = React.useCallback(async (profileId: string) => {
+        const id = String(profileId ?? '').trim();
+        if (!id || id === 'active') {
+            return;
+        }
+
+        const confirmed = await Modal.confirm(
+            t('setupOnboarding.removeRelayConfirmTitle'),
+            t('setupOnboarding.removeRelayConfirmBody'),
+            { confirmText: t('common.remove'), cancelText: t('common.cancel') },
+        );
+        if (!confirmed) return;
+
+        const serverUrl = profileChoices.find((profile) => profile.id === id)?.serverUrl ?? '';
+        try {
+            await removeServerProfileUiAction({ profileId: id, serverUrl });
+        } catch {
+            // ignore: profile may have been removed elsewhere
+        }
+
+        if (state.context.relaySelection.relayProfileId === id) {
+            dispatch({ type: 'wizard/setRelaySelection', relaySelection: buildDefaultRelaySelection() });
+        }
+    }, [profileChoices, state.context.relaySelection.relayProfileId]);
+
     const selectRelayChoice = React.useCallback((choiceId: WizardChoice['id']) => {
-        const snapshot = getActiveServerSnapshot();
         const next: WizardRelaySelection =
             choiceId === 'cloud'
                 ? {
@@ -410,10 +379,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                 : choiceId === 'thisComputer'
                     ? {
                         choiceId,
-                        serverUrl: resolveKnownLocalRelayUrl({
-                            activeServerUrl: snapshot.serverUrl,
-                            activeLocalRelayUrl: snapshot.activeLocalRelayUrl,
-                        }),
+                        serverUrl: null,
                         relayProfileId: null,
                         locked: false,
                     }
@@ -448,66 +414,72 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     const renderRelayChoiceRow = (choice: WizardChoice | WizardProfileChoice) => {
         if ((choice as WizardProfileChoice).kind === 'profile') {
             const profile = choice as WizardProfileChoice;
-            const selectedServerUrl = state.context.relaySelection.serverUrl ? String(state.context.relaySelection.serverUrl).trim() : '';
             const selected = state.context.relaySelection.choiceId === 'customUrl'
-                && Boolean(
-                    state.context.relaySelection.relayProfileId === profile.id
-                    || (
-                        selectedServerUrl
-                        && isSameServerUrl(selectedServerUrl, profile.serverUrl)
-                    ),
-                );
+                && state.context.relaySelection.relayProfileId === profile.id;
             const readiness = relayReadinessByEndpoint.get(profile.serverUrl);
+            const blocked = readiness?.status === 'blocked' || isWebMixedContentBlockedEndpoint(profile.serverUrl);
             const unavailable = readiness?.status === 'unavailable';
             const disabled = Boolean(profile.disabled)
                 || state.context.relaySelection.locked
-                || (unavailable && !selected);
+                ;
             return (
                 <WizardChoiceRow
                     key={`profile:${profile.id}`}
                     testID={`${props.testID ?? 'onboarding-wizard'}-relay:profile:${profile.id}`}
                     selected={selected}
                     disabled={disabled}
+                    dimmed={unavailable || blocked}
                     onPress={() => selectProfileRelay(profile)}
                     icon="link-outline"
                     title={profile.name}
                     subtitle={toServerUrlDisplay(profile.serverUrl)}
-                    badge={unavailable ? t('common.unavailable') : undefined}
-                    secondaryAction={unavailable ? {
-                        testID: `${props.testID ?? 'onboarding-wizard'}-relay:profile:${profile.id}-retry`,
-                        title: t('common.retry'),
-                        onPress: () => retryEndpoint(profile.serverUrl),
-                    } : undefined}
+                    badge={blocked ? t('common.blocked') : unavailable ? t('common.unreachable') : undefined}
+                    menuActions={[
+                        ...((unavailable || blocked) ? [{
+                            id: 'retry',
+                            title: t('common.retry'),
+                            onPress: () => retryEndpoint(profile.serverUrl),
+                        }] : []),
+                        ...(profile.id !== 'active' ? [{
+                            id: 'remove',
+                            title: t('common.remove'),
+                            destructive: true,
+                            onPress: () => { void handleRemoveRelayProfile(profile.id); },
+                        }] : []),
+                    ]}
                 />
             );
         }
 
         const fixed = choice as WizardChoice;
         const selected = state.context.relaySelection.choiceId === fixed.id;
-        const cloudReadinessEndpoint = fixed.id === 'cloud' && canonicalCloudUrl
-            ? (normalizeServerUrl(canonicalCloudUrl) ?? canonicalCloudUrl)
-            : null;
+        const cloudReadinessEndpoint = fixed.id === 'cloud' ? canonicalCloudReadinessEndpoint : null;
+        const cloudBlocked =
+            fixed.id === 'cloud'
+                && Boolean(cloudReadinessEndpoint)
+                && relayReadinessByEndpoint.get(cloudReadinessEndpoint!)?.status === 'blocked';
         const cloudUnavailable =
             fixed.id === 'cloud'
                 && Boolean(cloudReadinessEndpoint)
                 && relayReadinessByEndpoint.get(cloudReadinessEndpoint!)?.status === 'unavailable';
         const disabled = Boolean(fixed.disabled)
             || state.context.relaySelection.locked
-            || (fixed.id === 'cloud' && cloudUnavailable && !selected);
+            || (fixed.id === 'cloud' && (cloudUnavailable || cloudBlocked) && !selected);
         return (
             <WizardChoiceRow
                 key={fixed.id}
                 testID={`${props.testID ?? 'onboarding-wizard'}-relay:${fixed.id}`}
                 selected={selected}
                 disabled={disabled}
+                dimmed={cloudUnavailable || cloudBlocked}
                 onPress={() => {
                     selectRelayChoice(fixed.id);
                 }}
                 icon={fixed.icon}
                 title={fixed.title}
                 subtitle={fixed.subtitle}
-                badge={cloudUnavailable ? t('common.unavailable') : fixed.badge}
-                secondaryAction={cloudUnavailable ? {
+                badge={cloudBlocked ? t('common.blocked') : cloudUnavailable ? t('common.unreachable') : fixed.badge}
+                secondaryAction={(cloudUnavailable || cloudBlocked) ? {
                     testID: `${props.testID ?? 'onboarding-wizard'}-relay:${fixed.id}-retry`,
                     title: t('common.retry'),
                     onPress: () => retryEndpoint(cloudReadinessEndpoint!),
@@ -517,6 +489,9 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     };
 
     const renderManualRelayChoiceRow = () => {
+        if (!setupPolicy.relay.allowRelaySelection || !setupPolicy.relay.allowCustomRelayUrl) {
+            return null;
+        }
         const rawServerUrl = state.context.relaySelection.serverUrl
             ? String(state.context.relaySelection.serverUrl).trim()
             : '';
@@ -558,6 +533,10 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
 
         const selection = state.context.relaySelection;
         if (selection.choiceId === 'customUrl') {
+            if (!selection.relayProfileId) {
+                dispatch({ type: 'wizard/goToStep', stepId: 'relay_enter_url' });
+                return;
+            }
             const selectedServerUrlRaw = selection.serverUrl ? String(selection.serverUrl).trim() : '';
             const resolved = selectedServerUrlRaw ? normalizeServerUrl(selectedServerUrlRaw) : null;
 
@@ -570,12 +549,13 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             if (!isSameServerUrl(snapshot.serverUrl, resolved)) {
                 await upsertActivateAndSwitchServer({ serverUrl: resolved, source: 'url', scope: 'device' });
             }
+            const relayProfileId = selection.relayProfileId ?? resolveRelayProfileIdForServerUrl({ serverUrl: resolved, canonicalCloudUrl });
             dispatch({
                 type: 'wizard/setRelaySelection',
                 relaySelection: {
                     choiceId: 'customUrl',
                     serverUrl: resolved,
-                    relayProfileId: selection.relayProfileId ?? null,
+                    relayProfileId,
                     locked: selection.locked,
                 },
             });
@@ -603,32 +583,24 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
 
         if (selection.choiceId === 'thisComputer') {
-            if (!props.isDesktopShell && Platform.OS === 'web') {
-                dispatch({ type: 'wizard/goToStep', stepId: 'desktop_handoff' });
-                return;
-            }
-            const knownLocalRelayUrl = resolveKnownLocalRelayUrl({
-                activeServerUrl: snapshot.serverUrl,
-                activeLocalRelayUrl: snapshot.activeLocalRelayUrl,
-            });
-            if (knownLocalRelayUrl) {
-                if (!isSameServerUrl(snapshot.serverUrl, knownLocalRelayUrl)) {
-                    await upsertActivateAndSwitchServer({ serverUrl: knownLocalRelayUrl, source: 'url', scope: 'device' });
+            if (props.isDesktopShell) {
+                const status = trueLocalRelayRuntimeBindUrl
+                    ? relayReadinessByEndpoint.get(trueLocalRelayRuntimeBindUrl)?.status
+                    : null;
+                if (trueLocalRelayRuntimeBindUrl && status === 'ready') {
+                    dispatch({
+                        type: 'wizard/setRelaySelection',
+                        relaySelection: { choiceId: 'thisComputer', serverUrl: trueLocalRelayRuntimeBindUrl, relayProfileId: null, locked: false },
+                    });
+                    dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' });
+                    return;
                 }
-                dispatch({
-                    type: 'wizard/setRelaySelection',
-                    relaySelection: {
-                        choiceId: 'thisComputer',
-                        serverUrl: knownLocalRelayUrl,
-                        relayProfileId: null,
-                        locked: false,
-                    },
-                });
-                dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
+
+                dispatch({ type: 'wizard/goToStep', stepId: 'host_relay_local' });
                 return;
             }
 
-            dispatch({ type: 'wizard/goToStep', stepId: 'host_relay_local' });
+            dispatch({ type: 'wizard/goToStep', stepId: 'desktop_handoff' });
             return;
         }
 
@@ -638,11 +610,53 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
 
         dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
-    }, [canonicalCloudProfile, props.isDesktopShell, state.context.relaySelection, stepId]);
+    }, [canonicalCloudProfile, props.isDesktopShell, relayReadinessByEndpoint, state.context.relaySelection, stepId, trueLocalRelayRuntimeBindUrl]);
+
+    const handleRemoteRelayRuntimeCompletedChange = React.useCallback((payload: Readonly<{
+        machineId: string | null;
+        relayRuntimeUrl: string | null;
+        mode: 'remoteMachine' | 'remoteRelayHost';
+    }>) => {
+        const relayUrl = typeof payload.relayRuntimeUrl === 'string' ? payload.relayRuntimeUrl.trim() : '';
+        if (!relayUrl) {
+            return;
+        }
+
+        setRelaySwitchDecision('switch');
+        const relayProfileId = resolveRelayProfileIdForServerUrl({ serverUrl: relayUrl, canonicalCloudUrl });
+        dispatch({
+            type: 'wizard/setRelaySelection',
+            relaySelection: {
+                choiceId: 'customUrl',
+                serverUrl: relayUrl,
+                relayProfileId,
+                locked: false,
+            },
+        });
+        dispatch({ type: 'wizard/setRelaySwitchConfirmationPending', pending: true });
+        setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
+    }, [canonicalCloudUrl]);
 
     const handleBack = React.useCallback(() => {
         dispatch({ type: 'wizard/back' });
     }, []);
+
+    const handleOpenRelaySelectionFromWelcome = React.useCallback(() => {
+        if (!setupPolicy.relay.allowRelaySelection) {
+            return;
+        }
+        if (!state.context.relaySelection.locked) {
+            dispatch({ type: 'wizard/setRelaySelection', relaySelection: buildDefaultRelaySelection() });
+        }
+        dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
+    }, [setupPolicy.relay.allowRelaySelection, state.context.relaySelection.locked]);
+
+    const handleOpenRelaySelectionPreservingSelection = React.useCallback(() => {
+        if (!setupPolicy.relay.allowRelaySelection) {
+            return;
+        }
+        dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
+    }, [setupPolicy.relay.allowRelaySelection]);
 
     const handleScan = React.useCallback(async (data: string) => {
         const parsed = parseOnboardingScanPayload(data);
@@ -654,7 +668,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             return;
         }
         if (parsed.kind === 'relay_url') {
-            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: parsed.serverUrl, relayProfileId: null, locked: false } });
+            const relayProfileId = resolveRelayProfileIdForServerUrl({ serverUrl: parsed.serverUrl, canonicalCloudUrl });
+            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: parsed.serverUrl, relayProfileId, locked: false } });
             dispatch({ type: 'wizard/setRelayLockConfirmationPending', pending: true });
             dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
             dispatch({ type: 'wizard/goToStep', stepId: 'confirm_relay_lock' });
@@ -662,7 +677,8 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         }
         if (parsed.kind === 'pairing_link') {
             dispatch({ type: 'wizard/setAuthIntent', authIntent: 'restore' });
-            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: parsed.serverUrl, relayProfileId: null, locked: false } });
+            const relayProfileId = resolveRelayProfileIdForServerUrl({ serverUrl: parsed.serverUrl, canonicalCloudUrl });
+            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: parsed.serverUrl, relayProfileId, locked: false } });
             dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
             if (parsed.serverUrl) {
                 dispatch({ type: 'wizard/setRelayLockConfirmationPending', pending: true });
@@ -679,7 +695,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             return;
         }
         await Modal.alert(t('common.error'), t('modals.invalidAuthUrl'));
-    }, []);
+    }, [canonicalCloudUrl]);
 
     const handleSaveCustomRelayUrl = React.useCallback(async () => {
         const trimmed = urlDraft.trim();
@@ -693,7 +709,10 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             state.context.platform === 'web' && state.context.relaySelection.choiceId === 'thisComputer'
                 ? 'thisComputer'
                 : 'customUrl';
-        dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: nextChoiceId, serverUrl: normalized, relayProfileId: null, locked: false } });
+        const relayProfileId = nextChoiceId === 'customUrl'
+            ? resolveRelayProfileIdForServerUrl({ serverUrl: normalized, canonicalCloudUrl })
+            : null;
+        dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: nextChoiceId, serverUrl: normalized, relayProfileId, locked: false } });
         setOnboardingWizardAwaitingAuthResumeIntent(normalized);
         const nextStepId =
             state.context.platform === 'web' && nextChoiceId === 'thisComputer'
@@ -702,7 +721,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                     ? 'auth_restore'
                     : 'auth';
         dispatch({ type: 'wizard/goToStep', stepId: nextStepId });
-    }, [state.context.authIntent, state.context.platform, state.context.relaySelection.choiceId, urlDraft]);
+    }, [canonicalCloudUrl, state.context.authIntent, state.context.platform, state.context.relaySelection.choiceId, urlDraft]);
 
     const showBack = stepId !== 'welcome';
     const showSkip = canSkipWizardStep(state.context, stepId)
@@ -735,17 +754,15 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         relayLine: string;
     }>) => (
         <View testID={params.testID} style={styles.relayHintBlock}>
+            <Ionicons name="cloud-outline" size={12} style={styles.relayHintIcon} color={theme.colors.textSecondary} />
             <Text testID={`${params.testID}-line`} style={styles.relayHintLine}>{params.relayLine}</Text>
         </View>
     ), [styles]);
 
     const selectedSavedRelayProfile = React.useMemo(() => {
-        const selectedServerUrl = state.context.relaySelection.serverUrl ? String(state.context.relaySelection.serverUrl).trim() : '';
-        if (!selectedServerUrl) return null;
-        if (state.context.relaySelection.relayProfileId) {
-            return profileChoices.find((profile) => profile.id === state.context.relaySelection.relayProfileId) ?? null;
-        }
-        return profileChoices.find((profile) => isSameServerUrl(profile.serverUrl, selectedServerUrl)) ?? null;
+        const relayProfileId = state.context.relaySelection.relayProfileId;
+        if (!relayProfileId) return null;
+        return profileChoices.find((profile) => profile.id === relayProfileId) ?? null;
     }, [profileChoices, state.context.relaySelection.relayProfileId, state.context.relaySelection.serverUrl]);
 
     const selectedRelayFooterUrl = React.useMemo(() => {
@@ -763,7 +780,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     const footerHint = React.useMemo(() => {
         if (stepId === 'scan_code') return null;
         if (stepId === 'relay_select') {
-            const resolvedRelayUrl = selectedRelayFooterUrl;
+            const resolvedRelayUrl = selectedRelayFooterUrl || lastKnownSnapshotRelayUrlRef.current;
             if (!resolvedRelayUrl) return null;
             const relayLine = t('setupOnboarding.currentRelayDescription', { relayUrl: toServerUrlDisplay(resolvedRelayUrl) });
             return renderRelayHint({
@@ -789,6 +806,11 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             const normalizedCloud = canonicalCloudUrl ? normalizeServerUrl(canonicalCloudUrl) : null;
             return normalizedCloud ?? null;
         }
+        if (state.context.relaySelection.choiceId === 'customUrl' && !state.context.relaySelection.relayProfileId) {
+            // Manual entry mode ("Existing relay"): Continue should always open the URL entry step.
+            // Reachability gating applies only to concrete selections (saved profiles / cloud).
+            return null;
+        }
         if (
             state.context.relaySelection.choiceId === 'thisComputer'
             || state.context.relaySelection.choiceId === 'remoteComputer'
@@ -805,7 +827,11 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             state.context.relaySelection.choiceId == null
             || (
                 selectedRelayEndpointForReadiness != null
-                && relayReadinessByEndpoint.get(selectedRelayEndpointForReadiness)?.status === 'unavailable'
+                && (
+                    relayReadinessByEndpoint.get(selectedRelayEndpointForReadiness)?.status === 'unavailable'
+                    || relayReadinessByEndpoint.get(selectedRelayEndpointForReadiness)?.status === 'blocked'
+                    || isWebMixedContentBlockedEndpoint(selectedRelayEndpointForReadiness)
+                )
             )
         ))
         || (stepId === 'host_relay_local' && !localRelayRuntimeStatus?.relayUrl)
@@ -842,6 +868,10 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
     }, [stepId, welcomeHasAuthActions]);
 
     const onSkip = React.useMemo(() => {
+        if (activeSkipOverride) {
+            if (activeSkipOverride.hidden) return undefined;
+            return activeSkipOverride.onPress ?? (() => undefined);
+        }
         if (!showSkip) return undefined;
         if (stepId === 'welcome') {
             return welcomeHasAuthActions
@@ -852,20 +882,34 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             return async () => handleRelaySelectAdvance();
         }
         return () => dispatch({ type: 'wizard/advance' });
-    }, [handleRelaySelectAdvance, handleWelcomeAdvance, handleWelcomeLogin, showSkip, stepId, welcomeHasAuthActions]);
+    }, [
+        handleRelaySelectAdvance,
+        handleWelcomeAdvance,
+        handleWelcomeLogin,
+        showSkip,
+        stepId,
+        welcomeHasAuthActions,
+        activeSkipOverride,
+    ]);
 
-    const skipDisabled = showSkip && (stepId === 'relay_select' || stepId === 'welcome')
-        ? primaryDisabled
-        : false;
+    const skipDisabled = activeSkipOverride?.disabled ?? (
+        showSkip && (stepId === 'relay_select' || stepId === 'welcome')
+            ? primaryDisabled
+            : false
+    );
 
     const onPrimary =
-        stepId === 'welcome'
-            ? (welcomeHasKnownRelay ? undefined : handleWelcomeAdvance)
-            : stepId === 'relay_enter_url'
-                ? handleSaveCustomRelayUrl
-                : stepId === 'relay_select'
-                    ? handleRelaySelectAdvance
-                    : stepId === 'confirm_relay_lock'
+        activePrimaryOverride
+            ? activePrimaryOverride.onPress
+            : stepId === 'welcome'
+                ? (welcomeHasKnownRelay ? undefined : handleWelcomeAdvance)
+                : stepId === 'auth_secret_key'
+                    ? undefined
+                : stepId === 'relay_enter_url'
+                    ? handleSaveCustomRelayUrl
+                    : stepId === 'relay_select'
+                        ? handleRelaySelectAdvance
+                        : stepId === 'confirm_relay_lock'
                         ? async () => {
                             const relayUrl = state.context.relaySelection.serverUrl ? String(state.context.relaySelection.serverUrl).trim() : '';
                             if (!relayUrl) {
@@ -964,287 +1008,68 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                     : undefined;
 
     const onBack =
-        showBack
-            ? handleBack
-            : undefined;
+        activeBackOverride?.hidden
+            ? undefined
+            : (activeBackOverride?.onPress ?? (showBack ? handleBack : undefined));
 
     let body: React.ReactNode = null;
-    if (stepId === 'welcome') {
-        if (welcomeHasKnownRelay) {
-            body = (
-                <View testID={`${props.testID ?? 'onboarding-wizard'}-welcome-auth`} style={styles.welcomeAuthBody}>
-                    <View style={styles.authEntryWrapper}>
-                        <AuthEntryView
-                            layout={props.layout}
-                            isDesktopShell={false}
-                            options={props.authEntryOptions}
-                            onOpenSetup={() => {}}
-                            onChangeRelay={() => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' })}
-                            onRestore={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' })}
-                            onCreateAccount={props.onCreateAccount}
-                            onCreateAccountViaProvider={props.onCreateAccountViaProvider}
-                            onLoginWithKeylessProvider={props.onLoginWithKeylessProvider}
-                            onLoginWithMtls={props.onLoginWithMtls}
-                        />
-                    </View>
-                    {welcomeHasAuthActions ? (
-                        <View style={styles.scanCtaBlock}>
-                            <RoundButton
-                                testID={`${props.testID ?? 'onboarding-wizard'}-change-relay`}
-                                size="small"
-                                display="inverted"
-                                title={t('setupOnboarding.changeRelayAction')}
-                                onPress={() => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' })}
-                            />
-                        </View>
-                    ) : null}
-                </View>
-            );
-        } else {
-        body = (
-            <View testID={`${props.testID ?? 'onboarding-wizard'}-welcome-body`} style={styles.welcomeBody}>
-                <View style={styles.labelContainer}>
-                    <Text style={styles.label}>{t('setupOnboarding.welcomeBody2')}</Text>
-                    <Text style={styles.label}>{t('setupOnboarding.welcomeBody3')}</Text>
-                </View>
-                <WelcomeProvidersShowcase
-                    testID={`${props.testID ?? 'onboarding-wizard'}-welcome-showcase`}
-                    testIDPrefix={`${props.testID ?? 'onboarding-wizard'}-welcome`}
-                />
-                {canScanQr ? (
-                    <View style={styles.scanCtaBlock}>
-                        <RoundButton
-                            testID={`${props.testID ?? 'onboarding-wizard'}-scan`}
-                            size="normal"
-                            display="inverted"
-                            title={t('setupOnboarding.scanQrCode')}
-                            onPress={() => {
-                                dispatch({ type: 'wizard/setScanStepEnabled', enabled: true });
-                                dispatch({ type: 'wizard/goToStep', stepId: 'scan_code' });
-                            }}
-                        />
-                    </View>
-                ) : null}
-            </View>
-        );
-        }
-    } else if (stepId === 'scan_code') {
-        body = (
-            <QrCodeScannerView
-                testIDPrefix={`${props.testID ?? 'onboarding-wizard'}-scan`}
-                title={t('setupOnboarding.scanQrCode')}
-                permissionRequiredMessage={t('modals.cameraPermissionsRequiredToScanQr')}
-                embedded
-                onCancel={() => {
-                    dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
-                    dispatch({ type: 'wizard/goToStep', stepId: 'welcome' });
-                }}
-                onScan={handleScan}
-            />
-        );
-    } else if (stepId === 'relay_select') {
-        body = (
-            <>
-                <View style={styles.diagramContainer}>
-                    <RelayDiagram testID={`${props.testID ?? 'onboarding-wizard'}-relay-diagram`} />
-                </View>
-                <View>
-                    {profileChoices.length > 0 ? (
-                        <Text testID={`${props.testID ?? 'onboarding-wizard'}-saved-relays-title`} style={styles.relayGroupTitle}>
-                            {t('setupOnboarding.savedRelaysTitle')}
-                        </Text>
-                    ) : null}
-                    {profileChoices.map(renderRelayChoiceRow)}
-                    {relayChoices.map(renderRelayChoiceRow)}
-                    {renderManualRelayChoiceRow()}
-                </View>
-            </>
-        );
-    } else if (stepId === 'confirm_relay_lock') {
-        body = (
-            <View testID={`${props.testID ?? 'onboarding-wizard'}-confirm-relay-lock`}>
-                <Text style={styles.urlHint}>{t('setupOnboarding.confirmSwitchRelayWarning')}</Text>
-            </View>
-        );
-    } else if (stepId === 'relay_enter_url') {
-        body = (
-            <View style={styles.urlBlock}>
-                <TextInput
-                    testID={`${props.testID ?? 'onboarding-wizard'}-relay-url-input`}
-                    placeholder={t('common.urlPlaceholder')}
-                    placeholderTextColor={theme.colors.textSecondary}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    value={urlDraft}
-                    onChangeText={setUrlDraft}
-                    style={styles.urlInput}
-                />
-                <Text style={styles.urlHint}>{t('setupOnboarding.relayCustomUrlSubtitle')}</Text>
-            </View>
-        );
-    } else if (stepId === 'background_service_handoff') {
-        const relayUrl = typeof state.context.relaySelection.serverUrl === 'string'
-            ? state.context.relaySelection.serverUrl.trim()
-            : '';
-        body = (
-            <WebDesktopBackgroundServiceHandoffContent
-                testID={`${props.testID ?? 'onboarding-wizard'}-background-service-handoff`}
-                relayUrl={relayUrl}
-            />
-        );
-    } else if (stepId === 'host_relay_local') {
-        body = (
-            <LocalRelayRuntimeControlSection
-                onStatusChange={setLocalRelayRuntimeStatus}
-            />
-        );
-    } else if (stepId === 'relay_access') {
-        const upstreamUrl = typeof state.context.relaySelection.serverUrl === 'string'
-            ? normalizeServerUrl(state.context.relaySelection.serverUrl.trim())
-            : null;
-        body = (
-            <LocalRelayAccessControlSection upstreamUrl={upstreamUrl} />
-        );
-    } else if (stepId === 'host_relay_remote') {
-        const relayUrl = typeof state.context.relaySelection.serverUrl === 'string'
-            ? state.context.relaySelection.serverUrl
-            : '';
-        const cliInstallCommand = buildCliInstallCommandForCurrentApp();
-        body = (
-            <View testID={`${props.testID ?? 'onboarding-wizard'}-host-remote-relay`} style={styles.remoteRelayHostBlock}>
-                <WizardSshCredentialsFields
-                    testIDPrefix={`${props.testID ?? 'onboarding-wizard'}-remote-ssh`}
-                    supportedAuthModes={['agent', 'keyfile', 'password']}
-                    value={{
-                        username: remoteSshUsernameDraft,
-                        host: remoteSshHostDraft,
-                        port: remoteSshPortDraft,
-                        authMode: remoteSshAuth,
-                        identityFilePath: remoteIdentityFilePathDraft,
-                        password: remoteSshPasswordDraft,
-                    }}
-                    testIdStyle="wizard"
-                    onChange={(next) => {
-                        setRemoteSshUsernameDraft(next.username);
-                        setRemoteSshHostDraft(next.host);
-                        setRemoteSshPortDraft(next.port);
-                        setRemoteSshAuth(next.authMode);
-                        setRemoteIdentityFilePathDraft(next.identityFilePath);
-                        setRemoteSshPasswordDraft(next.password);
-                    }}
-                />
-                <WizardTerminalHandoff
-                    testID={`${props.testID ?? 'onboarding-wizard'}-remote-relay-handoff`}
-                    steps={[
-                        {
-                            title: t('setupOnboarding.webDesktopOnlyCliTitle'),
-                            subtitle: t('setupOnboarding.webDesktopOnlyCliSubtitle'),
-                            code: cliInstallCommand,
-                            scrollTestIDSuffix: 'cli-install',
-                        },
-                        {
-                            title: t('setupOnboarding.remoteRelayHostInstallTitle'),
-                            subtitle: t('setupOnboarding.relayOnRemoteComputerSubtitle'),
-                            code: buildRemoteRelayHostInstallCommand({
-                                draft: {
-                                    username: remoteSshUsernameDraft,
-                                    host: remoteSshHostDraft,
-                                    port: remoteSshPortDraft,
-                                    authMode: remoteSshAuth,
-                                    identityFilePath: remoteIdentityFilePathDraft,
-                                    password: remoteSshPasswordDraft,
-                                },
-                                installRelayRuntime: true,
-                            }),
-                            scrollTestIDSuffix: 'remote-relay-install',
-                        },
-                        {
-                            title: t('setupOnboarding.webDesktopOnlyRelayStatusTitle'),
-                            subtitle: t('setupOnboarding.webDesktopOnlyRelayStatusSubtitle'),
-                            code: buildRemoteRelayHostStatusCommand({
-                                draft: {
-                                    username: remoteSshUsernameDraft,
-                                    host: remoteSshHostDraft,
-                                    port: remoteSshPortDraft,
-                                    authMode: remoteSshAuth,
-                                    identityFilePath: remoteIdentityFilePathDraft,
-                                    password: remoteSshPasswordDraft,
-                                },
-                            }),
-                            scrollTestIDSuffix: 'remote-relay-status',
-                        },
-                    ]}
-                />
-                <View style={styles.urlBlock}>
-                    <TextInput
-                        testID={`${props.testID ?? 'onboarding-wizard'}-remote-relay-url-input`}
-                        placeholder={t('common.urlPlaceholder')}
-                        placeholderTextColor={theme.colors.textSecondary}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        value={relayUrl}
-                        onChangeText={(value) => {
-                            dispatch({
-                                type: 'wizard/setRelaySelection',
-                                relaySelection: {
-                                    ...state.context.relaySelection,
-                                    serverUrl: value,
-                                },
-                            });
-                        }}
-                        style={styles.urlInput}
-                    />
-                    <Text style={styles.urlHint}>{t('setupOnboarding.webDesktopOnlyRelayStatusSubtitle')}</Text>
-                </View>
-            </View>
-        );
-    } else if (stepId === 'confirm_switch_relay') {
-        const relayUrl = typeof state.context.relaySelection.serverUrl === 'string' ? state.context.relaySelection.serverUrl : '';
-        body = (
-            <ConfirmSwitchRelayStep
-                testIDPrefix={props.testID ?? 'onboarding-wizard'}
-                relayUrl={relayUrl}
-                decision={relaySwitchDecision}
-                onDecisionChange={setRelaySwitchDecision}
-            />
-        );
-    } else if (stepId === 'auth') {
-        body = (
-            <>
-                <View style={styles.authEntryWrapper}>
-                    <AuthEntryView
-                        layout={props.layout}
-                        isDesktopShell={false}
-                        options={props.authEntryOptions}
-                        onOpenSetup={() => {}}
-                        onChangeRelay={() => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' })}
-                        onRestore={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' })}
-                        onCreateAccount={props.onCreateAccount}
-                        onCreateAccountViaProvider={props.onCreateAccountViaProvider}
-                        onLoginWithKeylessProvider={props.onLoginWithKeylessProvider}
-                        onLoginWithMtls={props.onLoginWithMtls}
-                    />
-                </View>
-                <View style={styles.scanCtaBlock}>
-                    <RoundButton
-                        testID={`${props.testID ?? 'onboarding-wizard'}-lost-access`}
-                        size="small"
-                        display="inverted"
-                        title={t('setupOnboarding.authLostAccessTitle')}
-                        onPress={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth_lost_access' })}
-                    />
-                </View>
-            </>
-        );
-    } else if (stepId === 'desktop_handoff') {
-        body = (
-            <WebDesktopRelayHostHandoffContent testID={`${props.testID ?? 'onboarding-wizard'}-desktop-handoff`} />
-        );
-    } else if (stepId === 'auth_restore') {
-        body = <RestoreIndexEmbedded onBack={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth' })} />;
-    } else if (stepId === 'auth_lost_access') {
-        body = <LostAccessEmbedded onBack={() => dispatch({ type: 'wizard/goToStep', stepId: 'auth' })} />;
-    }
+    const relaySelectionServerUrl = typeof state.context.relaySelection.serverUrl === 'string'
+        ? state.context.relaySelection.serverUrl.trim()
+        : null;
+    const relaySelectBody = (
+        <View>
+            {profileChoices.map(renderRelayChoiceRow)}
+            {relayChoices.map(renderRelayChoiceRow)}
+            {renderManualRelayChoiceRow()}
+        </View>
+    );
+    body = renderOnboardingWizardStepBody({
+        stepId,
+        testIDPrefix: props.testID ?? 'onboarding-wizard',
+        styles,
+        theme,
+        layout: props.layout,
+        authEntryOptions: props.authEntryOptions,
+        canScanQr,
+        welcomeHasKnownRelay,
+        welcomeHasAuthActions,
+        allowRelaySelection: setupPolicy.relay.allowRelaySelection,
+        relaySelectBody,
+        urlDraft,
+        onUrlDraftChange: setUrlDraft,
+        relaySelectionServerUrl,
+        lastKnownSnapshotRelayUrl: lastKnownSnapshotRelayUrlRef.current || '',
+        relaySwitchDecision,
+        onRelaySwitchDecisionChange: setRelaySwitchDecision,
+        onLocalRelayRuntimeStatusChange: setLocalRelayRuntimeStatus,
+        onWizardPrimaryChange: handleWizardPrimaryChange,
+        onWizardBackChange: handleWizardBackChange,
+        onWizardSkipChange: handleWizardSkipChange,
+        onCreateAccount: props.onCreateAccount,
+        onCreateAccountViaProvider: props.onCreateAccountViaProvider,
+        onLoginWithKeylessProvider: props.onLoginWithKeylessProvider,
+        onLoginWithMtls: props.onLoginWithMtls,
+        onStartScan: () => {
+            dispatch({ type: 'wizard/setScanStepEnabled', enabled: true });
+            dispatch({ type: 'wizard/goToStep', stepId: 'scan_code' });
+        },
+        onCancelScan: () => {
+            dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
+            dispatch({ type: 'wizard/goToStep', stepId: 'welcome' });
+        },
+        onScan: handleScan,
+        onOpenRelaySelectionFromWelcome: handleOpenRelaySelectionFromWelcome,
+        onOpenRelaySelectionFromAuth: handleOpenRelaySelectionPreservingSelection,
+        onOpenRestore: () => dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' }),
+        onOpenLostAccess: () => dispatch({ type: 'wizard/goToStep', stepId: 'auth_lost_access' }),
+        onOpenSecretKeyLogin: () => dispatch({ type: 'wizard/goToStep', stepId: 'auth_secret_key' }),
+        onRestoreBackToAuth: () => dispatch({ type: 'wizard/goToStep', stepId: 'auth' }),
+        onLostAccessBackToAuth: () => dispatch({ type: 'wizard/goToStep', stepId: 'auth' }),
+        onHostRelayLocalAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' }),
+        onHostRelayRemoteAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' }),
+        onHostRelayRemoteCancel: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' }),
+        onRemoteRelayRuntimeCompleted: handleRemoteRelayRuntimeCompletedChange,
+    });
 
     return (
         <WizardModalShell
@@ -1255,13 +1080,14 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             title={title}
             subtitle={subtitle ?? undefined}
             onSkip={onSkip}
-            skipLabel={skipLabel}
+            skipLabel={activeSkipOverride?.label ?? skipLabel}
             skipDisabled={skipDisabled}
-            onBack={onBack}
+            onBack={onBack ?? (() => {})}
             onPrimary={onPrimary}
-            primaryLabel={primaryLabel}
-            primaryDisabled={primaryDisabled}
+            primaryLabel={activePrimaryOverride?.label ?? primaryLabel}
+            primaryDisabled={activePrimaryOverride?.disabled ?? primaryDisabled}
             showBack={Boolean(onBack)}
+            showSkip={activeSkipOverride ? !activeSkipOverride.hidden : undefined}
             footerHint={footerHint ?? undefined}
         >
             {body}

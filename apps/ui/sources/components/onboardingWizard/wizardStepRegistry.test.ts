@@ -1,0 +1,29 @@
+import { describe, expect, it } from 'vitest';
+
+import type { WizardContext } from './wizardTypes';
+import { getWizardStepDefinition } from './wizardStepRegistry';
+
+describe('wizardStepRegistry', () => {
+    it('shows the background service handoff step on native for the local-handoff branch', () => {
+        const context: WizardContext = {
+            mode: 'onboarding',
+            platform: 'native',
+            canScanQr: false,
+            scanStepEnabled: false,
+            canRunSystemTasks: false,
+            relaySelection: {
+                choiceId: 'thisComputer',
+                serverUrl: 'https://relay.local.test',
+                relayProfileId: null,
+                locked: false,
+            },
+            relayLockConfirmationPending: false,
+            relaySwitchConfirmationPending: false,
+            authIntent: 'standard',
+            setupAction: null,
+        };
+
+        const step = getWizardStepDefinition('background_service_handoff');
+        expect(step.visibleWhen(context)).toBe(true);
+    });
+});

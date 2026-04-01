@@ -17,6 +17,7 @@ import { LocalTailscaleSecureAccessSection } from '@/components/settings/server/
 import { resolveKnownLocalRelayUrl } from '@/components/settings/server/localControl/resolveKnownLocalRelayUrl';
 import { useServerSettingsScreenController } from '@/components/settings/server/hooks/useServerSettingsScreenController';
 import { isTauriDesktop } from '@/utils/platform/tauri';
+import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((_theme) => ({
@@ -35,6 +36,7 @@ export function ServerSettingsScreen() {
     const controller = useServerSettingsScreenController();
     const isDesktop = isTauriDesktop();
     const isWeb = Platform.OS === 'web';
+    const setupPolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);
     const [localRelayUrl, setLocalRelayUrl] = React.useState<string | null>(null);
     const knownLocalRelayUrl = React.useMemo(() => resolveKnownLocalRelayUrl({
         activeServerUrl: controller.activeServerUrl,
@@ -87,22 +89,26 @@ export function ServerSettingsScreen() {
 
                     <ServerRetentionSection serverId={controller.activeServerId || null} />
 
-                    <ItemGroup title={t('common.actions')}>
-                        <Item
-                            testID="settings.server.openSetupWizard"
-                            title={t('setupOnboarding.setupNewRelayAction')}
-                            subtitle={t('setupOnboarding.openSetupWizardSubtitle')}
-                            onPress={() => router.push('/setup/wizard?step=setup_chooser')}
-                        />
-                    </ItemGroup>
+                    {setupPolicy.relay.allowRelaySelection ? (
+                        <ItemGroup title={t('common.actions')}>
+                            <Item
+                                testID="settings.server.openSetupWizard"
+                                title={t('setupOnboarding.setupNewRelayAction')}
+                                subtitle={t('setupOnboarding.openSetupWizardSubtitle')}
+                                onPress={() => router.push('/setup/wizard?scope=relay&step=setup_chooser')}
+                            />
+                        </ItemGroup>
+                    ) : null}
 
-                    {isDesktop ? (
+                    {isDesktop && setupPolicy.relay.allowLocalRelayHost ? (
                         <>
                             <LocalRelayRuntimeControlSection
                                 onStatusChange={handleLocalRelayStatusChange}
                             />
                             <LocalRelayAccessControlSection upstreamUrl={localRelayUrl ?? knownLocalRelayUrl} />
-                            <LocalTailscaleSecureAccessSection upstreamUrl={localRelayUrl ?? knownLocalRelayUrl} />
+                            {setupPolicy.relayAccess.allowTailscale ? (
+                                <LocalTailscaleSecureAccessSection upstreamUrl={localRelayUrl ?? knownLocalRelayUrl} />
+                            ) : null}
                         </>
                     ) : isWeb ? null : (
                         <ItemGroup title={t('settingsProviders.localControlTitle')}>
@@ -116,22 +122,24 @@ export function ServerSettingsScreen() {
                         </ItemGroup>
                     )}
 
-                    <AddTargetsSection
-                        autoMode={controller.autoMode}
-                        inputUrl={controller.inputUrl}
-                        inputName={controller.inputName}
-                        error={controller.error}
-                        isValidating={controller.isValidating}
-                        prefillHint={controller.addServerPrefillHint}
-                        defaultExpanded={controller.addServerDefaultExpanded}
-                        onChangeUrl={controller.onChangeUrl}
-                        onChangeName={controller.onChangeName}
-                        onResetServer={controller.onResetServer}
-                        onAddServer={controller.onAddServer}
-                        servers={controller.servers}
-                        activeServerId={controller.activeServerId}
-                        onCreateServerGroup={controller.onCreateServerGroup}
-                    />
+                    {setupPolicy.relay.allowRelaySelection && setupPolicy.relay.allowCustomRelayUrl ? (
+                        <AddTargetsSection
+                            autoMode={controller.autoMode}
+                            inputUrl={controller.inputUrl}
+                            inputName={controller.inputName}
+                            error={controller.error}
+                            isValidating={controller.isValidating}
+                            prefillHint={controller.addServerPrefillHint}
+                            defaultExpanded={controller.addServerDefaultExpanded}
+                            onChangeUrl={controller.onChangeUrl}
+                            onChangeName={controller.onChangeName}
+                            onResetServer={controller.onResetServer}
+                            onAddServer={controller.onAddServer}
+                            servers={controller.servers}
+                            activeServerId={controller.activeServerId}
+                            onCreateServerGroup={controller.onCreateServerGroup}
+                        />
+                    ) : null}
 
                     {controller.serverGroups.length > 0 ? (
                         <ServerGroupsSection

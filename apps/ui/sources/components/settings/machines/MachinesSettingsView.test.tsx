@@ -186,11 +186,11 @@ describe('MachinesSettingsView', () => {
         const firstGroupItems = groups[0]!.findAllByType('Item' as any);
         expect(firstGroupItems.map((node: any) => node.props.title)).toContain('Machine A1');
         expect(firstGroupItems.map((node: any) => node.props.title)).not.toContain('settings.machineSetupCurrentMachineTitle');
-        expect(firstGroupItems.map((node: any) => node.props.title)).not.toContain('settings.addMachine');
+        expect(firstGroupItems.map((node: any) => node.props.title)).not.toContain('setupOnboarding.setupNewMachineAction');
 
         const actionItems = groups[1]!.findAllByType('Item' as any);
         expect(actionItems.map((node: any) => node.props.title)).toContain('setupOnboarding.setupThisComputerTitle');
-        expect(actionItems.map((node: any) => node.props.title)).toContain('settings.addMachine');
+        expect(actionItems.map((node: any) => node.props.title)).toContain('setupOnboarding.setupNewMachineAction');
     });
 
     it('shows desktop-only setup actions when running inside the Tauri desktop shell', async () => {
@@ -204,7 +204,7 @@ describe('MachinesSettingsView', () => {
 
         const secondGroupItems = groups[1]!.findAllByType('Item' as any);
         expect(secondGroupItems.map((node: any) => node.props.title)).toContain('settings.machineSetupCurrentMachineTitle');
-        expect(secondGroupItems.map((node: any) => node.props.title)).toContain('settings.addMachine');
+        expect(secondGroupItems.map((node: any) => node.props.title)).toContain('setupOnboarding.setupNewMachineAction');
 
         const setupThisComputerItem = secondGroupItems.find((node: any) => node.props.title === 'settings.machineSetupCurrentMachineTitle');
         expect(setupThisComputerItem).toBeTruthy();
@@ -212,6 +212,15 @@ describe('MachinesSettingsView', () => {
             await pressTestInstanceAsync(setupThisComputerItem!);
         });
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/machines/this-computer');
+
+        routerPushSpy.mockClear();
+
+        const setupNewMachineItem = secondGroupItems.find((node: any) => node.props.title === 'setupOnboarding.setupNewMachineAction');
+        expect(setupNewMachineItem).toBeTruthy();
+        await act(async () => {
+            await pressTestInstanceAsync(setupNewMachineItem!);
+        });
+        expect(routerPushSpy).toHaveBeenCalledWith('/setup/wizard?action=remote&step=remote_ssh_setup&scope=machine');
     });
 
     it('renders relay drift on web as a read-only notice instead of a repair action card', async () => {
@@ -235,7 +244,7 @@ describe('MachinesSettingsView', () => {
         expect(items.find((node: any) => node.props.testID === 'settings.machines.relayDrift.webNotice')).toBeTruthy();
     });
 
-    it('shows an empty-state row when the user has no machines yet', async () => {
+    it('shows a single setup button when the user has no machines yet', async () => {
         viewModelState.value = {
             activeServerId: 'srv-a',
             allMachines: [],
@@ -254,8 +263,15 @@ describe('MachinesSettingsView', () => {
         const groups = tree.findAllByType('Group' as any);
         const firstGroupItems = groups[0]!.findAllByType('Item' as any);
 
-        expect(firstGroupItems.map((node: any) => node.props.title)).toContain('newSession.noMachinesFound');
-        expect(firstGroupItems[0]?.props.showChevron).toBe(false);
+        expect(firstGroupItems.map((node: any) => node.props.title)).toContain('setupOnboarding.setupNewMachineAction');
+        expect(firstGroupItems[0]?.props.showChevron).toBe(true);
+
+        const setupButton = firstGroupItems.find((node: any) => node.props.title === 'setupOnboarding.setupNewMachineAction');
+        expect(setupButton).toBeTruthy();
+        await act(async () => {
+            await pressTestInstanceAsync(setupButton!);
+        });
+        expect(routerPushSpy).toHaveBeenCalledWith('/setup/wizard?action=remote&step=remote_ssh_setup&scope=machine');
     });
 
     it('shows a loading-state row when machines are still bootstrapping', async () => {

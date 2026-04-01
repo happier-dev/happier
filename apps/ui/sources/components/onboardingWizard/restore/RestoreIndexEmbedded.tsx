@@ -10,6 +10,7 @@ import { RestoreScanComputerQrView } from '@/components/account/restore/RestoreS
 
 export type RestoreIndexEmbeddedProps = Readonly<{
     onBack: () => void;
+    onOpenSecretKeyLogin?: () => void;
 }>;
 
 export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(props: RestoreIndexEmbeddedProps) {
@@ -18,11 +19,16 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
     const isWebPhoneWithCamera =
         Platform.OS === 'web' && isWebQrScannerSupported() && isWebMobileLikeQrScannerHost({ width, height });
     const showScannerFirst = isNativePhone || isWebPhoneWithCamera;
+    const [forceQrView, setForceQrView] = React.useState(false);
 
-    return showScannerFirst ? (
-        <RestoreScanComputerQrView embedded onBack={props.onBack} />
+    return showScannerFirst && !forceQrView ? (
+        <RestoreScanComputerQrView
+            embedded
+            onBack={props.onBack}
+            onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
+            onShowQrInstead={() => setForceQrView(true)}
+        />
     ) : (
-        <RestoreQrView embedded onBack={props.onBack} />
+        <RestoreQrView embedded onBack={props.onBack} onOpenSecretKeyLogin={props.onOpenSecretKeyLogin} />
     );
 });
-

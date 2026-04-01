@@ -151,6 +151,34 @@ describe('usePlanChecklistController', () => {
         expect(runExecutionPlan).toHaveBeenCalledTimes(2);
     });
 
+    it('treats satisfied items as done when entering execute phase', async () => {
+        const { usePlanChecklistController } = await import('./usePlanChecklistController');
+
+        const items = [
+            {
+                id: 'install_cli',
+                title: 'Install CLI',
+                satisfied: true,
+                disabled: false,
+                defaultSelected: true,
+            },
+        ] as const;
+
+        const hook = await renderHook(() => usePlanChecklistController({
+            items,
+            buildExecutionPlan: (selectedIds) => ({ selectedIds }),
+            runExecutionPlan: async () => undefined,
+            mapExecutionSnapshotToRowState: () => ({}),
+        }));
+
+        await act(async () => {
+            await hook.getCurrent().continue();
+        });
+
+        expect(hook.getCurrent().phase).toBe('execute');
+        expect(hook.getCurrent().executionById.install_cli?.status).toBe('done');
+    });
+
     it('can normalize selection dependencies', async () => {
         const { usePlanChecklistController } = await import('./usePlanChecklistController');
 
@@ -185,5 +213,108 @@ describe('usePlanChecklistController', () => {
         });
 
         expect(hook.getCurrent().selectedIds).toEqual([]);
+    });
+
+    it('syncs selectedIds to the normalized execution set when continuing', async () => {
+        const { usePlanChecklistController } = await import('./usePlanChecklistController');
+
+        const items = [
+            { id: 'install_service', title: 'Install service', satisfied: false, disabled: false, defaultSelected: false },
+            { id: 'start_service', title: 'Start service', satisfied: false, disabled: false, defaultSelected: false },
+            { id: 'verify_service', title: 'Verify service', satisfied: false, disabled: false, defaultSelected: false },
+        ] as const;
+
+        const buildExecutionPlan = vi.fn((selectedIds: readonly string[]) => ({ selectedIds }));
+        const runExecutionPlan = vi.fn(async () => undefined);
+
+        const hook = await renderHook(() => usePlanChecklistController({
+            items,
+            initialSelectedIds: ['start_service', 'verify_service'],
+            normalizeSelectedIds: (selectedIds) => {
+                const set = new Set(selectedIds);
+                if (!set.has('install_service')) {
+                    set.delete('start_service');
+                    set.delete('verify_service');
+                }
+                if (!set.has('start_service')) {
+                    set.delete('verify_service');
+                }
+                return [...set];
+            },
+            buildExecutionPlan,
+            runExecutionPlan,
+            mapExecutionSnapshotToRowState: () => ({}),
+        }));
+
+        expect(new Set(hook.getCurrent().selectedIds)).toEqual(new Set(['start_service', 'verify_service']));
+
+        await act(async () => {
+            await hook.getCurrent().continue();
+        });
+
+        expect(buildExecutionPlan).toHaveBeenCalledWith([]);
+        expect(hook.getCurrent().selectedIds).toEqual([]);
+    });
+
+    it('passes selectedIds into the snapshot mapper when publishing snapshots', async () => {
+        const { usePlanChecklistController } = await import('./usePlanChecklistController');
+
+        const items = [
+            { id: 'install_cli', title: 'Install CLI', satisfied: false, disabled: false, defaultSelected: true },
+            { id: 'install_daemon', title: 'Install daemon', satisfied: false, disabled: false, defaultSelected: false },
+        ] as const;
+
+        const mapper = vi.fn((_snapshot: { step: string }, _items: unknown, selectedIds?: readonly string[]) => {
+            return {
+                ...(selectedIds?.includes('install_cli')
+                    ? { install_cli: { status: 'running', logs: [] } satisfies PlanChecklistExecutionState }
+                    : {}),
+            };
+        });
+
+        const hook = await renderHook(() => usePlanChecklistController({
+            items,
+            buildExecutionPlan: (selectedIds) => ({ selectedIds }),
+            runExecutionPlan: async () => undefined,
+            mapExecutionSnapshotToRowState: mapper,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().toggleItem('install_daemon');
+        });
+        expect(new Set(hook.getCurrent().selectedIds)).toEqual(new Set(['install_cli', 'install_daemon']));
+
+        await act(async () => {
+            hook.getCurrent().publishSnapshot({ step: 'install_cli' });
+        });
+
+        expect(mapper).toHaveBeenCalledTimes(1);
+        expect(mapper.mock.calls[0]?.[2]).toEqual(['install_cli', 'install_daemon']);
+    });
+
+    it('can reset back to selection after starting execution', async () => {
+        const { usePlanChecklistController } = await import('./usePlanChecklistController');
+
+        const items = [
+            { id: 'install_cli', title: 'Install CLI', satisfied: false, disabled: false, defaultSelected: true },
+        ] as const;
+
+        const hook = await renderHook(() => usePlanChecklistController({
+            items,
+            buildExecutionPlan: (selectedIds) => ({ selectedIds }),
+            runExecutionPlan: async () => undefined,
+            mapExecutionSnapshotToRowState: () => ({}),
+        }));
+
+        await act(async () => {
+            await hook.getCurrent().continue();
+        });
+        expect(hook.getCurrent().phase).toBe('execute');
+
+        await act(async () => {
+            hook.getCurrent().resetToSelect();
+        });
+
+        expect(hook.getCurrent().phase).toBe('select');
     });
 });

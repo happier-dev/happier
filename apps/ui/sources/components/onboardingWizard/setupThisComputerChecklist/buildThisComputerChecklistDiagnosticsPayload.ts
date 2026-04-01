@@ -12,13 +12,46 @@ function redactId(value: string | null | undefined): string | null {
     return `${raw.slice(0, 4)}…${raw.slice(-4)}`;
 }
 
+export type ThisComputerChecklistDiagnosticsPayload = Readonly<{
+    capturedAt: string;
+    kind: 'setup.thisComputer';
+    row: string;
+    selection: readonly string[];
+    activeRelayUrl: string | null;
+    uiAccountId: string | null;
+    daemon: Readonly<{
+        serviceInstalled: boolean;
+        daemonRunning: boolean;
+        needsAuth: boolean;
+        machineId: string | null;
+        serverUrl: string | null;
+        accountId: string | null;
+        machineRegistered: boolean | null;
+    }>;
+    mismatch: Readonly<{
+        serverMismatch: boolean;
+        accountMismatch: boolean;
+        pairingRequired: boolean;
+    }>;
+    task: Readonly<{
+        status: string;
+        currentStepId: string | null;
+        errorCode?: string;
+    }> | null;
+    logs: PlanChecklistExecutionState['logs'];
+    error: Readonly<{
+        title: string;
+        message: string | null;
+    }> | null;
+}>;
+
 export function buildThisComputerChecklistDiagnosticsPayload(params: Readonly<{
     itemId: string;
     selectedIds: readonly string[];
     preflight: ThisComputerSetupPreflight;
     activeTaskSnapshot: SystemTaskRunState | null;
     executionById?: Readonly<Record<string, PlanChecklistExecutionState>> | undefined;
-}>): Readonly<Record<string, unknown>> {
+}>): ThisComputerChecklistDiagnosticsPayload {
     const rowExecution = params.executionById?.[params.itemId];
 
     return {

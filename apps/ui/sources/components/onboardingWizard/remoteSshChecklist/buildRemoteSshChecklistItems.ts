@@ -1,63 +1,65 @@
 import type { RemoteSshChecklistItem, RemoteSshChecklistMode } from './remoteSshChecklistTypes';
+import { getRemoteSshChecklistCopy } from './remoteSshChecklistCopy';
 
 export function buildRemoteSshChecklistItems(params: Readonly<{
     mode: RemoteSshChecklistMode;
-    installRelayRuntime: boolean;
 }>): readonly RemoteSshChecklistItem[] {
+    const copy = getRemoteSshChecklistCopy(params.mode);
+    const daemonItem: RemoteSshChecklistItem = {
+        id: 'install_daemon',
+        title: copy.installDaemonTitle,
+        subtitle: copy.installDaemonSubtitle,
+        selected: true,
+        disabled: true,
+        optional: false,
+        stepIds: ['daemon.service.install', 'daemon.service.start'],
+        details: copy.installDaemonDetails,
+    };
     const required: RemoteSshChecklistItem[] = [
         {
             id: 'trust_host',
-            title: 'Trust SSH host',
-            subtitle: 'Verify the remote machine fingerprint before connecting.',
+            title: copy.trustHostTitle,
+            subtitle: copy.trustHostSubtitle,
             selected: true,
             disabled: true,
             optional: false,
             stepIds: ['ssh.trust', 'ssh.hostTrust'],
-            details: 'We verify the SSH host key and reject unexpected fingerprints unless you explicitly trust them.',
+            details: copy.trustHostDetails,
         },
         {
             id: 'install_cli',
-            title: 'Install Happier CLI',
-            subtitle: 'Copy the Happier CLI to the remote machine.',
+            title: copy.installCliTitle,
+            subtitle: copy.installCliSubtitle,
             selected: true,
             disabled: true,
             optional: false,
             stepIds: ['ssh.installCli'],
-            details: 'The remote machine needs the Happier CLI so the rest of the bootstrap can be executed on it.',
+            details: copy.installCliDetails,
         },
         {
             id: 'configure_relay',
-            title: 'Configure the relay',
-            subtitle: 'Point the remote machine at the active relay and web app.',
+            title: copy.configureRelayTitle,
+            subtitle: copy.configureRelaySubtitle,
             selected: true,
             disabled: true,
             optional: false,
             stepIds: ['ssh.auth.request', 'ssh.auth.approval', 'ssh.auth.wait', 'ssh.complete'],
-            details: 'The remote CLI is configured to talk to the active relay and authenticate this machine to your account.',
+            details: copy.configureRelayDetails,
         },
-        {
-            id: 'install_daemon',
-            title: 'Install background service',
-            subtitle: 'Keep Happier running in the background on the remote machine.',
-            selected: true,
-            disabled: true,
-            optional: false,
-            stepIds: ['daemon.service.install', 'daemon.service.start'],
-            details: 'The background service keeps the remote machine connected and ready for future sessions.',
-        },
+        ...(params.mode === 'remoteRelayHost' ? [] : [daemonItem]),
     ];
 
     const relayRuntime: RemoteSshChecklistItem[] = params.mode === 'remoteRelayHost'
         ? [
             {
                 id: 'install_relay_runtime',
-                title: 'Install relay runtime',
-                subtitle: 'Host a relay on this remote machine.',
-                selected: params.installRelayRuntime,
-                disabled: true,
-                optional: false,
+                title: copy.installRelayRuntimeTitle,
+                subtitle: copy.installRelayRuntimeSubtitle,
+                selected: true,
+                disabled: false,
+                optional: true,
                 stepIds: ['relay.runtime.install'],
-                details: 'This installs the relay runtime on the remote machine so the machine can host a relay for you.',
+                details: copy.installRelayRuntimeDetails,
             },
         ]
         : [];
@@ -66,8 +68,4 @@ export function buildRemoteSshChecklistItems(params: Readonly<{
         ...required,
         ...relayRuntime,
     ];
-}
-
-export function getRemoteSshSelectedItemIds(items: readonly RemoteSshChecklistItem[]): readonly string[] {
-    return items.filter((item) => item.selected).map((item) => item.id);
 }

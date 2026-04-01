@@ -13,11 +13,16 @@ vi.mock('@/components/onboardingWizard', () => ({
 vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: () => null,
 }));
-vi.mock('@/components/onboardingWizard/SetupWizardSurface', () => ({
+vi.mock('@/components/onboardingWizard/surfaces/SetupWizardSurface', () => ({
     SetupWizardSurface: (props: any) => React.createElement('SetupWizardSurface', props),
 }));
 vi.mock('@/modal/components/BaseModal', () => ({
     BaseModal: (props: any) => React.createElement('BaseModal', props, props.children),
+}));
+
+const applyLocalSettingsSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/store/settingsWriters', () => ({
+    useApplyLocalSettings: () => applyLocalSettingsSpy,
 }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -106,6 +111,7 @@ describe('/ (welcome) setup continuation', () => {
         });
         clearPendingSetupIntentMock.mockReset();
         setPendingSetupIntentMock.mockReset();
+        applyLocalSettingsSpy.mockReset();
         localDaemonStatus.value = {
             serviceInstalled: false,
             daemonRunning: false,
@@ -140,7 +146,7 @@ describe('/ (welcome) setup continuation', () => {
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(1);
     });
 
-    it('opens the setup wizard in a scrollable full-screen modal on web', async () => {
+    it('opens the setup wizard in a modal on web (overlay owns scrolling + placement)', async () => {
         tauriDesktopState.value = false;
 
         const Screen = (await import('@/app/(app)/index')).default;
@@ -150,8 +156,6 @@ describe('/ (welcome) setup continuation', () => {
         const modal = screen.findByType('BaseModal' as never);
         const surface = screen.findByType('SetupWizardSurface' as never);
         expect(surface.props.useOuterScrollContainer).toBe(true);
-        expect(modal.props.scrollable).toBe(true);
-        expect(modal.props.disableContentTransform).toBe(true);
         expect(modal.props.showBackdrop).toBe(true);
     });
 
@@ -239,6 +243,7 @@ describe('/ (welcome) setup continuation', () => {
 
         expect(clearPendingSetupIntentMock).not.toHaveBeenCalled();
         expect(setPendingSetupIntentMock).toHaveBeenCalledWith(expect.objectContaining({ phase: 'dismissed' }));
+        expect(applyLocalSettingsSpy).toHaveBeenCalledWith(expect.objectContaining({ sessionGettingStartedGuidanceDismissed: true }));
         expect(screen.findAllByType('SetupWizardSurface' as never)).toHaveLength(0);
     });
 

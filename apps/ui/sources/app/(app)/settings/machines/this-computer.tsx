@@ -19,7 +19,7 @@ export default function ThisComputerSetupRoute() {
                     testID="settings.machineSetup.openSetupWizard"
                     title={t('setupOnboarding.openSetupAction')}
                     subtitle={t('settings.machineSetupCurrentMachineSubtitle')}
-                    onPress={() => router.push('/setup/wizard?action=local&step=setup_this_computer')}
+                    onPress={() => router.push('/setup/wizard?action=local&step=setup_this_computer&scope=machine')}
                 />
             </ItemGroup>
             {isDesktop ? <LocalDaemonControlSection /> : null}

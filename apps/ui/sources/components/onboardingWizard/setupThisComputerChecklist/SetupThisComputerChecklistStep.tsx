@@ -7,9 +7,14 @@ import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
-import { PlanChecklistCard, usePlanChecklistController } from '@/components/systemTasks/planChecklist';
+import {
+    PlanChecklistCard,
+    type PlanChecklistItem,
+    usePlanChecklistController,
+} from '@/components/systemTasks/planChecklist';
 import { resolveThisComputerSetupFollowUp, useThisComputerSetupTask } from '@/components/systemTasks/useThisComputerSetupTask';
 import { buildLocalMachineSetupSystemTaskSpec } from '@/components/systemTasks/buildLocalMachineSetupSystemTaskSpec';
+import type { SystemTaskRunState } from '@/components/systemTasks/types';
 
 import { buildThisComputerChecklistItems } from './buildThisComputerChecklistItems';
 import { mapThisComputerTaskToChecklistExecution } from './mapThisComputerTaskToChecklistExecution';
@@ -71,7 +76,8 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
             props.onSucceeded?.(typeof machineId === 'string' && machineId.trim().length > 0 ? machineId.trim() : null);
         },
     });
-    const checklistItems = React.useMemo(() => buildThisComputerChecklistItems(preflight), [preflight]);
+    const liveChecklistItems = React.useMemo(() => buildThisComputerChecklistItems(preflight), [preflight]);
+    const [checklistItems, setChecklistItems] = React.useState<readonly PlanChecklistItem[]>(liveChecklistItems);
     const followUp = resolveThisComputerSetupFollowUp(activeTaskSnapshot?.result ?? null);
     const isReady = Boolean(
         preflight.activeRelayUrl
@@ -106,40 +112,51 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         return [...set];
     }, []);
 
-    const controller = usePlanChecklistController({
+    const buildExecutionPlan = React.useCallback((selectedIds: readonly string[]) => ({ selectedIds }), []);
+
+    const runExecutionPlan = React.useCallback(async (plan: { selectedIds: readonly string[] }) => {
+        const selected = new Set(plan.selectedIds);
+        const installService = selected.has('setup.thisComputer.installService');
+        const startService = selected.has('setup.thisComputer.startService');
+        const verifyService = selected.has('setup.thisComputer.verifyService');
+
+        await start(buildLocalMachineSetupSystemTaskSpec({
+            installService,
+            startService,
+            verifyService,
+        }));
+    }, [start]);
+
+    const mapExecutionSnapshotToRowState = React.useCallback((snapshot: SystemTaskRunState | null) => {
+        return mapThisComputerTaskToChecklistExecution(snapshot);
+    }, []);
+
+    const controller = usePlanChecklistController<{ selectedIds: readonly string[] }, SystemTaskRunState | null>({
         items: checklistItems,
         normalizeSelectedIds,
-        buildExecutionPlan: (selectedIds) => ({ selectedIds }),
-        runExecutionPlan: async (plan) => {
-            const selected = new Set(plan.selectedIds);
-            const installService = selected.has('setup.thisComputer.installService');
-            const startService = selected.has('setup.thisComputer.startService');
-            const verifyService = selected.has('setup.thisComputer.verifyService');
-
-            await start(buildLocalMachineSetupSystemTaskSpec({
-                installService,
-                startService,
-                verifyService,
-            }));
-        },
-        mapExecutionSnapshotToRowState: (snapshot) => mapThisComputerTaskToChecklistExecution(snapshot) as any,
+        buildExecutionPlan,
+        runExecutionPlan,
+        mapExecutionSnapshotToRowState,
         onCancelExecution: cancel,
         initialPhase: activeTaskSnapshot ? 'execute' : 'select',
         initialExpandedIds: activeTaskSnapshot?.currentStepId ? [activeTaskSnapshot.currentStepId] : [],
     });
 
-    const executionById = React.useMemo(() => {
-        if (controller.phase !== 'execute') return undefined;
-        const snapshotExecution = mapThisComputerTaskToChecklistExecution(activeTaskSnapshot);
-        const selectedSet = new Set(controller.selectedIds);
-        const filtered: Record<string, (typeof snapshotExecution)[keyof typeof snapshotExecution]> = {};
-        for (const [itemId, state] of Object.entries(snapshotExecution)) {
-            if (selectedSet.has(itemId)) {
-                filtered[itemId] = state as any;
-            }
+    React.useEffect(() => {
+        if (controller.phase !== 'select') {
+            return;
         }
-        return filtered;
-    }, [activeTaskSnapshot, controller.phase, controller.selectedIds]);
+        setChecklistItems(liveChecklistItems);
+    }, [controller.phase, liveChecklistItems]);
+
+    const executionById = controller.phase === 'execute'
+        ? controller.executionById
+        : undefined;
+
+    React.useEffect(() => {
+        if (!activeTaskSnapshot) return;
+        controller.publishSnapshot(activeTaskSnapshot);
+    }, [activeTaskSnapshot, controller.publishSnapshot]);
 
     const handleCopyDiagnostics = React.useCallback(async (itemId: string) => {
         const payload = buildThisComputerChecklistDiagnosticsPayload({
@@ -178,6 +195,28 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
                         }
                         await controller.continue();
                     },
+            });
+            return;
+        }
+
+        if (startError) {
+            props.onWizardPrimaryChange({
+                label: t('common.retry'),
+                disabled: isStarting,
+                onPress: async () => {
+                    await controller.retry();
+                },
+            });
+            return;
+        }
+
+        if (!activeTaskSnapshot) {
+            // Execution was requested but the system-task snapshot has not materialized yet.
+            // Keep the primary CTA disabled to avoid an enabled no-op state.
+            props.onWizardPrimaryChange({
+                label: t('common.continue'),
+                disabled: true,
+                onPress: async () => undefined,
             });
             return;
         }
@@ -235,6 +274,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
             onPress: () => undefined,
         });
     }, [
+        activeTaskSnapshot,
         activeTaskSnapshot?.result,
         activeTaskSnapshot?.status,
         controller,
@@ -244,6 +284,7 @@ export const SetupThisComputerChecklistStep = React.memo(function SetupThisCompu
         props.onNeedsAuth,
         props.onRequestAdvance,
         props.onWizardPrimaryChange,
+        startError,
     ]);
 
     React.useEffect(() => () => props.onWizardPrimaryChange?.(null), [props.onWizardPrimaryChange]);

@@ -52,7 +52,7 @@ vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
         getActiveServerSnapshot: () => activeServerSnapshotMock,
     };
 });
-vi.mock('./SetupThisComputerWizardStep', () => ({
+vi.mock('../SetupThisComputerWizardStep', () => ({
     SetupThisComputerWizardStep: (props: Record<string, unknown>) => {
         React.useEffect(() => {
             if (!setupThisComputerWizardStepMock.forceBackHidden) return;
@@ -65,17 +65,20 @@ vi.mock('./SetupThisComputerWizardStep', () => ({
 vi.mock('@/components/settings/machines/localControl/LocalDaemonControlSection', () => ({
     LocalDaemonControlSection: (props: Record<string, unknown>) => React.createElement('LocalDaemonControlSection', props),
 }));
-vi.mock('./relayHostLocalChecklist/RelayHostLocalChecklistStep', () => ({
+vi.mock('../relayHostLocalChecklist/RelayHostLocalChecklistStep', () => ({
     RelayHostLocalChecklistStep: (props: Record<string, unknown>) => React.createElement('RelayHostLocalChecklistStep', props),
 }));
-vi.mock('./remoteSshChecklist/RemoteSshChecklistStep', () => ({
+vi.mock('../remoteSshChecklist/RemoteSshChecklistStep', () => ({
     RemoteSshChecklistStep: (props: Record<string, unknown>) => React.createElement('RemoteSshChecklistStep', props),
 }));
-vi.mock('./WizardTerminalHandoff', () => ({
+vi.mock('../WizardTerminalHandoff', () => ({
     WizardTerminalHandoff: (props: Record<string, unknown>) => React.createElement('WizardTerminalHandoff', props),
 }));
-vi.mock('./ProvidersLogoMultiSelect', () => ({
+vi.mock('../ProvidersLogoMultiSelect', () => ({
     ProvidersLogoMultiSelect: (props: Record<string, unknown>) => React.createElement('ProvidersLogoMultiSelect', props),
+}));
+vi.mock('../WizardProviderSetupStep', () => ({
+    WizardProviderSetupStep: (props: Record<string, unknown>) => React.createElement('WizardProviderSetupStep', props),
 }));
 vi.mock('@/components/settings/providers/setup/ProviderSetupFlow', () => ({
     ProviderSetupFlow: (props: Record<string, unknown>) => React.createElement('ProviderSetupFlow', props),
@@ -84,6 +87,7 @@ vi.mock('@/modal/portal/ModalPortalTarget', () => ({
     ModalPortalTargetProvider: (props: Record<string, unknown>) =>
         React.createElement(React.Fragment, null, props.children as React.ReactNode),
     useModalPortalTarget: () => null,
+    useHasModalPortalTargetProvider: () => false,
 }));
 const relayDriftBannerMock = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock('@/components/settings/server/useRelayDriftBanner', () => ({
@@ -127,6 +131,10 @@ vi.mock('@/text', async () => {
 vi.mock('react-native-safe-area-context', () => ({
     SafeAreaInsetsContext: React.createContext({ top: 0, bottom: 0, left: 0, right: 0 }),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    initialWindowMetrics: {
+        frame: { x: 0, y: 0, width: 390, height: 844 },
+        insets: { top: 0, bottom: 0, left: 0, right: 0 },
+    },
 }));
 
 describe('SetupWizardSurface', () => {
@@ -192,6 +200,50 @@ describe('SetupWizardSurface', () => {
         expect(screen.findByTestId('setupWizard.surface-back')).toBeFalsy();
     });
 
+    it('hides local relay hosting when setup surface policy denies it', async () => {
+        const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relay.allowLocalRelayHost';
+        try {
+            const { SetupWizardSurface } = await import('./SetupWizardSurface');
+            const screen = await renderScreen(React.createElement(SetupWizardSurface, { isDesktopShell: true }));
+
+            expect(screen.findByTestId('setupWizard-branch:relayLocal')).toBeNull();
+        } finally {
+            if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
+        }
+    });
+
+    it('hides remote SSH setup when setup surface policy denies it', async () => {
+        const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY =
+            'setup.relay.allowRemoteSshRelayHost,setup.machine.allowRemoteSshMachineSetup';
+        try {
+            const { SetupWizardSurface } = await import('./SetupWizardSurface');
+            const screen = await renderScreen(React.createElement(SetupWizardSurface, { isDesktopShell: true }));
+
+            expect(screen.findByTestId('setupWizard-branch:remote')).toBeNull();
+            expect(screen.findByTestId('setupWizard-branch:remoteRelay')).toBeNull();
+        } finally {
+            if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
+        }
+    });
+
+    it('hides Tailscale secure access when setup surface policy denies it', async () => {
+        const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relayAccess.allowTailscale';
+        try {
+            const { SetupWizardSurface } = await import('./SetupWizardSurface');
+            const screen = await renderScreen(React.createElement(SetupWizardSurface, { isDesktopShell: true }));
+
+            expect(screen.findByTestId('setupWizard-branch:tailscale')).toBeNull();
+        } finally {
+            if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
+        }
+    });
+
     it('persists the remote machine branch as soon as it is selected', async () => {
         const { SetupWizardSurface } = await import('./SetupWizardSurface');
         const screen = await renderScreen(React.createElement(SetupWizardSurface, {
@@ -245,6 +297,20 @@ describe('SetupWizardSurface', () => {
         expect(screen.findByType('RelayDriftActionCard' as never)).toBeTruthy();
     });
 
+    it('filters the chooser to relay-related options when scope=relay', async () => {
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+            scope: 'relay',
+        }));
+
+        expect(screen.findByTestId('setupWizard-branch:relayLocal')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard-branch:remoteRelay')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard-branch:local')).toBeFalsy();
+        expect(screen.findByTestId('setupWizard-branch:remote')).toBeFalsy();
+        expect(screen.findByTestId('setupWizard-branch:tailscale')).toBeTruthy();
+    });
+
     it('guides the user from branch selection into the local setup step', async () => {
         const { SetupWizardSurface } = await import('./SetupWizardSurface');
         const screen = await renderScreen(React.createElement(SetupWizardSurface, {
@@ -281,11 +347,11 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        expect(screen.findByType('ProviderSetupFlow' as never)).toBeTruthy();
+        expect(screen.findByType('WizardProviderSetupStep' as never)).toBeTruthy();
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
     });
 
-    it('propagates the local machine id to ProviderSetupFlow after local setup completes', async () => {
+    it('propagates the local machine id to the providers wizard step after local setup completes', async () => {
         const { SetupWizardSurface } = await import('./SetupWizardSurface');
         const screen = await renderScreen(React.createElement(SetupWizardSurface, {
             isDesktopShell: true,
@@ -316,8 +382,8 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const providerFlow = screen.findByType('ProviderSetupFlow' as never);
-        expect(providerFlow.props.machineId).toBe('mach-local');
+        const providersStep = screen.findByType('WizardProviderSetupStep' as never);
+        expect(providersStep.props.machineId).toBe('mach-local');
     });
 
     it('guides the user from relay hosting branch into the relay runtime step', async () => {
@@ -1158,7 +1224,7 @@ describe('SetupWizardSurface', () => {
         expect(remoteSection.props.initialInstallRelayRuntime).toBe(true);
     });
 
-    it('propagates the remote machine id to ProviderSetupFlow after remote SSH bootstrap completes', async () => {
+    it('propagates the remote machine id to the providers wizard step after remote SSH bootstrap completes', async () => {
         const { SetupWizardSurface } = await import('./SetupWizardSurface');
         const screen = await renderScreen(React.createElement(SetupWizardSurface, {
             isDesktopShell: true,
@@ -1194,8 +1260,8 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const providerFlow = screen.findByType('ProviderSetupFlow' as never);
-        expect(providerFlow).toBeTruthy();
-        expect(providerFlow.props.machineId).toBe('mach-remote');
+        const providersStep = screen.findByType('WizardProviderSetupStep' as never);
+        expect(providersStep).toBeTruthy();
+        expect(providersStep.props.machineId).toBe('mach-remote');
     });
 });

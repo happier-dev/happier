@@ -7,22 +7,35 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
 import { isTauriDesktop } from '@/utils/platform/tauri';
+import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t } from '@/text';
 
 import { MachineSetupActionsSection } from './MachineSetupActionsSection';
 import { MachinesListSection } from './MachinesListSection';
 import { useMachinesSettingsViewModel } from './machinesSettingsViewModel';
+import { buildMachineSetupWizardHref } from './setupWizardRoute';
+
+type MachineSetupWizardAction = 'local' | 'remote';
+type MachineSetupWizardStep = 'setup_this_computer' | 'remote_ssh_setup';
 
 export const MachinesSettingsView = React.memo(function MachinesSettingsView() {
     const router = useRouter();
     const viewModel = useMachinesSettingsViewModel();
     const isDesktop = isTauriDesktop();
     const isBrowserWeb = Platform.OS === 'web' && !isDesktop;
-    const openSetupWizard = React.useCallback((params?: Readonly<{ step?: string; action?: string }>) => {
-        const step = params?.step ? `step=${encodeURIComponent(params.step)}` : '';
-        const action = params?.action ? `action=${encodeURIComponent(params.action)}` : '';
-        const query = [step, action].filter(Boolean).join('&');
-        router.push(`/setup/wizard${query ? `?${query}` : ''}`);
+    const setupPolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);
+    const openSetupWizard = React.useCallback((params?: Readonly<{
+        step: MachineSetupWizardStep;
+        action: MachineSetupWizardAction;
+    }>) => {
+        if (!params?.step || !params?.action) {
+            router.push('/setup/wizard');
+            return;
+        }
+        router.push(buildMachineSetupWizardHref({
+            action: params.action,
+            step: params.step,
+        }));
     }, [router]);
 
     return (
@@ -53,18 +66,22 @@ export const MachinesSettingsView = React.memo(function MachinesSettingsView() {
                 <MachineSetupActionsSection />
             ) : isBrowserWeb ? (
                 <ItemGroup title={t('common.actions')}>
-                    <Item
-                        testID="settings.machines.openWizard.setupThisComputer"
-                        title={t('setupOnboarding.setupThisComputerTitle')}
-                        subtitle={t('settings.machineSetupCurrentMachineSubtitle')}
-                        onPress={() => openSetupWizard({ step: 'setup_this_computer', action: 'local' })}
-                    />
-                    <Item
-                        testID="settings.machines.openWizard.addMachine"
-                        title={t('settings.addMachine')}
-                        subtitle={t('settings.machineSetupSshMachineSubtitle')}
-                        onPress={() => openSetupWizard({ step: 'remote_ssh_setup', action: 'remote' })}
-                    />
+                    {setupPolicy.machine.allowLocalMachineSetup ? (
+                        <Item
+                            testID="settings.machines.openWizard.setupThisComputer"
+                            title={t('setupOnboarding.setupThisComputerTitle')}
+                            subtitle={t('settings.machineSetupCurrentMachineSubtitle')}
+                            onPress={() => openSetupWizard({ step: 'setup_this_computer', action: 'local' })}
+                        />
+                    ) : null}
+                    {setupPolicy.machine.allowRemoteSshMachineSetup ? (
+                        <Item
+                            testID="settings.machines.openWizard.addMachine"
+                            title={t('setupOnboarding.setupNewMachineAction')}
+                            subtitle={t('settings.machineSetupSshMachineSubtitle')}
+                            onPress={() => openSetupWizard({ step: 'remote_ssh_setup', action: 'remote' })}
+                        />
+                    ) : null}
                 </ItemGroup>
             ) : null}
         </ItemList>

@@ -55,11 +55,12 @@ export type PlanChecklistControllerOptions<Plan, Snapshot> = Readonly<{
     mapExecutionSnapshotToRowState: (
         snapshot: Snapshot,
         items: readonly PlanChecklistItem[],
+        selectedIds: readonly string[],
     ) => Partial<Record<string, PlanChecklistExecutionState>>;
     onCancelExecution?: () => void;
 }>;
 
-export type PlanChecklistControllerResult = Readonly<{
+export type PlanChecklistControllerResult<Snapshot = unknown> = Readonly<{
     phase: PlanChecklistPhase;
     selectedIds: readonly string[];
     expandedIds: readonly string[];
@@ -68,7 +69,9 @@ export type PlanChecklistControllerResult = Readonly<{
     canContinue: boolean;
     toggleItem: (itemId: string) => void;
     toggleExpanded: (itemId: string) => void;
+    publishSnapshot: (snapshot: Snapshot) => void;
     continue: () => Promise<void>;
     retry: () => Promise<void>;
     cancel: () => void;
+    resetToSelect: () => void;
 }>;

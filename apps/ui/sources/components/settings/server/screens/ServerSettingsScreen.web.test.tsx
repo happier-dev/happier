@@ -2,9 +2,11 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import type { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 let controllerValue: any = null;
+let routerMock: ReturnType<typeof createExpoRouterMock> | null = null;
 
 installSettingsViewCommonModuleMocks({
     reactNative: async () => {
@@ -19,7 +21,8 @@ installSettingsViewCommonModuleMocks({
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock().module;
+        routerMock = createExpoRouterMock();
+        return routerMock.module;
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -131,5 +134,8 @@ describe('ServerSettingsScreen web gating', () => {
         expect(notice?.props.title).toBe('setupOnboarding.setupNewRelayAction');
         expect(notice?.props.subtitle).toBe('setupOnboarding.openSetupWizardSubtitle');
         expect(typeof notice?.props.onPress).toBe('function');
+
+        await notice?.props.onPress?.();
+        expect(routerMock?.spies.push).toHaveBeenCalledWith('/setup/wizard?scope=relay&step=setup_chooser');
     });
 });

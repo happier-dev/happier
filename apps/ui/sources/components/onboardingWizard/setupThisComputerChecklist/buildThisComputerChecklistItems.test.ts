@@ -82,6 +82,41 @@ describe('buildThisComputerChecklistItems', () => {
         expect(items.find((item) => item.id === 'setup.thisComputer.configureRelay')?.badge).toBe('Mismatch');
     });
 
+    it('adds a tailscale recommendation when the active relay is tailnet-only', () => {
+        const items = buildThisComputerChecklistItems({
+            activeRelayUrl: 'https://relay.example.ts.net',
+            serviceInstalled: false,
+            daemonRunning: false,
+            machineId: null,
+            needsAuth: false,
+            daemonServerUrl: 'https://relay.example.ts.net',
+            daemonComparableKey: 'https://relay.example.ts.net',
+            daemonAccountId: null,
+            daemonMachineRegistered: null,
+            uiAccountId: null,
+            serverMismatch: false,
+            accountMismatch: false,
+            pairingRequired: false,
+            relayDriftBanner: null,
+        });
+
+        expect(items.map((item) => item.id)).toEqual([
+            'setup.thisComputer.resolveRelay',
+            'setup.thisComputer.checkAuth',
+            'setup.thisComputer.configureRelay',
+            'setup.thisComputer.installService',
+            'setup.thisComputer.startService',
+            'setup.thisComputer.verifyService',
+            'setup.thisComputer.installTailscale',
+        ]);
+        expect(items.find((item) => item.id === 'setup.thisComputer.installTailscale')).toMatchObject({
+            defaultSelected: true,
+            disabled: false,
+            satisfied: false,
+            badge: 'Recommended',
+        });
+    });
+
     it('surfaces account mismatch as an unsatisfied auth check even when the daemon is otherwise authenticated', () => {
         const items = buildThisComputerChecklistItems({
             activeRelayUrl: 'https://relay.example.test',

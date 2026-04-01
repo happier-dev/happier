@@ -27,7 +27,9 @@ describe('Machines settings routes', () => {
         const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
         const screen = await renderScreen(React.createElement(AddMachineRoute));
 
-        expect(screen.tree.findByProps({ testID: 'settings.machineSetup.openSetupWizard' })).toBeTruthy();
+        const item = screen.tree.findByProps({ testID: 'settings.machineSetup.openSetupWizard' });
+        expect(item).toBeTruthy();
+        expect(item.props.title).toBe('Set up a new machine');
     });
 
     it('renders a setup wizard launcher for this-computer route on desktop', async () => {
@@ -43,7 +45,9 @@ describe('Machines settings routes', () => {
         const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
         const screen = await renderScreen(React.createElement(AddMachineRoute));
 
-        expect(screen.tree.findByProps({ testID: 'settings.machineSetup.openSetupWizard' })).toBeTruthy();
+        const item = screen.tree.findByProps({ testID: 'settings.machineSetup.openSetupWizard' });
+        expect(item).toBeTruthy();
+        expect(item.props.title).toBe('Set up a new machine');
     });
 
     it('renders a setup wizard launcher for this-computer route on web', async () => {

@@ -225,4 +225,32 @@ describe('useServerSettingsScreenController (server validation)', () => {
         expect(value.isValidating).toBe(false);
         expect(value.error).toBe('server.failedToConnectToServer');
     });
+
+    it('treats a 401 response from /health as reachable (server requires auth but is online)', async () => {
+        runtimeFetchMock.mockResolvedValueOnce({
+            ok: false,
+            status: 401,
+            headers: new Headers(),
+        });
+
+        const { useServerSettingsScreenController } = await import('./useServerSettingsScreenController');
+
+        let value: any = null;
+        function Probe() {
+            value = useServerSettingsScreenController();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+        await act(async () => {
+            value.onChangeUrl('https://auth-required.example.test');
+            value.onChangeName('Auth Required');
+        });
+
+        await act(async () => {
+            await value.onAddServer();
+        });
+
+        expect(value.error).toBe(null);
+    });
 });

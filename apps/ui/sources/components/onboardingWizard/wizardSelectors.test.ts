@@ -35,6 +35,7 @@ describe('wizardSelectors', () => {
             'relay_select',
             'auth',
             'auth_restore',
+            'auth_secret_key',
             'auth_lost_access',
         ]);
     });
@@ -46,6 +47,7 @@ describe('wizardSelectors', () => {
             'relay_select',
             'auth',
             'auth_restore',
+            'auth_secret_key',
             'auth_lost_access',
         ]);
     });
@@ -57,6 +59,7 @@ describe('wizardSelectors', () => {
             'confirm_relay_lock',
             'auth',
             'auth_restore',
+            'auth_secret_key',
             'auth_lost_access',
         ]);
     });
@@ -72,6 +75,7 @@ describe('wizardSelectors', () => {
             'relay_select',
             'auth',
             'auth_restore',
+            'auth_secret_key',
             'auth_lost_access',
         ]);
 
@@ -86,6 +90,7 @@ describe('wizardSelectors', () => {
             'relay_enter_url',
             'auth',
             'auth_restore',
+            'auth_secret_key',
             'auth_lost_access',
         ]);
     });
@@ -138,6 +143,7 @@ describe('wizardSelectors', () => {
         })).toEqual([
             'setup_chooser',
             'host_relay_local',
+            'relay_access',
             'confirm_switch_relay',
             'done',
         ]);
@@ -161,6 +167,7 @@ describe('wizardSelectors', () => {
             },
         })).toEqual([
             'setup_chooser',
+            'relay_access',
             'remote_ssh_setup',
             'confirm_switch_relay',
             'providers_optional',
@@ -185,6 +192,6 @@ describe('wizardSelectors', () => {
             ...onboardingContext,
             relaySelection: { choiceId: 'customUrl' as const, serverUrl: 'https://relay.example.com', locked: false },
         }, 'auth')).toBe('relay_select');
-        expect(getWizardProgress(onboardingContext, 'auth')).toEqual({ current: 3, total: 5 });
+        expect(getWizardProgress(onboardingContext, 'auth')).toEqual({ current: 3, total: 6 });
     });
 });

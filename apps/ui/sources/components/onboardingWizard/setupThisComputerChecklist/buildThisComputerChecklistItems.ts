@@ -11,6 +11,8 @@ const BASE_ITEM_IDS: readonly ThisComputerChecklistItemId[] = [
     'setup.thisComputer.configureRelay',
 ];
 
+const TAILSCALE_ITEM_ID: ThisComputerChecklistItemId = 'setup.thisComputer.installTailscale';
+
 const AUTH_ITEM_IDS: readonly ThisComputerChecklistItemId[] = [
     'setup.thisComputer.auth.request',
     'setup.thisComputer.auth.wait',
@@ -26,12 +28,26 @@ const ITEM_TITLES: Readonly<Record<ThisComputerChecklistItemId, string>> = {
     'setup.thisComputer.resolveRelay': t('settings.machineSetupStepResolveRelay'),
     'setup.thisComputer.checkAuth': t('settings.machineSetupStepCheckAuth'),
     'setup.thisComputer.configureRelay': t('settings.machineSetupStepConfigureRelay'),
+    'setup.thisComputer.installTailscale': t('settings.localTailscale.title'),
     'setup.thisComputer.auth.request': t('settings.machineSetupStepAuthRequest'),
     'setup.thisComputer.auth.wait': t('settings.machineSetupStepAuthWait'),
     'setup.thisComputer.installService': t('settings.machineSetupStepInstallService'),
     'setup.thisComputer.startService': t('settings.machineSetupStepStartService'),
     'setup.thisComputer.verifyService': t('settings.machineSetupStepVerifyService'),
 };
+
+function isTailnetRelayUrl(relayUrl: string | null): boolean {
+    const value = String(relayUrl ?? '').trim();
+    if (!value) {
+        return false;
+    }
+
+    try {
+        return new URL(value).hostname.toLowerCase().endsWith('.ts.net');
+    } catch {
+        return false;
+    }
+}
 
 function toRedactedId(raw: string | null): string {
     const value = String(raw ?? '').trim();
@@ -68,11 +84,15 @@ function resolveAccountMismatchSubtitle(preflight: ThisComputerSetupPreflight): 
 }
 
 function buildChecklistItemIds(preflight: ThisComputerSetupPreflight): readonly ThisComputerChecklistItemId[] {
-    return [
-        ...BASE_ITEM_IDS,
-        ...(preflight.pairingRequired ? AUTH_ITEM_IDS : []),
-        ...FOOTER_ITEM_IDS,
-    ];
+    const items: ThisComputerChecklistItemId[] = [...BASE_ITEM_IDS];
+    if (preflight.pairingRequired) {
+        items.push(...AUTH_ITEM_IDS);
+    }
+    items.push(...FOOTER_ITEM_IDS);
+    if (isTailnetRelayUrl(preflight.activeRelayUrl)) {
+        items.push(TAILSCALE_ITEM_ID);
+    }
+    return items;
 }
 
 function resolveSubtitle(id: ThisComputerChecklistItemId, preflight: ThisComputerSetupPreflight): string {
@@ -102,6 +122,8 @@ function resolveSubtitle(id: ThisComputerChecklistItemId, preflight: ThisCompute
             return preflight.machineId
                 ? t('setupOnboarding.nextActionReady')
                 : t('setupOnboarding.postAuthBody');
+        case 'setup.thisComputer.installTailscale':
+            return t('settings.localTailscale.footer');
         default:
             return t('setupOnboarding.postAuthBody');
     }
@@ -146,6 +168,8 @@ function resolveDetails(id: ThisComputerChecklistItemId, preflight: ThisComputer
             return preflight.machineId
                 ? t('setupOnboarding.nextActionReady')
                 : t('settings.machineSetupStepVerifyService');
+        case 'setup.thisComputer.installTailscale':
+            return t('settings.localTailscale.installSubtitle');
         default:
             return t('setupOnboarding.postAuthBody');
     }
@@ -168,6 +192,8 @@ function resolveSatisfied(id: ThisComputerChecklistItemId, preflight: ThisComput
             return preflight.daemonRunning;
         case 'setup.thisComputer.verifyService':
             return Boolean(preflight.machineId);
+        case 'setup.thisComputer.installTailscale':
+            return false;
         default:
             return false;
     }
@@ -177,7 +203,10 @@ export function buildThisComputerChecklistItems(preflight: ThisComputerSetupPref
     return buildChecklistItemIds(preflight).map((id) => {
         const satisfied = resolveSatisfied(id, preflight);
         const isServiceItem = FOOTER_ITEM_IDS.includes(id);
-        const disabled = satisfied ? true : (isServiceItem ? false : true);
+        const isTailscaleItem = id === TAILSCALE_ITEM_ID;
+        const disabled = satisfied
+            ? true
+            : (isServiceItem || isTailscaleItem ? false : true);
         return {
             id,
             title: ITEM_TITLES[id],
@@ -189,7 +218,9 @@ export function buildThisComputerChecklistItems(preflight: ThisComputerSetupPref
                 ? t('systemStatus.mismatch')
                 : id === 'setup.thisComputer.checkAuth' && preflight.accountMismatch
                     ? t('systemStatus.mismatch')
-                : (satisfied ? t('common.done') : undefined),
+                    : isTailscaleItem
+                        ? t('setupOnboarding.recommendedBadge')
+                    : (satisfied ? t('common.done') : undefined),
             details: resolveDetails(id, preflight),
         } satisfies PlanChecklistItem;
     });

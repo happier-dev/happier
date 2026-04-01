@@ -14,6 +14,7 @@ import sodium from '@/encryption/libsodium.lib';
 import { digest } from '@/platform/digest';
 import { getRandomBytesAsync } from '@/platform/cryptoRandom';
 import { Modal } from '@/modal';
+import { BaseModal } from '@/modal/components/BaseModal';
 import { useAuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { useIsLandscape } from '@/utils/platform/responsive';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
@@ -33,7 +34,7 @@ import {
     resolveWizardAuthReturnToRoute,
     setOnboardingWizardPreAuthResumeIntent,
 } from '@/components/onboardingWizard/wizardResume';
-import { OnboardingWizardSurface } from '@/components/onboardingWizard/OnboardingWizardSurface';
+import { OnboardingWizardSurface } from '@/components/onboardingWizard/surfaces/OnboardingWizardSurface';
 import type { WizardStepId } from '@/components/onboardingWizard/wizardTypes';
 import { getWizardStepDefinition } from '@/components/onboardingWizard/wizardStepRegistry';
 
@@ -316,7 +317,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         }
     }, [props.initialStepId]);
 
-    return (
+    const wizard = (
         <OnboardingWizardSurface
             testID={props.testID ?? 'onboarding-wizard'}
             layout={isLandscape ? 'landscape' : 'portrait'}
@@ -330,4 +331,20 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             onChangeRelayViaServerConfig={changeRelayViaServerConfig}
         />
     );
+
+    // On web, render the pre-auth onboarding wizard inside BaseModal so the scrim/backdrop always
+    // covers the full viewport (and matches other overlay surfaces like popovers).
+    if (Platform.OS === 'web') {
+        return (
+            <BaseModal
+                visible
+                showBackdrop
+                closeOnBackdrop={false}
+            >
+                {wizard}
+            </BaseModal>
+        );
+    }
+
+    return wizard;
 });

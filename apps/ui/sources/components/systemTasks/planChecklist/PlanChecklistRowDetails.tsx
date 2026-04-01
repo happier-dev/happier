@@ -8,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import type { PlanChecklistLogEntry } from './types';
+import type { PlanChecklistExecutionError, PlanChecklistLogEntry } from './types';
 
 function formatLogEntry(entry: PlanChecklistLogEntry): string {
     const prefix = `${entry.ts}ms`;
@@ -39,6 +39,34 @@ const stylesheet = StyleSheet.create((theme) => ({
     detailsBody: {
         gap: 8,
     },
+    errorCard: {
+        gap: 6,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: theme.colors.warningCritical,
+        backgroundColor: theme.colors.surface,
+        padding: 12,
+    },
+    errorLabel: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.warningCritical,
+        fontSize: 12,
+        lineHeight: 16,
+        textTransform: 'uppercase',
+        letterSpacing: 0.4,
+    },
+    errorTitle: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.text,
+        fontSize: 13,
+        lineHeight: 18,
+    },
+    errorMessage: {
+        ...Typography.default(),
+        color: theme.colors.textSecondary,
+        fontSize: 13,
+        lineHeight: 18,
+    },
     logsLabel: {
         ...Typography.default('semiBold'),
         color: theme.colors.textSecondary,
@@ -67,6 +95,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 export type PlanChecklistRowDetailsProps = Readonly<{
     testID?: string;
     renderDetails?: () => React.ReactNode;
+    error?: PlanChecklistExecutionError;
     logs?: readonly PlanChecklistLogEntry[];
     onCopyDiagnostics?: () => void | Promise<void>;
 }>;
@@ -76,8 +105,13 @@ export const PlanChecklistRowDetails = React.memo(function PlanChecklistRowDetai
     const logText = React.useMemo(() => formatLogs(props.logs ?? []), [props.logs]);
     const hasLogs = Boolean(logText.trim().length > 0);
     const hasDetails = typeof props.renderDetails === 'function';
+    const hasError = Boolean(props.error?.title || props.error?.message);
+    const detailsNode = hasDetails ? props.renderDetails?.() : null;
+    const normalizedDetailsNode = (typeof detailsNode === 'string' || typeof detailsNode === 'number')
+        ? <Text style={styles.emptyText}>{String(detailsNode)}</Text>
+        : detailsNode;
 
-    if (!hasDetails && !hasLogs && !props.onCopyDiagnostics) {
+    if (!hasDetails && !hasLogs && !hasError && !props.onCopyDiagnostics) {
         return null;
     }
 
@@ -87,8 +121,16 @@ export const PlanChecklistRowDetails = React.memo(function PlanChecklistRowDetai
                 <View style={styles.details}>
                     <Text style={styles.detailsTitle}>{t('common.details')}</Text>
                     <View style={styles.detailsBody}>
-                        {props.renderDetails?.()}
+                        {normalizedDetailsNode}
                     </View>
+                </View>
+            ) : null}
+
+            {hasError ? (
+                <View style={styles.errorCard}>
+                    <Text style={styles.errorLabel}>{t('common.error')}</Text>
+                    {props.error?.title ? <Text style={styles.errorTitle}>{props.error.title}</Text> : null}
+                    {props.error?.message ? <Text style={styles.errorMessage}>{props.error.message}</Text> : null}
                 </View>
             ) : null}
 

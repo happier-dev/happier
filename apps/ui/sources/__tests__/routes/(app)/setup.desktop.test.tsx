@@ -139,13 +139,10 @@ describe('/setup route desktop post-auth routing', () => {
         standardCleanup();
     });
 
-    it('routes healthy desktop machines into the app after auth', async () => {
+    it('redirects authenticated desktop users to /setup/wizard', async () => {
         const Screen = (await import('@/app/(app)/setup/index')).default;
-        const screen = await renderScreen(React.createElement(Screen));
+        await renderScreen(React.createElement(Screen));
 
-        expect(screen.findByTestId('setup.postAuth')).toBeNull();
-        expect(screen.findByTestId('setup.summary.activeRelay')).toBeNull();
-        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/');
-        expect(clearPendingSetupIntentMock).toHaveBeenCalledTimes(1);
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/setup/wizard');
     });
 });

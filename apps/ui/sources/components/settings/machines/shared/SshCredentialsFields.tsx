@@ -39,6 +39,7 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
     value: SshCredentialsDraft;
     supportedAuthModes?: ReadonlyArray<SshAuthMode>;
     disabled?: boolean;
+    layoutVariant?: 'settings' | 'wizard';
     onChange: (next: SshCredentialsDraft) => void;
     onChooseIdentityFile?: () => void;
     afterAuthGroups?: React.ReactNode;
@@ -50,6 +51,8 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
     const testIDs = props.testIDs ?? {};
     const resolveTestID = (suffix: keyof NonNullable<typeof testIDs> | string) => `${props.testIDPrefix}-${suffix}`;
     const margins = theme.margins ?? lightTheme.margins;
+    const layoutVariant = props.layoutVariant ?? 'settings';
+    const isWizardLayout = layoutVariant === 'wizard';
     const supportedAuthModes = props.supportedAuthModes ?? DEFAULT_SSH_AUTH_MODES;
     const supportsAgentAuth = supportedAuthModes.includes('agent');
     const supportsKeyfileAuth = supportedAuthModes.includes('keyfile');
@@ -90,10 +93,88 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
         });
     }, [updateValue]);
 
+    const renderAuthModeItems = () => (
+        <>
+            {supportsAgentAuth ? (
+                <Item
+                    testID={testIDs.sshAuthAgent ?? resolveTestID('sshAuthAgent')}
+                    title={t('settings.machineSetupRemoteSshAgentAuthLabel')}
+                    selected={value.authMode === 'agent'}
+                    disabled={formDisabled}
+                    onPress={() => handleAuthModeChange('agent')}
+                />
+            ) : null}
+            {supportsKeyfileAuth ? (
+                <Item
+                    testID={testIDs.sshAuthKeyfile ?? resolveTestID('sshAuthKeyfile')}
+                    title={t('settings.machineSetupRemoteSshKeyFileAuthLabel')}
+                    selected={value.authMode === 'keyfile'}
+                    disabled={formDisabled}
+                    onPress={() => handleAuthModeChange('keyfile')}
+                />
+            ) : null}
+            {supportsPasswordAuth ? (
+                <Item
+                    testID={testIDs.sshAuthPassword ?? resolveTestID('sshAuthPassword')}
+                    title={tLoose('settings.machineSetupRemoteSshPasswordAuthLabel')}
+                    selected={value.authMode === 'password'}
+                    disabled={formDisabled}
+                    onPress={() => handleAuthModeChange('password')}
+                />
+            ) : null}
+        </>
+    );
+
+    const renderIdentityFileField = () => (
+        <>
+            <MachineSetupTextField
+                testID={testIDs.sshIdentityFile ?? resolveTestID('sshIdentityFile')}
+                label={t('settings.machineSetupRemoteSshIdentityFileLabel')}
+                value={value.identityFilePath}
+                editable={!formDisabled}
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={(nextPath) => {
+                    props.onChange({
+                        ...value,
+                        identityFilePath: nextPath,
+                    });
+                }}
+            />
+
+            {props.onChooseIdentityFile ? (
+                <Item
+                    testID={testIDs.chooseIdentityFile ?? resolveTestID('chooseIdentityFile')}
+                    title={t('common.open')}
+                    disabled={formDisabled}
+                    onPress={props.onChooseIdentityFile}
+                />
+            ) : null}
+        </>
+    );
+
+    const renderPasswordField = () => (
+        <MachineSetupTextField
+            testID={testIDs.sshPassword ?? resolveTestID('sshPasswordInput')}
+            label={tLoose('settings.machineSetupRemoteSshPasswordLabel')}
+            value={value.password}
+            editable={!formDisabled}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={(nextPassword) => {
+                props.onChange({
+                    ...value,
+                    password: nextPassword,
+                });
+            }}
+        />
+    );
+
     return (
         <>
-            <ItemGroup>
-                <View style={{ paddingHorizontal: margins.lg, paddingVertical: margins.sm, gap: margins.sm }}>
+            {isWizardLayout ? (
+                <View style={{ gap: margins.sm }}>
                     <MachineSetupTextField
                         testID={testIDs.sshUsername ?? resolveTestID('sshUsernameInput')}
                         label={tLoose('settings.machineSetupRemoteSshUsernameLabel')}
@@ -130,62 +211,88 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                         onChangeText={handlePortChange}
                     />
                 </View>
-            </ItemGroup>
+            ) : (
+                <ItemGroup>
+                    <View style={{ paddingHorizontal: margins.lg, paddingVertical: margins.sm, gap: margins.sm }}>
+                        <MachineSetupTextField
+                            testID={testIDs.sshUsername ?? resolveTestID('sshUsernameInput')}
+                            label={tLoose('settings.machineSetupRemoteSshUsernameLabel')}
+                            placeholder={t('settings.machineSetupRemoteSshUsernamePlaceholder')}
+                            value={value.username}
+                            editable={!formDisabled}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            onChangeText={(nextUsername) => {
+                                updateValue({
+                                    username: nextUsername.trim(),
+                                });
+                            }}
+                        />
+                        <MachineSetupTextField
+                            testID={testIDs.sshHost ?? resolveTestID('sshHostInput')}
+                            label={tLoose('settings.machineSetupRemoteSshHostLabel')}
+                            placeholder={tLoose('settings.machineSetupRemoteSshHostPlaceholder')}
+                            value={value.host}
+                            editable={!formDisabled}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            onChangeText={handleHostChange}
+                        />
+                        <MachineSetupTextField
+                            testID={testIDs.sshPort ?? resolveTestID('sshPortInput')}
+                            label={tLoose('settings.machineSetupRemoteSshPortLabel')}
+                            placeholder={tLoose('settings.machineSetupRemoteSshPortPlaceholder')}
+                            value={value.port}
+                            editable={!formDisabled}
+                            keyboardType="number-pad"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            onChangeText={handlePortChange}
+                        />
+                    </View>
+                </ItemGroup>
+            )}
 
-            <ItemGroup>
-                {supportsAgentAuth ? (
-                    <Item
-                        testID={testIDs.sshAuthAgent ?? resolveTestID('sshAuthAgent')}
-                        title={t('settings.machineSetupRemoteSshAgentAuthLabel')}
-                        selected={value.authMode === 'agent'}
-                        disabled={formDisabled}
-                        onPress={() => handleAuthModeChange('agent')}
-                    />
-                ) : null}
-                {supportsKeyfileAuth ? (
-                    <Item
-                        testID={testIDs.sshAuthKeyfile ?? resolveTestID('sshAuthKeyfile')}
-                        title={t('settings.machineSetupRemoteSshKeyFileAuthLabel')}
-                        selected={value.authMode === 'keyfile'}
-                        disabled={formDisabled}
-                        onPress={() => handleAuthModeChange('keyfile')}
-                    />
-                ) : null}
-                {supportsPasswordAuth ? (
-                    <Item
-                        testID={testIDs.sshAuthPassword ?? resolveTestID('sshAuthPassword')}
-                        title={tLoose('settings.machineSetupRemoteSshPasswordAuthLabel')}
-                        selected={value.authMode === 'password'}
-                        disabled={formDisabled}
-                        onPress={() => handleAuthModeChange('password')}
-                    />
-                ) : null}
-            </ItemGroup>
+            {isWizardLayout ? (
+                <View style={{ gap: margins.sm }}>
+                    {renderAuthModeItems()}
+                </View>
+            ) : (
+                <ItemGroup>
+                    {renderAuthModeItems()}
+                </ItemGroup>
+            )}
 
             {props.afterAuthGroups}
 
             {supportsKeyfileAuth && value.authMode === 'keyfile' ? (
                 <>
-                    <ItemGroup>
-                        <View style={{ paddingHorizontal: margins.lg, paddingVertical: margins.sm }}>
-                            <MachineSetupTextField
-                                testID={testIDs.sshIdentityFile ?? resolveTestID('sshIdentityFile')}
-                                label={t('settings.machineSetupRemoteSshIdentityFileLabel')}
-                                value={value.identityFilePath}
-                                editable={!formDisabled}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                onChangeText={(nextPath) => {
-                                    props.onChange({
-                                        ...value,
-                                        identityFilePath: nextPath,
-                                    });
-                                }}
-                            />
+                    {isWizardLayout ? (
+                        <View style={{ gap: margins.sm }}>
+                            {renderIdentityFileField()}
                         </View>
-                    </ItemGroup>
+                    ) : (
+                        <ItemGroup>
+                            <View style={{ paddingHorizontal: margins.lg, paddingVertical: margins.sm }}>
+                                <MachineSetupTextField
+                                    testID={testIDs.sshIdentityFile ?? resolveTestID('sshIdentityFile')}
+                                    label={t('settings.machineSetupRemoteSshIdentityFileLabel')}
+                                    value={value.identityFilePath}
+                                    editable={!formDisabled}
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                    onChangeText={(nextPath) => {
+                                        props.onChange({
+                                            ...value,
+                                            identityFilePath: nextPath,
+                                        });
+                                    }}
+                                />
+                            </View>
+                        </ItemGroup>
+                    )}
 
-                    {props.onChooseIdentityFile ? (
+                    {!isWizardLayout && props.onChooseIdentityFile ? (
                         <ItemGroup>
                             <Item
                                 testID={testIDs.chooseIdentityFile ?? resolveTestID('chooseIdentityFile')}
@@ -199,25 +306,31 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
             ) : null}
 
             {supportsPasswordAuth && value.authMode === 'password' ? (
-                <ItemGroup>
-                    <View style={{ paddingHorizontal: margins.lg, paddingVertical: margins.sm }}>
-                        <MachineSetupTextField
-                            testID={testIDs.sshPassword ?? resolveTestID('sshPasswordInput')}
-                            label={tLoose('settings.machineSetupRemoteSshPasswordLabel')}
-                            value={value.password}
-                            editable={!formDisabled}
-                            secureTextEntry
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            onChangeText={(nextPassword) => {
-                                props.onChange({
-                                    ...value,
-                                    password: nextPassword,
-                                });
-                            }}
-                        />
+                isWizardLayout ? (
+                    <View style={{ gap: margins.sm }}>
+                        {renderPasswordField()}
                     </View>
-                </ItemGroup>
+                ) : (
+                    <ItemGroup>
+                        <View style={{ paddingHorizontal: margins.lg, paddingVertical: margins.sm }}>
+                            <MachineSetupTextField
+                                testID={testIDs.sshPassword ?? resolveTestID('sshPasswordInput')}
+                                label={tLoose('settings.machineSetupRemoteSshPasswordLabel')}
+                                value={value.password}
+                                editable={!formDisabled}
+                                secureTextEntry
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                onChangeText={(nextPassword) => {
+                                    props.onChange({
+                                        ...value,
+                                        password: nextPassword,
+                                    });
+                                }}
+                            />
+                        </View>
+                    </ItemGroup>
+                )
             ) : null}
         </>
     );

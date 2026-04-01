@@ -1,16 +1,20 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess';
 
 import { getDefaultSystemTaskRunner, SystemTaskProgressCard } from '@/components/systemTasks';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
+import { resolveSystemTaskStepLabel } from '@/components/systemTasks/resolveSystemTaskStepLabel';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
-import { TextInput } from '@/components/ui/text/Text';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { setActiveShareableServerUrl } from '@/sync/domains/server/serverRuntime';
+import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t, type TranslationKey } from '@/text';
 
 import { useLocalRelayAccessControl } from './useLocalRelayAccessControl';
@@ -51,8 +55,12 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
     runner?: SystemTaskRunner;
     onShareUrlChange?: (shareUrl: string | null) => void;
     upstreamUrl?: string | null;
+    presentation?: 'settings' | 'wizard';
 }>) {
     const runner = props.runner ?? getDefaultSystemTaskRunner();
+    const presentation = props.presentation ?? 'settings';
+    const { theme } = useUnistyles();
+    const setupPolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);
     const {
         activeTaskSnapshot,
         configure,
@@ -81,6 +89,25 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
             setSelectedProviderId(resolvedProviderId);
         }
     }, [resolvedProviderId, selectedProviderId]);
+
+    const visibleProviderIds = React.useMemo(() => {
+        return relayAccessProviderIds.filter((providerId) => {
+            if (providerId === 'tailscaleServe' || providerId === 'tailscaleFunnel') {
+                return setupPolicy.relayAccess.allowTailscale;
+            }
+            if (providerId === 'cloudflareNamed') {
+                return setupPolicy.relayAccess.allowCloudflareTunnel;
+            }
+            return true;
+        });
+    }, [setupPolicy.relayAccess.allowCloudflareTunnel, setupPolicy.relayAccess.allowTailscale]);
+
+    React.useEffect(() => {
+        if (visibleProviderIds.includes(selectedProviderId)) {
+            return;
+        }
+        setSelectedProviderId(visibleProviderIds[0] ?? 'lan');
+    }, [selectedProviderId, visibleProviderIds]);
 
     React.useEffect(() => {
         props.onShareUrlChange?.(resolvedShareUrl);
@@ -144,6 +171,142 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
         await disable();
     }, [disable, isUnavailable]);
 
+    if (presentation === 'wizard') {
+        const inlineStepLabel = activeTaskSnapshot?.currentStepId ? resolveSystemTaskStepLabel(activeTaskSnapshot.currentStepId) : null;
+        const inlineLatestMessage = typeof activeTaskSnapshot?.latestMessage === 'string' ? activeTaskSnapshot.latestMessage : null;
+        return (
+            <>
+                <View style={{ width: '100%', gap: 12 }}>
+                    <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                        {t('settings.relayAccess.footer')}
+                    </Text>
+                    {resolvedShareUrl ? (
+                        <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                            {resolvedShareUrl}
+                        </Text>
+                    ) : null}
+
+                    <View style={{ width: '100%', gap: 8 }}>
+                        {visibleProviderIds.map((providerId: RelayAccessProviderId) => (
+                            <SelectableRow
+                                key={providerId}
+                                testID={`settings.server.relayAccess.choice:${providerId}`}
+                                variant="selectable"
+                                selected={selectedProviderId === providerId}
+                                disabled={isBusy || isUnavailable}
+                                title={t(PROVIDER_TITLE_KEYS[providerId])}
+                                subtitle={t(PROVIDER_SUBTITLE_KEYS[providerId])}
+                                onPress={() => setSelectedProviderId(providerId)}
+                            />
+                        ))}
+                    </View>
+
+                    {selectedProviderId === 'lan' ? (
+                        <View>
+                            <TextInput
+                                testID="settings.server.relayAccess.lanUrl"
+                                placeholder={t('settings.relayAccess.fields.urlLabel')}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                value={lanUrlDraft}
+                                onChangeText={setLanUrlDraft}
+                            />
+                        </View>
+                    ) : null}
+
+                    {selectedProviderId === 'cloudflareNamed' ? (
+                        <View>
+                            <TextInput
+                                testID="settings.server.relayAccess.cloudflareHostname"
+                                placeholder={t('settings.relayAccess.fields.hostnameLabel')}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                value={cloudflareHostnameDraft}
+                                onChangeText={setCloudflareHostnameDraft}
+                            />
+                            <TextInput
+                                testID="settings.server.relayAccess.cloudflareToken"
+                                placeholder={t('settings.relayAccess.fields.tokenLabel')}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                secureTextEntry={true}
+                                value={cloudflareTokenDraft}
+                                onChangeText={setCloudflareTokenDraft}
+                            />
+                        </View>
+                    ) : null}
+
+                    <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'center' }}>
+                        <RoundButton
+                            testID="settings.server.relayAccess.refresh"
+                            size="small"
+                            display="inverted"
+                            title={t('settings.relayAccess.refreshAction')}
+                            onPress={() => {
+                                void refreshStatus();
+                            }}
+                            disabled={isBusy || isUnavailable}
+                        />
+                        <RoundButton
+                            testID="settings.server.relayAccess.save"
+                            size="small"
+                            display="inverted"
+                            title={t('settings.relayAccess.saveAction')}
+                            onPress={() => {
+                                void save();
+                            }}
+                            disabled={isBusy || isUnavailable}
+                        />
+                        {resolvedConfigured ? (
+                            <RoundButton
+                                testID="settings.server.relayAccess.disable"
+                                size="small"
+                                display="inverted"
+                                title={t('settings.relayAccess.disableAction')}
+                                onPress={() => {
+                                    void disableAction();
+                                }}
+                                disabled={isBusy || isUnavailable}
+                            />
+                        ) : null}
+                    </View>
+
+                    {lastErrorMessage ? (
+                        <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                            {lastErrorMessage}
+                        </Text>
+                    ) : null}
+                    {activeTaskSnapshot ? (
+                        <View style={{ width: '100%', gap: 6 }}>
+                            <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                                {t('settings.relayAccess.statusWorking')}
+                            </Text>
+                            {inlineStepLabel ? (
+                                <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                                    {inlineStepLabel}
+                                </Text>
+                            ) : null}
+                            {inlineLatestMessage ? (
+                                <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                                    {inlineLatestMessage}
+                                </Text>
+                            ) : null}
+                            <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
+                                <RoundButton
+                                    testID="settings.server.relayAccess.cancel"
+                                    size="small"
+                                    display="inverted"
+                                    title={t('common.cancel')}
+                                    onPress={cancel}
+                                />
+                            </View>
+                        </View>
+                    ) : null}
+                </View>
+            </>
+        );
+    }
+
     return (
         <>
             <ItemGroup
@@ -192,7 +355,7 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
                 />
 
                 <View>
-                    {relayAccessProviderIds.map((providerId) => (
+                    {visibleProviderIds.map((providerId: RelayAccessProviderId) => (
                         <SelectableRow
                             key={providerId}
                             testID={`settings.server.relayAccess.choice:${providerId}`}

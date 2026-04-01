@@ -22,6 +22,9 @@ function getRowStatus(
     execution?: PlanChecklistExecutionState,
 ): PlanChecklistItemStatus {
     if (phase === 'select') {
+        if (item.satisfied && item.disabled) {
+            return 'done';
+        }
         if (item.satisfied && selected) {
             return 'done';
         }
@@ -31,7 +34,7 @@ function getRowStatus(
         if (execution?.status) {
             return execution.status;
         }
-        if (item.satisfied && item.disabled) {
+        if (item.satisfied) {
             return 'done';
         }
         return selected ? 'queued' : 'idle';
@@ -50,10 +53,10 @@ function getExecutionStatusIcon(status: PlanChecklistItemStatus, selected: boole
         return 'close-circle';
     }
     if (status === 'queued') {
-        return selected ? 'checkbox' : 'ellipse-outline';
+        return 'ellipse-outline';
     }
     if (status === 'idle') {
-        return selected ? 'checkbox-outline' : 'ellipse-outline';
+        return 'ellipse-outline';
     }
     return null;
 }
@@ -155,6 +158,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     detailsToggle: {
         padding: 2,
     },
+    detailsToggleHidden: {
+        opacity: 0,
+    },
+    detailsToggleSlot: {
+        width: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     details: {
         borderTopWidth: 1,
         borderTopColor: theme.colors.divider,
@@ -178,6 +189,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     iconBoxQueued: {
         borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surface,
+    },
+    iconBoxRunning: {
+        borderColor: theme.colors.accent.blue,
         backgroundColor: theme.colors.surface,
     },
 }));
@@ -214,66 +229,81 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
         return undefined;
     }, [props.item.details, props.item.renderDetails]);
     const detailsAvailable = Boolean(itemRenderDetails || (props.execution?.logs?.length ?? 0) > 0 || props.onCopyDiagnostics);
+    const shouldRevealDetailsToggle = detailsAvailable && (Platform.OS !== 'web' || hovered || props.expanded);
     const iconName = props.phase === 'select'
-        ? (status === 'done' ? 'checkmark-circle' : (props.selected ? 'checkbox' : 'checkbox-outline'))
+        ? (status === 'done' ? 'checkmark-circle' : (props.selected ? 'checkmark-circle-outline' : 'ellipse-outline'))
         : getExecutionStatusIcon(status, props.selected);
-    const isInteractive = props.phase === 'select' && !props.item.disabled;
-    const handlePress = React.useCallback(() => {
-        if (isInteractive) {
-            props.onToggle();
+    const canToggleSelection = props.phase === 'select' && !props.item.disabled;
+    const canToggleExpanded = detailsAvailable;
+    const rowOnPress = React.useMemo(() => {
+        if (canToggleSelection) {
+            return props.onToggle;
         }
-    }, [isInteractive, props]);
+        if (canToggleExpanded) {
+            return props.onToggleExpanded;
+        }
+        return undefined;
+    }, [canToggleExpanded, canToggleSelection, props.onToggle, props.onToggleExpanded]);
+    const dimRow = props.phase === 'select' && props.item.disabled && props.item.satisfied;
+    const statusSlotTestID = props.testID ? `${props.testID}-status-slot` : undefined;
 
     const detailsToggle = detailsAvailable ? (
-        <Pressable
-            testID={props.testID ? `${props.testID}-details-toggle` : undefined}
-            accessibilityRole="button"
-            onPress={(event) => {
-                (event as { stopPropagation?: () => void })?.stopPropagation?.();
-                props.onToggleExpanded();
-            }}
-            style={({ pressed }) => ([
-                styles.detailsToggle,
-                pressed ? { opacity: 0.7 } : null,
-            ])}
-        >
-            <Ionicons
-                name={props.expanded ? 'chevron-down' : 'chevron-forward'}
-                size={16}
-                color={theme.colors.textSecondary}
-            />
-        </Pressable>
+        <View style={styles.detailsToggleSlot} pointerEvents={shouldRevealDetailsToggle ? 'auto' : 'none'}>
+            <Pressable
+                testID={props.testID ? `${props.testID}-details-toggle` : undefined}
+                accessibilityRole="button"
+                onPress={(event) => {
+                    (event as { stopPropagation?: () => void })?.stopPropagation?.();
+                    props.onToggleExpanded();
+                }}
+                style={({ pressed }) => ([
+                    styles.detailsToggle,
+                    shouldRevealDetailsToggle ? null : styles.detailsToggleHidden,
+                    pressed ? { opacity: 0.7 } : null,
+                ])}
+            >
+                <Ionicons
+                    name={props.expanded ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={theme.colors.textSecondary}
+                />
+            </Pressable>
+        </View>
     ) : null;
 
     return (
         <View>
             <Pressable
                 testID={props.testID}
-                accessibilityRole={isInteractive ? 'button' : undefined}
-                disabled={!isInteractive}
-                onPress={handlePress}
-                onHoverIn={Platform.OS === 'web' ? () => setHovered(true) : undefined}
-                onHoverOut={Platform.OS === 'web' ? () => setHovered(false) : undefined}
+                accessibilityRole={rowOnPress ? 'button' : undefined}
+                disabled={!rowOnPress}
+                onPress={rowOnPress}
+                onHoverIn={Platform.OS === 'web' && detailsAvailable ? () => setHovered(true) : undefined}
+                onHoverOut={Platform.OS === 'web' && detailsAvailable ? () => setHovered(false) : undefined}
                 style={({ pressed }) => ([
                     styles.row,
                     props.selected ? styles.rowSelected : null,
-                    hovered && !props.selected && isInteractive ? styles.rowHovered : null,
-                    pressed && isInteractive ? { backgroundColor: theme.colors.surfacePressed } : null,
-                    !isInteractive ? styles.rowDisabled : null,
+                    hovered && !props.selected && rowOnPress ? styles.rowHovered : null,
+                    pressed && rowOnPress ? { backgroundColor: theme.colors.surfacePressed } : null,
+                    dimRow ? styles.rowDisabled : null,
                 ])}
             >
                 <View style={styles.rowContent}>
                     <View style={styles.leading}>
-                        {status === 'running' ? (
-                            <ActivityIndicator color={theme.colors.accent.blue} />
-                        ) : iconName ? (
-                            <View style={[
+                        <View
+                            testID={statusSlotTestID}
+                            style={[
                                 styles.iconBoxBase,
                                 status === 'done' ? styles.iconBoxDone : null,
                                 status === 'error' ? styles.iconBoxError : null,
                                 status === 'queued' ? styles.iconBoxQueued : null,
+                                status === 'running' ? styles.iconBoxRunning : null,
                                 props.selected ? styles.iconBoxSelected : null,
-                            ]}>
+                            ]}
+                        >
+                            {status === 'running' ? (
+                                <ActivityIndicator size={16} color={theme.colors.accent.blue} />
+                            ) : iconName ? (
                                 <Ionicons
                                     name={iconName}
                                     size={16}
@@ -287,10 +317,8 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                                                     : theme.colors.textTertiary
                                     }
                                 />
-                            </View>
-                        ) : (
-                            <View style={styles.iconBoxBase} />
-                        )}
+                            ) : null}
+                        </View>
                     </View>
 
                     <View style={styles.titleColumn}>
@@ -327,6 +355,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     <PlanChecklistRowDetails
                         testID={props.testID ? `${props.testID}-details` : undefined}
                         renderDetails={itemRenderDetails}
+                        error={props.execution?.error}
                         logs={props.execution?.logs}
                         onCopyDiagnostics={props.onCopyDiagnostics}
                     />

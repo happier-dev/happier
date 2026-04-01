@@ -25,14 +25,14 @@ export const WizardSshCredentialsFields = React.memo(function WizardSshCredentia
     }, [props.testIDPrefix, style]);
     const testIDs = style === 'wizard'
         ? {
-            sshUsername: `${props.testIDPrefix}-username`,
-            sshHost: `${props.testIDPrefix}-host`,
-            sshPort: `${props.testIDPrefix}-port`,
-            sshAuthAgent: `${props.testIDPrefix}-auth:agent`,
-            sshAuthKeyfile: `${props.testIDPrefix}-auth:keyfile`,
-            sshAuthPassword: `${props.testIDPrefix}-auth:password`,
-            sshIdentityFile: rootTestIDPrefix ? `${rootTestIDPrefix}-remote-identity-file` : `${props.testIDPrefix}-identity-file`,
-            sshPassword: `${props.testIDPrefix}-password`,
+            sshUsername: `${props.testIDPrefix}-sshUsernameInput`,
+            sshHost: `${props.testIDPrefix}-sshHostInput`,
+            sshPort: `${props.testIDPrefix}-sshPortInput`,
+            sshAuthAgent: `${props.testIDPrefix}-sshAuthAgent`,
+            sshAuthKeyfile: `${props.testIDPrefix}-sshAuthKeyfile`,
+            sshAuthPassword: `${props.testIDPrefix}-sshAuthPassword`,
+            sshIdentityFile: rootTestIDPrefix ? `${rootTestIDPrefix}-remote-identity-file` : `${props.testIDPrefix}-sshIdentityFile`,
+            sshPassword: `${props.testIDPrefix}-sshPasswordInput`,
         }
         : undefined;
 
@@ -42,6 +42,7 @@ export const WizardSshCredentialsFields = React.memo(function WizardSshCredentia
             testIDs={testIDs}
             supportedAuthModes={props.supportedAuthModes}
             disabled={props.disabled}
+            layoutVariant={style}
             value={props.value}
             onChange={props.onChange}
         />

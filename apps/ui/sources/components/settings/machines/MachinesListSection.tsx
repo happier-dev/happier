@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ActiveSelectionMachinesSection } from '@/components/settings/server/sections/ActiveSelectionMachinesSection';
@@ -8,6 +9,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 import type { useMachinesSettingsViewModel } from './machinesSettingsViewModel';
+import { buildMachineSetupWizardHref } from './setupWizardRoute';
 
 type MachinesSettingsViewModel = ReturnType<typeof useMachinesSettingsViewModel>;
 
@@ -18,15 +20,20 @@ type MachinesListSectionProps = Readonly<{
 
 export const MachinesListSection = React.memo(function MachinesListSection(props: MachinesListSectionProps) {
     const { theme } = useUnistyles();
+    const router = useRouter();
 
     if (!props.viewModel.hasMachines) {
         const title = props.viewModel.isLoadingMachines ? t('common.loading') : t('newSession.noMachinesFound');
+        const openSetupWizard = () => router.push(buildMachineSetupWizardHref({ action: 'remote', step: 'remote_ssh_setup' }));
+        const emptyStateTitle = props.viewModel.isLoadingMachines ? title : t('setupOnboarding.setupNewMachineAction');
         return (
             <ItemGroup title={t('settings.machines')}>
                 <Item
-                    title={title}
+                    testID={props.viewModel.isLoadingMachines ? undefined : 'settings.machines.openSetupWizard'}
+                    title={emptyStateTitle}
                     icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.textSecondary} />}
-                    showChevron={false}
+                    showChevron={props.viewModel.isLoadingMachines ? false : true}
+                    onPress={props.viewModel.isLoadingMachines ? undefined : openSetupWizard}
                 />
             </ItemGroup>
         );

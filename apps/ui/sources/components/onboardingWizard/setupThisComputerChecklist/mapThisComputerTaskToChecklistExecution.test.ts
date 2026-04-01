@@ -41,6 +41,7 @@ describe('mapThisComputerTaskToChecklistExecution', () => {
             { ts: 20, level: 'info', message: 'Connecting to relay' },
         ]);
         expect(execution['setup.thisComputer.installService']?.status).toBe('queued');
+        expect(execution['setup.thisComputer.installTailscale']?.status).toBe('running');
     });
 
     it('marks the current row as error when the task fails', () => {
@@ -62,6 +63,8 @@ describe('mapThisComputerTaskToChecklistExecution', () => {
                 },
             ],
             result: {
+                protocolVersion: 1,
+                taskId: 'task-1',
                 ok: false,
                 error: {
                     code: 'daemon_service_not_ready',
@@ -79,5 +82,6 @@ describe('mapThisComputerTaskToChecklistExecution', () => {
                 message: 'Service did not become ready',
             },
         });
+        expect(execution['setup.thisComputer.installTailscale']?.status).toBe('idle');
     });
 });

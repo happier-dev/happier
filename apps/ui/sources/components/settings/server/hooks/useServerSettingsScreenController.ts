@@ -33,10 +33,10 @@ import { useServerSettingsGroupActions } from '@/components/settings/server/hook
 import { useServerSettingsConcurrentActions } from '@/components/settings/server/hooks/useServerSettingsConcurrentActions';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import type { RelayDriftBanner } from '@/components/settings/server/relayDriftTypes';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
 import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
+import { createEndpointReadinessProbe } from '@/sync/runtime/connectivity/createEndpointReadinessProbe';
 
 type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[]; source?: string | string[] }>;
 
@@ -115,6 +115,8 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     const [inputName, setInputName] = React.useState('');
     const [error, setError] = React.useState<string | null>(null);
     const [isValidating, setIsValidating] = React.useState(false);
+    const validationAttemptIdRef = React.useRef(0);
+    const validationAbortControllerRef = React.useRef<AbortController | null>(null);
 
     const [serverSelectionGroups, setServerSelectionGroups] = useSettingMutable('serverSelectionGroups');
     const [serverSelectionActiveTargetKind, setServerSelectionActiveTargetKind] = useSettingMutable('serverSelectionActiveTargetKind');
@@ -137,6 +139,10 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     }, [auth, router]);
 
     const validateServerReachable = React.useCallback(async (url: string): Promise<boolean> => {
+        const attemptId = (validationAttemptIdRef.current += 1);
+        validationAbortControllerRef.current?.abort();
+        const controller = new AbortController();
+        validationAbortControllerRef.current = controller;
         try {
             setIsValidating(true);
             setError(null);
@@ -148,32 +154,36 @@ export function useServerSettingsScreenController(): ServerSettingsController {
             }
 
             const timeoutMs = readServerReachabilityProbeTimeoutMs();
-            const controller = typeof AbortController === 'function' ? new AbortController() : null;
-            const timeout = controller
-                ? setTimeout(() => {
-                    controller.abort();
-                }, Math.max(0, timeoutMs))
-                : null;
-            let versionRes: Response;
-            try {
-                versionRes = await runtimeFetch(`${normalized}/v1/version`, {
-                    method: 'GET',
-                    headers: { 'Accept': 'application/json' },
-                    ...(controller ? { signal: controller.signal } : null),
-                });
-            } finally {
-                if (timeout) clearTimeout(timeout);
-            }
-            if (!versionRes.ok) {
-                setError(t('server.serverReturnedError'));
+            const probe = createEndpointReadinessProbe({
+                endpoint: normalized,
+                token: null,
+                timeoutMs,
+                signal: controller.signal,
+            });
+            const result = await probe();
+
+            if (attemptId !== validationAttemptIdRef.current) {
                 return false;
             }
-            return true;
+
+            if (result.status === 'ready') return true;
+
+            const message = typeof result.errorMessage === 'string' ? result.errorMessage : '';
+            if (message.includes('returned')) {
+                setError(t('server.serverReturnedError'));
+            } else {
+                setError(t('server.failedToConnectToServer'));
+            }
+            return false;
         } catch {
-            setError(t('server.failedToConnectToServer'));
+            if (attemptId === validationAttemptIdRef.current) {
+                setError(t('server.failedToConnectToServer'));
+            }
             return false;
         } finally {
-            setIsValidating(false);
+            if (attemptId === validationAttemptIdRef.current) {
+                setIsValidating(false);
+            }
         }
     }, []);
 

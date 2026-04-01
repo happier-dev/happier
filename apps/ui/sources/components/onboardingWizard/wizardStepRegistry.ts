@@ -18,6 +18,7 @@ const onboardingVisible = (stepId: WizardStepId) => (context: WizardContext): bo
         case 'background_service_handoff':
         case 'auth':
         case 'auth_restore':
+        case 'auth_secret_key':
         case 'auth_lost_access':
         case 'done':
             return true;
@@ -115,7 +116,7 @@ const wizardStepRegistryEntries = [
         canSkip: false,
         visibleWhen: (context) => {
             return context.mode === 'onboarding'
-                && context.platform === 'web'
+                && (context.platform === 'web' || context.platform === 'native')
                 && context.relaySelection.choiceId === 'thisComputer';
         },
     },
@@ -138,7 +139,7 @@ const wizardStepRegistryEntries = [
         visibleWhen: (context) => {
             const url = typeof context.relaySelection.serverUrl === 'string' ? context.relaySelection.serverUrl.trim() : '';
             return context.mode === 'onboarding'
-                && context.platform === 'web'
+                && (context.platform === 'web' || context.platform === 'native')
                 && context.relaySelection.choiceId === 'thisComputer'
                 && url.length > 0;
         },
@@ -160,6 +161,15 @@ const wizardStepRegistryEntries = [
         surface: 'onboarding',
         canSkip: true,
         visibleWhen: onboardingVisible('auth_restore'),
+    },
+    {
+        id: 'auth_secret_key',
+        titleKey: 'setupOnboarding.authSecretKeyTitle',
+        subtitleKey: 'setupOnboarding.authSecretKeySubtitle',
+        kind: 'recovery',
+        surface: 'onboarding',
+        canSkip: true,
+        visibleWhen: onboardingVisible('auth_secret_key'),
     },
     {
         id: 'auth_lost_access',

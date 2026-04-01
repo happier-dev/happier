@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { useAuth } from '@/auth/context/AuthContext';
+import { storage as syncStorage } from '@/sync/domains/state/storageStore';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 
@@ -9,7 +9,7 @@ import { computeThisComputerMismatches } from './computeThisComputerMismatches';
 import type { ThisComputerSetupPreflight } from './types';
 
 export function useThisComputerSetupPreflight(): ThisComputerSetupPreflight {
-    const auth = useAuth();
+    const uiAccountId = syncStorage((state) => state.profile?.id ?? null);
     const daemon = useLocalDaemonControl();
     const relayDriftBanner = useRelayDriftBanner();
     const activeServerSnapshot = getActiveServerSnapshot();
@@ -34,7 +34,7 @@ export function useThisComputerSetupPreflight(): ThisComputerSetupPreflight {
         daemonMachineRegistered: typeof daemon.status?.daemonMachineRegistered === 'boolean'
             ? daemon.status.daemonMachineRegistered
             : null,
-        uiAccountId: auth.profile?.id ?? null,
+        uiAccountId,
         ...computeThisComputerMismatches({
             activeRelayUrl: typeof activeServerSnapshot.serverUrl === 'string' && activeServerSnapshot.serverUrl.trim().length > 0
                 ? activeServerSnapshot.serverUrl.trim()
@@ -48,7 +48,7 @@ export function useThisComputerSetupPreflight(): ThisComputerSetupPreflight {
             daemonAccountId: typeof daemon.status?.daemonAccountId === 'string' && daemon.status.daemonAccountId.trim().length > 0
                 ? daemon.status.daemonAccountId.trim()
                 : null,
-            uiAccountId: auth.profile?.id ?? null,
+            uiAccountId,
             needsAuth: daemon.status?.needsAuth === true,
             machineId: daemon.status?.machineId ?? null,
             machineRegistered: typeof daemon.status?.daemonMachineRegistered === 'boolean'
@@ -59,7 +59,6 @@ export function useThisComputerSetupPreflight(): ThisComputerSetupPreflight {
     }), [
         activeServerSnapshot.serverUrl,
         activeServerSnapshot.activeLocalRelayUrl,
-        auth.profile?.id,
         daemon.status?.daemonRunning,
         daemon.status?.daemonServerUrl,
         daemon.status?.daemonComparableKey,
@@ -69,5 +68,6 @@ export function useThisComputerSetupPreflight(): ThisComputerSetupPreflight {
         daemon.status?.needsAuth,
         daemon.status?.serviceInstalled,
         relayDriftBanner,
+        uiAccountId,
     ]);
 }

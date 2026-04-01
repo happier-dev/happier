@@ -106,6 +106,35 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('LocalTailscaleSecureAccessSection', () => {
+    it('does not render settings list chrome in wizard presentation', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start() {
+                    return 'task_1:secure.access.tailscale.v1';
+                },
+                async subscribe(_taskId, _listenerSet) {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalTailscaleSecureAccessSection } = await import('./LocalTailscaleSecureAccessSection');
+        const screen = await renderScreen(
+            React.createElement(LocalTailscaleSecureAccessSection, {
+                runner,
+                upstreamUrl: 'http://127.0.0.1:3005',
+                presentation: 'wizard',
+            }),
+        );
+
+        expect(screen.findAllByType('Group' as never)).toHaveLength(0);
+        expect(screen.findAllByType('Item' as never)).toHaveLength(0);
+    });
+
     it('copies the shareable private URL after secure access succeeds', async () => {
         setClipboardStringSafeSpy.mockClear();
         modalAlertSpy.mockClear();

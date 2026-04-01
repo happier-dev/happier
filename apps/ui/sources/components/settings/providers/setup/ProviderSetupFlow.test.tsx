@@ -156,6 +156,18 @@ vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
     getProviderLocalAuthPlugin: () => null,
 }));
 
+vi.mock('@/components/onboardingWizard/WizardTerminalHandoff', () => ({
+    WizardTerminalHandoff: (props: Record<string, unknown>) => React.createElement('WizardTerminalHandoff', props),
+}));
+
+vi.mock('@/components/onboardingWizard/ProvidersLogoMultiSelect', () => ({
+    ProvidersLogoMultiSelect: (props: Record<string, unknown>) => React.createElement('ProvidersLogoMultiSelect', props),
+}));
+
+vi.mock('@/components/onboardingWizard/WebDesktopDownloadCta', () => ({
+    WebDesktopDownloadCta: (props: Record<string, unknown>) => React.createElement('WebDesktopDownloadCta', props),
+}));
+
 describe('ProviderSetupFlow', () => {
     beforeEach(() => {
         tauriDesktopState.value = true;
@@ -190,6 +202,35 @@ describe('ProviderSetupFlow', () => {
 
         expect(modalMock.spies.confirm).toHaveBeenCalledTimes(1);
         expect(capabilitiesState.invoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('renders the CLI web handoff on browser web for the settings presentation', async () => {
+        tauriDesktopState.value = false;
+
+        const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
+        const screen = await renderScreen(React.createElement(ProviderSetupFlow, {
+            providerIds: ['codex', 'claude'],
+            presentation: 'settings',
+        }));
+
+        expect(screen.findByTestId('settings.providers.setup.desktopOnlyNotice')).toBeNull();
+        expect(screen.findByTestId('setupWizard.providers.webHandoff')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-start-card')).toBeNull();
+        expect(screen.findByTestId('provider-setup-queue-card')).toBeNull();
+        expect(screen.findByTestId('provider-setup-option-codex')).toBeNull();
+    });
+
+    it('renders a wizard-friendly CLI handoff on web when running in wizard presentation', async () => {
+        tauriDesktopState.value = false;
+
+        const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
+        const screen = await renderScreen(React.createElement(ProviderSetupFlow, {
+            providerIds: ['codex', 'claude'],
+            presentation: 'wizard',
+        }));
+
+        expect(screen.findByTestId('setupWizard.providers.webHandoff')).toBeTruthy();
+        expect(screen.findByTestId('settings.providers.setup.desktopOnlyNotice')).toBeNull();
     });
 
     it('filters unsupported provider ids from the selectable list', async () => {

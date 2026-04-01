@@ -23,6 +23,9 @@ export function buildRemoteSshBootstrapMachineSystemTaskSpec(params: Readonly<{
     sshAuth: 'agent' | 'keyfile' | 'password';
     sshConfigFilePath?: string;
     identityFilePath?: string;
+    serviceMode?: 'user' | 'none';
+    sshPassword?: string;
+    identityPrivateKey?: string;
     installRelayRuntime?: boolean;
     promptResolution?: RemoteSshPromptResolution;
 }>): SystemTaskSpec {
@@ -35,6 +38,9 @@ export function buildRemoteSshBootstrapMachineSystemTaskSpec(params: Readonly<{
         host,
     });
     const port = portText ? Number.parseInt(portText, 10) : Number.NaN;
+    const serviceMode = params.serviceMode === 'none' ? 'none' : 'user';
+    const passwordRaw = typeof params.sshPassword === 'string' ? params.sshPassword.trim() : '';
+    const identityPrivateKeyRaw = typeof params.identityPrivateKey === 'string' ? params.identityPrivateKey.trim() : '';
 
     return {
         protocolVersion: 1,
@@ -47,6 +53,12 @@ export function buildRemoteSshBootstrapMachineSystemTaskSpec(params: Readonly<{
                 ...(params.sshAuth === 'keyfile' && params.identityFilePath?.trim()
                     ? { identityFile: params.identityFilePath.trim() }
                     : {}),
+                ...(params.sshAuth === 'keyfile' && identityPrivateKeyRaw
+                    ? { identityPrivateKey: identityPrivateKeyRaw }
+                    : {}),
+                ...(params.sshAuth === 'password' && passwordRaw
+                    ? { password: passwordRaw }
+                    : {}),
                 ...(params.sshConfigFilePath?.trim()
                     ? { sshConfigFile: params.sshConfigFilePath.trim() }
                     : {}),
@@ -58,7 +70,7 @@ export function buildRemoteSshBootstrapMachineSystemTaskSpec(params: Readonly<{
                     ? { publicRelayUrl: params.publicRelayUrl.trim() }
                     : {}),
             },
-            serviceMode: 'user',
+            serviceMode,
             knownHostsMode: 'app',
             ...(params.installRelayRuntime === true
                 ? {

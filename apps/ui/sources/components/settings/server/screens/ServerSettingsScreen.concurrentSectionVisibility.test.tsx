@@ -192,4 +192,61 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
         expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
         expect(screen.findByTestId('settings.server.localControl.desktopOnlyNotice')).toBeTruthy();
     });
+
+    it('hides local relay control surfaces when setup surface policy denies local relay host (desktop)', async () => {
+        const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relay.allowLocalRelayHost';
+        (globalThis as any).__TAURI_INTERNALS__ = { invoke: () => undefined };
+        try {
+            setController({ relayDriftBanner: null });
+
+            const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
+            const screen = await renderScreen(React.createElement(ServerSettingsScreen));
+
+            expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(0);
+            expect(screen.findAllByType('LocalRelayAccessControlSection' as any)).toHaveLength(0);
+            expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
+        } finally {
+            delete (globalThis as any).__TAURI_INTERNALS__;
+            if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
+        }
+    });
+
+    it('hides the local Tailscale surface when setup surface policy denies it (desktop)', async () => {
+        const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relayAccess.allowTailscale';
+        (globalThis as any).__TAURI_INTERNALS__ = { invoke: () => undefined };
+        try {
+            setController({ relayDriftBanner: null });
+
+            const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
+            const screen = await renderScreen(React.createElement(ServerSettingsScreen));
+
+            expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(1);
+            expect(screen.findAllByType('LocalRelayAccessControlSection' as any)).toHaveLength(1);
+            expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
+        } finally {
+            delete (globalThis as any).__TAURI_INTERNALS__;
+            if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
+        }
+    });
+
+    it('hides relay selection/setup surfaces when setup surface policy denies relay selection', async () => {
+        const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relay.allowRelaySelection';
+        try {
+            setController({ relayDriftBanner: null });
+
+            const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
+            const screen = await renderScreen(React.createElement(ServerSettingsScreen));
+
+            expect(screen.findByTestId('settings.server.openSetupWizard')).toBeNull();
+            expect(screen.findAllByType('AddTargetsSection' as any)).toHaveLength(0);
+        } finally {
+            if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
+        }
+    });
 });

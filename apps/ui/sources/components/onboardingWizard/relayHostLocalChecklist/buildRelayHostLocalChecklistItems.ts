@@ -12,7 +12,7 @@ export function buildRelayHostLocalChecklistItems(params: Readonly<{
     const running = status?.service.active === true;
     const healthy = status?.healthy === true;
     const shareableReady = Boolean(params.currentShareableUrl);
-    const relayHostUrlKnown = Boolean(params.currentRelayUrl);
+    const relayRuntimeUrlKnown = installed && typeof status?.relayUrl === 'string' && status.relayUrl.trim().length > 0;
 
     const items: RelayHostLocalChecklistItem[] = [
         {
@@ -37,16 +37,16 @@ export function buildRelayHostLocalChecklistItems(params: Readonly<{
         },
     ];
 
-    if (relayHostUrlKnown) {
+    if (relayRuntimeUrlKnown) {
         items.push({
             id: 'enableSecureAccess',
             title: t('settings.localTailscale.title'),
             subtitle: t('settings.localTailscale.footer'),
-            badge: shareableReady ? t('common.done') : t('common.optional'),
+            badge: shareableReady ? t('common.done') : t('setupOnboarding.recommendedBadge'),
             optional: true,
             satisfied: shareableReady,
             disabled: shareableReady,
-            defaultSelected: false,
+            defaultSelected: !shareableReady,
             stepIds: ['tailscale.detect', 'tailscale.install', 'tailscale.login', 'tailscale.serveEnable', 'tailscale.verifyUrl'],
         });
     }

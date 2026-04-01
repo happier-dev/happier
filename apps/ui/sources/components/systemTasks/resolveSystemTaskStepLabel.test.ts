@@ -21,6 +21,6 @@ describe('resolveSystemTaskStepLabel', () => {
     });
 
     it('returns null for unknown step ids', () => {
-        expect(resolveSystemTaskStepLabel('unknown.step.id')).toBeNull();
+        expect(resolveSystemTaskStepLabel('unknown.step.id')).toBe('unknown.step.id');
     });
 });

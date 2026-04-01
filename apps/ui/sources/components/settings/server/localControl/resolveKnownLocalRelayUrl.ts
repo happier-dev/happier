@@ -10,7 +10,7 @@ export function resolveKnownLocalRelayUrl(params: Readonly<{
     activeLocalRelayUrl?: string | null | undefined;
 }>): string | null {
     const activeLocalRelayUrl = normalizeRelayUrl(params.activeLocalRelayUrl);
-    if (activeLocalRelayUrl) {
+    if (activeLocalRelayUrl && isLocalishServerUrl(activeLocalRelayUrl)) {
         return activeLocalRelayUrl;
     }
 

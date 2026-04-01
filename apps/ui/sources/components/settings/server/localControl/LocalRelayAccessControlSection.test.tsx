@@ -85,6 +85,68 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('LocalRelayAccessControlSection', () => {
+    it('does not render settings list chrome in wizard presentation', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start() {
+                    return 'task_1:relay.access.status.v1';
+                },
+                async subscribe(_taskId, _listenerSet) {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+        const screen = await renderScreen(
+            React.createElement(LocalRelayAccessControlSection, {
+                runner,
+                upstreamUrl: 'http://127.0.0.1:3005',
+                presentation: 'wizard',
+            }),
+        );
+
+        expect(screen.findAllByType('Group' as never)).toHaveLength(0);
+        expect(screen.findAllByType('Item' as never)).toHaveLength(0);
+    });
+
+    it('filters relay access providers when setup surface policy denies Tailscale and Cloudflare Tunnel', async () => {
+        const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relayAccess.allowTailscale,setup.relayAccess.allowCloudflareTunnel';
+        try {
+            const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+
+            const runner = createSystemTaskRunner({
+                bridge: {
+                    async start() {
+                        return 'task_1:relay.access.status.v1';
+                    },
+                    async subscribe(_taskId, _listenerSet) {
+                        return () => {};
+                    },
+                    async cancel() {},
+                    async respond() {},
+                },
+            });
+
+            const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+            const screen = await renderScreen(
+                React.createElement(LocalRelayAccessControlSection, { runner, upstreamUrl: 'http://127.0.0.1:3005' }),
+            );
+
+            expect(screen.findByTestId('settings.server.relayAccess.choice:tailscaleServe')).toBeNull();
+            expect(screen.findByTestId('settings.server.relayAccess.choice:tailscaleFunnel')).toBeNull();
+            expect(screen.findByTestId('settings.server.relayAccess.choice:cloudflareNamed')).toBeNull();
+        } finally {
+            if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
+        }
+    });
+
     it('runs relay.access.configure.v1 for LAN and updates the active shareable URL on success', async () => {
         setActiveServerShareableUrlSpy.mockClear();
 

@@ -20,11 +20,3 @@ export type RemoteSshChecklistItem = Readonly<{
     stepIds: readonly string[];
     details: string;
 }>;
-
-export type RemoteSshChecklistItemExecutionStatus = 'idle' | 'running' | 'done' | 'error' | 'waiting';
-
-export type RemoteSshChecklistItemExecution = Readonly<{
-    status: RemoteSshChecklistItemExecutionStatus;
-    logs: readonly string[];
-    errorMessage: string | null;
-}>;

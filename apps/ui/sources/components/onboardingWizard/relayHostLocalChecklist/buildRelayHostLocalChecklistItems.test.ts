@@ -9,7 +9,7 @@ vi.mock('@/text', async () => {
 });
 
 describe('buildRelayHostLocalChecklistItems', () => {
-    it('marks missing relay runtime items as recommended and keeps tailscale hidden without a relay URL', () => {
+    it('marks missing relay runtime items as recommended and keeps secure access hidden until the runtime is installed', () => {
         const status: RelayHostLocalChecklistRuntimeStatus = {
             installed: false,
             version: null,
@@ -32,7 +32,7 @@ describe('buildRelayHostLocalChecklistItems', () => {
         expect(items[1]?.defaultSelected).toBe(true);
     });
 
-    it('adds the optional secure-access row when a relay URL is available and marks it satisfied once secure access exists', () => {
+    it('adds the optional secure-access row when the runtime relay URL is available and marks it satisfied once secure access exists', () => {
         const status: RelayHostLocalChecklistRuntimeStatus = {
             installed: true,
             version: '1.2.3',
@@ -43,7 +43,7 @@ describe('buildRelayHostLocalChecklistItems', () => {
 
         const items = buildRelayHostLocalChecklistItems({
             runtimeStatus: status,
-            currentRelayUrl: 'http://localhost:53288',
+            currentRelayUrl: 'https://cloud.example.test',
             currentShareableUrl: 'https://relay.example.test',
         });
 

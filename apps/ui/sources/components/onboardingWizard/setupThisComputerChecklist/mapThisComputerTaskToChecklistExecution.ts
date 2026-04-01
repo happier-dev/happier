@@ -15,6 +15,7 @@ const ITEM_ORDER: readonly ThisComputerChecklistItemId[] = [
     'setup.thisComputer.installService',
     'setup.thisComputer.startService',
     'setup.thisComputer.verifyService',
+    'setup.thisComputer.installTailscale',
 ];
 
 const STEP_TO_ITEM: Readonly<Record<string, ThisComputerChecklistItemId>> = {
@@ -27,6 +28,19 @@ const STEP_TO_ITEM: Readonly<Record<string, ThisComputerChecklistItemId>> = {
     'setup.thisComputer.startService': 'setup.thisComputer.startService',
     'setup.thisComputer.verifyService': 'setup.thisComputer.verifyService',
 };
+
+function resolveRecommendedTailscaleStatus(snapshot: SystemTaskRunState | null): PlanChecklistExecutionState['status'] {
+    if (!snapshot) {
+        return 'queued';
+    }
+    if (snapshot.status === 'succeeded') {
+        return 'done';
+    }
+    if (snapshot.status === 'failed' || snapshot.status === 'canceled') {
+        return 'error';
+    }
+    return 'running';
+}
 
 function normalizeStepId(stepId: unknown): string {
     return typeof stepId === 'string' ? stepId.trim() : '';
@@ -87,7 +101,9 @@ export function mapThisComputerTaskToChecklistExecution(snapshot: SystemTaskRunS
     const currentItemId = currentStepId ? STEP_TO_ITEM[currentStepId] : null;
     const currentIndex = currentItemId ? ITEM_ORDER.indexOf(currentItemId) : -1;
 
-    return ITEM_ORDER.reduce((acc, itemId, index) => {
+    const executionById: Record<ThisComputerChecklistItemId, PlanChecklistExecutionState> = {} as Record<ThisComputerChecklistItemId, PlanChecklistExecutionState>;
+
+    for (const [index, itemId] of ITEM_ORDER.entries()) {
         const logs = logsByItem.get(itemId) ?? [];
         let status: PlanChecklistExecutionState['status'] = 'idle';
         if (snapshot?.status === 'succeeded') {
@@ -96,6 +112,8 @@ export function mapThisComputerTaskToChecklistExecution(snapshot: SystemTaskRunS
             status = itemId === currentItemId ? 'error' : seenItemIds.has(itemId) ? 'done' : 'idle';
         } else if (snapshot?.status === 'canceled') {
             status = itemId === currentItemId ? 'error' : seenItemIds.has(itemId) ? 'done' : 'idle';
+        } else if (itemId === 'setup.thisComputer.installTailscale') {
+            status = resolveRecommendedTailscaleStatus(snapshot);
         } else if (itemId === currentItemId) {
             status = snapshot?.awaitingInput ? 'running' : 'running';
         } else if (currentIndex >= 0 && index < currentIndex) {
@@ -106,7 +124,7 @@ export function mapThisComputerTaskToChecklistExecution(snapshot: SystemTaskRunS
             status = 'done';
         }
 
-        acc[itemId] = {
+        executionById[itemId] = {
             status,
             logs,
             error: snapshot?.result && !snapshot.result.ok && itemId === currentItemId
@@ -117,6 +135,7 @@ export function mapThisComputerTaskToChecklistExecution(snapshot: SystemTaskRunS
                 }
                 : undefined,
         };
-        return acc;
-    }, {} as ThisComputerChecklistExecution);
+    }
+
+    return executionById;
 }

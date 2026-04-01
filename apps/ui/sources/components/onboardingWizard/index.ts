@@ -10,5 +10,5 @@ export * from './WizardStepDots';
 export * from './RelayDiagram';
 export * from './WizardIconBox';
 export * from './WizardChoiceRow';
-export * from './OnboardingWizardSurface';
-export * from './SetupWizardSurface';
+export * from './surfaces/OnboardingWizardSurface';
+export * from './surfaces/SetupWizardSurface';

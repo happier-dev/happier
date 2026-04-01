@@ -3,14 +3,17 @@ import { router, useLocalSearchParams } from 'expo-router';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { BaseModal } from '@/modal/components/BaseModal';
-import { SetupWizardSurface } from '@/components/onboardingWizard/SetupWizardSurface';
+import { SetupWizardSurface } from '@/components/onboardingWizard/surfaces/SetupWizardSurface';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import type { WizardContext, WizardStepId } from '@/components/onboardingWizard/wizardTypes';
+import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 
 export default function SetupWizardRoute() {
     const auth = useAuth();
-    const params = useLocalSearchParams<{ action?: string; step?: string }>();
+    const params = useLocalSearchParams<{ action?: string; step?: string; scope?: string }>();
+    const [hydrationAttempted, setHydrationAttempted] = React.useState(false);
+    const applyLocalSettings = useApplyLocalSettings();
 
     const initialStepId: WizardStepId | undefined = React.useMemo(() => {
         const raw = typeof params.step === 'string' ? params.step.trim() : '';
@@ -37,12 +40,45 @@ export default function SetupWizardRoute() {
         }
     }, [params.action]);
 
-    React.useEffect(() => {
-        if (!auth.isAuthenticated) {
-            clearPendingSetupIntent();
-            router.replace('/');
+    const scope = React.useMemo(() => {
+        const raw = typeof params.scope === 'string' ? params.scope.trim() : '';
+        if (raw === 'relay' || raw === 'machine' || raw === 'all') {
+            return raw;
         }
-    }, [auth.isAuthenticated]);
+        return undefined;
+    }, [params.scope]);
+
+    React.useEffect(() => {
+        if (auth.isAuthenticated) {
+            setHydrationAttempted(true);
+            return;
+        }
+        if (hydrationAttempted) {
+            return;
+        }
+
+        let canceled = false;
+        Promise.resolve(auth.refreshFromActiveServer?.())
+            .catch(() => {})
+            .finally(() => {
+                if (canceled) return;
+                setHydrationAttempted(true);
+            });
+        return () => {
+            canceled = true;
+        };
+    }, [auth.isAuthenticated, auth.refreshFromActiveServer, hydrationAttempted]);
+
+    React.useEffect(() => {
+        if (auth.isAuthenticated) {
+            return;
+        }
+        if (!hydrationAttempted) {
+            return;
+        }
+        clearPendingSetupIntent();
+        router.replace('/');
+    }, [auth.isAuthenticated, hydrationAttempted]);
 
     if (!auth.isAuthenticated) {
         return null;
@@ -53,19 +89,24 @@ export default function SetupWizardRoute() {
             testID="setupWizard.surface"
             isDesktopShell={isTauriDesktop()}
             useOuterScrollContainer={true}
-            onExit={() => router.replace('/')}
+            onExit={() => {
+                applyLocalSettings({ sessionGettingStartedGuidanceDismissed: true });
+                router.replace('/');
+            }}
             initialStepId={initialStepId}
             initialSetupAction={initialSetupAction}
+            scope={scope}
         />
     );
 
     return (
         <BaseModal
             visible={true}
-            scrollable={true}
-            disableContentTransform={true}
-            showBackdrop={false}
-            onClose={() => router.replace('/')}
+            showBackdrop={true}
+            onClose={() => {
+                applyLocalSettings({ sessionGettingStartedGuidanceDismissed: true });
+                router.replace('/');
+            }}
         >
             {content}
         </BaseModal>

@@ -7,9 +7,22 @@ import { Typography } from '@/constants/Typography';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { t } from '@/text';
 
-import type { PlanChecklistExecutionState, PlanChecklistItem, PlanChecklistLogEntry } from '@/components/systemTasks/planChecklist';
-import { PlanChecklistCard } from '@/components/systemTasks/planChecklist';
-import { useRelayHostLocalChecklistController } from './useRelayHostLocalChecklistController';
+import type { PlanChecklistExecutionState, PlanChecklistItem } from '@/components/systemTasks/planChecklist';
+import {
+    mapSystemTaskSnapshotToPlanChecklistExecutionState,
+    PlanChecklistCard,
+    usePlanChecklistController,
+    useSequentialSystemTaskChecklistExecution,
+} from '@/components/systemTasks/planChecklist';
+import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
+import { buildLocalRelayRuntimeSystemTaskSpec } from '@/components/settings/server/localControl/buildLocalRelayRuntimeSystemTaskSpec';
+import { buildLocalTailscaleSecureAccessSystemTaskSpec } from '@/components/settings/server/localControl/buildLocalTailscaleSecureAccessSystemTaskSpec';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { useLocalRelayRuntimeControl } from '@/components/settings/server/localControl/useLocalRelayRuntimeControl';
+import { Modal } from '@/modal';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+
+import { buildRelayHostLocalChecklistItems } from './buildRelayHostLocalChecklistItems';
 import type { RelayHostLocalChecklistRuntimeStatus } from './types';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -27,6 +40,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'center',
     },
 }));
+
+type RelayHostLocalChecklistItemId = 'installRelayRuntime' | 'startRelayRuntime' | 'enableSecureAccess';
+
+type RelayHostLocalChecklistExecutionUpdate = Partial<Record<RelayHostLocalChecklistItemId, PlanChecklistExecutionState>>;
 
 function renderRuntimeDetails(
     _itemId: string,
@@ -53,6 +70,19 @@ function renderRuntimeDetails(
     );
 }
 
+function resolveTaskSpec(itemId: RelayHostLocalChecklistItemId, runtimeRelayUrl: string | null) {
+    if (itemId === 'installRelayRuntime') {
+        return buildLocalRelayRuntimeSystemTaskSpec('relay.runtime.installOrUpdate.v1');
+    }
+    if (itemId === 'startRelayRuntime') {
+        return buildLocalRelayRuntimeSystemTaskSpec('relay.runtime.start.v1');
+    }
+    if (!runtimeRelayUrl) {
+        throw new Error('Missing upstream URL for Tailscale secure access.');
+    }
+    return buildLocalTailscaleSecureAccessSystemTaskSpec({ upstreamUrl: runtimeRelayUrl });
+}
+
 export function RelayHostLocalChecklistStep(props: Readonly<{
     testID?: string;
     runner?: SystemTaskRunner;
@@ -66,19 +96,32 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
 }>) {
     useUnistyles();
     const styles = stylesheet;
-    const controller = useRelayHostLocalChecklistController({ ...(props.runner ? { runner: props.runner } : {}) });
-    const [expandedIds, setExpandedIds] = React.useState<readonly string[]>([]);
+    const runner = props.runner ?? getDefaultSystemTaskRunner();
+    const { status } = useLocalRelayRuntimeControl({ runner });
+    const activeServerSnapshot = getActiveServerSnapshot();
+    const currentRelayUrl = activeServerSnapshot.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : null;
+    const currentShareableUrl = activeServerSnapshot.activeShareableServerUrl
+        ? String(activeServerSnapshot.activeShareableServerUrl).trim()
+        : null;
+    const runtimeRelayUrl = status?.relayUrl ? String(status.relayUrl).trim() : null;
+    const requestAdvanceRef = React.useRef(props.onRequestAdvance);
+    const wizardPrimaryChangeRef = React.useRef(props.onWizardPrimaryChange);
 
     React.useEffect(() => {
-        props.onStatusChange?.(controller.status ?? null);
-    }, [controller.status, props.onStatusChange]);
+        props.onStatusChange?.(status ?? null);
+    }, [status, props.onStatusChange]);
+    React.useEffect(() => {
+        requestAdvanceRef.current = props.onRequestAdvance;
+        wizardPrimaryChangeRef.current = props.onWizardPrimaryChange;
+    }, [props.onRequestAdvance, props.onWizardPrimaryChange]);
 
-    const hasPendingSelection = React.useMemo(() => {
-        const selectedSet = new Set(controller.selectedIds);
-        return controller.items.some((item) => selectedSet.has(item.id) && !item.satisfied);
-    }, [controller.items, controller.selectedIds]);
+    const liveItems = React.useMemo(() => buildRelayHostLocalChecklistItems({
+        runtimeStatus: status ?? null,
+        currentRelayUrl,
+        currentShareableUrl,
+    }), [currentRelayUrl, currentShareableUrl, status]);
 
-    const items: readonly PlanChecklistItem[] = React.useMemo(() => controller.items.map((item) => ({
+    const items: readonly PlanChecklistItem[] = React.useMemo(() => liveItems.map((item) => ({
         id: item.id,
         title: item.title,
         subtitle: item.subtitle,
@@ -86,58 +129,103 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
         satisfied: item.satisfied,
         disabled: item.disabled,
         defaultSelected: item.defaultSelected,
-        renderDetails: () => renderRuntimeDetails(item.id, controller.status, controller.currentRelayUrl, controller.currentShareableUrl),
-    })), [controller.currentRelayUrl, controller.currentShareableUrl, controller.items, controller.status]);
+        renderDetails: () => renderRuntimeDetails(item.id, status ?? null, currentRelayUrl, currentShareableUrl),
+    })), [currentRelayUrl, currentShareableUrl, liveItems, status]);
 
-    const executionById: Readonly<Record<string, PlanChecklistExecutionState>> = React.useMemo(() => {
-        const result: Record<string, PlanChecklistExecutionState> = {};
-        for (const [itemId, execution] of Object.entries(controller.executionById)) {
-            const logs: PlanChecklistLogEntry[] = (execution.logs ?? []).map((entry) => ({
-                ts: entry.ts,
-                level: entry.level,
-                message: entry.message,
-            }));
-            const status = execution.status === 'queued' ? 'queued'
-                : execution.status === 'running' ? 'running'
-                    : execution.status === 'done' ? 'done'
-                        : execution.status === 'error' ? 'error'
-                            : 'idle';
-            result[itemId] = {
-                status,
-                logs,
-                error: execution.errorMessage ? { title: t('common.error'), message: execution.errorMessage } : undefined,
-            };
+    const buildExecutionPlan = React.useCallback((selectedIds: readonly string[]) => {
+        const selectedSet = new Set(selectedIds);
+        const plan: RelayHostLocalChecklistItemId[] = [];
+        for (const id of ['installRelayRuntime', 'startRelayRuntime', 'enableSecureAccess'] as const) {
+            if (!selectedSet.has(id)) continue;
+            const item = items.find((candidate) => candidate.id === id);
+            if (item?.satisfied) continue;
+            plan.push(id);
         }
-        return result;
-    }, [controller.executionById]);
+        return plan;
+    }, [items]);
 
-    const hasError = React.useMemo(() => Object.values(executionById).some((state) => state.status === 'error'), [executionById]);
+    const publishExecutionUpdateRef = React.useRef<(update: RelayHostLocalChecklistExecutionUpdate) => void>(() => undefined);
+
+    const sequential = useSequentialSystemTaskChecklistExecution<RelayHostLocalChecklistItemId>({
+        runner,
+        errorTitle: t('common.error'),
+        buildSpec: (itemId) => resolveTaskSpec(itemId, runtimeRelayUrl),
+        mapSnapshotToExecutionState: (snapshot) => mapSystemTaskSnapshotToPlanChecklistExecutionState(snapshot, { errorTitle: t('common.error') }),
+        onExecutionStateChange: (update) => {
+            publishExecutionUpdateRef.current(update);
+        },
+    });
+
+    const mapExecutionSnapshotToRowState = React.useCallback((update: RelayHostLocalChecklistExecutionUpdate) => update, []);
+
+    const runExecutionPlan = React.useCallback((plan: readonly RelayHostLocalChecklistItemId[]) => {
+        sequential.start(plan);
+    }, [sequential]);
+
+    const checklist = usePlanChecklistController<readonly RelayHostLocalChecklistItemId[], RelayHostLocalChecklistExecutionUpdate>({
+        items,
+        buildExecutionPlan,
+        runExecutionPlan,
+        mapExecutionSnapshotToRowState,
+        onCancelExecution: () => {
+            sequential.cancel();
+            sequential.reset();
+        },
+    });
+
+    publishExecutionUpdateRef.current = checklist.publishSnapshot;
+
+    React.useEffect(() => {
+        if (checklist.phase === 'select') {
+            sequential.reset();
+        }
+    }, [checklist.phase, sequential.reset]);
+
+    const executionById = checklist.phase === 'execute' ? checklist.executionById : undefined;
+    const hasError = React.useMemo(
+        () => Object.values(checklist.executionById).some((state) => state.status === 'error'),
+        [checklist.executionById],
+    );
+    const hasRunningExecution = React.useMemo(
+        () => Object.values(checklist.executionById).some((state) => state.status === 'running' || state.status === 'queued'),
+        [checklist.executionById],
+    );
+    const hasPendingSelection = React.useMemo(() => {
+        const selectedSet = new Set(checklist.selectedIds);
+        return items.some((item) => selectedSet.has(item.id) && !item.satisfied);
+    }, [checklist.selectedIds, items]);
+    const continueRef = React.useRef(checklist.continue);
+    const retryRef = React.useRef(checklist.retry);
+    React.useEffect(() => {
+        continueRef.current = checklist.continue;
+        retryRef.current = checklist.retry;
+    }, [checklist.continue, checklist.retry]);
 
     React.useLayoutEffect(() => {
-        if (!props.onWizardPrimaryChange) return;
+        const onWizardPrimaryChange = wizardPrimaryChangeRef.current;
+        if (!onWizardPrimaryChange) return;
 
-        if (controller.phase === 'select') {
+        if (checklist.phase === 'select') {
             if (!hasPendingSelection) {
-                props.onWizardPrimaryChange({
+                onWizardPrimaryChange({
                     label: t('common.continue'),
                     disabled: false,
-                    onPress: props.onRequestAdvance ?? (() => undefined),
+                    onPress: requestAdvanceRef.current ?? (() => undefined),
                 });
                 return;
             }
-            props.onWizardPrimaryChange({
+            onWizardPrimaryChange({
                 label: t('common.continue'),
                 disabled: false,
                 onPress: async () => {
-                    controller.startExecution();
+                    await continueRef.current();
                 },
             });
             return;
         }
 
-        const taskStatus = controller.activeTaskSnapshot?.status;
-        if (taskStatus === 'running' || taskStatus === 'canceling') {
-            props.onWizardPrimaryChange({
+        if (hasRunningExecution) {
+            onWizardPrimaryChange({
                 label: t('common.continue'),
                 disabled: true,
                 onPress: async () => undefined,
@@ -145,46 +233,27 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
             return;
         }
 
-        if (controller.activeTaskSnapshot?.result && !controller.activeTaskSnapshot.result.ok) {
-            props.onWizardPrimaryChange({
+        if (hasError) {
+            onWizardPrimaryChange({
                 label: t('common.retry'),
                 disabled: false,
                 onPress: async () => {
-                    controller.retry();
+                    await retryRef.current();
                 },
             });
             return;
         }
 
-        if (controller.phase === 'done') {
-            if (hasError) {
-                props.onWizardPrimaryChange({
-                    label: t('common.retry'),
-                    disabled: false,
-                    onPress: async () => {
-                        controller.retry();
-                    },
-                });
-                return;
-            }
-            props.onWizardPrimaryChange({
-                label: t('common.continue'),
-                disabled: false,
-                onPress: props.onRequestAdvance ?? (() => undefined),
-            });
-            return;
-        }
-
-        props.onWizardPrimaryChange({
+        onWizardPrimaryChange({
             label: t('common.continue'),
-            disabled: true,
-            onPress: async () => undefined,
+            disabled: false,
+            onPress: requestAdvanceRef.current ?? (() => undefined),
         });
     }, [
-        controller,
+        checklist.phase,
         hasError,
         hasPendingSelection,
-        props.onRequestAdvance,
+        hasRunningExecution,
         props.onWizardPrimaryChange,
     ]);
 
@@ -192,22 +261,36 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
 
     return (
         <View testID={props.testID} style={styles.root}>
-            {controller.activeTaskSnapshot?.result && !controller.activeTaskSnapshot.result.ok ? (
-                <Text style={styles.error}>{controller.activeTaskSnapshot.result.error.message}</Text>
-            ) : null}
-
             <PlanChecklistCard
                 testID={props.testID ? `${props.testID}-checklist` : 'relay-host-local-checklist'}
                 items={items}
-                phase={controller.phase === 'select' ? 'select' : 'execute'}
-                selectedIds={controller.selectedIds}
-                onToggleItem={(itemId) => controller.toggleItem(itemId as any)}
-                executionById={controller.phase === 'select' ? undefined : executionById}
-                expandedIds={expandedIds}
-                onToggleExpanded={(itemId) => setExpandedIds((current) => (
-                    current.includes(itemId) ? current.filter((candidate) => candidate !== itemId) : [...current, itemId]
-                ))}
-                onCopyDiagnostics={(item) => controller.copyDiagnostics(item.id as any)}
+                phase={checklist.phase}
+                selectedIds={checklist.selectedIds}
+                onToggleItem={checklist.toggleItem}
+                executionById={executionById}
+                expandedIds={checklist.expandedIds}
+                onToggleExpanded={checklist.toggleExpanded}
+                onCopyDiagnostics={async (item) => {
+                    const payload = {
+                        itemId: item.id,
+                        currentRelayUrl,
+                        currentShareableUrl,
+                        runtime: {
+                            installed: status?.installed ?? null,
+                            version: status?.version ?? null,
+                            serviceActive: status?.service.active ?? null,
+                            relayUrl: status?.relayUrl ?? null,
+                        },
+                        execution: checklist.executionById[item.id] ?? null,
+                    };
+                    const copied = await setClipboardStringSafe(JSON.stringify(payload, null, 2));
+                    Modal.alert(
+                        copied ? t('common.copied') : t('common.error'),
+                        copied
+                            ? t('items.copiedToClipboard', { label: t('common.details') })
+                            : t('items.failedToCopyToClipboard'),
+                    );
+                }}
             />
         </View>
     );
