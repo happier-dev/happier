@@ -2061,10 +2061,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         options: {
           environment: { type: 'string' },
           platform: { type: 'string' },
+          id: { type: 'string', default: '' },
           path: { type: 'string', default: '' },
           profile: { type: 'string', default: '' },
           interactive: { type: 'string', default: 'auto' },
           'eas-cli-version': { type: 'string', default: '' },
+          wait: { type: 'string', default: 'true' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
           'keychain-service': { type: 'string', default: 'happier/pipeline' },
@@ -2116,7 +2118,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const rawProfile = String(values.profile ?? '').trim();
       const profile = normalizeMobileReleaseProfile(rawProfile) || rawProfile;
       const submitPath = String(values.path ?? '').trim();
+      const submitId = String(values.id ?? '').trim();
       const interactive = String(values.interactive ?? '').trim();
+      const wait = String(values.wait ?? '').trim();
       const dryRun = values['dry-run'] === true;
 
       runExpoSubmit({
@@ -2128,10 +2132,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           environmentArg,
           '--platform',
           platform,
+          ...(submitId ? ['--id', submitId] : []),
           ...(submitPath ? ['--path', submitPath] : []),
           ...(profile ? ['--profile', profile] : []),
           ...(interactive ? ['--interactive', interactive] : []),
           ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
+          ...(wait ? ['--wait', wait] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
       });
@@ -2609,6 +2615,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           });
         }
       } else {
+        const waitForCloudBuild = action !== 'native_submit';
         runExpoNativeBuild({
           repoRoot,
           env: mergedEnv,
@@ -2620,6 +2627,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             profile,
             '--out',
             buildJson,
+            '--wait',
+            waitForCloudBuild ? 'true' : 'false',
             ...(interactive ? ['--interactive', interactive] : []),
             ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
             ...(dumpView ? ['--dump-view', dumpView] : []),
@@ -2712,25 +2721,70 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 p,
                 '--path',
                 rel,
+                '--wait',
+                'false',
                 ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
                 ...(dryRun ? ['--dry-run'] : []),
               ],
             });
           }
         } else {
-          runExpoSubmit({
-            repoRoot,
-            env: mergedEnv,
-            dryRun,
-            args: [
-              '--environment',
-              environment,
-              '--platform',
-              platform,
-              ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
-              ...(dryRun ? ['--dry-run'] : []),
-            ],
-          });
+          /**
+           * When we just scheduled a cloud build, `eas submit --latest` can pick up an unrelated older build.
+           * Prefer submitting the explicit build ids written by `expo native-build --out <build-json>`.
+           *
+           * @returns {{ ios?: string; android?: string }}
+           */
+          function tryResolveCloudBuildIds() {
+            if (!buildJson) return {};
+            const abs = path.isAbsolute(buildJson) ? buildJson : path.join(repoRoot, buildJson);
+            try {
+              if (!fs.existsSync(abs)) return {};
+              const parsed = JSON.parse(fs.readFileSync(abs, 'utf8'));
+              const list = Array.isArray(parsed) ? parsed : [parsed];
+              /** @type {{ ios?: string; android?: string }} */
+              const out = {};
+              for (const item of list) {
+                const id = item?.id ? String(item.id) : '';
+                const platRaw = item?.platform ? String(item.platform).trim() : '';
+                const platUpper = platRaw.toUpperCase();
+                const plat =
+                  platUpper === 'IOS'
+                    ? 'ios'
+                    : platUpper === 'ANDROID'
+                      ? 'android'
+                      : platRaw.toLowerCase();
+                if (!id) continue;
+                if (plat === 'ios' && !out.ios) out.ios = id;
+                if (plat === 'android' && !out.android) out.android = id;
+              }
+              return out;
+            } catch {
+              return {};
+            }
+          }
+
+          const buildIds = tryResolveCloudBuildIds();
+          const toSubmit = platform === 'all' ? ['android', 'ios'] : [platform];
+          for (const p of toSubmit) {
+            const explicitId = p === 'ios' ? buildIds.ios : p === 'android' ? buildIds.android : '';
+            runExpoSubmit({
+              repoRoot,
+              env: mergedEnv,
+              dryRun,
+              args: [
+                '--environment',
+                environmentArg,
+                '--platform',
+                p,
+                ...(explicitId ? ['--id', explicitId] : []),
+                '--wait',
+                'false',
+                ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
+                ...(dryRun ? ['--dry-run'] : []),
+              ],
+            });
+          }
         }
       }
 

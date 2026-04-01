@@ -444,6 +444,7 @@ async function main() {
       interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'dump-view': { type: 'string', default: 'true' },
+      wait: { type: 'string', default: 'true' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -495,6 +496,7 @@ async function main() {
   }
 
   const dumpView = parseBool(values['dump-view'], '--dump-view');
+  const waitForBuild = parseBool(values.wait, '--wait');
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
 
@@ -747,6 +749,7 @@ async function main() {
           platform,
           '--profile',
           profile,
+          ...(waitForBuild ? ['--wait'] : ['--no-wait']),
           '--non-interactive',
           '--json',
         ],
