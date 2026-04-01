@@ -2987,6 +2987,40 @@ export const pt: TranslationStructure = {
                         title: "Usar Agent SDK (remoto)",
                         subtitle: "Usa o @anthropic-ai/claude-agent-sdk oficial no modo remoto."
                     },
+                    claudeRemoteDebugEnabled: {
+                        title: "Modo debug",
+                        subtitle: "Ativa logs de debug do Claude Code (equivalente a --debug)."
+                    },
+                    claudeRemoteVerboseEnabled: {
+                        title: "Verbose",
+                        subtitle: "Ativa logging verboso (equivalente a --verbose)."
+                    },
+                    claudeRemoteDebugCategories: {
+                        title: "Categorias de debug",
+                        subtitle: "Filtro opcional de categorias. Quando vazio, o Claude registra todas as categorias de debug.",
+                        options: {
+                            api: {
+                                title: "API",
+                                subtitle: "Requisicoes e respostas HTTP/API."
+                            },
+                            mcp: {
+                                title: "MCP",
+                                subtitle: "Conexoes de servidores MCP e trafego de ferramentas."
+                            },
+                            hooks: {
+                                title: "Hooks",
+                                subtitle: "Ciclo de vida de hooks e execucao de comandos."
+                            },
+                            file: {
+                                title: "Arquivos",
+                                subtitle: "Operacoes de sistema de arquivos e helpers."
+                            },
+                            '1p': {
+                                title: "1p",
+                                subtitle: "Categoria interna first-party."
+                            }
+                        }
+                    },
                     claudeRemoteSettingSourcesV2: {
                         title: "Fontes de configuracao",
                         subtitle: "Controla quais configuracoes do Claude sao carregadas.",

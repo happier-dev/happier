@@ -62,6 +62,8 @@ describe('applyClaudeRemoteMetaState', () => {
       claudeRemoteDisableTodos: true,
       claudeRemoteStrictMcpServerConfig: true,
       claudeCodeExperimentalAgentTeamsEnabled: true,
+      claudeRemoteDebugEnabled: true,
+      claudeRemoteVerboseEnabled: true,
     });
 
     expect(next).toMatchObject({
@@ -72,7 +74,16 @@ describe('applyClaudeRemoteMetaState', () => {
       claudeRemoteDisableTodos: true,
       claudeRemoteStrictMcpServerConfig: true,
       claudeCodeExperimentalAgentTeamsEnabled: true,
+      claudeRemoteDebugEnabled: true,
+      claudeRemoteVerboseEnabled: true,
     });
+  });
+
+  it('normalizes claudeRemoteDebugCategories arrays when provided', () => {
+    const next = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE as any, {
+      claudeRemoteDebugCategories: ['mcp', 'api', 'api', 'bogus', 'file'],
+    });
+    expect((next as any).claudeRemoteDebugCategories).toEqual(['api', 'mcp', 'file']);
   });
 
   it('applies advanced options JSON only when the value is a string', () => {

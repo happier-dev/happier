@@ -2865,6 +2865,40 @@ export const es: TranslationStructure = {
                         title: "Usar Agent SDK (remoto)",
                         subtitle: "Usa el @anthropic-ai/claude-agent-sdk oficial para el modo remoto."
                     },
+                    claudeRemoteDebugEnabled: {
+                        title: "Modo debug",
+                        subtitle: "Activa los logs de depuración de Claude Code (equivalente a --debug)."
+                    },
+                    claudeRemoteVerboseEnabled: {
+                        title: "Verbose",
+                        subtitle: "Activa el registro verboso (equivalente a --verbose)."
+                    },
+                    claudeRemoteDebugCategories: {
+                        title: "Categorías de debug",
+                        subtitle: "Filtro opcional de categorías. Si está vacío, Claude registra todas las categorías de debug.",
+                        options: {
+                            api: {
+                                title: "API",
+                                subtitle: "Solicitudes y respuestas HTTP/API."
+                            },
+                            mcp: {
+                                title: "MCP",
+                                subtitle: "Conexiones de servidores MCP y tráfico de herramientas."
+                            },
+                            hooks: {
+                                title: "Hooks",
+                                subtitle: "Ciclo de vida de hooks y ejecución de comandos."
+                            },
+                            file: {
+                                title: "Archivos",
+                                subtitle: "Operaciones del sistema de archivos y helpers."
+                            },
+                            '1p': {
+                                title: "1p",
+                                subtitle: "Categoría interna first-party."
+                            }
+                        }
+                    },
                     claudeRemoteSettingSourcesV2: {
                         title: "Fuentes de ajustes",
                         subtitle: "Controla qué ajustes de Claude se cargan.",

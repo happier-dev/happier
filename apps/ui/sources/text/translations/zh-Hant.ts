@@ -2529,6 +2529,40 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                         title: "使用 Agent SDK（遠端）",
                         subtitle: "在遠端模式下使用官方 @anthropic-ai/claude-agent-sdk。"
                     },
+                    claudeRemoteDebugEnabled: {
+                        title: "除錯模式",
+                        subtitle: "啟用 Claude Code 除錯日誌（等同於 --debug）。"
+                    },
+                    claudeRemoteVerboseEnabled: {
+                        title: "Verbose",
+                        subtitle: "啟用詳細日誌（等同於 --verbose）。"
+                    },
+                    claudeRemoteDebugCategories: {
+                        title: "除錯類別",
+                        subtitle: "可選的類別篩選器。為空時，Claude 會輸出所有除錯類別。",
+                        options: {
+                            api: {
+                                title: "API",
+                                subtitle: "HTTP/API 請求與回應。"
+                            },
+                            mcp: {
+                                title: "MCP",
+                                subtitle: "MCP 伺服器連線與工具流量。"
+                            },
+                            hooks: {
+                                title: "Hooks",
+                                subtitle: "Hook 生命週期與命令執行。"
+                            },
+                            file: {
+                                title: "檔案",
+                                subtitle: "檔案系統操作與檔案輔助邏輯。"
+                            },
+                            '1p': {
+                                title: "1p",
+                                subtitle: "第一方內部類別。"
+                            }
+                        }
+                    },
                     claudeRemoteSettingSourcesV2: {
                         title: "設定來源",
                         subtitle: "控制要載入哪些 Claude 設定。",

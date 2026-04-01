@@ -2848,6 +2848,40 @@ export const ru: TranslationStructure = {
                         title: "Использовать Agent SDK (удаленно)",
                         subtitle: "Использовать официальный @anthropic-ai/claude-agent-sdk для удаленного режима."
                     },
+                    claudeRemoteDebugEnabled: {
+                        title: "Режим debug",
+                        subtitle: "Включает debug-логи Claude Code (эквивалент --debug)."
+                    },
+                    claudeRemoteVerboseEnabled: {
+                        title: "Verbose",
+                        subtitle: "Включает подробное логирование (эквивалент --verbose)."
+                    },
+                    claudeRemoteDebugCategories: {
+                        title: "Категории debug",
+                        subtitle: "Необязательный фильтр категорий. Если пусто, Claude логирует все категории debug.",
+                        options: {
+                            api: {
+                                title: "API",
+                                subtitle: "HTTP/API запросы и ответы."
+                            },
+                            mcp: {
+                                title: "MCP",
+                                subtitle: "Подключения MCP серверов и трафик инструментов."
+                            },
+                            hooks: {
+                                title: "Hooks",
+                                subtitle: "Жизненный цикл хуков и выполнение команд."
+                            },
+                            file: {
+                                title: "Файлы",
+                                subtitle: "Операции файловой системы и вспомогательные функции."
+                            },
+                            '1p': {
+                                title: "1p",
+                                subtitle: "Внутренняя first-party категория."
+                            }
+                        }
+                    },
                     claudeRemoteSettingSourcesV2: {
                         title: "Источники настроек",
                         subtitle: "Определяет, какие настройки Claude загружаются.",

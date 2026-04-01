@@ -3149,6 +3149,40 @@ localTailscale: {
                         title: "Agent SDK を使用（リモート）",
                         subtitle: "リモートモードで公式の @anthropic-ai/claude-agent-sdk を使用します。"
                     },
+                    claudeRemoteDebugEnabled: {
+                        title: "デバッグモード",
+                        subtitle: "Claude Code のデバッグログを有効にします（--debug と同等）。"
+                    },
+                    claudeRemoteVerboseEnabled: {
+                        title: "Verbose",
+                        subtitle: "詳細ログを有効にします（--verbose と同等）。"
+                    },
+                    claudeRemoteDebugCategories: {
+                        title: "デバッグカテゴリ",
+                        subtitle: "任意のカテゴリフィルタ。空の場合はすべてのデバッグカテゴリを出力します。",
+                        options: {
+                            api: {
+                                title: "API",
+                                subtitle: "HTTP/API リクエストとレスポンス。"
+                            },
+                            mcp: {
+                                title: "MCP",
+                                subtitle: "MCP サーバー接続とツール通信。"
+                            },
+                            hooks: {
+                                title: "Hooks",
+                                subtitle: "フックのライフサイクルとコマンド実行。"
+                            },
+                            file: {
+                                title: "Files",
+                                subtitle: "ファイル操作とファイル関連ヘルパー。"
+                            },
+                            '1p': {
+                                title: "1p",
+                                subtitle: "ファーストパーティ内部カテゴリ。"
+                            }
+                        }
+                    },
                     claudeRemoteSettingSourcesV2: {
                         title: "設定ソース",
                         subtitle: "どの Claude 設定を読み込むかを制御します。",

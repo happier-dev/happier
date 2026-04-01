@@ -132,6 +132,62 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.allowedTools).toBeUndefined();
     });
 
+    it('passes debug and verbose flags via extraArgs when enabled', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return {
+                message: 'hello',
+                mode: makeMode({
+                    permissionMode: 'default',
+                    claudeRemoteDebugEnabled: true,
+                    claudeRemoteVerboseEnabled: true,
+                    claudeRemoteDebugCategories: ['mcp', 'api', 'bogus', 'file'],
+                } as any),
+            };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions).toBeTruthy();
+        // Debug categories normalized to stable order, invalid dropped.
+        expect(capturedOptions.extraArgs).toMatchObject({
+            debug: 'api,mcp,file',
+            verbose: null,
+        });
+    });
+
     it('passes effort when the mode specifies a reasoningEffort', async () => {
         let capturedOptions: any = null;
 

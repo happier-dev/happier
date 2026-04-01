@@ -2761,6 +2761,40 @@ export const zhHans: TranslationStructure = {
                         title: "使用 Agent SDK（远程）",
                         subtitle: "在远程模式下使用官方 @anthropic-ai/claude-agent-sdk。"
                     },
+                    claudeRemoteDebugEnabled: {
+                        title: "调试模式",
+                        subtitle: "启用 Claude Code 调试日志（等同于 --debug）。"
+                    },
+                    claudeRemoteVerboseEnabled: {
+                        title: "Verbose",
+                        subtitle: "启用详细日志（等同于 --verbose）。"
+                    },
+                    claudeRemoteDebugCategories: {
+                        title: "调试类别",
+                        subtitle: "可选的类别过滤器。为空时，Claude 会输出所有调试类别。",
+                        options: {
+                            api: {
+                                title: "API",
+                                subtitle: "HTTP/API 请求与响应。"
+                            },
+                            mcp: {
+                                title: "MCP",
+                                subtitle: "MCP 服务器连接与工具流量。"
+                            },
+                            hooks: {
+                                title: "Hooks",
+                                subtitle: "Hook 生命周期与命令执行。"
+                            },
+                            file: {
+                                title: "文件",
+                                subtitle: "文件系统操作与文件辅助逻辑。"
+                            },
+                            '1p': {
+                                title: "1p",
+                                subtitle: "第一方内部类别。"
+                            }
+                        }
+                    },
                     claudeRemoteSettingSourcesV2: {
                         title: "设置来源",
                         subtitle: "控制加载哪些 Claude 设置。",

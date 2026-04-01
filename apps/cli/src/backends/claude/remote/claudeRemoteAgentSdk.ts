@@ -178,6 +178,21 @@ export async function claudeRemoteAgentSdk(opts: {
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? mode.appendSystemPrompt;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: mode.claudeRemoteDisableTodos === true });
     const enableFileCheckpointing = mode.claudeRemoteEnableFileCheckpointing === true;
+    const debugEnabled = mode.claudeRemoteDebugEnabled === true;
+    const verboseEnabled = mode.claudeRemoteVerboseEnabled === true;
+    const debugCategories = (() => {
+        const raw = mode.claudeRemoteDebugCategories;
+        if (!Array.isArray(raw)) return [] as string[];
+        const set = new Set<string>();
+        for (const value of raw) {
+            set.add(value);
+        }
+        const out: string[] = [];
+        for (const key of ['api', 'mcp', 'hooks', 'file', '1p'] as const) {
+            if (set.has(key)) out.push(key);
+        }
+        return out;
+    })();
     const settingSources = (() => {
         type SettingSource = 'user' | 'project' | 'local';
 
@@ -495,6 +510,13 @@ export async function claudeRemoteAgentSdk(opts: {
             modelId: argOverrides.model ?? mode.model,
             effort: argOverrides.effort ?? mode.reasoningEffort,
         });
+        const extraArgs = (() => {
+            const out: Record<string, string | null> = Object.create(null);
+            if (enableFileCheckpointing) out['replay-user-messages'] = null;
+            if (debugEnabled) out.debug = debugCategories.length > 0 ? debugCategories.join(',') : null;
+            if (verboseEnabled) out.verbose = null;
+            return Object.keys(out).length > 0 ? out : undefined;
+        })();
             const queryOptions: Record<string, unknown> = {
                 abortController,
                 cwd: opts.path,
@@ -521,7 +543,7 @@ export async function claudeRemoteAgentSdk(opts: {
             executable: runtimeExecutable,
             pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
         enableFileCheckpointing: enableFileCheckpointing || undefined,
-        extraArgs: enableFileCheckpointing ? { 'replay-user-messages': null } : undefined,
+        extraArgs,
         maxThinkingTokens: typeof mode.claudeRemoteMaxThinkingTokens === 'number' ? mode.claudeRemoteMaxThinkingTokens : undefined,
             hooks,
         };

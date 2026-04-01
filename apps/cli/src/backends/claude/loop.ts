@@ -48,6 +48,9 @@ export interface EnhancedMode {
     claudeRemoteMaxThinkingTokens?: number | null;
     claudeRemoteDisableTodos?: boolean;
     claudeRemoteStrictMcpServerConfig?: boolean;
+    claudeRemoteDebugEnabled?: boolean;
+    claudeRemoteVerboseEnabled?: boolean;
+    claudeRemoteDebugCategories?: ReadonlyArray<'api' | 'mcp' | 'hooks' | 'file' | '1p'>;
     claudeRemoteAdvancedOptionsJson?: string;
 }
 
