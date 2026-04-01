@@ -18,10 +18,10 @@ Happier always follows the same high-level flow:
 ### Option A — Hosted (recommended to start)
 You use Happier Cloud as your Relay.
 
-1. Open the desktop app (recommended) or web app (status/management only).
+1. Open the desktop app (recommended) or the web app.
 2. Choose **Happier Cloud** when the app asks you which Relay to use.
 3. Sign in.
-4. In the desktop app, open `/setup` and choose **Set up this computer**.
+4. Open `/setup` and choose **Set up this computer**.
    - This configures the local background service against the Relay you just selected.
    - If the app detects Relay drift later, it shows a repair action instead of silently leaving the daemon on another Relay.
 
@@ -30,10 +30,10 @@ Optional CLI path:
 ```bash
 # Node-free (recommended): install the CLI binary via the official installer
 curl -fsSL https://happier.dev/install | bash
-happier auth login
+happier setup --relay-url https://api.happier.dev
 ```
 
-The CLI login flow still works, but the app-first setup is the recommended control-panel flow.
+The app-first setup is the recommended control-panel flow. The CLI is a great fallback when you want one-command setup from a terminal.
 
 Notes:
 - The desktop app and the installer-installed CLI are self-contained; you do not need system Node/Yarn installed.
@@ -64,15 +64,14 @@ If you need an advanced CLI fallback for the daemon host:
 happier machine setup --ssh user@host --install-relay-runtime
 ```
 
-Troubleshooting-only (manual daemon setup on the remote host):
+Troubleshooting-only (manual daemon setup on the remote host, without SSH automation):
 
 ```bash
-happier server add --name company --server-url https://YOUR_SERVER_URL --webapp-url https://YOUR_WEBAPP_URL --use
-happier auth login
-happier daemon service install
+happier setup --relay-url https://YOUR_SERVER_URL --skip-providers
 ```
 
-`--use` sets the default Relay profile for that CLI installation, but the app-first flow is preferred because it keeps Relay/account selection visible.
+This is the same “guided executor” path as the app wizard, but from the terminal.
+If you want to save a reusable Relay profile for future CLI commands, see [CLI → Server profiles](/docs/clients/cli#server-profiles).
 
 ### Option C — Devbox (server + daemon on the same machine)
 You install both the Relay and the background service on one box.

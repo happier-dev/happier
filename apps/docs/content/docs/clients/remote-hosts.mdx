@@ -1,0 +1,72 @@
+---
+title: Remote hosts (SSH)
+description: Save SSH host profiles and reuse them across setup flows.
+---
+
+Remote hosts let you save SSH connection details for machines you manage (VPS, home server, dev box) and reuse them across setup and repair flows.
+
+## What a remote host contains
+
+At minimum:
+
+- host (DNS name or IP)
+- port (optional)
+- username
+- auth method:
+  - SSH agent
+  - key file
+  - password
+
+Optionally:
+
+- a friendly name / notes
+- saved secret material (for example an SSH private key or password) when supported by your server/build policy
+
+## Where to manage remote hosts
+
+In the desktop app, open:
+
+- **Settings → Remote hosts**
+
+From there you can:
+
+- add a new host
+- test the SSH connection (including first-time host-key trust prompts)
+- reuse a saved host in setup flows
+
+## How it’s used in setup flows
+
+When a setup step requires SSH (for example “Set up a remote machine”), the wizard can:
+
+- let you pick an existing remote host, or
+- let you enter a new host inline and optionally save it (desktop-only).
+
+If saving is disabled by your server/build policy, the wizard still supports one-time SSH use; it simply won’t persist the profile.
+
+## CLI equivalents
+
+Remote hosts are primarily a UI affordance, but you can always run the underlying SSH bootstraps from the CLI:
+
+Bootstrap a remote machine:
+
+```bash
+happier machine setup --ssh user@host
+```
+
+Bootstrap a remote machine using password auth:
+
+```bash
+happier machine setup --ssh-user user --ssh-host host --ssh-auth=password
+```
+
+Install the managed Relay runtime on a remote host:
+
+```bash
+happier relay host install --ssh user@host --mode system
+```
+
+## Security notes
+
+- SSH host-key trust prompts should be reviewed carefully the first time you connect.
+- Saved secret material is never stored as plaintext in synced settings.
+- If you don’t want a host saved long-term, keep “Save this host” disabled and use one-time SSH inputs.

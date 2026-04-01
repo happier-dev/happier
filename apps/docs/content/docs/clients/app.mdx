@@ -24,16 +24,22 @@ Some installers (for example `hstack setup-from-source` and Proxmox) print one-c
 
 On desktop, the app is intended to be the main control panel for your Happier setup:
 
-- start from the in-app `/setup` flow (desktop-only)
+- start from the in-app `/setup` wizard (desktop can execute tasks; web shows guided handoff commands)
 - choose your Relay before signing in
 - sign in on that Relay
 - set up **this computer**
 - add a **remote machine over SSH**
+- save **remote hosts** (SSH profiles) and reuse them across setup flows
 - repair Relay drift when the daemon is pointed at a different Relay
 - manage the local self-hosted Relay runtime
 - enable private access for a local/self-hosted Relay
 
 This keeps Relay choice, account context, daemon state, and machine setup visible in one place instead of spreading the flow across separate CLI steps.
+
+User guides:
+
+- [Setup wizard](./setup-wizard)
+- [Remote hosts (SSH)](./remote-hosts)
 
 ## Multi-server workflows
 

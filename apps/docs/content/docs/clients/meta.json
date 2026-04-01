@@ -4,6 +4,8 @@
     "index",
     "app",
     "control-panel",
+    "setup-wizard",
+    "remote-hosts",
     "cli",
     "cli-sessions",
     "daemon",

@@ -1,0 +1,99 @@
+---
+title: Setup wizard
+description: Guided setup for Relay selection, login, machine setup, and secure access.
+---
+
+The Setup wizard is the guided flow behind the in-app `/setup` route.
+
+It helps you:
+
+- pick the active Relay (Happier Cloud or self-hosted)
+- sign in / create an account on that Relay
+- set up a machine (daemon/background service)
+- host a local Relay (optional)
+- enable private access (optional, for example Tailscale)
+- set up providers (optional)
+
+## Desktop vs web behavior
+
+- **Desktop app (recommended control panel)**: can execute setup actions directly (system tasks).
+- **Web app**: can guide you through setup and show copy/paste commands, but cannot execute local system tasks on your computer.
+
+If you’re using the web app and the wizard shows a “Run this command” step, you can:
+
+- run the command in a terminal on the target machine, or
+- continue in the desktop app for one-click execution.
+
+## Main entrypoints
+
+### Set up this computer (local machine)
+
+Use this when the daemon should run on the same computer as the desktop app.
+
+The wizard will guide you through one-command setup:
+
+```bash
+happier setup --relay-url https://YOUR_RELAY_URL
+```
+
+What it does (high level):
+
+- selects the Relay
+- signs in if needed
+- installs and enables the background service (unless skipped)
+- optionally guides provider setup
+
+### Host a Relay on this computer (optional)
+
+If you want to run a Relay locally (for example on a dev box or LAN machine), the wizard guides you through installing the **managed Relay runtime**:
+
+```bash
+happier relay host install --mode system
+```
+
+After installing a local Relay, you may still need to configure **private access** (see below) so phones and other devices can reach it.
+
+### Set up a remote machine over SSH
+
+Use this when you want the daemon/providers to run on another machine (VPS, home server, dev box), but you want to control setup from your desktop.
+
+The wizard will either:
+
+- run an SSH bootstrap task from the desktop app, or
+- show the equivalent CLI command to run yourself.
+
+CLI example:
+
+```bash
+happier machine setup --ssh user@host
+```
+
+## Provider setup (optional)
+
+After a machine is set up, the wizard can guide provider setup. The underlying CLI surface is:
+
+```bash
+happier providers setup
+```
+
+You can also pass a provider list when you already know what you want:
+
+```bash
+happier providers setup --providers codex,claude
+```
+
+## Secure access (optional)
+
+If your Relay URL is not publicly reachable (for example it’s only `localhost`), phones and other devices won’t be able to sign in or connect.
+
+The wizard can guide private access setup using Tailscale when available. After configuration, you should see a reachable HTTPS URL that you can use as the Relay URL in the app and CLI.
+
+## Troubleshooting
+
+### “Unreachable” Relay in the wizard
+
+- Use **Retry** (or the row menu) to re-check reachability.
+- If the Relay is truly down, select a different Relay or edit the URL.
+
+If you are using the **web app on HTTPS** and your Relay is `http://...`, your browser may block the probe as mixed-content.
+In that case, use the desktop app or expose your Relay over HTTPS (for example via Tailscale Serve/Funnel or a reverse proxy).
