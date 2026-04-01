@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getProjectPath } from './path';
+import * as fs from 'node:fs';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -98,6 +99,23 @@ describe('getProjectPath', () => {
       expect(result).toBe(join('/test/home/.claude', 'projects', expectedProjectId));
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes /tmp project ids when realpath resolves to /private/tmp', () => {
+    process.env.CLAUDE_CONFIG_DIR = '/test/home/.claude';
+
+    const spy = vi.spyOn(fs, 'realpathSync').mockImplementation((path) => {
+      const resolved = resolve(String(path));
+      if (resolved === '/tmp/my-app') return '/private/tmp/my-app';
+      return resolved;
+    });
+
+    try {
+      const result = getProjectPath('/tmp/my-app');
+      expect(result).toBe(join('/test/home/.claude', 'projects', '-private-tmp-my-app'));
+    } finally {
+      spy.mockRestore();
     }
   });
 
