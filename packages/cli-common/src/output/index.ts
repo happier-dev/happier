@@ -12,7 +12,9 @@ export {
   dim,
   emphasis,
   errorFrame,
+  frame,
   fail,
+  checklist,
   gray,
   green,
   info,
@@ -28,8 +30,13 @@ export {
   warn,
   yellow,
   type BannerOptions,
+  type ChecklistItem,
+  type ChecklistOptions,
+  type ChecklistState,
   type DefinitionListOptions,
   type DefinitionListRow,
+  type FrameOptions,
+  type FrameTone,
   type TerminalStyles,
 } from './presentation.js';
 export { createStepPrinter, runCommandLogged } from './progress.js';

@@ -63,6 +63,33 @@ describe('renderOutputItems', () => {
       ].join('\n'),
     );
   });
+
+  it('renders checklist items using the presentation formatter', () => {
+    const noColorChalk = Object.create(chalk) as typeof chalk;
+    noColorChalk.level = 0;
+    const presentation = createTerminalPresentation(noColorChalk);
+
+    const items: OutputItem[] = [
+      {
+        kind: 'checklist',
+        items: [
+          { state: 'success', label: 'Install CLI' },
+          { state: 'pending', label: 'Connect to relay' },
+          { state: 'warning', label: 'Install Tailscale', details: ['Optional for local-only setups'] },
+        ],
+      },
+    ];
+
+    const rendered = renderOutputItems(items, { presentation });
+    expect(stripAnsi(rendered)).toBe(
+      [
+        '- [✓] Install CLI',
+        '- [..] Connect to relay',
+        '- [!] Install Tailscale',
+        '  Optional for local-only setups',
+      ].join('\n'),
+    );
+  });
 });
 
 describe('createOutputBuilder', () => {

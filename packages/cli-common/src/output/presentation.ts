@@ -30,6 +30,25 @@ export type DefinitionListOptions = Readonly<{
   indent?: string;
 }>;
 
+export type FrameTone = 'success' | 'warning' | 'error' | 'info' | 'neutral';
+
+export type FrameOptions = Readonly<{
+  indent?: string;
+}>;
+
+export type ChecklistState = 'pending' | 'running' | FrameTone;
+
+export type ChecklistItem = Readonly<{
+  state: ChecklistState;
+  label: string;
+  details?: readonly string[];
+}>;
+
+export type ChecklistOptions = Readonly<{
+  indent?: string;
+  detailsIndent?: string;
+}>;
+
 function normalizeText(value: unknown): string {
   return String(value ?? '');
 }
@@ -104,12 +123,64 @@ function statusSymbolFor(chalkLike: ChalkLike, tone: 'success' | 'warning' | 'er
 
 function statusLineImpl(
   chalkLike: ChalkLike,
-  tone: 'success' | 'warning' | 'error' | 'info' | 'neutral',
+  tone: FrameTone,
   message?: string,
 ): string {
   const symbol = statusSymbolFor(chalkLike, tone);
   const text = normalizeText(message ?? '');
   return text ? `${symbol} ${text}` : symbol;
+}
+
+function checklistSymbolFor(chalkLike: ChalkLike, state: ChecklistState): string {
+  if (state === 'pending' || state === 'running') {
+    const symbol = '..';
+    if (!hasColor(chalkLike)) return symbol;
+    return chalkLike.cyan(symbol);
+  }
+  return statusSymbolFor(chalkLike, state);
+}
+
+function frameImpl(
+  chalkLike: ChalkLike,
+  tone: FrameTone,
+  title: string,
+  details: readonly string[] = [],
+  options: FrameOptions = {},
+): string {
+  const indent = normalizeText(options.indent ?? '  ') || '  ';
+  const lines: string[] = [statusLineImpl(chalkLike, tone, title)];
+  for (const detail of details) {
+    const normalized = normalizeText(detail);
+    if (!normalized) continue;
+    lines.push(chalkLike.gray(`${indent}${normalized}`));
+  }
+  return lines.join('\n');
+}
+
+function checklistImpl(
+  chalkLike: ChalkLike,
+  items: readonly ChecklistItem[] = [],
+  options: ChecklistOptions = {},
+): string {
+  const indent = normalizeText(options.indent ?? '');
+  const detailsIndent = normalizeText(options.detailsIndent ?? '  ') || '  ';
+
+  const lines: string[] = [];
+  for (const item of items ?? []) {
+    const label = normalizeText(item?.label ?? '').trim();
+    if (!label) continue;
+    const state = (item?.state ?? 'neutral') as ChecklistState;
+    const symbol = checklistSymbolFor(chalkLike, state);
+    lines.push(`${indent}- [${symbol}] ${label}`);
+
+    for (const detail of item?.details ?? []) {
+      const normalized = normalizeText(detail);
+      if (!normalized) continue;
+      lines.push(`${indent}${chalkLike.gray(`${detailsIndent}${normalized}`)}`);
+    }
+  }
+
+  return lines.join('\n');
 }
 
 function createPresentation(chalkLike: ChalkLike) {
@@ -151,6 +222,10 @@ function createPresentation(chalkLike: ChalkLike) {
     }
     return lines.join('\n');
   };
+  const frame = (tone: FrameTone, title: string, details: readonly string[] = [], options: FrameOptions = {}): string =>
+    frameImpl(chalkLike, tone, title, details, options);
+  const checklist = (items: readonly ChecklistItem[], options: ChecklistOptions = {}): string =>
+    checklistImpl(chalkLike, items, options);
 
   return {
     cmd,
@@ -167,6 +242,8 @@ function createPresentation(chalkLike: ChalkLike) {
     definitionList,
     table,
     errorFrame,
+    frame,
+    checklist,
   } as const;
 }
 
@@ -197,6 +274,8 @@ export const {
   definitionList,
   table,
   errorFrame,
+  frame,
+  checklist,
 } = terminalPresentation;
 
 export const { ansiEnabled, bold, dim, gray, red, green, yellow, blue, magenta, cyan } = terminalStyles;

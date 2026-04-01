@@ -42,6 +42,31 @@ describe('createTerminalPresentation', () => {
     const errorFrame = presentation.errorFrame('Error:', ['First detail', 'Second detail']);
     expect(stripAnsi(errorFrame)).toBe('Error:\n  First detail\n  Second detail');
   });
+
+  it('formats generic frames and checklists with stable structure', () => {
+    const colorChalk = Object.create(chalk) as typeof chalk;
+    colorChalk.level = 3;
+    const presentation = createTerminalPresentation(colorChalk);
+
+    const frame = presentation.frame('warning', "Can't reach Relay", ['Retry', 'Use a different URL']);
+    expect(frame).toContain('\u001B[');
+    expect(stripAnsi(frame)).toBe(["! Can't reach Relay", '  Retry', '  Use a different URL'].join('\n'));
+
+    const checklist = presentation.checklist([
+      { state: 'success', label: 'Install CLI' },
+      { state: 'pending', label: 'Connect to relay' },
+      { state: 'error', label: 'Pair this computer', details: ['Denied by server'] },
+    ]);
+    expect(checklist).toContain('\u001B[');
+    expect(stripAnsi(checklist)).toBe(
+      [
+        '- [✓] Install CLI',
+        '- [..] Connect to relay',
+        '- [x] Pair this computer',
+        '  Denied by server',
+      ].join('\n'),
+    );
+  });
 });
 
 describe('createTerminalStyles', () => {

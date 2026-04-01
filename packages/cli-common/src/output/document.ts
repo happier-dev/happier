@@ -1,9 +1,17 @@
-import { terminalPresentation, type BannerOptions, type DefinitionListOptions, type DefinitionListRow } from './presentation.js';
+import {
+  terminalPresentation,
+  type BannerOptions,
+  type ChecklistItem,
+  type ChecklistOptions,
+  type DefinitionListOptions,
+  type DefinitionListRow,
+} from './presentation.js';
 
 export type OutputItem =
   | Readonly<{ kind: 'line'; text: string }>
   | Readonly<{ kind: 'blank' }>
   | Readonly<{ kind: 'bullets'; items: readonly (string | null | undefined)[] }>
+  | Readonly<{ kind: 'checklist'; items: readonly ChecklistItem[]; options?: ChecklistOptions }>
   | Readonly<{ kind: 'numbered'; items: readonly (string | null | undefined)[]; start?: number }>
   | Readonly<{ kind: 'definitionList'; rows: readonly DefinitionListRow[]; options?: DefinitionListOptions }>
   | Readonly<{ kind: 'section'; title: string; body: readonly OutputItem[] }>;
@@ -11,6 +19,7 @@ export type OutputItem =
 export type OutputPresentation = Readonly<{
   banner: (title: string, options?: BannerOptions) => string;
   bullets: (lines: readonly (string | null | undefined)[]) => string;
+  checklist: (items: readonly ChecklistItem[], options?: ChecklistOptions) => string;
   definitionList: (rows: readonly DefinitionListRow[], options?: DefinitionListOptions) => string;
   sectionTitle: (title: string) => string;
 }>;
@@ -24,6 +33,7 @@ function normalizePresentation(explicit?: OutputPresentation): OutputPresentatio
   return {
     banner: terminalPresentation.banner,
     bullets: terminalPresentation.bullets,
+    checklist: terminalPresentation.checklist,
     definitionList: terminalPresentation.definitionList,
     sectionTitle: terminalPresentation.sectionTitle,
   };
@@ -34,6 +44,10 @@ function renderItem(item: OutputItem, presentation: OutputPresentation): string[
   if (item.kind === 'line') return [String(item.text ?? '')];
   if (item.kind === 'bullets') {
     const rendered = presentation.bullets(item.items ?? []);
+    return rendered ? String(rendered).split('\n') : [];
+  }
+  if (item.kind === 'checklist') {
+    const rendered = presentation.checklist(item.items ?? [], item.options);
     return rendered ? String(rendered).split('\n') : [];
   }
   if (item.kind === 'numbered') {
@@ -70,6 +84,7 @@ export type OutputBuilder = Readonly<{
   line: (text: string) => void;
   blank: () => void;
   bullets: (items: readonly (string | null | undefined)[]) => void;
+  checklist: (items: readonly ChecklistItem[], options?: ChecklistOptions) => void;
   numbered: (items: readonly (string | null | undefined)[], options?: Readonly<{ start?: number }>) => void;
   definitionList: (rows: readonly DefinitionListRow[], options?: DefinitionListOptions) => void;
   section: (title: string, build?: (section: OutputBuilder) => void) => void;
@@ -90,6 +105,9 @@ export function createOutputBuilder({ presentation: explicitPresentation }: Rend
     },
     bullets: (bulletItems) => {
       items.push({ kind: 'bullets', items: bulletItems ?? [] });
+    },
+    checklist: (checkItems, options) => {
+      items.push({ kind: 'checklist', items: checkItems ?? [], ...(options ? { options } : {}) });
     },
     numbered: (numberedItems, options) => {
       items.push({
