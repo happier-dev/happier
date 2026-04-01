@@ -167,7 +167,7 @@ fi
 hstack remote server setup "${setup_args[@]}" --json >/dev/null
 
 echo "[remote-server] checking remote server health..."
-ssh "$REMOTE_SSH_TARGET" "curl -fsS http://127.0.0.1:${REMOTE_SERVER_PORT}/v1/version" >/dev/null
+ssh "$REMOTE_SSH_TARGET" "curl -fsS http://127.0.0.1:${REMOTE_SERVER_PORT}/health" >/dev/null
 
 echo "[remote-server] checking remote server config reflects postgres..."
 config_json="$(ssh "$REMOTE_SSH_TARGET" "sudo -E ~/.happier/bin/hstack self-host config view --mode=system --channel=${remote_channel_flag} --json")"

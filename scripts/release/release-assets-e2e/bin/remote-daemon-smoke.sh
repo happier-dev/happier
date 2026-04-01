@@ -67,13 +67,13 @@ chmod 600 /root/.ssh/config
 
 echo "[remote-daemon] waiting for server..."
 for _ in $(seq 1 120); do
-  if curl -fsS "${HAPPIER_SERVER_URL}/v1/version" >/dev/null 2>&1; then
+  if curl -fsS "${HAPPIER_SERVER_URL}/health" >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-if ! curl -fsS "${HAPPIER_SERVER_URL}/v1/version" >/dev/null 2>&1; then
-  echo "[remote-daemon] server did not become ready at ${HAPPIER_SERVER_URL}/v1/version" >&2
+if ! curl -fsS "${HAPPIER_SERVER_URL}/health" >/dev/null 2>&1; then
+  echo "[remote-daemon] server did not become ready at ${HAPPIER_SERVER_URL}/health" >&2
   exit 1
 fi
 

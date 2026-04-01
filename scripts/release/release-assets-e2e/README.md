@@ -91,7 +91,7 @@ Defaults:
 2) Runs container `cli` and validates:
 - `happier server set --server-url http://stack:3005 ...`
 - non-interactive auth bootstrap + `GET /v1/account/profile`
-- `happier server test` (probes `GET /v1/version`)
+- `happier server test` (probes `GET /health`)
 - `happier daemon start` + `happier daemon status`
 
 If something fails, re-run with `--keep` and inspect logs:

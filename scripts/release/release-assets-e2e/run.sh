@@ -540,7 +540,7 @@ run_dockerhub_images_smoke() {
       echo "[npm-e2e-smoke] waiting for dockerhub relay-server..."
       start_ts="$(date +%s)"
       while true; do
-        if "${compose_images[@]}" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/v1/version >/dev/null && curl -fsS http://127.0.0.1:3005/ | head -c 4096 | grep -qi "<html"' >/dev/null 2>&1; then
+        if "${compose_images[@]}" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/health >/dev/null && curl -fsS http://127.0.0.1:3005/ | head -c 4096 | grep -qi "<html"' >/dev/null 2>&1; then
           break
         fi
         now_ts="$(date +%s)"
@@ -708,7 +708,7 @@ run_relay_upgrade_smoke() {
 
       "${compose_upgrade[@]}" --env-file "$upgrade_env_from" up -d --no-deps --force-recreate --renew-anon-volumes --remove-orphans relay >/dev/null
       for _ in $(seq 1 120); do
-        if "${compose_upgrade[@]}" --env-file "$upgrade_env_from" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/v1/version >/dev/null' >/dev/null 2>&1; then
+        if "${compose_upgrade[@]}" --env-file "$upgrade_env_from" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/health >/dev/null' >/dev/null 2>&1; then
           break
         fi
         sleep 2
@@ -734,7 +734,7 @@ run_relay_upgrade_smoke() {
       "${compose_upgrade[@]}" --env-file "$upgrade_env_to" up -d --no-deps --force-recreate --renew-anon-volumes --remove-orphans relay >/dev/null
 
       for _ in $(seq 1 120); do
-        if "${compose_upgrade[@]}" --env-file "$upgrade_env_to" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/v1/version >/dev/null' >/dev/null 2>&1; then
+        if "${compose_upgrade[@]}" --env-file "$upgrade_env_to" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/health >/dev/null' >/dev/null 2>&1; then
           break
         fi
         sleep 2
@@ -816,7 +816,7 @@ if ! [[ "$timeout_s" =~ ^[0-9]+$ ]] || [[ "$timeout_s" -le 0 ]]; then
 fi
 start_ts="$(date +%s)"
 while true; do
-  if "${compose[@]}" exec -T stack bash -lc 'curl -fsS http://127.0.0.1:3005/v1/version >/dev/null && curl -fsS http://127.0.0.1:3005/ | head -c 4096 | grep -qi "<html"' >/dev/null 2>&1; then
+  if "${compose[@]}" exec -T stack bash -lc 'curl -fsS http://127.0.0.1:3005/health >/dev/null && curl -fsS http://127.0.0.1:3005/ | head -c 4096 | grep -qi "<html"' >/dev/null 2>&1; then
     break
   fi
   now_ts="$(date +%s)"

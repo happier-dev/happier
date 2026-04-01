@@ -173,12 +173,12 @@ if [[ "$HSTACK_E2E_WITH_DAEMON" == "1" ]]; then
 
   # Wait for server.
   for _ in $(seq 1 120); do
-    if curl -fsS "${STACK_INTERNAL_SERVER_URL}/v1/version" >/dev/null 2>&1; then
+    if curl -fsS "${STACK_INTERNAL_SERVER_URL}/health" >/dev/null 2>&1; then
       break
     fi
     sleep 1
   done
-  if ! curl -fsS "${STACK_INTERNAL_SERVER_URL}/v1/version" >/dev/null 2>&1; then
+  if ! curl -fsS "${STACK_INTERNAL_SERVER_URL}/health" >/dev/null 2>&1; then
     echo "[stack] server did not become ready for auth bootstrap" >&2
     kill "$phase1_pid" >/dev/null 2>&1 || true
     exit 1
@@ -209,8 +209,8 @@ echo "[stack] starting stack (phase 2)..."
 
 echo "[stack] keeping container alive (stack start daemonizes processes)..."
 while true; do
-  if ! curl -fsS "${STACK_INTERNAL_SERVER_URL}/v1/version" >/dev/null 2>&1; then
-    echo "[stack] server healthcheck failed (${STACK_INTERNAL_SERVER_URL}/v1/version)" >&2
+  if ! curl -fsS "${STACK_INTERNAL_SERVER_URL}/health" >/dev/null 2>&1; then
+    echo "[stack] server healthcheck failed (${STACK_INTERNAL_SERVER_URL}/health)" >&2
     exit 1
   fi
   sleep 5
