@@ -1,11 +1,13 @@
 export {
   banner,
   bullets,
+  checklist,
   cmd,
   createTerminalPresentation,
   definitionList,
   emphasis,
   errorFrame,
+  frame,
   fail,
   info,
   kv,
