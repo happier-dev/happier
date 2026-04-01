@@ -17,13 +17,15 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
 COPY package.json yarn.lock ./
-RUN mkdir -p apps/cli apps/stack packages/agents packages/cli-common packages/protocol packages/release-runtime
+RUN mkdir -p apps/cli apps/stack packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers
 COPY apps/cli/package.json apps/cli/
 COPY apps/stack/package.json apps/stack/
 COPY packages/agents/package.json packages/agents/
 COPY packages/cli-common/package.json packages/cli-common/
+COPY packages/connection-supervisor/package.json packages/connection-supervisor/
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/release-runtime/package.json packages/release-runtime/
+COPY packages/transfers/package.json packages/transfers/
 
 COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
@@ -34,8 +36,10 @@ RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
 
 COPY packages/agents ./packages/agents
 COPY packages/cli-common ./packages/cli-common
+COPY packages/connection-supervisor ./packages/connection-supervisor
 COPY packages/protocol ./packages/protocol
 COPY packages/release-runtime ./packages/release-runtime
+COPY packages/transfers ./packages/transfers
 COPY apps/cli ./apps/cli
 COPY apps/stack ./apps/stack
 
@@ -62,8 +66,10 @@ COPY --from=cli-builder /repo/yarn.lock /repo/yarn.lock
 COPY --from=cli-builder /repo/node_modules /repo/node_modules
 COPY --from=cli-builder /repo/packages/agents /repo/packages/agents
 COPY --from=cli-builder /repo/packages/cli-common /repo/packages/cli-common
+COPY --from=cli-builder /repo/packages/connection-supervisor /repo/packages/connection-supervisor
 COPY --from=cli-builder /repo/packages/protocol /repo/packages/protocol
 COPY --from=cli-builder /repo/packages/release-runtime /repo/packages/release-runtime
+COPY --from=cli-builder /repo/packages/transfers /repo/packages/transfers
 COPY --from=cli-builder /repo/apps/cli /repo/apps/cli
 COPY --from=cli-builder /repo/apps/stack /repo/apps/stack
 
