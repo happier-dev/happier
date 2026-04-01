@@ -26,10 +26,14 @@ function deriveWebappUrl(serverUrl: string, explicitWebappUrl?: string): string 
 
 function buildRelayArgs(params: Readonly<{
   serverUrl: string;
+  localServerUrl?: string;
   webappUrl?: string;
 }>): string {
   const args = [
     `--server-url ${safeBashSingleQuote(params.serverUrl)}`,
+    ...(typeof params.localServerUrl === 'string' && params.localServerUrl.trim() && params.localServerUrl.trim() !== params.serverUrl.trim()
+      ? [`--local-server-url ${safeBashSingleQuote(params.localServerUrl)}`]
+      : []),
     `--webapp-url ${safeBashSingleQuote(deriveWebappUrl(params.serverUrl, params.webappUrl))}`,
   ];
   return args.join(' ');
@@ -37,11 +41,19 @@ function buildRelayArgs(params: Readonly<{
 
 function buildDaemonServiceEnv(params: Readonly<{
   serverUrl: string;
+  localServerUrl?: string;
   webappUrl?: string;
 }>): string {
+  const localServerUrl = typeof params.localServerUrl === 'string' ? params.localServerUrl.trim() : '';
+  const serverUrl = params.serverUrl.trim();
+  const shouldPreferLocal = Boolean(localServerUrl) && localServerUrl !== serverUrl;
+  const daemonServerUrl = shouldPreferLocal ? localServerUrl : serverUrl;
   const env = [
-    `HAPPIER_DAEMON_SERVICE_SERVER_URL=${safeBashSingleQuote(params.serverUrl)}`,
+    `HAPPIER_DAEMON_SERVICE_SERVER_URL=${safeBashSingleQuote(daemonServerUrl)}`,
     `HAPPIER_DAEMON_SERVICE_WEBAPP_URL=${safeBashSingleQuote(deriveWebappUrl(params.serverUrl, params.webappUrl))}`,
+    ...(shouldPreferLocal
+      ? [`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${safeBashSingleQuote(serverUrl)}`]
+      : []),
   ];
   return env.join(' ');
 }
@@ -49,6 +61,7 @@ function buildDaemonServiceEnv(params: Readonly<{
 export function buildRemoteBootstrapCommand(params: Readonly<{
   label: RemoteBootstrapCommandLabel;
   serverUrl: string;
+  localServerUrl?: string;
   channel?: string;
   webappUrl?: string;
   daemonServiceMode?: 'none' | 'user' | 'system';

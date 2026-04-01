@@ -1,11 +1,19 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 import { SystemTaskSpecSchema } from '@happier-dev/protocol';
 import {
+  createDaemonServiceRestartTaskKind,
+  createDaemonServiceStartTaskKind,
+  createDaemonServiceStatusTaskKind,
+  createDaemonServiceStopTaskKind,
   createRelayRuntimeInstallOrUpdateTaskKind,
   createRelayRuntimeStartTaskKind,
   createRelayRuntimeStatusTaskKind,
   createRelayRuntimeStopTaskKind,
+  SystemTaskExecutionError,
+  type DaemonServiceStatusSnapshot,
+  type DaemonServiceTaskParams,
   type RelayRuntimeStatusSnapshot,
   type RelayRuntimeTaskParams,
 } from '@happier-dev/cli-common/systemTasks';
@@ -17,6 +25,50 @@ import {
 } from './relayRuntime/liveRelayRuntime';
 import { createLiveRemoteSshBootstrapTaskKind } from './ssh/liveRemoteSshBootstrap';
 import { createSystemTasksRunner } from './systemTasksRunner';
+import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
+import { commandExistsInPath } from '@/daemon/service/commandExistsInPath';
+import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
+import { planDaemonServiceLifecycle, type DaemonServiceLifecycleAction } from '@/daemon/service/plan';
+
+function runCommandsBestEffort(commands: ReadonlyArray<Readonly<{ cmd: string; args: readonly string[] }>>): void {
+  for (const command of commands) {
+    if (!commandExistsInPath({ cmd: command.cmd, envPath: process.env.PATH, platform: process.platform, pathext: process.env.PATHEXT })) continue;
+    try {
+      spawnSync(command.cmd, [...command.args], { stdio: 'ignore', env: process.env });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function readLiveDaemonServiceStatusSnapshot(_params: DaemonServiceTaskParams): Promise<DaemonServiceStatusSnapshot> {
+  const status = await readDaemonStatusSnapshot();
+  return {
+    serviceInstalled: status.service.installed === true,
+    daemonRunning: status.daemon.running === true,
+    needsAuth: status.auth.needsAuth === true,
+    machineId: status.auth.machineId ?? null,
+    daemonServerUrl: status.server.serverUrl ?? null,
+    daemonComparableKey: status.server.comparableKey ?? null,
+    daemonAccountId: status.auth.accountId ?? null,
+    daemonMachineRegistered: typeof status.auth.machineRegistered === 'boolean' ? status.auth.machineRegistered : null,
+  };
+}
+
+async function runLiveDaemonServiceLifecycleAction(_params: DaemonServiceTaskParams, action: Exclude<DaemonServiceLifecycleAction, 'status'>): Promise<void> {
+  const runtime = resolveDaemonServiceCliRuntimeFromEnv({ mode: 'user' });
+  const plan = planDaemonServiceLifecycle({
+    platform: runtime.platform,
+    action,
+    mode: 'user',
+    channel: runtime.channel,
+    instanceId: runtime.instanceId,
+    userHomeDir: runtime.userHomeDir,
+    happierHomeDir: runtime.happierHomeDir,
+    uid: runtime.uid ?? undefined,
+  });
+  runCommandsBestEffort(plan.commands);
+}
 
 function requireLocalRelayRuntimeParams(params: RelayRuntimeTaskParams): Readonly<{
   mode?: 'user' | 'system';
@@ -38,6 +90,85 @@ function deriveBaseUrl(status: Awaited<ReturnType<typeof readLiveRelayRuntimeSta
   } catch {
     return 'http://127.0.0.1:3005';
   }
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  if (!value || typeof value !== 'object') return 'null';
+
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(',')}}`;
+}
+
+function digestParams(params: unknown): string {
+  return createHash('sha256').update(stableStringify(params)).digest('hex');
+}
+
+async function waitForDelay(delayMs: number, signal: AbortSignal | undefined): Promise<void> {
+  if (delayMs <= 0) return;
+  if (signal?.aborted) {
+    throw new SystemTaskExecutionError('cancelled', 'System task execution was cancelled.');
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+
+    const onAbort = () => {
+      cleanup();
+      reject(new SystemTaskExecutionError('cancelled', 'System task execution was cancelled.'));
+    };
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function parseNoopParams(params: unknown): Readonly<{
+  delayMs?: number;
+  source?: string;
+}> {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    throw new SystemTaskExecutionError('invalid_params', 'Noop params must be an object.');
+  }
+
+  const paramRecord = params as Record<string, unknown>;
+  const delayMs = paramRecord.delayMs;
+  const source = paramRecord.source;
+  const allowedKeys = new Set(['delayMs', 'source']);
+  for (const key of Object.keys(paramRecord)) {
+    if (!allowedKeys.has(key)) {
+      throw new SystemTaskExecutionError('invalid_params', `Unknown noop param: ${key}`);
+    }
+  }
+
+  if (delayMs !== undefined) {
+    if (typeof delayMs !== 'number' || !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 60_000) {
+      throw new SystemTaskExecutionError('invalid_params', 'delayMs must be an integer between 0 and 60000.');
+    }
+  }
+
+  if (source !== undefined) {
+    if (typeof source !== 'string' || source.trim().length === 0) {
+      throw new SystemTaskExecutionError('invalid_params', 'source must be a non-empty string.');
+    }
+  }
+
+  return {
+    ...(typeof delayMs === 'number' ? { delayMs } : {}),
+    ...(source === undefined ? {} : { source }),
+  };
 }
 
 async function readLiveRelayRuntimeSnapshot(params: RelayRuntimeTaskParams): Promise<RelayRuntimeStatusSnapshot> {
@@ -70,7 +201,61 @@ export function getLiveSystemTasksRunnerAdapter(): SystemTasksRunnerAdapter {
 
   const runner = createSystemTasksRunner({
     kinds: {
+      'system.ping.v1': {
+        run: async (ctx) => {
+          const paramDigest = digestParams(ctx.params);
+          ctx.emit({
+            type: 'progress',
+            stepId: 'ping',
+            message: 'ping acknowledged',
+          });
+          return {
+            acknowledged: true,
+            kind: 'system.ping.v1',
+            paramDigest,
+          };
+        },
+      },
+      'system.noop.v1': {
+        run: async (ctx) => {
+          const parsed = parseNoopParams(ctx.params);
+          ctx.emit({
+            type: 'progress',
+            stepId: 'noop',
+            message: 'noop started',
+          });
+          await waitForDelay(parsed.delayMs ?? 0, ctx.signal);
+          return {
+            kind: 'system.noop.v1',
+            status: 'completed',
+          };
+        },
+      },
       'remote.ssh.bootstrapMachine.v1': createLiveRemoteSshBootstrapTaskKind(),
+      'daemon.service.status.v1': createDaemonServiceStatusTaskKind({
+        readStatus: readLiveDaemonServiceStatusSnapshot,
+        startService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'start'),
+        stopService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'stop'),
+        restartService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'restart'),
+      }),
+      'daemon.service.start.v1': createDaemonServiceStartTaskKind({
+        readStatus: readLiveDaemonServiceStatusSnapshot,
+        startService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'start'),
+        stopService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'stop'),
+        restartService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'restart'),
+      }),
+      'daemon.service.stop.v1': createDaemonServiceStopTaskKind({
+        readStatus: readLiveDaemonServiceStatusSnapshot,
+        startService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'start'),
+        stopService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'stop'),
+        restartService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'restart'),
+      }),
+      'daemon.service.restart.v1': createDaemonServiceRestartTaskKind({
+        readStatus: readLiveDaemonServiceStatusSnapshot,
+        startService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'start'),
+        stopService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'stop'),
+        restartService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'restart'),
+      }),
       'relay.runtime.installOrUpdate.v1': createRelayRuntimeInstallOrUpdateTaskKind({
         installOrUpdate: async (params) => {
           const localParams = requireLocalRelayRuntimeParams(params);

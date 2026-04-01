@@ -275,7 +275,7 @@ async function waitForHealthyRelay(config: RelayRuntimeConfig): Promise<RelayRun
     reachable: false,
     portOpen: false,
     pingOk: false,
-    url: `http://${config.serverHost}:${config.serverPort}/v1/version`,
+    url: `http://${config.serverHost}:${config.serverPort}/health`,
     statusCode: null,
     version: null,
   };

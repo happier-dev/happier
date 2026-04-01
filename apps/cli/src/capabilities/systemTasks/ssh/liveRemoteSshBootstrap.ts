@@ -12,7 +12,8 @@ import type {
 import { redactBugReportSensitiveText, sanitizeBugReportArtifactPath } from '@happier-dev/protocol';
 
 import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
-import { configuration } from '@/configuration';
+import { findAvailableLoopbackPort, isLoopbackPortAvailable } from '@/cloud/loopbackPort';
+import { configuration, reloadConfiguration } from '@/configuration';
 
 import { buildRemoteBootstrapCommand } from './remoteBootstrapCommandBuilder';
 import {
@@ -22,6 +23,11 @@ import {
   safeBashSingleQuote,
   type SshAuth,
 } from './sshTransport';
+import {
+  buildSshKeyscanInvocation,
+  readKnownHostsTextSyncWithFs,
+  writeKnownHostsTextSyncWithFs,
+} from '@happier-dev/cli-common/ssh';
 
 type JsonRecord = Record<string, unknown>;
 type RemoteCommandResult = Readonly<{ status: number; stdout: string; stderr: string }>;
@@ -52,22 +58,11 @@ function resolveKnownHostsPath(
 }
 
 function readKnownHostsText(knownHostsPath: string | undefined): string {
-  if (!knownHostsPath) {
-    return '';
-  }
-  try {
-    return readFileSync(knownHostsPath, 'utf8');
-  } catch {
-    return '';
-  }
+  return readKnownHostsTextSyncWithFs(knownHostsPath, { readFileSync });
 }
 
 function writeKnownHostsText(knownHostsPath: string | undefined, text: string): void {
-  if (!knownHostsPath) {
-    return;
-  }
-  mkdirSync(dirname(knownHostsPath), { recursive: true });
-  writeFileSync(knownHostsPath, text ? `${text}\n` : '', 'utf8');
+  writeKnownHostsTextSyncWithFs(knownHostsPath, text, { mkdirSync, writeFileSync });
 }
 
 function parseSshTarget(target: string): Readonly<{ host: string; port?: number }> {
@@ -119,13 +114,238 @@ function formatKnownHostsHostToken(params: Readonly<{ host: string; port?: numbe
   return `[${host}]:${Math.floor(port)}`;
 }
 
+function parseLoopbackPort(url: string | undefined): number | null {
+  const normalized = String(url ?? '').trim();
+  if (!normalized) return null;
+  try {
+    const parsed = new URL(normalized);
+    if (!isLoopbackHostname(parsed.hostname)) return null;
+    if (parsed.port) {
+      const port = Number(parsed.port);
+      if (Number.isFinite(port) && port > 0 && port <= 65535) return Math.floor(port);
+    }
+    if (parsed.protocol === 'https:') return 443;
+    if (parsed.protocol === 'http:') return 80;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function withSshLocalPortForward(params: Readonly<{
+  ssh: SystemTaskSshConnectionConfig;
+  auth: SshAuth;
+  knownHostsPath?: string;
+  knownHostsMode?: 'app' | 'system';
+  localPort: number;
+  remotePort: number;
+  fn: () => Promise<void>;
+}>): Promise<void> {
+  const controlDir = join(configuration.happyHomeDir, 'ssh', 'control');
+  mkdirSync(controlDir, { recursive: true });
+  const controlPath = join(controlDir, `tunnel-${process.pid}-${Date.now()}-${params.localPort}.sock`);
+
+  const openInvocation = buildSshCommand({
+    sshBin: 'ssh',
+    target: params.ssh.target,
+    port: params.ssh.port,
+    sshConfigFile: params.ssh.sshConfigFile,
+    remoteCommand: [],
+    knownHostsPath: params.knownHostsPath,
+    knownHostsMode: params.knownHostsMode,
+    auth: params.auth,
+    connectTimeoutSec: 10,
+    serverAliveIntervalSec: 15,
+    serverAliveCountMax: 2,
+  });
+
+  const openArgs = [...openInvocation.args];
+  const resolvedTargetIndex = openArgs.lastIndexOf(params.ssh.target);
+  const targetIndex = resolvedTargetIndex >= 0
+    ? resolvedTargetIndex
+    : Math.max(0, openArgs.length - 1);
+  if (targetIndex >= 0) {
+    openArgs.splice(targetIndex, 0,
+      '-o', 'ExitOnForwardFailure=yes',
+      '-o', 'ControlMaster=yes',
+      '-o', `ControlPath=${controlPath}`,
+      '-o', 'ControlPersist=60',
+      '-f',
+      '-N',
+      '-L', `${params.localPort}:127.0.0.1:${params.remotePort}`,
+    );
+  }
+
+  const openResult = spawnSync(openInvocation.command, openArgs, { encoding: 'utf8', windowsHide: true });
+  if (openResult.error) {
+    throw openResult.error;
+  }
+  if ((openResult.status ?? 1) !== 0) {
+    const stderr = String(openResult.stderr ?? '').trim();
+    const stdout = String(openResult.stdout ?? '').trim();
+    const detail = stderr || stdout;
+    const redactedDetail = detail ? redactSshStderrForErrorMessage(detail).trim() : '';
+    throw new Error(redactedDetail ? `SSH tunnel failed: ${redactedDetail}` : 'SSH tunnel failed');
+  }
+
+  const closeTunnel = () => {
+    const closeInvocation = buildSshCommand({
+      sshBin: 'ssh',
+      target: params.ssh.target,
+      port: params.ssh.port,
+      sshConfigFile: params.ssh.sshConfigFile,
+      remoteCommand: [],
+      knownHostsPath: params.knownHostsPath,
+      knownHostsMode: params.knownHostsMode,
+      auth: params.auth,
+      connectTimeoutSec: 10,
+      serverAliveIntervalSec: 15,
+      serverAliveCountMax: 2,
+    });
+    const closeArgs = [...closeInvocation.args];
+    const resolvedCloseTargetIndex = closeArgs.lastIndexOf(params.ssh.target);
+    const closeTargetIndex = resolvedCloseTargetIndex >= 0
+      ? resolvedCloseTargetIndex
+      : Math.max(0, closeArgs.length - 1);
+    if (closeTargetIndex >= 0) {
+      closeArgs.splice(closeTargetIndex, 0,
+        '-o', `ControlPath=${controlPath}`,
+        '-O',
+        'exit',
+      );
+    }
+    spawnSync(closeInvocation.command, closeArgs, { encoding: 'utf8', windowsHide: true });
+  };
+
+  return params.fn().finally(() => {
+    closeTunnel();
+  });
+}
+
+function resolveSshAuthForTunnel(ssh: SystemTaskSshConnectionConfig): SshAuth | null {
+  if (ssh.auth === 'keyfile') {
+    const identityFile = String(ssh.identityFile ?? '').trim();
+    if (!identityFile) {
+      return null;
+    }
+    return { mode: 'keyFile', privateKeyPath: identityFile };
+  }
+  if (ssh.auth === 'password') {
+    return null;
+  }
+  return { mode: 'agent' };
+}
+
+type ServerSelectionEnvSnapshot = Readonly<{
+  HAPPIER_SERVER_URL?: string;
+  HAPPIER_PUBLIC_SERVER_URL?: string;
+  HAPPIER_LOCAL_SERVER_URL?: string;
+  HAPPIER_WEBAPP_URL?: string;
+}>;
+
+function snapshotServerSelectionEnv(): ServerSelectionEnvSnapshot {
+  return {
+    HAPPIER_SERVER_URL: process.env.HAPPIER_SERVER_URL,
+    HAPPIER_PUBLIC_SERVER_URL: process.env.HAPPIER_PUBLIC_SERVER_URL,
+    HAPPIER_LOCAL_SERVER_URL: process.env.HAPPIER_LOCAL_SERVER_URL,
+    HAPPIER_WEBAPP_URL: process.env.HAPPIER_WEBAPP_URL,
+  };
+}
+
+function restoreServerSelectionEnv(snapshot: ServerSelectionEnvSnapshot): void {
+  const keys: Array<keyof ServerSelectionEnvSnapshot> = [
+    'HAPPIER_SERVER_URL',
+    'HAPPIER_PUBLIC_SERVER_URL',
+    'HAPPIER_LOCAL_SERVER_URL',
+    'HAPPIER_WEBAPP_URL',
+  ];
+  for (const key of keys) {
+    const value = snapshot[key];
+    if (typeof value === 'string') {
+      process.env[key] = value;
+    } else {
+      delete process.env[key];
+    }
+  }
+}
+
+async function withEphemeralLoopbackServerSelection(
+  params: Readonly<{
+    port: number;
+    fn: () => Promise<void>;
+  }>,
+): Promise<void> {
+  const snapshot = snapshotServerSelectionEnv();
+  try {
+    const url = `http://localhost:${params.port}`;
+    process.env.HAPPIER_SERVER_URL = url;
+    process.env.HAPPIER_WEBAPP_URL = url;
+    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+    delete process.env.HAPPIER_LOCAL_SERVER_URL;
+    reloadConfiguration();
+    await params.fn();
+  } finally {
+    restoreServerSelectionEnv(snapshot);
+    reloadConfiguration();
+  }
+}
+
+async function withEphemeralRelaySelection(
+  params: Readonly<{
+    relayUrl: string;
+    publicRelayUrl?: string;
+    webappUrl?: string;
+    fn: () => Promise<void>;
+  }>,
+): Promise<void> {
+  const snapshot = snapshotServerSelectionEnv();
+  try {
+    const relayUrl = String(params.relayUrl ?? '').trim();
+    const publicRelayUrl = String(params.publicRelayUrl ?? '').trim();
+    const webappUrl = String(params.webappUrl ?? '').trim();
+
+    if (publicRelayUrl && publicRelayUrl !== relayUrl) {
+      process.env.HAPPIER_PUBLIC_SERVER_URL = publicRelayUrl;
+      process.env.HAPPIER_SERVER_URL = relayUrl;
+      delete process.env.HAPPIER_LOCAL_SERVER_URL;
+    } else {
+      process.env.HAPPIER_SERVER_URL = relayUrl;
+      delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+      delete process.env.HAPPIER_LOCAL_SERVER_URL;
+    }
+
+    if (webappUrl) {
+      process.env.HAPPIER_WEBAPP_URL = webappUrl;
+    } else {
+      try {
+        process.env.HAPPIER_WEBAPP_URL = new URL(relayUrl).origin;
+      } catch {
+        process.env.HAPPIER_WEBAPP_URL = relayUrl;
+      }
+    }
+
+    reloadConfiguration();
+    await params.fn();
+  } finally {
+    restoreServerSelectionEnv(snapshot);
+    reloadConfiguration();
+  }
+}
+
 function resolveSshEndpoint(params: Readonly<{
   ssh: SystemTaskSshConnectionConfig;
 }>): Readonly<{ host: string; port?: number }> {
   const parsedTarget = parseSshTarget(params.ssh.target);
+  const explicitPort = typeof params.ssh.port === 'number' && Number.isFinite(params.ssh.port) && params.ssh.port > 0
+    ? Math.floor(params.ssh.port)
+    : undefined;
+  const baselinePort = explicitPort ?? parsedTarget.port;
   const sshConfigFile = String(params.ssh.sshConfigFile ?? '').trim();
   if (!sshConfigFile) {
-    return parsedTarget;
+    return {
+      host: parsedTarget.host,
+      ...(typeof baselinePort === 'number' ? { port: baselinePort } : {}),
+    };
   }
 
   const result = spawnSync('ssh', ['-G', '-F', sshConfigFile, params.ssh.target], {
@@ -157,9 +377,11 @@ function resolveSshEndpoint(params: Readonly<{
   const resolvedPort = Number(values.get('port') ?? '');
   return {
     host: values.get('hostname')?.trim() || parsedTarget.host,
-    ...(Number.isFinite(resolvedPort) && resolvedPort > 0
-      ? { port: Math.floor(resolvedPort) }
-      : (typeof parsedTarget.port === 'number' ? { port: parsedTarget.port } : {})),
+    ...(explicitPort
+      ? { port: explicitPort }
+      : (Number.isFinite(resolvedPort) && resolvedPort > 0
+          ? { port: Math.floor(resolvedPort) }
+          : (typeof baselinePort === 'number' ? { port: baselinePort } : {}))),
   };
 }
 
@@ -542,16 +764,14 @@ export function createLiveRemoteSshBootstrapTaskKind() {
       const knownHostsPath = resolveKnownHostsPath(ssh, knownHostsMode);
       const existingKnownHostsText = readKnownHostsText(knownHostsPath);
       const parsedTarget = resolveSshEndpoint({ ssh });
+      const keyscanInvocation = buildSshKeyscanInvocation({
+        host: parsedTarget.host,
+        port: parsedTarget.port,
+        timeoutSec: 5,
+        keyType: 'ed25519',
+      });
       const keyscanOutput = runCommandSync({
-        command: 'ssh-keyscan',
-        args: [
-          '-T',
-          '5',
-          ...(parsedTarget.port ? ['-p', String(parsedTarget.port)] : []),
-          '-t',
-          'ed25519',
-          parsedTarget.host,
-        ],
+        ...keyscanInvocation,
         errorPrefix: 'ssh-keyscan failed',
       });
       const scanned = systemTasks.extractFirstScannedSshKnownHostLine(keyscanOutput);
@@ -645,8 +865,47 @@ export function createLiveRemoteSshBootstrapTaskKind() {
         },
       });
     },
-    approveLocalAuthRequest: async ({ publicKey }) => {
-      await approveTerminalAuthRequest({ publicKey });
+    approveLocalAuthRequest: async ({ publicKey, parsed }) => {
+      const knownHostsMode = parsed.knownHostsMode ?? 'app';
+      const knownHostsPath = resolveKnownHostsPath(parsed.ssh, knownHostsMode);
+      const loopbackPort = parseLoopbackPort(parsed.relay.relayUrl);
+      if (loopbackPort) {
+        const tunnelAuth = resolveSshAuthForTunnel(parsed.ssh);
+        if (!tunnelAuth) {
+          await approveTerminalAuthRequest({ publicKey });
+          return;
+        }
+        const requestedPort = Number(loopbackPort);
+        const localPort = (await isLoopbackPortAvailable(requestedPort))
+          ? requestedPort
+          : await findAvailableLoopbackPort();
+        await withEphemeralLoopbackServerSelection({
+          port: localPort,
+          fn: async () => {
+            await withSshLocalPortForward({
+              ssh: parsed.ssh,
+              auth: tunnelAuth,
+              knownHostsPath,
+              knownHostsMode,
+              localPort,
+              remotePort: requestedPort,
+              fn: async () => {
+                await approveTerminalAuthRequest({ publicKey });
+              },
+            });
+          },
+        });
+        return;
+      }
+
+      await withEphemeralRelaySelection({
+        relayUrl: parsed.relay.relayUrl,
+        publicRelayUrl: parsed.relay.publicRelayUrl,
+        webappUrl: parsed.relay.webappUrl,
+        fn: async () => {
+          await approveTerminalAuthRequest({ publicKey });
+        },
+      });
     },
     runRemoteCommand: async ({ label, parsed, auth, knownHostsMode, data }) => {
       const knownHostsPath = resolveKnownHostsPath(parsed.ssh, knownHostsMode);
@@ -676,16 +935,20 @@ export function createLiveRemoteSshBootstrapTaskKind() {
         auth: auth as SshAuth,
         knownHostsPath,
         knownHostsMode,
-        shellCommand: buildRemoteBootstrapCommand({
-          label,
-          channel: parsed.channel,
-          serverUrl: parsed.relay.relayUrl,
-          webappUrl: isLoopbackUrl(parsed.relay.webappUrl) ? undefined : parsed.relay.webappUrl,
-          daemonServiceMode: parsed.serviceMode,
-          data: label === 'auth.wait'
-            ? { publicKey: data?.publicKey }
-            : undefined,
-        }),
+        shellCommand: (() => {
+          const localServerUrl = typeof data?.localServerUrl === 'string' ? data.localServerUrl.trim() : '';
+          return buildRemoteBootstrapCommand({
+            label,
+            channel: parsed.channel,
+            serverUrl: parsed.relay.relayUrl,
+            localServerUrl: localServerUrl || undefined,
+            webappUrl: isLoopbackUrl(parsed.relay.webappUrl) ? undefined : parsed.relay.webappUrl,
+            daemonServiceMode: parsed.serviceMode,
+            data: label === 'auth.wait'
+              ? { publicKey: data?.publicKey }
+              : undefined,
+          });
+        })(),
       });
       if (label === 'auth.status') {
         if (result.ok === false) {

@@ -6,12 +6,19 @@ const {
   readFileSync,
   writeFileSync,
   approveTerminalAuthRequest,
+  reloadConfiguration,
 } = vi.hoisted(() => ({
   spawnSync: vi.fn(),
   mkdirSync: vi.fn(),
   readFileSync: vi.fn(),
   writeFileSync: vi.fn(),
   approveTerminalAuthRequest: vi.fn(async () => undefined),
+  reloadConfiguration: vi.fn(),
+}));
+
+const { isLoopbackPortAvailable, findAvailableLoopbackPort } = vi.hoisted(() => ({
+  isLoopbackPortAvailable: vi.fn<(port: number) => Promise<boolean>>(),
+  findAvailableLoopbackPort: vi.fn<(requestedPort: number) => Promise<number>>(),
 }));
 
 vi.mock('node:child_process', () => ({
@@ -36,6 +43,12 @@ vi.mock('@/configuration', () => ({
   configuration: {
     happyHomeDir: '/mock-home',
   },
+  reloadConfiguration,
+}));
+
+vi.mock('@/cloud/loopbackPort', () => ({
+  isLoopbackPortAvailable,
+  findAvailableLoopbackPort,
 }));
 
 vi.mock('@happier-dev/cli-common/systemTasks', async () => {
@@ -64,6 +77,7 @@ vi.mock('@happier-dev/cli-common/systemTasks', async () => {
 });
 
 import { createLiveRemoteSshBootstrapTaskKind } from './liveRemoteSshBootstrap';
+import { createServer } from 'node:http';
 
 function jsonResult(data: Record<string, unknown>) {
   return {
@@ -81,6 +95,8 @@ function jsonResult(data: Record<string, unknown>) {
 describe('createLiveRemoteSshBootstrapTaskKind', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isLoopbackPortAvailable.mockResolvedValue(true);
+    findAvailableLoopbackPort.mockImplementation(async (requestedPort: number) => requestedPort + 1);
     readFileSync.mockImplementation(() => {
       throw new Error('missing known_hosts');
     });
@@ -493,6 +509,72 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     expect(writeFileSync).toHaveBeenCalledWith('/tmp/custom-known_hosts', `${TRUSTED_HOST_KEY}\n`, 'utf8');
   });
 
+  it('honors explicit ssh.port when resolving trusted host keys (even if the ssh config file does not match the target)', async () => {
+    const promptKinds: string[] = [];
+    const kind = createLiveRemoteSshBootstrapTaskKind();
+    const trustedHostKey = '[dev.example.test]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnlyDoNotUseInProd';
+
+    const previousImplementation = spawnSync.getMockImplementation();
+    if (!previousImplementation) {
+      throw new Error('Missing spawnSync mock implementation');
+    }
+
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      if (command === 'ssh' && args.includes('-G') && args.includes('-F') && args.includes('/tmp/ssh_config')) {
+        // Simulate a config file that exists but doesn't apply to the target; ssh -G falls back to port 22.
+        return {
+          status: 0,
+          stdout: 'hostname dev.example.test\nport 22\n',
+          stderr: '',
+        };
+      }
+      if (command === 'ssh-keyscan') {
+        // Mirror the port-aware host token so it matches `ssh.port` resolution.
+        return {
+          status: 0,
+          stdout: `${trustedHostKey}\n`,
+          stderr: '',
+        };
+      }
+      return previousImplementation(command, args);
+    });
+
+    await expect(kind.run({
+      params: {
+        ssh: {
+          target: 'dev.example.test',
+          port: 2222,
+          auth: 'agent',
+          sshConfigFile: '/tmp/ssh_config',
+          trustedHostKey,
+        },
+        relay: {
+          relayUrl: 'https://relay.example.test',
+        },
+        channel: 'preview',
+        serviceMode: 'none',
+      },
+      emit: () => undefined,
+      prompt: async (request) => {
+        promptKinds.push(request.kind);
+        if (request.kind === 'auth.approveRemoteProvisioning') {
+          return { approved: true };
+        }
+        throw new Error(`Unexpected prompt: ${request.kind}`);
+      },
+    })).resolves.toBeTruthy();
+
+    // Guardrail: trusted host key should avoid SSH trust prompts.
+    expect(promptKinds).toEqual(['auth.approveRemoteProvisioning']);
+
+    const keyscanArgs = spawnSync.mock.calls
+      .filter(([command]) => command === 'ssh-keyscan')
+      .map(([, args]) => args as readonly string[]);
+    expect(keyscanArgs).toHaveLength(1);
+    expect(keyscanArgs[0]).toContain('-p');
+    expect(keyscanArgs[0]).toContain('2222');
+  });
+
   it('fails closed when an explicit trusted host key mismatches the fresh keyscan result', async () => {
     readFileSync.mockReturnValue(`${TRUSTED_HOST_KEY}\n`);
     const kind = createLiveRemoteSshBootstrapTaskKind();
@@ -640,6 +722,215 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     })).resolves.toBeDefined();
 
     expect(approveTerminalAuthRequest).toHaveBeenCalledWith({ publicKey: 'pub-key' });
+  });
+
+  it('temporarily applies the target relay selection when approving remote provisioning against a non-loopback relay URL', async () => {
+    const kind = createLiveRemoteSshBootstrapTaskKind();
+    const previousServerUrl = process.env.HAPPIER_SERVER_URL;
+    const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    const previousPublicServerUrl = process.env.HAPPIER_PUBLIC_SERVER_URL;
+    const previousLocalServerUrl = process.env.HAPPIER_LOCAL_SERVER_URL;
+
+    process.env.HAPPIER_SERVER_URL = 'https://original.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'https://original-app.example.test';
+    process.env.HAPPIER_PUBLIC_SERVER_URL = 'https://original-public.example.test';
+    process.env.HAPPIER_LOCAL_SERVER_URL = 'http://127.0.0.1:59999';
+
+    let observedServerUrl: string | null = null;
+    let observedWebappUrl: string | null = null;
+
+    approveTerminalAuthRequest.mockImplementation(async () => {
+      observedServerUrl = String(process.env.HAPPIER_SERVER_URL ?? '');
+      observedWebappUrl = String(process.env.HAPPIER_WEBAPP_URL ?? '');
+    });
+
+    await kind.run({
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        },
+        channel: 'preview',
+        knownHostsMode: 'system',
+        serviceMode: 'none',
+      },
+      emit: () => undefined,
+      prompt: async (request) => {
+        if (request.kind === 'auth.approveRemoteProvisioning') {
+          return { approved: true };
+        }
+        throw new Error(`Unexpected prompt: ${request.kind}`);
+      },
+    });
+
+    expect(observedServerUrl).toBe('https://relay.example.test');
+    expect(observedWebappUrl).toBe('https://app.example.test');
+
+    expect(process.env.HAPPIER_SERVER_URL).toBe('https://original.example.test');
+    expect(process.env.HAPPIER_WEBAPP_URL).toBe('https://original-app.example.test');
+    expect(process.env.HAPPIER_PUBLIC_SERVER_URL).toBe('https://original-public.example.test');
+    expect(process.env.HAPPIER_LOCAL_SERVER_URL).toBe('http://127.0.0.1:59999');
+
+    if (typeof previousServerUrl === 'string') process.env.HAPPIER_SERVER_URL = previousServerUrl;
+    else delete process.env.HAPPIER_SERVER_URL;
+    if (typeof previousWebappUrl === 'string') process.env.HAPPIER_WEBAPP_URL = previousWebappUrl;
+    else delete process.env.HAPPIER_WEBAPP_URL;
+    if (typeof previousPublicServerUrl === 'string') process.env.HAPPIER_PUBLIC_SERVER_URL = previousPublicServerUrl;
+    else delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+    if (typeof previousLocalServerUrl === 'string') process.env.HAPPIER_LOCAL_SERVER_URL = previousLocalServerUrl;
+    else delete process.env.HAPPIER_LOCAL_SERVER_URL;
+  });
+
+  it('opens a loopback relay tunnel over ssh before approving remote provisioning', async () => {
+    const kind = createLiveRemoteSshBootstrapTaskKind();
+    const previousServerUrl = process.env.HAPPIER_SERVER_URL;
+    const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    let observedServerUrl: string | null = null;
+    const relayPort = await new Promise<number>((resolve, reject) => {
+      const server = createServer((_req, res) => {
+        res.statusCode = 200;
+        res.end('ok');
+      });
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        const port = (server.address() as { port: number } | null)?.port ?? 0;
+        server.close(() => resolve(port));
+      });
+    });
+    if (!relayPort) {
+      throw new Error('Expected to reserve an available loopback port for test');
+    }
+
+    approveTerminalAuthRequest.mockImplementation(async () => {
+      observedServerUrl = String(process.env.HAPPIER_SERVER_URL ?? '');
+    });
+
+    await kind.run({
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: `http://127.0.0.1:${relayPort}`,
+        },
+        relayRuntime: {
+          enabled: true,
+          mode: 'user',
+          env: {
+            PORT: String(relayPort),
+          },
+        },
+        channel: 'preview',
+        knownHostsMode: 'system',
+        serviceMode: 'none',
+      },
+      emit: () => undefined,
+      prompt: async (request) => {
+        if (request.kind === 'auth.approveRemoteProvisioning') {
+          return { approved: true };
+        }
+        throw new Error(`Unexpected prompt: ${request.kind}`);
+      },
+    });
+
+    expect(
+      spawnSync.mock.calls.some(
+        ([command, args]) =>
+          command === 'ssh' &&
+          Array.isArray(args) &&
+          args.includes('-L') &&
+          args.includes(`${relayPort}:127.0.0.1:${relayPort}`),
+      ),
+    ).toBe(true);
+    expect(observedServerUrl).toMatch(new RegExp(`^http://(127\\\\.0\\\\.0\\\\.1|localhost):${relayPort}$`, 'u'));
+    expect(approveTerminalAuthRequest).toHaveBeenCalledWith({ publicKey: 'pub-key' });
+    expect(reloadConfiguration).toHaveBeenCalled();
+    expect(process.env.HAPPIER_SERVER_URL).toBe(previousServerUrl);
+    expect(process.env.HAPPIER_WEBAPP_URL).toBe(previousWebappUrl);
+  });
+
+	  it('falls back to an available local port when the loopback relay port is already occupied', async () => {
+	    const kind = createLiveRemoteSshBootstrapTaskKind();
+	    const previousServerUrl = process.env.HAPPIER_SERVER_URL;
+	    const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+	    let observedServerUrl: string | null = null;
+
+    const occupied = createServer((_req, res) => {
+      res.statusCode = 200;
+      res.end('ok');
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      occupied.once('error', reject);
+      occupied.listen(0, '127.0.0.1', () => resolve());
+    });
+	    const occupiedPort = (occupied.address() as { port: number } | null)?.port ?? 0;
+	    if (!occupiedPort) {
+	      throw new Error('Failed to allocate an occupied loopback port for test');
+	    }
+	    isLoopbackPortAvailable.mockImplementation(async (port) => port !== occupiedPort);
+	    findAvailableLoopbackPort.mockImplementation(async () => occupiedPort + 1);
+
+	    try {
+	      approveTerminalAuthRequest.mockImplementation(async () => {
+	        observedServerUrl = String(process.env.HAPPIER_SERVER_URL ?? '');
+	      });
+
+      await kind.run({
+        params: {
+          ssh: {
+            target: 'dev@example.test',
+            auth: 'agent',
+          },
+          relay: {
+            relayUrl: `http://127.0.0.1:${occupiedPort}`,
+          },
+          relayRuntime: {
+            enabled: true,
+            mode: 'user',
+            env: {
+              PORT: String(occupiedPort),
+            },
+          },
+          channel: 'preview',
+          knownHostsMode: 'system',
+          serviceMode: 'none',
+        },
+        emit: () => undefined,
+        prompt: async (request) => {
+          if (request.kind === 'auth.approveRemoteProvisioning') {
+            return { approved: true };
+          }
+          throw new Error(`Unexpected prompt: ${request.kind}`);
+        },
+      });
+
+      const forwarded = spawnSync.mock.calls
+        .filter(([command, args]) => command === 'ssh' && Array.isArray(args) && args.includes('-L'))
+        .map(([, args]) => {
+          const tokens = args as readonly string[];
+          const idx = tokens.indexOf('-L');
+          return idx >= 0 ? String(tokens[idx + 1] ?? '') : '';
+        })
+        .find((spec) => spec.endsWith(`:127.0.0.1:${occupiedPort}`));
+
+      expect(forwarded).toBeTruthy();
+      const localPort = Number(String(forwarded ?? '').split(':')[0] ?? '');
+      expect(Number.isFinite(localPort)).toBe(true);
+      expect(localPort).not.toBe(occupiedPort);
+      expect(observedServerUrl).toMatch(new RegExp(`^http://(127\\\\.0\\\\.0\\\\.1|localhost):${localPort}$`, 'u'));
+      expect(approveTerminalAuthRequest).toHaveBeenCalledWith({ publicKey: 'pub-key' });
+      expect(reloadConfiguration).toHaveBeenCalled();
+      expect(process.env.HAPPIER_SERVER_URL).toBe(previousServerUrl);
+      expect(process.env.HAPPIER_WEBAPP_URL).toBe(previousWebappUrl);
+    } finally {
+      await new Promise<void>((resolve) => occupied.close(() => resolve()));
+    }
   });
 
   it('redacts sensitive values and absolute paths from stderr when ssh config resolution fails', async () => {
