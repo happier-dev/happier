@@ -111,6 +111,16 @@ test.describe('ui e2e: settings sidebar', () => {
                 if (wantsScreenshots()) {
                     await page.screenshot({ path: join(screenshotDir, `settings-sidebar.${viewport.label}.notifications.png`), fullPage: true });
                 }
+
+                await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/appearance?happier_hmr=0`, 180_000);
+                const settingsSidebarToggleRow = page.getByTestId('settings-appearance-settings-nav-sidebar-enabled');
+                await expect(settingsSidebarToggleRow).toHaveCount(1, { timeout: 60_000 });
+
+                await settingsSidebarToggleRow.click();
+                await expect(page.getByTestId('settings-sidebar')).toHaveCount(0, { timeout: 60_000 });
+
+                await settingsSidebarToggleRow.click();
+                await expect(page.getByTestId('settings-sidebar')).toHaveCount(1, { timeout: 60_000 });
             });
         }
     });

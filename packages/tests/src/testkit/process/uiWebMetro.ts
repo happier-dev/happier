@@ -3,7 +3,7 @@ import { resolve as resolvePath } from 'node:path';
 
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { repoRootDir } from '../paths';
-import { waitFor } from '../timing';
+import { sleep, waitFor } from '../timing';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -68,28 +68,31 @@ function extractHttpUrls(text: string): string[] {
 type UiWebEntryPageProbe = Readonly<{
   isEntryPage: boolean;
   hasScriptTags: boolean;
+  primaryScriptUrl: string | null;
 }>;
 
 async function inspectUiWebEntryPage(url: string, env: NodeJS.ProcessEnv): Promise<UiWebEntryPageProbe> {
   try {
     const timeoutMs = resolveUiWebEntryProbeTimeoutMs(env);
     const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) return { isEntryPage: false, hasScriptTags: false };
+    if (!res.ok) return { isEntryPage: false, hasScriptTags: false, primaryScriptUrl: null };
     const text = await res.text().catch(() => '');
     if (!text.includes('<html') && !text.toLowerCase().includes('<!doctype html')) {
-      return { isEntryPage: false, hasScriptTags: false };
+      return { isEntryPage: false, hasScriptTags: false, primaryScriptUrl: null };
     }
     if (text.toLowerCase().includes('metro bundler')) {
-      return { isEntryPage: false, hasScriptTags: false };
+      return { isEntryPage: false, hasScriptTags: false, primaryScriptUrl: null };
     }
 
     const scripts = resolveScriptUrlsFromHtml(text, url);
+    const primaryScriptUrl = scripts.length > 0 ? (selectPrimaryAppScriptUrl(scripts) ?? null) : null;
     return {
       isEntryPage: true,
-      hasScriptTags: scripts.length > 0 && Boolean(selectPrimaryAppScriptUrl(scripts)),
+      hasScriptTags: scripts.length > 0 && Boolean(primaryScriptUrl),
+      primaryScriptUrl,
     };
   } catch {
-    return { isEntryPage: false, hasScriptTags: false };
+    return { isEntryPage: false, hasScriptTags: false, primaryScriptUrl: null };
   }
 }
 
@@ -97,6 +100,37 @@ type ResolvedExpoWebBaseUrl = Readonly<{
   baseUrl: string;
   hasScriptTags: boolean;
 }>;
+
+function resolveUrlPort(url: string): number | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.port) {
+      const port = Number(parsed.port);
+      return Number.isFinite(port) && port > 0 ? Math.floor(port) : null;
+    }
+    if (parsed.protocol === 'https:') return 443;
+    if (parsed.protocol === 'http:') return 80;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function entryPageMatchesExpectedMetroPort(
+  probe: UiWebEntryPageProbe,
+  baseUrl: string,
+  expectedPort: number | undefined,
+): boolean {
+  if (!expectedPort || !Number.isFinite(expectedPort) || expectedPort <= 0) {
+    return false;
+  }
+  if (probe.primaryScriptUrl) {
+    const port = resolveUrlPort(probe.primaryScriptUrl);
+    return port === expectedPort;
+  }
+  // If no script URL is detected, treat as mismatch (we can still fall back to the entry page).
+  return false;
+}
 
 async function resolveExpoWebBaseUrl(params: {
   stdoutPath: string;
@@ -116,36 +150,53 @@ async function resolveExpoWebBaseUrl(params: {
       ? [`http://localhost:${params.expectedPort}`, `http://127.0.0.1:${params.expectedPort}`]
       : [];
 
-  const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
-  const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
-  const orderedCandidates: string[] = [];
-  const seen = new Set<string>();
+  const startedAt = Date.now();
+  let lastOrderedCandidates: string[] = [];
 
-  for (const raw of [...stdoutCandidates, ...expectedCandidates, ...(expectedCandidates.length > 0 ? [] : defaultCandidates)]) {
-    const url = raw.trim().replace(/\/+$/, '');
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    orderedCandidates.push(url);
-  }
+  while (Date.now() - startedAt < params.timeoutMs) {
+    const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
+    const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
+    const orderedCandidates: string[] = [];
+    const seen = new Set<string>();
 
-  for (const url of orderedCandidates) {
-    const probe = await inspectUiWebEntryPage(url, params.env);
-    if (probe.isEntryPage) {
-      return { baseUrl: url, hasScriptTags: probe.hasScriptTags };
+    for (const raw of [...stdoutCandidates, ...expectedCandidates, ...(expectedCandidates.length > 0 ? [] : defaultCandidates)]) {
+      const url = raw.trim().replace(/\/+$/, '');
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      orderedCandidates.push(url);
     }
+
+    lastOrderedCandidates = orderedCandidates;
+
+    let firstEntryPage: ResolvedExpoWebBaseUrl | null = null;
+    for (const url of orderedCandidates) {
+      const probe = await inspectUiWebEntryPage(url, params.env);
+      if (probe.isEntryPage) {
+        if (!firstEntryPage) {
+          firstEntryPage = { baseUrl: url, hasScriptTags: probe.hasScriptTags };
+        }
+        if (entryPageMatchesExpectedMetroPort(probe, url, params.expectedPort)) {
+          return { baseUrl: url, hasScriptTags: probe.hasScriptTags };
+        }
+      }
+    }
+    if (firstEntryPage) {
+      return firstEntryPage;
+    }
+
+    await sleep(120);
   }
 
-  for (const url of expectedCandidates.length > 0 ? expectedCandidates : defaultCandidates) {
-    const probe = await inspectUiWebEntryPage(url, params.env);
-    if (probe.isEntryPage) return { baseUrl: url, hasScriptTags: probe.hasScriptTags };
-  }
-
-  if (orderedCandidates.length > 0) {
-    return { baseUrl: orderedCandidates[0] as string, hasScriptTags: false };
+  if (lastOrderedCandidates.length > 0) {
+    return { baseUrl: lastOrderedCandidates[0] as string, hasScriptTags: false };
   }
 
   throw new Error(`Failed to resolve Expo web baseUrl from stdout log: ${params.stdoutPath}`);
 }
+
+export const __testables = {
+  resolveExpoWebBaseUrl,
+};
 
 async function isMetroPackagerReady(baseUrl: string): Promise<boolean> {
   try {

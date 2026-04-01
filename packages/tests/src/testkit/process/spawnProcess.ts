@@ -170,6 +170,15 @@ export function spawnLoggedProcess(params: {
   stdoutPath: string;
   stderrPath: string;
 }): SpawnedProcess {
+  type IntervalHandle = ReturnType<typeof setInterval>;
+  const unrefInterval = (handle: IntervalHandle | null) => {
+    if (!handle) return;
+    if (typeof handle === 'object' && handle !== null && 'unref' in handle) {
+      const candidate = handle as unknown as { unref?: () => void };
+      candidate.unref?.();
+    }
+  };
+
   const child = spawn(params.command, params.args, {
     cwd: params.cwd,
     env: params.env,
@@ -181,7 +190,7 @@ export function spawnLoggedProcess(params: {
   const stderr = createWriteStream(params.stderrPath, { flags: 'w' });
   const observedDescendantPids = new Set<number>();
   const detachCleanup = attachExitCleanup(child, () => [...observedDescendantPids]);
-  const descendantPoller = process.platform === 'win32'
+  const descendantPoller: IntervalHandle | null = process.platform === 'win32'
     ? null
     : setInterval(() => {
       if (typeof child.pid !== 'number' || child.pid <= 0) return;
@@ -190,13 +199,13 @@ export function spawnLoggedProcess(params: {
       }
     }, 1);
 
-  descendantPoller?.unref?.();
+  unrefInterval(descendantPoller);
 
   child.stdout?.pipe(stdout);
   child.stderr?.pipe(stderr);
 
   const stop = async (signal: NodeJS.Signals = 'SIGTERM') => {
-    descendantPoller?.unref?.();
+    unrefInterval(descendantPoller);
     descendantPoller && clearInterval(descendantPoller);
 
     if (typeof child.pid === 'number' && child.pid > 0) {
