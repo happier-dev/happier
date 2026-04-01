@@ -357,6 +357,7 @@ async function main() {
     ],
   });
 
+  const runtimeModeRaw = String(cleaned.HAPPIER_STACK_RUNTIME_MODE ?? '').trim();
   const env = {
     ...cleaned,
     HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
@@ -368,6 +369,9 @@ async function main() {
           // Treat repo-local runs as an isolated, per-checkout stack by default.
           // This prevents collisions with the user's "main" stack (ports, daemon home, tailscale prefs, etc).
           HAPPIER_STACK_STACK: stacklessName,
+          // Default to source mode for repo-local dev flows (ensures `yarn tui:with-tauri` reflects local changes
+          // even if the user previously enabled runtime snapshots). Users can override by setting this env var.
+          HAPPIER_STACK_RUNTIME_MODE: runtimeModeRaw || 'source',
           // Make stack-owned processes prove ownership (for stop/cleanup) and enable stack commands like `stack auth`.
           HAPPIER_STACK_ENV_FILE: stacklessEnvPath,
           HAPPIER_STACK_CLI_HOME_DIR: stacklessCliHomeDir,
@@ -510,6 +514,7 @@ async function main() {
             HAPPIER_STACK_LOG_TEE_DIR: effectiveEnv.HAPPIER_STACK_LOG_TEE_DIR,
             HAPPIER_ACTIVE_SERVER_ID: effectiveEnv.HAPPIER_ACTIVE_SERVER_ID,
             HAPPIER_STACK_INVOKED_CWD: effectiveEnv.HAPPIER_STACK_INVOKED_CWD,
+            HAPPIER_STACK_RUNTIME_MODE: effectiveEnv.HAPPIER_STACK_RUNTIME_MODE,
           },
         },
         null,

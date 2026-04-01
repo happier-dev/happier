@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { createServer } from 'node:net';
@@ -59,7 +59,7 @@ test('repo-local wrapper dry-run prints hstack invocation with repo-local env', 
     [join(packageRoot, 'scripts', 'repo_local.mjs'), 'dev', '--dry-run'],
     {
       cwd: repoRoot,
-      env: { ...process.env, HAPPIER_STACK_CLI_ROOT_DIR: '/some/other/install' },
+      env: { ...process.env, HAPPIER_STACK_CLI_ROOT_DIR: '/some/other/install', HAPPIER_STACK_RUNTIME_MODE: '' },
     }
   );
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
@@ -84,6 +84,7 @@ test('repo-local wrapper dry-run prints hstack invocation with repo-local env', 
   assert.ok(String(data.env.HAPPIER_ACTIVE_SERVER_ID ?? '').trim() !== '', 'expected wrapper to set a stack-scoped active server id');
   assert.ok(String(data.env.HAPPIER_STACK_LOG_TEE_DIR ?? '').trim() !== '', 'expected wrapper to set a stack-scoped log tee dir');
   assert.ok(String(data.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim() !== '');
+  assert.equal(data.env.HAPPIER_STACK_RUNTIME_MODE, 'source', 'expected repo-local wrapper to default to source runtime mode');
 });
 
 test('repo-local wrapper defaults `tui` to `tui dev` when no forwarded args are provided', async () => {
