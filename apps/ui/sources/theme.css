@@ -1,5 +1,15 @@
 /* Theme-aware scrollbar styles using Unistyles CSS variables */
 
+/* iOS Safari / PWA safe-area insets (web)
+   - Expose env(...) values as CSS custom properties so RNW surfaces can read them via JS when needed.
+   - Only affects browsers that support env(safe-area-inset-*); others resolve to 0px. */
+:root {
+    --happier-safe-area-top: env(safe-area-inset-top, 0px);
+    --happier-safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --happier-safe-area-left: env(safe-area-inset-left, 0px);
+    --happier-safe-area-right: env(safe-area-inset-right, 0px);
+}
+
 /* Webkit Scrollbars (Chrome, Safari, Edge) */
 ::-webkit-scrollbar {
     width: 12px;

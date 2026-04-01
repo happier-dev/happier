@@ -46,7 +46,7 @@ describe('serverFetch abort handling', () => {
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         const { abortServerFetches, serverFetch } = await import('./client');
-        const pending = serverFetch('/v1/health');
+        const pending = serverFetch('/v1/health', undefined, { retry: 'none' });
         abortServerFetches();
 
         await expect(pending).rejects.toMatchObject({ name: 'ServerFetchAbortedForServerSwitchError' });

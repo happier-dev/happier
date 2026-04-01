@@ -32,7 +32,6 @@ describe('apiArtifacts retry modes', () => {
         upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'tab' });
         runtimeFetchSpy.mockImplementation(async (url: unknown) => {
             const href = String(url ?? '');
-            if (href.includes('/v1/version')) return new Response('{}', { status: 200 });
             if (href.endsWith('/health')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/auth/ping')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/artifacts')) return new Response('nope', { status: 500 });

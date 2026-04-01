@@ -31,7 +31,6 @@ describe('createEndpointReadinessProbe', () => {
 
     it('uses an async token resolver when provided', async () => {
         runtimeFetchMock
-            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })) // /v1/version
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })) // /health
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })); // /v1/auth/ping
 
@@ -43,7 +42,7 @@ describe('createEndpointReadinessProbe', () => {
         });
 
         await expect(probe()).resolves.toEqual(expect.objectContaining({ status: 'ready' }));
-        expect(runtimeFetchMock).toHaveBeenCalledTimes(3);
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
 
         const lastCall = runtimeFetchMock.mock.calls.at(-1);
         const init = lastCall?.[1] as RequestInit | undefined;
@@ -108,8 +107,9 @@ describe('createEndpointReadinessProbe', () => {
         expect(runtimeFetchMock).toHaveBeenCalledTimes(0);
     });
 
-    it('returns server_unreachable when /v1/version is non-200 and does not proceed', async () => {
-        runtimeFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 500 }));
+    it('returns server_unreachable when readiness probes are non-ok', async () => {
+        runtimeFetchMock
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 404 })); // /health
 
         const { createEndpointReadinessProbe } = await import('./createEndpointReadinessProbe');
         const probe = createEndpointReadinessProbe({
@@ -121,15 +121,29 @@ describe('createEndpointReadinessProbe', () => {
         await expect(probe()).resolves.toEqual(
             expect.objectContaining({
                 status: 'server_unreachable',
-                errorMessage: expect.stringContaining('Version probe returned'),
+                errorMessage: expect.stringContaining('Readiness probe returned 404'),
             }),
         );
         expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it('returns server_unreachable when /health is missing', async () => {
+        runtimeFetchMock
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 404 })); // /health
+
+        const { createEndpointReadinessProbe } = await import('./createEndpointReadinessProbe');
+        const probe = createEndpointReadinessProbe({
+            endpoint: 'https://server.example.test',
+            token: null,
+            timeoutMs: 50,
+        });
+
+        await expect(probe()).resolves.toEqual(expect.objectContaining({ status: 'server_unreachable' }));
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('returns retry_later when /health responds with 429 and parses Retry-After seconds', async () => {
         runtimeFetchMock
-            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })) // /v1/version
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 429, headers: { 'Retry-After': '2' } })); // /health
 
         const { createEndpointReadinessProbe } = await import('./createEndpointReadinessProbe');
@@ -145,12 +159,11 @@ describe('createEndpointReadinessProbe', () => {
                 retryAfterMs: 2000,
             }),
         );
-        expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('returns auth_failed when authenticated probe is rejected', async () => {
         runtimeFetchMock
-            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })) // /v1/version
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })) // /health
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 401 })); // /v1/auth/ping
 
@@ -165,7 +178,7 @@ describe('createEndpointReadinessProbe', () => {
             expect.objectContaining({
                 status: 'auth_failed',
                 statusCode: 401,
-            }),
+                }),
         );
 
         const lastCall = runtimeFetchMock.mock.calls.at(-1);
@@ -176,7 +189,6 @@ describe('createEndpointReadinessProbe', () => {
 
     it('skips the authenticated probe when the token resolver returns null', async () => {
         runtimeFetchMock
-            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })) // /v1/version
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })) // /health
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 401 })); // would be /v1/auth/ping
 
@@ -188,13 +200,40 @@ describe('createEndpointReadinessProbe', () => {
         });
 
         await expect(probe()).resolves.toEqual(expect.objectContaining({ status: 'ready' }));
-        expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns retry_later when the browser blocks mixed-content (https app → http endpoint)', async () => {
+        const globalWithLocation = globalThis as unknown as { location?: { protocol?: string } };
+        const originalLocation = globalWithLocation.location;
+        try {
+            globalWithLocation.location = { protocol: 'https:' };
+
+            const { createEndpointReadinessProbe } = await import('./createEndpointReadinessProbe');
+            const probe = createEndpointReadinessProbe({
+                endpoint: 'http://server.example.test',
+                token: null,
+                timeoutMs: 50,
+            });
+
+            await expect(probe()).resolves.toEqual(
+                expect.objectContaining({
+                    status: 'retry_later',
+                    errorMessage: expect.stringContaining('mixed content'),
+                }),
+            );
+            expect(runtimeFetchMock).toHaveBeenCalledTimes(0);
+        } finally {
+            globalWithLocation.location = originalLocation;
+        }
     });
 
     it('sanitizes error messages from runtimeFetch failures', async () => {
-        runtimeFetchMock.mockRejectedValueOnce(
-            new Error('Failed to fetch https://admin:secret@custom.example.test:9443/path/?token=abc#frag (Bearer hdr.eyJzdWIiOiJ0ZXN0In0.sig)'),
-        );
+        runtimeFetchMock
+            .mockRejectedValueOnce(
+                new Error('Failed to fetch https://admin:secret@custom.example.test:9443/path/?token=abc#frag (Bearer hdr.eyJzdWIiOiJ0ZXN0In0.sig)'),
+            )
+            ;
 
         const { createEndpointReadinessProbe } = await import('./createEndpointReadinessProbe');
         const probe = createEndpointReadinessProbe({
@@ -213,5 +252,6 @@ describe('createEndpointReadinessProbe', () => {
         expect(result.errorMessage).not.toContain('token=abc');
         expect(result.errorMessage).toContain('Bearer [REDACTED]');
         expect(result.errorMessage).not.toContain('hdr.eyJ');
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
     });
 });

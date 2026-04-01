@@ -33,6 +33,10 @@ function createFeaturesPayload(params: { voiceEnabled: boolean }) {
     return FeaturesResponseSchema.parse({
         features: {
             voice: { enabled: params.voiceEnabled },
+            remoteHosts: {
+                management: { enabled: false },
+                secretMaterial: { enabled: false },
+            },
         },
         capabilities: {
             voice: {
@@ -97,7 +101,7 @@ describe('featureDecisionRuntime', () => {
         }
     });
 
-	    it('applies build policy without waiting for server probes in runtime scope', async () => {
+    it('applies build policy without waiting for server probes in runtime scope', async () => {
 	        vi.resetModules();
 
         const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
@@ -123,6 +127,84 @@ describe('featureDecisionRuntime', () => {
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
             else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
         }
+    });
+
+    it('fails closed when remoteHosts.management is missing or disabled in the server snapshot', async () => {
+        vi.resetModules();
+
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        const settings = getStorage().getState().settings;
+        const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
+
+        const decision = resolveRuntimeFeatureDecisionFromSnapshot({
+            featureId: 'remoteHosts.management',
+            settings,
+            snapshot: { status: 'ready', features: createFeaturesPayload({ voiceEnabled: false }) },
+            scope: { scopeKind: 'runtime' },
+        });
+
+        expect(decision).not.toBeNull();
+        expect(decision?.state).toBe('disabled');
+        expect(decision?.blockedBy).toBe('server');
+    });
+
+    it('enables remoteHosts.management when server snapshot gate is enabled', async () => {
+        vi.resetModules();
+
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        const settings = getStorage().getState().settings;
+        const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
+
+        const decision = resolveRuntimeFeatureDecisionFromSnapshot({
+            featureId: 'remoteHosts.management',
+            settings,
+            snapshot: {
+                status: 'ready',
+                features: FeaturesResponseSchema.parse({
+                    features: {
+                        remoteHosts: {
+                            management: { enabled: true },
+                            secretMaterial: { enabled: false },
+                        },
+                    },
+                    capabilities: {},
+                }),
+            },
+            scope: { scopeKind: 'runtime' },
+        });
+
+        expect(decision).not.toBeNull();
+        expect(decision?.state).toBe('enabled');
+    });
+
+    it('disables remoteHosts.secretMaterial when remoteHosts.management is disabled (dependency)', async () => {
+        vi.resetModules();
+
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        const settings = getStorage().getState().settings;
+        const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
+
+        const decision = resolveRuntimeFeatureDecisionFromSnapshot({
+            featureId: 'remoteHosts.secretMaterial',
+            settings,
+            snapshot: {
+                status: 'ready',
+                features: FeaturesResponseSchema.parse({
+                    features: {
+                        remoteHosts: {
+                            management: { enabled: false },
+                            secretMaterial: { enabled: true },
+                        },
+                    },
+                    capabilities: {},
+                }),
+            },
+            scope: { scopeKind: 'runtime' },
+        });
+
+        expect(decision).not.toBeNull();
+        expect(decision?.state).toBe('disabled');
+        expect(decision?.blockedBy).toBe('dependency');
     });
 
     it('refetches the server feature snapshot when active server changes', async () => {

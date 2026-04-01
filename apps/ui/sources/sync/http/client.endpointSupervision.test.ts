@@ -40,7 +40,7 @@ describe('serverFetch endpoint supervision', () => {
         const client = await import('./client');
         const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
-            if (url.includes('/v1/version') || url.includes('/health') || url.includes('/v1/auth/ping')) {
+            if (url.includes('/health') || url.includes('/v1/auth/ping')) {
                 throw new TypeError('Network request failed');
             }
             return new Response(null, { status: 200, headers: new Headers() });
@@ -93,7 +93,7 @@ describe('serverFetch endpoint supervision', () => {
         const client = await import('./client');
         const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
-            if (url.includes('/v1/version') || url.includes('/health') || url.includes('/v1/auth/ping')) {
+            if (url.includes('/health') || url.includes('/v1/auth/ping')) {
                 return new Response(null, { status: 200, headers: new Headers() });
             }
             throw new Error(

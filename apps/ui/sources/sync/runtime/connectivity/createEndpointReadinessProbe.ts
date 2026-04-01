@@ -1,5 +1,6 @@
 import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
+import { Platform } from 'react-native';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 import { sanitizeEndpointErrorMessage } from './sanitizeEndpointErrorMessage';
@@ -19,6 +20,19 @@ function normalizeAbsoluteHttpBaseUrl(raw: string): string | null {
     } catch {
         return null;
     }
+}
+
+function isWebMixedContentBlocked(baseUrl: string): boolean {
+    if (Platform.OS !== 'web') return false;
+    let endpointProtocol: string | null = null;
+    try {
+        endpointProtocol = new URL(baseUrl).protocol;
+    } catch {
+        return false;
+    }
+    const globalWithLocation = globalThis as unknown as { location?: { protocol?: string } };
+    const pageProtocol = globalWithLocation.location?.protocol;
+    return pageProtocol === 'https:' && endpointProtocol === 'http:';
 }
 
 function joinBaseAndPath(baseUrl: string, path: string): string {
@@ -75,6 +89,7 @@ export function createEndpointReadinessProbe(params: Readonly<{
     const endpoint = normalizeAbsoluteHttpBaseUrl(params.endpoint);
     const timeoutMs = params.timeoutMs ?? 800;
     const backgroundRetryAfterMs = 60_000;
+    const readinessProbePaths = ['/health'];
     const resolveToken = async (): Promise<string | null> => {
         try {
             const raw = typeof params.token === 'function' ? params.token() : params.token;
@@ -100,58 +115,67 @@ export function createEndpointReadinessProbe(params: Readonly<{
                 errorMessage: 'Invalid endpoint URL',
             };
         }
-        try {
-            const versionResponse = await fetchWithTimeout(
-                joinBaseAndPath(endpoint, '/v1/version'),
-                {
-                    method: 'GET',
-                    headers: { Accept: 'application/json' },
-                    ...(params.signal ? { signal: params.signal } : {}),
-                },
-                timeoutMs,
-            );
-            if (versionResponse.status !== 200) {
-                return {
-                    status: 'server_unreachable',
-                    errorMessage: `Version probe returned ${versionResponse.status}`,
-                };
-            }
-        } catch (error) {
+        if (isWebMixedContentBlocked(endpoint)) {
             return {
-                status: 'server_unreachable',
-                errorMessage: sanitizeEndpointErrorMessage(error) ?? 'Network request failed',
+                status: 'retry_later',
+                retryAfterMs: backgroundRetryAfterMs,
+                errorMessage: 'Browser blocked mixed content (HTTPS app cannot reach HTTP endpoint)',
             };
         }
+        let readinessError: string | null = null;
+        let readinessOk = false;
+        for (const path of readinessProbePaths) {
+            try {
+                const response = await fetchWithTimeout(
+                    joinBaseAndPath(endpoint, path),
+                    {
+                        method: 'GET',
+                        headers: { Accept: 'application/json' },
+                        ...(params.signal ? { signal: params.signal } : {}),
+                    },
+                    timeoutMs,
+                );
 
-        try {
-            const healthResponse = await fetchWithTimeout(
-                joinBaseAndPath(endpoint, '/health'),
-                {
-                    method: 'GET',
-                    headers: { Accept: 'application/json' },
-                    ...(params.signal ? { signal: params.signal } : {}),
-                },
-                timeoutMs,
-            );
+                if (response.status === 429) {
+                    return {
+                        status: 'retry_later',
+                        retryAfterMs: parseRetryAfterMs(response.headers),
+                        errorMessage: `Readiness probe returned ${response.status}`,
+                    };
+                }
 
-            if (healthResponse.status === 429) {
-                return {
-                    status: 'retry_later',
-                    retryAfterMs: parseRetryAfterMs(healthResponse.headers),
-                    errorMessage: `Health probe returned ${healthResponse.status}`,
-                };
+                if (response.status === 503 || response.status >= 500) {
+                    return {
+                        status: 'server_unreachable',
+                        errorMessage: `Readiness probe returned ${response.status}`,
+                    };
+                }
+
+                if (response.ok) {
+                    readinessOk = true;
+                    break;
+                }
+
+                if (response.status === 401 || response.status === 403) {
+                    readinessOk = true;
+                    break;
+                }
+
+                if (response.status === 404) {
+                    readinessError ??= `Readiness probe returned ${response.status}`;
+                    continue;
+                }
+
+                readinessError ??= `Readiness probe returned ${response.status}`;
+            } catch (error) {
+                readinessError = sanitizeEndpointErrorMessage(error) ?? readinessError ?? 'Network request failed';
             }
+        }
 
-            if (healthResponse.status === 503 || healthResponse.status >= 500) {
-                return {
-                    status: 'retry_later',
-                    errorMessage: `Health probe returned ${healthResponse.status}`,
-                };
-            }
-        } catch (error) {
+        if (!readinessOk) {
             return {
                 status: 'server_unreachable',
-                errorMessage: sanitizeEndpointErrorMessage(error) ?? 'Network request failed',
+                errorMessage: readinessError ?? 'Network request failed',
             };
         }
 
@@ -192,7 +216,7 @@ export function createEndpointReadinessProbe(params: Readonly<{
 
             if (authResponse.status >= 500) {
                 return {
-                    status: 'retry_later',
+                    status: 'server_unreachable',
                     errorMessage: `Authenticated probe returned ${authResponse.status}`,
                 };
             }

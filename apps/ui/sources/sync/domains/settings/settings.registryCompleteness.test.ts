@@ -39,6 +39,12 @@ describe('settings registry completeness', () => {
         expect(ACCOUNT_LEGACY_SETTING_ARTIFACTS.definitions).not.toHaveProperty('lastUsedAgent');
     });
 
+    it('owns remoteHostsV1 in canonical account settings artifacts', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty('remoteHostsV1');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('remoteHostsV1', []);
+    });
+
     it('builds local settings schema and defaults entirely from canonical local setting artifacts', async () => {
         const { LOCAL_SETTING_ARTIFACTS } = await import('./registry/local/localSettingDefinitions');
         const { LocalSettingsSchema, localSettingsDefaults } = await import('./localSettings');

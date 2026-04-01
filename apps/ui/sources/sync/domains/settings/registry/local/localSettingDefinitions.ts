@@ -162,6 +162,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
     },
+    sessionGettingStartedGuidanceDismissed: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Suppress the “set up a computer” empty-state guidance after the setup wizard was dismissed once',
+        storageScope: 'local',
+    },
     detailsPaneTabsBehavior: {
         schema: z.enum(['preview', 'persistent']),
         default: 'preview',

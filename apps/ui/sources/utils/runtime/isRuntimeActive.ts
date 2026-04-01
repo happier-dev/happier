@@ -3,7 +3,7 @@ import { AppState, Platform } from 'react-native';
 export function isRuntimeActive(): boolean {
     try {
         const appState = String(AppState.currentState ?? '').trim();
-        if (appState && appState !== 'active') {
+        if (appState && appState !== 'active' && appState !== 'unknown') {
             return false;
         }
     } catch {

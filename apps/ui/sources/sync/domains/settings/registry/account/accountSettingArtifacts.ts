@@ -12,6 +12,7 @@ import { ACCOUNT_MCP_SETTING_DEFINITIONS } from './accountMcpSettingDefinitions'
 import { ACCOUNT_PERMISSION_SETTING_DEFINITIONS } from './accountPermissionSettingDefinitions';
 import { ACCOUNT_PROFILES_SETTING_DEFINITIONS } from './accountProfilesSettingDefinitions';
 import { ACCOUNT_PROMPT_LIBRARY_SETTING_DEFINITIONS } from './accountPromptLibrarySettingDefinitions';
+import { ACCOUNT_REMOTE_HOSTS_SETTING_DEFINITIONS } from './accountRemoteHostsSettingDefinitions';
 import { ACCOUNT_RUNTIME_SETTING_DEFINITIONS } from './accountRuntimeSettingDefinitions';
 import { ACCOUNT_SCM_FILES_SETTING_DEFINITIONS } from './accountScmFilesSettingDefinitions';
 import { ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS } from './accountSessionCreationSettingDefinitions';
@@ -33,6 +34,7 @@ export const ACCOUNT_SETTING_DEFINITIONS = defineSettingDefinitions({
     ...ACCOUNT_PERMISSION_SETTING_DEFINITIONS,
     ...ACCOUNT_PROFILES_SETTING_DEFINITIONS,
     ...ACCOUNT_PROMPT_LIBRARY_SETTING_DEFINITIONS,
+    ...ACCOUNT_REMOTE_HOSTS_SETTING_DEFINITIONS,
     ...ACCOUNT_RUNTIME_SETTING_DEFINITIONS,
     ...ACCOUNT_SCM_FILES_SETTING_DEFINITIONS,
     ...ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS,

@@ -36,7 +36,7 @@ describe('getFriendsList retry semantics', () => {
 
         runtimeFetchSpy.mockImplementation(async (input: unknown) => {
             const url = String(input ?? '');
-            if (url.endsWith('/v1/version') || url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
                 return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
             }
             if (url.endsWith('/v1/friends')) {

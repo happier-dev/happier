@@ -21,7 +21,12 @@ describe('serverUrlCanonical', () => {
 
     it('accepts localish hostnames without a scheme and defaults to http', () => {
         expect(canonicalizeServerUrl('localhost:3005')).toBe('http://localhost:3005');
+        expect(canonicalizeServerUrl('127.0.0.1:3005')).toBe('http://127.0.0.1:3005');
         expect(canonicalizeServerUrl('192.168.1.20:3005')).toBe('http://192.168.1.20:3005');
+        expect(canonicalizeServerUrl('10.0.0.5:53288')).toBe('http://10.0.0.5:53288');
+        expect(canonicalizeServerUrl('172.16.0.5:53288')).toBe('http://172.16.0.5:53288');
+        expect(canonicalizeServerUrl('172.31.255.254:53288')).toBe('http://172.31.255.254:53288');
+        expect(canonicalizeServerUrl('[::1]:3005')).toBe('http://[::1]:3005');
         expect(canonicalizeServerUrl('happier-dev.local:3005/path')).toBe('http://happier-dev.local:3005/path');
         expect(canonicalizeServerUrl('my-nas:3005/path')).toBe('http://my-nas:3005/path');
     });

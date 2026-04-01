@@ -4,8 +4,11 @@ import { isStackContext } from './serverContext';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
 import { sanitizeServerUrlForShareableLink } from './url/shareableServerUrl';
 import { readConfiguredServerUrlEnv, readConfiguredServerUrlEnvRaw } from './readConfiguredServerUrlEnv';
+import { resolveSetupSurfacePolicy } from './setup/setupSurfacePolicy';
 
 export type ServerProfileSource = 'manual' | 'url' | 'stack-env' | 'notification' | 'preconfigured';
+
+export const HAPPIER_CLOUD_SERVER_URL = 'https://api.happier.dev' as const;
 
 export type ServerProfile = Readonly<{
     id: string;
@@ -161,6 +164,7 @@ function getPersistedStateStorage(): PersistedStateStorage {
 function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
     const entries: PreconfiguredServer[] = [];
     const seenUrlKeys = new Set<string>();
+    const setupPolicy = resolveSetupSurfacePolicy();
 
     const append = (
         urlRaw: unknown,
@@ -216,8 +220,8 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
     }
 
     // In stack context, and on native builds, never start "serverless": seed Happier Cloud when no preconfigured server exists.
-    if (entries.length === 0 && (isStackContext() || !isWebRuntime())) {
-        append('https://api.happier.dev', 'Happier Cloud', 'preconfigured');
+    if (entries.length === 0 && (isStackContext() || !isWebRuntime()) && setupPolicy.relay.allowHappierCloud) {
+        append(HAPPIER_CLOUD_SERVER_URL, 'Happier Cloud', 'preconfigured');
     }
 
     return entries;
@@ -530,7 +534,7 @@ function getWebSameOriginServerUrl(): string | null {
         // When builds are missing EXPO_PUBLIC_HAPPIER_SERVER_URL (and legacy aliases), this prevents the default server
         // from incorrectly pointing at the web host.
         if (parsed.hostname.toLowerCase() === 'app.happier.dev') {
-            return 'https://api.happier.dev';
+            return HAPPIER_CLOUD_SERVER_URL;
         }
         // In stack context, the UI can be served by an Expo/Metro dev server (e.g. http://localhost:8081).
         // Do not treat the UI origin as a relay server. Only allow same-origin fallback for stack-served
@@ -669,6 +673,14 @@ export function upsertServerProfile(
     });
     emitActiveServerChanged(previousSnapshot);
     return profile;
+}
+
+export function getOrCreateHappierCloudServerProfile(): ServerProfile {
+    return upsertServerProfile({
+        serverUrl: HAPPIER_CLOUD_SERVER_URL,
+        name: 'Happier Cloud',
+        source: 'preconfigured',
+    });
 }
 
 export function setActiveServerId(

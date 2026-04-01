@@ -33,7 +33,6 @@ describe('apiPush retry modes', () => {
 
         runtimeFetchSpy.mockImplementation(async (url: unknown) => {
             const href = String(url ?? '');
-            if (href.includes('/v1/version')) return new Response('{}', { status: 200 });
             if (href.endsWith('/health')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/auth/ping')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/push-tokens')) return new Response('nope', { status: 408 });

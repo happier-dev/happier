@@ -1,9 +1,12 @@
 export type StreamSegmentKind = 'assistant' | 'thinking';
 
+export type StreamSegmentState = 'streaming' | 'complete' | 'interrupted';
+
 export type StreamSegmentMetaV1 = Readonly<{
   v: 1;
   segmentKind: StreamSegmentKind;
   segmentLocalId: string | null;
+  segmentState: StreamSegmentState | null;
   updatedAtMs: number | null;
 }>;
 
@@ -19,8 +22,13 @@ export function readStreamSegmentMetaV1(meta: unknown): StreamSegmentMetaV1 | nu
   const segmentLocalId = typeof segmentLocalIdRaw === 'string' && segmentLocalIdRaw.length > 0
     ? segmentLocalIdRaw
     : null;
+  const segmentStateRaw = segmentRecord.segmentState;
+  const segmentState =
+    segmentStateRaw === 'streaming' || segmentStateRaw === 'complete' || segmentStateRaw === 'interrupted'
+      ? segmentStateRaw
+      : null;
   const updatedAtMsRaw = segmentRecord.updatedAtMs;
   const updatedAtMs =
     typeof updatedAtMsRaw === 'number' && Number.isFinite(updatedAtMsRaw) ? updatedAtMsRaw : null;
-  return { v: 1, segmentKind, segmentLocalId, updatedAtMs };
+  return { v: 1, segmentKind, segmentLocalId, segmentState, updatedAtMs };
 }

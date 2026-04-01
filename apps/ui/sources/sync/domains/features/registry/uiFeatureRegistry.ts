@@ -106,6 +106,12 @@ export const UI_FEATURE_REGISTRY = {
     'channelBridges.telegram': {
         settingsToggle: undefined,
     },
+    'remoteHosts.management': {
+        settingsToggle: undefined,
+    },
+    'remoteHosts.secretMaterial': {
+        settingsToggle: undefined,
+    },
     'updates.ota': {
         settingsToggle: undefined,
     },
@@ -313,6 +319,36 @@ export const UI_FEATURE_REGISTRY = {
             subtitleKey: 'settingsFeatures.expUsageReportingSubtitle',
             icon: { ioniconName: 'analytics-outline', color: '#007AFF' },
         },
+    },
+    'setup.relay.allowRelaySelection': {
+        settingsToggle: undefined,
+    },
+    'setup.relay.allowHappierCloud': {
+        settingsToggle: undefined,
+    },
+    'setup.relay.allowCustomRelayUrl': {
+        settingsToggle: undefined,
+    },
+    'setup.relay.allowLocalRelayHost': {
+        settingsToggle: undefined,
+    },
+    'setup.relay.allowRemoteSshRelayHost': {
+        settingsToggle: undefined,
+    },
+    'setup.relayAccess.allowTailscale': {
+        settingsToggle: undefined,
+    },
+    'setup.relayAccess.allowCloudflareTunnel': {
+        settingsToggle: undefined,
+    },
+    'setup.machine.allowLocalMachineSetup': {
+        settingsToggle: undefined,
+    },
+    'setup.machine.allowRemoteSshMachineSetup': {
+        settingsToggle: undefined,
+    },
+    'setup.providers.allowProviderSetup': {
+        settingsToggle: undefined,
     },
 } satisfies Readonly<Record<FeatureId, UiFeatureDefinition>>;
 

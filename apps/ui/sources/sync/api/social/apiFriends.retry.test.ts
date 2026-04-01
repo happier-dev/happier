@@ -33,7 +33,6 @@ describe('apiFriends retry modes', () => {
 
         runtimeFetchSpy.mockImplementation(async (url: unknown) => {
             const href = String(url ?? '');
-            if (href.includes('/v1/version')) return new Response('{}', { status: 200 });
             if (href.endsWith('/health')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/auth/ping')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/friends')) return new Response('nope', { status: 408 });
@@ -67,7 +66,6 @@ describe('apiFriends retry modes', () => {
 
         runtimeFetchSpy.mockImplementation(async (url: unknown) => {
             const href = String(url ?? '');
-            if (href.includes('/v1/version')) return new Response('{}', { status: 200 });
             if (href.endsWith('/health')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/auth/ping')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/user/user-1')) {
@@ -97,7 +95,6 @@ describe('apiFriends retry modes', () => {
 
         runtimeFetchSpy.mockImplementation(async (url: unknown) => {
             const href = String(url ?? '');
-            if (href.includes('/v1/version')) return new Response('{}', { status: 200 });
             if (href.endsWith('/health')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/auth/ping')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/friends')) {

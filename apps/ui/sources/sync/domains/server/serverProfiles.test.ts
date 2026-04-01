@@ -37,6 +37,7 @@ describe('serverProfiles', () => {
     const previousServerUrl = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
     const previousLegacyGenericServerUrl = process.env.EXPO_PUBLIC_SERVER_URL;
     const previousPreconfigured = process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
+    const previousBuildFeaturesDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
 
     afterEach(() => {
         vi.unstubAllGlobals();
@@ -52,6 +53,8 @@ describe('serverProfiles', () => {
         else process.env.EXPO_PUBLIC_SERVER_URL = previousLegacyGenericServerUrl;
         if (previousPreconfigured === undefined) delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
         else process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS = previousPreconfigured;
+        if (previousBuildFeaturesDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousBuildFeaturesDeny;
     });
 
     it('prefers sessionStorage activeServerId on web over the device default', async () => {
@@ -169,6 +172,16 @@ describe('serverProfiles', () => {
         const profiles = await importFresh();
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(true);
         expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
+    });
+
+    it('does not seed Happier Cloud on native when build policy denies the setup surface policy gate', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relay.allowHappierCloud';
+
+        const profiles = await importFresh();
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
+        expect(profiles.getActiveServerUrl()).not.toBe('https://api.happier.dev');
     });
 
     it('seeds a same-origin server profile on web when no preconfigured env exists', async () => {
