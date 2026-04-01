@@ -7185,7 +7185,7 @@ settingsSession: {
 	          letsStart: 'Empecemos',
 	          scanQrCode: 'Escanear código QR',
           relayDiagramPhoneLabel: 'Teléfono',
-          relayDiagramRelayLabel: 'Relay',
+          relayDiagramRelayLabel: 'Relé',
           relayDiagramThisComputerLabel: 'Este ordenador',
           recommendedBadge: 'Recomendado',
 	          relayCloudTitle: 'Happier Cloud',
