@@ -36,6 +36,32 @@ on:
         required: false
         default: ""
         type: string
+  workflow_call:
+    inputs:
+      source_ref:
+        required: false
+        default: dev
+        type: string
+      publish_ota:
+        required: false
+        default: true
+        type: boolean
+      publish_android_apk:
+        required: false
+        default: true
+        type: boolean
+      submit_ios_testflight:
+        required: false
+        default: true
+        type: boolean
+      eas_builder:
+        required: false
+        default: eas_cloud
+        type: string
+      release_message:
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -164,4 +190,3 @@ jobs:
         run: |
           set -euo pipefail
           echo "Triggered UI mobile dev lane: OTA + Android APK rolling release + optional TestFlight submit." >> "$GITHUB_STEP_SUMMARY"
-

@@ -21,7 +21,9 @@ inputs:
   trusted_actors:
     description: "Comma-separated list of explicitly trusted actors (e.g. a release bot) that can bypass team membership checks"
     required: false
-    default: ""
+    # Scheduled workflows run as `github-actions` / `github-actions[bot]`. We treat these as trusted
+    # so nightly release automation can run, while workflow_dispatch still requires team membership.
+    default: "github-actions[bot],github-actions"
 
 runs:
   using: composite

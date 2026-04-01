@@ -1,0 +1,100 @@
+name: NIGHTLY — Dev Releases
+
+on:
+  schedule:
+    # Nightly dev channel builds from the default branch (dev).
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Source ref — Branch, tag, or SHA to build/publish (default: dev)"
+        required: true
+        default: dev
+        type: string
+      release_message:
+        description: "Release message — Optional note for rolling release notes"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: nightly-dev-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cli:
+    name: CLI binaries (dev)
+    uses: ./.github/workflows/publish-cli-binaries.yml
+    secrets: inherit
+    with:
+      channel: dev
+      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      allow_stable: false
+      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+
+  hstack:
+    name: HStack binaries (dev)
+    uses: ./.github/workflows/publish-hstack-binaries.yml
+    secrets: inherit
+    with:
+      channel: dev
+      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      allow_stable: false
+      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+
+  server_runtime:
+    name: Server runtime (dev)
+    uses: ./.github/workflows/publish-server-runtime.yml
+    secrets: inherit
+    with:
+      channel: dev
+      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      allow_stable: false
+      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+
+  ui_web:
+    name: UI web bundle (dev)
+    uses: ./.github/workflows/publish-ui-web.yml
+    secrets: inherit
+    with:
+      channel: dev
+      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      allow_stable: false
+      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+
+  ui_mobile:
+    name: UI mobile (dev)
+    uses: ./.github/workflows/publish-ui-mobile-dev.yml
+    secrets: inherit
+    with:
+      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      publish_ota: true
+      publish_android_apk: true
+      submit_ios_testflight: true
+      eas_builder: eas_cloud
+      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+
+  ui_desktop:
+    name: UI desktop (Tauri) (dev)
+    uses: ./.github/workflows/build-tauri.yml
+    secrets: inherit
+    with:
+      environment: dev
+      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      publish_release: true
+
+  docker:
+    name: Docker images (dev)
+    uses: ./.github/workflows/publish-docker.yml
+    secrets: inherit
+    with:
+      channel: dev
+      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      push_latest: true
+      registries: dockerhub,ghcr
+      build_relay: true
+      build_dev_box: true
