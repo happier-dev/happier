@@ -25,6 +25,16 @@ export const FeatureGatesSchema = z.object({
     })
     .optional()
     .default({ plaintextStorage: DEFAULT_GATE_DISABLED, accountOptOut: DEFAULT_GATE_DISABLED }),
+  remoteHosts: z
+    .object({
+      management: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      secretMaterial: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({
+      management: DEFAULT_GATE_DISABLED,
+      secretMaterial: DEFAULT_GATE_DISABLED,
+    }),
   attachments: z
     .object({
       uploads: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
@@ -107,6 +117,49 @@ export const FeatureGatesSchema = z.object({
     })
     .optional()
     .default({ enabled: false, transfer: { enabled: false, directPeer: { enabled: false }, serverRouted: { enabled: false } } }),
+  setup: z
+    .object({
+      relay: z
+        .object({
+          allowRelaySelection: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          allowHappierCloud: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          allowCustomRelayUrl: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          allowLocalRelayHost: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          allowRemoteSshRelayHost: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({
+          allowRelaySelection: DEFAULT_GATE_DISABLED,
+          allowHappierCloud: DEFAULT_GATE_DISABLED,
+          allowCustomRelayUrl: DEFAULT_GATE_DISABLED,
+          allowLocalRelayHost: DEFAULT_GATE_DISABLED,
+          allowRemoteSshRelayHost: DEFAULT_GATE_DISABLED,
+        }),
+      relayAccess: z
+        .object({
+          allowTailscale: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          allowCloudflareTunnel: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({
+          allowTailscale: DEFAULT_GATE_DISABLED,
+          allowCloudflareTunnel: DEFAULT_GATE_DISABLED,
+        }),
+    })
+    .optional()
+    .default({
+      relay: {
+        allowRelaySelection: DEFAULT_GATE_DISABLED,
+        allowHappierCloud: DEFAULT_GATE_DISABLED,
+        allowCustomRelayUrl: DEFAULT_GATE_DISABLED,
+        allowLocalRelayHost: DEFAULT_GATE_DISABLED,
+        allowRemoteSshRelayHost: DEFAULT_GATE_DISABLED,
+      },
+      relayAccess: {
+        allowTailscale: DEFAULT_GATE_DISABLED,
+        allowCloudflareTunnel: DEFAULT_GATE_DISABLED,
+      },
+    }),
   terminal: z
     .object({
       embeddedPty: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),

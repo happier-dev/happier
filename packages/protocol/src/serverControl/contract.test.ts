@@ -35,7 +35,7 @@ describe('serverControl contract exports', () => {
       v: 1,
       ok: true,
       kind: 'server_test',
-      data: { ok: false, url: 'http://127.0.0.1:3000/v1/version', status: 500, error: 'http_500' },
+      data: { ok: false, url: 'http://127.0.0.1:3000/health', status: 500, error: 'http_500' },
     });
     expect(parsed.success).toBe(true);
   });

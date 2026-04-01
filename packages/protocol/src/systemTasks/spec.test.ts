@@ -21,6 +21,24 @@ describe('systemTasks protocol exports', () => {
     readSchema('SystemTaskEventSchema');
     readSchema('SystemTaskResultSchema');
   });
+
+  it('exports the canonical prompt kind catalog', () => {
+    const schema = readSchema('SystemTaskPromptKindSchema');
+    expect(schema.safeParse('ssh.trustHost').success).toBe(true);
+    expect(schema.safeParse('unknown.prompt').success).toBe(false);
+
+    const promptKinds = (protocol as Record<string, unknown>).SYSTEM_TASK_PROMPT_KINDS_V1;
+    expect(Array.isArray(promptKinds)).toBe(true);
+    expect(promptKinds).toContain('ssh.trustHost');
+
+    const setupThisComputerStepSchema = readSchema('SetupThisComputerSystemTaskStepIdSchema');
+    expect(setupThisComputerStepSchema.safeParse('setup.thisComputer.resolveRelay').success).toBe(true);
+    expect(setupThisComputerStepSchema.safeParse('setup.thisComputer.unknown').success).toBe(false);
+
+    const setupThisComputerSteps = (protocol as Record<string, unknown>).SETUP_THIS_COMPUTER_SYSTEM_TASK_STEP_IDS_V1;
+    expect(Array.isArray(setupThisComputerSteps)).toBe(true);
+    expect(setupThisComputerSteps).toContain('setup.thisComputer.resolveRelay');
+  });
 });
 
 describe('SystemTaskSpecSchema', () => {

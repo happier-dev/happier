@@ -27,6 +27,11 @@ describe('feature catalog', () => {
     expect(isFeatureId('connectedServices.quotas')).toBe(true);
   });
 
+  it('includes remote hosts feature ids', () => {
+    expect(isFeatureId('remoteHosts.management')).toBe(true);
+    expect(isFeatureId('remoteHosts.secretMaterial')).toBe(true);
+  });
+
   it('includes channel bridge feature ids', () => {
     expect(isFeatureId('channelBridges')).toBe(true);
     expect(isFeatureId('channelBridges.telegram')).toBe(true);
@@ -65,6 +70,21 @@ describe('feature catalog', () => {
 
   it('includes happier voice feature id', () => {
     expect(isFeatureId('voice.happierVoice')).toBe(true);
+  });
+
+  it('includes setup surface policy feature ids', () => {
+    expect(isFeatureId('setup.relay.allowRelaySelection')).toBe(true);
+    expect(isFeatureId('setup.relay.allowHappierCloud')).toBe(true);
+    expect(isFeatureId('setup.relay.allowCustomRelayUrl')).toBe(true);
+    expect(isFeatureId('setup.relay.allowLocalRelayHost')).toBe(true);
+    expect(isFeatureId('setup.relay.allowRemoteSshRelayHost')).toBe(true);
+    expect(isFeatureId('setup.relayAccess.allowTailscale')).toBe(true);
+    expect(isFeatureId('setup.relayAccess.allowCloudflareTunnel')).toBe(true);
+  });
+
+  it('includes remote host management feature ids', () => {
+    expect(isFeatureId('remoteHosts.management')).toBe(true);
+    expect(isFeatureId('remoteHosts.secretMaterial')).toBe(true);
   });
 
   it('does not include legacy connected.services ids', () => {

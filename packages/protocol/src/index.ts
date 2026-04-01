@@ -1142,6 +1142,14 @@ export {
   SystemTaskResultErrorSchema,
   SystemTaskResultSchema,
   SystemTaskSpecSchema,
+  RELAY_CONNECT_BACKGROUND_SERVICE_SYSTEM_TASK_STEP_IDS_V1,
+  REMOTE_SSH_BOOTSTRAP_MACHINE_SYSTEM_TASK_STEP_IDS_V1,
+  SETUP_REPAIR_THIS_COMPUTER_SYSTEM_TASK_STEP_IDS_V1,
+  SETUP_THIS_COMPUTER_SYSTEM_TASK_STEP_IDS_V1,
+  RemoteSshBootstrapMachineSystemTaskStepIdSchema,
+  RelayConnectBackgroundServiceSystemTaskStepIdSchema,
+  SetupRepairThisComputerSystemTaskStepIdSchema,
+  SetupThisComputerSystemTaskStepIdSchema,
   createTailscaleSecureAccessTaskSpec,
   TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND,
   TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_STEP_IDS,
@@ -1152,6 +1160,10 @@ export {
   type SystemTaskResult,
   type SystemTaskResultError,
   type SystemTaskSpec,
+  type RemoteSshBootstrapMachineSystemTaskStepId,
+  type RelayConnectBackgroundServiceSystemTaskStepId,
+  type SetupRepairThisComputerSystemTaskStepId,
+  type SetupThisComputerSystemTaskStepId,
   type TailscaleSecureAccessInstallPolicy,
   type TailscaleSecureAccessLoginPolicy,
   type TailscaleSecureAccessMode,
@@ -1160,6 +1172,12 @@ export {
   type TailscaleSecureAccessTaskResult,
   type TailscaleSecureAccessTaskSpec,
 } from './systemTasks/index.js';
+
+export {
+  SYSTEM_TASK_PROMPT_KINDS_V1,
+  SystemTaskPromptKindSchema,
+  type SystemTaskPromptKind,
+} from './systemTasks/promptKindCatalog.js';
 
 export {
   LlmTaskRunnerConfigV1Schema,
