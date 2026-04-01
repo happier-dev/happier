@@ -1242,21 +1242,21 @@ async function restartAndCheckHealth({ config, serviceSpec, port }) {
   const timeoutMs = resolveSelfHostHealthTimeoutMs();
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const ok = await checkHealth({ port: parsePort(port, config.serverPort) });
+    const ok = await probeSelfHostHealth({ port: parsePort(port, config.serverPort) });
     if (ok) return true;
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
   return false;
 }
 
-async function checkHealth({ port }) {
+export async function probeSelfHostHealth({ port }) {
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/v1/version`, {
+    const response = await fetch(`http://127.0.0.1:${port}/health`, {
       headers: { accept: 'application/json' },
     });
     if (!response.ok) return false;
     const payload = await response.json().catch(() => ({}));
-    return payload?.ok === true;
+    return payload?.status === 'ok';
   } catch {
     return false;
   }
@@ -2129,7 +2129,7 @@ async function cmdStatus({ channel, mode, json }) {
     updaterEnabled = null;
   }
 
-  const healthy = await checkHealth({ port: config.serverPort });
+  const healthy = await probeSelfHostHealth({ port: config.serverPort });
   const serverVersion = state?.version ? String(state.version) : '';
   const uiWebVersion =
     state?.uiWeb?.installed === true && state?.uiWeb?.version

@@ -232,7 +232,7 @@ test(
       }
     );
     if ((installResult.status ?? 1) !== 0) {
-      const recovered = await waitForHealth(`${serverUrl}/v1/version`, 120_000);
+      const recovered = await waitForHealth(`${serverUrl}/health`, 120_000);
       if (!recovered) {
         throw new Error(
           [
@@ -246,7 +246,7 @@ test(
     }
     installSucceeded = true;
 
-    const healthOk = await waitForHealth(`${serverUrl}/v1/version`, 120_000);
+    const healthOk = await waitForHealth(`${serverUrl}/health`, 120_000);
     assert.equal(healthOk, true, 'self-host service health endpoint did not become ready');
 
     const token = await createAuthToken(serverUrl);
@@ -290,7 +290,7 @@ test(
     );
     installSucceeded = false;
 
-    const healthAfter = await waitForHealth(`${serverUrl}/v1/version`, 10_000);
+    const healthAfter = await waitForHealth(`${serverUrl}/health`, 10_000);
     assert.equal(healthAfter, false, 'server should not remain healthy after uninstall');
   }
 );

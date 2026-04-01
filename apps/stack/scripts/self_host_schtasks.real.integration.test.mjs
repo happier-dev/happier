@@ -161,7 +161,7 @@ test(
       }
     );
     if ((installResult.status ?? 1) !== 0) {
-      const recoveredHealth = await waitForHealth(`http://127.0.0.1:${serverPort}/v1/version`, 120_000);
+      const recoveredHealth = await waitForHealth(`http://127.0.0.1:${serverPort}/health`, 120_000);
       if (!recoveredHealth) {
         const statusResult = run(
           hstackPath,
@@ -187,7 +187,7 @@ test(
     }
     installSucceeded = true;
 
-    const healthOk = await waitForHealth(`http://127.0.0.1:${serverPort}/v1/version`, 120_000);
+    const healthOk = await waitForHealth(`http://127.0.0.1:${serverPort}/health`, 120_000);
     assert.equal(healthOk, true, 'self-host service health endpoint did not become ready');
 
     const status = run(

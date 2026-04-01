@@ -15,6 +15,7 @@ import {
   resolveSelfHostAutoUpdateDefault,
   resolveSelfHostAutoUpdateIntervalMinutes,
   resolveSelfHostHealthTimeoutMs,
+  probeSelfHostHealth,
   resolveSelfHostDefaults,
   renderUpdaterLaunchdPlistXml,
   renderUpdaterScheduledTaskWrapperPs1,
@@ -1077,6 +1078,28 @@ test('renderServerEnvFile uses file URL semantics on Windows', () => {
 
 test('resolveSelfHostHealthTimeoutMs defaults to a safe health timeout', () => {
   assert.equal(resolveSelfHostHealthTimeoutMs({}), 90_000);
+});
+
+test('probeSelfHostHealth queries /health and accepts healthy responses', async () => {
+  const originalFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url) => {
+    urls.push(String(url));
+    return {
+      ok: true,
+      async json() {
+        return { status: 'ok' };
+      },
+    };
+  };
+
+  try {
+    const healthy = await probeSelfHostHealth({ port: 53288 });
+    assert.equal(healthy, true);
+    assert.deepEqual(urls, ['http://127.0.0.1:53288/health']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('resolveSelfHostHealthTimeoutMs honors explicit timeout values >= 10s', () => {
