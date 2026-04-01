@@ -6,6 +6,8 @@ import { installSessionGuidanceCommonModuleMocks } from './sessionGuidanceTestHe
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const routerPushSpy = vi.fn();
+
 const mockEnv = vi.hoisted(() => ({
   iconsRenderAsText: false,
 }));
@@ -40,7 +42,14 @@ vi.mock('@/constants/Typography', () => ({
   },
 }));
 
-installSessionGuidanceCommonModuleMocks();
+installSessionGuidanceCommonModuleMocks({
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+      router: { push: routerPushSpy },
+    }).module;
+  },
+});
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
   useConnectTerminal: () => ({
@@ -59,6 +68,27 @@ vi.mock('@/config', () => ({
 }));
 
 describe('SessionGettingStartedGuidanceView', () => {
+  it('renders only the setup wizard CTA for connect_machine on phone surfaces', async () => {
+    const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
+    const screen = await renderScreen(
+      <SessionGettingStartedGuidanceView
+        variant="phone"
+        model={{
+          kind: 'connect_machine',
+          targetLabel: 'Company',
+          serverUrl: 'https://api.company.example',
+          serverName: 'company',
+          showServerSetup: true,
+          onConnectTerminal: () => {},
+          onEnterUrlManually: () => {},
+        }}
+      />,
+    );
+
+    expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
+    expect(screen.findAllByType('RoundButton' as any)).toHaveLength(1);
+  });
+
   it('hides terminal follow-up when setup is available', async () => {
     const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
     const onOpenSetup = vi.fn();
@@ -86,6 +116,7 @@ describe('SessionGettingStartedGuidanceView', () => {
     expect(screen.findByTestId('session-getting-started-logo')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-kind-connect_machine')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
+    expect(screen.findAllByType('RoundButton' as any)).toHaveLength(1);
 
     await screen.pressByTestIdAsync('session-getting-started-open-setup');
     expect(onOpenSetup).toHaveBeenCalledTimes(1);
@@ -109,6 +140,13 @@ describe('SessionGettingStartedGuidanceView', () => {
         />,
       );
 
+      expect(screen.findByTestId('session-getting-started-setup-primary-card')).not.toBeNull();
+      expect(screen.findByTestId('session-getting-started-cli-follow-up')).toBeNull();
+      expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
+      expect(screen.findAllByType('RoundButton' as any)).toHaveLength(1);
+      routerPushSpy.mockClear();
+      await screen.pressByTestIdAsync('session-getting-started-open-setup');
+      expect(routerPushSpy).toHaveBeenCalledWith('/setup/wizard?action=local&step=setup_this_computer&scope=machine');
       expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
     } finally {
       mockEnv.iconsRenderAsText = false;

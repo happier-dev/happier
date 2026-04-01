@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import {
     renderProviderSessionDetailsTab,
@@ -221,7 +221,7 @@ function isExecutionRunLauncherResource(value: unknown): value is Readonly<{
 export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     const pane = useAppPaneScope(props.scopeId);
     const requestClose = props.onRequestClose ?? pane.closeDetails;
     const editorFocusModeEnabled = useLocalSetting('editorFocusModeEnabled');
@@ -382,13 +382,13 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         );
     }, [openFileTab, pane, props.scopeId, props.sessionId, renderLoadingFallback, requestClose, styles.empty, styles.emptyText]);
 
-    const headerPaddingTop = Platform.OS === 'ios' && props.onRequestClose ? insets.top + 10 : 10;
+    const headerPaddingTop = 10;
 
     return (
         <ViewWithWheel
             ref={rootRef}
-            testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-panel-root')}
-            style={styles.container}
+            testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-panel-root') ?? 'session-details-panel-root'}
+            style={[styles.container, { paddingTop: insets.top }]}
             {...(Platform.OS === 'web'
                 ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
                 : {})}

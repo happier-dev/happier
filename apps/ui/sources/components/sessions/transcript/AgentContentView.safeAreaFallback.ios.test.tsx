@@ -1,9 +1,9 @@
-import React from 'react';
-import renderer from 'react-test-renderer';
+import * as React from 'react';
+import type renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+
 import { renderScreen } from '@/dev/testkit';
 import { installTranscriptCommonModuleMocks } from './transcriptTestHelpers';
-
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,8 +12,8 @@ installTranscriptCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'android',
-                select: (v: any) => v.android ?? v.native ?? v.default,
+                OS: 'ios',
+                select: (v: any) => v.ios ?? v.native ?? v.default,
             },
             View: (props: any) => React.createElement('View', props, props.children),
         });
@@ -21,12 +21,12 @@ installTranscriptCommonModuleMocks({
 });
 
 vi.mock('@/utils/platform/responsive', () => ({
-    useHeaderHeight: () => 0,
+    useHeaderHeight: () => 40,
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-    initialWindowMetrics: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+    initialWindowMetrics: { insets: { top: 22, bottom: 0, left: 0, right: 0 } },
 }));
 
 vi.mock('react-native-keyboard-controller', () => ({
@@ -50,20 +50,21 @@ vi.mock('react-native-reanimated', async () => {
     };
 });
 
-describe('AgentContentView (android keyboard)', () => {
-    it('uses the keyboard-controller animated implementation on Android', async () => {
+describe('AgentContentView safe area', () => {
+    it('uses the chrome-safe area fallback (initialWindowMetrics) when positioning placeholder content', async () => {
         const { AgentContentView } = await import('./AgentContentView.native');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<AgentContentView
-                    content={<React.Fragment>content</React.Fragment>}
-                    input={<React.Fragment>input</React.Fragment>}
-                    placeholder={<React.Fragment>placeholder</React.Fragment>}
-                />)).tree;
+        const tree = (await renderScreen(
+            <AgentContentView
+                content={<React.Fragment>content</React.Fragment>}
+                input={<React.Fragment>input</React.Fragment>}
+                placeholder={<React.Fragment>placeholder</React.Fragment>}
+            />,
+        )).tree as renderer.ReactTestRenderer;
 
-        const animatedViews = tree!.findAllByType('AnimatedView' as any);
-        expect(animatedViews.length).toBeGreaterThan(0);
-        expect(animatedViews[0]?.props.pointerEvents).toBe('box-none');
-        expect(tree!.findAllByType('AnimatedScrollView' as any).length).toBe(1);
+        const scroll = tree.findByType('AnimatedScrollView' as any);
+        const styleArray = Array.isArray(scroll.props.style) ? scroll.props.style : [scroll.props.style];
+        const baseStyle = styleArray[0] ?? {};
+        expect(baseStyle.top).toBe(22 + 40);
     });
 });

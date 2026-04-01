@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionRepositoryTreeBrowserView } from '@/components/sessions/files/views/SessionRepositoryTreeBrowserView';
 import { SessionRightPanelGitView } from '@/components/sessions/panes/git/SessionRightPanelGitView';
@@ -74,11 +74,11 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     const deviceType = useDeviceType();
     const pane = useAppPaneScope(props.scopeId);
     const scopeState = pane.scopeState;
-    const headerPaddingTop = deviceType === 'phone' ? insets.top + 10 : 10;
+    const headerPaddingTop = 10;
 
     const terminalEnabled = useFeatureEnabled('terminal.embeddedPty');
     const dockLocationRaw = useLocalSetting('embeddedTerminalDockLocation');
@@ -146,8 +146,8 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
     }, [terminalTabAvailable]);
 
     return (
-        <View style={styles.container}>
-            <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
+        <View testID="session-right-panel-root" style={styles.container}>
+            <View style={[styles.header, { paddingTop: headerPaddingTop + insets.top }]}>
                 <View style={styles.segmentedContainer}>
                     <SegmentedTabBar
                         tabs={rightPanelTabs}

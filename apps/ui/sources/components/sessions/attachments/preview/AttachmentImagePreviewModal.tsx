@@ -176,7 +176,6 @@ export const AttachmentImagePreviewModal = React.memo(function AttachmentImagePr
         testID: 'attachment-image-preview-modal',
         titleTestID: 'attachment-image-preview-title',
         dimensions: chromeDimensions,
-        layout: 'fill' as const,
     }), [chromeDimensions, currentImage.title]);
 
     useModalCardChrome(props.setChrome, chrome);

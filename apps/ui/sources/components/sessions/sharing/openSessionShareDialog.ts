@@ -30,7 +30,6 @@ export async function openSessionShareDialog(params: Readonly<{
             kind: 'card',
             title: t('session.sharing.title'),
             testID: 'session-share-dialog',
-            layout: 'fill',
             dimensions: { width: 560, maxHeightRatio: 0.85, size: 'md' },
         },
         closeOnBackdrop: true,

@@ -37,8 +37,14 @@ installTranscriptCommonModuleMocks({
     },
 });
 
+const safeAreaState = vi.hoisted(() => ({
+    insets: { top: 0, bottom: 0, left: 0, right: 0 },
+    initial: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+}));
+
 vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    useSafeAreaInsets: () => safeAreaState.insets,
+    initialWindowMetrics: safeAreaState.initial,
 }));
 
 vi.mock('@react-navigation/native', () => ({
@@ -68,6 +74,16 @@ vi.mock('@/components/ui/layout/layout', () => ({
 describe('ChatHeaderView', () => {
     afterEach(standardCleanup);
     afterEach(resetTranscriptCommonModuleMockState);
+    afterEach(() => {
+        safeAreaState.insets.top = 0;
+        safeAreaState.insets.bottom = 0;
+        safeAreaState.insets.left = 0;
+        safeAreaState.insets.right = 0;
+        safeAreaState.initial.insets.top = 0;
+        safeAreaState.initial.insets.bottom = 0;
+        safeAreaState.initial.insets.left = 0;
+        safeAreaState.initial.insets.right = 0;
+    });
 
     it('uses elevation to keep the header above scroll content on Android', async () => {
         const { ChatHeaderView } = await import('./ChatHeaderView');
@@ -142,6 +158,30 @@ describe('ChatHeaderView', () => {
         expect(() => screen.findByProps({ testID: 'session-header-badge:1' })).not.toThrow();
         expect(screen.getTextContent()).toContain('Direct');
         expect(screen.getTextContent()).toContain('Codex · happy-host');
+    });
+
+    it('pads the header below the status bar using chrome-safe-area fallback insets', async () => {
+        safeAreaState.insets.top = 0;
+        safeAreaState.insets.bottom = 0;
+        safeAreaState.insets.left = 0;
+        safeAreaState.insets.right = 0;
+        safeAreaState.initial.insets.top = 22;
+        safeAreaState.initial.insets.bottom = 0;
+        safeAreaState.initial.insets.left = 0;
+        safeAreaState.initial.insets.right = 0;
+
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+
+        const screen = await renderScreen(<ChatHeaderView title="Title" />);
+
+        const allViews = screen.findAllByType('View' as any);
+        const containerView = allViews.find((node) => {
+            const style = node.props?.style;
+            const flat = Array.isArray(style) ? style.flat() : [style];
+            return flat.some((s) => s && typeof s === 'object' && s.paddingTop === 22);
+        });
+
+        expect(containerView).toBeTruthy();
     });
 
     it('suppresses session-scoped testIDs when the session screen is hidden', async () => {

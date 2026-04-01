@@ -185,6 +185,7 @@ vi.mock('@/utils/platform/responsive', () => ({
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    initialWindowMetrics: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {

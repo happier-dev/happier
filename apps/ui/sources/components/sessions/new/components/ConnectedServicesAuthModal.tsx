@@ -48,7 +48,6 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
     title: t('connectedServices.title'),
     testID: 'connected-services:auth-modal',
     closeButtonTestID: 'connected-services:auth-modal:close',
-    layout: 'fill' as const,
     dimensions: { width: 560, maxHeightRatio: 0.92, size: 'md' as const },
   }), []);
   useModalCardChrome(props.setChrome, chrome);

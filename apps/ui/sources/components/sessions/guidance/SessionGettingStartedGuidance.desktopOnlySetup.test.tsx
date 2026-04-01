@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
-import { installSessionGuidanceCommonModuleMocks } from './sessionGuidanceTestHelpers';
+import { installSessionGuidanceCommonModuleMocks, setSessionGettingStartedGuidanceDismissedForTests } from './sessionGuidanceTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -98,5 +98,19 @@ describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
 
         const tree: renderer.ReactTestRenderer = (await renderScreen(<SessionGettingStartedGuidance variant="sidebar" />)).tree;
         expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).not.toThrow();
+    });
+
+    it('suppresses the setup CTA after the user dismissed the setup wizard', async () => {
+        tauriState.desktop = false;
+        setSessionGettingStartedGuidanceDismissedForTests(true);
+        try {
+            vi.resetModules();
+            const { SessionGettingStartedGuidance } = await import('./SessionGettingStartedGuidance');
+
+            const tree: renderer.ReactTestRenderer = (await renderScreen(<SessionGettingStartedGuidance variant="sidebar" />)).tree;
+            expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).toThrow();
+        } finally {
+            setSessionGettingStartedGuidanceDismissedForTests(false);
+        }
     });
 });

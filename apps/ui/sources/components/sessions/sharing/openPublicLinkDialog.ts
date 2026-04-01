@@ -24,7 +24,6 @@ export async function openPublicLinkDialog(params: Readonly<{
             kind: 'card',
             title: t('session.sharing.publicLink'),
             testID: 'public-link-dialog',
-            layout: 'fill',
             dimensions: { width: 560, maxHeightRatio: 0.85, size: 'md' },
         },
         closeOnBackdrop: true,

@@ -88,7 +88,7 @@ import { usePathname, useRouter } from 'expo-router';
 import * as React from 'react';
 import { useMemo } from 'react';
 import { ActivityIndicator, Platform, Pressable, View, useWindowDimensions } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useUnistyles } from 'react-native-unistyles';
 import { sessionSwitch } from '@/sync/ops';
 import { shouldRenderChatTimelineForSession, shouldRequestRemoteControlAfterPendingEnqueue } from '@/sync/domains/session/control/localControlSwitch';
@@ -159,7 +159,7 @@ export const SessionView = React.memo((props: {
         });
     }, [router]);
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(sessionId);
-    const safeArea = useSafeAreaInsets();
+    const safeArea = useChromeSafeAreaInsets();
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
     const headerHeight = useHeaderHeight();
@@ -507,7 +507,7 @@ function SessionViewLoaded({
     const { theme } = useUnistyles();
     const applyLocalSettings = useApplyLocalSettings();
     const router = useRouter();
-    const safeArea = useSafeAreaInsets();
+    const safeArea = useChromeSafeAreaInsets();
     const directSessionLink = directSessionRuntime.directSessionLink;
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();

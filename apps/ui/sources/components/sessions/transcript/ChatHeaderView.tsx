@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View, Platform, Pressable } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -9,6 +8,7 @@ import { useHeaderHeight } from '@/utils/platform/responsive';
 import { layout } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { t } from '@/text';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 
@@ -42,7 +42,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
 }) => {
     const { theme } = useUnistyles();
     const navigation = useNavigation();
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     const headerHeight = useHeaderHeight();
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
     const backButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-back');

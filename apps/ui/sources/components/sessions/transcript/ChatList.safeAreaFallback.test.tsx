@@ -1,0 +1,148 @@
+import * as React from 'react';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen } from '@/dev/testkit';
+import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
+
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+let capturedHeaderSpacerHeight: number | null = null;
+
+function unwrapStyle(style: unknown): Record<string, unknown> | null {
+    if (!style) return null;
+    if (Array.isArray(style)) {
+        for (const entry of style) {
+            const resolved = unwrapStyle(entry);
+            if (resolved) return resolved;
+        }
+        return null;
+    }
+    return typeof style === 'object' ? (style as Record<string, unknown>) : null;
+}
+
+function extractFirstNumericHeight(node: unknown): number | null {
+    if (!node || typeof node !== 'object') return null;
+    const element = node as { type?: unknown; props?: any };
+    const style = unwrapStyle(element.props?.style);
+    const height = style?.height;
+    if (typeof height === 'number') return height;
+    const children = React.Children.toArray(element.props?.children ?? []);
+    for (const child of children) {
+        const found = extractFirstNumericHeight(child);
+        if (typeof found === 'number') return found;
+    }
+    return null;
+}
+
+function renderReactElementCandidate(candidate: unknown): React.ReactNode {
+    if (!candidate || typeof candidate !== 'object') return candidate as any as React.ReactNode;
+    const element = candidate as any;
+    if (typeof element.type === 'function') {
+        return element.type(element.props) as React.ReactNode;
+    }
+    if (typeof element.type === 'object' && typeof element.type.type === 'function') {
+        return element.type.type(element.props) as React.ReactNode;
+    }
+    return candidate as React.ReactNode;
+}
+
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (values: any) => values?.ios ?? values?.default,
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+            ActivityIndicator: () => React.createElement('ActivityIndicator'),
+            FlatList: (props: any) => {
+                const header = renderReactElementCandidate(props.ListHeaderComponent ?? null);
+                capturedHeaderSpacerHeight = extractFirstNumericHeight(header);
+                return React.createElement('FlatList', props, header as any);
+            },
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSession: () => null,
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionMessagesById: () => ({}),
+            useForkedTranscriptSnapshot: () => null,
+            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+            useSessionActionDrafts: () => ([]),
+            useSessionLatestThinkingMessageId: () => null,
+            useSessionLatestThinkingMessageActivityAtMs: () => null,
+            useMessage: () => null,
+            useSetting: (key: string) => (key === 'transcriptListImplementation' ? 'flatlist_legacy' : undefined),
+        });
+    },
+});
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useHeaderHeight: () => 40,
+}));
+
+vi.mock('react-native-safe-area-context', () => ({
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    initialWindowMetrics: { insets: { top: 22, bottom: 0, left: 0, right: 0 } },
+}));
+
+vi.mock('@/components/sessions/chatListItems', () => ({
+    buildChatListItems: () => [],
+    buildChatListItemsCached: () => ({ cache: null, items: [] }),
+}));
+
+vi.mock('./ChatFooter', () => ({
+    ChatFooter: () => React.createElement('ChatFooter'),
+}));
+
+vi.mock('./MessageView', () => ({
+    MessageView: () => React.createElement('MessageView'),
+}));
+
+vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
+    TurnView: () => React.createElement('TurnView'),
+}));
+
+vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
+    PendingMessagesTranscriptBlock: () => React.createElement('PendingMessagesTranscriptBlock'),
+}));
+
+vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
+    SessionActionDraftCard: () => React.createElement('SessionActionDraftCard'),
+}));
+
+vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({
+    getPermissionsInUiWhileLocal: () => ({}),
+}));
+
+describe('ChatList safe area', () => {
+    beforeEach(() => {
+        capturedHeaderSpacerHeight = null;
+    });
+
+    afterEach(() => {
+        resetTranscriptCommonModuleMockState();
+    });
+
+    it('uses the chrome-safe area fallback (initialWindowMetrics) when safe-area provider returns zeros', async () => {
+        const { ChatList } = await import('./ChatList');
+
+        const session = {
+            id: 'session-1',
+            metadata: null,
+            accessLevel: null,
+            canApprovePermissions: true,
+            active: true,
+            presence: null,
+            agentState: null,
+            thinking: null,
+        } as any;
+
+        await renderScreen(<ChatList session={session} />);
+        expect(capturedHeaderSpacerHeight).toBe(40 + 22 + 32);
+    });
+});

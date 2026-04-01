@@ -20,7 +20,6 @@ export async function openDirectSessionsResumeIdPickerModal(params: Readonly<{
             kind: 'card',
             title: params.title,
             testID: 'resume-id-browse-modal',
-            layout: 'fill',
             dimensions: {
                 width: 560,
                 maxHeightRatio: 0.92,

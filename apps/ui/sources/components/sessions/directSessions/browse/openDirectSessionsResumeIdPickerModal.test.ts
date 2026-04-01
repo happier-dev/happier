@@ -87,7 +87,6 @@ describe('openDirectSessionsResumeIdPickerModal', () => {
             kind: 'card',
             title: 'Browse Codex sessions',
             testID: 'resume-id-browse-modal',
-            layout: 'fill',
         }));
         expect(config.chrome.dimensions).toEqual({
             width: 560,

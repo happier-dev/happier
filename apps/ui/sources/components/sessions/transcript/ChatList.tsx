@@ -16,7 +16,7 @@ import { ActivityIndicator, FlatList, Platform, View, type LayoutChangeEvent, ty
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { useCallback } from 'react';
 import { useHeaderHeight } from '@/utils/platform/responsive';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { MessageView } from './MessageView';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { Metadata, Session } from '@/sync/domains/state/storageTypes';
@@ -297,7 +297,7 @@ export const ChatList = React.memo((props: {
 
 const ListHeader = React.memo((props: { isLoadingOlder: boolean }) => {
     const headerHeight = useHeaderHeight();
-    const safeArea = useSafeAreaInsets();
+    const safeArea = useChromeSafeAreaInsets();
     return (
         <View>
             {props.isLoadingOlder && (

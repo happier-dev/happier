@@ -67,7 +67,6 @@ async function renderScmCommitMessageEditorModal(
             <ModalCardFrame
                 title={card?.title}
                 footer={card?.footer}
-                layout={card?.layout ?? 'fit'}
                 dimensions={card?.dimensions}
             >
                 <Component {...p} setChrome={handleSetChrome} />

@@ -3,7 +3,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useKeyboardHandler, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 
 interface AgentContentViewProps {
     input?: React.ReactNode | null;
@@ -12,7 +12,7 @@ interface AgentContentViewProps {
 }
 
 export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ input, content, placeholder }) => {
-    const safeArea = useSafeAreaInsets();
+    const safeArea = useChromeSafeAreaInsets();
     const keyboard = useReanimatedKeyboardAnimation();
     const headerHeight = useHeaderHeight();
     const animatedPadding = useSharedValue(0);

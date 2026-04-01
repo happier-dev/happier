@@ -6,7 +6,7 @@ import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat
 import { Text } from '@/components/ui/text/Text';
 import { usePathname, useRouter } from 'expo-router';
 import { SessionListViewItem, useAllMachines, useProfile, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -466,7 +466,7 @@ const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHeader(pr
 export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageFilter }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const safeArea = useSafeAreaInsets();
+    const safeArea = useChromeSafeAreaInsets();
     const data = useVisibleSessionListViewData(props.storageKind ?? 'all');
     const pathname = usePathname();
     const router = useRouter();

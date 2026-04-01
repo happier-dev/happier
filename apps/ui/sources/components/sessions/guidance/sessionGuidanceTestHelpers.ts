@@ -13,6 +13,8 @@ type InstallSessionGuidanceCommonModuleMocksOptions = Readonly<{
 
 const sessionGuidanceTranslations: Record<string, string> = {
     'components.emptyMainScreen.installCommand': '$ npm i -g @happier-dev/cli',
+    'components.emptySessionsTablet.noActiveSessions': 'No active sessions',
+    'components.emptySessionsTablet.startNewSessionDescription': 'Start a new session from the + button.',
     'components.emptySessionsTablet.startNewSessionButton': 'Start New Session',
     'components.emptyMainScreen.openCamera': 'Open Camera',
     'connect.enterUrlManually': 'Enter URL manually',
@@ -62,7 +64,14 @@ const sessionGuidanceModuleState = vi.hoisted(() => ({
         text: undefined as SessionGuidanceModuleFactory | undefined,
         unistyles: undefined as SessionGuidanceModuleFactory | undefined,
     },
+    localSettings: {
+        sessionGettingStartedGuidanceDismissed: false,
+    },
 }));
+
+export function setSessionGettingStartedGuidanceDismissedForTests(value: boolean): void {
+    sessionGuidanceModuleState.localSettings.sessionGettingStartedGuidanceDismissed = value;
+}
 
 export function installSessionGuidanceCommonModuleMocks(
     options: InstallSessionGuidanceCommonModuleMocksOptions = {},
@@ -142,6 +151,7 @@ export function installSessionGuidanceCommonModuleMocks(
             useSessionListViewDataByServerId: () => ({ s1: [] }),
             useMachineListByServerId: () => ({ s1: [] }),
             useMachineListStatusByServerId: () => ({ s1: 'idle' }),
+            useLocalSetting: () => sessionGuidanceModuleState.localSettings.sessionGettingStartedGuidanceDismissed,
             useSetting: () => [],
         });
     });

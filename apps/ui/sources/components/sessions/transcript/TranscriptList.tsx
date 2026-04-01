@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, FlatList, Platform, View } from 'react-native';
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { MessageView } from '@/components/sessions/transcript/MessageView';
 import { ChatFooter } from '@/components/sessions/transcript/ChatFooter';
@@ -9,6 +8,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { useSetting } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 
 type TranscriptInteraction = {
     canSendMessages: boolean;
@@ -24,7 +24,7 @@ export type TranscriptBottomNotice = {
 
 const ListHeader = React.memo((props: { isLoading?: boolean }) => {
     const headerHeight = useHeaderHeight();
-    const safeArea = useSafeAreaInsets();
+    const safeArea = useChromeSafeAreaInsets();
     return (
         <View>
             {props.isLoading ? (

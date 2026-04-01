@@ -13,14 +13,13 @@ import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
-import { useMachineListByServerId, useMachineListStatusByServerId, useSetting } from '@/sync/domains/state/storage';
+import { useLocalSetting, useMachineListByServerId, useMachineListStatusByServerId, useSetting } from '@/sync/domains/state/storage';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { config } from '@/config';
 import { resolveAppVariant, type AppVariant } from '@/sync/runtime/appVariant';
-import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import type { SessionGettingStartedDecisionKind } from './gettingStartedModel';
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
@@ -323,15 +322,23 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const router = useRouter();
     const { model } = props;
 
     const title = titleForKind(model.kind);
     const subtitle = subtitleForKind(model.kind, model.targetLabel);
     const steps = buildSteps(model);
     const showLogo = props.variant === 'primaryPane' || props.variant === 'newSessionBlocking';
-    const showSetupPrimaryCard = (model.kind === 'connect_machine' || model.kind === 'start_daemon') && Boolean(model.onOpenSetup);
+    const showSetupPrimaryCard = model.kind === 'connect_machine' || model.kind === 'start_daemon';
     const showCliFollowUp = steps.length > 0 && !showSetupPrimaryCard;
     const showCliFollowUpTitle = false;
+    const handleOpenSetup = React.useCallback(() => {
+        if (model.onOpenSetup) {
+            model.onOpenSetup();
+            return;
+        }
+        router.push('/setup/wizard?action=local&step=setup_this_computer&scope=machine' as any);
+    }, [model.onOpenSetup, router]);
 
     return (
         <ScrollView
@@ -359,7 +366,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                         <RoundButton
                             testID="session-getting-started-open-setup"
                             title={t('setupOnboarding.openSetupAction')}
-                            onPress={model.onOpenSetup}
+                            onPress={handleOpenSetup}
                             size="normal"
                         />
                     </View>
@@ -417,7 +424,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                     </View>
                 ) : null}
 
-                {props.variant === 'phone' && Platform.OS !== 'web' && model.onConnectTerminal ? (
+                {model.kind !== 'connect_machine' && props.variant === 'phone' && Platform.OS !== 'web' && model.onConnectTerminal ? (
                     <View style={styles.buttonWrapper}>
                         <RoundButton
                             title={t('components.emptyMainScreen.openCamera')}
@@ -428,7 +435,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                     </View>
                 ) : null}
 
-                {props.variant === 'phone' && model.onEnterUrlManually ? (
+                {model.kind !== 'connect_machine' && props.variant === 'phone' && model.onEnterUrlManually ? (
                     <View style={styles.buttonWrapper}>
                         <RoundButton
                             title={t('connect.enterUrlManually')}
@@ -463,12 +470,12 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
     }, [machineListByServerId, machineListStatusByServerId, selection, serverSelectionGroups, sessions]);
 }
 
-function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: SessionGettingStartedGuidanceVariant }>): React.ReactElement {
+function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: SessionGettingStartedGuidanceVariant }>): React.ReactElement | null {
     const router = useRouter();
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
-    const canOpenSetup = Platform.OS === 'web' || isTauriDesktop();
+    const dismissed = useLocalSetting('sessionGettingStartedGuidanceDismissed') === true;
     const onOpenSetup = React.useCallback(() => {
-        router.push('/setup/wizard?action=local&step=setup_this_computer' as any);
+        router.push('/setup/wizard?action=local&step=setup_this_computer&scope=machine' as any);
     }, [router]);
 
     const onStartNewSession = React.useCallback(() => {
@@ -498,7 +505,7 @@ function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: Session
         serverUrl: baseModel.serverUrl,
         serverName: baseModel.serverName,
         showServerSetup: baseModel.showServerSetup,
-        ...((baseModel.kind === 'connect_machine' || baseModel.kind === 'start_daemon') && canOpenSetup ? { onOpenSetup } : {}),
+        ...((baseModel.kind === 'connect_machine' || baseModel.kind === 'start_daemon') ? { onOpenSetup } : {}),
         ...(baseModel.kind === 'create_session' || baseModel.kind === 'select_session' ? { onStartNewSession } : {}),
         ...(props.variant === 'phone'
             ? {
@@ -508,6 +515,10 @@ function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: Session
             }
             : {}),
     };
+
+    if (dismissed && baseModel.kind === 'connect_machine') {
+        return null;
+    }
 
     return <SessionGettingStartedGuidanceView variant={props.variant} model={viewModel} />;
 }

@@ -23,7 +23,6 @@ export async function openFriendSelectorModal(params: Readonly<{
             kind: 'card',
             title: t('session.sharing.addShare'),
             testID: 'friend-selector-modal',
-            layout: 'fill',
             dimensions: { width: 560, maxHeightRatio: 0.85, size: 'md' },
         },
         closeOnBackdrop: true,

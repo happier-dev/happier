@@ -46,6 +46,9 @@ import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/ro
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { useStreamingTextSmoothing } from '@/components/sessions/transcript/streaming/useStreamingTextSmoothing';
+import { readStreamSegmentMetaV1 } from '@/sync/reducer/helpers/streamSegmentMeta';
 
 function shouldHideVoiceAgentTurnMessage(message: Message): boolean {
     if (message.kind !== 'user-text' && message.kind !== 'agent-text') return false;
@@ -701,10 +704,6 @@ function AgentTextBlock(props: {
     return cleaned.slice(0, 117) + '…';
   };
   const copyText = isStructuredOnly ? props.message.text : markdown;
-  const linkedWorkspaceFiles = React.useMemo(
-    () => extractWorkspaceFileMentions(markdown),
-    [markdown],
-  );
 
   const handleOptionPress = React.useCallback((option: Option) => {
     fireAndForget((async () => {
@@ -877,8 +876,58 @@ function AgentTextBlock(props: {
       sessionThinkingInlinePresentation === 'full' ? 'full' : 'summary';
     const normalizedThinkingInlineChrome: 'plain' | 'card' =
       sessionThinkingInlineChrome === 'plain' ? 'plain' : 'card';
-    const thinkingMarkdownTextStyle =
+  const thinkingMarkdownTextStyle =
       normalizedThinkingInlineChrome === 'card' ? styles.thinkingMarkdownTextCard : styles.thinkingMarkdownText;
+
+  const transcriptStreamingSmoothingEnabledRaw = useSetting('transcriptStreamingSmoothingEnabled');
+  const transcriptStreamingSettleDelayMsRaw = useSetting('transcriptStreamingSettleDelayMs');
+  const transcriptStreamingPartialOutputEnabledRaw = useSetting('transcriptStreamingPartialOutputEnabled');
+  const transcriptStreamingSmoothingEnabled =
+      typeof transcriptStreamingSmoothingEnabledRaw === 'boolean'
+          ? transcriptStreamingSmoothingEnabledRaw
+          : settingsDefaults.transcriptStreamingSmoothingEnabled;
+  const transcriptStreamingSettleDelayMs =
+      typeof transcriptStreamingSettleDelayMsRaw === 'number' && Number.isFinite(transcriptStreamingSettleDelayMsRaw)
+          ? Math.max(0, Math.trunc(transcriptStreamingSettleDelayMsRaw))
+          : settingsDefaults.transcriptStreamingSettleDelayMs;
+  const transcriptStreamingPartialOutputEnabled =
+      typeof transcriptStreamingPartialOutputEnabledRaw === 'boolean'
+          ? transcriptStreamingPartialOutputEnabledRaw
+          : settingsDefaults.transcriptStreamingPartialOutputEnabled;
+
+  const streamSegmentMeta = readStreamSegmentMetaV1(props.message.meta);
+  const streamSegmentAssistantState =
+      streamSegmentMeta?.segmentKind === 'assistant' ? streamSegmentMeta.segmentState : null;
+  const streamSegmentAssistantStreaming =
+      streamSegmentMeta?.segmentKind === 'assistant'
+          ? (streamSegmentAssistantState === 'streaming' || streamSegmentAssistantState === null)
+          : false;
+  const shouldHidePartialStreamingOutput =
+      transcriptStreamingPartialOutputEnabled !== true &&
+      props.historical !== true &&
+      props.message.isThinking !== true &&
+      isStructuredOnly !== true &&
+      streamSegmentAssistantStreaming === true;
+
+  const renderText = shouldHidePartialStreamingOutput ? '…' : markdown;
+
+  const streamingSmoothingEligible =
+      transcriptStreamingSmoothingEnabled === true &&
+      props.historical !== true &&
+      props.message.isThinking !== true &&
+      isStructuredOnly !== true &&
+      (streamSegmentMeta ? streamSegmentAssistantStreaming === true : true);
+  const streaming = useStreamingTextSmoothing({
+      enabled: streamingSmoothingEligible,
+      targetText: renderText,
+      settleDelayMs: transcriptStreamingSettleDelayMs,
+  });
+  const shouldRenderStreamingPlain =
+      (streamSegmentMeta ? streamSegmentAssistantStreaming === true : false) || streaming.isStreaming;
+  const linkedWorkspaceFilesDeferred = React.useMemo(() => {
+      if (shouldRenderStreamingPlain) return [];
+      return extractWorkspaceFileMentions(markdown);
+  }, [markdown, shouldRenderStreamingPlain]);
 
   return (
     <Pressable
@@ -940,17 +989,29 @@ function AgentTextBlock(props: {
                   />
                 </ThinkingTimelineRow>
             ) : (
-              <MarkdownView
-                markdown={markdown}
-                onOptionPress={handleOptionPress}
-                textStyle={props.message.isThinking ? styles.thinkingMarkdownText : styles.transcriptMarkdownText}
-                variant={props.message.isThinking ? 'thinking' : undefined}
-              />
+              shouldRenderStreamingPlain ? (
+                  <View style={{ width: '100%' }}>
+                      <Text
+                          testID={`transcript-streaming-plain:${props.message.id}`}
+                          selectable={true}
+                          style={styles.transcriptMarkdownText}
+                      >
+                          {streaming.displayText}
+                      </Text>
+                  </View>
+              ) : (
+                  <MarkdownView
+                      markdown={markdown}
+                      onOptionPress={handleOptionPress}
+                      textStyle={props.message.isThinking ? styles.thinkingMarkdownText : styles.transcriptMarkdownText}
+                      variant={props.message.isThinking ? 'thinking' : undefined}
+                  />
+              )
             )
           )
         )}
-        {linkedWorkspaceFiles.length > 0 && !isStructuredOnly ? (
-          <LinkedWorkspaceFilesRow sessionId={props.sessionId} paths={linkedWorkspaceFiles} />
+        {linkedWorkspaceFilesDeferred.length > 0 && !isStructuredOnly ? (
+          <LinkedWorkspaceFilesRow sessionId={props.sessionId} paths={linkedWorkspaceFilesDeferred} />
         ) : null}
         {!isNativeMobile ? (
           <View

@@ -1,11 +1,16 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { View } from 'react-native';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native-safe-area-context', () => ({
+    useSafeAreaInsets: () => ({ top: 24, bottom: 12, left: 0, right: 0 }),
+}));
 
 let terminalFeatureEnabled = false;
 let embeddedTerminalDockLocation: 'sidebar' | 'details' | 'bottom' = 'sidebar';
@@ -107,5 +112,29 @@ describe('SessionRightPanel (terminal tab)', () => {
         embeddedTerminalDockLocation = 'sidebar';
         const enabled = await renderPanel();
         expect(enabled.tree.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(1);
+    });
+
+    it('pads the panel root by the iOS safe-area inset at the top', async () => {
+        const { tree } = await renderPanel();
+        const root = tree.findByProps({ testID: 'session-right-panel-root' });
+        const rootStyle = Array.isArray(root.props.style)
+            ? Object.assign({}, ...root.props.style.filter(Boolean))
+            : root.props.style;
+        expect(rootStyle.paddingTop ?? 0).toBe(0);
+
+        const header = root.findAll((node) => {
+            if (node.type !== View) return false;
+            const style = Array.isArray(node.props?.style)
+                ? Object.assign({}, ...node.props.style.filter(Boolean))
+                : node.props?.style;
+            return style?.flexDirection === 'row' && typeof style?.borderBottomWidth === 'number';
+        })[0];
+
+        const headerStyle = Array.isArray(header?.props?.style)
+            ? Object.assign({}, ...header.props.style.filter(Boolean))
+            : header?.props?.style;
+
+        // Base header padding (10) + safe-area inset (24)
+        expect(headerStyle?.paddingTop).toBe(34);
     });
 });

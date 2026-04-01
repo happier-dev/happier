@@ -278,7 +278,6 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         title: actionSpec.title,
         subtitle: actionSpec.description,
         testID: 'session-handoff-modal',
-        layout: 'fill' as const,
         dimensions: { width: 520, maxHeightRatio: 0.92 },
         footer,
     }), [actionSpec.description, actionSpec.title, footer]);
