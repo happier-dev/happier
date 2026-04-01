@@ -27,7 +27,7 @@ test('resolve-public-release-channel-meta normalizes dev input to the publicdev 
   assert.equal(parsed.source_ref, 'dev');
   assert.equal(parsed.app_env, 'preview');
   assert.equal(parsed.embedded_policy_env, 'preview');
-  assert.equal(parsed.expo_updates_channel, 'publicdev');
+  assert.equal(parsed.expo_updates_channel, 'dev');
   assert.equal(parsed.rolling_release_suffix, 'dev');
 });
 

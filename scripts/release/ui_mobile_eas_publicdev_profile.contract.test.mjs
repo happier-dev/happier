@@ -18,9 +18,10 @@ test('apps/ui/eas.json defines publicdev profiles for the public nightly dev lan
   assert.equal(publicdev.extends, 'base');
   assert.equal(publicdev.environment, 'preview');
   assert.equal(publicdev.distribution, 'store');
-  assert.equal(publicdev.channel, 'publicdev');
+  // User-facing OTA channel should be "dev" (internal lane is "publicdev").
+  assert.equal(publicdev.channel, 'dev');
   assert.equal(publicdev?.env?.APP_ENV, 'publicdev');
-  assert.equal(publicdev?.env?.EXPO_UPDATES_CHANNEL, 'publicdev');
+  assert.equal(publicdev?.env?.EXPO_UPDATES_CHANNEL, 'dev');
   assert.equal(publicdev?.env?.EXPO_APP_NAME, 'Happier (dev)');
   assert.equal(publicdev?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.publicdev');
   assert.equal(publicdev?.env?.EXPO_APP_SCHEME, 'happier-dev');
@@ -30,10 +31,10 @@ test('apps/ui/eas.json defines publicdev profiles for the public nightly dev lan
   assert.equal(publicdevApk.extends, 'base');
   assert.equal(publicdevApk.environment, 'preview');
   assert.equal(publicdevApk.distribution, 'internal');
-  assert.equal(publicdevApk.channel, 'publicdev');
+  assert.equal(publicdevApk.channel, 'dev');
   assert.equal(publicdevApk?.android?.buildType, 'apk');
   assert.equal(publicdevApk?.env?.APP_ENV, 'publicdev');
-  assert.equal(publicdevApk?.env?.EXPO_UPDATES_CHANNEL, 'publicdev');
+  assert.equal(publicdevApk?.env?.EXPO_UPDATES_CHANNEL, 'dev');
   assert.equal(publicdevApk?.env?.EXPO_APP_NAME, 'Happier (dev)');
   assert.equal(publicdevApk?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.publicdev');
   assert.equal(publicdevApk?.env?.EXPO_APP_SCHEME, 'happier-dev');
