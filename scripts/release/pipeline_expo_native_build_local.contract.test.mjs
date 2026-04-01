@@ -72,7 +72,8 @@ test('expo native-build supports local mode and writes build metadata json', () 
   );
 
   assert.match(stdout, /\[pipeline\] expo native build:/);
-  assert.match(stdout, /CWD=.*happier-pipeline-dagger-repo-.*\/apps\/ui\b/);
+  // Local builds run from the current checkout (apps/ui), not an ephemeral copy.
+  assert.match(stdout, /CWD=.*\/apps\/ui\b/);
   assert.match(stdout, /NPX --yes eas-cli@/);
   assert.match(stdout, /\s--local\b/);
   assert.match(stdout, /\s--non-interactive\b/);

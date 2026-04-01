@@ -14,10 +14,36 @@ import { ensureStagedGitRepo } from '../git/ensure-staged-git-repo.mjs';
 import { shouldStageRepoForEasLocalBuild } from './should-stage-eas-local-build-repo.mjs';
 import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
 import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
+import {
+  normalizeMobileReleaseEnvironment,
+  normalizeMobileReleaseProfile,
+  resolveMobileBuildNodeEnvironment,
+} from './mobile-release-environments.mjs';
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+/**
+ * @param {string} profile
+ * @returns {string}
+ */
+function resolveNodeEnvironmentForProfile(profile) {
+  const raw = String(profile ?? '').trim();
+  if (!raw) return '';
+
+  // Prefer parsing via the canonical mobile release profile/env normalizers so:
+  // - public labels like "dev" map to internal ids like "publicdev"
+  // - "-apk" / "-store" suffixes are handled consistently
+  const normalizedProfile = normalizeMobileReleaseProfile(raw) || raw;
+  const withoutSuffix = normalizedProfile.replace(/-(apk|store)$/, '');
+  const environment =
+    normalizeMobileReleaseEnvironment(withoutSuffix) ||
+    normalizeMobileReleaseEnvironment(normalizedProfile);
+  if (!environment) return '';
+
+  return resolveMobileBuildNodeEnvironment(environment);
 }
 
 /**
@@ -471,6 +497,13 @@ async function main() {
   const dumpView = parseBool(values['dump-view'], '--dump-view');
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
+
+  // Some Expo config/plugins assume NODE_ENV is always set and fail hard when it's missing.
+  // Ensure it's set for both cloud and local builds when the operator hasn't explicitly set it.
+  const resolvedNodeEnv = resolveNodeEnvironmentForProfile(profile);
+  if (resolvedNodeEnv && !String(process.env.NODE_ENV ?? '').trim()) {
+    process.env.NODE_ENV = resolvedNodeEnv;
+  }
 
   console.log(
     `[pipeline] expo native build: mode=${buildMode}${buildMode === 'local' ? ` runtime=${localRuntime}` : ''} platform=${platform} profile=${profile}`,
