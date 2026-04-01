@@ -14,6 +14,7 @@ import { assertCleanWorktree } from './git/ensure-clean-worktree.mjs';
 import { computeReleaseExecutionPlan } from './release/lib/release-orchestrator.mjs';
 import { createAnsiStyle } from './cli/ansi-style.mjs';
 import { renderCommandHelp, renderPipelineHelp } from './cli/help.mjs';
+import { isDockerChannel } from './docker/docker-channels.mjs';
 import {
   allowsBestEffortSubmit,
   formatMobileReleaseEnvironment,
@@ -102,14 +103,6 @@ function isDeployComponent(v) {
  */
 function isReleaseTarget(v) {
   return isDeployComponent(v) || v === 'cli' || v === 'stack' || v === 'server_runner';
-}
-
-/**
- * @param {string} v
- * @returns {v is 'stable' | 'preview'}
- */
-function isDockerChannel(v) {
-  return v === 'stable' || v === 'preview';
 }
 
 /**
@@ -3263,7 +3256,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
     const channel = String(values.channel ?? '').trim();
     if (!isDockerChannel(channel)) {
-      fail(`--channel must be 'stable' or 'preview' (got: ${channel || '<empty>'})`);
+      fail(`--channel must be 'stable', 'preview', or 'dev' (got: ${channel || '<empty>'})`);
     }
 
     const { env, sources } = loadPipelineEnv({ repoRoot });

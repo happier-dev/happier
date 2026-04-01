@@ -3,6 +3,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveOptionalDockerBuildArgs } from './resolve-build-args.mjs';
+import { resolveDockerTagSpec } from './resolve-tag-spec.mjs';
 import { maybeTrackSentryRelease } from '../sentry/track-release.mjs';
 import { runCommandWithEnv } from './runCommandWithEnv.mjs';
 
@@ -446,19 +447,6 @@ function ensureMultiarchBuilder(opts) {
   return fallback;
 }
 
-/**
- * @param {string} channel
- */
-function resolveTagSpec(channel) {
-  if (channel === 'stable') {
-    return { channelTag: 'stable', floatTag: 'latest', policyEnv: 'production' };
-  }
-  if (channel === 'preview') {
-    return { channelTag: 'preview', floatTag: 'preview', policyEnv: 'preview' };
-  }
-  fail(`--channel must be 'stable' or 'preview' (got: ${channel})`);
-}
-
 async function main() {
   const { values } = parseArgs({
     options: {
@@ -478,7 +466,7 @@ async function main() {
   if (!channel) fail('--channel is required');
 
   const registries = resolveRegistries(values.registries);
-  const { channelTag, floatTag, policyEnv } = resolveTagSpec(channel);
+  const { channelTag, floatTag, policyEnv } = resolveDockerTagSpec(channel);
 
   const pushLatest = parseBool(values['push-latest'], '--push-latest');
   const buildRelay = parseBool(values['build-relay'], '--build-relay');
