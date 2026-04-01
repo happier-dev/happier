@@ -46,6 +46,7 @@ test('buildTauriDevInvocation disables beforeDevCommand and reuses the existing 
     build: {
       beforeDevCommand: '',
       devUrl: 'http://localhost:8081',
+      frontendDist: null,
     },
   });
 });
@@ -78,6 +79,7 @@ test('buildStackTauriDevProcessInvocation launches tauri from apps/ui/src-tauri 
     build: {
       beforeDevCommand: '',
       devUrl: 'http://localhost:8081',
+      frontendDist: null,
     },
   });
   assert.equal(invocation.cwd, join(repoRootDir, 'apps', 'ui', 'src-tauri'));

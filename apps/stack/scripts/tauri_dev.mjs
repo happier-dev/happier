@@ -294,6 +294,7 @@ async function main() {
         ...(stackDevConfig.build ?? {}),
         beforeDevCommand: null,
         beforeBuildCommand: null,
+        frontendDist: null,
       };
       if (stackDevConfig.bundle && typeof stackDevConfig.bundle === 'object') {
         stackDevConfig.bundle = {
@@ -318,6 +319,7 @@ async function main() {
     build: {
       beforeDevCommand: '',
       devUrl,
+      frontendDist: null,
     },
   };
 

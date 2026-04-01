@@ -44,12 +44,18 @@ export function resolveTauriPaneInvocation({ rootDir, env = process.env } = {}) 
 }
 
 export function buildTauriPaneEnv({ env = process.env, resolveUserHomeDir } = {}) {
-  return {
+  const out = {
     ...buildTauriRuntimeEnv({ env, resolveUserHomeDir }),
     HAPPIER_STACK_TUI: '1',
     COREPACK_ENABLE_AUTO_PIN: '0',
     COREPACK_ENABLE_STRICT: '0',
   };
+
+  if (!String(out.HAPPIER_STACK_EXPO_CLEAR_CACHE ?? '').trim()) {
+    out.HAPPIER_STACK_EXPO_CLEAR_CACHE = '1';
+  }
+
+  return out;
 }
 
 export function resolveTauriPaneSpawnConfig({ rootDir, env = process.env, resolveUserHomeDir } = {}) {

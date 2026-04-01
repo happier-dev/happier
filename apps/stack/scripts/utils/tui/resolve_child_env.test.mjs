@@ -24,3 +24,12 @@ test('resolveTuiChildEnv prefers process env when keys overlap', () => {
   assert.equal(out.HAPPIER_STACK_TUI, '1');
 });
 
+test('resolveTuiChildEnv forces fresh Expo bundles when Tauri mode is enabled', () => {
+  const out = resolveTuiChildEnv({
+    stackEnvFromFile: { HAPPIER_STACK_STACK: 'file-stack' },
+    processEnv: { HAPPIER_STACK_TUI_WITH_TAURI: '1' },
+  });
+
+  assert.equal(out.HAPPIER_STACK_TUI_WITH_TAURI, '1');
+  assert.equal(out.HAPPIER_STACK_EXPO_CLEAR_CACHE, '1');
+});

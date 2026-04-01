@@ -29,6 +29,7 @@ export function buildTauriDevInvocation({
         build: {
           beforeDevCommand: '',
           devUrl,
+          frontendDist: null,
         },
       }),
     ],
@@ -354,6 +355,16 @@ export function buildStackTauriDevProcessInvocation({
     if (existsSync(fallback)) return fallback;
     return preferred;
   })();
+  const normalizedConfigOverride = (() => {
+    if (!configOverride || typeof configOverride !== 'object') return configOverride;
+    const override = { ...configOverride };
+    const build = override.build && typeof override.build === 'object' ? { ...override.build } : null;
+    if (build && typeof build.devUrl === 'string' && !Object.prototype.hasOwnProperty.call(build, 'frontendDist')) {
+      build.frontendDist = null;
+      override.build = build;
+    }
+    return override;
+  })();
   const invocation = resolveCommandInvocation({
     command: process.execPath,
     args: [
@@ -364,7 +375,7 @@ export function buildStackTauriDevProcessInvocation({
       '--no-dev-server-wait',
       '--config',
       resolvedConfigPath,
-      ...(configOverride == null ? [] : ['-c', JSON.stringify(configOverride)]),
+      ...(normalizedConfigOverride == null ? [] : ['-c', JSON.stringify(normalizedConfigOverride)]),
     ],
     env: runtimeEnv,
   });

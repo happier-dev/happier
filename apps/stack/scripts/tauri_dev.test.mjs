@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 const execFileAsync = promisify(execFile);
@@ -32,6 +32,8 @@ test('tauri_dev --json prints the resolved launch plan without running build hoo
   assert.equal(typeof payload?.devUrl, 'string');
   const normalizedConfigPath = String(payload?.configPath ?? '').trim().replaceAll('\\', '/');
   assert.equal(normalizedConfigPath.endsWith('/apps/ui/src-tauri/tauri.publicdev.conf.json'), true);
+  const configJson = JSON.parse(await readFile(payload.configPath, 'utf8'));
+  assert.equal(configJson?.app?.windows?.[0]?.incognito, true);
   const url = new URL(String(payload.devUrl));
   assert.equal(url.searchParams.has('happier_tauri_ts'), true);
   assert.equal(url.searchParams.has('happier_tauri_launch_id'), true);
