@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { Typography } from '@/constants/Typography';
 import { Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,7 +22,7 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 export const ZenView = React.memo(() => {
     const router = useRouter();
     const { theme } = useUnistyles();
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     const params = useLocalSearchParams();
     const auth = useAuth();
 

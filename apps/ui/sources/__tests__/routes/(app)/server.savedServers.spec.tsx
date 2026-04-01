@@ -185,20 +185,20 @@ describe('ServerConfigScreen', () => {
         const screen = await renderServerScreen();
 
         expect(getActiveServerId()).toBeTruthy();
-        expect(fetchSpy).toHaveBeenCalledWith('https://company.example.test/v1/version', expect.any(Object));
+        expect(fetchSpy).toHaveBeenCalledWith('https://company.example.test/health', expect.any(Object));
         expect(switchConnectionToActiveServerSpy).toHaveBeenCalledTimes(1);
         expect(refreshFromActiveServerSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceMock).toHaveBeenCalledWith('/');
     });
 
-    it('does not fall back to legacy root probe when /v1/version is not ok', async () => {
+    it('does not fall back to legacy root probe when /health is not ok', async () => {
         localSearchParamsMock = { url: 'https://company.example.test', auto: '1' };
         routerReplaceMock.mockClear();
         switchConnectionToActiveServerSpy.mockClear();
         refreshFromActiveServerSpy.mockClear();
 
         const fetchSpy = vi.fn(async (url: string) => {
-            if (url === 'https://company.example.test/v1/version') {
+            if (url === 'https://company.example.test/health') {
                 return { ok: false, json: async () => ({}) };
             }
             if (url === 'https://company.example.test') {
@@ -210,7 +210,7 @@ describe('ServerConfigScreen', () => {
 
         const screen = await renderServerScreen();
 
-        expect(fetchSpy).toHaveBeenCalledWith('https://company.example.test/v1/version', expect.any(Object));
+        expect(fetchSpy).toHaveBeenCalledWith('https://company.example.test/health', expect.any(Object));
         expect(fetchSpy).not.toHaveBeenCalledWith('https://company.example.test', expect.any(Object));
         expect(switchConnectionToActiveServerSpy).not.toHaveBeenCalled();
         expect(refreshFromActiveServerSpy).not.toHaveBeenCalled();

@@ -53,6 +53,10 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             plaintextStorage: { enabled: false },
             accountOptOut: { enabled: false },
         },
+        remoteHosts: {
+            management: { enabled: true },
+            secretMaterial: { enabled: false },
+        },
         attachments: {
             uploads: { enabled: true },
         },
@@ -92,6 +96,19 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
                 serverRouted: {
                     enabled: false,
                 },
+            },
+        },
+        setup: {
+            relay: {
+                allowRelaySelection: { enabled: true },
+                allowHappierCloud: { enabled: true },
+                allowCustomRelayUrl: { enabled: true },
+                allowLocalRelayHost: { enabled: true },
+                allowRemoteSshRelayHost: { enabled: true },
+            },
+            relayAccess: {
+                allowTailscale: { enabled: true },
+                allowCloudflareTunnel: { enabled: true },
             },
         },
         terminal: {

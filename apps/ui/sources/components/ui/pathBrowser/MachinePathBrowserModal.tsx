@@ -31,6 +31,7 @@ import { t } from '@/text';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { FilesystemBrowserToolbarChrome, type FilesystemBrowserToolbarAction } from '@/components/ui/filesystemBrowser/FilesystemBrowserToolbarChrome';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 
 import {
     getPathBrowserRowTestId,
@@ -343,6 +344,7 @@ function toRootEntries(machineId: string, serverId?: string | null) {
 
 export function MachinePathBrowserView(props: MachinePathBrowserViewProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const insets = useChromeSafeAreaInsets();
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
     const browserListRef = React.useRef<FlatList<FilesystemBrowserNode> | null>(null);
     const lastScrolledSelectionRef = React.useRef<string | null>(null);
@@ -951,7 +953,6 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         testID: PATH_BROWSER_MODAL_TEST_ID,
         actions: chromeActions,
         footer: chromeFooter,
-        layout: 'fill' as const,
         dimensions: { width: 560, maxHeightRatio: 0.92, size: 'md' as const },
     }), [chromeActions, chromeFooter, props.title, selectedPath]);
 
@@ -1058,6 +1059,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         return items;
     }, [collapseAll, createFolderInDirectory, expandedPaths.length, isCreatingFolder, props.onRequestClose, selectedDirectoryPath]);
 
+        const headerPaddingTop = 16 + insets.top;
+
         return (
             <View
                 {...(variant === 'modal' && !useCardChrome ? { testID: PATH_BROWSER_MODAL_TEST_ID } : {})}
@@ -1070,7 +1073,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 ]}
             >
             {variant === 'modal' && !useCardChrome ? (
-                <View style={styles.header}>
+                <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
                     <View style={{ flex: 1, paddingRight: 12 }}>
                         <Text style={styles.title}>{props.title ?? t('newSession.pathPicker.enterPathTitle')}</Text>
                         <Text style={styles.subtitle}>{selectedPath ?? ''}</Text>

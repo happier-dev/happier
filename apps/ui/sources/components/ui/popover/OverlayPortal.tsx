@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
+
 type OverlayPortalDispatch = Readonly<{
     setPortalNode: (id: string, node: React.ReactNode) => void;
     removePortalNode: (id: string) => void;
@@ -15,6 +17,10 @@ export function OverlayPortalProvider(props: { children: React.ReactNode }) {
 
     const setPortalNode = React.useCallback((id: string, node: React.ReactNode) => {
         setNodes((prev) => {
+            const previousNode = prev.get(id) ?? null;
+            if (areReactNodesStructurallyEqual(previousNode, node)) {
+                return prev;
+            }
             const next = new Map(prev);
             next.set(id, node);
             return next;

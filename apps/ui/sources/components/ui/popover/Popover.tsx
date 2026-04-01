@@ -4,7 +4,7 @@ import { usePopoverBoundaryRef } from './PopoverBoundary';
 import { usePopoverScrollSourceRef } from './PopoverScrollSource';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { useOverlayPortal } from './OverlayPortal';
-import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
+import { useHasModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { usePopoverPortalTarget } from './PopoverPortalTarget';
 import type {
     PopoverBackdropEffect,
@@ -114,11 +114,12 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
     const overlayPortal = useOverlayPortal();
     const modalPortalTarget = useModalPortalTarget();
+    const hasModalPortalTargetProvider = useHasModalPortalTargetProvider();
     const portalTarget = usePopoverPortalTarget();
     const portalWeb = props.portal?.web;
     const portalNative = props.portal?.native;
     const defaultPortalTargetOnWeb: 'body' | 'boundary' | 'modal' =
-        modalPortalTarget ? 'modal' : 'body';
+        hasModalPortalTargetProvider ? 'modal' : 'body';
     const portalTargetOnWeb =
         typeof portalWeb === 'object' && portalWeb
             ? (portalWeb.target ?? defaultPortalTargetOnWeb)

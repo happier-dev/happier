@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { Typography } from '@/constants/Typography';
 import { addTodo } from '@/sync/domains/todos/todoOps';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -13,7 +13,7 @@ import { TextInput } from '@/components/ui/text/Text';
 export const ZenAdd = React.memo(() => {
     const router = useRouter();
     const { theme } = useUnistyles();
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     const [text, setText] = React.useState('');
     const auth = useAuth();
 

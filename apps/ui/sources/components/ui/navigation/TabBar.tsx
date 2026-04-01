@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View, Pressable } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Image } from 'expo-image';
 import { t } from '@/text';
@@ -88,7 +88,7 @@ const styles = StyleSheet.create((theme) => ({
 
 export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
     const { theme } = useUnistyles();
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     const friendsEnabled = useFriendsEnabled();
     const friendRequests = useFriendRequests();
     const inboxEnabled = useInboxAvailable();

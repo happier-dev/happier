@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import { requireReactDOM } from '@/utils/web/reactDomCjs';
+import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
 
 type OverlayPortalDispatch = Readonly<{
     setPortalNode: (id: string, node: React.ReactNode) => void;
@@ -15,17 +16,33 @@ export function useNativeOverlayPortalNode(params: Readonly<{
     content: React.ReactNode | null;
 }>) {
     const { overlayPortal, portalId, enabled, content } = params;
+    const lastContentRef = React.useRef<React.ReactNode | null>(null);
 
     React.useLayoutEffect(() => {
         if (!overlayPortal) return;
-        if (!enabled || !content) {
-            overlayPortal.removePortalNode(portalId);
-            return;
-        }
-        overlayPortal.setPortalNode(portalId, content);
         return () => {
+            lastContentRef.current = null;
             overlayPortal.removePortalNode(portalId);
         };
+    }, [overlayPortal, portalId]);
+
+    React.useLayoutEffect(() => {
+        if (!overlayPortal) return;
+
+        if (!enabled || !content) {
+            if (lastContentRef.current !== null) {
+                lastContentRef.current = null;
+                overlayPortal.removePortalNode(portalId);
+            }
+            return;
+        }
+
+        if (areReactNodesStructurallyEqual(lastContentRef.current, content)) {
+            return;
+        }
+
+        lastContentRef.current = content;
+        overlayPortal.setPortalNode(portalId, content);
     }, [content, enabled, overlayPortal, portalId]);
 }
 

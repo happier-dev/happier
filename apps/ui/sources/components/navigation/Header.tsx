@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View, Platform, StatusBar, Pressable } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { layout } from '../ui/layout/layout';
@@ -9,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 
 
 interface HeaderProps {
@@ -44,7 +44,7 @@ export const Header = React.memo((props: HeaderProps) => {
         safeAreaEnabled = true,
     } = props;
 
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     const paddingTop = safeAreaEnabled ? insets.top : 0;
     const headerHeight = useHeaderHeight();
 

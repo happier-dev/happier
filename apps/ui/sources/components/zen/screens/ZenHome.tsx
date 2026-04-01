@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View, ScrollView, Platform } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { layout } from '@/components/ui/layout/layout';
 import { ZenHeader } from '@/components/zen/navigation/ZenHeader';
 import { TodoList } from '@/components/zen/lists/TodoList';
@@ -17,7 +17,7 @@ import { Text } from '@/components/ui/text/Text';
 
 
 export const ZenHome = () => {
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     const { theme } = useUnistyles();
     const auth = useAuth();
     const realtimeStatus = useRealtimeStatus();

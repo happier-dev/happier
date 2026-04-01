@@ -14,12 +14,14 @@
     "withGlobalTauri": true,
     "security": {
       "capabilities": [
-        "default"
+        "default",
+        "mcp-dev"
       ]
     },
     "windows": [
       {
-        "title": "Happier Dev"
+        "title": "Happier Dev",
+        "incognito": true
       }
     ]
   }

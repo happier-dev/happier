@@ -79,6 +79,10 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
+vi.mock('@/modal/components/BaseModal', () => ({
+    BaseModal: (props: any) => React.createElement('BaseModal', props, props.children),
+}));
+
 const getAuthProviderMock = vi.hoisted(() => vi.fn());
 vi.mock('@/auth/providers/registry', () => ({
     getAuthProvider: (id: string) => getAuthProviderMock(id),
@@ -103,6 +107,8 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
             ? { id: 'cloud-profile', serverUrl: CLOUD_SERVER_URL }
             : null
     ),
+    getOrCreateHappierCloudServerProfile: () => ({ id: 'cloud-profile', name: 'Happier Cloud', serverUrl: CLOUD_SERVER_URL }),
+    listServerProfiles: () => [],
 }));
 
 const tokenStorageMock = vi.hoisted(() => ({
@@ -120,6 +126,7 @@ vi.mock('@/auth/providers/externalAuthUrl', () => ({
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverUrl: 'http://api.example.test' }),
+    isActiveServerSelectionExplicit: () => false,
 }));
 
 vi.mock('@/track', () => ({
@@ -213,20 +220,27 @@ async function loadHome() {
 
 async function advanceWizardToAuth(screen: RenderScreenResult) {
     const primary = screen.findByTestId('onboarding-wizard-primary');
-    if (!primary) {
-        throw new Error('Unable to find onboarding wizard primary action');
-    }
-    await act(async () => {
-        await (primary.props.onPress ?? primary.props.action)?.();
-    });
+    if (primary) {
+        await act(async () => {
+            await (primary.props.onPress ?? primary.props.action)?.();
+        });
 
-    const relayContinue = screen.findByTestId('onboarding-wizard-primary');
-    if (!relayContinue) {
-        throw new Error('Unable to find onboarding wizard continue action');
+        const relayContinue = screen.findByTestId('onboarding-wizard-primary');
+        if (relayContinue) {
+            await act(async () => {
+                await (relayContinue.props.onPress ?? relayContinue.props.action)?.();
+            });
+        }
+        return;
     }
-    await act(async () => {
-        await (relayContinue.props.onPress ?? relayContinue.props.action)?.();
-    });
+
+    // When a relay is already known/selected, the welcome step can render auth CTAs directly and omit the primary CTA.
+    const skip = screen.findByTestId('onboarding-wizard-skip');
+    if (skip) {
+        await act(async () => {
+            await (skip.props.onPress ?? skip.props.action)?.();
+        });
+    }
 }
 
 function findActionButton(screen: RenderScreenResult, testID: string) {
@@ -319,7 +333,7 @@ describe('Home external auth start', () => {
         mockGithubAuthFeatures('provision', 'keyed');
 
         const screen = await renderScreen(<Home />);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 3, turns: 3 });
 
         const skip = screen.findByTestId('onboarding-wizard-skip');
         expect(skip).not.toBeNull();
@@ -332,7 +346,7 @@ describe('Home external auth start', () => {
         await flushHookEffects({ cycles: 1, turns: 2 });
         expect(setPendingSetupIntentMock).toHaveBeenLastCalledWith({
             branch: 'thisComputer',
-            phase: 'pre_auth',
+            phase: 'awaiting_auth',
             relayUrl: 'http://api.example.test',
         });
     });
@@ -350,10 +364,10 @@ describe('Home external auth start', () => {
         });
 
         const screen = await renderScreen(<Home />);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 3, turns: 3 });
 
         await advanceWizardToAuth(screen);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 2, turns: 2 });
 
         const button = screen.findByTestId('welcome-configure-server');
         expect(button).not.toBeNull();
@@ -363,10 +377,11 @@ describe('Home external auth start', () => {
             await handler?.();
         });
 
-        expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/server');
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        expect(screen.findByTestId('onboarding-wizard-relay:cloud')).not.toBeNull();
     });
 
-    it('uses /setup as the auth returnTo when a setup continuation is pending', async () => {
+    it('uses / as the auth returnTo when a setup continuation is pending (wizard resumes after auth)', async () => {
         tauriDesktopState.value = true;
 
         const Home = await loadHome();
@@ -383,10 +398,10 @@ describe('Home external auth start', () => {
         mockGithubAuthFeatures('provision', 'keyed');
 
         const screen = await renderScreen(<Home />);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 3, turns: 3 });
 
         await advanceWizardToAuth(screen);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 2, turns: 2 });
 
         const signupButton = findActionButton(screen, 'welcome-signup-provider');
         await act(async () => {
@@ -397,7 +412,7 @@ describe('Home external auth start', () => {
         expect(tokenStorageMock.setPendingExternalAuth).toHaveBeenCalledWith(
             expect.objectContaining({
                 provider: 'github',
-                returnTo: '/setup',
+                returnTo: '/',
             }),
         );
     });
@@ -412,10 +427,10 @@ describe('Home external auth start', () => {
         mockGithubAuthFeatures('provision', 'keyed');
 
         const screen = await renderScreen(<Home />);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 3, turns: 3 });
 
         await advanceWizardToAuth(screen);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 2, turns: 2 });
 
         const signupButton = findActionButton(screen, 'welcome-signup-provider');
         await act(async () => {
@@ -450,10 +465,10 @@ describe('Home external auth start', () => {
         mockGithubAuthFeatures('login', 'keyless');
 
         const screen = await renderScreen(<Home />);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 3, turns: 3 });
 
         await advanceWizardToAuth(screen);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 2, turns: 2 });
 
         const loginButton = findActionButton(screen, 'welcome-create-account');
         await act(async () => {

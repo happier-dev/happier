@@ -1,48 +1,26 @@
-import { useAuth } from "@/auth/context/AuthContext";
-import { Platform, Linking, View } from 'react-native';
+import { useAuth } from '@/auth/context/AuthContext';
+import { View } from 'react-native';
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
-import { encodeBase64 } from "@/encryption/base64";
-import { authGetToken } from "@/auth/flows/getToken";
-import { router, useRouter, useLocalSearchParams } from "expo-router";
-import { getRandomBytesAsync } from "@/platform/cryptoRandom";
-import { useIsLandscape } from "@/utils/platform/responsive";
-import { trackAccountCreated } from '@/track';
-import { MainView } from "@/components/navigation/shell/MainView";
-import { t } from '@/text';
-import { TokenStorage } from "@/auth/storage/tokenStorage";
-import sodium from '@/encryption/libsodium.lib';
-import { getAuthProvider } from "@/auth/providers/registry";
-import { Modal } from "@/modal";
-import { BaseModal } from "@/modal/components/BaseModal";
-import { getPendingTerminalConnect } from "@/sync/domains/pending/pendingTerminalConnect";
-import { isSafeExternalAuthUrl } from "@/auth/providers/externalAuthUrl";
-import { fireAndForget } from "@/utils/system/fireAndForget";
-import { formatOperationFailedDebugMessage } from "@/utils/errors/formatOperationFailedDebugMessage";
-import { getActiveServerSnapshot } from "@/sync/domains/server/serverRuntime";
-import { buildDataKeyCredentialsForToken } from "@/auth/flows/buildDataKeyCredentialsForToken";
-import { digest } from "@/platform/digest";
-import { encodeHex } from "@/encryption/hex";
-import { resolveAppUrlScheme } from "@/utils/url/appScheme";
-import { readConfiguredServerUrlEnv } from "@/sync/domains/server/readConfiguredServerUrlEnv";
-import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from "@/sync/domains/pending/pendingSetupIntent";
-import { isTauriDesktop } from "@/utils/platform/tauri";
-import { isAuthenticatedRootDeepLinkRedirectAllowed } from "@/auth/routing/isAuthenticatedRootDeepLinkRedirectAllowed";
-import { resolvePostAuthSetupRoute } from "@/components/onboardingWizard/wizardResume";
-import { PreAuthOnboardingWizardEntry } from "@/components/onboardingWizard/PreAuthOnboardingWizardEntry";
-import { SetupWizardSurface } from "@/components/onboardingWizard/SetupWizardSurface";
-import { useConnectionHealth } from "@/components/navigation/connectionStatus/useConnectionHealth";
-import { useLocalDaemonControl } from "@/components/settings/machines/localControl/useLocalDaemonControl";
-import { useRelayDriftBanner } from "@/components/settings/server/useRelayDriftBanner";
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { MainView } from '@/components/navigation/shell/MainView';
+import { BaseModal } from '@/modal/components/BaseModal';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
+import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isAuthenticatedRootDeepLinkRedirectAllowed } from '@/auth/routing/isAuthenticatedRootDeepLinkRedirectAllowed';
+import { resolvePostAuthSetupRoute } from '@/components/onboardingWizard/wizardResume';
+import { PreAuthOnboardingWizardEntry } from '@/components/onboardingWizard/PreAuthOnboardingWizardEntry';
+import { SetupWizardSurface } from '@/components/onboardingWizard/surfaces/SetupWizardSurface';
+import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
+import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
+import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
+import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 
 const stylesheet = StyleSheet.create({
     root: {
         flex: 1,
         position: 'relative',
-    },
-    overlay: {
-        ...StyleSheet.absoluteFillObject,
-        zIndex: 100000,
     },
 });
 
@@ -53,7 +31,7 @@ export default function Home() {
     }
     return (
         <Authenticated />
-    )
+    );
 }
 
 function Authenticated() {
@@ -62,6 +40,7 @@ function Authenticated() {
     const connectionHealth = useConnectionHealth();
     const localDaemonControl = useLocalDaemonControl();
     const relayDriftBanner = useRelayDriftBanner();
+    const applyLocalSettings = useApplyLocalSettings();
     const [setupWizardVisible, setSetupWizardVisible] = React.useState(false);
 
     const sessionId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? (params.id[0] ?? null) : null;
@@ -168,36 +147,26 @@ function Authenticated() {
 
     const handleSetupWizardExit = React.useCallback(() => {
         setSetupWizardVisible(false);
+        applyLocalSettings({ sessionGettingStartedGuidanceDismissed: true });
         dismissPendingSetupIntent();
-    }, [dismissPendingSetupIntent]);
+    }, [applyLocalSettings, dismissPendingSetupIntent]);
 
     return (
         <View style={stylesheet.root}>
             <MainView variant="phone" />
             {setupWizardVisible ? (
-                Platform.OS === 'web' ? (
-                    <BaseModal
-                        visible
-                        scrollable
-                        showBackdrop
-                        closeOnBackdrop={false}
-                        disableContentTransform
-                        onClose={handleSetupWizardExit}
-                    >
-                        <SetupWizardSurface
-                            isDesktopShell={isTauriDesktop()}
-                            useOuterScrollContainer={true}
-                            onExit={handleSetupWizardExit}
-                        />
-                    </BaseModal>
-                ) : (
-                    <View style={stylesheet.overlay}>
-                        <SetupWizardSurface
-                            isDesktopShell={isTauriDesktop()}
-                            onExit={handleSetupWizardExit}
-                        />
-                    </View>
-                )
+                <BaseModal
+                    visible
+                    showBackdrop
+                    closeOnBackdrop={false}
+                    onClose={handleSetupWizardExit}
+                >
+                    <SetupWizardSurface
+                        isDesktopShell={isTauriDesktop()}
+                        useOuterScrollContainer={true}
+                        onExit={handleSetupWizardExit}
+                    />
+                </BaseModal>
             ) : null}
         </View>
     );

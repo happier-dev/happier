@@ -54,8 +54,7 @@ describe('requestMtlsWebToken', () => {
 
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
-            if (url.includes('/v1/version')) return okJson({ version: '1' });
-            if (url.includes('/health')) return okJson({ ok: true });
+            if (url.includes('/health')) return okJson({ status: 'ok' });
             if (url.includes('/v1/auth/ping')) return new Response(JSON.stringify({ ok: false }), { status: 401 });
             if (url.endsWith('/v1/auth/mtls')) return okJson({ token: 'mtls-token' });
             return okJson({});

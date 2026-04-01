@@ -73,8 +73,12 @@ const ALLOW_SAME_STRING_VALUES = new Set<string>([
     'Windows',
     'Windows Terminal',
     'Happier Voice',
+    'Happier Cloud',
     // Technical ids that should remain unchanged across locales.
     'Xenova/all-MiniLM-L6-v2',
+    // Relay access provider feature names that are intentionally not localized.
+    'Tailscale Serve',
+    'Tailscale Funnel',
 ]);
 
 const ALLOW_SAME_KEY_PREFIXES: ReadonlyArray<string> = [
@@ -98,7 +102,13 @@ const ALLOW_SAME_STRING_KEYS = new Set<string>([
     // Provider/model examples in replay resume settings are identifiers, not localized UI copy.
     'settingsSession.replayResume.summaryRunner.backendPlaceholder',
     'settingsSession.replayResume.summaryRunner.modelPlaceholder',
-    // Claude debug category ids should remain stable because they map to provider-native categories.
+    // Onboarding / setup placeholders should remain literal.
+    'promptLibrary.supportingFilePathPlaceholder',
+    'settingsSession.handoff.includeIgnoredMode.globsPlaceholder',
+    'settings.machineSetupRemoteSshTargetPlaceholder',
+    'settings.machineSetupRemoteSshUsernamePlaceholder',
+    'settings.machineSetupRemoteSshHostPlaceholder',
+    // Debug category identifiers are provider-owned technical names.
     'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.hooks.title',
     'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.title',
 ]);

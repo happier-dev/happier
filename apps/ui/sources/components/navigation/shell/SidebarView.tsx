@@ -1,7 +1,6 @@
 import { useSocketStatus, useFriendRequests, useSetting, useSyncError } from '@/sync/domains/state/storage';
 import * as React from 'react';
 import { Platform, View, Pressable } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
@@ -23,6 +22,7 @@ import { isStackContext } from '@/sync/domains/server/serverContext';
 import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
 import { resolveVisibleAppEnvironmentBadge } from '@/sync/runtime/appVariant';
 import { Text } from '@/components/ui/text/Text';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
@@ -216,7 +216,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 export const SidebarView = React.memo((props: SidebarViewProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const safeArea = useSafeAreaInsets();
+    const safeArea = useChromeSafeAreaInsets();
     const router = useRouter();
     const headerHeight = useHeaderHeight();
     const socketStatus = useSocketStatus();

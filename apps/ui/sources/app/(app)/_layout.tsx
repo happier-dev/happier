@@ -279,11 +279,10 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="settings/index"
+                name="settings"
                 options={{
-                    headerShown: true,
-                    headerTitle: t('settings.title'),
-                    headerBackTitle: t('common.home')
+                    // Nested navigator; per-settings-screen headers are configured in `settings/_layout.tsx`.
+                    headerShown: false,
                 }}
             />
             <Stack.Screen
@@ -644,21 +643,6 @@ export default function RootLayout() {
                 name="dev/multi-text-input"
                 options={{
                     headerTitle: t('navigation.multiTextInput'),
-                }}
-            />
-            <Stack.Screen
-                name="settings/connect/claude"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('navigation.connectClaude'),
-                    headerBackTitle: t('common.back'),
-                    // headerStyle: {
-                    //     backgroundColor: Platform.OS === 'web' ? theme.colors.header.background : '#1F1E1C',
-                    // },
-                    // headerTintColor: Platform.OS === 'web' ? theme.colors.header.tint : '#FFFFFF',
-                    // headerTitleStyle: {
-                    //     color: Platform.OS === 'web' ? theme.colors.header.tint : '#FFFFFF',
-                    // },
                 }}
             />
             <Stack.Screen

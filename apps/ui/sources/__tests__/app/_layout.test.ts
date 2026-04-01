@@ -120,7 +120,12 @@ vi.mock('@/components/navigation/Header', () => {
 });
 
 vi.mock('@/constants/Typography', () => {
-    return { Typography: { default: () => ({}) } };
+    return {
+        Typography: {
+            default: () => ({}),
+            mono: () => ({}),
+        },
+    };
 });
 
 vi.mock('@/text', async () => {
@@ -337,4 +342,22 @@ describe('RootLayout restore navigation', () => {
             }
         }
     }, 30_000);
+});
+
+describe('RootLayout settings routes', () => {
+    it('registers settings as a nested navigator (no settings/* screens in the root stack)', async () => {
+        stubFeatureFetch();
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const screen = await renderScreen(React.createElement(RootLayout));
+
+        const screens = screen.findAllByType('StackScreen' as any);
+        const names = screens
+            .map((node) => node.props?.name)
+            .filter((name): name is string => typeof name === 'string');
+
+        expect(names).toContain('settings');
+        expect(names).not.toContain('settings/index');
+        expect(names.some((name) => name.startsWith('settings/'))).toBe(false);
+    }, 60_000);
 });

@@ -1,6 +1,11 @@
 import fs from 'node:fs';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { __testables as uiWebMetroTestables } from '../../../../packages/tests/src/testkit/process/uiWebMetro';
 
 describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
     const envSnapshot = { ...process.env };
@@ -73,5 +78,90 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
 
         const config = requireFreshMetroConfig();
         expect(config?.resolver?.useWatchman).toBe(false);
+    });
+
+    it('resolves explicit .js relative imports by file path in CI mode (avoids Metro resolver regressions)', () => {
+        process.env.CI = '1';
+        delete process.env.HAPPIER_STACK_STACK;
+        delete process.env.HAPPIER_STACK_TUI;
+
+        const config = requireFreshMetroConfig();
+
+        const originModulePath = path.resolve(
+            __dirname,
+            '../../../../packages/cli-common/dist/relayAccess/registry.js',
+        );
+        const result = config.resolver.resolveRequest(
+            { originModulePath },
+            './providers/localOnly/index.js',
+            'web',
+        );
+
+        expect(result).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(path.dirname(originModulePath), './providers/localOnly/index.js'),
+        });
+    });
+
+    it('allows cache busting Metro via HAPPIER_UI_METRO_CACHE_VERSION_BUST', () => {
+        process.env.HAPPIER_UI_METRO_CACHE_VERSION_BUST = 'test-bust';
+
+        const config = requireFreshMetroConfig();
+        expect(String(config.cacheVersion)).toContain('test-bust');
+    });
+});
+
+describe('packages/tests uiWebMetro (Expo web baseUrl resolution)', () => {
+    async function startHtmlServer(html: string): Promise<{ server: ReturnType<typeof createServer>; baseUrl: string }> {
+        const server = createServer((req, res) => {
+            if (req.url === '/' || req.url === '/index.html') {
+                res.writeHead(200, { 'content-type': 'text/html' });
+                res.end(html);
+                return;
+            }
+            res.writeHead(404);
+            res.end();
+        });
+
+        await new Promise<void>((resolve) => {
+            server.listen(0, '127.0.0.1', () => resolve());
+        });
+        const addr = server.address();
+        if (!addr || typeof addr !== 'object') {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+            throw new Error('missing server address');
+        }
+
+        return { server, baseUrl: `http://localhost:${addr.port}` };
+    }
+
+    it('prefers entry pages whose primary script targets the expected Metro port', async () => {
+        const expectedMetroPort = 45678;
+
+        const stale = await startHtmlServer(
+            `<!doctype html><html><head></head><body><div id="root"></div><script src="http://localhost:11111/index.bundle?platform=web"></script></body></html>`,
+        );
+        const fresh = await startHtmlServer(
+            `<!doctype html><html><head></head><body><div id="root"></div><script src="http://localhost:${expectedMetroPort}/index.bundle?platform=web"></script></body></html>`,
+        );
+
+        try {
+            const dir = await mkdtemp(path.join(tmpdir(), 'happier-uiwebmetro-baseurl-'));
+            const stdoutPath = path.join(dir, 'ui.web.stdout.log');
+            await writeFile(stdoutPath, `stale ${stale.baseUrl}\nfresh ${fresh.baseUrl}\n`, 'utf8');
+
+            const resolved = await uiWebMetroTestables.resolveExpoWebBaseUrl({
+                stdoutPath,
+                timeoutMs: 350,
+                expectedPort: expectedMetroPort,
+                env: { NODE_ENV: 'test' },
+            });
+
+            expect(resolved.baseUrl).toBe(fresh.baseUrl);
+            expect(resolved.hasScriptTags).toBe(true);
+        } finally {
+            await new Promise<void>((resolve) => stale.server.close(() => resolve()));
+            await new Promise<void>((resolve) => fresh.server.close(() => resolve()));
+        }
     });
 });

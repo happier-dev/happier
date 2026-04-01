@@ -140,7 +140,7 @@ describe('RootLayout', () => {
         }
     });
 
-    it('registers the dedicated this-computer setup route under machines settings', async () => {
+    it('registers settings as a nested navigator', async () => {
         vi.resetModules();
         stubRootLayoutFeaturesFetch();
 
@@ -148,7 +148,7 @@ describe('RootLayout', () => {
         try {
             const screenNames = getScreenNames(tree);
 
-            expect(screenNames).toContain('settings/machines/this-computer');
+            expect(screenNames).toContain('settings');
         } finally {
             await tree?.unmount();
         }

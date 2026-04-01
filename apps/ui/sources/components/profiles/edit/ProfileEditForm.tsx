@@ -162,7 +162,6 @@ export function ProfileEditForm({
             chrome: {
                 kind: 'card',
                 title: t('profiles.previewMachine.title'),
-                layout: 'fill',
                 dimensions: { width: 560, maxHeightRatio: 0.85, size: 'md' as const },
             },
         });

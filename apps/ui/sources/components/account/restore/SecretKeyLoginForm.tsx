@@ -1,0 +1,151 @@
+import * as React from 'react';
+import { Pressable, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import { useRouter } from 'expo-router';
+
+import { useAuth } from '@/auth/context/AuthContext';
+import { authGetToken } from '@/auth/flows/getToken';
+import { normalizeSecretKey } from '@/auth/recovery/secretKeyBackup';
+import { decodeBase64 } from '@/encryption/base64';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import { Typography } from '@/constants/Typography';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
+export type SecretKeyLoginFormProps = Readonly<{
+    embedded?: boolean;
+    onSuccess?: () => void;
+}>;
+
+const stylesheet = StyleSheet.create((theme) => ({
+    noticeCard: {
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        backgroundColor: theme.colors.surface,
+        marginBottom: 16,
+    },
+    noticeText: {
+        fontSize: 15,
+        color: theme.colors.textSecondary,
+        lineHeight: 21,
+        ...Typography.default(),
+    },
+    textInput: {
+        backgroundColor: theme.colors.input.background,
+        padding: 16,
+        paddingRight: 52,
+        borderRadius: 8,
+        fontFamily: 'IBMPlexMono-Regular',
+        fontSize: 14,
+        minHeight: 54,
+        color: theme.colors.input.text,
+    },
+    textInputWrapper: {
+        width: '100%',
+        position: 'relative',
+        marginBottom: 24,
+    },
+    revealButton: {
+        position: 'absolute',
+        right: 10,
+        top: 0,
+        bottom: 0,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 8,
+    },
+}));
+
+export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: SecretKeyLoginFormProps) {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const auth = useAuth();
+    const router = useRouter();
+
+    const [secretKey, setSecretKey] = React.useState('');
+    const [revealed, setRevealed] = React.useState(false);
+
+    const handleSuccess = React.useCallback(() => {
+        if (props.onSuccess) {
+            props.onSuccess();
+            return;
+        }
+        router.replace('/');
+    }, [props.onSuccess, router]);
+
+    const handleLogin = React.useCallback(async () => {
+        const trimmedKey = secretKey.trim();
+        if (!trimmedKey) {
+            Modal.alert(t('common.error'), t('connect.enterSecretKey'));
+            return;
+        }
+
+        try {
+            const normalizedKey = normalizeSecretKey(trimmedKey);
+            const secretBytes = decodeBase64(normalizedKey, 'base64url');
+            if (secretBytes.length !== 32) {
+                throw new Error('Invalid secret key length');
+            }
+
+            const token = await authGetToken(secretBytes);
+            if (!token) {
+                throw new Error('Failed to authenticate with provided key');
+            }
+
+            await auth.login(token, normalizedKey);
+            handleSuccess();
+        } catch {
+            Modal.alert(t('common.error'), t('connect.invalidSecretKey'));
+        }
+    }, [auth, handleSuccess, secretKey]);
+
+    return (
+        <>
+            <View style={styles.noticeCard}>
+                <Text style={styles.noticeText}>{t('connect.restoreWithSecretKeyDescription')}</Text>
+            </View>
+
+            <View style={styles.textInputWrapper}>
+                <TextInput
+                    testID="restore-manual-secret-input"
+                    style={styles.textInput}
+                    placeholder={t('connect.secretKeyPlaceholder')}
+                    placeholderTextColor={theme.colors.input.placeholder}
+                    value={secretKey}
+                    onChangeText={setSecretKey}
+                    secureTextEntry={!revealed}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    multiline={false}
+                />
+
+                <Pressable
+                    testID="restore-manual-secret-reveal"
+                    accessibilityRole="button"
+                    accessibilityLabel={revealed ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
+                    onPress={() => setRevealed((v) => !v)}
+                    style={styles.revealButton}
+                    hitSlop={10}
+                >
+                    <Ionicons
+                        name={revealed ? 'eye-off-outline' : 'eye-outline'}
+                        size={20}
+                        color={theme.colors.textSecondary}
+                    />
+                </Pressable>
+            </View>
+
+            <RoundButton
+                testID="restore-manual-submit"
+                title={t('connect.restoreAccount')}
+                action={handleLogin}
+            />
+        </>
+    );
+});

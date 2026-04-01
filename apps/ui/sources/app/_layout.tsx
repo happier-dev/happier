@@ -16,7 +16,7 @@ import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage'
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/navigation/shell/SidebarNavigator';
 import sodium from '@/encryption/libsodium.lib';
@@ -36,6 +36,7 @@ import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIn
 import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
 import { DesktopUpdateBanner } from '@/components/ui/feedback/DesktopUpdateBanner';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 // import * as SystemUI from 'expo-system-ui';
 import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds } from '@/utils/system/remoteLogger';
 import { installBugReportConsoleCapture } from '@/utils/system/bugReportLogBuffer';
@@ -390,7 +391,7 @@ if (shouldCaptureRnwUnexpectedTextNodeStacks()) {
 
 // Component to apply horizontal safe area padding
 function HorizontalSafeAreaWrapper({ children }: { children: React.ReactNode }) {
-    const insets = useSafeAreaInsets();
+    const insets = useChromeSafeAreaInsets();
     return (
         <View style={{
             flex: 1,

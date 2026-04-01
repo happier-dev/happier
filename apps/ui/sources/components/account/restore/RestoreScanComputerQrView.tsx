@@ -111,6 +111,8 @@ function resolveDeviceLabel(): string | null {
 export type RestoreScanComputerQrViewProps = Readonly<{
     embedded?: boolean;
     onBack?: () => void;
+    onOpenSecretKeyLogin?: () => void;
+    onShowQrInstead?: () => void;
 }>;
 
 export const RestoreScanComputerQrView = React.memo(function RestoreScanComputerQrView(props: RestoreScanComputerQrViewProps) {
@@ -134,6 +136,22 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         }
         router.back();
     }, [props.onBack, router]);
+
+    const openSecretKeyLogin = React.useCallback(() => {
+        if (embedded && props.onOpenSecretKeyLogin) {
+            props.onOpenSecretKeyLogin();
+            return;
+        }
+        router.push('/restore/manual');
+    }, [embedded, props.onOpenSecretKeyLogin, router]);
+
+    const openShowQrInstead = React.useCallback(() => {
+        if (embedded && props.onShowQrInstead) {
+            props.onShowQrInstead();
+            return;
+        }
+        router.push('/restore/show-qr');
+    }, [embedded, props.onShowQrInstead, router]);
 
     const scrollViewStyle: StyleProp<ViewStyle> = props.embedded
         ? [styles.scrollView, { backgroundColor: 'transparent' }]
@@ -269,7 +287,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                                 title={t('connect.restoreWithSecretKeyInstead')}
                                 display="inverted"
                                 action={async () => {
-                                    router.push('/restore/manual');
+                                    openSecretKeyLogin();
                                 }}
                             />
                         </View>
@@ -324,7 +342,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                                 title={t('connect.restoreWithSecretKeyInstead')}
                                 display="inverted"
                                 action={async () => {
-                                    router.push('/restore/manual');
+                                    openSecretKeyLogin();
                                 }}
                             />
                         </View>
@@ -408,7 +426,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                                 title={t('connect.restoreWithSecretKeyInstead')}
                                 display="inverted"
                                 action={async () => {
-                                    router.push('/restore/manual');
+                                    openSecretKeyLogin();
                                 }}
                             />
                         </View>
@@ -419,7 +437,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                                 title={t('connect.showQrInstead')}
                                 display="inverted"
                                 action={async () => {
-                                    router.push('/restore/show-qr');
+                                    openShowQrInstead();
                                 }}
                             />
                         </View>
@@ -479,7 +497,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                             title={t('connect.restoreWithSecretKeyInstead')}
                             display="inverted"
                             action={async () => {
-                                router.push('/restore/manual');
+                                openSecretKeyLogin();
                             }}
                         />
                     </View>
@@ -490,7 +508,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                             title={t('connect.showQrInstead')}
                             display="inverted"
                             action={async () => {
-                                router.push('/restore/show-qr');
+                                openShowQrInstead();
                             }}
                         />
                     </View>

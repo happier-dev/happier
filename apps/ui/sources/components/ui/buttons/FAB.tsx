@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View, Pressable } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 
@@ -28,7 +28,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 export const FAB = React.memo((props: { onPress: () => void; accessibilityLabel?: string }) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const safeArea = useSafeAreaInsets();
+    const safeArea = useChromeSafeAreaInsets();
     return (
         <View
             style={[

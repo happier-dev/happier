@@ -11,6 +11,7 @@ export type SelectableRowVariant = 'slim' | 'default' | 'selectable';
 export type SelectableRowProps = Readonly<{
     testID?: string;
     title: React.ReactNode;
+    titleAccessory?: React.ReactNode;
     subtitle?: React.ReactNode;
     left?: React.ReactNode;
     right?: React.ReactNode;
@@ -18,6 +19,12 @@ export type SelectableRowProps = Readonly<{
 
     selected?: boolean;
     disabled?: boolean;
+    /**
+     * When `disabled`, the row will not be pressable. Set this to true when the row
+     * contains nested interactive elements (e.g. menu buttons) that must remain
+     * usable even while the row itself is disabled.
+     */
+    allowChildInteractionWhenDisabled?: boolean;
     destructive?: boolean;
 
     variant?: SelectableRowVariant;
@@ -89,6 +96,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         minWidth: 0,
     },
+    titleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        minWidth: 0,
+    },
+    titleText: {
+        flexGrow: 0,
+        flexShrink: 1,
+        minWidth: 0,
+    },
     title: {
         ...Typography.default(),
         color: theme.colors.text,
@@ -130,6 +148,7 @@ export function SelectableRow(props: SelectableRowProps) {
     const variant: SelectableRowVariant = props.variant ?? 'default';
     const selected = Boolean(props.selected);
     const disabled = Boolean(props.disabled);
+    const allowChildInteractionWhenDisabled = Boolean(props.allowChildInteractionWhenDisabled);
 
     const canHover = Platform.OS === 'web' && !disabled;
 
@@ -161,13 +180,15 @@ export function SelectableRow(props: SelectableRowProps) {
     const subtitleVariantStyle = variant === 'selectable' ? styles.subtitleSelectable : null;
     const leftAccessory = React.useMemo(() => normalizeNodeForView(props.left ?? null), [props.left]);
     const rightAccessory = React.useMemo(() => normalizeNodeForView(props.right ?? null), [props.right]);
+    const titleAccessory = React.useMemo(() => normalizeNodeForView(props.titleAccessory ?? null), [props.titleAccessory]);
 
     return (
         <Pressable
             testID={props.testID}
             onPress={disabled ? undefined : props.onPress}
-            disabled={disabled}
+            accessibilityState={disabled ? ({ disabled: true } as const) : undefined}
             accessibilityRole={props.onPress ? 'button' : undefined}
+            pointerEvents={disabled && allowChildInteractionWhenDisabled ? 'box-none' : 'auto'}
             style={({ pressed }) => ([
                 styles.row,
                 rowVariantStyle,
@@ -193,9 +214,18 @@ export function SelectableRow(props: SelectableRowProps) {
             ) : null}
 
             <View style={styles.content}>
-                <Text style={[styles.title, titleVariantStyle, titleColorStyle, props.titleStyle]} numberOfLines={1}>
-                    {props.title}
-                </Text>
+                {titleAccessory ? (
+                    <View style={styles.titleRow}>
+                        <Text style={[styles.title, styles.titleText, titleVariantStyle, titleColorStyle, props.titleStyle]} numberOfLines={1}>
+                            {props.title}
+                        </Text>
+                        {titleAccessory}
+                    </View>
+                ) : (
+                    <Text style={[styles.title, titleVariantStyle, titleColorStyle, props.titleStyle]} numberOfLines={1}>
+                        {props.title}
+                    </Text>
+                )}
                 {props.subtitle ? (
                     <Text style={[styles.subtitle, subtitleVariantStyle, props.subtitleStyle]} numberOfLines={2}>
                         {props.subtitle}

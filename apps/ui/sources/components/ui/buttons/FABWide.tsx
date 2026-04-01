@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View, Pressable } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
@@ -36,7 +36,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 
 export const FABWide = React.memo(({ onPress }: { onPress: () => void }) => {
     const styles = stylesheet;
-    const safeArea = useSafeAreaInsets();
+    const safeArea = useChromeSafeAreaInsets();
     return (
         <View
             style={[

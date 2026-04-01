@@ -102,7 +102,6 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
         subtitle: modalSubtitle,
         testID: 'secret-requirement:modal',
         closeButtonTestID: 'secret-requirement:close',
-        layout: 'fill' as const,
         dimensions: {
             width: 560,
             maxHeightRatio: 0.92,

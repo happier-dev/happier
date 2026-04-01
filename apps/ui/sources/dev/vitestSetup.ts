@@ -4,6 +4,20 @@ import { installVitestRnShim } from './vitestRnShim';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
 
+// `@expo/vector-icons` ships JSX in `.js` files under `build/`, which Vite may not always
+// prebundle as JSX in the Vitest environment. Mock it globally so tests never attempt to
+// parse the real implementation.
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
+    FontAwesome: 'FontAwesome',
+    FontAwesome5: 'FontAwesome5',
+    Feather: 'Feather',
+    MaterialIcons: 'MaterialIcons',
+    MaterialCommunityIcons: 'MaterialCommunityIcons',
+}));
+vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Ionicons' }));
+
 // UI tests should not inherit embedded build-policy gating (set in CI).
 // Clear it by default so feature tests can opt-in explicitly per case.
 process.env.HAPPIER_FEATURE_POLICY_ENV = '';

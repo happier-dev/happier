@@ -32,7 +32,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         title,
         testID: 'command-palette:modal',
         closeButtonTestID: 'command-palette:close',
-        layout: 'fill' as const,
         dimensions: {
             width: 800,
             maxHeightRatio: 0.6,

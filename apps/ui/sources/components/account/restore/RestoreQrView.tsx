@@ -126,6 +126,7 @@ function parseRestoreRedirectReason(value: unknown): RestoreRedirectReason | nul
 export type RestoreQrViewProps = Readonly<{
     embedded?: boolean;
     onBack?: () => void;
+    onOpenSecretKeyLogin?: () => void;
 }>;
 
 export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrViewProps) {
@@ -255,7 +256,13 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                             size="normal"
                             title={t('connect.restoreWithSecretKeyInstead')}
                             display="inverted"
-                            onPress={() => router.push('/restore/manual')}
+                            onPress={() => {
+                                if (embedded && props.onOpenSecretKeyLogin) {
+                                    props.onOpenSecretKeyLogin();
+                                    return;
+                                }
+                                router.push('/restore/manual');
+                            }}
                         />
                     </View>
                     {providerResetEnabled ? (
