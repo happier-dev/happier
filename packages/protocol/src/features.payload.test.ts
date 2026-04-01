@@ -27,6 +27,14 @@ function readRequiredPath(root: unknown, path: ReadonlyArray<string>): unknown {
   return current;
 }
 
+function readOptionalPath(root: unknown, path: ReadonlyArray<string>): unknown {
+  try {
+    return readRequiredPath(root, path);
+  } catch {
+    return undefined;
+  }
+}
+
 describe('FeaturesResponseSchema', () => {
   it('applies safe defaults for missing subtrees', () => {
     const parsed = FeaturesResponseSchema.parse({
@@ -58,6 +66,17 @@ describe('FeaturesResponseSchema', () => {
     expect((parsed as any).features.auth.pairing.desktopQrMobileScan.enabled).toBe(false);
     expect(parsed.features.auth.ui.recoveryKeyReminder.enabled).toBe(false);
     expect((parsed as any).features.e2ee.keylessAccounts.enabled).toBe(false);
+
+    expect(readOptionalPath(parsed, ['features', 'setup', 'relay', 'allowRelaySelection', 'enabled'])).toBe(false);
+    expect(readOptionalPath(parsed, ['features', 'setup', 'relay', 'allowHappierCloud', 'enabled'])).toBe(false);
+    expect(readOptionalPath(parsed, ['features', 'setup', 'relay', 'allowCustomRelayUrl', 'enabled'])).toBe(false);
+    expect(readOptionalPath(parsed, ['features', 'setup', 'relay', 'allowLocalRelayHost', 'enabled'])).toBe(false);
+    expect(readOptionalPath(parsed, ['features', 'setup', 'relay', 'allowRemoteSshRelayHost', 'enabled'])).toBe(false);
+    expect(readOptionalPath(parsed, ['features', 'setup', 'relayAccess', 'allowTailscale', 'enabled'])).toBe(false);
+    expect(readOptionalPath(parsed, ['features', 'setup', 'relayAccess', 'allowCloudflareTunnel', 'enabled'])).toBe(false);
+
+    expect(readOptionalPath(parsed, ['features', 'remoteHosts', 'management', 'enabled'])).toBe(false);
+    expect(readOptionalPath(parsed, ['features', 'remoteHosts', 'secretMaterial', 'enabled'])).toBe(false);
 
     expect(parsed.capabilities.bugReports).toEqual(DEFAULT_BUG_REPORTS_CAPABILITIES);
     expect(parsed.capabilities.voice).toEqual({
