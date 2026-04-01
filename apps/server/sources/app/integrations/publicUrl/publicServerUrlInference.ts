@@ -1,6 +1,7 @@
 import { resolveRelayAccessConfiguredCanonicalPublicServerUrl } from "@happier-dev/cli-common/relayAccess";
 import { resolveHappyHomeDirFromEnvironment } from "@happier-dev/cli-common/providers";
 import { inferAndApplyTailscaleServePublicServerUrl } from "@/app/integrations/tailscale/tailscaleServePublicUrlInference";
+import { inferAndApplyTailscaleFunnelPublicServerUrl } from "@/app/integrations/tailscale/tailscaleFunnelPublicUrlInference";
 import { parseBooleanEnv, parseIntEnv } from "@/config/env";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -133,7 +134,9 @@ export async function resolveCachedCanonicalPublicServerUrl(
                 env[INFERRED_ENV_FLAG] = "1";
                 return relayAccessCandidate;
             }
-            const inferred = await inferAndApplyTailscaleServePublicServerUrl(env);
+            const inferred =
+                (await inferAndApplyTailscaleServePublicServerUrl(env))
+                ?? (await inferAndApplyTailscaleFunnelPublicServerUrl(env));
             if (inferred) {
                 env[INFERRED_ENV_FLAG] = "1";
             }

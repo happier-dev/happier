@@ -12,6 +12,26 @@ import { resolveServerFeatureBuildPolicy } from './serverFeatureBuildPolicy';
 
 const DEPENDENCIES_BY_ID = new Map(FEATURE_IDS.map((featureId) => [featureId, FEATURE_CATALOG[featureId].dependencies] as const));
 
+const DEFAULT_SETUP_SURFACE_POLICY_FEATURES: Record<string, unknown> = Object.freeze({
+    setup: {
+        relay: {
+            allowRelaySelection: { enabled: true },
+            allowHappierCloud: { enabled: true },
+            allowCustomRelayUrl: { enabled: true },
+            allowLocalRelayHost: { enabled: true },
+            allowRemoteSshRelayHost: { enabled: true },
+        },
+        relayAccess: {
+            allowTailscale: { enabled: true },
+            allowCloudflareTunnel: { enabled: true },
+        },
+    },
+    remoteHosts: {
+        management: { enabled: true },
+        secretMaterial: { enabled: false },
+    },
+});
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -37,7 +57,7 @@ export function resolveServerFeaturePayload(
         throw new Error('resolveServerFeaturePayload: resolvers list is empty');
     }
 
-    const mergedFeatures: Record<string, unknown> = {};
+    const mergedFeatures: Record<string, unknown> = mergeDeep({}, DEFAULT_SETUP_SURFACE_POLICY_FEATURES);
     const mergedCapabilities: Record<string, unknown> = {};
     for (const resolver of resolvers) {
         const partial = resolver(env);

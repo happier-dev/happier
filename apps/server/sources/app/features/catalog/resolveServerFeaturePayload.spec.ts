@@ -14,6 +14,28 @@ function fromPartial(partial: FeaturesPayloadDelta): ServerFeatureResolver {
     return () => partial;
 }
 
+function readRequiredPath(root: unknown, path: ReadonlyArray<string>): unknown {
+    let current: unknown = root;
+    for (const segment of path) {
+        if (typeof current !== "object" || current === null) {
+            throw new Error(`Expected object at "${segment}" while reading "${path.join(".")}"`);
+        }
+        if (!Object.prototype.hasOwnProperty.call(current, segment)) {
+            throw new Error(`Missing "${segment}" while reading "${path.join(".")}"`);
+        }
+        current = (current as Record<string, unknown>)[segment];
+    }
+    return current;
+}
+
+function readOptionalPath(root: unknown, path: ReadonlyArray<string>): unknown {
+    try {
+        return readRequiredPath(root, path);
+    } catch {
+        return undefined;
+    }
+}
+
 describe("resolveServerFeaturePayload", () => {
     it("throws when resolvers list is empty", () => {
         expect(() => resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [])).toThrow(/resolvers/i);
@@ -220,6 +242,58 @@ describe("resolveServerFeaturePayload", () => {
 
         expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
         expect(payload.capabilities.server.retention?.enabled).toBe(true);
+    });
+
+    it("includes setup surface policy gates, and build-policy denies can disable them", () => {
+        const payloadAllowed = resolveServerFeaturePayload(
+            {} as NodeJS.ProcessEnv,
+            [
+                resolveTerminalFeature,
+            ],
+        );
+        expect(readOptionalPath(payloadAllowed, ["features", "setup", "relay", "allowRelaySelection", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadAllowed, ["features", "setup", "relay", "allowHappierCloud", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadAllowed, ["features", "setup", "relay", "allowCustomRelayUrl", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadAllowed, ["features", "setup", "relay", "allowLocalRelayHost", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadAllowed, ["features", "setup", "relay", "allowRemoteSshRelayHost", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadAllowed, ["features", "setup", "relayAccess", "allowTailscale", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadAllowed, ["features", "setup", "relayAccess", "allowCloudflareTunnel", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadAllowed, ["features", "remoteHosts", "management", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadAllowed, ["features", "remoteHosts", "secretMaterial", "enabled"])).toBe(false);
+
+        const payloadDenied = resolveServerFeaturePayload(
+            {
+                HAPPIER_BUILD_FEATURES_DENY: "setup.relay.allowHappierCloud,setup.relay.allowCustomRelayUrl,remoteHosts.management",
+            } as NodeJS.ProcessEnv,
+            [
+                resolveTerminalFeature,
+            ],
+        );
+        expect(readOptionalPath(payloadDenied, ["features", "setup", "relay", "allowRelaySelection", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadDenied, ["features", "setup", "relay", "allowHappierCloud", "enabled"])).toBe(false);
+        expect(readOptionalPath(payloadDenied, ["features", "setup", "relay", "allowCustomRelayUrl", "enabled"])).toBe(false);
+        expect(readOptionalPath(payloadDenied, ["features", "setup", "relay", "allowLocalRelayHost", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadDenied, ["features", "setup", "relay", "allowRemoteSshRelayHost", "enabled"])).toBe(true);
+        expect(readOptionalPath(payloadDenied, ["features", "remoteHosts", "management", "enabled"])).toBe(false);
+    });
+
+    it("enforces remoteHosts.secretMaterial dependency on remoteHosts.management", () => {
+        const payload = resolveServerFeaturePayload(
+            {} as NodeJS.ProcessEnv,
+            [
+                fromPartial({
+                    features: {
+                        remoteHosts: {
+                            management: { enabled: false },
+                            secretMaterial: { enabled: true },
+                        },
+                    },
+                }),
+            ],
+        );
+
+        expect(readOptionalPath(payload, ["features", "remoteHosts", "management", "enabled"])).toBe(false);
+        expect(readOptionalPath(payload, ["features", "remoteHosts", "secretMaterial", "enabled"])).toBe(false);
     });
 
 });

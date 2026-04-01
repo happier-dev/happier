@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
     isRequestOnCanonicalPublicServerUrl,
@@ -7,7 +7,20 @@ import {
     resetPublicServerUrlInferenceCacheForTests,
 } from "./publicServerUrlInference";
 
+vi.mock("@/app/integrations/tailscale/tailscaleServePublicUrlInference", () => ({
+    inferAndApplyTailscaleServePublicServerUrl: vi.fn(),
+}));
+
+vi.mock("@/app/integrations/tailscale/tailscaleFunnelPublicUrlInference", () => ({
+    inferAndApplyTailscaleFunnelPublicServerUrl: vi.fn(),
+}));
+
 describe("publicServerUrlInference", () => {
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPublicServerUrlInferenceCacheForTests();
+    });
+
     describe("resolveCachedCanonicalPublicServerUrl", () => {
         it("infers the canonical public URL from the persisted relay access config (cloudflareNamed)", async () => {
             const { mkdtemp, writeFile, rm, mkdir } = await import("node:fs/promises");
@@ -66,6 +79,30 @@ describe("publicServerUrlInference", () => {
                 process.env.HOME = previousHome;
                 await rm(homeDir, { recursive: true, force: true });
             }
+        });
+
+        it("falls back to tailscale funnel inference after serve inference returns null", async () => {
+            const { inferAndApplyTailscaleServePublicServerUrl } = await import("@/app/integrations/tailscale/tailscaleServePublicUrlInference");
+            const { inferAndApplyTailscaleFunnelPublicServerUrl } = await import("@/app/integrations/tailscale/tailscaleFunnelPublicUrlInference");
+
+            vi.mocked(inferAndApplyTailscaleServePublicServerUrl).mockImplementation(async () => null);
+            vi.mocked(inferAndApplyTailscaleFunnelPublicServerUrl).mockImplementation(async (env) => {
+                env.HAPPIER_PUBLIC_SERVER_URL = "https://funnel.example.test";
+                return "https://funnel.example.test";
+            });
+
+            const env = {
+                HAPPIER_TAILSCALE_INFER_PUBLIC_URL: "1",
+                HAPPIER_PUBLIC_SERVER_URL: "",
+                HAPPIER_PUBLIC_SERVER_URL_INFER_TTL_MS: "60000",
+            } as NodeJS.ProcessEnv;
+
+            resetPublicServerUrlInferenceCacheForTests();
+            const resolved = await resolveCachedCanonicalPublicServerUrl(env);
+
+            expect(resolved).toBe("https://funnel.example.test");
+            expect(inferAndApplyTailscaleServePublicServerUrl).toHaveBeenCalledTimes(1);
+            expect(inferAndApplyTailscaleFunnelPublicServerUrl).toHaveBeenCalledTimes(1);
         });
 
         it("invalidates the cache when a relay access config appears after a null inference", async () => {
