@@ -631,7 +631,9 @@ async function main() {
     fail("Interactive Expo local builds are not supported with --local-runtime dagger. Use --local-runtime host or --interactive false.");
   }
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
-  if ((localRuntime === 'dagger' || (buildMode === 'cloud' && nonInteractive) || isCi) && !expoToken) {
+  // Expo token is required for non-interactive cloud builds (CI/default) and for dagger-powered local builds.
+  // Interactive cloud builds can rely on the operator's local EAS auth (contract tests stub `npx eas`).
+  if ((localRuntime === 'dagger' || (buildMode === 'cloud' && nonInteractive)) && !expoToken) {
     fail('EXPO_TOKEN is required for Expo native builds.');
   }
 

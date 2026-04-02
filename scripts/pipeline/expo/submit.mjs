@@ -313,11 +313,7 @@ function main() {
     fail(/** @type {Error} */ (error).message);
   }
 
-  const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
   const { isCi, nonInteractive } = resolveExpoInteractivity({ interactiveOverride });
-  if (isCi && !expoToken) {
-    fail('EXPO_TOKEN is required for Expo submit.');
-  }
 
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
@@ -367,6 +363,13 @@ function main() {
         }
       }
     }
+  }
+
+  const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
+  // CI releases should require explicit Expo auth for cloud submissions, but allow dry-run validation
+  // of local artifacts (contract tests) without requiring an EXPO_TOKEN.
+  if (isCi && !expoToken && !(dryRun && submitPathAbs)) {
+    fail('EXPO_TOKEN is required for Expo submit.');
   }
 
   if (platforms.includes('ios') && nonInteractive) {

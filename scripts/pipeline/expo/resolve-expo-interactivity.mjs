@@ -31,6 +31,26 @@ export function resolveExpoInteractivity(opts = {}) {
   const forceNonInteractive = rawOverride === '0' || rawOverride === 'false';
 
   if (isCi) {
+    // CI defaults to non-interactive, but we still allow explicit overrides so local
+    // contract tests (and rare manual CI runs) can exercise interactive code paths.
+    if (interactiveOverride === 'true' || forceInteractive) {
+      return {
+        isCi,
+        hasInteractiveTty,
+        nonInteractive: false,
+        source: interactiveOverride === 'true' ? 'ci-arg-force-interactive' : 'ci-env-force-interactive',
+      };
+    }
+
+    if (interactiveOverride === 'false' || forceNonInteractive) {
+      return {
+        isCi,
+        hasInteractiveTty,
+        nonInteractive: true,
+        source: interactiveOverride === 'false' ? 'ci-arg-force-non-interactive' : 'ci-env-force-non-interactive',
+      };
+    }
+
     return {
       isCi,
       hasInteractiveTty,

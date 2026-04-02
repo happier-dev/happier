@@ -51,11 +51,22 @@ test('expo interactivity allows explicit local override to non-interactive', () 
 
 test('expo interactivity stays non-interactive in CI', () => {
   const resolved = resolveExpoInteractivity({
-    env: { EXPO_TOKEN: 'expo-token', CI: 'true', PIPELINE_INTERACTIVE: '1' },
+    env: { EXPO_TOKEN: 'expo-token', CI: 'true' },
     stdinIsTty: true,
     stdoutIsTty: true,
   });
 
   assert.equal(resolved.isCi, true);
   assert.equal(resolved.nonInteractive, true);
+});
+
+test('expo interactivity allows explicit interactive override in CI (contract tests)', () => {
+  const resolved = resolveExpoInteractivity({
+    env: { EXPO_TOKEN: 'expo-token', CI: 'true', PIPELINE_INTERACTIVE: '1' },
+    stdinIsTty: false,
+    stdoutIsTty: false,
+  });
+
+  assert.equal(resolved.isCi, true);
+  assert.equal(resolved.nonInteractive, false);
 });
