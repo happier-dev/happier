@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,17 +9,12 @@ import { makeMode } from './claudeRemoteAgentSdk.testkit';
 import { resolveClaudeProjectId } from '../utils/path';
 
 const ORIGINAL_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
-const { ensureJavaScriptRuntimeExecutableMock, repairTranscriptMock } = vi.hoisted(() => ({
+const { ensureJavaScriptRuntimeExecutableMock } = vi.hoisted(() => ({
     ensureJavaScriptRuntimeExecutableMock: vi.fn(async () => '/managed/js-runtime'),
-    repairTranscriptMock: vi.fn(async () => ({ appendedToolUseIds: [] as string[] })),
 }));
 
 vi.mock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
     ensureJavaScriptRuntimeExecutable: ensureJavaScriptRuntimeExecutableMock,
-}));
-
-vi.mock('@/backends/claude/utils/repairClaudeSessionJsonlToolResults', () => ({
-    repairClaudeSessionJsonlToolResults: repairTranscriptMock,
 }));
 
 afterEach(() => {
@@ -34,8 +29,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
     afterEach(() => {
         ensureJavaScriptRuntimeExecutableMock.mockReset();
         ensureJavaScriptRuntimeExecutableMock.mockResolvedValue('/managed/js-runtime');
-        repairTranscriptMock.mockReset();
-        repairTranscriptMock.mockResolvedValue({ appendedToolUseIds: [] });
     });
 
     it('yields stream-json user messages as objects (Agent SDK stringifies them)', async () => {
@@ -295,13 +288,43 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(interrupt).toHaveBeenCalled();
     });
 
-    it('invokes transcript repair on turn interrupt', async () => {
+    it('repairs transcript on turn interrupt even when sessionId is discovered at runtime', async () => {
+        const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-interrupt-repair-'));
+        process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+
+        const workDir = await mkdtemp(join(tmpdir(), 'happier-claude-interrupt-repair-workdir-'));
+        const projectDir = join(claudeConfigDir, 'projects', resolveClaudeProjectId(workDir));
+        const transcriptPath = join(projectDir, 'sess_1.jsonl');
+        await mkdir(projectDir, { recursive: true });
+
+        await writeFile(
+            transcriptPath,
+            JSON.stringify({
+                type: 'assistant',
+                uuid: 'asst_1',
+                isSidechain: false,
+                message: {
+                    role: 'assistant',
+                    content: [
+                        {
+                            type: 'tool_use',
+                            id: 'toolu_1',
+                            name: 'Bash',
+                            input: { command: 'sleep 1000' },
+                        },
+                    ],
+                },
+            }) + '\n',
+            'utf8',
+        );
+
         const interrupt = vi.fn(async () => {});
         let capturedTurnInterrupt: null | (() => Promise<void>) = null;
 
         const createQuery = vi.fn((_params: any) => {
             return {
                 async *[Symbol.asyncIterator]() {
+                    yield { type: 'system', subtype: 'init', session_id: 'sess_1' } as any;
                     yield { type: 'result' } as any;
                 },
                 interrupt,
@@ -322,9 +345,9 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         });
 
         await claudeRemoteAgentSdk({
-            sessionId: 'session-1',
-            transcriptPath: '/tmp/session-1.jsonl',
-            path: '/tmp',
+            sessionId: null,
+            transcriptPath: null,
+            path: workDir,
             claudeArgs: [],
             claudeExecutablePath: '/tmp/claude',
             canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
@@ -345,13 +368,10 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
 
         await (capturedTurnInterrupt as unknown as () => Promise<void>)();
         expect(interrupt).toHaveBeenCalled();
-        expect(repairTranscriptMock).toHaveBeenCalledWith(
-            expect.objectContaining({
-                sessionId: 'session-1',
-                transcriptPath: '/tmp/session-1.jsonl',
-                cwd: '/tmp',
-            }),
-        );
+
+        const updatedTranscript = await readFile(transcriptPath, 'utf8');
+        expect(updatedTranscript).toContain('"type":"tool_result"');
+        expect(updatedTranscript).toContain('"tool_use_id":"toolu_1"');
     });
 
     it('omits effort when the mode specifies reasoningEffort=high (provider default)', async () => {
