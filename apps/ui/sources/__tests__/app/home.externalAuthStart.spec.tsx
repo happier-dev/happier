@@ -100,16 +100,20 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
 }));
 
 const CLOUD_SERVER_URL = 'https://api.happier.dev';
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getResetToDefaultServerId: () => 'cloud-profile',
-    getServerProfileById: (serverId: string) => (
-        serverId === 'cloud-profile'
-            ? { id: 'cloud-profile', serverUrl: CLOUD_SERVER_URL }
-            : null
-    ),
-    getOrCreateHappierCloudServerProfile: () => ({ id: 'cloud-profile', name: 'Happier Cloud', serverUrl: CLOUD_SERVER_URL }),
-    listServerProfiles: () => [],
-}));
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+    return {
+        ...actual,
+        getResetToDefaultServerId: () => 'cloud-profile',
+        getServerProfileById: (serverId: string) => (
+            serverId === 'cloud-profile'
+                ? { id: 'cloud-profile', serverUrl: CLOUD_SERVER_URL }
+                : null
+        ),
+        getOrCreateHappierCloudServerProfile: () => ({ id: 'cloud-profile', name: 'Happier Cloud', serverUrl: CLOUD_SERVER_URL }),
+        listServerProfiles: () => [],
+    };
+});
 
 const tokenStorageMock = vi.hoisted(() => ({
     setPendingExternalAuth: vi.fn(async () => true),
@@ -124,10 +128,15 @@ vi.mock('@/auth/providers/externalAuthUrl', () => ({
     isSafeExternalAuthUrl: () => true,
 }));
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverUrl: 'http://api.example.test' }),
-    isActiveServerSelectionExplicit: () => false,
-}));
+vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
+    return {
+        ...actual,
+        getActiveServerSnapshot: () => ({ serverUrl: 'http://api.example.test' }),
+        isActiveServerSelectionExplicit: () => false,
+        subscribeActiveServer: () => () => {},
+    };
+});
 
 vi.mock('@/track', () => ({
     trackAccountCreated: vi.fn(),
@@ -142,7 +151,7 @@ vi.mock('@/components/navigation/shell/MainView', () => ({
     MainView: () => null,
 }));
 
-vi.mock('@/components/onboardingWizard/WelcomeProvidersShowcase', () => ({
+vi.mock('@/components/onboarding/preAuth/WelcomeProvidersShowcase', () => ({
     WelcomeProvidersShowcase: () => null,
 }));
 
@@ -208,6 +217,7 @@ vi.mock('@/utils/errors/formatOperationFailedDebugMessage', () => ({
 }));
 
 vi.mock('@/platform/cryptoRandom', () => ({
+    getRandomBytes: (size: number) => new Uint8Array(size).fill(1),
     getRandomBytesAsync: async (size: number) => new Uint8Array(size).fill(1),
 }));
 
@@ -219,27 +229,45 @@ async function loadHome() {
 }
 
 async function advanceWizardToAuth(screen: RenderScreenResult) {
-    const primary = screen.findByTestId('onboarding-wizard-primary');
-    if (primary) {
-        await act(async () => {
-            await (primary.props.onPress ?? primary.props.action)?.();
-        });
+    const hasAuthActions = () => (
+        screen.findAllByTestId('welcome-signup-provider').length > 0
+        || screen.findAllByTestId('welcome-create-account').length > 0
+        || screen.findAllByTestId('welcome-mtls-login').length > 0
+    );
 
-        const relayContinue = screen.findByTestId('onboarding-wizard-primary');
-        if (relayContinue) {
+    // The onboarding flow can pivot between welcome → relay select → welcome(auth actions).
+    // Drive it until AuthEntryView actions are visible.
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+        if (hasAuthActions()) return;
+
+        const cloud = screen.findByTestId('onboarding-wizard-relay:cloud');
+        if (cloud) {
             await act(async () => {
-                await (relayContinue.props.onPress ?? relayContinue.props.action)?.();
+                await (cloud.props.onPress ?? cloud.props.action)?.();
             });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            continue;
         }
-        return;
-    }
 
-    // When a relay is already known/selected, the welcome step can render auth CTAs directly and omit the primary CTA.
-    const skip = screen.findByTestId('onboarding-wizard-skip');
-    if (skip) {
-        await act(async () => {
-            await (skip.props.onPress ?? skip.props.action)?.();
-        });
+        const primary = screen.findByTestId('onboarding-wizard-primary');
+        if (primary) {
+            await act(async () => {
+                await (primary.props.onPress ?? primary.props.action)?.();
+            });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            continue;
+        }
+
+        const skip = screen.findByTestId('onboarding-wizard-skip');
+        if (skip) {
+            await act(async () => {
+                await (skip.props.onPress ?? skip.props.action)?.();
+            });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            continue;
+        }
+
+        break;
     }
 }
 

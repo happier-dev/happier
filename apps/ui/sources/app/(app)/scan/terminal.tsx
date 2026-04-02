@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { WizardModalShell } from '@/components/onboardingWizard/WizardModalShell';
+import { WizardModalShell } from '@/components/onboarding';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';

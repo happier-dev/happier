@@ -3,7 +3,7 @@ import * as React from 'react';
 import { useRouter } from 'expo-router';
 
 import { RestoreQrView } from '@/components/account/restore/RestoreQrView';
-import { WizardModalShell } from '@/components/onboardingWizard/WizardModalShell';
+import { WizardModalShell } from '@/components/onboarding';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { t } from '@/text';
 

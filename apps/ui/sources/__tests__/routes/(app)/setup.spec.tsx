@@ -69,7 +69,7 @@ vi.mock('@/components/settings/server/RelayDriftActionCard', () => ({
     RelayDriftActionCard: (props: Record<string, unknown>) => React.createElement('RelayDriftActionCard', props),
 }));
 
-vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
+vi.mock('@/components/onboarding/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: (props: Record<string, unknown>) => React.createElement('PreAuthOnboardingWizardEntry', props),
 }));
 

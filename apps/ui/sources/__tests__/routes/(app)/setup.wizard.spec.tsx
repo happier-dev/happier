@@ -29,11 +29,11 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     clearPendingSetupIntent: vi.fn(),
 }));
 
-vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
+vi.mock('@/components/onboarding/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: (props: Record<string, unknown>) => React.createElement('PreAuthOnboardingWizardEntry', props),
 }));
 
-vi.mock('@/components/onboardingWizard/surfaces/SetupWizardSurface', () => ({
+vi.mock('@/components/onboarding/surfaces/SetupWizardSurface', () => ({
     SetupWizardSurface: (props: Record<string, unknown>) => React.createElement('SetupWizardSurface', props),
 }));
 vi.mock('@/components/ui/lists/ItemList', () => ({

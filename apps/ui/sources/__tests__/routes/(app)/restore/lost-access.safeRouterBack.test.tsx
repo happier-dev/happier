@@ -70,10 +70,10 @@ describe('LostAccess route', () => {
         try {
             await flushHookEffects({ cycles: 4, turns: 2 });
 
-            const backButton = screen.find((node) => node.props?.title === 'common.back' && typeof node.props?.onPress === 'function');
-            expect(backButton).toBeTruthy();
+            const backButtons = screen.findAll((node) => node.props?.title === 'common.back' && typeof node.props?.onPress === 'function');
+            expect(backButtons.length).toBeGreaterThanOrEqual(1);
 
-            backButton.props.onPress();
+            backButtons[0]?.props.onPress();
 
             await vi.advanceTimersByTimeAsync(75);
             expect(router.replace).toHaveBeenCalledWith('/');

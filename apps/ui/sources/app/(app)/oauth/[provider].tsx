@@ -20,7 +20,7 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 
-import { WizardModalShell } from '@/components/onboardingWizard/WizardModalShell';
+import { WizardModalShell } from '@/components/onboarding';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 

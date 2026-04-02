@@ -18,6 +18,7 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 export type SecretKeyLoginFormProps = Readonly<{
     embedded?: boolean;
     onSuccess?: () => void;
+    submitTitle?: string;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -143,7 +144,7 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
 
             <RoundButton
                 testID="restore-manual-submit"
-                title={t('connect.restoreAccount')}
+                title={props.submitTitle ?? t('connect.restoreAccount')}
                 action={handleLogin}
             />
         </>

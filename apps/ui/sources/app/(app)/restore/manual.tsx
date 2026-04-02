@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { t } from '@/text';
 import { StyleSheet } from 'react-native-unistyles';
-import { WizardModalShell } from '@/components/onboardingWizard/WizardModalShell';
+import { WizardModalShell } from '@/components/onboarding';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginForm';
 

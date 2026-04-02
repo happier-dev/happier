@@ -67,9 +67,14 @@ vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     clearPendingTerminalConnect: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverUrl: '' }),
-}));
+vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
+    return {
+        ...actual,
+        getActiveServerSnapshot: () => ({ serverUrl: '' }),
+        isActiveServerSelectionExplicit: () => false,
+    };
+});
 
 vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytesAsync: async (n: number) => new Uint8Array(n).fill(9),

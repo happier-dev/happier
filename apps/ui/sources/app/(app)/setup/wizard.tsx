@@ -3,10 +3,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { BaseModal } from '@/modal/components/BaseModal';
-import { SetupWizardSurface } from '@/components/onboardingWizard/surfaces/SetupWizardSurface';
+import { SetupWizardSurface } from '@/components/onboarding/surfaces/SetupWizardSurface';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
-import type { WizardContext, WizardStepId } from '@/components/onboardingWizard/wizardTypes';
+import type { WizardContext, WizardStepId } from '@/components/onboarding';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 
 export default function SetupWizardRoute() {

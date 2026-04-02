@@ -141,9 +141,14 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
 }));
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverUrl: 'https://server.test' }),
-}));
+vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
+    return {
+        ...actual,
+        getActiveServerSnapshot: () => ({ serverUrl: 'https://server.test' }),
+        isActiveServerSelectionExplicit: () => false,
+    };
+});
 
 describe('/ (welcome) auto redirect', () => {
     const testTimeoutMs = 60_000;

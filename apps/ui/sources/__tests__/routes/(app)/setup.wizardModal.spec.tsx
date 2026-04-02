@@ -42,7 +42,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 vi.mock('@/modal/components/BaseModal', () => ({
     BaseModal: (props: Record<string, unknown>) => React.createElement('BaseModal', props, props.children as any),
 }));
-vi.mock('@/components/onboardingWizard/surfaces/SetupWizardSurface', () => ({
+vi.mock('@/components/onboarding/surfaces/SetupWizardSurface', () => ({
     SetupWizardSurface: (props: Record<string, unknown>) => React.createElement('SetupWizardSurface', props),
 }));
 vi.mock('@/utils/platform/tauri', () => ({

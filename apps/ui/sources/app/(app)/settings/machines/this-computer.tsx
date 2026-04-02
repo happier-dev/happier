@@ -8,6 +8,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { LocalDaemonControlSection } from '@/components/settings/machines/localControl/LocalDaemonControlSection';
 import { t } from '@/text';
 import { isTauriDesktop } from '@/utils/platform/tauri';
+import { buildMachineSetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 export default function ThisComputerSetupRoute() {
     const router = useRouter();
@@ -19,7 +20,7 @@ export default function ThisComputerSetupRoute() {
                     testID="settings.machineSetup.openSetupWizard"
                     title={t('setupOnboarding.openSetupAction')}
                     subtitle={t('settings.machineSetupCurrentMachineSubtitle')}
-                    onPress={() => router.push('/setup/wizard?action=local&step=setup_this_computer&scope=machine')}
+                    onPress={() => router.push(buildMachineSetupWizardHref({ action: 'local', step: 'setup_this_computer' }))}
                 />
             </ItemGroup>
             {isDesktop ? <LocalDaemonControlSection /> : null}

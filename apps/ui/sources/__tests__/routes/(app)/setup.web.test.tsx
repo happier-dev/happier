@@ -72,7 +72,7 @@ vi.mock('@/components/navigation/shell/HomeHeader', () => ({
     HomeHeaderNotAuth: () => null,
 }));
 
-vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
+vi.mock('@/components/onboarding/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: (props: Record<string, unknown>) => React.createElement('PreAuthOnboardingWizardEntry', props),
 }));
 

@@ -1,0 +1,147 @@
+import * as React from 'react';
+import { View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
+
+import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
+import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
+import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
+import { WizardChoiceRow } from '@/components/onboarding';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SelectableRow } from '@/components/ui/lists/SelectableRow';
+
+import type { RemoteSshChecklistCopy } from './copy';
+import { remoteSshChecklistStyles } from './styles';
+
+export type RemoteSshChecklistCredentialsPhaseProps = Readonly<{
+    testID?: string;
+    copy: RemoteSshChecklistCopy;
+
+    remoteHostsCount: number;
+    hostPickerOpen: boolean;
+    onChangeHostPickerOpen: (open: boolean) => void;
+    hostPickerItems: readonly DropdownMenuItem[];
+    selectedHostPickerId: string;
+    onSelectHostPickerId: (itemId: string) => void;
+    usingSavedHost: boolean;
+
+    draft: SshCredentialsDraft;
+    onChangeDraft: (next: SshCredentialsDraft) => void;
+
+    remoteHostsManagementEnabled: boolean;
+    remoteHostsSecretMaterialEnabled: boolean;
+    saveHost: boolean;
+    onToggleSaveHost: () => void;
+    saveSecretMaterial: boolean;
+    onToggleSaveSecretMaterial: () => void;
+    privateKeyMaterialDraft: string;
+    onChangePrivateKeyMaterialDraft: (next: string) => void;
+}>;
+
+export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshChecklistCredentialsPhase(
+    props: RemoteSshChecklistCredentialsPhaseProps,
+) {
+    const { theme } = useUnistyles();
+    const styles = remoteSshChecklistStyles;
+
+    const renderToggleRow = React.useCallback((params: Readonly<{
+        testID: string;
+        selected: boolean;
+        title: string;
+        subtitle: string;
+        icon: React.ComponentProps<typeof Ionicons>['name'];
+        onPress: () => void;
+    }>) => (
+        <WizardChoiceRow
+            testID={params.testID}
+            selected={params.selected}
+            onPress={params.onPress}
+            icon={params.icon}
+            title={params.title}
+            subtitle={params.subtitle}
+        />
+    ), []);
+
+    return (
+        <View testID={props.testID} style={styles.root}>
+            {props.remoteHostsCount > 0 ? (
+                <View style={styles.sectionBlock}>
+                    <DropdownMenu
+                        open={props.hostPickerOpen}
+                        onOpenChange={props.onChangeHostPickerOpen}
+                        items={props.hostPickerItems}
+                        selectedId={props.selectedHostPickerId}
+                        onSelect={props.onSelectHostPickerId}
+                        placement="bottom"
+                        matchTriggerWidth={true}
+                        variant="slim"
+                        trigger={({ toggle, selectedItem }) => (
+                            <SelectableRow
+                                testID={props.testID ? `${props.testID}-remote-host-picker` : 'remote-ssh-checklist-remote-host-picker'}
+                                variant="selectable"
+                                selected={props.hostPickerOpen}
+                                onPress={toggle}
+                                left={<Ionicons name="server-outline" size={18} color={theme.colors.textSecondary} />}
+                                title={selectedItem?.title ?? t('setupOnboarding.remoteHosts.hostPickerTitle')}
+                                subtitle={selectedItem?.subtitle ?? t('setupOnboarding.remoteHosts.hostPickerSubtitle')}
+                                right={<Ionicons name="chevron-down" size={18} color={theme.colors.textSecondary} />}
+                            />
+                        )}
+                    />
+                </View>
+            ) : null}
+
+            {props.usingSavedHost ? null : (
+                    <>
+                    <SshCredentialsFields
+                        testIDPrefix={props.testID ? `${props.testID}-ssh` : 'remote-ssh-checklist-ssh'}
+                        layoutVariant="wizard"
+                        value={props.draft}
+                        onChange={props.onChangeDraft}
+                        privateKeyMaterial={props.privateKeyMaterialDraft}
+                        onChangePrivateKeyMaterial={props.onChangePrivateKeyMaterialDraft}
+                    />
+                    {props.remoteHostsManagementEnabled ? (
+                        <View style={styles.toggleList}>
+                            {renderToggleRow({
+                                testID: props.testID ? `${props.testID}-save-host` : 'remote-ssh-checklist-save-host',
+                                selected: props.saveHost,
+                                title: t('setupOnboarding.remoteHosts.saveHostTitle'),
+                                subtitle: t('setupOnboarding.remoteHosts.saveHostSubtitle'),
+                                icon: 'bookmark-outline',
+                                onPress: props.onToggleSaveHost,
+                            })}
+
+                            {props.saveHost && props.remoteHostsSecretMaterialEnabled && props.draft.authMode === 'password'
+                                ? renderToggleRow({
+                                    testID: props.testID ? `${props.testID}-save-password` : 'remote-ssh-checklist-save-password',
+                                    selected: props.saveSecretMaterial,
+                                    title: t('setupOnboarding.remoteHosts.savePasswordTitle'),
+                                    subtitle: t('setupOnboarding.remoteHosts.savePasswordSubtitle'),
+                                    icon: 'key-outline',
+                                    onPress: props.onToggleSaveSecretMaterial,
+                                })
+                                : null}
+
+                            {props.saveHost && props.remoteHostsSecretMaterialEnabled && props.draft.authMode === 'keyfile'
+                                ? (
+                                    <>
+                                        {renderToggleRow({
+                                            testID: props.testID ? `${props.testID}-save-private-key` : 'remote-ssh-checklist-save-private-key',
+                                            selected: props.saveSecretMaterial,
+                                            title: t('setupOnboarding.remoteHosts.savePrivateKeyTitle'),
+                                            subtitle: t('setupOnboarding.remoteHosts.savePrivateKeySubtitle'),
+                                            icon: 'key-outline',
+                                            onPress: props.onToggleSaveSecretMaterial,
+                                        })}
+                                    </>
+                                )
+                                : null}
+                        </View>
+                    ) : null}
+                </>
+            )}
+        </View>
+    );
+});

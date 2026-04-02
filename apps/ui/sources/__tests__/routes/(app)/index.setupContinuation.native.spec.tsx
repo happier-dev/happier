@@ -6,13 +6,17 @@ import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupInte
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
-vi.mock('@/components/onboardingWizard', () => ({
-    OnboardingWizardSurface: () => null,
-}));
-vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
+vi.mock('@/components/onboarding', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/onboarding')>();
+    return {
+        ...actual,
+        OnboardingWizardSurface: () => null,
+    };
+});
+vi.mock('@/components/onboarding/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: () => null,
 }));
-vi.mock('@/components/onboardingWizard/surfaces/SetupWizardSurface', () => ({
+vi.mock('@/components/onboarding/surfaces/SetupWizardSurface', () => ({
     SetupWizardSurface: (props: any) => React.createElement('SetupWizardSurface', props),
 }));
 vi.mock('@/modal/components/BaseModal', () => ({

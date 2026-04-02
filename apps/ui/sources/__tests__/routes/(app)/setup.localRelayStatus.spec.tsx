@@ -73,7 +73,7 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown>) => React.createElement('Item', props),
 }));
 
-vi.mock('@/components/onboardingWizard/PreAuthOnboardingWizardEntry', () => ({
+vi.mock('@/components/onboarding/PreAuthOnboardingWizardEntry', () => ({
     PreAuthOnboardingWizardEntry: (props: Record<string, unknown>) => React.createElement('PreAuthOnboardingWizardEntry', props),
 }));
 

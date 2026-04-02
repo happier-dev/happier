@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
+import { buildSetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 export default function SetupRoute() {
     const auth = useAuth();
@@ -21,7 +22,7 @@ export default function SetupRoute() {
         }
 
         redirectedRef.current = true;
-        router.replace('/setup/wizard');
+        router.replace(buildSetupWizardHref());
     }, [auth.isAuthenticated]);
 
     return null;

@@ -8,14 +8,13 @@ import { BaseModal } from '@/modal/components/BaseModal';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { isTauriDesktop } from '@/utils/platform/tauri';
-import { isAuthenticatedRootDeepLinkRedirectAllowed } from '@/auth/routing/isAuthenticatedRootDeepLinkRedirectAllowed';
-import { resolvePostAuthSetupRoute } from '@/components/onboardingWizard/wizardResume';
-import { PreAuthOnboardingWizardEntry } from '@/components/onboardingWizard/PreAuthOnboardingWizardEntry';
-import { SetupWizardSurface } from '@/components/onboardingWizard/surfaces/SetupWizardSurface';
+import { resolvePostAuthSetupRoute, PreAuthOnboardingWizardEntry } from '@/components/onboarding';
+import { SetupWizardSurface } from '@/components/onboarding/surfaces/SetupWizardSurface';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
+import { isAuthenticatedRootDeepLinkRedirectAllowed } from '@/auth/routing/authenticatedRootDeepLinkRedirectAllowed';
 
 const stylesheet = StyleSheet.create({
     root: {

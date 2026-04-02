@@ -88,6 +88,15 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
 }));
 
+vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
+    return {
+        ...actual,
+        getActiveServerSnapshot: () => ({ serverUrl: 'https://server.test' }),
+        isActiveServerSelectionExplicit: () => true,
+    };
+});
+
 describe('/ (welcome) signup methods', () => {
     beforeEach(() => {
         getReadyServerFeaturesMock.mockReset();
@@ -276,7 +285,7 @@ describe('/ (welcome) signup methods', () => {
             expect(screen.findAllByTestId('welcome-signup-provider')).toHaveLength(0);
             expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
             expect(screen.findByTestId('welcome-configure-server')).not.toBeNull();
-            expect(screen.findAllByTestId('welcome-retry-server')).toHaveLength(0);
+            expect(screen.findAllByTestId('welcome-retry-server').length).toBeGreaterThan(0);
         } finally {
             delete process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;
             vi.clearAllTimers();
@@ -301,6 +310,6 @@ describe('/ (welcome) signup methods', () => {
         expect(screen.findAllByTestId('welcome-signup-provider')).toHaveLength(0);
         expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
         expect(screen.findByTestId('welcome-configure-server')).not.toBeNull();
-        expect(screen.findAllByTestId('welcome-retry-server')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-retry-server').length).toBeGreaterThan(0);
     });
 });
