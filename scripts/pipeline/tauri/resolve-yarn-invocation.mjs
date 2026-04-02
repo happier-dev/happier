@@ -24,7 +24,7 @@ function canExec(execImpl, cmd, args) {
 }
 
 /**
- * @param {{ platform: NodeJS.Platform; execImpl: typeof execFileSync }} opts
+ * @param {{ platform: NodeJS.Platform; execImpl: typeof execFileSync; nodeExecPath: string }} opts
  * @returns {string | ''}
  */
 function resolveCorepackPath(opts) {
@@ -32,7 +32,7 @@ function resolveCorepackPath(opts) {
   if (canExec(opts.execImpl, 'corepack', ['--version'])) return 'corepack';
 
   // On some runners, corepack isn't on PATH even though it's shipped next to node.
-  const nodeDir = path.dirname(process.execPath);
+  const nodeDir = path.dirname(opts.nodeExecPath);
   const candidates =
     opts.platform === 'win32'
       ? ['corepack.cmd', 'corepack.exe', 'corepack']
@@ -54,14 +54,29 @@ function resolveCorepackPath(opts) {
  * @param {{
  *   platform?: NodeJS.Platform;
  *   execFileSync?: typeof execFileSync;
+ *   nodeExecPath?: string;
  * }} [opts]
  * @returns {{ cmd: string; prefixArgs: string[] }}
  */
 export function resolveYarnInvocation(opts) {
   const platform = opts?.platform ?? process.platform;
   const execImpl = opts?.execFileSync ?? execFileSync;
+  const nodeExecPath = opts?.nodeExecPath ?? process.execPath;
 
   if (platform === 'win32') {
+    // Prefer an absolute-path yarn shim next to node.exe. This is how `corepack enable`
+    // installs yarn on GitHub-hosted Windows runners, and using an absolute path avoids
+    // PATH resolution issues inside Git-Bash-hosted Node processes.
+    const nodeDir = path.dirname(nodeExecPath);
+    const yarnCmdNearNode = path.join(nodeDir, 'yarn.cmd');
+    try {
+      if (fs.existsSync(yarnCmdNearNode) && fs.statSync(yarnCmdNearNode).isFile()) {
+        return { cmd: yarnCmdNearNode, prefixArgs: [] };
+      }
+    } catch {
+      // ignore
+    }
+
     // Prefer a PATH-resolved yarn.cmd invoked through cmd.exe.
     // This avoids Corepack's internal `spawn('yarn')` checks which can fail on Windows runners.
     if (canExec(execImpl, 'cmd.exe', ['/D', '/S', '/C', 'yarn --version'])) {
@@ -74,7 +89,7 @@ export function resolveYarnInvocation(opts) {
     return { cmd: 'yarn', prefixArgs: [] };
   }
 
-  const corepackPath = resolveCorepackPath({ platform, execImpl });
+  const corepackPath = resolveCorepackPath({ platform, execImpl, nodeExecPath });
   if (corepackPath) {
     return { cmd: corepackPath, prefixArgs: ['yarn'] };
   }
