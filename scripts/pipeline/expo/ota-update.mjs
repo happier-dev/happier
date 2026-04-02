@@ -28,6 +28,59 @@ function fail(message) {
   process.exit(1);
 }
 
+function parseNonNegativeInt(raw) {
+  const parsed = Number.parseInt(String(raw ?? '').trim(), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function sleepMs(ms) {
+  const duration = Math.max(0, Number(ms) || 0);
+  if (duration <= 0) return;
+  // Sync sleep keeps this script dependency-free and avoids refactoring the caller to async.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, duration);
+}
+
+function resolveOtaRetrySettings(env) {
+  const maxRetries = parseNonNegativeInt(env?.HAPPIER_PIPELINE_EXPO_OTA_MAX_RETRIES) ?? 3;
+  const baseDelayMs = parseNonNegativeInt(env?.HAPPIER_PIPELINE_EXPO_OTA_RETRY_DELAY_MS) ?? 5_000;
+  return { maxRetries, baseDelayMs };
+}
+
+/**
+ * @param {unknown} err
+ * @returns {string}
+ */
+function stringifyExecOutput(err) {
+  if (!err || typeof err !== 'object') return '';
+  const stdout = /** @type {any} */ (err).stdout;
+  const stderr = /** @type {any} */ (err).stderr;
+  const raw = [
+    typeof stdout === 'string' ? stdout : Buffer.isBuffer(stdout) ? stdout.toString('utf8') : '',
+    typeof stderr === 'string' ? stderr : Buffer.isBuffer(stderr) ? stderr.toString('utf8') : '',
+    typeof /** @type {any} */ (err).message === 'string' ? /** @type {any} */ (err).message : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return String(raw ?? '');
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isTransientEasUpdateFailure(err) {
+  const raw = stringifyExecOutput(err);
+  if (!raw) return false;
+  return (
+    raw.includes('Service Unavailable')
+    || raw.includes('GraphQL request failed')
+    || raw.includes('Request failed with status code 503')
+    || raw.includes('ECONNRESET')
+    || raw.includes('ETIMEDOUT')
+    || raw.includes('socket hang up')
+  );
+}
+
 /**
  * @param {{ dryRun: boolean }} opts
  * @param {string} cmd
@@ -205,24 +258,41 @@ function main() {
   const message = resolvePreviewMessage(normalizedEnvironment, values.message, opts);
   if (!message) fail(`Missing Expo update message for ${normalizedEnvironment} OTA update.`);
 
-  run(
-    opts,
-    'npx',
-    [
-      '--yes',
-      `eas-cli@${easCliVersion}`,
-      'update',
-      '--channel',
-      updateLane,
-      ...(interactivity.nonInteractive ? ['--non-interactive'] : []),
-      '--message',
-      message,
-    ],
-    {
-      cwd: uiDir,
-      env: easCommandEnv,
-    },
-  );
+  const retrySettings = resolveOtaRetrySettings(process.env);
+  const updateArgs = [
+    '--yes',
+    `eas-cli@${easCliVersion}`,
+    'update',
+    '--channel',
+    updateLane,
+    ...(interactivity.nonInteractive ? ['--non-interactive'] : []),
+    '--message',
+    message,
+  ];
+
+  for (let attempt = 0; attempt <= retrySettings.maxRetries; attempt += 1) {
+    try {
+      const stdout = run(opts, 'npx', updateArgs, {
+        cwd: uiDir,
+        env: easCommandEnv,
+        // In non-interactive mode we can capture output and pattern-match transient failures.
+        stdio: interactivity.nonInteractive ? 'pipe' : 'inherit',
+      });
+      if (interactivity.nonInteractive && stdout) {
+        // Preserve useful CLI output when we run with stdio=pipe.
+        process.stdout.write(stdout);
+      }
+      break;
+    } catch (error) {
+      if (!interactivity.nonInteractive || !isTransientEasUpdateFailure(error) || attempt >= retrySettings.maxRetries) {
+        throw error;
+      }
+
+      const delayMs = retrySettings.baseDelayMs * (2 ** attempt);
+      console.error(`[pipeline] eas update failed with a transient error; retrying in ${delayMs}ms (attempt ${attempt + 1}/${retrySettings.maxRetries})`);
+      sleepMs(delayMs);
+    }
+  }
 
   const upload = maybeUploadSentryExpoSourceMaps({
     dryRun,
