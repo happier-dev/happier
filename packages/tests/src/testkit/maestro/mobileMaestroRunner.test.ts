@@ -29,7 +29,7 @@ describe('mobileMaestroRunner', () => {
             '--flows',
             'suites/mobile-e2e/flows',
             '--appId',
-            'dev.happier.app.internaldev',
+            'dev.happier.app.dev.internal',
             '--serverUrl',
             'http://127.0.0.1:26050',
           ],

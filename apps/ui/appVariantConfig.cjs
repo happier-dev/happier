@@ -39,7 +39,7 @@ function buildProductionConfig(overrides) {
 const APP_ENVIRONMENT_CONFIGS = {
     internaldev: buildRingBackedConfig('internaldev', {
         name: 'Happier (internal dev)',
-        iosBundleId: 'dev.happier.app.internaldev',
+        iosBundleId: 'dev.happier.app.dev.internal',
         androidPackage: 'dev.happier.app.internaldev',
         scheme: 'happier-internaldev',
         enableAssociatedDomains: false,
@@ -96,4 +96,3 @@ module.exports = {
     getAppEnvironmentConfig,
     normalizeAppEnvironmentId,
 };
-

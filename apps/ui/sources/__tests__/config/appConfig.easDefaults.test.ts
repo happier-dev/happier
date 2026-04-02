@@ -65,7 +65,7 @@ describe('app.config.js', () => {
         expect(exp.extra?.app?.identityVariant).toBe('internaldev');
         expect(exp.owner).toBe('happier-dev');
         expect(exp.slug).toBe('happier');
-        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.internaldev');
+        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.dev.internal');
         expect(exp.android?.package).toBe('dev.happier.app.internaldev');
         expect(exp.scheme).toBe('happier-internaldev');
     });

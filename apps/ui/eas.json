@@ -30,7 +30,8 @@
         "APP_ENV": "internaldev",
         "EXPO_UPDATES_CHANNEL": "internaldev",
         "EXPO_APP_NAME": "Happier (internal dev)",
-        "EXPO_APP_BUNDLE_ID": "dev.happier.app.internaldev",
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app.dev.internal",
+        "EXPO_ANDROID_PACKAGE": "dev.happier.app.internaldev",
         "EXPO_APP_SCHEME": "happier-internaldev",
         "HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE": "most-recent",
         "HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH": "true",
@@ -49,7 +50,8 @@
         "APP_ENV": "internaldev",
         "EXPO_UPDATES_CHANNEL": "internaldev",
         "EXPO_APP_NAME": "Happier (internal dev)",
-        "EXPO_APP_BUNDLE_ID": "dev.happier.app.internaldev",
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app.dev.internal",
+        "EXPO_ANDROID_PACKAGE": "dev.happier.app.internaldev",
         "EXPO_APP_SCHEME": "happier-internaldev"
       }
     },

@@ -38,7 +38,8 @@ test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-cli
   assert.equal(internaldev?.env?.APP_ENV, 'internaldev');
   assert.equal(internaldev?.env?.EXPO_UPDATES_CHANNEL, 'internaldev');
   assert.equal(internaldev?.env?.EXPO_APP_NAME, 'Happier (internal dev)');
-  assert.equal(internaldev?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.internaldev');
+  assert.equal(internaldev?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.dev.internal');
+  assert.equal(internaldev?.env?.EXPO_ANDROID_PACKAGE, 'dev.happier.app.internaldev');
   assert.equal(internaldev?.env?.EXPO_APP_SCHEME, 'happier-internaldev');
   assert.equal(internaldev?.env?.HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE, 'most-recent');
   assert.equal(internaldev?.env?.HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH, 'true');
@@ -55,6 +56,7 @@ test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-cli
   assert.equal(internaldevStore?.env?.APP_ENV, 'internaldev');
   assert.equal(internaldevStore?.env?.EXPO_UPDATES_CHANNEL, 'internaldev');
   assert.equal(internaldevStore?.env?.EXPO_APP_NAME, 'Happier (internal dev)');
-  assert.equal(internaldevStore?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.internaldev');
+  assert.equal(internaldevStore?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.dev.internal');
+  assert.equal(internaldevStore?.env?.EXPO_ANDROID_PACKAGE, 'dev.happier.app.internaldev');
   assert.equal(internaldevStore?.env?.EXPO_APP_SCHEME, 'happier-internaldev');
 });
