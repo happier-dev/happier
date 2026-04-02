@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import { compareVersions } from '@happier-dev/cli-common/update';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { resolvePublicReleaseRingLabelForId } from '@happier-dev/release-runtime/releaseRings';
 import { ensureJavaScriptRuntimeExecutable } from '../../../runtime/js/ensureJavaScriptRuntimeExecutable';
 import { isBun } from '../../../utils/runtime';
 
@@ -15,12 +16,8 @@ function packageJsonPathForNodeModules(params: Readonly<{ rootDir: string; packa
   return join(params.rootDir, 'node_modules', ...parts, 'package.json');
 }
 
-function resolvePublicReleaseRingSuffix(ring: PublicReleaseRingId): 'stable' | 'preview' | 'dev' {
-  return ring === 'publicdev' ? 'dev' : ring;
-}
-
 function resolveScopedRuntimeDir(params: Readonly<{ homeDir: string; publicReleaseRing: PublicReleaseRingId }>): string {
-  const suffix = resolvePublicReleaseRingSuffix(params.publicReleaseRing);
+  const suffix = resolvePublicReleaseRingLabelForId(params.publicReleaseRing);
   return suffix === 'stable' ? join(params.homeDir, 'runtime') : join(params.homeDir, `runtime.${suffix}`);
 }
 

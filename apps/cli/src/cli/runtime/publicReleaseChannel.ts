@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 import {
   getReleaseRingCatalogEntry,
   normalizePublicReleaseRingId,
+  resolvePublicReleaseRingIdForCliInvokerName,
   type PublicReleaseRingId,
 } from '@happier-dev/release-runtime/releaseRings';
 
@@ -30,8 +31,8 @@ export function inferPublicReleaseRingIdFromEnvAndArgv(params: Readonly<{
   const candidates = [params.argv[0] ?? '', params.argv[1] ?? ''];
   for (const candidate of candidates) {
     const name = normalizeInvokerCandidate(candidate);
-    if (name === 'hprev') return 'preview';
-    if (name === 'hdev') return 'publicdev';
+    const ring = resolvePublicReleaseRingIdForCliInvokerName(name);
+    if (ring) return ring;
   }
 
   return 'stable';
@@ -48,8 +49,8 @@ export function resolvePublicReleaseRingIdFromCliArgs(params: Readonly<{
   const ch = args.find((a) => a === '--channel' || a.startsWith('--channel='));
   if (!ch) {
     const name = normalizeInvokerCandidate(params.invokedPath);
-    if (name === 'hprev') return 'preview';
-    if (name === 'hdev') return 'publicdev';
+    const ring = resolvePublicReleaseRingIdForCliInvokerName(name);
+    if (ring) return ring;
     return 'stable';
   }
 

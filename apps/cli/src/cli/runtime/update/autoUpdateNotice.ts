@@ -9,7 +9,11 @@ import {
   spawnDetachedNode,
   writeUpdateCache,
 } from '@happier-dev/cli-common/update';
-import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import {
+  resolveCliInvokerNameForPublicRing,
+  resolvePublicReleaseRingLabelForId,
+  type PublicReleaseRingId,
+} from '@happier-dev/release-runtime/releaseRings';
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CHECK_LOCK_TTL_MS = 2 * 60 * 1000;
@@ -25,17 +29,13 @@ function updateChecksEnabled(env: NodeJS.ProcessEnv): boolean {
   return String(env.HAPPIER_CLI_UPDATE_CHECK ?? '1').trim() !== '0';
 }
 
-function resolvePublicReleaseRingSuffix(ring: PublicReleaseRingId): 'stable' | 'preview' | 'dev' {
-  return ring === 'publicdev' ? 'dev' : ring;
-}
-
 function resolveUpdateCacheFileName(ring: PublicReleaseRingId): string {
-  const suffix = resolvePublicReleaseRingSuffix(ring);
+  const suffix = resolvePublicReleaseRingLabelForId(ring);
   return suffix === 'stable' ? 'update.json' : `update.${suffix}.json`;
 }
 
 function resolveUpdateCheckLockFileName(ring: PublicReleaseRingId): string {
-  const suffix = resolvePublicReleaseRingSuffix(ring);
+  const suffix = resolvePublicReleaseRingLabelForId(ring);
   return suffix === 'stable' ? 'update.check.lock.json' : `update.check.${suffix}.lock.json`;
 }
 
@@ -46,9 +46,7 @@ function resolveSelfChannelArgs(ring: PublicReleaseRingId): string[] {
 }
 
 function resolveUpdateCommand(ring: PublicReleaseRingId): string {
-  if (ring === 'preview') return 'hprev self update';
-  if (ring === 'publicdev') return 'hdev self update';
-  return 'happier self update';
+  return `${resolveCliInvokerNameForPublicRing(ring)} self update`;
 }
 
 const LONG_FLAGS_WITH_VALUE = new Set([
@@ -159,7 +157,7 @@ export function maybeAutoUpdateNotice(params: Readonly<{
   if (shouldNotify && cached) {
     const from = current || cached.runtimeVersion || cached.invokerVersion || 'current';
     const msg = formatUpdateNotice({
-      toolName: publicReleaseRing === 'preview' ? 'hprev' : publicReleaseRing === 'publicdev' ? 'hdev' : 'happier',
+      toolName: resolveCliInvokerNameForPublicRing(publicReleaseRing),
       from,
       to: latest ?? 'latest',
       updateCommand: resolveUpdateCommand(publicReleaseRing),
