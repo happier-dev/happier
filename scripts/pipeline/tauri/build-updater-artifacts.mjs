@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
 import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
 import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
@@ -57,6 +58,38 @@ function tempFile(dir, filename) {
   return path.join(dir, filename);
 }
 
+/**
+ * We avoid invoking Yarn/Corepack on Windows runners because Corepack shims can fail when Git-Bash
+ * provides a POSIX-style PATH (Corepack tries to spawn `yarn` during validation). Instead, we use
+ * Node + npm CLI to run `tauri:prepare:build` and call the Tauri CLI directly from node_modules.
+ *
+ * @param {{ platform: NodeJS.Platform; nodeExecPath: string; npmExecPath?: string }} opts
+ */
+export function resolveTauriPrepareBuildInvocation(opts) {
+  if (opts.platform !== 'win32') {
+    throw new Error('resolveTauriPrepareBuildInvocation is Windows-only');
+  }
+
+  const normalized = String(opts.npmExecPath ?? '').trim();
+  if (normalized) {
+    return { cmd: opts.nodeExecPath, args: [normalized, 'run', '-s', 'tauri:prepare:build'] };
+  }
+
+  const nodeDir = path.win32.dirname(opts.nodeExecPath);
+  const fallback = path.win32.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  return { cmd: opts.nodeExecPath, args: [fallback, 'run', '-s', 'tauri:prepare:build'] };
+}
+
+/**
+ * @param {{ platform: NodeJS.Platform; absUiDir: string }} opts
+ */
+export function resolveTauriCliInvocation(opts) {
+  if (opts.platform === 'win32') {
+    return { cmd: path.win32.join(opts.absUiDir, 'node_modules', '.bin', 'tauri.cmd'), args: [] };
+  }
+  return { cmd: path.join(opts.absUiDir, 'node_modules', '.bin', 'tauri'), args: [] };
+}
+
 function main() {
   const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
@@ -102,7 +135,8 @@ function main() {
     run(opts, 'rustup', ['target', 'add', tauriTarget], { cwd: absUiDir, timeoutMs: 10 * 60_000 });
   }
 
-  const yarn = resolveYarnInvocation();
+  const platform = process.platform;
+  const yarn = platform === 'win32' ? null : resolveYarnInvocation();
   const targetArgs = tauriTarget ? ['--target', tauriTarget] : [];
   /** @type {string[]} */
   const configs = [];
@@ -156,7 +190,16 @@ function main() {
   };
 
   // Build the frontend assets once, outside of Tauri's internal beforeBuild hook.
-  run(opts, yarn.cmd, [...yarn.prefixArgs, '-s', 'tauri:prepare:build'], { cwd: absUiDir, env: baseTauriEnv });
+  if (platform === 'win32') {
+    const npm = resolveTauriPrepareBuildInvocation({
+      platform,
+      nodeExecPath: process.execPath,
+      npmExecPath: process.env.npm_execpath,
+    });
+    run(opts, npm.cmd, npm.args, { cwd: absUiDir, env: baseTauriEnv });
+  } else {
+    run(opts, yarn.cmd, [...yarn.prefixArgs, '-s', 'tauri:prepare:build'], { cwd: absUiDir, env: baseTauriEnv });
+  }
 
   if (environment !== 'production') {
     const versionOverride = tempFile(tmpRoot, 'tauri.version.override.json');
@@ -168,15 +211,32 @@ function main() {
 
     const configPath = environment === 'publicdev' ? 'src-tauri/tauri.publicdev.conf.json' : 'src-tauri/tauri.preview.conf.json';
 
-    run(
-      opts,
-      yarn.cmd,
-      [...yarn.prefixArgs, 'tauri', 'build', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
-      {
+    if (platform === 'win32') {
+      const tauri = resolveTauriCliInvocation({ platform, absUiDir });
+      run(opts, tauri.cmd, ['build', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs], {
         cwd: absUiDir,
         env: baseTauriEnv,
-      },
-    );
+      });
+    } else {
+      run(
+        opts,
+        yarn.cmd,
+        [...yarn.prefixArgs, 'tauri', 'build', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
+        {
+          cwd: absUiDir,
+          env: baseTauriEnv,
+        },
+      );
+    }
+    return;
+  }
+
+  if (platform === 'win32') {
+    const tauri = resolveTauriCliInvocation({ platform, absUiDir });
+    run(opts, tauri.cmd, ['build', ...configs, ...targetArgs], {
+      cwd: absUiDir,
+      env: baseTauriEnv,
+    });
     return;
   }
 
@@ -186,4 +246,8 @@ function main() {
   });
 }
 
-main();
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+const selfPath = fileURLToPath(import.meta.url);
+if (invokedPath && invokedPath === selfPath) {
+  main();
+}
