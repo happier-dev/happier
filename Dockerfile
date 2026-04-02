@@ -276,7 +276,9 @@ RUN yarn workspace @happier-dev/server build
 
 FROM node:${NODE_VERSION} AS server
 WORKDIR /repo
-RUN apt-get update && apt-get install -y python3 ffmpeg curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends -o APT::Keep-Downloaded-Packages=false python3 ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV PORT=3005
 ENV RUN_MIGRATIONS=1
