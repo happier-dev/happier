@@ -114,6 +114,60 @@ function listFilesRecursively(filePath) {
   return out;
 }
 
+/**
+ * Resolve the current tag ref target SHA via the GitHub API.
+ * Returns empty string when the ref is missing or cannot be read.
+ *
+ * @param {{ repo: string; tag: string; env: Record<string, string>; dryRun: boolean }} params
+ */
+function readTagShaViaGithubApi(params) {
+  const repo = String(params.repo ?? '').trim();
+  const tag = String(params.tag ?? '').trim();
+  if (!repo || !tag) return '';
+  return run('gh', ['api', `repos/${repo}/git/ref/tags/${tag}`, '--jq', '.object.sha'], {
+    env: params.env,
+    dryRun: params.dryRun,
+    allowFailure: true,
+  }).trim();
+}
+
+/**
+ * Best-effort update for a rolling tag (force) using the GitHub API.
+ * This avoids relying on `git push` auth being wired to GH_TOKEN in CI.
+ *
+ * @param {{ repo: string; tag: string; sha: string; env: Record<string, string>; dryRun: boolean; oldShaHint?: string }} params
+ */
+function updateRollingTagViaGithubApi(params) {
+  const repo = String(params.repo ?? '').trim();
+  const tag = String(params.tag ?? '').trim();
+  const sha = String(params.sha ?? '').trim();
+  if (!repo || !tag || !sha) return false;
+
+  const oldSha = String(params.oldShaHint ?? '').trim() || readTagShaViaGithubApi({
+    repo,
+    tag,
+    env: params.env,
+    dryRun: params.dryRun,
+  });
+
+  // PATCH existing ref, otherwise POST a new ref.
+  if (oldSha) {
+    run(
+      'gh',
+      ['api', '-X', 'PATCH', `repos/${repo}/git/refs/tags/${tag}`, '-f', `sha=${sha}`, '-f', 'force=true'],
+      { env: params.env, dryRun: params.dryRun },
+    );
+    return true;
+  }
+
+  run(
+    'gh',
+    ['api', '-X', 'POST', `repos/${repo}/git/refs`, '-f', `ref=refs/tags/${tag}`, '-f', `sha=${sha}`],
+    { env: params.env, dryRun: params.dryRun },
+  );
+  return true;
+}
+
 function main() {
   const { values } = parseArgs({
     options: {
@@ -169,20 +223,32 @@ function main() {
   if (ghToken) ghEnv.GH_TOKEN = ghToken;
 
   let oldSha = '';
-  try {
+  if (rollingTag && repo) {
+    oldSha = readTagShaViaGithubApi({ repo, tag, env: ghEnv, dryRun });
+  }
+  if (!oldSha) {
     oldSha = run('git', ['rev-parse', '-q', '--verify', `refs/tags/${tag}^{commit}`], {
       dryRun,
       allowFailure: true,
     }).trim();
-  } catch {
-    oldSha = '';
   }
 
   let pushedRollingTag = true;
   if (rollingTag) {
-    run('git', ['tag', '-f', tag, sha], { dryRun });
     try {
-      run('git', ['push', 'origin', `refs/tags/${tag}`, '--force'], { dryRun });
+      // Prefer GH API so the workflow does not rely on git remote auth being configured.
+      if (repo) {
+        pushedRollingTag = updateRollingTagViaGithubApi({ repo, tag, sha, env: ghEnv, dryRun, oldShaHint: oldSha });
+      } else {
+        pushedRollingTag = false;
+      }
+
+      if (!pushedRollingTag) {
+        // Fall back to git push for local runs where the user has origin auth set up.
+        run('git', ['tag', '-f', tag, sha], { dryRun });
+        run('git', ['push', 'origin', `refs/tags/${tag}`, '--force'], { dryRun });
+        pushedRollingTag = true;
+      }
     } catch {
       pushedRollingTag = false;
       console.log('::warning::Rolling tag push failed (tag protections or permissions). Skipping asset upload for rolling tag.');
