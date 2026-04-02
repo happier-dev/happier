@@ -10,8 +10,10 @@ Happier always follows the same high-level flow:
 3. **Use the desktop app as your control panel** (recommended; the web UI is best for status/management).
 4. **Get a machine ready**:
    - **This computer**: configure the local background service from the app.
-   - **Remote machine**: bootstrap it over SSH from the app.
+   - **Remote machine**: bootstrap it over SSH from the app, and optionally save the SSH target as a reusable Remote host.
 5. **Optionally enable private access** (for example Tailscale) for self-hosted/local Relay access from other devices.
+
+User guide: [Relay access](/docs/clients/relay-access).
 
 ## Choose your setup
 
@@ -21,9 +23,10 @@ You use Happier Cloud as your Relay.
 1. Open the desktop app (recommended) or the web app.
 2. Choose **Happier Cloud** when the app asks you which Relay to use.
 3. Sign in.
-4. Open `/setup` and choose **Set up this computer**.
+4. Open the **Setup wizard** and choose **Set up this computer**.
    - This configures the local background service against the Relay you just selected.
    - If the app detects Relay drift later, it shows a repair action instead of silently leaving the daemon on another Relay.
+   - If you are restoring an already-signed-in device, use **Login with secret key instead** on the mobile login screen.
 
 Optional CLI path:
 
@@ -34,6 +37,7 @@ happier setup --relay-url https://api.happier.dev
 ```
 
 The app-first setup is the recommended control-panel flow. The CLI is a great fallback when you want one-command setup from a terminal.
+`happier setup` is the terminal executor for the same shared setup flow; `happier setup plan` only previews the steps.
 
 Notes:
 - The desktop app and the installer-installed CLI are self-contained; you do not need system Node/Yarn installed.
@@ -44,7 +48,7 @@ You run your own Relay (remote machine, LAN box, or even your own computer), but
 
 1. Install your Relay (examples):
    - Proxmox: see [Proxmox deployment](../deployment/proxmox).
-   - Any machine (managed service): install the CLI, then run `happier relay host install --mode system` (or remote: `happier relay host install --ssh user@host --mode system`)
+   - Any machine (managed service): install the CLI, then run `happier relay host install` (or remote: `happier relay host install --ssh user@host`). To install as a system-wide service, use `--mode system` (requires root/sudo).
    - Docker: see [Deployment → Docker](../deployment/docker).
 
 2. Open the desktop app (recommended) or web UI (status/management only) and choose that Relay.
@@ -54,23 +58,22 @@ You run your own Relay (remote machine, LAN box, or even your own computer), but
 3. Create an account / sign in on that Relay.
 
 4. In the desktop app, decide which machine should run the background service:
-   - **This computer**: use `/setup` → **Set up this computer**.
-   - **Another machine**: use **Add machine over SSH** from the Machines settings screen.
+   - **This computer**: use the **Setup wizard** → **Set up this computer**.
+   - **Another machine**: use **Add machine over SSH** from the Machines settings screen or save a reusable Remote host first.
 
-If you need an advanced CLI fallback for the daemon host:
-
-```bash
-# Recommended remote-machine setup:
-happier machine setup --ssh user@host --install-relay-runtime
-```
-
-Troubleshooting-only (manual daemon setup on the remote host, without SSH automation):
+If you need a CLI fallback for the daemon host:
 
 ```bash
 happier setup --relay-url https://YOUR_SERVER_URL --skip-providers
 ```
 
-This is the same “guided executor” path as the app wizard, but from the terminal.
+This is the same guided executor path as the app wizard, but from the terminal.
+
+If you want to bootstrap a *remote machine* over SSH instead, use:
+
+```bash
+happier machine setup --ssh user@host
+```
 If you want to save a reusable Relay profile for future CLI commands, see [CLI → Server profiles](/docs/clients/cli#server-profiles).
 
 ### Option C — Devbox (server + daemon on the same machine)
@@ -79,7 +82,7 @@ You install both the Relay and the background service on one box.
 1. Install the stack (for example via `hstack setup-from-source --profile=selfhost` or the Proxmox “devbox” option).
 2. Open the desktop app (recommended) or web UI (status/management only) and choose that Relay (use the printed configure-server link/QR if available).
 3. Sign in / create an account.
-4. In the app, use `/setup` → **Set up this computer** if you are on that machine, or set up the box over SSH if you are operating it remotely.
+4. In the app, use the **Setup wizard** → **Set up this computer** if you are on that machine, or set up the box over SSH if you are operating it remotely.
 5. If the Relay is local/self-hosted, optionally enable private access so phones and other devices can reach it without exposing it publicly.
 
 Recommended for first setup:

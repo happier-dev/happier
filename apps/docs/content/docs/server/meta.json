@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "quickstart",
+    "setup-and-bootstrap-policy",
     "auth",
     "encryption",
     "retention",

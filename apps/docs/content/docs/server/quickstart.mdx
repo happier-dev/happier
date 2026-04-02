@@ -24,7 +24,7 @@ If you self-host the web UI (or you use OAuth providers and need a non-hosted re
 
 - `HAPPIER_WEBAPP_URL=https://app.example.com`
 
-If you’re LAN-only, using `http://<lan-ip>:3005` is fine, but QR/deep links will only work on the same LAN/VPN.
+If you’re LAN-only, using `http://<lan-ip>:53288` (or whatever your `PORT` is) is fine, but QR/deep links will only work on the same LAN/VPN.
 
 Important: Tailscale without Serve usually gives you a `100.x` IP. Browsers do **not** treat `http://100.x...` as a secure context, so the web UI won’t work reliably over plain HTTP. Use **Tailscale Serve (HTTPS)** or a reverse proxy for web/mobile flows.
 
@@ -60,7 +60,7 @@ Minimal Tailscale Serve commands (on the server host, outside containers):
 
 ```bash
 tailscale up
-tailscale serve --bg http://127.0.0.1:3005
+tailscale serve --bg http://127.0.0.1:53288
 tailscale serve status
 ```
 

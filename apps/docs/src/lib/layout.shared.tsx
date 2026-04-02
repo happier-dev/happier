@@ -16,7 +16,7 @@ function NavTitle(props: ComponentProps<'a'>) {
         alt="Happier"
         width={120}
         height={20}
-        className="h-5 w-auto dark:hidden"
+        className="h-7 w-auto dark:hidden"
         priority
       />
       <Image
@@ -24,7 +24,7 @@ function NavTitle(props: ComponentProps<'a'>) {
         alt="Happier"
         width={120}
         height={20}
-        className="hidden h-5 w-auto dark:block"
+        className="hidden h-7 w-auto dark:block"
         priority
       />
     </Link>

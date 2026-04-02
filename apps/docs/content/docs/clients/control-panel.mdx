@@ -4,6 +4,7 @@ description: Use the desktop app as the control panel for Relay, machine, daemon
 ---
 
 The desktop app is the main control panel for Happier setup and machine management.
+It hosts the full-screen onboarding wizard, plus the settings surfaces for Relay, machines, remote hosts, and local relay control.
 
 Use it to keep four things aligned:
 
@@ -37,7 +38,7 @@ From the desktop app, you can choose between:
 - **Set up this computer** — configure the local daemon/background service against the active Relay
 - **Add machine over SSH** — set up a remote machine from the desktop app
 
-The primary entrypoint for these flows is the in-app `/setup` screen.
+The primary entrypoint for these flows is the in-app **Setup wizard** (a full-screen onboarding modal, not a settings page).
 
 User guide: [Setup wizard](./setup-wizard).
 
@@ -54,6 +55,12 @@ Use the Relay settings screen to:
 - see when the daemon is connected to a different Relay
 - repair Relay drift from the app instead of redoing setup manually
 
+The relay selection list also uses reachability state directly:
+
+- unreachable rows stay selected if they are the active Relay
+- the row menu stays available for retry/remove actions
+- `Continue` stays disabled until you choose a reachable option
+
 ### Machines
 
 Use the Machines screen to:
@@ -63,6 +70,7 @@ Use the Machines screen to:
 - continue provider setup for the specific machine that was just prepared
 
 If you repeatedly manage the same SSH targets, save them as **Remote hosts** in settings and reuse them in the setup wizard.
+Saved remote hosts are synced, so the same host list can follow you across devices when your policy allows it.
 
 User guide: [Remote hosts (SSH)](./remote-hosts).
 
@@ -80,6 +88,8 @@ If you are running a self-hosted Relay locally, the app can also manage the loca
 For local or self-hosted Relays, the app can guide secure private access setup so phones or other computers can still reach the Relay without exposing it publicly.
 
 Today this is surfaced as a local secure-access task from the desktop app.
+
+User guide: [Relay access](./relay-access).
 
 ## Relay drift
 
@@ -127,3 +137,8 @@ The CLI still exposes the underlying commands (`server`, `auth`, `daemon`, and r
 - let the desktop app drive machine setup actions
 
 That keeps Relay/account/machine state visible and reduces mismatches.
+
+## Web vs desktop
+
+The web app is great for onboarding, status, and settings, but it cannot execute local system tasks on your computer.
+If a setup step needs to install a service or run privileged operations, use the desktop control panel (one-click) or copy/paste the provided CLI commands.

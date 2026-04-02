@@ -30,6 +30,12 @@ Windows (PowerShell):
 irm https://happier.dev/install.ps1 | iex
 ```
 
+To pass installer flags like `-SetupRelay` or `-Run`, invoke it as a script block:
+
+```powershell
+& ([ScriptBlock]::Create((irm https://happier.dev/install.ps1))) -SetupRelay
+```
+
 npm fallback (power-user / Node workflow):
 
 ```bash
@@ -86,7 +92,9 @@ User guide: [Features → Device linking & restore](/docs/features/device-linkin
 
 ## Bootstrap & setup (one-command)
 
-If you want a guided “do the right thing” setup flow from the terminal (Relay selection, sign-in if needed, daemon service install), use:
+`happier setup` is the guided setup executor from the terminal. It runs the same setup orchestration the app uses for Relay selection, sign-in if needed, daemon service install, and optional provider setup.
+
+Use it when you want Happier to do the work instead of only previewing a plan:
 
 ```bash
 happier setup --relay-url https://YOUR_RELAY_URL
@@ -99,11 +107,14 @@ Useful flags:
 - `--provider <id>` (preselect providers to set up)
 - `--yes` (auto-accept prompts for non-interactive runs)
 
-Dry-run the plan (prints what would happen):
+Dry-run the plan only if you want to inspect the steps before running them:
 
 ```bash
 happier setup plan --relay-url https://YOUR_RELAY_URL
 ```
+
+`happier setup plan` is a preview. `happier setup` is the executor.
+Note: `--json` output is currently supported for `happier setup plan` only.
 
 Provider-only setup:
 
@@ -111,12 +122,92 @@ Provider-only setup:
 happier providers setup
 ```
 
+## Remote machine setup (SSH)
+
+If you want to set up a remote machine to run the daemon/providers (VPS, home server, dev box):
+
+```bash
+happier machine setup --ssh user@host
+```
+
+Common flags:
+
+- `--ssh-user <user>` / `--ssh-host <host>` / `--ssh-port <port>` (split SSH form)
+- `--install-relay-runtime` (also install the managed Relay runtime on that host)
+- `--service-mode user|none` (daemon service mode)
+- `--relay-runtime-mode user|system` (relay runtime install mode)
+- `--ssh-auth agent|keyfile|password` (select auth mode)
+- `--identity-file <path>` (for `keyfile` mode)
+- `--ssh-config-file <path>` (use an explicit SSH config)
+- `--known-hosts-path <path>` (override host-key storage)
+- `--trusted-host-key <line>` (pin a host key)
+- `--server-url <url>` / `--local-server-url <url>` / `--webapp-url <url>` (target a specific Relay profile)
+- `--require-local-approval` (fail closed when the current machine cannot approve the pairing request)
+- `--yes` (auto-accept prompts for non-interactive runs)
+- `--json` (stream protocol JSON events/results)
+
+SSH auth modes:
+
+- `agent` uses your SSH agent
+- `keyfile` uses a private key path
+- `password` prompts for a password in the terminal when supported
+
+Tip: if you want to save the host for later reuse in the app, use the desktop Remote Hosts screen instead of a one-off inline SSH bootstrap. The inline SSH bootstrap is intentionally one-off; reusable SSH profiles live in the app.
+
 Self-hosted Relay runtime (managed service):
 
 ```bash
-happier relay host install --mode system
+happier relay host install
 happier relay host status
 ```
+
+By default this installs the Relay runtime in `user` mode (no root required).
+To install as a system-wide service, use `--mode system` (requires root/sudo):
+
+```bash
+sudo happier relay host install --mode system
+```
+
+Remote host (over SSH):
+
+```bash
+happier relay host install --ssh user@host
+```
+
+```bash
+happier relay host uninstall --ssh user@host
+```
+
+Service lifecycle helpers:
+
+```bash
+happier relay host start
+happier relay host stop
+happier relay host restart
+happier relay host uninstall
+```
+
+Daemon background service reference: [Daemon](./daemon).
+
+## Relay access (share/public URL strategy)
+
+If your self-hosted Relay is only reachable locally (for example `localhost`), other devices (phones, other computers) won’t be able to use it until you expose a reachable Relay URL (often HTTPS).
+
+Inspect and configure the relay access method:
+
+```bash
+happier relay access status
+happier relay access configure --provider tailscaleServe --upstream-url http://127.0.0.1:53288
+```
+
+You can also apply the same configuration on a remote host:
+
+```bash
+happier relay access status --ssh user@host
+happier relay access configure --ssh user@host --provider tailscaleServe --upstream-url http://127.0.0.1:53288
+```
+
+User guide: [Relay access](./relay-access).
 
 ### Remote machine pairing (SSH, automated)
 

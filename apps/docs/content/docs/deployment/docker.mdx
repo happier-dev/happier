@@ -6,6 +6,7 @@ description: Deploy the Happier Server using Docker / Docker Compose.
 This page explains how to deploy **your own Happier Server** with Docker. It focuses on the server only.
 
 Use `/apps/server/.env.example` as your base env template and load the same values in Docker/Compose.
+If you want your Docker deployment to match the default port used by Happier’s managed self-host flows, set `PORT=53288` and publish `53288` (the examples below assume this).
 
 ## Prebuilt images (recommended)
 
@@ -48,7 +49,8 @@ Full matrix (all apps/assets): [Updates](/docs/advanced/updates).
 The `relay-server` image defaults to the **light flavor + SQLite**, with all data stored under `/data`. Mount it as a volume so upgrades and restarts are safe.
 
 ```bash
-docker run --rm -p 3005:3005 \
+docker run --rm -p 53288:53288 \
+  -e PORT=53288 \
   -v happier-server-data:/data \
   happierdev/relay-server:preview
 ```
@@ -87,9 +89,9 @@ services:
   relay:
     image: happierdev/relay-server:preview
     ports:
-      - "3005:3005"
+      - "53288:53288"
     environment:
-      PORT: "3005"
+      PORT: "53288"
       HAPPIER_SERVER_FLAVOR: full
       HAPPIER_DB_PROVIDER: postgres
       DATABASE_URL: postgresql://happier:change-me@db:5432/happier
@@ -125,7 +127,7 @@ services:
   relay:
     image: happierdev/relay-server:preview
     environment:
-      PORT: "3005"
+      PORT: "53288"
       # Optional:
       # Disable UI serving:
       # HAPPIER_SERVER_UI_DIR: ""
@@ -151,7 +153,7 @@ services:
         tailscaled --state=${TS_STATE_DIR}/tailscaled.state &
         sleep 2
         tailscale up --authkey="${TS_AUTHKEY}" --hostname="${TS_HOSTNAME}" --accept-dns=false
-        tailscale serve --bg --https=443 http://127.0.0.1:3005
+        tailscale serve --bg --https=443 http://127.0.0.1:53288
         tail -f /dev/null
       '
 
@@ -248,8 +250,8 @@ This is useful for quick experiments. For production, prefer Docker Compose (nex
 ### Full flavor (Postgres)
 
 ```bash
-docker run --rm -p 3005:3005 \
-  -e PORT=3005 \
+docker run --rm -p 53288:53288 \
+  -e PORT=53288 \
   -e DATABASE_URL='postgresql://user:pass@db:5432/happier?sslmode=require' \
   -e HANDY_MASTER_SECRET='change-me-to-a-long-random-string' \
   -e HAPPIER_FILES_BACKEND=s3 \
@@ -266,8 +268,8 @@ docker run --rm -p 3005:3005 \
 ### Full flavor (MySQL 8+)
 
 ```bash
-docker run --rm -p 3005:3005 \
-  -e PORT=3005 \
+docker run --rm -p 53288:53288 \
+  -e PORT=53288 \
   -e HAPPIER_DB_PROVIDER=mysql \
   -e DATABASE_URL='mysql://user:pass@db:3306/happier' \
   -e HANDY_MASTER_SECRET='change-me-to-a-long-random-string' \
@@ -296,8 +298,8 @@ docker run --env-file .env -p 3005:3005 happier-server
 If you don’t want S3/Minio, you can store public files on local disk:
 
 ```bash
-docker run --rm -p 3005:3005 \
-  -e PORT=3005 \
+docker run --rm -p 53288:53288 \
+  -e PORT=53288 \
   -e DATABASE_URL='postgresql://user:pass@db:5432/happier?sslmode=require' \
   -e HANDY_MASTER_SECRET='change-me-to-a-long-random-string' \
   -e HAPPIER_FILES_BACKEND=local \
@@ -316,8 +318,8 @@ The default `server` image starts the **full** flavor. To run light in Docker, y
 For PGlite specifically, you still need to run the light migrations helper script (PGlite’s connection string is created at runtime).
 
 ```bash
-docker run --rm -p 3005:3005 \
-  -e PORT=3005 \
+docker run --rm -p 53288:53288 \
+  -e PORT=53288 \
   -e HAPPIER_SERVER_LIGHT_DATA_DIR=/data/server-light \
   -v happier-server-light:/data/server-light \
   happier-server \
@@ -329,8 +331,8 @@ docker run --rm -p 3005:3005 \
 SQLite is the recommended light-mode database for Docker because it is single-process and easy to back up. The server image entrypoint automatically runs `prisma migrate deploy` for SQLite when `RUN_MIGRATIONS=1` (default).
 
 ```bash
-docker run --rm -p 3005:3005 \
-  -e PORT=3005 \
+docker run --rm -p 53288:53288 \
+  -e PORT=53288 \
   -e HAPPIER_SERVER_FLAVOR=light \
   -e HAPPIER_DB_PROVIDER=sqlite \
   -e HAPPIER_SERVER_LIGHT_DATA_DIR=/data/server-light \
@@ -379,9 +381,9 @@ services:
       context: .
       target: server
     ports:
-      - "3005:3005"
+      - "53288:53288"
     environment:
-      PORT: "3005"
+      PORT: "53288"
       DATABASE_URL: postgresql://happier:change-me@db:5432/happier
       HANDY_MASTER_SECRET: change-me-to-a-long-random-string
       HAPPIER_FILES_BACKEND: s3
@@ -434,9 +436,9 @@ services:
       context: .
       target: server
     ports:
-      - "3005:3005"
+      - "53288:53288"
     environment:
-      PORT: "3005"
+      PORT: "53288"
       HAPPIER_DB_PROVIDER: mysql
       DATABASE_URL: mysql://root:change-me@db:3306/happier
       HANDY_MASTER_SECRET: change-me-to-a-long-random-string
@@ -468,9 +470,9 @@ services:
       context: .
       target: server
     ports:
-      - "3005:3005"
+      - "53288:53288"
     environment:
-      PORT: "3005"
+      PORT: "53288"
       HAPPIER_SERVER_LIGHT_DATA_DIR: /data/server-light
       # default: embedded Postgres via PGlite
       # HAPPIER_DB_PROVIDER: pglite

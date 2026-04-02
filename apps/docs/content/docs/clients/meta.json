@@ -6,6 +6,7 @@
     "control-panel",
     "setup-wizard",
     "remote-hosts",
+    "relay-access",
     "cli",
     "cli-sessions",
     "daemon",

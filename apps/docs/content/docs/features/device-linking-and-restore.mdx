@@ -60,9 +60,9 @@ On the phone restore flow, **Show a QR code instead** switches to the opposite d
 
 This is the fallback when scanning from the current phone is not practical.
 
-### Restore with Secret Key Instead
+### Login with secret key instead
 
-Use **Restore with Secret Key Instead** when:
+Use **Login with secret key instead** when:
 
 - you do not have another signed-in device available
 - scanning is not possible
@@ -146,7 +146,7 @@ In that situation:
 
 Typical working choices:
 
-- a LAN URL such as `http://192.168.x.x:3005`
+- a LAN URL such as `http://192.168.x.x:53288`
 - a Tailscale HTTPS URL such as `https://machine.tailnet.ts.net`
 - your own public/reverse-proxied domain
 
@@ -159,7 +159,7 @@ Use this quick rule:
 - **I want my phone to sign in to my existing account** → **Add your phone**
 - **I want a new browser/computer/device to join an existing account** → **Restore account**
 - **I want the CLI/terminal to connect** → **Scan QR to connect terminal**
-- **I cannot scan right now** → **Enter URL manually** or **Restore with Secret Key Instead**
+- **I cannot scan right now** → **Enter URL manually** or **Login with secret key instead**
 
 ## Related docs
 

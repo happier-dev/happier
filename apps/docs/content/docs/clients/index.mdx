@@ -8,7 +8,7 @@ Happier has multiple client surfaces that can all interact with the same server 
 Use this section to understand which surface does what:
 
 - **App** (`@happier-dev/app`): the desktop, web, and mobile UI for sessions, devices, approvals, and settings.
-- **CLI** (`@happier-dev/cli`): the scripting and operator client for install/auth/server profiles plus session control.
+- **CLI** (`@happier-dev/cli`): the scripting and operator client for install/auth/server profiles, guided setup execution, and session control.
 - **Daemon**: the background process that keeps remote session control available without an open terminal.
 - **Happier MCP**: the external MCP server you run from the CLI so other MCP hosts can control Happier sessions and actions.
 
@@ -26,6 +26,7 @@ For the most common user-facing flows:
 - [CLI](./cli) for install/auth/server selection
 - [Setup wizard](./setup-wizard) for guided Relay + machine + secure-access setup
 - [Remote hosts (SSH)](./remote-hosts) for saved SSH targets used by setup flows
+- [Relay access](./relay-access) for exposing a self-hosted Relay to other devices (LAN/Tailscale/Cloudflare)
 - [CLI sessions](./cli-sessions) for create/list/send/resume/attach/manage
 - [Happier MCP (external)](./mcp) for editor/agent automation
 - [MCP host setup](./mcp-hosts) for privileged host configuration

@@ -24,7 +24,7 @@ Some installers (for example `hstack setup-from-source` and Proxmox) print one-c
 
 On desktop, the app is intended to be the main control panel for your Happier setup:
 
-- start from the in-app `/setup` wizard (desktop can execute tasks; web shows guided handoff commands)
+- start from the in-app **Setup wizard** (desktop can execute tasks; web shows guided handoff commands)
 - choose your Relay before signing in
 - sign in on that Relay
 - set up **this computer**
@@ -208,7 +208,7 @@ Full matrix (all apps/assets): [Updates](/docs/advanced/updates).
 
 Happier supports both:
 
-- **Device-key accounts (default)**: end-to-end encrypted by default; users must **restore** access on new devices/browsers by using the account restore flow (for example **Add your phone** on a signed-in computer, or **Restore with Secret Key Instead**).
+- **Device-key accounts (default)**: end-to-end encrypted by default; users must **restore** access on new devices/browsers by using the account restore flow (for example **Add your phone** on a signed-in computer, or **Login with secret key instead**).
 - **Keyless accounts (enterprise)**: no device keys; sign-in can be **seamless across devices**, typically paired with plaintext storage mode.
 
 The app discovers available login and signup options from your server via `GET /v1/features` and renders what the server advertises.

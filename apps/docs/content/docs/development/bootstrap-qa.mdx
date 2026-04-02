@@ -45,7 +45,7 @@ We use `@hypothesi/tauri-mcp-server` to drive an actual native Tauri window (scr
 ### Prereqs
 
 - The app must be running via `tauri dev` (debug assertions); the MCP bridge plugin is registered in `apps/ui/src-tauri/src/lib.rs`.
-- The public dev config enables the MCP capability:
+- The dev config enables the MCP capability:
   - `apps/ui/src-tauri/tauri.publicdev.conf.json` includes `app.security.capabilities = ["default","mcp-dev"]`.
   - `apps/ui/src-tauri/capabilities/mcp-dev.json` grants `mcp-bridge:default`.
 

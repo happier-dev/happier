@@ -3,7 +3,13 @@ title: Setup wizard
 description: Guided setup for Relay selection, login, machine setup, and secure access.
 ---
 
-The Setup wizard is the guided flow behind the in-app `/setup` route.
+The Setup wizard is the guided in-app flow for getting a Relay and one or more machines ready.
+
+On desktop it appears as a full-screen onboarding modal. On web and mobile-sized layouts the chrome adapts to the screen size, but the flow stays the same wizard.
+
+Layout notes:
+- Phone-sized viewports render a full-screen sheet (no backdrop scrim).
+- Desktop-sized viewports render a centered card inside a modal backdrop.
 
 It helps you:
 
@@ -14,15 +20,20 @@ It helps you:
 - enable private access (optional, for example Tailscale)
 - set up providers (optional)
 
+Which options you see depends on what your server advertises via `GET /v1/features` (enterprise/self-host policy).
+See: [Server → Setup & bootstrap policy](/docs/server/setup-and-bootstrap-policy).
+
 ## Desktop vs web behavior
 
-- **Desktop app (recommended control panel)**: can execute setup actions directly (system tasks).
+- **Desktop app (recommended control panel)**: can execute setup actions directly through the shared system-task executor.
 - **Web app**: can guide you through setup and show copy/paste commands, but cannot execute local system tasks on your computer.
 
 If you’re using the web app and the wizard shows a “Run this command” step, you can:
 
 - run the command in a terminal on the target machine, or
 - continue in the desktop app for one-click execution.
+
+When the wizard shows relay rows, the current Relay stays selected even if it is unreachable; the row menu still lets you retry or remove saved entries, and the footer uses an `Active relay:` label to show the canonical Relay URL.
 
 ## Main entrypoints
 
@@ -43,12 +54,23 @@ What it does (high level):
 - installs and enables the background service (unless skipped)
 - optionally guides provider setup
 
+`happier setup plan` only previews the steps. `happier setup` is the executor.
+
+If you log in from the mobile app with **Login with secret key instead**, the wizard continues the same onboarding flow after sign-in instead of sending you to a separate settings page.
+
 ### Host a Relay on this computer (optional)
 
 If you want to run a Relay locally (for example on a dev box or LAN machine), the wizard guides you through installing the **managed Relay runtime**:
 
 ```bash
-happier relay host install --mode system
+happier relay host install
+```
+
+By default this installs the Relay runtime in `user` mode (no root required).
+If you want a system-wide service, use `--mode system` (requires root/sudo):
+
+```bash
+sudo happier relay host install --mode system
 ```
 
 After installing a local Relay, you may still need to configure **private access** (see below) so phones and other devices can reach it.
@@ -68,6 +90,10 @@ CLI example:
 happier machine setup --ssh user@host
 ```
 
+If you already saved the machine as a Remote host, you can pick it from the wizard instead of retyping the SSH details.
+
+When you enter a new SSH target inline, the wizard shows a **Save this host** toggle inside the SSH form itself. That lets you decide before submitting whether the host should be saved as a reusable Remote host.
+
 ## Provider setup (optional)
 
 After a machine is set up, the wizard can guide provider setup. The underlying CLI surface is:
@@ -82,11 +108,24 @@ You can also pass a provider list when you already know what you want:
 happier providers setup --providers codex,claude
 ```
 
+When you choose providers in the wizard, it can prefill the CLI command with the selected providers for you.
+
+If remote-host persistence is disabled by your server/build policy, the wizard still supports one-time SSH setup. It simply won’t offer long-term saving for the host.
+
 ## Secure access (optional)
 
 If your Relay URL is not publicly reachable (for example it’s only `localhost`), phones and other devices won’t be able to sign in or connect.
 
 The wizard can guide private access setup using Tailscale when available. After configuration, you should see a reachable HTTPS URL that you can use as the Relay URL in the app and CLI.
+
+CLI equivalent (share URL strategy):
+
+```bash
+happier relay access status
+happier relay access configure --provider tailscaleServe --upstream-url http://127.0.0.1:53288
+```
+
+User guide: [Relay access](./relay-access).
 
 ## Troubleshooting
 
@@ -97,3 +136,10 @@ The wizard can guide private access setup using Tailscale when available. After 
 
 If you are using the **web app on HTTPS** and your Relay is `http://...`, your browser may block the probe as mixed-content.
 In that case, use the desktop app or expose your Relay over HTTPS (for example via Tailscale Serve/Funnel or a reverse proxy).
+
+The inline **Use a different Relay URL** action always opens the same manual Relay URL step, so you do not have to remember a separate settings page.
+
+### “Login with secret key instead”
+
+If you are restoring a device that already has an account, the wizard sends you to the secret-key login step when you choose **Login with secret key instead**.
+That path is separate from the QR-code login flow and is meant for account/device restoration, not terminal approval.
