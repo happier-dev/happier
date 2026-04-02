@@ -298,6 +298,7 @@ describe('opencode session handoff bundle', () => {
       await expect(readFile(importPath, 'utf8')).resolves.toBe('{"id":"op_sess_fail"}');
       throw new Error('import failed');
     });
+    const commandPath = await createFakeExecutable('opencode');
     const root = await mkdtemp(join(tmpdir(), 'happier-opencode-handoff-import-failure-'));
 
     await expect(importOpenCodeSessionBundle({
@@ -313,6 +314,7 @@ describe('opencode session handoff bundle', () => {
       },
       targetPath: join(root, 'workspace'),
       execFile,
+      processEnv: { HAPPIER_OPENCODE_PATH: commandPath },
     })).rejects.toThrow('import failed');
 
     await expect(access(importPath)).rejects.toThrow();
