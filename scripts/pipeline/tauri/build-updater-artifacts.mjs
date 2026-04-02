@@ -66,7 +66,7 @@ export function normalizeTauriBuildVersionForWindows(buildVersion) {
 export function resolveLinuxProductNameOverride(opts) {
   const env = String(opts.environment ?? '').trim();
   if (!env || env === 'production') return null;
-  if (env === 'publicdev') return 'HappierDev';
+  if (env === 'dev' || env === 'publicdev') return 'HappierDev';
   if (env === 'preview') return 'HappierPreview';
   return null;
 }
