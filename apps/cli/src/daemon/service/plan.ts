@@ -91,8 +91,17 @@ export function resolveWindowsDaemonTaskName(params: Readonly<{ instanceId: stri
   return `Happier\\${label}`;
 }
 
-export function resolveWindowsDaemonWrapperPath(params: Readonly<{ happierHomeDir: string; instanceId: string; channel?: PublicReleaseRingId }>): string {
+export function resolveWindowsDaemonWrapperPath(params: Readonly<{
+  happierHomeDir: string;
+  instanceId: string;
+  channel?: PublicReleaseRingId;
+  mode?: DaemonServiceMode;
+}>): string {
   const label = resolveDaemonServiceSystemdUnitLabel(params.instanceId, params.channel ?? 'stable');
+  const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
+  if (mode === 'system') {
+    return `C:\\\\ProgramData\\\\happier\\\\services\\\\${label}.ps1`;
+  }
   const home = String(params.happierHomeDir ?? '').trim();
   // When callers supply a POSIX absolute path (common in unit tests on macOS/Linux),
   // `win32.join("/tmp/...", ...)` yields a leading `\\tmp\\...` path which is relative on POSIX and can
@@ -186,7 +195,8 @@ export function planDaemonServiceInstall(params: Readonly<{
   }
 
   if (params.platform === 'win32') {
-    const wrapperPath = resolveWindowsDaemonWrapperPath({ happierHomeDir: params.happierHomeDir, instanceId, channel });
+    const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
+    const wrapperPath = resolveWindowsDaemonWrapperPath({ happierHomeDir: params.happierHomeDir, instanceId, channel, mode });
     const stdoutPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${instanceId}.out.log`);
     const stderrPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${instanceId}.err.log`);
 
@@ -210,7 +220,7 @@ export function planDaemonServiceInstall(params: Readonly<{
 
     const taskName = resolveWindowsDaemonTaskName({ instanceId, channel });
     const basePlan = planServiceAction({
-      backend: 'schtasks-user',
+      backend: mode === 'system' ? 'schtasks-system' : 'schtasks-user',
       action: 'install',
       label: unitLabel,
       definitionPath: wrapperPath,
@@ -322,10 +332,11 @@ export function planDaemonServiceUninstall(params: Readonly<{
     if (!happierHomeDir) {
       throw new Error('happierHomeDir is required for Windows service uninstall');
     }
-    const wrapperPath = resolveWindowsDaemonWrapperPath({ happierHomeDir, instanceId, channel });
+    const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
+    const wrapperPath = resolveWindowsDaemonWrapperPath({ happierHomeDir, instanceId, channel, mode });
     const taskName = resolveWindowsDaemonTaskName({ instanceId, channel });
     const plan = planServiceAction({
-      backend: 'schtasks-user',
+      backend: mode === 'system' ? 'schtasks-system' : 'schtasks-user',
       action: 'uninstall',
       label: unitLabel,
       taskName,
@@ -430,9 +441,10 @@ export function planDaemonServiceLifecycle(params: Readonly<{
     if (params.action === 'status') {
       return { platform: 'win32', commands: [{ cmd: 'schtasks', args: ['/Query', '/TN', taskName, '/FO', 'LIST', '/V'] }] };
     }
+    const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
     const action = params.action === 'start' ? 'start' : params.action === 'stop' ? 'stop' : 'restart';
     const plan = planServiceAction({
-      backend: 'schtasks-user',
+      backend: mode === 'system' ? 'schtasks-system' : 'schtasks-user',
       action,
       label: unitLabel,
       taskName,
