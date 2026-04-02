@@ -30,6 +30,17 @@ test('apps/ui Tauri public dev config enables the global Tauri bridge API for MC
   assert.equal(config?.app?.withGlobalTauri, true);
 });
 
+test('apps/ui Tauri config runs beforeBuildCommand/beforeDevCommand via node wrapper (works on Windows CI)', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+
+  const raw = await readFile(join(packageRoot, 'src-tauri', 'tauri.conf.json'), 'utf-8');
+  const config = JSON.parse(raw);
+
+  assert.equal(config?.build?.beforeDevCommand, 'node ./scripts/runTauriBeforeCommand.mjs dev');
+  assert.equal(config?.build?.beforeBuildCommand, 'node ./scripts/runTauriBeforeCommand.mjs build');
+});
+
 test('apps/ui default Tauri capability allows dialog open for SSH identity selection', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir);
