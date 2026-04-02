@@ -13,6 +13,8 @@ use std::{
 use tauri::{
     path::BaseDirectory,
     App,
+    LogicalPosition,
+    LogicalSize,
     Manager,
     PhysicalPosition,
     PhysicalSize,
@@ -57,6 +59,23 @@ struct PersistedWindowState {
     height: f64,
     #[serde(default)]
     maximized: bool,
+    #[serde(default)]
+    units: PersistedWindowUnits,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+enum PersistedWindowUnits {
+    Physical,
+    Logical,
+}
+
+#[cfg(desktop)]
+impl Default for PersistedWindowUnits {
+    fn default() -> Self {
+        Self::Physical
+    }
 }
 
 #[cfg(desktop)]
@@ -152,6 +171,29 @@ fn physical_size_to_rect(pos: PhysicalPosition<i32>, size: PhysicalSize<u32>) ->
 }
 
 #[cfg(desktop)]
+fn normalize_persisted_rect_to_logical(persisted: &PersistedWindowState, scale_factor: f64) -> Rect {
+    let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    match persisted.units {
+        PersistedWindowUnits::Logical => Rect {
+            x: persisted.x,
+            y: persisted.y,
+            width: persisted.width,
+            height: persisted.height,
+        },
+        PersistedWindowUnits::Physical => Rect {
+            x: persisted.x / scale,
+            y: persisted.y / scale,
+            width: persisted.width / scale,
+            height: persisted.height / scale,
+        },
+    }
+}
+
+#[cfg(desktop)]
 fn resolve_launch_window_rect(monitor_rect: Rect, persisted: Option<&PersistedWindowState>) -> Rect {
     if let Some(persisted) = persisted {
         return clamp_window_rect_to_monitor(
@@ -185,6 +227,7 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 
     let state_path = resolve_state_path(app)?;
     let persisted = read_json(&state_path);
+    let scale_factor = window.scale_factor().unwrap_or(1.0);
 
     let monitor = window
         .current_monitor()?
@@ -193,14 +236,34 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     if let Some(monitor) = monitor {
         let monitor_rect = monitor_to_rect(&monitor);
 
-        let clamped = resolve_launch_window_rect(monitor_rect, persisted.as_ref());
-        let _ = window.set_size(tauri::Size::Physical(PhysicalSize {
-            width: clamped.width.round().max(1.0) as u32,
-            height: clamped.height.round().max(1.0) as u32,
+        let monitor_logical = Rect {
+            x: monitor_rect.x / scale_factor,
+            y: monitor_rect.y / scale_factor,
+            width: monitor_rect.width / scale_factor,
+            height: monitor_rect.height / scale_factor,
+        };
+        let persisted_logical = persisted
+            .as_ref()
+            .map(|state| {
+                let rect = normalize_persisted_rect_to_logical(state, scale_factor);
+                PersistedWindowState {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                    maximized: state.maximized,
+                    units: PersistedWindowUnits::Logical,
+                }
+            });
+
+        let clamped = resolve_launch_window_rect(monitor_logical, persisted_logical.as_ref());
+        let _ = window.set_size(tauri::Size::Logical(LogicalSize {
+            width: clamped.width.round().max(1.0),
+            height: clamped.height.round().max(1.0),
         }));
-        let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
-            x: clamped.x.round() as i32,
-            y: clamped.y.round() as i32,
+        let _ = window.set_position(tauri::Position::Logical(LogicalPosition {
+            x: clamped.x.round(),
+            y: clamped.y.round(),
         }));
     }
 
@@ -240,15 +303,23 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
         };
 
         let rect = physical_size_to_rect(pos, size);
+        let scale_factor = window_for_events.scale_factor().unwrap_or(1.0);
+        let logical = Rect {
+            x: rect.x / scale_factor,
+            y: rect.y / scale_factor,
+            width: rect.width / scale_factor,
+            height: rect.height / scale_factor,
+        };
         let maximized = window_for_events.is_maximized().unwrap_or(false);
         write_json(
             &state_path,
             &PersistedWindowState {
-                x: rect.x,
-                y: rect.y,
-                width: rect.width,
-                height: rect.height,
+                x: logical.x,
+                y: logical.y,
+                width: logical.width,
+                height: logical.height,
                 maximized,
+                units: PersistedWindowUnits::Logical,
             },
         );
     });
@@ -259,6 +330,7 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn compute_default_window_size_respects_caps() {
@@ -374,6 +446,7 @@ mod tests {
             width: 5000.0,
             height: 4000.0,
             maximized: false,
+            units: PersistedWindowUnits::Logical,
         };
         let rect = resolve_launch_window_rect(monitor, Some(&persisted));
         assert!(rect.width <= monitor.width);
@@ -382,5 +455,44 @@ mod tests {
         assert!(rect.y >= monitor.y);
         assert!(rect.x + rect.width <= monitor.x + monitor.width + 0.01);
         assert!(rect.y + rect.height <= monitor.y + monitor.height + 0.01);
+    }
+
+    #[test]
+    fn normalize_persisted_rect_to_logical_converts_physical_units() {
+        let persisted: PersistedWindowState = serde_json::from_value(json!({
+            "x": 200.0,
+            "y": 100.0,
+            "width": 2400.0,
+            "height": 1600.0,
+            "maximized": false
+        }))
+        .expect("deserialize persisted window state");
+
+        assert_eq!(persisted.units, PersistedWindowUnits::Physical);
+        let rect = normalize_persisted_rect_to_logical(&persisted, 2.0);
+        assert!((rect.x - 100.0).abs() < 0.01, "x={}", rect.x);
+        assert!((rect.y - 50.0).abs() < 0.01, "y={}", rect.y);
+        assert!((rect.width - 1200.0).abs() < 0.01, "width={}", rect.width);
+        assert!((rect.height - 800.0).abs() < 0.01, "height={}", rect.height);
+    }
+
+    #[test]
+    fn normalize_persisted_rect_to_logical_keeps_logical_units() {
+        let persisted: PersistedWindowState = serde_json::from_value(json!({
+            "x": 100.0,
+            "y": 50.0,
+            "width": 1200.0,
+            "height": 800.0,
+            "maximized": false,
+            "units": "logical"
+        }))
+        .expect("deserialize persisted window state");
+
+        assert_eq!(persisted.units, PersistedWindowUnits::Logical);
+        let rect = normalize_persisted_rect_to_logical(&persisted, 2.0);
+        assert!((rect.x - 100.0).abs() < 0.01, "x={}", rect.x);
+        assert!((rect.y - 50.0).abs() < 0.01, "y={}", rect.y);
+        assert!((rect.width - 1200.0).abs() < 0.01, "width={}", rect.width);
+        assert!((rect.height - 800.0).abs() < 0.01, "height={}", rect.height);
     }
 }

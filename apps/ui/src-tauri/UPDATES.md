@@ -55,11 +55,11 @@ Key pieces:
 - Config: `plugins.updater` in `tauri.conf.json`:
   - `endpoints` (stable) and `pubkey` (base64-encoded minisign public key; Tauri updater signing uses minisign, not PEM)
   - preview overrides endpoints in `tauri.preview.conf.json`
-  - public dev overrides endpoints in `tauri.publicdev.conf.json`
+  - dev overrides endpoints in `tauri.publicdev.conf.json`
 - Local builds: `bundle.createUpdaterArtifacts` is disabled by default so contributors can build the desktop app without updater signing keys.
 - CI: when `TAURI_SIGNING_PRIVATE_KEY` is present, CI enables `bundle.createUpdaterArtifacts` and publishes:
   - platform update bundles (per target)
-  - `latest.json` (public dev: `ui-desktop-dev/latest.json`, preview: `ui-desktop-preview/latest.json`, stable: `ui-desktop-stable/latest.json`)
+  - `latest.json` (dev: `ui-desktop-dev/latest.json`, preview: `ui-desktop-preview/latest.json`, stable: `ui-desktop-stable/latest.json`)
 
 Notes:
 - For preview vs production update channels, you usually either:
