@@ -95,6 +95,14 @@ export const Animated = {
             cb?.({ finished: true });
         },
     }),
+    sequence: (steps: Array<{ start?: (cb?: (result: { finished: boolean }) => void) => void }>) => ({
+        start: (cb?: (result: { finished: boolean }) => void) => {
+            for (const step of steps) {
+                step?.start?.();
+            }
+            cb?.({ finished: true });
+        },
+    }),
     parallel: (steps: Array<{ start?: (cb?: (result: { finished: boolean }) => void) => void }>) => ({
         start: (cb?: (result: { finished: boolean }) => void) => {
             for (const step of steps) {
@@ -103,7 +111,18 @@ export const Animated = {
             cb?.({ finished: true });
         },
     }),
+    loop: (animation: { start?: (cb?: (result: { finished: boolean }) => void) => void }) => ({
+        start: (cb?: (result: { finished: boolean }) => void) => {
+            animation?.start?.();
+            cb?.({ finished: true });
+        },
+        stop: () => {},
+    }),
     View: 'Animated.View' as any,
+} as const;
+
+export const Alert = {
+    alert: () => {},
 } as const;
 
 export const Easing = {

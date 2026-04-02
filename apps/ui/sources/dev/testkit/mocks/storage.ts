@@ -48,6 +48,23 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         useArtifacts: () => [],
         useMachineListByServerId: () => ({}),
         useMachineListStatusByServerId: () => ({}),
+        useSocketStatus: () => ({
+            status: 'connected',
+            lastConnectedAt: null,
+            lastDisconnectedAt: null,
+            lastError: null,
+            lastErrorAt: null,
+        }),
+        useEndpointConnectivity: () => ({
+            status: 'online',
+            reason: null,
+            attempt: 0,
+            nextRetryAt: null,
+            lastConnectedAt: null,
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        }),
+        useSyncError: () => null,
     } satisfies Partial<StorageModule>;
 
     // Stub helpers intentionally allow partial boundary-shaped fixtures without forcing

@@ -103,6 +103,29 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         });
     });
 
+    it('maps explicit .node.js relative imports to their browser variants in CI mode', () => {
+        process.env.CI = '1';
+        delete process.env.HAPPIER_STACK_STACK;
+        delete process.env.HAPPIER_STACK_TUI;
+
+        const config = requireFreshMetroConfig();
+
+        const originModulePath = path.resolve(
+            __dirname,
+            '../../../../node_modules/engine.io-client/build/esm/index.js',
+        );
+        const result = config.resolver.resolveRequest(
+            { originModulePath },
+            './globals.node.js',
+            'web',
+        );
+
+        expect(result).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(path.dirname(originModulePath), './globals.js'),
+        });
+    });
+
     it('allows cache busting Metro via HAPPIER_UI_METRO_CACHE_VERSION_BUST', () => {
         process.env.HAPPIER_UI_METRO_CACHE_VERSION_BUST = 'test-bust';
 

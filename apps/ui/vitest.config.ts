@@ -181,6 +181,8 @@ export default defineConfig({
             { find: 'expo-clipboard', replacement: resolve('./sources/dev/expoClipboardStub.ts') },
             // `expo-linear-gradient` ships JSX in its build output; stub it in node/Vitest.
             { find: 'expo-linear-gradient', replacement: resolve('./sources/dev/expoLinearGradientStub.ts') },
+            // `expo-camera` ships code that Vitest's node runtime can fail to parse; stub it for deterministic route tests.
+            { find: 'expo-camera', replacement: resolve('./sources/dev/expoCameraStub.ts') },
             // `react-native-device-info` is native and pulls in RN internals.
             { find: 'react-native-device-info', replacement: resolve('./sources/dev/reactNativeDeviceInfoStub.ts') },
             // Sentry's React Native SDK depends on native modules; stub it in node/Vitest.
