@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
 import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
 import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
@@ -13,6 +14,34 @@ import { resolveYarnInvocation } from './resolve-yarn-invocation.mjs';
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+/**
+ * Extracts the base64 updater signature from `tauri signer sign` stdout.
+ *
+ * Tauri CLI may print additional log lines (or prefix the signature with a label), so we can't
+ * assume stdout is only the base64 blob.
+ *
+ * @param {string} stdout
+ * @returns {string}
+ */
+export function extractTauriUpdaterSignature(stdout) {
+  const raw = String(stdout ?? '').replaceAll('\r', '');
+  const lines = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  // Prefer explicit "Signature: <base64>" lines when present.
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    const m = /^signature:\s*([A-Za-z0-9+/=]+)$/i.exec(line);
+    if (m?.[1]) return m[1];
+  }
+
+  // Fallback: pick the last plausible base64 token of signature-like length.
+  const matches = raw.match(/[A-Za-z0-9+/=]{80,256}/g) ?? [];
+  return matches.length > 0 ? matches[matches.length - 1] : '';
 }
 
 /**
@@ -183,14 +212,13 @@ function main() {
   if (signingKeyPassword) signArgs.push('--password', signingKeyPassword);
   signArgs.push(path.resolve(absUiDir, artifactPath));
 
-  const sigValue = run(opts, yarn.cmd, signArgs, {
+  const sigRaw = run(opts, yarn.cmd, signArgs, {
     cwd: absUiDir,
     stdio: ['ignore', 'pipe', 'inherit'],
     timeoutMs: 10 * 60_000,
-  })
-    .trim()
-    .replaceAll('\r', '')
-    .replaceAll('\n', '');
+  });
+
+  const sigValue = extractTauriUpdaterSignature(sigRaw);
 
   if (opts.dryRun) {
     console.log(`[dry-run] write ${sigPath} (updated signature)`);
@@ -241,4 +269,6 @@ function findAppDir(workDir) {
   fail(`Unable to find .app inside updater artifact (work dir: ${workDir})`);
 }
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}
