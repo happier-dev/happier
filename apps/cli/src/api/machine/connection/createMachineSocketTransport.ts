@@ -23,7 +23,7 @@ export function createMachineSocketTransport(params: Readonly<{
       clientType: 'machine-scoped' as const,
       machineId: params.machineId,
     },
-    path: '/v1/updates',
+    path: '/v1/updates/',
     reconnection: false,
     withCredentials: true,
     autoConnect: false,

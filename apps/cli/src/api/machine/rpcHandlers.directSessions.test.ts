@@ -19,6 +19,7 @@ vi.mock('@/configuration', () => ({
     activeServerDir: '/tmp/happier-test-active-server',
     happyHomeDir: '/tmp/happier-test-home',
     logsDir: '/tmp',
+    publicReleaseRing: 'stable',
     isDaemonProcess: false,
   },
 }));

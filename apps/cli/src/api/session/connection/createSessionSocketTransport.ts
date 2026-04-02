@@ -68,7 +68,7 @@ export function createSessionSocketTransport(params: Readonly<{
             sessionId: params.sessionId,
             ...(params.machineId ? { machineId: params.machineId } : null),
         },
-        path: '/v1/updates',
+        path: '/v1/updates/',
         reconnection: false,
         withCredentials: true,
         autoConnect: false,

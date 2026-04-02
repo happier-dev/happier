@@ -81,6 +81,7 @@ vi.mock('@/configuration', () => ({
     activeServerDir: '/tmp/happier-test-active-server',
     happyHomeDir: '/tmp/happier-test-home',
     logsDir: '/tmp',
+    publicReleaseRing: 'stable',
     daemonStateFile: '/tmp/happier-test-home/daemon.state.json',
     isDaemonProcess: false,
     replaySeedMaxChars: 50_000,

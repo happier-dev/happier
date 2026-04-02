@@ -2557,6 +2557,32 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       }
     }
 
+    const timedOutJob = await prepareJobStore.read(jobId);
+    if (timedOutJob && typeof timedOutJob.completedAtMs === 'number') {
+      if (timedOutJob.prepareTargetResult) {
+        return timedOutJob.prepareTargetResult;
+      }
+      if (timedOutJob.status.status === 'awaiting_recovery' && timedOutJob.lastErrorMessage) {
+        if (isMachineTransferTimeoutErrorMessage(timedOutJob.lastErrorMessage)) {
+          return {
+            handoffId: parsed.data.handoffId,
+            status: pendingStatus,
+          };
+        }
+        if (timedOutJob.lastErrorMessage === directPeerTransferUnavailable().error) {
+          return directPeerTransferUnavailable();
+        }
+        if (timedOutJob.lastErrorMessage === missingHandoffMetadataV2().error) {
+          return missingHandoffMetadataV2();
+        }
+        throw new Error(timedOutJob.lastErrorMessage);
+      }
+      return {
+        handoffId: parsed.data.handoffId,
+        status: timedOutJob.status,
+      };
+    }
+
     return {
       handoffId: parsed.data.handoffId,
       status: pendingStatus,

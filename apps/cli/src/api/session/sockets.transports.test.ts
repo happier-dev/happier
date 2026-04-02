@@ -39,7 +39,7 @@ describe('session sockets transports', () => {
     mod.createUserScopedSocket({ token: 'fake-token' });
 
     const opts = mockIo.mock.calls[0]?.[1] as any;
-    expect(opts.path).toBe('/v1/updates');
+    expect(opts.path).toBe('/v1/updates/');
     expect(opts.transports).toEqual(['websocket', 'polling']);
     expect(opts.reconnection).toBe(false);
     expect(opts.autoConnect).toBe(false);
@@ -53,7 +53,7 @@ describe('session sockets transports', () => {
     mod.createUserScopedSocket({ token: 'fake-token' });
 
     const opts = mockIo.mock.calls[0]?.[1] as any;
-    expect(opts.path).toBe('/v1/updates');
+    expect(opts.path).toBe('/v1/updates/');
     expect(opts.transports).toEqual(['websocket']);
     expect(opts.reconnection).toBe(false);
     expect(opts.autoConnect).toBe(false);
