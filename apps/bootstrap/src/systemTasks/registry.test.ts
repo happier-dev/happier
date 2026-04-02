@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -269,6 +269,73 @@ async function executeSetupRepairThisComputerTask(): Promise<Awaited<ReturnType<
 }
 
 describe('createHsetupSystemTaskRegistry', () => {
+  it('uses the publicdev release ring when setup.thisComputer.v1 specifies channel publicdev', async () => {
+    const fakeCli = createFakeHappierCli({});
+    const homeDir = join(fakeCli.cliPath, '..');
+    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
+    const previousRepoDir = process.env.HAPPIER_STACK_REPO_DIR;
+    const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+    const previousStatePath = process.env.HAPPIER_FAKE_CLI_STATE_PATH;
+    const previousLogPath = process.env.HAPPIER_FAKE_CLI_LOG_PATH;
+    try {
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      process.env.HAPPIER_STACK_REPO_DIR = homeDir;
+      delete process.env.HAPPIER_BOOTSTRAP_CLI_PATH;
+      process.env.HAPPIER_FAKE_CLI_STATE_PATH = join(homeDir, 'scenario.json');
+      process.env.HAPPIER_FAKE_CLI_LOG_PATH = join(homeDir, 'invocations.log');
+
+      const stablePath = join(homeDir, 'cli', 'current', 'happier');
+      mkdirSync(join(homeDir, 'cli', 'current'), { recursive: true });
+      writeFileSync(stablePath, `#!/bin/sh\nexit 1\n`);
+      chmodSync(stablePath, 0o755);
+
+      const devPath = join(homeDir, 'cli-dev', 'current', 'happier');
+      mkdirSync(join(homeDir, 'cli-dev', 'current'), { recursive: true });
+      writeFileSync(devPath, readFileSync(fakeCli.cliPath, 'utf8'));
+      chmodSync(devPath, 0o755);
+
+      const result = await executeSystemTask({
+        spec: {
+          protocolVersion: 1,
+          kind: 'setup.thisComputer.v1',
+          params: {
+            surface: 'desktop.ui',
+            target: 'thisComputer',
+            channel: 'publicdev',
+          },
+        },
+        taskId: 'task_setup_release_ring_publicdev',
+        registry: createHsetupSystemTaskRegistry(),
+        now: () => 1700000000000,
+        emitEvent() {},
+      });
+
+      expect(result).toEqual({
+        protocolVersion: 1,
+        taskId: 'task_setup_release_ring_publicdev',
+        ok: true,
+        data: {
+          machineId: 'machine-local-1',
+        },
+      });
+      expect(fakeCli.readInvocations()).toEqual([
+        ['server', 'current', '--json'],
+        ['auth', 'status', '--json'],
+        ['server', 'set', '--server-url', 'https://relay.example.test', '--webapp-url', 'https://app.example.test', '--json'],
+        ['daemon', 'service', 'install', '--json'],
+        ['daemon', 'service', 'start', '--json'],
+        ['daemon', 'status', '--json'],
+      ]);
+    } finally {
+      restoreEnvVar('HAPPIER_HOME_DIR', previousHomeDir);
+      restoreEnvVar('HAPPIER_STACK_REPO_DIR', previousRepoDir);
+      restoreEnvVar('HAPPIER_BOOTSTRAP_CLI_PATH', previousCliPath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_STATE_PATH', previousStatePath);
+      restoreEnvVar('HAPPIER_FAKE_CLI_LOG_PATH', previousLogPath);
+      fakeCli.cleanup();
+    }
+  });
+
   it('runs setup.thisComputer.v1 with deterministic step ids and returns a machine id', async () => {
     const fakeCli = createFakeHappierCli({});
     const previousCliPath = process.env.HAPPIER_BOOTSTRAP_CLI_PATH;

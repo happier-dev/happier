@@ -389,14 +389,15 @@ describe('runRemoteBootstrapCommandDefault', () => {
 
             const remoteCommand = fakeSsh.readInvocations().at(-1)?.at(-1) ?? '';
             expect(remoteCommand).toContain(' server set ');
-            expect(remoteCommand).toContain('--server-url=https://relay.example.test');
+            expect(remoteCommand).toContain('--server-url=https://public-relay.example.test');
+            expect(remoteCommand).toContain('--local-server-url=https://relay.example.test');
             expect(remoteCommand).not.toContain('--public-server-url=');
         } finally {
             fakeSsh.cleanup();
         }
     });
 
-    it('uses data.localServerUrl when configuring the remote server profile after installing a relay runtime', async () => {
+    it('passes data.localServerUrl as --local-server-url when configuring the remote server profile after installing a relay runtime', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
                 {
@@ -428,8 +429,48 @@ describe('runRemoteBootstrapCommandDefault', () => {
             });
 
             const remoteCommand = fakeSsh.readInvocations().at(-1)?.at(-1) ?? '';
-            expect(remoteCommand).toContain('--server-url=http://127.0.0.1:3005');
-            expect(remoteCommand).not.toContain('--server-url=https://relay.example.test');
+            expect(remoteCommand).toContain('--server-url=https://relay.example.test');
+            expect(remoteCommand).toContain('--local-server-url=http://127.0.0.1:3005');
+        } finally {
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('does not override auth pairing to data.localServerUrl when a relay runtime is installed', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n`,
+                },
+                {
+                    status: 0,
+                    stdout: '\n',
+                },
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({ ok: true, data: { publicKey: 'pub-key-123' } })}\n`,
+                },
+            ],
+        });
+
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await runRemoteBootstrapCommandDefault({
+                    label: 'auth.request',
+                    parsed: createParsedRemoteBootstrapParams(),
+                    auth: { mode: 'agent' },
+                    knownHostsMode: 'system',
+                    data: {
+                        localServerUrl: 'http://127.0.0.1:3005',
+                    },
+                });
+            });
+
+            const remoteCommand = fakeSsh.readInvocations().at(-1)?.at(-1) ?? '';
+            expect(remoteCommand).toContain('--server-url=https://relay.example.test');
+            expect(remoteCommand).not.toContain('--server-url=http://127.0.0.1:3005');
+            expect(remoteCommand).not.toContain('--local-server-url=http://127.0.0.1:3005');
         } finally {
             fakeSsh.cleanup();
         }

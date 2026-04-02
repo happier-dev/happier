@@ -5,7 +5,7 @@ import { runRemoteTextSync } from '@happier-dev/cli-common/ssh';
 
 import { redactSshText } from '../ssh/index.js';
 import { checkRelayRuntimeHealthDefault, controlRelayRuntimeDefault, installOrUpdateRelayRuntimeDefault, readRelayRuntimeStatusDefault } from './relayRuntimeTasks.js';
-import { resolveDefaultKnownHostsPath } from './taskRuntime.js';
+import { normalizeBootstrapChannel, resolveDefaultKnownHostsPath } from './taskRuntime.js';
 import { installRemoteFirstPartyComponent, resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyPayloadInstaller.js';
 
 type RemoteSshAuth =
@@ -69,11 +69,13 @@ export async function installRemoteCliForManageHostDefault(params: Readonly<{
   ssh: SystemTaskSshConnectionConfig;
   auth: RemoteSshAuth;
   knownHostsMode: 'app' | 'system';
+  channel: 'stable' | 'preview' | 'dev';
 }>): Promise<void> {
   const ssh = buildRemoteSshConnection(params.ssh, params.auth);
+  const { releaseChannel } = normalizeBootstrapChannel(params.channel);
   await installRemoteFirstPartyComponent({
     componentId: 'happier-cli',
-    channel: 'stable',
+    channel: releaseChannel === 'publicdev' ? 'dev' : releaseChannel,
     ssh,
     knownHostsMode: params.knownHostsMode,
   });
@@ -85,12 +87,14 @@ export async function runRemoteDaemonServiceCommandDefault(params: Readonly<{
   knownHostsMode: 'app' | 'system';
   action: 'installOrUpdate' | 'start' | 'stop' | 'restart';
   serviceMode: 'user' | 'none';
+  channel: 'stable' | 'preview' | 'dev';
 }>): Promise<void> {
   const ssh = buildRemoteSshConnection(params.ssh, params.auth);
   const knownHosts = resolveKnownHostsConfig(ssh, params.knownHostsMode);
+  const { releaseChannel } = normalizeBootstrapChannel(params.channel);
   const happier = resolveRemoteInstalledFirstPartyBinaryPath({
     componentId: 'happier-cli',
-    channel: 'stable',
+    channel: releaseChannel === 'publicdev' ? 'dev' : releaseChannel,
   });
   const mode = params.serviceMode === 'none' ? 'user' : params.serviceMode;
   const action = params.action === 'installOrUpdate' ? 'install' : params.action;

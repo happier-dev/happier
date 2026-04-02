@@ -143,20 +143,33 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
     componentId: 'happier-cli',
     channel: params.parsed.channel,
   });
-  const localServerUrl = typeof params.data?.localServerUrl === 'string'
+  const serverUrl = (params.parsed.relay.publicRelayUrl ?? params.parsed.relay.relayUrl).trim();
+  const webappUrl = (params.parsed.relay.webappUrl ?? serverUrl).trim();
+  const derivedRelayLocalServerUrl = params.parsed.relay.publicRelayUrl
+    && params.parsed.relay.publicRelayUrl.trim()
+    && params.parsed.relay.publicRelayUrl.trim() !== params.parsed.relay.relayUrl.trim()
+      ? params.parsed.relay.relayUrl.trim()
+      : '';
+  const relayLocalServerUrl = typeof params.data?.localServerUrl === 'string'
     ? params.data.localServerUrl.trim()
-    : '';
-  const relayUrl = localServerUrl || params.parsed.relay.relayUrl;
-  const webappUrl = localServerUrl || (params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl);
+    : derivedRelayLocalServerUrl;
+  const shouldPreferLocal = Boolean(relayLocalServerUrl) && relayLocalServerUrl !== serverUrl;
+  const daemonServerUrl = shouldPreferLocal ? relayLocalServerUrl : serverUrl;
+
   const relayArgs = [
-    `--server-url=${relayUrl}`,
+    `--server-url=${serverUrl}`,
+    ...(shouldPreferLocal ? [`--local-server-url=${relayLocalServerUrl}`] : []),
+    `--webapp-url=${webappUrl}`,
+  ];
+  const authRelayArgs = [
+    `--server-url=${serverUrl}`,
     `--webapp-url=${webappUrl}`,
   ];
   const daemonEnv = [
-    `HAPPIER_DAEMON_SERVICE_SERVER_URL=${safeBashSingleQuote(relayUrl)}`,
+    `HAPPIER_DAEMON_SERVICE_SERVER_URL=${safeBashSingleQuote(daemonServerUrl)}`,
     `HAPPIER_DAEMON_SERVICE_WEBAPP_URL=${safeBashSingleQuote(webappUrl)}`,
-    ...(params.parsed.relay.publicRelayUrl
-      ? [`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${safeBashSingleQuote(params.parsed.relay.publicRelayUrl)}`]
+    ...(shouldPreferLocal
+      ? [`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${safeBashSingleQuote(serverUrl)}`]
       : []),
   ].join(' ');
 
@@ -166,9 +179,9 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
   } else if (params.label === 'server.configure') {
     command = `${happier} server set ${relayArgs.map(safeBashSingleQuote).join(' ')} --json`;
   } else if (params.label === 'auth.request') {
-    command = `${happier} auth request --json --persist ${relayArgs.map(safeBashSingleQuote).join(' ')}`;
+    command = `${happier} auth request --json --persist ${authRelayArgs.map(safeBashSingleQuote).join(' ')}`;
   } else if (params.label === 'auth.wait') {
-    command = `${happier} auth wait --public-key ${safeBashSingleQuote(String(params.data?.publicKey ?? ''))} --json --persist ${relayArgs.map(safeBashSingleQuote).join(' ')}`;
+    command = `${happier} auth wait --public-key ${safeBashSingleQuote(String(params.data?.publicKey ?? ''))} --json --persist ${authRelayArgs.map(safeBashSingleQuote).join(' ')}`;
   } else if (params.label === 'daemon.service.install') {
     command = `${daemonEnv} ${happier} daemon service install --mode=${params.parsed.serviceMode === 'none' ? 'user' : params.parsed.serviceMode ?? 'user'} --json`;
   } else if (params.label === 'daemon.service.start') {

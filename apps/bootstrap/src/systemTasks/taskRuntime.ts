@@ -2,6 +2,12 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 
+import {
+  normalizePublicReleaseRingLabel,
+  resolvePublicReleaseRingIdForLabel,
+  type PublicReleaseRingLabel,
+} from '@happier-dev/release-runtime/releaseRings';
+
 export interface CommandExecutionResult {
   status: number;
   stdout: string;
@@ -12,14 +18,10 @@ export function normalizeBootstrapChannel(raw: unknown): Readonly<{
   commandChannel: 'stable' | 'preview' | 'dev';
   releaseChannel: 'stable' | 'preview' | 'publicdev';
 }> {
-  const text = String(raw ?? '').trim().toLowerCase();
-  if (text === 'preview') {
-    return { commandChannel: 'preview', releaseChannel: 'preview' };
-  }
-  if (text === 'dev' || text === 'publicdev') {
-    return { commandChannel: 'dev', releaseChannel: 'publicdev' };
-  }
-  return { commandChannel: 'stable', releaseChannel: 'stable' };
+  const label = normalizePublicReleaseRingLabel(raw);
+  const commandChannel: PublicReleaseRingLabel = label || 'stable';
+  const releaseChannel = resolvePublicReleaseRingIdForLabel(commandChannel);
+  return { commandChannel, releaseChannel };
 }
 
 export async function runCommandCapture(params: Readonly<{

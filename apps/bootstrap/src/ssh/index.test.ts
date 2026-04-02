@@ -186,7 +186,7 @@ describe('buildScpCommand', () => {
 describe('redactSshText', () => {
   it('removes private key paths and password fragments from surfaced text', () => {
     const redacted = redactSshText(
-      'Identity file /Users/me/.ssh/id_ed25519 not accessible. password: hunter2',
+      'Identity file /Users/me/.ssh/id_ed25519 not accessible. password: hunter2 HAPPIER_SSH_PASSWORD=hunter2',
     );
 
     expect(redacted).not.toContain('/Users/me/.ssh/id_ed25519');

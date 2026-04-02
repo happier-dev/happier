@@ -7,9 +7,12 @@ import {
   type SetupMachineRecipeResult,
 } from '@happier-dev/cli-common/systemTasks';
 
+import { normalizeBootstrapChannel } from '../taskRuntime.js';
+
 export interface SetupThisComputerParams {
   surface?: string;
   target?: string;
+  channel?: 'stable' | 'preview' | 'dev' | 'publicdev';
   installService?: boolean;
   startService?: boolean;
   verifyService?: boolean;
@@ -31,7 +34,8 @@ export function createSetupThisComputerHandler() {
   > {
     const parsed = parseSetupThisComputerParams(params);
 
-    const executor = createLocalHappierJsonExecutor();
+    const releaseRing = parsed.channel ? normalizeBootstrapChannel(parsed.channel).releaseChannel : undefined;
+    const executor = createLocalHappierJsonExecutor({ releaseRing });
     yield { type: 'progress', stepId: 'setup.thisComputer.resolveRelay' };
     const relay = await readActiveRelayProfile(executor);
 
@@ -127,6 +131,16 @@ export function parseSetupThisComputerParams(params: unknown): SetupThisComputer
     surface: typeof record.surface === 'string' ? record.surface : undefined,
     target: typeof record.target === 'string' ? record.target : undefined,
   };
+  if ('channel' in record) {
+    if (typeof record.channel !== 'string') {
+      throw new systemTasks.SystemTaskExecutionError('invalid_params', 'Expected channel to be a string.');
+    }
+    const channel = record.channel.trim().toLowerCase();
+    if (channel !== 'stable' && channel !== 'preview' && channel !== 'dev' && channel !== 'publicdev') {
+      throw new systemTasks.SystemTaskExecutionError('invalid_params', `Unsupported channel: ${record.channel}`);
+    }
+    parsed.channel = channel as SetupThisComputerParams['channel'];
+  }
   if ('installService' in record) {
     if (typeof record.installService !== 'boolean') {
       throw new systemTasks.SystemTaskExecutionError('invalid_params', 'Expected installService to be a boolean.');

@@ -173,7 +173,7 @@ describe('installOrUpdateRelayRuntimeDefault', () => {
                 runLocalServiceCommands: false,
                 skipLocalHealthCheck: true,
             })).resolves.toMatchObject({
-                relayUrl: 'http://127.0.0.1:3005',
+                relayUrl: 'http://127.0.0.1:53288',
                 mode: 'user',
             });
 
@@ -184,7 +184,7 @@ describe('installOrUpdateRelayRuntimeDefault', () => {
 
             const installRoot = join(fakeOsHomeDir, '.happier', 'self-host');
             expect(readFileSync(join(installRoot, 'self-host-state.json'), 'utf8')).toContain('"version"');
-            expect(readFileSync(join(installRoot, 'config', 'server.env'), 'utf8')).toContain('PORT=3005');
+            expect(readFileSync(join(installRoot, 'config', 'server.env'), 'utf8')).toContain('PORT=53288');
         } finally {
             if (previousHomeDir === undefined) {
                 delete process.env.HAPPIER_HOME_DIR;
@@ -335,7 +335,7 @@ describe('installOrUpdateRelayRuntimeDefault', () => {
                         }
                     },
                 })).resolves.toMatchObject({
-                    relayUrl: 'http://127.0.0.1:3005',
+                    relayUrl: 'http://127.0.0.1:53288',
                     mode: 'user',
                 });
             });
