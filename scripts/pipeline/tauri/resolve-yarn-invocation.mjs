@@ -24,6 +24,26 @@ function canExec(execImpl, cmd, args) {
 }
 
 /**
+ * @param {typeof execFileSync} execImpl
+ * @param {string} cmd
+ * @param {string[]} args
+ * @returns {string}
+ */
+function tryExecText(execImpl, cmd, args) {
+  try {
+    return String(
+      execImpl(cmd, args, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 10_000,
+      }) ?? ''
+    );
+  } catch {
+    return '';
+  }
+}
+
+/**
  * @param {{ platform: NodeJS.Platform; execImpl: typeof execFileSync; nodeExecPath: string }} opts
  * @returns {string | ''}
  */
@@ -32,14 +52,16 @@ function resolveCorepackPath(opts) {
   if (canExec(opts.execImpl, 'corepack', ['--version'])) return 'corepack';
 
   // On some runners, corepack isn't on PATH even though it's shipped next to node.
-  const nodeDir = path.dirname(opts.nodeExecPath);
+  const useWin32Path = opts.platform === 'win32' && /\\/.test(opts.nodeExecPath);
+  const platformPath = useWin32Path ? path.win32 : path;
+  const nodeDir = platformPath.dirname(opts.nodeExecPath);
   const candidates =
     opts.platform === 'win32'
       ? ['corepack.cmd', 'corepack.exe', 'corepack']
       : ['corepack'];
 
   for (const name of candidates) {
-    const abs = path.join(nodeDir, name);
+    const abs = platformPath.join(nodeDir, name);
     try {
       if (fs.existsSync(abs) && fs.statSync(abs).isFile()) return abs;
     } catch {
@@ -64,11 +86,32 @@ export function resolveYarnInvocation(opts) {
   const nodeExecPath = opts?.nodeExecPath ?? process.execPath;
 
   if (platform === 'win32') {
+    const useWin32Path = /\\/.test(nodeExecPath);
+    const platformPath = useWin32Path ? path.win32 : path;
+    const nodeDir = platformPath.dirname(nodeExecPath);
+
+    // Prefer a PATH-resolved yarn from a real Windows cmd.exe environment. This avoids Git-Bash
+    // PATH translation pitfalls and also avoids Corepack shims that can internally call `spawn('yarn')`.
+    const whereOut = tryExecText(execImpl, 'cmd.exe', ['/D', '/S', '/C', 'where yarn']);
+    const whereCandidates = whereOut
+      .replaceAll('\r', '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => /yarn\.(cmd|exe)$/i.test(line));
+
+    const nodeDirLower = nodeDir.toLowerCase();
+    const preferredWhere =
+      whereCandidates.find((abs) => !abs.toLowerCase().startsWith(nodeDirLower)) ?? whereCandidates[0] ?? '';
+
+    if (preferredWhere) {
+      return { cmd: preferredWhere, prefixArgs: [] };
+    }
+
     // Prefer an absolute-path yarn shim next to node.exe. This is how `corepack enable`
     // installs yarn on GitHub-hosted Windows runners, and using an absolute path avoids
     // PATH resolution issues inside Git-Bash-hosted Node processes.
-    const nodeDir = path.dirname(nodeExecPath);
-    const yarnCmdNearNode = path.join(nodeDir, 'yarn.cmd');
+    const yarnCmdNearNode = platformPath.join(nodeDir, 'yarn.cmd');
     try {
       if (fs.existsSync(yarnCmdNearNode) && fs.statSync(yarnCmdNearNode).isFile()) {
         return { cmd: yarnCmdNearNode, prefixArgs: [] };
