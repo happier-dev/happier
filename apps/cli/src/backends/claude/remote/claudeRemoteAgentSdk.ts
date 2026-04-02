@@ -109,6 +109,13 @@ export async function claudeRemoteAgentSdk(opts: {
     onCompletionEvent?: (message: string) => void;
     onSessionReset?: () => void;
     setUserMessageSender?: (sender: ((message: SDKUserMessage) => void) | null) => void;
+    /**
+     * Registers a best-effort interrupt handler that can stop the current turn without
+     * terminating the underlying Claude Code subprocess.
+     *
+     * Used by the remote launcher to implement UI "Abort" without losing context.
+     */
+    setTurnInterrupt?: ((handler: (() => Promise<void>) | null) => void) | null;
     onCheckpointCaptured?: (checkpointId: string) => void;
     onCapabilities?: (caps: { slashCommands?: string[]; slashCommandDetails?: Array<{ command: string; description?: string }>; models?: unknown[] }) => void;
 
@@ -711,6 +718,27 @@ export async function claudeRemoteAgentSdk(opts: {
             prompt: messages,
             options: queryOptions,
         });
+
+        const interruptTurn = async (): Promise<void> => {
+            try {
+                const interrupt = (response as any)?.interrupt;
+                if (typeof interrupt === 'function') {
+                    await interrupt.call(response);
+                }
+            } catch {
+                // Best-effort: interrupt is optional and should not crash cancellation.
+            } finally {
+                // Ensure UI thinking state is released even if Claude does not emit a clean result.
+                updateThinking(false);
+                try {
+                    cleanupBufferedAssistantMessages?.(null);
+                } catch {
+                    // ignore
+                }
+                await flushStreamedTranscriptWriter('abort', 'turn-interrupt');
+            }
+        };
+        opts.setTurnInterrupt?.(interruptTurn);
 
         updateThinking(true);
         const streamingToolUses = new Map<
@@ -1487,6 +1515,7 @@ export async function claudeRemoteAgentSdk(opts: {
         throw e;
     } finally {
         opts.setUserMessageSender?.(null);
+        opts.setTurnInterrupt?.(null);
         updateThinking(false);
         cleanupBufferedAssistantMessages?.(null);
         await flushStreamedTranscriptWriter('abort', 'runner-finalize');

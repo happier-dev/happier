@@ -249,6 +249,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     let exitReason: 'switch' | 'exit' | null = null;
     let abortController: AbortController | null = null;
     let abortFuture: Future<void> | null = null;
+    let turnInterrupt: (() => Promise<void>) | null = null;
     let didSendChangeTitleInstructionForSession = false;
     const turnChangeTracker = new ClaudeTurnChangeTracker();
     const suppressedExplicitDiffCallIds = new Set<string>();
@@ -263,6 +264,17 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     async function doAbort() {
         logger.debug('[remote]: doAbort');
         session.noteUserAbortRequested();
+        if (turnInterrupt) {
+            try {
+                await turnInterrupt();
+            } catch (error) {
+                logger.debug('[remote]: turn interrupt failed; falling back to process abort', { error });
+                await abort();
+                return;
+            }
+            session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
+            return;
+        }
         await abort();
     }
 
@@ -817,6 +829,9 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         happierMcpServers: baseMcpServers,
                         happierMcpConfigJson: baseMcpConfigJson,
                         streamedTranscriptWriter,
+                    setTurnInterrupt: (handler: (() => Promise<void>) | null) => {
+                        turnInterrupt = handler;
+                    },
                     canCallTool: permissionHandler.handleToolCall,
                     isAborted: (toolCallId: string) => {
                         return permissionHandler.isAborted(toolCallId);
@@ -980,6 +995,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 abortController = null;
                 abortFuture?.resolve(undefined);
                 abortFuture = null;
+                turnInterrupt = null;
                 logger.debug('[remote]: launch done');
                 await permissionHandler.resetAndFlush();
                 turnChangeTracker.resetTurn();

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { configuration } from '@/configuration';
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
+import { resolveClaudeProjectId } from '../utils/path';
 
 const ORIGINAL_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
 const { ensureJavaScriptRuntimeExecutableMock } = vi.hoisted(() => ({
@@ -234,6 +235,57 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions).toBeTruthy();
         expect(capturedOptions.model).toBe('claude-opus-4-6');
         expect(capturedOptions.effort).toBe('max');
+    });
+
+    it('exposes a turn interrupt handler that calls query.interrupt()', async () => {
+        const interrupt = vi.fn(async () => {});
+        let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                interrupt,
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            setTurnInterrupt: (next: (() => Promise<void>) | null) => {
+                if (next) capturedTurnInterrupt = next;
+            },
+            createQuery,
+        } as any);
+
+        if (!capturedTurnInterrupt) {
+            throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+        }
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
+        expect(interrupt).toHaveBeenCalled();
     });
 
     it('omits effort when the mode specifies reasoningEffort=high (provider default)', async () => {
@@ -1153,7 +1205,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(onSessionFound).toHaveBeenCalledWith(
             'sess_999',
             expect.objectContaining({
-                transcript_path: '/tmp/claude_cfg/projects/-tmp/sess_999.jsonl',
+                transcript_path: `/tmp/claude_cfg/projects/${resolveClaudeProjectId('/tmp')}/sess_999.jsonl`,
             }),
         );
     });
@@ -1217,7 +1269,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(onSessionFound).toHaveBeenCalledWith(
             'sess_abc',
             expect.objectContaining({
-                transcript_path: '/tmp/claude_cfg/projects/-tmp/sess_abc.jsonl',
+                transcript_path: `/tmp/claude_cfg/projects/${resolveClaudeProjectId('/tmp')}/sess_abc.jsonl`,
             }),
         );
     });
@@ -1325,7 +1377,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(onSessionFound).toHaveBeenCalledWith(
             'sess_init',
             expect.objectContaining({
-                transcript_path: '/tmp/claude_cfg/projects/-tmp/sess_init.jsonl',
+                transcript_path: `/tmp/claude_cfg/projects/${resolveClaudeProjectId('/tmp')}/sess_init.jsonl`,
             }),
         );
     });
