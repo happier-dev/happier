@@ -34,8 +34,10 @@ import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mo
 import { ensureDevCheckout } from './utils/git/dev_checkout.mjs';
 import { parseGithubOwnerRepo } from './utils/git/worktrees.mjs';
 import { findAnyCredentialPathInCliHome, findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
+import { findSetupAuthCredentialPath } from './utils/auth/setup_auth.mjs';
 import { normalizeStackNameOrNull } from './utils/stack/names.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
+import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
 
 function resolveWorkspaceDirDefault() {
   const explicit = (process.env.HAPPIER_STACK_WORKSPACE_DIR ?? '').toString().trim();
@@ -428,15 +430,8 @@ async function spawnDetachedNodeScript({ rootDir, rel, args = [], env = process.
   return child.pid;
 }
 
-function mainCliHomeDirForEnvPath(envPath) {
-  const { baseDir } = resolveStackEnvPath('main');
-  // Prefer stack base dir; envPath is informational and can be legacy/new.
-  return join(baseDir, 'cli');
-}
-
 function getMainStacksAccessKeyPath() {
-  const cliHomeDir = mainCliHomeDirForEnvPath(resolveStackEnvPath('main').envPath);
-  return findAnyCredentialPathInCliHome({ cliHomeDir });
+  return findSetupAuthCredentialPath(process.env);
 }
 
 function getDevAuthStackAccessKeyPath(stackName = 'dev-auth') {
@@ -1439,7 +1434,7 @@ async function cmdSetup({ rootDir, argv }) {
 
     // 8) Optional: auth login (runs interactive browser flow via happier-cli).
     if (authWanted) {
-      const cliHomeDir = mainCliHomeDirForEnvPath(resolveStackEnvPath('main').envPath);
+      const cliHomeDir = resolveCliHomeDir(process.env);
       const existingCredentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl });
       if (existingCredentialPath) {
         // eslint-disable-next-line no-console

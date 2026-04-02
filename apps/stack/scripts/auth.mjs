@@ -1625,11 +1625,18 @@ async function cmdLogin({ argv, json }) {
     startKind: guidedStartKind,
   });
 
+  const publicServerUrlForAuth = effectiveWebappMode === 'stack' ? defaultPublicUrl : publicServerUrl;
+
   let webappUrlRaw = '';
   let webappUrlSource = '';
   if (explicitWebappUrl) {
     webappUrlRaw = explicitWebappUrl;
     webappUrlSource = 'webapp-url flag';
+  } else if (effectiveWebappMode === 'stack') {
+    // Local-first: when explicitly targeting the stack webapp, do not route the browser auth flow
+    // through a share/public URL (which may not map to this ephemeral dev stack port).
+    webappUrlRaw = defaultPublicUrl;
+    webappUrlSource = 'stack';
   } else if (effectiveWebappMode === 'public') {
     webappUrlRaw = publicServerUrl;
     webappUrlSource = 'public server';
@@ -1665,7 +1672,7 @@ async function cmdLogin({ argv, json }) {
     ...process.env,
     HAPPIER_HOME_DIR: cliHomeDir,
     HAPPIER_SERVER_URL: internalServerUrl,
-    HAPPIER_PUBLIC_SERVER_URL: publicServerUrl,
+    HAPPIER_PUBLIC_SERVER_URL: publicServerUrlForAuth,
     ...(webappUrl ? { HAPPIER_WEBAPP_URL: webappUrl } : {}),
     ...(noOpen ? { HAPPIER_NO_BROWSER_OPEN: '1' } : {}),
     ...(method ? { HAPPIER_AUTH_METHOD: method } : {}),
@@ -1697,7 +1704,7 @@ async function cmdLogin({ argv, json }) {
     const cmd =
       `HAPPIER_HOME_DIR="${cliHomeDir}" ` +
       `HAPPIER_SERVER_URL="${internalServerUrl}" ` +
-      `HAPPIER_PUBLIC_SERVER_URL="${publicServerUrl}" ` +
+      `HAPPIER_PUBLIC_SERVER_URL="${publicServerUrlForAuth}" ` +
       (loginEnv.HAPPIER_ACTIVE_SERVER_ID ? `HAPPIER_ACTIVE_SERVER_ID="${loginEnv.HAPPIER_ACTIVE_SERVER_ID}" ` : '') +
       (webappUrl ? `HAPPIER_WEBAPP_URL="${webappUrl}" ` : '') +
       (noOpen ? `HAPPIER_NO_BROWSER_OPEN="1" ` : '') +
@@ -1705,8 +1712,8 @@ async function cmdLogin({ argv, json }) {
       `"${loginCommand}" ${loginArgs.map((arg) => `"${arg}"`).join(' ')}`;
 
     const configureServer =
-      webappUrl && publicServerUrl
-        ? buildConfigureServerLinks({ webappUrl, serverUrl: publicServerUrl })
+      webappUrl && publicServerUrlForAuth
+        ? buildConfigureServerLinks({ webappUrl, serverUrl: publicServerUrlForAuth })
         : webappUrl
           ? buildConfigureServerLinks({ webappUrl, serverUrl: internalServerUrl })
           : null;

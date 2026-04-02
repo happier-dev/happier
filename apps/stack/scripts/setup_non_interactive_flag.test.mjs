@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { runNodeCapture as runNode } from './testkit/stack_script_command_testkit.mjs';
 
@@ -57,4 +59,29 @@ test('--interactive does not override HAPPIER_STACK_NON_INTERACTIVE=1', async ()
 
   const data = JSON.parse(res.stdout);
   assert.equal(data.interactive, false);
+});
+
+test('hstack setup respects the current stack CLI home when deciding auth defaults', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-setup-auth-defaults-'));
+
+  try {
+    const cliHomeDir = join(tmp, 'cli');
+    await mkdir(join(cliHomeDir, 'servers', 'stack-test'), { recursive: true });
+    await writeFile(
+      join(cliHomeDir, 'servers', 'stack-test', 'access.key'),
+      JSON.stringify({ token: 'token-123', encryption: { publicKey: 'AA==', machineKey: 'AA==' } }, null, 2),
+      'utf8'
+    );
+
+    const env = {
+      ...process.env,
+      HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+    };
+    const { findSetupAuthCredentialPath } = await import('./utils/auth/setup_auth.mjs');
+    assert.equal(findSetupAuthCredentialPath(env), join(cliHomeDir, 'servers', 'stack-test', 'access.key'));
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
 });

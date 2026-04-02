@@ -616,12 +616,40 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
   }
 
   const pm = await getComponentPm(pkgDir, env);
-  if (pm.name === 'yarn') {
-    await ensureYarnReady({ dir: pkgDir, env, quiet });
-    await run(pm.cmd, ['-s', 'build'], { cwd: pkgDir, stdio, env });
-  } else {
-    await run(pm.cmd, ['run', '-s', 'build'], { cwd: pkgDir, stdio, env });
-  }
+
+  const lockPath = join(getHappyStacksHomeDir(), 'cache', 'build', 'workspace-dist', `${sha256Hex(resolve(pkgDir))}.lock`);
+  const runBuild = async () => {
+    if (pm.name === 'yarn') {
+      await ensureYarnReady({ dir: pkgDir, env, quiet });
+      await run(pm.cmd, ['-s', 'build'], { cwd: pkgDir, stdio, env });
+    } else {
+      await run(pm.cmd, ['run', '-s', 'build'], { cwd: pkgDir, stdio, env });
+    }
+  };
+
+  const res = await withCliDistBuildLock(async ({ waited }) => {
+    if (waited) {
+      // Another process may have rebuilt while we waited; re-check before running build again.
+      const expectedAgain = collectExpectedPackageFilesFromPackageJson(await readJson(pkgJsonPath)).map((p) => join(pkgDir, p));
+      const missingAgain = expectedAgain.filter((p) => !existsSync(p));
+      if (missingAgain.length === 0) {
+        const distDirAgain = join(pkgDir, 'dist');
+        const distRootAgain = resolve(distDirAgain);
+        const distEntrypointsAgain = expectedAgain
+          .filter((p) => /\.(?:mjs|cjs|js)$/.test(p))
+          .filter((p) => {
+            const abs = resolve(p);
+            return abs === distRootAgain || abs.startsWith(distRootAgain + sep);
+          });
+        for (const entryPath of distEntrypointsAgain) {
+          await assertNoMissingLocalImports({ distDir: distDirAgain, entryPath, label });
+        }
+        return { built: false, reason: 'concurrent_build_already_completed' };
+      }
+    }
+    await runBuild();
+    return { built: true, reason: 'rebuilt' };
+  }, { lockPath });
 
   const missingAfter = expectedFiles.filter((p) => !existsSync(p));
   if (missingAfter.length > 0) {
@@ -638,7 +666,7 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
     }
   }
 
-  return { built: true, reason: 'rebuilt' };
+  return res;
 }
 
 export async function ensureWorkspacePackagesBuiltForComponent(componentDir, { quiet = false, env = process.env } = {}) {
