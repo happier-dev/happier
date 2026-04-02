@@ -242,7 +242,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         let capturedTurnInterrupt: null | (() => Promise<void>) = null;
         let resolveFinish: (() => void) | null = null;
         const finish = new Promise<void>((resolve) => {
-            resolveFinish = resolve;
+            resolveFinish = () => resolve();
         });
 
         const createQuery = vi.fn((_params: any) => {
@@ -293,10 +293,122 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         }
         if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
 
-        await capturedTurnInterrupt();
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
         expect(stopTask).toHaveBeenCalledWith('task_1');
-        resolveFinish?.();
+        (resolveFinish as unknown as (() => void) | null)?.();
         await runnerPromise;
+    });
+
+    it('does not emit duplicate assistant text after stopTask interrupt when streamed text already covered it', async () => {
+        const stopTask = vi.fn(async (_taskId: string) => {});
+        let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+
+        const assistantText = 'hello';
+        const emittedMessages: any[] = [];
+        let writerClosed = false;
+
+        let resolveAfterTaskStarted: (() => void) | null = null;
+        const afterTaskStarted = new Promise<void>((resolve) => {
+            resolveAfterTaskStarted = () => resolve();
+        });
+
+        let resolveContinue: (() => void) | null = null;
+        const continueIterator = new Promise<void>((resolve) => {
+            resolveContinue = () => resolve();
+        });
+
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(async () => {}),
+            appendThinkingDelta: vi.fn(async () => {}),
+            overrideAssistantText: vi.fn((text: string) => !writerClosed && text === assistantText),
+            overrideThinkingText: vi.fn(() => false),
+            flushAll: vi.fn(async (params: { reason: string }) => {
+                if (params.reason === 'abort') writerClosed = true;
+            }),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        event: { type: 'content_block_start', content_block: { type: 'text', text: assistantText } },
+                    } as any;
+
+                    yield { type: 'system', subtype: 'task_started', task_id: 'task_1' } as any;
+                    resolveAfterTaskStarted?.();
+                    await continueIterator;
+
+                    yield {
+                        type: 'assistant',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        message: { role: 'assistant', content: [{ type: 'text', text: assistantText }] },
+                    } as any;
+
+                    yield { type: 'system', subtype: 'task_notification', task_id: 'task_1', status: 'stopped' } as any;
+                    yield { type: 'result' } as any;
+                },
+                stopTask,
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: (message: any) => emittedMessages.push(message),
+            streamedTranscriptWriter,
+            setTurnInterrupt: (next: (() => Promise<void>) | null) => {
+                if (next) capturedTurnInterrupt = next;
+            },
+            createQuery,
+        } as any);
+
+        for (let i = 0; i < 50 && !capturedTurnInterrupt; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((r) => setTimeout(r, 5));
+        }
+        if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+
+        await afterTaskStarted;
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
+        expect(stopTask).toHaveBeenCalledWith('task_1');
+
+        (resolveContinue as unknown as (() => void) | null)?.();
+        await runnerPromise;
+
+        const assistantMessagesWithText = emittedMessages.filter(
+            (msg) =>
+                msg &&
+                typeof msg === 'object' &&
+                msg.type === 'assistant' &&
+                Array.isArray((msg as any).message?.content) &&
+                (msg as any).message.content.some((b: any) => b?.type === 'text' && typeof b?.text === 'string' && b.text.length > 0),
+        );
+        expect(assistantMessagesWithText).toHaveLength(0);
     });
 
     it('repairs transcript on turn interrupt even when sessionId is discovered at runtime', async () => {
@@ -333,7 +445,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         let capturedTurnInterrupt: null | (() => Promise<void>) = null;
         let resolveFinish: (() => void) | null = null;
         const finish = new Promise<void>((resolve) => {
-            resolveFinish = resolve;
+            resolveFinish = () => resolve();
         });
 
         const createQuery = vi.fn((_params: any) => {
@@ -385,9 +497,9 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         }
         if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
 
-        await capturedTurnInterrupt();
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
         expect(stopTask).toHaveBeenCalledWith('task_1');
-        resolveFinish?.();
+        (resolveFinish as unknown as (() => void) | null)?.();
         await runnerPromise;
 
         const updatedTranscript = await readFile(transcriptPath, 'utf8');

@@ -737,13 +737,17 @@ export async function claudeRemoteAgentSdk(opts: {
 	        });
 
         let activeTaskId: string | null = null;
+        let deferredInterruptedReason: string | null = null;
 
 	        const interruptTurn = async (): Promise<void> => {
+                let usedStopTask = false;
 	            try {
                     const stopTask = (response as any)?.stopTask;
                     if (typeof stopTask === 'function') {
                         const taskId = activeTaskId;
                         if (typeof taskId === 'string' && taskId.trim().length > 0) {
+                            usedStopTask = true;
+                            deferredInterruptedReason = deferredInterruptedReason ?? 'turn-interrupt';
                             await stopTask.call(response, taskId);
                             return;
                         }
@@ -758,13 +762,15 @@ export async function claudeRemoteAgentSdk(opts: {
 	            } finally {
 	                // Ensure UI thinking state is released even if Claude does not emit a clean result.
 	                updateThinking(false);
-                try {
-                    cleanupBufferedAssistantMessages?.(null);
-	                } catch {
-	                    // ignore
-	                }
-	                await flushStreamedTranscriptWriter('abort', 'turn-interrupt');
-	                await repairTranscriptAfterAbort();
+                    if (!usedStopTask) {
+                        try {
+                            cleanupBufferedAssistantMessages?.(null);
+                        } catch {
+                            // ignore
+                        }
+	                    await flushStreamedTranscriptWriter('abort', 'turn-interrupt');
+	                    await repairTranscriptAfterAbort();
+                    }
 	            }
 	        };
 	        opts.setTurnInterrupt?.(interruptTurn);
@@ -1112,7 +1118,13 @@ export async function claudeRemoteAgentSdk(opts: {
             awaitingNextTurnStart = true;
             activeTaskId = null;
             updateThinking(false);
-            await flushStreamedTranscriptWriter('turn-end');
+            const interruptedReason = deferredInterruptedReason;
+            deferredInterruptedReason = null;
+            if (typeof interruptedReason === 'string' && interruptedReason.trim().length > 0) {
+                await flushStreamedTranscriptWriter('abort', interruptedReason);
+            } else {
+                await flushStreamedTranscriptWriter('turn-end');
+            }
             logger.debug('[claudeRemoteAgentSdk] Turn summary', {
                 ...turnDiagnostics,
                 didPublishAssistantTextThisTurn,
