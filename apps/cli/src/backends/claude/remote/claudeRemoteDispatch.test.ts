@@ -182,14 +182,14 @@ describe('claudeRemoteDispatch', () => {
         expect(mockLegacy).toHaveBeenCalledTimes(1);
     });
 
-    it('falls back to legacy runner when Agent SDK emits only non-assistant messages and then exits with code 1', async () => {
-        const mockLegacy = vi.fn(async () => {});
-        const mockAgentSdk = vi.fn(async (params: any) => {
-            params.onSessionFound?.('sess_started');
-            params.onMessage?.({ type: 'system', message: { role: 'system', content: [] } });
-            throw new Error('Claude Code process exited with code 1');
-        });
-        const onRunnerSelected = vi.fn();
+	    it('falls back to legacy runner when Agent SDK emits only non-assistant messages and then exits with code 1', async () => {
+	        const mockLegacy = vi.fn(async () => {});
+	        const mockAgentSdk = vi.fn(async (params: any) => {
+	            params.onSessionFound?.('sess_started');
+	            params.onMessage?.({ type: 'system', message: { role: 'system', content: [] } });
+	            throw new Error('Claude Code process exited with code 1');
+	        });
+	        const onRunnerSelected = vi.fn();
 
         let sent = false;
         await claudeRemoteDispatch(
@@ -211,17 +211,51 @@ describe('claudeRemoteDispatch', () => {
 
         expect(onRunnerSelected).toHaveBeenNthCalledWith(1, 'agentSdk');
         expect(onRunnerSelected).toHaveBeenNthCalledWith(2, 'legacy');
-        expect(mockAgentSdk).toHaveBeenCalledTimes(1);
-        expect(mockLegacy).toHaveBeenCalledTimes(1);
-    });
+	        expect(mockAgentSdk).toHaveBeenCalledTimes(1);
+	        expect(mockLegacy).toHaveBeenCalledTimes(1);
+	    });
 
-    it('does not fall back to legacy runner when Agent SDK exits with code 1 after emitting a message', async () => {
-        const mockLegacy = vi.fn(async () => {});
-        const mockAgentSdk = vi.fn(async (params: any) => {
-            params.onMessage?.({ type: 'assistant', message: { role: 'assistant', content: [] } });
-            throw new Error('Claude Code process exited with code 1');
-        });
-        const onRunnerSelected = vi.fn();
+	    it('falls back to legacy runner when Agent SDK emits assistant thinking but no assistant text and exits with code 1', async () => {
+	        const mockLegacy = vi.fn(async () => {});
+	        const mockAgentSdk = vi.fn(async (params: any) => {
+	            params.onMessage?.({
+	                type: 'assistant',
+	                message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }] },
+	            });
+	            throw new Error('Claude Code process exited with code 1');
+	        });
+	        const onRunnerSelected = vi.fn();
+
+	        let sent = false;
+	        await claudeRemoteDispatch(
+	            {
+	                onRunnerSelected,
+	                onMessage: vi.fn(),
+	                nextMessage: async () => {
+	                    if (sent) return null;
+	                    sent = true;
+	                    return {
+	                        message: 'continue',
+	                        mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any,
+	                    };
+	                },
+	            } as any,
+	            { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+	        );
+
+	        expect(onRunnerSelected).toHaveBeenNthCalledWith(1, 'agentSdk');
+	        expect(onRunnerSelected).toHaveBeenNthCalledWith(2, 'legacy');
+	        expect(mockAgentSdk).toHaveBeenCalledTimes(1);
+	        expect(mockLegacy).toHaveBeenCalledTimes(1);
+	    });
+
+	    it('does not fall back to legacy runner when Agent SDK exits with code 1 after emitting assistant text', async () => {
+	        const mockLegacy = vi.fn(async () => {});
+	        const mockAgentSdk = vi.fn(async (params: any) => {
+	            params.onMessage?.({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] } });
+	            throw new Error('Claude Code process exited with code 1');
+	        });
+	        const onRunnerSelected = vi.fn();
 
         let sent = false;
         await expect(

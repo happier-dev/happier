@@ -38,36 +38,48 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     opts: T & { onRunnerSelected?: ((runner: ClaudeRemoteRunnerKind) => void) | null },
     deps?: Partial<ClaudeRemoteDispatchDependencies>,
 ): Promise<void> {
-    const first = await opts.nextMessage();
-    if (!first) return;
+	    const first = await opts.nextMessage();
+	    if (!first) return;
 
-    const bufferedAfterFirst: Array<{ message: string; mode: EnhancedMode }> = [];
-    let didStartSession = false;
-    let didEmitMessage = false;
-    let didEmitAssistantMessage = false;
+	    const bufferedAfterFirst: Array<{ message: string; mode: EnhancedMode }> = [];
+	    let didStartSession = false;
+	    let didEmitMessage = false;
+	    let didEmitAssistantText = false;
 
-    const originalOnSessionFound = (opts as any).onSessionFound as unknown;
-    const onSessionFound = (...args: any[]) => {
-        didStartSession = true;
-        if (typeof originalOnSessionFound === 'function') {
+	    const originalOnSessionFound = (opts as any).onSessionFound as unknown;
+	    const onSessionFound = (...args: any[]) => {
+	        didStartSession = true;
+	        if (typeof originalOnSessionFound === 'function') {
             originalOnSessionFound(...args);
         }
     };
 
-    const originalOnMessage = (opts as any).onMessage as unknown;
-    const onMessage = (...args: any[]) => {
-        didEmitMessage = true;
-        const firstArg = args[0];
-        if (firstArg && typeof firstArg === 'object') {
-            const messageType = (firstArg as any).type;
-            const role = (firstArg as any)?.message?.role ?? (firstArg as any)?.role;
-            if (messageType === 'assistant' || role === 'assistant') {
-                didEmitAssistantMessage = true;
-            }
-        }
-        if (typeof originalOnMessage === 'function') {
-            (originalOnMessage as any)(...args);
-        }
+	    const originalOnMessage = (opts as any).onMessage as unknown;
+	    const onMessage = (...args: any[]) => {
+	        didEmitMessage = true;
+	        const firstArg = args[0];
+	        if (firstArg && typeof firstArg === 'object') {
+	            const messageType = (firstArg as any).type;
+	            const role = (firstArg as any)?.message?.role ?? (firstArg as any)?.role;
+	            if (messageType === 'assistant' || role === 'assistant') {
+	                const content = (firstArg as any)?.message?.content ?? (firstArg as any)?.content;
+	                if (typeof content === 'string') {
+	                    if (content.trim().length > 0) didEmitAssistantText = true;
+	                } else if (Array.isArray(content)) {
+	                    for (const block of content) {
+	                        if (!block || typeof block !== 'object') continue;
+	                        const blockType = (block as any).type;
+	                        if (blockType === 'text' && typeof (block as any).text === 'string' && String((block as any).text).trim().length > 0) {
+	                            didEmitAssistantText = true;
+	                            break;
+	                        }
+	                    }
+	                }
+	            }
+	        }
+	        if (typeof originalOnMessage === 'function') {
+	            (originalOnMessage as any)(...args);
+	        }
     };
 
     const baseOpts = { ...opts, onSessionFound, onMessage };
@@ -108,21 +120,21 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
             return;
         } catch (error) {
             const shouldFallbackBecauseExitCodeOne = isClaudeAgentSdkProcessExitCodeOne(error);
-            if (
-                (
-                    // Authentication errors are only safe to fall back from when the Agent SDK failed
-                    // before establishing/claiming a session id. Once a session is started, switching
-                    // runners can confuse session metadata and lead to duplicated/invalid resumes.
-                    (!didStartSession && !didEmitMessage && isClaudeAgentSdkAuthenticationError(error))
-                    // Claude Code sometimes exits with status 1 (e.g. resume failures, transient crashes)
-                    // after already emitting a session id, but before producing any assistant messages.
-                    // In that case we still prefer a best-effort fallback so the user isn't stuck.
-                    || (shouldFallbackBecauseExitCodeOne && !didEmitAssistantMessage)
-                )
-            ) {
-                baseOpts.onRunnerSelected?.('legacy');
-                await resolvedLegacy({ ...baseOpts, nextMessage: createLegacyReplayNextMessage() } as any);
-                return;
+	            if (
+	                (
+	                    // Authentication errors are only safe to fall back from when the Agent SDK failed
+	                    // before establishing/claiming a session id. Once a session is started, switching
+	                    // runners can confuse session metadata and lead to duplicated/invalid resumes.
+	                    (!didStartSession && !didEmitMessage && isClaudeAgentSdkAuthenticationError(error))
+	                    // Claude Code sometimes exits with status 1 (e.g. resume failures, transient crashes)
+	                    // after already emitting a session id, but before producing any assistant messages.
+	                    // In that case we still prefer a best-effort fallback so the user isn't stuck.
+	                    || (shouldFallbackBecauseExitCodeOne && !didEmitAssistantText)
+	                )
+	            ) {
+	                baseOpts.onRunnerSelected?.('legacy');
+	                await resolvedLegacy({ ...baseOpts, nextMessage: createLegacyReplayNextMessage() } as any);
+	                return;
             }
             throw error;
         }
