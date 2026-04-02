@@ -26,7 +26,8 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
             maestroStubPath,
             [
                 '#!/usr/bin/env sh',
-                'set -euo pipefail',
+                // `/bin/sh` is `dash` on Ubuntu and does not support `pipefail`.
+                'set -eu',
                 'if [ -n "${MAESTRO_ARGS_LOG_PATH:-}" ]; then',
                 '  printf "%s\\n" "$@" > "$MAESTRO_ARGS_LOG_PATH"',
                 'fi',
@@ -97,7 +98,8 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
             maestroStubPath,
             [
                 '#!/usr/bin/env sh',
-                'set -euo pipefail',
+                // `/bin/sh` is `dash` on Ubuntu and does not support `pipefail`.
+                'set -eu',
                 'if [ -n "${MAESTRO_ARGS_LOG_PATH:-}" ]; then',
                 '  printf "%s\\n" "$@" > "$MAESTRO_ARGS_LOG_PATH"',
                 'fi',
@@ -200,7 +202,8 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
             maestroStubPath,
             [
                 '#!/usr/bin/env sh',
-                'set -euo pipefail',
+                // `/bin/sh` is `dash` on Ubuntu and does not support `pipefail`.
+                'set -eu',
                 `exec node "${maestroStubJsPath}" "$@"`,
                 '',
             ].join('\n'),
