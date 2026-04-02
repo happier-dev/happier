@@ -559,7 +559,10 @@ describe('app/_layout init resilience', () => {
         expect(loadAsyncMock).toHaveBeenCalledTimes(0);
         expect(screen.findByTestId('app-crash-recovery-boundary')).not.toBeNull();
         // Non-automation web startup should not install global error suppression handlers.
-        expect(addEventListenerSpy).not.toHaveBeenCalled();
+        // Other web-only runtime helpers (viewport/safe-area) may still register resize listeners.
+        const installedEvents = addEventListenerSpy.mock.calls.map((call) => call[0]);
+        expect(installedEvents).not.toContain('error');
+        expect(installedEvents).not.toContain('unhandledrejection');
 
         const fontInitErrors = consoleErrorSpy.mock.calls.filter(
             (call) => call[0] === 'Failed to load fonts during init, continuing startup:'
@@ -577,7 +580,9 @@ describe('app/_layout init resilience', () => {
         const screen = await renderSettledRootLayout();
 
         expect(screen.findByTestId('app-crash-recovery-boundary')).not.toBeNull();
-        expect(addEventListenerSpy).not.toHaveBeenCalled();
+        const installedEvents = addEventListenerSpy.mock.calls.map((call) => call[0]);
+        expect(installedEvents).not.toContain('error');
+        expect(installedEvents).not.toContain('unhandledrejection');
     });
 
     it('does not surface synchronous expo-font errors as console errors on web startup', async () => {

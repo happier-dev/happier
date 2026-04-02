@@ -11,7 +11,10 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('expo-router', () => ({
-    Slot: () => React.createElement('Slot', { testID: 'settings-layout-slot' }),
+    Stack: Object.assign(
+        (props: any) => React.createElement('Stack', { testID: 'settings-layout-stack' }, props.children),
+        { Screen: (props: any) => React.createElement('Stack.Screen', { name: props?.name ?? '' }) },
+    ),
 }));
 
 vi.mock('@/components/settings/shell/SettingsShell', () => ({
@@ -24,6 +27,6 @@ describe('/settings/_layout SettingsShell wiring', () => {
         const screen = await renderScreen(React.createElement(Layout));
 
         expect(screen.findByTestId('settings-shell')).toBeTruthy();
-        expect(screen.findByTestId('settings-layout-slot')).toBeTruthy();
+        expect(screen.findByTestId('settings-layout-stack')).toBeTruthy();
     });
 });
