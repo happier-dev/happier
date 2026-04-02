@@ -314,7 +314,8 @@ function dockerLoginGhcr(opts) {
   const localMode = !isGithubActions();
 
   let username = String(process.env.GHCR_USERNAME ?? process.env.GITHUB_ACTOR ?? '').trim();
-  let token = String(process.env.GHCR_TOKEN ?? process.env.GITHUB_TOKEN ?? '').trim();
+  // Prefer an explicit GHCR token/PAT. GHCR_PAT is supported for convenience since "PAT" is the common naming.
+  let token = String(process.env.GHCR_TOKEN ?? process.env.GHCR_PAT ?? process.env.GITHUB_TOKEN ?? '').trim();
 
   if (!opts.dryRun && localMode) {
     if (!token) token = tryGh(['auth', 'token']);
@@ -339,7 +340,7 @@ function dockerLoginGhcr(opts) {
     fail(
       [
         '[pipeline] missing GHCR_TOKEN (required to push GHCR images).',
-        'Fix: set GHCR_TOKEN, or authenticate with GitHub CLI locally via `gh auth login`.',
+        'Fix: set GHCR_TOKEN (or GHCR_PAT), or authenticate with GitHub CLI locally via `gh auth login`.',
       ].join('\n'),
     );
   }
