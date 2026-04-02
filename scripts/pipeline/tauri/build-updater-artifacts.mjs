@@ -15,6 +15,20 @@ function fail(message) {
   process.exit(1);
 }
 
+function resolveYarnInvocation() {
+  try {
+    execFileSync('yarn', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 });
+    return { cmd: 'yarn', prefixArgs: [] };
+  } catch (err) {
+    const anyErr = /** @type {{ code?: unknown }} */ (err);
+    if (anyErr && anyErr.code === 'ENOENT') {
+      return { cmd: 'corepack', prefixArgs: ['yarn'] };
+    }
+    // If yarn exists but fails, still attempt to run it normally so we surface the real error.
+    return { cmd: 'yarn', prefixArgs: [] };
+  }
+}
+
 /**
  * @param {unknown} value
  * @param {string} name
@@ -101,6 +115,7 @@ function main() {
     run(opts, 'rustup', ['target', 'add', tauriTarget], { cwd: absUiDir, timeoutMs: 10 * 60_000 });
   }
 
+  const yarn = resolveYarnInvocation();
   const targetArgs = tauriTarget ? ['--target', tauriTarget] : [];
   /** @type {string[]} */
   const configs = [];
@@ -145,8 +160,8 @@ function main() {
 
     run(
       opts,
-      'yarn',
-      ['tauri', 'build', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
+      yarn.cmd,
+      [...yarn.prefixArgs, 'tauri', 'build', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
       {
         cwd: absUiDir,
         env: {
@@ -160,7 +175,7 @@ function main() {
     return;
   }
 
-  run(opts, 'yarn', ['tauri', 'build', ...configs, ...targetArgs], {
+  run(opts, yarn.cmd, [...yarn.prefixArgs, 'tauri', 'build', ...configs, ...targetArgs], {
     cwd: absUiDir,
     env: {
       CI: 'true',
