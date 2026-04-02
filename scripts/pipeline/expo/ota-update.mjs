@@ -7,6 +7,7 @@ import { maybeUploadSentryExpoSourceMaps } from './sentry-upload-sourcemaps.mjs'
 import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
 import { applyExpoNodeHeapEnv } from '../../expo/expoNodeHeapEnv.mjs';
 import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
+import { resolveEasBuildProfileEnv } from './resolve-eas-build-profile-env.mjs';
 import {
   MOBILE_RELEASE_ENVIRONMENT_CHOICES,
   formatMobileReleaseEnvironment,
@@ -14,6 +15,13 @@ import {
   resolveMobileBuildNodeEnvironment,
   resolveMobileAppEnvironmentConfig,
 } from './mobile-release-environments.mjs';
+
+const OTA_IDENTITY_ENV_KEYS = Object.freeze([
+  'EXPO_APP_NAME',
+  'EXPO_APP_BUNDLE_ID',
+  'EXPO_ANDROID_PACKAGE',
+  'EXPO_APP_SCHEME',
+]);
 
 function fail(message) {
   console.error(message);
@@ -63,6 +71,51 @@ function resolvePreviewMessage(environment, rawMessage, opts) {
     return `Happier OTA ${laneLabel} ${sha} (run ${runId})`;
   }
   return `Happier OTA ${laneLabel} ${sha}`;
+}
+
+function pickNonEmptyString(raw) {
+  const value = String(raw ?? '').trim();
+  return value ? value : '';
+}
+
+/**
+ * Expo runtimeVersion uses the fingerprint policy, so OTA updates must be generated with the
+ * same env inputs as the corresponding native build profile; otherwise iOS/Android builds won't
+ * be eligible to download the update.
+ *
+ * We merge the EAS build-profile env (following `extends`) from `apps/ui/eas.json`, and then
+ * backfill identity env (name/bundle/package/scheme) from the canonical app environment config.
+ * This keeps OTA and native builds aligned, while still being robust when older build profiles
+ * do not set all identity overrides explicitly (for example `EXPO_ANDROID_PACKAGE`).
+ *
+ * @param {string} uiDir
+ * @param {import('./mobile-release-environments.mjs').MobileReleaseEnvironment} environment
+ */
+function resolveOtaFingerprintEnv(uiDir, environment) {
+  const easJsonPath = path.join(uiDir, 'eas.json');
+  const easProfileEnv = resolveEasBuildProfileEnv({ easJsonPath, profileId: environment });
+
+  /** @type {Record<string, string>} */
+  const resolved = { ...easProfileEnv };
+
+  const appConfig = resolveMobileAppEnvironmentConfig(environment);
+  const identityDefaults = {
+    EXPO_APP_NAME: pickNonEmptyString(appConfig.name),
+    EXPO_APP_BUNDLE_ID: pickNonEmptyString(appConfig.iosBundleId),
+    EXPO_ANDROID_PACKAGE: pickNonEmptyString(appConfig.androidPackage),
+    EXPO_APP_SCHEME: pickNonEmptyString(appConfig.scheme),
+  };
+
+  for (const key of OTA_IDENTITY_ENV_KEYS) {
+    if (pickNonEmptyString(resolved[key])) continue;
+    resolved[key] = identityDefaults[key];
+  }
+
+  for (const key of Object.keys(resolved)) {
+    if (!pickNonEmptyString(resolved[key])) delete resolved[key];
+  }
+
+  return resolved;
 }
 
 function main() {
@@ -117,12 +170,28 @@ function main() {
   const appEnvironment = normalizedEnvironment;
   const updateLane = resolveMobileAppEnvironmentConfig(normalizedEnvironment).updatesChannel;
   const nodeEnvironment = resolveMobileBuildNodeEnvironment(normalizedEnvironment);
+  const otaFingerprintEnv = resolveOtaFingerprintEnv(uiDir, normalizedEnvironment);
+
+  /** @type {Record<string, string>} */
+  const injectedEnv = { ...otaFingerprintEnv };
+  for (const [key, value] of Object.entries(injectedEnv)) {
+    if (!pickNonEmptyString(value)) delete injectedEnv[key];
+  }
+
+  for (const key of Object.keys(injectedEnv)) {
+    const existing = pickNonEmptyString(process.env[key]);
+    if (existing) {
+      delete injectedEnv[key];
+    }
+  }
+
   const easCommandEnv = withEasGitCaseSensitiveEnv(
     applyExpoNodeHeapEnv({
       ...process.env,
       APP_ENV: process.env.APP_ENV ?? appEnvironment,
       NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment,
       EXPO_UPDATES_CHANNEL: process.env.EXPO_UPDATES_CHANNEL ?? updateLane,
+      ...injectedEnv,
     }, {
       envKey: 'HAPPIER_PIPELINE_EXPO_MAX_OLD_SPACE_SIZE_MB',
     }),
