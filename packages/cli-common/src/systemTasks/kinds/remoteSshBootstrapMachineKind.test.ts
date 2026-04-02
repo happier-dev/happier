@@ -208,7 +208,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
         }
 
         if (label === 'server.configure' || label === 'auth.request' || label === 'auth.wait' || label === 'daemon.service.install' || label === 'daemon.service.start') {
-          expect((data ?? {}).localServerUrl).toBe('http://127.0.0.1:9999');
+          expect((data ?? {}).localServerUrl).toBeUndefined();
         }
 
         expect(parsed.relay.relayUrl).toBe('https://api.happier.dev');
@@ -299,6 +299,111 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     expect(invocations.indexOf('server.configure')).toBeLessThan(invocations.indexOf('auth.request'));
   });
 
+  it('switches to the installed relay runtime when relay.relayUrl is loopback and no public relay URL exists', async () => {
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async () => undefined,
+      approveLocalAuthRequest: async ({ parsed }) => {
+        expect(parsed.relay.relayUrl).toBe('http://127.0.0.1:9999');
+      },
+      runRemoteCommand: async ({ label, parsed, data }) => {
+        if (label === 'relay.runtime.install') {
+          return { ok: true, data: { relayUrl: 'http://127.0.0.1:9999', mode: 'user' } };
+        }
+
+        if (
+          label === 'server.configure'
+          || label === 'auth.request'
+          || label === 'auth.wait'
+          || label === 'daemon.service.install'
+          || label === 'daemon.service.start'
+        ) {
+          expect((data ?? {}).localServerUrl).toBeUndefined();
+          expect(parsed.relay.relayUrl).toBe('http://127.0.0.1:9999');
+        }
+
+        if (label === 'auth.status') {
+          return { ok: true, data: { authenticated: false } };
+        }
+
+        if (label === 'server.configure') {
+          return { ok: true, data: { configured: true } };
+        }
+
+        if (label === 'auth.request') {
+          return {
+            ok: true,
+            data: {
+              publicKey: 'pub-key',
+              claimSecret: 'secret-value',
+              stateFile: '/tmp/claim-state.json',
+              supportsV2: true,
+              webappUrl: 'http://127.0.0.1:9999',
+            },
+          };
+        }
+
+        if (label === 'auth.wait') {
+          return { ok: true, data: { paired: true, machineId: 'remote-machine' } };
+        }
+
+        if (label === 'daemon.service.install') {
+          return { ok: true, data: { installed: true } };
+        }
+
+        if (label === 'daemon.service.start') {
+          return { ok: true, data: { started: true } };
+        }
+
+        throw new Error(`Unexpected remote command: ${label}`);
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: { 'remote.ssh.bootstrapMachine.v1': kind },
+    });
+
+    await runner.start({
+      taskId: 'ssh-task-loopback',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'http://127.0.0.1:3005',
+          webappUrl: 'http://localhost:3005',
+        },
+        relayRuntime: {
+          enabled: true,
+          mode: 'user',
+        },
+        channel: 'dev',
+        serviceMode: 'user',
+        promptResolution: {
+          authApproval: {
+            publicKey: 'pub-key',
+          },
+        },
+      },
+    });
+
+    const result = await waitForResult(runner, { taskId: 'ssh-task-loopback', cursor: 0 });
+    expect(result.result?.ok).toBe(true);
+    if (!result.result || result.result.ok !== true) {
+      throw new Error('Expected remote ssh bootstrap to succeed');
+    }
+    expect(result.result.data).toEqual({
+      publicKey: 'pub-key',
+      machineId: 'remote-machine',
+      relayRuntime: {
+        relayUrl: 'http://127.0.0.1:9999',
+        mode: 'user',
+      },
+    });
+  });
+
   it('prefers relay.publicRelayUrl for remote commands when provided', async () => {
     const kind = createRemoteSshBootstrapMachineTaskKind({
       resolveHostTrust: async () => ({ status: 'trusted' }),
@@ -325,7 +430,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
           };
         }
         if (label === 'auth.wait') {
-          return { ok: true, data: { paired: true } };
+          return { ok: true, data: { paired: true, machineId: 'machine-runtime-port-1' } };
         }
         throw new Error(`Unexpected remote command: ${label}`);
       },
@@ -353,6 +458,54 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
         promptResolution: {
           authApproval: {
             publicKey: 'pub-key',
+          },
+        },
+      },
+    });
+
+    const result = await waitForResult(runner, { taskId: 'ssh-task', cursor: 0 });
+    expect(result.result?.ok).toBe(true);
+  });
+
+  it('accepts publicdev as an alias for the dev channel label', async () => {
+    const kind = createRemoteSshBootstrapMachineTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      installRemoteCli: async ({ parsed }) => {
+        expect(parsed.channel).toBe('dev');
+      },
+      approveLocalAuthRequest: async () => undefined,
+      runRemoteCommand: async ({ label }) => {
+        if (label === 'auth.status') return { ok: true, data: { authenticated: true } };
+        if (label === 'auth.request') return { ok: true, data: { publicKey: 'pub', claimSecret: 'secret', stateFile: '/tmp/state.json' } };
+        if (label === 'auth.wait') return { ok: true, data: { paired: true, machineId: 'machine-remote-0' } };
+        if (label === 'server.configure') return { ok: true, data: { configured: true } };
+        if (label === 'daemon.service.install') return { ok: true, data: { installed: true } };
+        if (label === 'daemon.service.start') return { ok: true, data: { started: true } };
+        return { ok: true, data: {} };
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: { 'remote.ssh.bootstrapMachine.v1': kind },
+    });
+
+    await runner.start({
+      taskId: 'ssh-task',
+      kind: 'remote.ssh.bootstrapMachine.v1',
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'https://api.happier.dev',
+          webappUrl: 'https://app.happier.dev',
+        },
+        channel: 'publicdev',
+        serviceMode: 'user',
+        promptResolution: {
+          authApproval: {
+            publicKey: 'pub',
           },
         },
       },
@@ -410,7 +563,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
         }
         if (label === 'auth.wait') {
           expect(data).toEqual({ publicKey: 'pub-key' });
-          return { ok: true, data: { paired: true } };
+          return { ok: true, data: { paired: true, machineId: 'machine-remote-0' } };
         }
         if (label === 'daemon.service.install') {
           return { ok: true, data: { installed: true } };
@@ -484,7 +637,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
       ok: true,
       data: {
         publicKey: 'pub-key',
-        machineId: null,
+        machineId: 'machine-remote-0',
       },
     });
     expect(invocations).toEqual([
@@ -762,7 +915,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
         }
         if (label === 'auth.wait') {
           expect(data).toEqual({ publicKey: 'pub-key' });
-          return { ok: true, data: { paired: true } };
+          return { ok: true, data: { paired: true, machineId: 'machine-not-auth-1' } };
         }
         throw new Error(`Unexpected remote command: ${label}`);
       },
@@ -819,7 +972,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
         }
         if (label === 'auth.wait') {
           expect(data).toEqual({ publicKey: 'pub-key' });
-          return { ok: true, data: { paired: true } };
+          return { ok: true, data: { paired: true, machineId: 'machine-not-auth-2' } };
         }
         throw new Error(`Unexpected remote command: ${label}`);
       },
@@ -957,7 +1110,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
           };
         }
         if (label === 'auth.wait') {
-          return { ok: true, data: { paired: true } };
+          return { ok: true, data: { paired: true, machineId: 'machine-loopback-1' } };
         }
         if (label === 'daemon.service.install') {
           return { ok: true, data: { installed: true } };
@@ -1008,7 +1161,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
       ok: true,
       data: {
         publicKey: 'pub-key',
-        machineId: null,
+        machineId: 'machine-loopback-1',
         relayRuntime: {
           relayUrl: 'http://10.0.0.5:3005',
           mode: 'user',
@@ -1059,7 +1212,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
           return { ok: true, data: { publicKey: 'pub-key', supportsV2: true, webappUrl: 'https://relay.example.test' } };
         }
         if (label === 'auth.wait') {
-          return { ok: true, data: { paired: true } };
+          return { ok: true, data: { paired: true, machineId: 'machine-remote-relay-1' } };
         }
         if (label === 'relay.runtime.install') {
           return { ok: true, data: { relayUrl: 'http://10.0.0.5:3005' } };
@@ -1122,7 +1275,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
       ok: true,
       data: {
         publicKey: 'pub-key',
-        machineId: null,
+        machineId: 'machine-remote-relay-1',
         relayRuntime: {
           relayUrl: 'http://10.0.0.5:3005',
           mode: 'system',
@@ -1162,7 +1315,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
           return { ok: true, data: { publicKey: 'pub-key', supportsV2: true, webappUrl: 'https://relay.example.test' } };
         }
         if (label === 'auth.wait') {
-          return { ok: true, data: { paired: true } };
+          return { ok: true, data: { paired: true, machineId: 'machine-runtime-port-1' } };
         }
         if (label === 'relay.runtime.install') {
           return { ok: true, data: { relayUrl: 'http://10.0.0.5:3005' } };
@@ -1253,7 +1406,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
           return { ok: true, data: { publicKey: 'pub-key', supportsV2: true, webappUrl: 'https://public-relay.example.test' } };
         }
         if (label === 'auth.wait') {
-          return { ok: true, data: { paired: true } };
+          return { ok: true, data: { paired: true, machineId: 'machine-runtime-port-1' } };
         }
         return { ok: true, data: {} };
       },
@@ -1336,7 +1489,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
           return { ok: true, data: { publicKey: 'pub-key', supportsV2: true, webappUrl: 'https://public.example.test' } };
         }
         if (label === 'auth.wait') {
-          return { ok: true, data: { paired: true } };
+          return { ok: true, data: { paired: true, machineId: 'machine-runtime-port-1' } };
         }
         if (label === 'daemon.service.install') {
           return { ok: true, data: { installed: true } };
@@ -1387,7 +1540,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
       ok: true,
       data: {
         publicKey: 'pub-key',
-        machineId: null,
+        machineId: 'machine-runtime-port-1',
         relayRuntime: {
           relayUrl: 'http://127.0.0.1:4449',
           mode: 'user',

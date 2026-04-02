@@ -149,6 +149,16 @@ function normalizeSchtasksStatus(raw: RelayRuntimeServiceRaw): RelayRuntimeNorma
   };
 }
 
+const DEFAULT_RELAY_RUNTIME_PORTS: Readonly<Record<PublicReleaseRingId, number>> = Object.freeze({
+  stable: 53288,
+  preview: 53388,
+  publicdev: 53488,
+});
+
+function resolveDefaultRelayRuntimePort(channel: PublicReleaseRingId): number {
+  return DEFAULT_RELAY_RUNTIME_PORTS[channel] ?? DEFAULT_RELAY_RUNTIME_PORTS.stable;
+}
+
 export function resolveRelayRuntimeDefaults(params: Readonly<{
   platform?: RelayRuntimePlatform;
   mode?: RelayRuntimeMode;
@@ -159,6 +169,7 @@ export function resolveRelayRuntimeDefaults(params: Readonly<{
   const mode = normalizeMode(params.mode);
   const channel = normalizeChannel(params.channel);
   const homeDir = String(params.homeDir ?? '').trim();
+  const serverPort = resolveDefaultRelayRuntimePort(channel);
 
   if (mode === 'system') {
     return {
@@ -171,7 +182,7 @@ export function resolveRelayRuntimeDefaults(params: Readonly<{
       logDir: appendChannelSuffix('/var/log/happier', channel),
       serviceName: appendChannelSuffix('happier-server', channel),
       serverHost: '127.0.0.1',
-      serverPort: 3005,
+      serverPort,
       healthPath: '/health',
     };
   }
@@ -194,7 +205,7 @@ export function resolveRelayRuntimeDefaults(params: Readonly<{
     logDir: platform === 'win32' ? `${installRoot}\\logs` : `${installRoot}/logs`,
     serviceName: appendChannelSuffix('happier-server', channel),
     serverHost: '127.0.0.1',
-    serverPort: 3005,
+    serverPort,
     healthPath: '/health',
   };
 }

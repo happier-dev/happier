@@ -13,6 +13,7 @@ import {
 } from '../../firstPartyRuntime/index.js';
 import { resolveWindowsCommandInvocation } from '../../process/index.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
+import { applyPublicReleaseRingScopeToEnv } from './releaseRingScopedEnv.js';
 
 export const DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES = [
   'HAPPIER_BOOTSTRAP_CLI_PATH',
@@ -377,10 +378,11 @@ export function createLocalHappierJsonExecutor(params: Readonly<{
     async runHappierText(args, opts) {
       const processEnv = opts?.env ?? defaultProcessEnv;
       const command = await ensureCommand(processEnv);
+      const scopedEnv = applyPublicReleaseRingScopeToEnv(processEnv, releaseRing ?? null);
       const result = await runCommandCapture({
         command,
         args,
-        env: processEnv,
+        env: scopedEnv,
         cwd: opts?.cwd,
         signal: opts?.signal,
         timeoutMs: opts?.timeoutMs,

@@ -7,14 +7,10 @@ import {
     runTailscaleServeStatus,
     runTailscaleStatusJson,
 } from '../../../tailscale/index.js';
-import type { RelayAccessProviderDescriptor } from '../../types.js';
 
-const descriptor = {
-    id: 'tailscaleServe',
-    title: 'Tailscale Serve',
-    exposure: 'private',
-    prerequisites: [{ kind: 'tailscaleInstalled' }, { kind: 'tailscaleAuth' }],
-} as const satisfies RelayAccessProviderDescriptor;
+import { relayAccessProviderDescriptorsById } from '../../catalog.js';
+
+const descriptor = relayAccessProviderDescriptorsById.tailscaleServe;
 
 export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
     descriptor,

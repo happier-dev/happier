@@ -155,9 +155,11 @@ export async function resolveTailscaleBin(
     return resolvedOnPath;
   }
 
-  for (const candidate of MACOS_TAILSCALE_CLI_PATHS) {
-    if (await (deps.isExecutable ?? isExecutablePath)(candidate)) {
-      return candidate;
+  if (!deps.resolveCommandOnPath) {
+    for (const candidate of MACOS_TAILSCALE_CLI_PATHS) {
+      if (await (deps.isExecutable ?? isExecutablePath)(candidate)) {
+        return candidate;
+      }
     }
   }
 

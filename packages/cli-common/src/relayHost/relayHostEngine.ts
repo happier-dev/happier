@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, posix as posixPath } from 'node:path';
 
-import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import {
   applyServicePlan,
@@ -19,6 +19,8 @@ import { renderSystemdServiceUnit } from '../service/systemd.js';
 import { resolveRelayRuntimeDefaults, type RelayRuntimeDefaults } from '../firstPartyRuntime/relayRuntime.js';
 import { installOrUpdateRelayRuntimeLocal } from '../firstPartyRuntime/relayRuntimeInstall.js';
 import { applyEnvOverridesToEnvText, parseEnvText } from '../firstPartyRuntime/selfHostServerEnv.js';
+
+import { buildRelayRuntimeHealthProbeCommand, RELAY_RUNTIME_HEALTH_OK_TOKEN } from './buildRelayRuntimeHealthProbeCommand.js';
 
 import type {
   RelayRuntimeStatusSnapshot,
@@ -97,10 +99,7 @@ function sanitizeRemotePathSegment(value: string): string {
 }
 
 function normalizeChannel(raw: unknown): PublicReleaseRingId {
-  const normalized = String(raw ?? '').trim().toLowerCase();
-  if (normalized === 'preview') return 'preview';
-  if (normalized === 'dev' || normalized === 'publicdev') return 'publicdev';
-  return 'stable';
+  return normalizePublicReleaseRingId(raw) || 'stable';
 }
 
 function normalizeMode(raw: unknown): 'user' | 'system' {
@@ -457,11 +456,9 @@ function buildRemoteControlCommand(params: Readonly<{ backend: ServiceBackend; s
     if (params.action === 'stop') {
       return `${sudoSetup}${privilegedPrefix}launchctl unload -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))}`;
     }
-    if (params.action === 'restart') {
-      const plistPath = resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system');
-      return `${sudoSetup}${privilegedPrefix}launchctl unload -w ${quoteRemoteShellArg(plistPath)} 2>/dev/null || true; ${privilegedPrefix}launchctl load -w ${quoteRemoteShellArg(plistPath)}`;
-    }
-    return `${sudoSetup}${privilegedPrefix}launchctl load -w ${quoteRemoteShellArg(resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system'))}`;
+    const plistPath = resolveLaunchdPlistPath(params.serviceName, params.backend === 'launchd-system');
+    const domain = params.backend === 'launchd-system' ? `system/${params.serviceName}` : `gui/${typeof process.getuid === 'function' ? process.getuid() : 0}/${params.serviceName}`;
+    return `${sudoSetup}${privilegedPrefix}launchctl bootout -w ${quoteRemoteShellArg(plistPath)} 2>/dev/null || true; ${privilegedPrefix}launchctl bootstrap ${params.backend === 'launchd-system' ? 'system' : `gui/${typeof process.getuid === 'function' ? process.getuid() : 0}` } ${quoteRemoteShellArg(plistPath)}; ${privilegedPrefix}launchctl enable ${quoteRemoteShellArg(domain)}; ${privilegedPrefix}launchctl kickstart -k ${quoteRemoteShellArg(domain)}`;
   }
   throw new Error(`Unsupported remote backend: ${params.backend}`);
 }
@@ -789,6 +786,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     });
     const serverBinaryName = process.platform === 'win32' ? 'happier-server.exe' : 'happier-server';
     const installServerBinaryPath = join(defaults.installRoot, 'bin', serverBinaryName);
+    const statePath = join(defaults.installRoot, 'self-host-state.json');
     const stdoutPath = join(defaults.logDir, 'server.out.log');
     const stderrPath = join(defaults.logDir, 'server.err.log');
     const backend = resolveServiceBackend({ platform: process.platform, mode });
@@ -819,6 +817,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
 
     const cleanupTargets = [
       definition.path,
+      statePath,
       installServerBinaryPath,
       join(defaults.binDir, serverBinaryName),
       defaults.installRoot,
@@ -826,9 +825,18 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       defaults.dataDir,
       defaults.logDir,
     ];
-    await Promise.all(cleanupTargets.map(async (path) => {
+
+    for (const path of cleanupTargets) {
       await rm(path, { force: true, recursive: true }).catch(() => undefined);
-    }));
+    }
+
+    if (existsSync(defaults.installRoot)) {
+      await rm(defaults.installRoot, { force: true, recursive: true }).catch(() => undefined);
+    }
+
+    if (existsSync(statePath)) {
+      throw new Error('Failed to remove relay runtime state file.');
+    }
   }
 
   async function resolveRemoteTarget(ssh: SystemTaskSshConnectionConfig, knownHostsMode?: 'app' | 'system'): Promise<RemoteReleaseTarget> {
@@ -1067,10 +1075,64 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       ? parsedPort
       : defaults.serverPort;
 
+    const relayUrl = `http://127.0.0.1:${port}`;
+    await assertRemoteRelayRuntimeHealthy({
+      deps,
+      ssh: params.ssh,
+      knownHostsMode,
+      backend,
+      relayUrl,
+      stderrPath,
+    });
+
     return {
-      relayUrl: `http://127.0.0.1:${port}`,
+      relayUrl,
       mode,
     };
+  }
+
+  async function assertRemoteRelayRuntimeHealthy(params: Readonly<{
+    deps: RelayHostEngineDeps;
+    ssh: SystemTaskSshConnectionConfig;
+    knownHostsMode: 'app' | 'system';
+    backend: ServiceBackend;
+    relayUrl: string;
+    stderrPath: string;
+  }>): Promise<void> {
+    const privilegedPrefix = params.backend === 'systemd-system' || params.backend === 'launchd-system'
+      ? 'sudo -n '
+      : '';
+    const probeCommand = buildRelayRuntimeHealthProbeCommand({
+      baseUrl: params.relayUrl,
+      maxAttempts: 120,
+      sleepSeconds: 1,
+    });
+
+    const probeResult = await params.deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode: params.knownHostsMode,
+      remoteCommand: probeCommand,
+    });
+    const probeStdout = String(probeResult.stdout ?? '');
+    if (probeResult.status === 0 || probeStdout.includes(RELAY_RUNTIME_HEALTH_OK_TOKEN)) {
+      return;
+    }
+
+    const tailResult = await params.deps.runRemoteText({
+      ssh: params.ssh,
+      knownHostsMode: params.knownHostsMode,
+      remoteCommand: `${privilegedPrefix}tail -n 80 ${quoteRemoteShellArg(params.stderrPath)} 2>/dev/null || true`,
+    }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
+    const tailText = String(tailResult.stdout ?? '').trim();
+    const stderrDetail = probeResult.stderr.trim();
+    const message = [
+      `Remote relay runtime did not become healthy at ${params.relayUrl}.`,
+      probeResult.status === 3 ? 'Missing curl/wget on the remote host (required for health checks).' : '',
+      `Exit status: ${probeResult.status}`,
+      stderrDetail ? `Probe error: ${stderrDetail}` : '',
+      tailText ? `Recent stderr:\n${tailText}` : '',
+    ].filter(Boolean).join('\n');
+    throw new Error(message);
   }
 
   async function uninstallRemote(params: Readonly<{ parsed: RelayRuntimeTaskParams; ssh: SystemTaskSshConnectionConfig }>): Promise<void> {
@@ -1171,13 +1233,47 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
         if (backend === 'launchd-user' || backend === 'launchd-system') {
           const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
           const domain = backend === 'launchd-system' ? `system/${serviceName}` : `gui/${uid}/${serviceName}`;
-          const args = parsed.action === 'stop'
-            ? ['bootout', domain]
-            : ['kickstart', '-k', domain];
-          const result = runLocalText('launchctl', args);
-          if (result.status !== 0) {
-            throw new Error(result.stderr.trim() || `Failed to ${parsed.action} relay runtime.`);
+          const plistPath = backend === 'launchd-system'
+            ? `/Library/LaunchDaemons/${serviceName}.plist`
+            : join(homedir(), 'Library', 'LaunchAgents', `${serviceName}.plist`);
+
+          const runLaunchctl = (args: readonly string[], options: Readonly<{ allowFail?: boolean }> = {}) => {
+            const result = runLocalText('launchctl', args);
+            if (result.status !== 0 && options.allowFail !== true) {
+              throw new Error(result.stderr.trim() || `Failed to ${parsed.action} relay runtime.`);
+            }
+            return result;
+          };
+
+          if (parsed.action === 'stop') {
+            runLaunchctl(['bootout', domain], { allowFail: true });
+            return;
           }
+
+          if (parsed.action === 'restart') {
+            const kickstartResult = runLaunchctl(['kickstart', '-k', domain], { allowFail: true });
+            if (kickstartResult.status === 0) {
+              return;
+            }
+          }
+
+          if (backend === 'launchd-user' && uid > 0) {
+            runLaunchctl(['bootout', domain], { allowFail: true });
+            runLaunchctl(['bootstrap', `gui/${uid}`, plistPath]);
+            runLaunchctl(['enable', domain]);
+            runLaunchctl(['kickstart', '-k', domain]);
+            return;
+          }
+
+          if (backend === 'launchd-system') {
+            runLaunchctl(['bootout', domain], { allowFail: true });
+            runLaunchctl(['bootstrap', 'system', plistPath]);
+            runLaunchctl(['enable', domain]);
+            runLaunchctl(['kickstart', '-k', domain]);
+            return;
+          }
+
+          runLaunchctl(['kickstart', '-k', domain]);
           return;
         }
         const taskName = `Happier\\${serviceName}`;

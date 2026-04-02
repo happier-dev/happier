@@ -27,6 +27,10 @@ export {
   parseSshTarget,
   type ParsedSshTarget,
 } from './ssh/sshTarget.js';
+export {
+  buildRemoteBootstrapCommand,
+  type RemoteBootstrapCommandLabel,
+} from './ssh/remoteBootstrapCommandBuilder.js';
 
 export {
   DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,

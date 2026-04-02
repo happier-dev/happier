@@ -1,4 +1,5 @@
 import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
+import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { redactSensitiveSystemTaskJsonValue, type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
@@ -38,6 +39,7 @@ export type RemoteSshManageHostDeps = Readonly<{
     ssh: SystemTaskSshConnectionConfig;
     auth: RemoteSshAuth;
     knownHostsMode: 'app' | 'system';
+    channel: 'stable' | 'preview' | 'dev';
   }>) => Promise<void>;
   runDaemonServiceCommand: (params: Readonly<{
     ssh: SystemTaskSshConnectionConfig;
@@ -45,6 +47,7 @@ export type RemoteSshManageHostDeps = Readonly<{
     knownHostsMode: 'app' | 'system';
     action: 'installOrUpdate' | 'start' | 'stop' | 'restart';
     serviceMode: 'user' | 'none';
+    channel: 'stable' | 'preview' | 'dev';
   }>) => Promise<void>;
   runRelayRuntimeCommand: (params: Readonly<{
     ssh: SystemTaskSshConnectionConfig;
@@ -130,6 +133,7 @@ export function createRemoteSshManageHostTaskKind(
             ssh: parsed.ssh,
             auth,
             knownHostsMode,
+            channel: parsed.channel,
           });
           return { action: parsed.action };
         }
@@ -171,6 +175,7 @@ export function createRemoteSshManageHostTaskKind(
           ssh: parsed.ssh,
           auth,
           knownHostsMode,
+          channel: parsed.channel,
         });
 
         ctx.emit({
@@ -184,6 +189,7 @@ export function createRemoteSshManageHostTaskKind(
           knownHostsMode,
           action: daemonAction,
           serviceMode: parsed.serviceMode,
+          channel: parsed.channel,
         });
 
         return { action: parsed.action };
@@ -310,6 +316,7 @@ async function resolveRemoteSshAuth(params: Readonly<{
 
 type RemoteSshManageHostParams = Readonly<{
   action: RemoteSshManageHostAction;
+  channel: 'stable' | 'preview' | 'dev';
   ssh: SystemTaskSshConnectionConfig;
   identityPrivateKey?: string;
   knownHostsMode: 'app' | 'system';
@@ -338,6 +345,7 @@ function parseRemoteSshManageHostParams(params: unknown): RemoteSshManageHostPar
   const identityPrivateKey = sshRecord && typeof sshRecord.identityPrivateKey === 'string'
     ? sshRecord.identityPrivateKey.trim()
     : '';
+  const channel = normalizePublicReleaseRingLabel(record.channel) || 'stable';
   const knownHostsMode = record.knownHostsMode === 'system' ? 'system' : 'app';
   const serviceMode = record.serviceMode === 'none' ? 'none' : 'user';
   const relayRuntime = record.relayRuntime && typeof record.relayRuntime === 'object' && !Array.isArray(record.relayRuntime)
@@ -346,6 +354,7 @@ function parseRemoteSshManageHostParams(params: unknown): RemoteSshManageHostPar
 
   return {
     action,
+    channel,
     ssh,
     ...(identityPrivateKey ? { identityPrivateKey } : {}),
     knownHostsMode,
@@ -369,7 +378,7 @@ function isRemoteSshManageHostAction(value: string): value is RemoteSshManageHos
 }
 
 function parseRelayRuntimeOptions(value: Record<string, unknown>): NonNullable<RemoteSshManageHostParams['relayRuntime']> {
-  const channel = value.channel === 'preview' || value.channel === 'dev' ? value.channel : 'stable';
+  const channel = normalizePublicReleaseRingLabel(value.channel) || 'stable';
   const mode = value.mode === 'system' ? 'system' : 'user';
   return {
     channel,

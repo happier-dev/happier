@@ -8,6 +8,20 @@ export type OpenSshAuth =
 
 export type OpenSshKnownHostsMode = 'app' | 'system';
 
+function validateOpenSshTarget(target: string): string {
+  const normalized = String(target ?? '').trim();
+  if (!normalized) {
+    throw new Error('target is required');
+  }
+  if (normalized.startsWith('-')) {
+    throw new Error('target must not start with "-"');
+  }
+  if (/\s/u.test(normalized)) {
+    throw new Error('target must not contain whitespace');
+  }
+  return normalized;
+}
+
 function parseTimeoutSeconds(value: unknown, fallback: number): number {
   const numeric = typeof value === 'number' ? value : Number(value);
   if (Number.isFinite(numeric)) {
@@ -110,6 +124,7 @@ export function buildOpenSshCommand(params: Readonly<{
   redactedLabel: string;
   env?: NodeJS.ProcessEnv;
 }> {
+  const target = validateOpenSshTarget(params.target);
   const { args, env } = buildOpenSshTransportArgs({
     sshConfigFile: params.sshConfigFile,
     knownHostsMode: params.knownHostsMode,
@@ -122,7 +137,7 @@ export function buildOpenSshCommand(params: Readonly<{
     portFlag: '-p',
   });
 
-  const nextArgs = [...args, params.target, ...params.remoteCommand];
+  const nextArgs = [...args, target, ...params.remoteCommand];
   const commandLabel = params.remoteCommand.length >= 2
     ? `${params.remoteCommand[0]} ${params.remoteCommand[1]} …`
     : `${params.remoteCommand[0] ?? 'remote'} …`;
@@ -130,7 +145,7 @@ export function buildOpenSshCommand(params: Readonly<{
   return {
     command: params.sshBin,
     args: nextArgs,
-    redactedLabel: `${params.sshBin} ${params.target} ${commandLabel}`,
+    redactedLabel: `${params.sshBin} ${target} ${commandLabel}`,
     ...(env ? { env } : {}),
   };
 }
@@ -154,6 +169,7 @@ export function buildOpenScpCommand(params: Readonly<{
   redactedLabel: string;
   env?: NodeJS.ProcessEnv;
 }> {
+  const target = validateOpenSshTarget(params.target);
   const { args, env } = buildOpenSshTransportArgs({
     sshConfigFile: params.sshConfigFile,
     knownHostsMode: params.knownHostsMode,
@@ -168,9 +184,9 @@ export function buildOpenScpCommand(params: Readonly<{
 
   return {
     command: params.scpBin,
-    args: [...args, '-r', params.localPath, `${params.target}:${params.remotePath}`],
+    args: [...args, '-r', params.localPath, `${target}:${params.remotePath}`],
     ...(env ? { env } : {}),
-    redactedLabel: `${params.scpBin} ${params.localPath} ${params.target}:…`,
+    redactedLabel: `${params.scpBin} ${params.localPath} ${target}:…`,
   };
 }
 
@@ -201,6 +217,12 @@ export function buildSshKeyscanInvocation(params: Readonly<{
   if (!host) {
     throw new Error('host is required');
   }
+  if (host.startsWith('-')) {
+    throw new Error('host must not start with "-"');
+  }
+  if (/\s/u.test(host)) {
+    throw new Error('host must not contain whitespace');
+  }
   const args = [
     '-T',
     String(parseTimeoutSeconds(params.timeoutSec, 5)),
@@ -215,5 +237,6 @@ export function buildSshKeyscanInvocation(params: Readonly<{
 export function redactSshText(text: string): string {
   return String(text ?? '')
     .replace(/Identity file\s+\S+/gi, 'Identity file [redacted-path]')
-    .replace(/password:\s*[^\s]+/gi, 'password: [redacted-secret]');
+    .replace(/password:\s*[^\s]+/gi, 'password: [redacted-secret]')
+    .replace(/HAPPIER_SSH_PASSWORD=\S+/gi, 'HAPPIER_SSH_PASSWORD=[redacted-secret]');
 }

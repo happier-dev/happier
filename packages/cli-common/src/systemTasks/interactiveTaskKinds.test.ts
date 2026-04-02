@@ -123,6 +123,7 @@ describe('createSystemTasksRunner', () => {
                 publicKey: 'pub-key',
                 claimSecret: 'claim-secret',
                 stateFile: '/tmp/claim-state.json',
+                identityPrivateKey: '-----BEGIN PRIVATE KEY-----\nnope\n-----END PRIVATE KEY-----',
                 nested: {
                   accessToken: 'nested-token',
                   keep: 'ok',

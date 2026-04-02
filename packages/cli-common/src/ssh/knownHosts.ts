@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 type SshKnownHostEntry = Readonly<{
@@ -69,11 +69,17 @@ export function writeKnownHostsTextSync(knownHostsPath: string | undefined, text
 export function writeKnownHostsTextSyncWithFs(
   knownHostsPath: string | undefined,
   text: string,
-  fsDeps: Readonly<Pick<typeof import('node:fs'), 'mkdirSync' | 'writeFileSync'>> = { mkdirSync, writeFileSync },
+  fsDeps: Readonly<Pick<typeof import('node:fs'), 'mkdirSync' | 'writeFileSync' | 'chmodSync'>>
+    = { mkdirSync, writeFileSync, chmodSync },
 ): void {
   if (!knownHostsPath) return;
-  fsDeps.mkdirSync(dirname(knownHostsPath), { recursive: true });
-  fsDeps.writeFileSync(knownHostsPath, normalizeKnownHostsText(text), 'utf8');
+  fsDeps.mkdirSync(dirname(knownHostsPath), { recursive: true, mode: 0o700 });
+  fsDeps.writeFileSync(knownHostsPath, normalizeKnownHostsText(text), { encoding: 'utf8', mode: 0o600 });
+  try {
+    fsDeps.chmodSync(knownHostsPath, 0o600);
+  } catch {
+    // best-effort
+  }
 }
 
 export async function readKnownHostsText(knownHostsPath: string | undefined): Promise<string> {
@@ -87,8 +93,9 @@ export async function readKnownHostsText(knownHostsPath: string | undefined): Pr
 
 export async function writeKnownHostsText(knownHostsPath: string | undefined, text: string): Promise<void> {
   if (!knownHostsPath) return;
-  await mkdir(dirname(knownHostsPath), { recursive: true });
-  await writeFile(knownHostsPath, normalizeKnownHostsText(text), 'utf8');
+  await mkdir(dirname(knownHostsPath), { recursive: true, mode: 0o700 });
+  await writeFile(knownHostsPath, normalizeKnownHostsText(text), { encoding: 'utf8', mode: 0o600 });
+  await chmod(knownHostsPath, 0o600).catch(() => {});
 }
 
 export class SshKnownHostsStore {
@@ -98,15 +105,29 @@ export class SshKnownHostsStore {
     this.entries = parseKnownHosts(params.initialText ?? '');
   }
 
+  private static normalizeKnownHostToken(value: unknown, field: 'host' | 'keyType' | 'key'): string {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) {
+      throw new Error(`${field} is required`);
+    }
+    if (normalized.startsWith('-')) {
+      throw new Error(`${field} must not start with "-"`);
+    }
+    if (/\s/u.test(normalized)) {
+      throw new Error(`${field} must not contain whitespace`);
+    }
+    return normalized;
+  }
+
   remember(params: Readonly<{
     host: string;
     keyType: string;
     key: string;
   }>): SshKnownHostRememberResult {
     const entry: SshKnownHostEntry = {
-      host: String(params.host ?? '').trim(),
-      keyType: String(params.keyType ?? '').trim(),
-      key: String(params.key ?? '').trim(),
+      host: SshKnownHostsStore.normalizeKnownHostToken(params.host, 'host'),
+      keyType: SshKnownHostsStore.normalizeKnownHostToken(params.keyType, 'keyType'),
+      key: SshKnownHostsStore.normalizeKnownHostToken(params.key, 'key'),
     };
     const fingerprint = computeSshFingerprint(entry.key);
     const existing = this.entries.find((candidate) => candidate.host === entry.host && candidate.keyType === entry.keyType);

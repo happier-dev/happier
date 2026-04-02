@@ -19,6 +19,7 @@ describe('resolveRelayRuntimeDefaults', () => {
       dataDir: '/Users/alex/.happier/self-host/data',
       logDir: '/Users/alex/.happier/self-host/logs',
       serviceName: 'happier-server',
+      serverPort: 53288,
     });
 
     expect(resolveRelayRuntimeDefaults({
@@ -30,6 +31,7 @@ describe('resolveRelayRuntimeDefaults', () => {
       installRoot: 'C:\\Users\\alex\\.happier\\self-host-preview',
       binDir: 'C:\\Users\\alex\\.happier\\bin',
       serviceName: 'happier-server-preview',
+      serverPort: 53388,
     });
   });
 
@@ -45,6 +47,7 @@ describe('resolveRelayRuntimeDefaults', () => {
       dataDir: '/var/lib/happier-dev',
       logDir: '/var/log/happier-dev',
       serviceName: 'happier-server-dev',
+      serverPort: 53488,
     });
   });
 });

@@ -222,6 +222,8 @@ const SENSITIVE_PROMPT_DATA_KEY_PATTERNS = [
   /token/i,
   /password/i,
   /statefile/i,
+  /privatekey/i,
+  /identityprivatekey/i,
   /privatekeypath/i,
   /identityfile/i,
   /^env$/i,

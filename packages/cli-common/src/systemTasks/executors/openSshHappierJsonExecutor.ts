@@ -1,4 +1,4 @@
-import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { resolvePublicReleaseRingLabelForId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import type { SystemTaskSshConnectionConfig } from '../kinds/relayRuntimeKinds.js';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../kinds/remoteFirstPartyPayloadInstaller.js';
@@ -63,6 +63,7 @@ export function createOpenSshHappierJsonExecutor(params: Readonly<{
   runRemoteText: OpenSshRunRemoteText;
 }>): HappierJsonExecutor {
   const channel = params.channel ?? 'stable';
+  const scopedLabel = channel === 'stable' ? '' : resolvePublicReleaseRingLabelForId(channel);
   const remoteHappier = resolveRemoteInstalledFirstPartyBinaryPath({
     componentId: 'happier-cli',
     channel,
@@ -70,7 +71,10 @@ export function createOpenSshHappierJsonExecutor(params: Readonly<{
 
   return {
     async runHappierText(args, opts) {
-      const remoteCommand = buildRemoteCommandFromArgv([remoteHappier, ...args]);
+      const argvCommand = buildRemoteCommandFromArgv([remoteHappier, ...args]);
+      const remoteCommand = scopedLabel
+        ? `HAPPIER_PUBLIC_RELEASE_CHANNEL=${safeBashSingleQuote(scopedLabel)} HAPPIER_RELEASE_RING=${safeBashSingleQuote(scopedLabel)} ${argvCommand}`
+        : argvCommand;
       return await params.runRemoteText({
         ssh: params.ssh,
         auth: params.auth,

@@ -60,6 +60,27 @@ describe('runOpenSshPosixShellCommandSync', () => {
       }),
     });
   });
+
+  it('rejects targets that could be interpreted as flags', () => {
+    spawnSync.mockReturnValue({
+      status: 1,
+      stdout: '',
+      stderr: '',
+      error: undefined,
+    });
+
+    expect(() => runOpenSshPosixShellCommandSync({
+      target: '-oProxyCommand=bad',
+      shellCommand: 'echo ok',
+      knownHostsMode: 'system',
+      auth: { mode: 'agent' },
+      connectTimeoutSec: 10,
+      serverAliveIntervalSec: 15,
+      serverAliveCountMax: 2,
+      parseJson: false,
+    })).toThrow(/target.*must not start/i);
+    expect(spawnSync).toHaveBeenCalledTimes(0);
+  });
 });
 
 describe('sshKeyscanSync', () => {
@@ -77,5 +98,10 @@ describe('sshKeyscanSync', () => {
     const [command, args] = spawnSync.mock.calls.at(-1) ?? [];
     expect(command).toBe('ssh-keyscan');
     expect(args).toEqual(expect.arrayContaining(['-t', 'ed25519', 'example.test']));
+  });
+
+  it('rejects hosts that could be interpreted as flags', () => {
+    expect(() => sshKeyscanSync({ host: '-f' })).toThrow(/must not start/i);
+    expect(spawnSync).toHaveBeenCalledTimes(0);
   });
 });

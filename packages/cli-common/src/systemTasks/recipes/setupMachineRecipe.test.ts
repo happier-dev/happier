@@ -214,4 +214,80 @@ describe('runSetupMachineRecipe', () => {
       code: 'machine_id_unavailable',
     }));
   });
+
+  it('falls back to auth status when auth wait does not return a machine id', async () => {
+    const relayProfile = {
+      serverUrl: 'https://relay.example.test',
+      webappUrl: 'https://app.example.test',
+      localServerUrl: null,
+    };
+
+    const executor = {
+      configureRelay: vi.fn(async () => undefined),
+      readAuthStatus: vi.fn()
+        .mockResolvedValueOnce({ authenticated: false, machineId: null })
+        .mockResolvedValueOnce({ authenticated: true, machineId: 'machine-6' as string | null }),
+      requestAuthPairing: vi.fn(async () => ({ publicKey: 'public-key-6' })),
+      waitForAuthPairing: vi.fn(async () => ({ machineId: null })),
+      installDaemonService: vi.fn(async () => undefined),
+      startDaemonService: vi.fn(async () => undefined),
+    } as const;
+
+    const result = await runSetupMachineRecipe({
+      relayProfile,
+      executor,
+      steps: {
+        installService: false,
+        startService: false,
+        verifyService: false,
+      },
+      signal: new AbortController().signal,
+      emit() {},
+      approvePairingRequest: async () => undefined,
+    });
+
+    expect(result).toEqual({ machineId: 'machine-6', publicKey: 'public-key-6' });
+    expect(executor.readAuthStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-reads auth status after starting the daemon service to capture a machine id that only becomes available after registration', async () => {
+    const relayProfile = {
+      serverUrl: 'https://relay.example.test',
+      webappUrl: 'https://app.example.test',
+      localServerUrl: null,
+    };
+
+    const executor = {
+      configureRelay: vi.fn(async () => undefined),
+      readAuthStatus: vi.fn()
+        // initial preflight: not authenticated
+        .mockResolvedValueOnce({ authenticated: false, machineId: null })
+        // best-effort after auth wait: still no machine id
+        .mockResolvedValueOnce({ authenticated: true, machineId: null })
+        // after daemon service starts: machine id becomes available
+        .mockResolvedValueOnce({ authenticated: true, machineId: 'machine-7' as string | null }),
+      requestAuthPairing: vi.fn(async () => ({ publicKey: 'public-key-7' })),
+      waitForAuthPairing: vi.fn(async () => ({ machineId: null })),
+      installDaemonService: vi.fn(async () => undefined),
+      startDaemonService: vi.fn(async () => undefined),
+    } as const;
+
+    const result = await runSetupMachineRecipe({
+      relayProfile,
+      executor,
+      steps: {
+        installService: true,
+        startService: true,
+        verifyService: false,
+      },
+      signal: new AbortController().signal,
+      emit() {},
+      approvePairingRequest: async () => undefined,
+    });
+
+    expect(result).toEqual({ machineId: 'machine-7', publicKey: 'public-key-7' });
+    expect(executor.installDaemonService).toHaveBeenCalledTimes(1);
+    expect(executor.startDaemonService).toHaveBeenCalledTimes(1);
+    expect(executor.readAuthStatus).toHaveBeenCalledTimes(3);
+  });
 });

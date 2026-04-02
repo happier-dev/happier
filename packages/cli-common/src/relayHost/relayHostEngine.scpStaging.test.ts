@@ -250,6 +250,85 @@ describe('RelayHostEngine (remote SSH)', () => {
     expect(setupCommand).toContain('mkdir -p $HOME/.happier/bin');
   });
 
+  it('fails installOrUpdate when the remote relay /health probe does not become ready', async () => {
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'arm64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('echo yes')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        if (command.includes('/health')) {
+          return { status: 1, stdout: '', stderr: 'curl: (7) connection refused\n' };
+        }
+        if (command.includes('tail') && command.includes('server.err.log')) {
+          return { status: 0, stdout: 'PrismaClientInitializationError: missing query engine\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '$HOME/.happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    await expect(engine.installOrUpdate({
+      target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
+      channel: 'preview',
+      mode: 'user',
+    })).rejects.toThrow(/health/i);
+  });
+
+  it('treats the relay /health probe as successful when it prints an ok token (even if exit status is non-zero)', async () => {
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/home/remote-user\n', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$PATH')) {
+          return { status: 0, stdout: '/usr/local/bin:/usr/bin\n', stderr: '' };
+        }
+        if (command.includes('echo yes')) {
+          return { status: 0, stdout: 'yes\n', stderr: '' };
+        }
+        if (command.includes('/health')) {
+          return { status: 1, stdout: 'HAPPIER_RELAY_HEALTH_OK\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '$HOME/.happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    await expect(engine.installOrUpdate({
+      target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
+      channel: 'preview',
+      mode: 'user',
+    })).resolves.toEqual({ relayUrl: 'http://127.0.0.1:53388', mode: 'user' });
+  });
+
   it('ensures the shim install command creates the destination directory before copying', async () => {
     let setupCommand = '';
 
@@ -670,5 +749,55 @@ describe('RelayHostEngine (remote SSH)', () => {
     expect(controlCommand).toContain('sudo -n');
     expect(controlCommand).toContain('launchctl unload -w');
     expect(cleanupCommand).toContain('sudo -n');
+  });
+
+  it('restarts a system-mode launchd service using bootstrap semantics when needed', async () => {
+    let restartCommand = '';
+
+    const engine = createRelayHostEngine({
+      now: () => 123,
+      resolveRemoteReleaseTarget: async () => ({ os: 'darwin', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        const command = String(remoteCommand ?? '');
+        if (command.includes('launchctl') && command.includes('bootstrap') && command.includes('kickstart')) {
+          restartCommand = command;
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        if (command.includes('printf') && command.includes('$HOME')) {
+          return { status: 0, stdout: '/Users/remote-user\n', stderr: '' };
+        }
+        return { status: 0, stdout: 'no\n', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async ({ componentId }) => {
+        return {
+          binaryPath: componentId === 'happier-cli'
+            ? '$HOME/.happier/happier-cli/current/happier'
+            : '$HOME/.happier/happier-server/current/happier-server',
+          versionId: 'publicdev-1',
+        };
+      },
+    });
+
+    await engine.control({
+      target: {
+        kind: 'ssh',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+      channel: 'dev',
+      mode: 'system',
+      action: 'restart',
+    });
+
+    expect(restartCommand).toContain('sudo -n');
+    expect(restartCommand).toContain('launchctl bootout -w');
+    expect(restartCommand).toContain('launchctl bootstrap system');
+    expect(restartCommand).toContain('/Library/LaunchDaemons/happier-server-dev.plist');
+    expect(restartCommand).toContain('launchctl kickstart -k');
+    expect(restartCommand).toContain('system/happier-server-dev');
+    expect(restartCommand).not.toContain('launchctl load -w');
   });
 });

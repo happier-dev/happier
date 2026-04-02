@@ -123,6 +123,20 @@ async function installBinaryShim(params: Readonly<{
     await copyFile(params.sourcePath, params.destPath);
 }
 
+async function installPersistentPayload(params: Readonly<{
+    sourceDir: string;
+    destDir: string;
+    executablePath: string;
+}>): Promise<void> {
+    await mkdir(params.destDir, { recursive: true });
+    await rm(params.destDir, { recursive: true, force: true });
+    await copyDirectoryContents({
+        sourceDir: params.sourceDir,
+        destDir: params.destDir,
+    });
+    await chmod(params.executablePath, 0o755).catch(() => undefined);
+}
+
 function buildRelayRuntimeServiceSpec(params: Readonly<{
     serviceName: string;
     installRoot: string;
@@ -197,10 +211,10 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         });
     }
 
-    await installBinaryShim({
-        platform,
-        sourcePath: params.serverBinaryPath,
-        destPath: installServerBinaryPath,
+    await installPersistentPayload({
+        sourceDir: dirname(params.serverBinaryPath),
+        destDir: dirname(installServerBinaryPath),
+        executablePath: installServerBinaryPath,
     });
     await installBinaryShim({
         platform,
@@ -215,7 +229,7 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         filesDir,
         dbDir,
         uiDir: '',
-        serverBinDir: dirname(params.serverBinaryPath),
+        serverBinDir: dirname(installServerBinaryPath),
         arch,
         platform,
     });

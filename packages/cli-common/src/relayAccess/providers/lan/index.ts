@@ -1,15 +1,12 @@
-import type { RelayAccessProvider, RelayAccessProviderDescriptor } from '../../types.js';
+import type { RelayAccessProvider } from '../../types.js';
+
+import { relayAccessProviderDescriptorsById } from '../../catalog.js';
 
 function normalizeUrl(url: string): string {
     return url.trim().replace(/\/+$/, '');
 }
 
-const descriptor = {
-    id: 'lan',
-    title: 'LAN / custom URL',
-    exposure: 'private',
-    prerequisites: [{ kind: 'manualUrl' }],
-} as const satisfies RelayAccessProviderDescriptor;
+const descriptor = relayAccessProviderDescriptorsById.lan;
 
 export const lanRelayAccessProvider: RelayAccessProvider = {
     descriptor,

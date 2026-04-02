@@ -129,6 +129,17 @@ export async function runSetupMachineRecipe(params: Readonly<{
       ? waitResult.machineId.trim()
       : null;
     machineId = waitedMachineId ?? statusMachineId;
+    if (!machineId) {
+      try {
+        const statusAfterWait = await params.executor.readAuthStatus();
+        const machineIdAfterWait = typeof statusAfterWait.machineId === 'string' && statusAfterWait.machineId.trim()
+          ? statusAfterWait.machineId.trim()
+          : null;
+        machineId = machineIdAfterWait ?? machineId;
+      } catch {
+        // best-effort fallback only
+      }
+    }
 
     if (params.requireMachineIdAfterAuthWait === true && !machineId) {
       throw new SystemTaskExecutionError('machine_id_unavailable', 'Auth pairing did not return a machine id.');
@@ -143,6 +154,18 @@ export async function runSetupMachineRecipe(params: Readonly<{
   if (steps.startService !== false) {
     emitProgress(stepIds.startService, 'Starting background service');
     await params.executor.startDaemonService?.();
+
+    if (!machineId) {
+      try {
+        const statusAfterStart = await params.executor.readAuthStatus();
+        const machineIdAfterStart = typeof statusAfterStart.machineId === 'string' && statusAfterStart.machineId.trim()
+          ? statusAfterStart.machineId.trim()
+          : null;
+        machineId = machineIdAfterStart ?? machineId;
+      } catch {
+        // best-effort only
+      }
+    }
   }
 
   let daemonStatus: SetupMachineDaemonStatus | null = null;

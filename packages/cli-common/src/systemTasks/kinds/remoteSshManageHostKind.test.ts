@@ -165,6 +165,46 @@ describe('createRemoteSshManageHostTaskKind', () => {
     }));
   });
 
+  it('accepts publicdev as an alias for the dev channel label', async () => {
+    const installRemoteCli = vi.fn(async () => {});
+    const kind = createRemoteSshManageHostTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      testConnection: async () => {
+        throw new Error('should not call testConnection during installOrUpdateCli');
+      },
+      installRemoteCli,
+      runDaemonServiceCommand: async () => {
+        throw new Error('should not call daemon commands during installOrUpdateCli');
+      },
+      runRelayRuntimeCommand: async () => {
+        throw new Error('should not call relay runtime commands during installOrUpdateCli');
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: { 'remote.ssh.manageHost.v1': kind },
+    });
+
+    await runner.start({
+      taskId: 'channel-alias',
+      kind: 'remote.ssh.manageHost.v1',
+      params: {
+        action: 'installOrUpdateCli',
+        channel: 'publicdev',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'channel-alias', cursor: 0 });
+    expect(finalPoll.result?.ok).toBe(true);
+    expect(installRemoteCli).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'dev',
+    }));
+  });
+
   it('runs relay runtime status after resolving host trust', async () => {
     const runRelayRuntimeCommand = vi.fn(async () => ({ installed: false }));
     const kind = createRemoteSshManageHostTaskKind({
@@ -202,6 +242,50 @@ describe('createRemoteSshManageHostTaskKind', () => {
     expect(runRelayRuntimeCommand).toHaveBeenCalledWith(expect.objectContaining({
       action: 'status',
       ssh: expect.objectContaining({ target: 'dev@example.test' }),
+    }));
+  });
+
+  it('threads the requested channel into CLI and daemon-service actions', async () => {
+    const installRemoteCli = vi.fn(async () => {});
+    const runDaemonServiceCommand = vi.fn(async () => {});
+
+    const kind = createRemoteSshManageHostTaskKind({
+      resolveHostTrust: async () => ({ status: 'trusted' }),
+      testConnection: async () => {
+        throw new Error('should not call testConnection during daemonService.restart');
+      },
+      installRemoteCli,
+      runDaemonServiceCommand,
+      runRelayRuntimeCommand: async () => {
+        throw new Error('should not call relay runtime commands during daemonService.restart');
+      },
+    });
+
+    const runner = createSystemTasksRunner({
+      kinds: { 'remote.ssh.manageHost.v1': kind },
+    });
+
+    await runner.start({
+      taskId: 'daemon-channel',
+      kind: 'remote.ssh.manageHost.v1',
+      params: {
+        action: 'daemonService.restart',
+        channel: 'dev',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+      },
+    });
+
+    const finalPoll = await waitForResult(runner, { taskId: 'daemon-channel', cursor: 0 });
+    expect(finalPoll.result?.ok).toBe(true);
+    expect(installRemoteCli).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'dev',
+    }));
+    expect(runDaemonServiceCommand).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'dev',
+      action: 'restart',
     }));
   });
 

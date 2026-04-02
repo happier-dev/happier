@@ -47,15 +47,28 @@ describe('resolveTailscaleBin', () => {
 
     const resolved = await resolveTailscaleBin(
       {
-        env: {},
+        env: { PATH: '' },
       },
       {
-        resolveCommandOnPath: vi.fn(async () => null),
         isExecutable,
       },
     );
 
     expect(resolved).toBe('/Applications/Tailscale.app/Contents/MacOS/tailscale');
+  });
+
+  it('does not fall back to the macOS app bundle CLI when a custom PATH resolver is provided', async () => {
+    const resolveCommandOnPath = vi.fn(async () => null);
+    const isExecutable = vi.fn(async () => true);
+
+    await expect(
+      resolveTailscaleBin(
+        { env: { PATH: '' } },
+        { resolveCommandOnPath, isExecutable },
+      ),
+    ).rejects.toThrow(/CLI not found/i);
+
+    expect(isExecutable).not.toHaveBeenCalled();
   });
 });
 

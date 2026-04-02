@@ -1,4 +1,5 @@
 import type { SystemTaskJsonValue } from '@happier-dev/protocol';
+import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
@@ -175,7 +176,7 @@ export function parseRelayRuntimeTaskParams(params: unknown): RelayRuntimeTaskPa
 
   const targetRecord = target as Record<string, unknown>;
   const kind = targetRecord.kind === 'ssh' ? 'ssh' : 'local';
-  const channel = value.channel === 'preview' || value.channel === 'dev' ? value.channel : 'stable';
+  const channel = normalizePublicReleaseRingLabel(value.channel) || 'stable';
   const mode = value.mode === 'system' ? 'system' : 'user';
   const env = typeof value.env === 'object' && value.env && !Array.isArray(value.env)
     ? Object.fromEntries(Object.entries(value.env as Record<string, unknown>).map(([key, innerValue]) => [key, String(innerValue ?? '')]))

@@ -1,4 +1,5 @@
 import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
+import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { redactSensitiveSystemTaskJsonValue, type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
@@ -188,6 +189,8 @@ export function createRemoteSshBootstrapMachineTaskKind(
           ? parsedRaw.relay.publicRelayUrl.trim()
           : '';
         const remoteRelayUrl = publicRelayUrl || parsedRaw.relay.relayUrl;
+        const shouldPreferInstalledRelayRuntimeAsLocalServerUrl =
+          Boolean(publicRelayUrl) || isLoopbackRelayUrl(parsedRaw.relay.relayUrl);
         let parsedRemote = remoteRelayUrl && remoteRelayUrl !== parsedRaw.relay.relayUrl
           ? {
               ...parsedRaw,
@@ -246,9 +249,9 @@ export function createRemoteSshBootstrapMachineTaskKind(
         }
       }
 
-      let relayRuntime: Readonly<{ relayUrl: string; mode: 'user' | 'system' }> | undefined;
-      let relayRuntimeLocalServerUrl: string | undefined;
-      if (parsedRemote.relayRuntime?.enabled === true) {
+        let relayRuntime: Readonly<{ relayUrl: string; mode: 'user' | 'system' }> | undefined;
+        let relayRuntimeLocalServerUrl: string | undefined;
+        if (parsedRemote.relayRuntime?.enabled === true) {
         ctx.emit({
           type: 'progress',
           stepId: 'relay.runtime.install',
@@ -269,9 +272,35 @@ export function createRemoteSshBootstrapMachineTaskKind(
           relayUrl: resolveRelayRuntimeRelayUrlFromInstallResult(relayInstall, parsedRemote.relay.relayUrl),
           mode: parsedRemote.relayRuntime.mode ?? 'user',
         };
-        relayRuntimeLocalServerUrl = relayRuntime.relayUrl;
+        const shouldSwitchLoopbackRelayUrlToInstalledRuntime =
+          !publicRelayUrl
+          && isLoopbackRelayUrl(parsedRaw.relay.relayUrl)
+          && isLoopbackRelayUrl(relayRuntime.relayUrl)
+          && relayRuntime.relayUrl !== parsedRaw.relay.relayUrl;
 
-        if (parsedRemote.relayRuntime.switchRelayUrl === true && publicRelayUrl) {
+        if (shouldSwitchLoopbackRelayUrlToInstalledRuntime) {
+          parsedRemote = {
+            ...parsedRemote,
+            relay: {
+              ...parsedRemote.relay,
+              relayUrl: relayRuntime.relayUrl,
+            },
+          };
+          parsedLocalForApproval = {
+            ...parsedLocalForApproval,
+            relay: {
+              ...parsedLocalForApproval.relay,
+              relayUrl: relayRuntime.relayUrl,
+            },
+          };
+          relayRuntimeLocalServerUrl = undefined;
+        } else {
+          relayRuntimeLocalServerUrl = shouldPreferInstalledRelayRuntimeAsLocalServerUrl
+            ? relayRuntime.relayUrl
+            : undefined;
+        }
+
+        if (parsedRemote.relayRuntime?.switchRelayUrl === true && publicRelayUrl) {
           const canonicalRemoteRelayUrl = parsedRemote.relay.relayUrl;
           parsedLocalForApproval = {
             ...parsedLocalForApproval,
@@ -414,7 +443,7 @@ export function parseRemoteBootstrapMachineParams(params: unknown): RemoteBootst
       ...(typeof relayRecord.publicRelayUrl === 'string' ? { publicRelayUrl: relayRecord.publicRelayUrl } : {}),
     },
     requireLocalApproval: value.requireLocalApproval === true,
-    channel: value.channel === 'preview' || value.channel === 'dev' ? value.channel : 'stable',
+    channel: normalizePublicReleaseRingLabel(value.channel) || 'stable',
     serviceMode: value.serviceMode === 'none' ? 'none' : 'user',
     knownHostsMode: value.knownHostsMode === 'system' ? 'system' : 'app',
     ...(relayRuntime

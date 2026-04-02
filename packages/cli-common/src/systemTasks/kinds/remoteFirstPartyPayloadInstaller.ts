@@ -1,5 +1,7 @@
 import { basename } from 'node:path';
 
+import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+
 import type {
   FirstPartyComponentId,
   PreparedFirstPartyComponentPayload,
@@ -56,15 +58,8 @@ function quoteShellSingleArg(value: string): string {
   return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
 }
 
-function normalizeBootstrapReleaseChannel(raw: unknown): 'stable' | 'preview' | 'publicdev' {
-  const text = String(raw ?? '').trim().toLowerCase();
-  if (text === 'preview') {
-    return 'preview';
-  }
-  if (text === 'dev' || text === 'publicdev') {
-    return 'publicdev';
-  }
-  return 'stable';
+function normalizeBootstrapReleaseChannel(raw: unknown): PublicReleaseRingId {
+  return normalizePublicReleaseRingId(raw) || 'stable';
 }
 
 function normalizeRemoteHomeDir(raw: unknown): string {

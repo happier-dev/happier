@@ -1,5 +1,7 @@
 import type { RelayAccessProvider, RelayAccessProviderDescriptor, RelayAccessStatus } from '../../types.js';
 
+import { relayAccessProviderDescriptorsById } from '../../catalog.js';
+
 type CloudflareNamedConfig = Readonly<{
     providerId: 'cloudflareNamed';
     hostname: string;
@@ -11,12 +13,7 @@ type CloudflareNamedStatusResolution = Readonly<{
     config: CloudflareNamedConfig | null;
 }>;
 
-const descriptor = {
-    id: 'cloudflareNamed',
-    title: 'Cloudflare (named tunnel)',
-    exposure: 'public',
-    prerequisites: [{ kind: 'cloudflareHostname' }, { kind: 'cloudflareToken' }],
-} as const satisfies RelayAccessProviderDescriptor;
+const descriptor: RelayAccessProviderDescriptor = relayAccessProviderDescriptorsById.cloudflareNamed;
 
 function normalizeCloudflareNamedConfig(config: unknown): CloudflareNamedConfig | null {
     if (!config || typeof config !== 'object' || Array.isArray(config)) {

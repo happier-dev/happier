@@ -7,14 +7,10 @@ import {
     runTailscaleFunnelStatus,
     runTailscaleStatusJson,
 } from '../../../tailscale/index.js';
-import type { RelayAccessProviderDescriptor } from '../../types.js';
 
-const descriptor = {
-    id: 'tailscaleFunnel',
-    title: 'Tailscale Funnel',
-    exposure: 'public',
-    prerequisites: [{ kind: 'tailscaleInstalled' }, { kind: 'tailscaleAuth' }],
-} as const satisfies RelayAccessProviderDescriptor;
+import { relayAccessProviderDescriptorsById } from '../../catalog.js';
+
+const descriptor = relayAccessProviderDescriptorsById.tailscaleFunnel;
 
 export const tailscaleFunnelRelayAccessProvider: RelayAccessProvider = {
     descriptor,
