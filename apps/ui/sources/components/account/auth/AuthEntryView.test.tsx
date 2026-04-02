@@ -66,5 +66,55 @@ describe('AuthEntryView', () => {
         });
         expect(onChangeRelay).toHaveBeenCalled();
     });
-});
 
+    it('invokes create account from the ready welcome screen', async () => {
+        const onCreateAccount = vi.fn();
+
+        const screen = await renderScreen(
+            <AuthEntryView
+                layout="portrait"
+                isDesktopShell={false}
+                options={{
+                    serverAvailability: 'ready',
+                    serverUrlForCopy: 'https://relay.example.test',
+                    showAuthActions: true,
+                    showProviderSignup: false,
+                    showAnonymousSignup: true,
+                    showMtlsLogin: false,
+                    showKeylessProviderLogin: false,
+                    providerId: null,
+                    keylessProviderId: null,
+                    providerSignupTitle: '',
+                    providerKeylessTitle: '',
+                    anonymousSignupTitle: 'Create account',
+                    mtlsTitle: 'Sign in with certificate',
+                    primarySignupTitle: 'Create account',
+                    mtlsPrimary: false,
+                    keylessPrimary: false,
+                    autoRedirect: {
+                        enabled: false,
+                        providerId: null,
+                        toKeyedProvision: false,
+                        toKeylessLogin: false,
+                        toMtls: false,
+                        toLegacySignupProvider: false,
+                    },
+                    retryServerCheck: vi.fn(),
+                }}
+                onOpenSetup={vi.fn()}
+                onChangeRelay={vi.fn()}
+                onRestore={vi.fn()}
+                onCreateAccount={onCreateAccount}
+                onCreateAccountViaProvider={vi.fn()}
+                onLoginWithKeylessProvider={vi.fn()}
+                onLoginWithMtls={vi.fn()}
+            />,
+        );
+
+        await act(async () => {
+            await screen.findByTestId('welcome-create-account')!.props.onPress?.();
+        });
+
+        expect(onCreateAccount).toHaveBeenCalled();
+    });
+});

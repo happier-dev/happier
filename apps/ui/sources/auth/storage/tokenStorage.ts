@@ -292,14 +292,26 @@ function safeParseJson(raw: string): unknown {
     }
 }
 
+function resolveWebStorageBackend(): Storage | null {
+    const windowStorage = (globalThis as any).window?.localStorage;
+    if (windowStorage && typeof windowStorage.getItem === 'function') return windowStorage as Storage;
+
+    const localStorage = (globalThis as any).localStorage;
+    if (localStorage && typeof localStorage.getItem === 'function') return localStorage as Storage;
+
+    return null;
+}
+
 async function readStoredJson<T>(
     key: string,
     label: string,
     validator: (value: unknown) => value is T,
 ): Promise<T | null> {
     if (Platform.OS === 'web') {
+        const storage = resolveWebStorageBackend();
+        if (!storage) return null;
         try {
-            const raw = localStorage.getItem(key);
+            const raw = storage.getItem(key);
             if (!raw) return null;
             const parsed = safeParseJson(raw);
             return validator(parsed) ? parsed : null;
@@ -326,8 +338,10 @@ async function writeStoredJson(
     value: unknown,
 ): Promise<boolean> {
     if (Platform.OS === 'web') {
+        const storage = resolveWebStorageBackend();
+        if (!storage) return false;
         try {
-            localStorage.setItem(key, JSON.stringify(value));
+            storage.setItem(key, JSON.stringify(value));
             return true;
         } catch (error) {
             console.error(`Error setting ${label}:`, error);
@@ -346,8 +360,10 @@ async function writeStoredJson(
 
 async function removeStoredValue(key: string, label: string): Promise<boolean> {
     if (Platform.OS === 'web') {
+        const storage = resolveWebStorageBackend();
+        if (!storage) return false;
         try {
-            localStorage.removeItem(key);
+            storage.removeItem(key);
             return true;
         } catch (error) {
             console.error(`Error removing ${label}:`, error);
@@ -397,8 +413,10 @@ function parseRecoveryKeyReminderDismissedRaw(raw: string | null): boolean {
 
 async function readCredentialRawByKey(key: string): Promise<string | null> {
     if (Platform.OS === 'web') {
+        const storage = resolveWebStorageBackend();
+        if (!storage) return null;
         try {
-            return localStorage.getItem(key);
+            return storage.getItem(key);
         } catch (error) {
             console.error('Error getting credentials:', error);
             return null;
@@ -420,8 +438,10 @@ async function readCredentialRawByKey(key: string): Promise<string | null> {
 
 async function writeCredentialRawByKey(key: string, raw: string): Promise<boolean> {
     if (Platform.OS === 'web') {
+        const storage = resolveWebStorageBackend();
+        if (!storage) return false;
         try {
-            localStorage.setItem(key, raw);
+            storage.setItem(key, raw);
             return true;
         } catch (error) {
             console.error('Error setting credentials:', error);
@@ -441,8 +461,10 @@ async function writeCredentialRawByKey(key: string, raw: string): Promise<boolea
 
 async function removeCredentialByKey(key: string): Promise<boolean> {
     if (Platform.OS === 'web') {
+        const storage = resolveWebStorageBackend();
+        if (!storage) return false;
         try {
-            localStorage.removeItem(key);
+            storage.removeItem(key);
             return true;
         } catch (error) {
             console.error('Error removing credentials:', error);
@@ -475,10 +497,12 @@ function listKnownServerUrlsForCredentialCleanup(): string[] {
 
 function listWebScopedCredentialKeysForCleanup(): string[] {
     if (Platform.OS !== 'web') return [];
+    const storage = resolveWebStorageBackend();
+    if (!storage) return [];
     const keys: string[] = [];
     try {
-        for (let i = 0; i < localStorage.length; i += 1) {
-            const key = localStorage.key(i);
+        for (let i = 0; i < storage.length; i += 1) {
+            const key = storage.key(i);
             if (!key) continue;
             if (key === AUTH_KEY || key.startsWith(`${AUTH_KEY}__srv_`)) {
                 keys.push(key);
@@ -501,9 +525,11 @@ export const TokenStorage = {
         };
 
         if (Platform.OS === 'web') {
+            const storage = resolveWebStorageBackend();
+            if (!storage) return 0;
             try {
-                const scopedSuppressedUntil = parse(localStorage.getItem(key));
-                const globalSuppressedUntil = parse(localStorage.getItem(globalKey));
+                const scopedSuppressedUntil = parse(storage.getItem(key));
+                const globalSuppressedUntil = parse(storage.getItem(globalKey));
                 return Math.max(scopedSuppressedUntil, globalSuppressedUntil);
             } catch {
                 return 0;
@@ -527,9 +553,11 @@ export const TokenStorage = {
         const raw = String(Math.max(0, Math.floor(value)));
 
         if (Platform.OS === 'web') {
+            const storage = resolveWebStorageBackend();
+            if (!storage) return false;
             try {
-                localStorage.setItem(key, raw);
-                localStorage.setItem(globalKey, raw);
+                storage.setItem(key, raw);
+                storage.setItem(globalKey, raw);
                 return true;
             } catch {
                 return false;
@@ -556,8 +584,10 @@ export const TokenStorage = {
         const key = await getRecoveryKeyReminderDismissedKey();
 
         if (Platform.OS === 'web') {
+            const storage = resolveWebStorageBackend();
+            if (!storage) return false;
             try {
-                const raw = localStorage.getItem(key);
+                const raw = storage.getItem(key);
                 return parseRecoveryKeyReminderDismissedRaw(raw);
             } catch {
                 return false;
@@ -578,8 +608,10 @@ export const TokenStorage = {
         if (!key) return null;
 
         if (Platform.OS === 'web') {
+            const storage = resolveWebStorageBackend();
+            if (!storage) return null;
             try {
-                return parseRecoveryKeyReminderDismissedRaw(localStorage.getItem(key));
+                return parseRecoveryKeyReminderDismissedRaw(storage.getItem(key));
             } catch {
                 return null;
             }
@@ -594,8 +626,10 @@ export const TokenStorage = {
         const raw = value ? '1' : '0';
 
         if (Platform.OS === 'web') {
+            const storage = resolveWebStorageBackend();
+            if (!storage) return false;
             try {
-                localStorage.setItem(key, raw);
+                storage.setItem(key, raw);
                 recoveryKeyReminderDismissedCacheByKey.set(key, raw);
                 return true;
             } catch {

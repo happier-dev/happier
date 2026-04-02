@@ -76,4 +76,16 @@ describe('TokenStorage (web)', () => {
         await TokenStorage.getCredentials();
         expect(storage.getItemMock).toHaveBeenCalledTimes(2);
     });
+
+    it('fails closed without logging when localStorage is unavailable', async () => {
+        restoreLocalStorage?.();
+        restoreLocalStorage = null;
+        localStorageHandle = null;
+
+        Reflect.deleteProperty(globalThis, 'localStorage');
+
+        const { TokenStorage } = await import('./tokenStorage');
+        await expect(TokenStorage.getCredentials()).resolves.toBeNull();
+        expect(console.error).not.toHaveBeenCalled();
+    });
 });

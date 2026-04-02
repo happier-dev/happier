@@ -1,8 +1,9 @@
 import * as React from 'react';
 
 import { getAuthProvider } from '@/auth/providers/registry';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
 
 type AuthEntryServerAvailability = 'loading' | 'ready' | 'legacy' | 'unavailable' | 'incompatible';
@@ -86,13 +87,8 @@ function resolveMethodById(methods: readonly AuthMethod[], providerId: string): 
     return methods.find((method) => normalizeProviderId(method.id) === normalized) ?? null;
 }
 
-function resolveServerUrlForCopy(): string {
-    const snapshot = getActiveServerSnapshot();
-    const raw = snapshot?.serverUrl ? String(snapshot.serverUrl).trim() : '';
-    return raw || t('status.unknown');
-}
-
 export function useAuthEntryOptions(): AuthEntryOptions {
+    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
     const [serverAvailability, setServerAvailability] = React.useState<AuthEntryServerAvailability>('loading');
     const [serverCheckNonce, setServerCheckNonce] = React.useState(0);
     const [options, setOptions] = React.useState<Pick<
@@ -137,7 +133,19 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         },
     });
 
-    const serverUrlForCopy = resolveServerUrlForCopy();
+    // NOTE: getActiveServerSnapshot() is not reactive on its own; ensure we re-check when the active server changes
+    // by tracking a comparable key derived from the current snapshot.
+    React.useEffect(() => subscribeActiveServer(setActiveServerSnapshot), []);
+
+    const serverUrlForCopy = React.useMemo(() => {
+        const raw = activeServerSnapshot?.serverUrl ? String(activeServerSnapshot.serverUrl).trim() : '';
+        return raw || t('status.unknown');
+    }, [activeServerSnapshot?.serverUrl]);
+
+    const activeServerComparableKey = React.useMemo(
+        () => createServerUrlComparableKey(activeServerSnapshot?.serverUrl ?? '') ?? '',
+        [activeServerSnapshot?.serverUrl],
+    );
 
     React.useEffect(() => {
         let mounted = true;
@@ -158,7 +166,10 @@ export function useAuthEntryOptions(): AuthEntryOptions {
 
         void (async () => {
             try {
-                if (mounted) setServerAvailability('loading');
+                if (mounted) {
+                    setServerAvailability('loading');
+                    setOptions((prev) => (prev.showAuthActions ? { ...prev, showAuthActions: false } : prev));
+                }
 
                 const featuresSnapshot = await getServerFeaturesSnapshot({
                     timeoutMs: readWelcomeServerCheckTimeoutMs(),
@@ -167,12 +178,18 @@ export function useAuthEntryOptions(): AuthEntryOptions {
 
                 if (featuresSnapshot.status === 'error') {
                     if (scheduleInitialServerCheckRetry()) return;
-                    if (mounted) setServerAvailability('unavailable');
+                    if (mounted) {
+                        setOptions((prev) => (prev.showAuthActions ? { ...prev, showAuthActions: false } : prev));
+                        setServerAvailability('unavailable');
+                    }
                     return;
                 }
 
                 if (featuresSnapshot.status === 'unsupported' && featuresSnapshot.reason === 'invalid_payload') {
-                    if (mounted) setServerAvailability('incompatible');
+                    if (mounted) {
+                        setOptions((prev) => (prev.showAuthActions ? { ...prev, showAuthActions: false } : prev));
+                        setServerAvailability('incompatible');
+                    }
                     return;
                 }
 
@@ -318,6 +335,7 @@ export function useAuthEntryOptions(): AuthEntryOptions {
             } catch {
                 if (scheduleInitialServerCheckRetry()) return;
                 if (mounted) {
+                    setOptions((prev) => (prev.showAuthActions ? { ...prev, showAuthActions: false } : prev));
                     setServerAvailability('unavailable');
                 }
             }
@@ -329,7 +347,7 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                 clearTimeout(retryTimer);
             }
         };
-    }, [serverCheckNonce]);
+    }, [activeServerComparableKey, serverCheckNonce]);
 
     return {
         serverAvailability,

@@ -1,10 +1,12 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 
 const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn());
+const subscribeActiveServerMock = vi.hoisted(() => vi.fn());
 const getAuthProviderMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
@@ -13,6 +15,7 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: getActiveServerSnapshotMock,
+    subscribeActiveServer: subscribeActiveServerMock,
 }));
 
 vi.mock('@/auth/providers/registry', () => ({
@@ -32,11 +35,23 @@ vi.mock('@/text', () => ({
 }));
 
 describe('useAuthEntryOptions', () => {
+    let activeServerListener: ((snapshot: { serverUrl: string }) => void) | null = null;
+
     beforeEach(() => {
         getServerFeaturesSnapshotMock.mockReset();
         getActiveServerSnapshotMock.mockReset();
+        subscribeActiveServerMock.mockReset();
         getAuthProviderMock.mockReset();
         getActiveServerSnapshotMock.mockReturnValue({ serverUrl: 'http://api.example.test' });
+        activeServerListener = null;
+        subscribeActiveServerMock.mockImplementation((listener: (snapshot: { serverUrl: string }) => void) => {
+            activeServerListener = listener;
+            return () => {
+                if (activeServerListener === listener) {
+                    activeServerListener = null;
+                }
+            };
+        });
         getAuthProviderMock.mockImplementation((id: string) => (
             id === 'github' ? { id, displayName: 'GitHub' } : null
         ));
@@ -100,5 +115,50 @@ describe('useAuthEntryOptions', () => {
         expect(options.serverAvailability).toBe('incompatible');
         expect(options.showAuthActions).toBe(false);
         expect(options.retryServerCheck).toEqual(expect.any(Function));
+    });
+
+    it('re-checks auth options when the active server changes', async () => {
+        getServerFeaturesSnapshotMock
+            .mockResolvedValueOnce({
+                status: 'ready',
+                features: {
+                    capabilities: {
+                        auth: {
+                            methods: [
+                                {
+                                    id: 'key_challenge',
+                                    actions: [
+                                        { id: 'login', enabled: true, mode: 'keyed' },
+                                        { id: 'provision', enabled: true, mode: 'keyed' },
+                                    ],
+                                },
+                            ],
+                            signup: { methods: [] },
+                            login: { methods: [], requiredProviders: [] },
+                            ui: { autoRedirect: { enabled: false, providerId: null } },
+                        },
+                    },
+                },
+            })
+            .mockResolvedValueOnce({ status: 'unsupported', reason: 'invalid_payload' });
+
+        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
+        const hook = await renderHook(() => useAuthEntryOptions());
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(hook.getCurrent().serverAvailability).toBe('ready');
+        expect(hook.getCurrent().serverUrlForCopy).toBe('http://api.example.test');
+        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            activeServerListener?.({ serverUrl: 'http://api.other.test' });
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const options = hook.getCurrent();
+        expect(options.serverUrlForCopy).toBe('http://api.other.test');
+        expect(options.serverAvailability).toBe('incompatible');
+        expect(options.showAuthActions).toBe(false);
+        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
     });
 });

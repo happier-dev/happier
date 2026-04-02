@@ -33,6 +33,9 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
     const styles = stylesheet;
     const isMobileShell = Platform.OS === 'android' || Platform.OS === 'ios';
     const restoreTitle = isMobileShell ? t('welcome.linkOrRestoreAccount') : t('welcome.loginWithMobileApp');
+    const handleCreateAccountPress = React.useCallback(() => {
+        void props.onCreateAccount();
+    }, [props.onCreateAccount]);
 
     const showAuthActions = props.options.serverAvailability === 'ready' || props.options.serverAvailability === 'legacy';
     const showProviderSignup = props.options.showProviderSignup;
@@ -137,7 +140,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                             testID="welcome-create-account"
                             size={smallButtonSize}
                             title={props.options.anonymousSignupTitle}
-                            action={wrapAsyncAction(props.onCreateAccount)}
+                            onPress={handleCreateAccountPress}
                             display="inverted"
                         />
                     </View>
@@ -155,7 +158,12 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                                         ? wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId))
                                         : showProviderSignup && providerId
                                             ? wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId))
-                                            : wrapAsyncAction(props.onCreateAccount)
+                                            : undefined
+                            }
+                            onPress={
+                                mtlsPrimary || (keylessPrimary && keylessProviderId) || (showProviderSignup && providerId)
+                                    ? undefined
+                                    : handleCreateAccountPress
                             }
                             display="inverted"
                         />
@@ -191,7 +199,12 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                                     ? wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId))
                                     : showProviderSignup && providerId
                                         ? wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId))
-                                        : wrapAsyncAction(props.onCreateAccount)
+                                        : undefined
+                        }
+                        onPress={
+                            mtlsPrimary || (keylessPrimary && keylessProviderId) || (showProviderSignup && providerId)
+                                ? undefined
+                                : handleCreateAccountPress
                         }
                     />
                 </View>
@@ -252,13 +265,15 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
 const stylesheet = StyleSheet.create((theme) => ({
     serverUnavailableBlock: {
         width: '100%',
-        maxWidth: 560,
+        maxWidth: 360,
+        alignSelf: 'center',
         borderRadius: 12,
         borderWidth: 1,
         borderColor: theme.colors.divider,
         backgroundColor: theme.colors.surface,
         paddingHorizontal: 14,
         paddingVertical: 10,
+        marginBottom: 20,
     },
     serverUnavailableTitle: {
         ...Typography.default('semiBold'),
