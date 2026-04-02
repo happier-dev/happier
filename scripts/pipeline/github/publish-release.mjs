@@ -219,11 +219,6 @@ function main() {
     }
   }
 
-  // If rolling tag push failed, we still created/confirmed the release, but we must avoid mutating assets/notes.
-  if (rollingTag && !pushedRollingTag) {
-    return;
-  }
-
   // Update rolling release notes with commit summary.
   if (rollingTag) {
     let compareUrl = '';
