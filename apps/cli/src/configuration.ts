@@ -158,6 +158,10 @@ class Configuration {
   // Claude local transcript scanner (UI-facing missing-transcript warning delay).
   public readonly claudeTranscriptMissingWarningMs: number
 
+  // Claude JSONL transcript repair (missing tool_result injection for interrupted tool calls).
+  public readonly claudeTranscriptRepairWaitForToolUseIdsTimeoutMs: number
+  public readonly claudeTranscriptRepairWaitForToolUseIdsPollIntervalMs: number
+
   // Claude Task tool policy (remote mode).
   public readonly claudeTaskAllowRunInBackground: boolean
   /**
@@ -546,6 +550,17 @@ class Configuration {
     this.claudeTranscriptMissingWarningMs = resolveIntEnvWithBounds(
       'HAPPIER_CLAUDE_TRANSCRIPT_MISSING_WARNING_MS',
       { min: 0, max: 2 * 60_000, default: 15_000 },
+    );
+
+    // Default: 250ms. This is a best-effort grace window for tool_use blocks to flush to disk
+    // before we attempt to patch missing tool_result entries after an interrupt.
+    this.claudeTranscriptRepairWaitForToolUseIdsTimeoutMs = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_TRANSCRIPT_REPAIR_WAIT_TOOL_USE_IDS_TIMEOUT_MS',
+      { min: 0, max: 60_000, default: 250 },
+    );
+    this.claudeTranscriptRepairWaitForToolUseIdsPollIntervalMs = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_TRANSCRIPT_REPAIR_WAIT_TOOL_USE_IDS_POLL_INTERVAL_MS',
+      { min: 10, max: 5_000, default: 25 },
     );
 
     const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '').trim().toLowerCase();
