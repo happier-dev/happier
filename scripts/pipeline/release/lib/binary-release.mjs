@@ -103,7 +103,14 @@ export async function createDeterministicArchive({ artifactPath, sourcePath, sou
   }
   // AppleDouble metadata (files prefixed with `._`) can appear in staging directories (and can even be
   // checked into repos). Always exclude them to keep archives deterministic and avoid shipping junk.
-  const excludeArgs = ['--exclude=._*', '--exclude=*/._*'];
+  const excludeArgs = [
+    '--exclude=._*',
+    '--exclude=*/._*',
+    // @prisma/client includes a nested node_modules used for tooling shims. It is not required at runtime,
+    // and excluding it avoids flaky tar walks when file providers or tooling mutate it during packaging.
+    '--exclude=*/node_modules/@prisma/client/node_modules',
+    '--exclude=*/node_modules/@prisma/client/node_modules/*',
+  ];
   if (_isGnuTar) {
     execOrThrow('tar', [
       '--sort=name',
