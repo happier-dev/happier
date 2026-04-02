@@ -11,7 +11,7 @@ In the repo and in CI we also use internal variants for local development.
 | Variant | `APP_ENV` | iOS Bundle ID | Android Package | URL scheme | Use case |
 | --- | --- | --- | --- | --- | --- |
 | **Internal dev** | `development` (alias `internaldev`) | `dev.happier.app.dev.internal` | `dev.happier.app.internaldev` | `happier-internaldev` | Local development with hot reload |
-| **Public dev** | `publicdev` | `dev.happier.app.publicdev` | `dev.happier.app.publicdev` | `happier-dev` | Nightly public dev builds + OTA updates |
+| **Dev** | `publicdev` | `dev.happier.app.publicdev` | `dev.happier.app.publicdev` | `happier-dev` | Dev builds + OTA updates |
 | **Preview** | `preview` | `dev.happier.app.preview` | `dev.happier.app.preview` | `happier-preview` | Pre-release testing + OTA updates |
 | **Production** | `production` | `dev.happier.app` | `dev.happier.app` | `happier` | App Store / Play Store builds |
 
@@ -343,7 +343,7 @@ yarn ios:connected-device
 ## Tips
 
 1. **Use internal dev for active work**: fast iteration and dev-only affordances.
-2. **Use preview/public dev for production-like validation**: runs the preview feature policy and uses OTA.
+2. **Use preview/dev for production-like validation**: runs the preview feature policy and uses OTA.
 3. **Use production for final validation**: exact configuration that ships to users.
 4. **Install variants side-by-side**: compare behavior without uninstalling.
 5. **Match CLI lanes when needed**: `happier` (stable), `hprev` (preview), `hdev` (dev).

@@ -247,7 +247,20 @@ function resolveExplicitRelativeImportFromOrigin({ originModulePath, moduleName,
   const ext = path.extname(moduleName);
   if (!ext) return null;
 
-  const candidate = path.resolve(path.dirname(originModulePath), moduleName);
+  // Respect packages that explicitly import `*.node.js` files but ship a browser mapping
+  // (via package.json "browser") that rewrites them to the non-node variant. Our CI/stack
+  // fast-path resolver runs before Metro applies those mappings, so emulate the common
+  // `*.node.js` -> `*.js` rewrite when the browser file exists.
+  let normalizedModuleName = moduleName;
+  if (normalizedModuleName.endsWith('.node.js')) {
+    const browserVariant = normalizedModuleName.replace(/\.node\.js$/u, '.js');
+    const browserCandidate = path.resolve(path.dirname(originModulePath), browserVariant);
+    if (!isFileBlockedByMetro(blockList, browserCandidate) && fs.existsSync(browserCandidate)) {
+      normalizedModuleName = browserVariant;
+    }
+  }
+
+  const candidate = path.resolve(path.dirname(originModulePath), normalizedModuleName);
   if (isFileBlockedByMetro(blockList, candidate)) return null;
   if (!fs.existsSync(candidate)) return null;
   return candidate;

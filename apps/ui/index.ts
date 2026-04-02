@@ -4,6 +4,18 @@ declare const require: (id: string) => unknown;
 
 if (typeof window !== 'undefined') {
     try {
+        const mod = require('./sources/utils/runtime/ensureGlobalBuffer');
+        if (typeof mod === 'object' && mod !== null && 'ensureGlobalBuffer' in mod) {
+            const ensure = (mod as { ensureGlobalBuffer?: unknown }).ensureGlobalBuffer;
+            if (typeof ensure === 'function') {
+                ensure();
+            }
+        }
+    } catch {
+        // ignore
+    }
+
+    try {
         const mod = require('./sources/dev/webHmrOptOut/webHmrOptOut');
         if (typeof mod === 'object' && mod !== null && 'installWebHmrOptOutForWebTab' in mod) {
             const install = (mod as { installWebHmrOptOutForWebTab?: unknown }).installWebHmrOptOutForWebTab;
