@@ -101,7 +101,14 @@ exit 0
       expoToken,
       extraEnv = {},
     } = {}) {
+      const baseEnv = { ...process.env };
+      // CI runners often provide Android SDK env vars. Tests should opt in explicitly
+      // so strategy resolution stays deterministic.
+      delete baseEnv.ANDROID_HOME;
+      delete baseEnv.ANDROID_SDK_ROOT;
+
       return buildStackHarnessEnv({
+        baseEnv,
         extraEnv: {
           HSTACK_MOBILE_DEV_CLIENT_TEST_STUB: '1',
           HAPPIER_STACK_ENV_FILE: fixture.path('nonexistent-env'),
