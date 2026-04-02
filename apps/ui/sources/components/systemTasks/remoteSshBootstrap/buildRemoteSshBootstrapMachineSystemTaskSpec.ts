@@ -1,5 +1,5 @@
 import type { SystemTaskSpec } from '@happier-dev/protocol';
-import { buildSshTarget, parseSshTarget } from '@happier-dev/cli-common/systemTasks';
+import { buildSshTarget, parseSshTarget } from '@happier-dev/protocol';
 
 export type RemoteSshPromptResolution = Readonly<{
     hostTrust?: Readonly<{
@@ -16,6 +16,7 @@ export function buildRemoteSshBootstrapMachineSystemTaskSpec(params: Readonly<{
     relayUrl: string;
     webappUrl?: string;
     publicRelayUrl?: string;
+    channel: 'stable' | 'preview' | 'dev';
     sshTarget?: string;
     sshUsername?: string;
     sshHost?: string;
@@ -70,6 +71,7 @@ export function buildRemoteSshBootstrapMachineSystemTaskSpec(params: Readonly<{
                     ? { publicRelayUrl: params.publicRelayUrl.trim() }
                     : {}),
             },
+            channel: params.channel,
             serviceMode,
             knownHostsMode: 'app',
             ...(params.installRelayRuntime === true

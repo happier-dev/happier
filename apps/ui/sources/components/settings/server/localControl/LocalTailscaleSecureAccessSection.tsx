@@ -15,10 +15,8 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
-import { setActiveShareableServerUrl } from '@/sync/domains/server/serverRuntime';
-import { buildLocalTailscaleSecureAccessSystemTaskSpec } from './buildLocalTailscaleSecureAccessSystemTaskSpec';
-import { decorateLocalControlSnapshot } from './decorateLocalControlSnapshot';
+import { getActiveServerSnapshot, setActiveShareableServerUrl } from '@/sync/domains/server/serverRuntime';
+import { buildLocalTailscaleSecureAccessSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalTailscaleSecureAccessSystemTaskSpec';
 
 type TailscaleResultData = Readonly<{
     tailscaleInstalled: boolean;
@@ -155,7 +153,7 @@ export const LocalTailscaleSecureAccessSection = React.memo(function LocalTailsc
         }
     }, [normalizedUpstreamUrl]);
 
-    const decoratedSnapshot = React.useMemo(() => snapshot ? decorateLocalControlSnapshot(snapshot) : null, [snapshot]);
+    const decoratedSnapshot = snapshot ?? null;
     const installUrl = readLatestPromptUrl(snapshot, 'tailscaleInstall');
     const loginActionUrl = readLatestPromptAnyUrl(snapshot, ['needsUserAction.openUrl', 'needsUserAction.scanQr']);
     const approvalUrl = lastResult?.requiresApproval?.url ?? readLatestPromptUrl(snapshot, 'tailscaleServeApproval');

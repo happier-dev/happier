@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess';
+import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 
 import { getDefaultSystemTaskRunner, SystemTaskProgressCard } from '@/components/systemTasks';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
@@ -56,9 +56,13 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
     onShareUrlChange?: (shareUrl: string | null) => void;
     upstreamUrl?: string | null;
     presentation?: 'settings' | 'wizard';
+    onWizardPrimaryChange?: (state: Readonly<{ label: string; disabled: boolean; onPress: (() => void) | (() => Promise<void>) }> | null) => void;
+    onRequestAdvance?: () => void;
 }>) {
     const runner = props.runner ?? getDefaultSystemTaskRunner();
     const presentation = props.presentation ?? 'settings';
+    const onWizardPrimaryChange = props.onWizardPrimaryChange;
+    const onRequestAdvance = props.onRequestAdvance;
     const { theme } = useUnistyles();
     const setupPolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);
     const {
@@ -85,10 +89,11 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
     const [cloudflareTokenDraft, setCloudflareTokenDraft] = React.useState('');
 
     React.useEffect(() => {
-        if (resolvedProviderId && resolvedProviderId !== selectedProviderId) {
-            setSelectedProviderId(resolvedProviderId);
+        if (!resolvedProviderId) {
+            return;
         }
-    }, [resolvedProviderId, selectedProviderId]);
+        setSelectedProviderId(resolvedProviderId);
+    }, [resolvedProviderId]);
 
     const visibleProviderIds = React.useMemo(() => {
         return relayAccessProviderIds.filter((providerId) => {
@@ -120,9 +125,9 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
         setActiveShareableServerUrl(resolvedShareUrl);
     }, [resolvedShareUrl, snapshot]);
 
-    const save = React.useCallback(async () => {
+    const save = React.useCallback(async (): Promise<boolean> => {
         if (isUnavailable) {
-            return;
+            return false;
         }
 
         let config: RelayAccessConfig;
@@ -130,7 +135,7 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
             const normalized = lanUrlDraft.trim();
             if (!normalized) {
                 await Modal.alert(t('common.error'), t('settings.relayAccess.missingUrl'));
-                return;
+                return false;
             }
             config = { providerId: 'lan', url: normalized };
         } else if (selectedProviderId === 'cloudflareNamed') {
@@ -138,18 +143,19 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
             const token = cloudflareTokenDraft.trim();
             if (!hostname) {
                 await Modal.alert(t('common.error'), t('settings.relayAccess.missingHostname'));
-                return;
+                return false;
             }
             if (!token) {
                 await Modal.alert(t('common.error'), t('settings.relayAccess.missingToken'));
-                return;
+                return false;
             }
             config = { providerId: 'cloudflareNamed', hostname, token };
         } else {
             config = { providerId: selectedProviderId } as RelayAccessConfig;
         }
 
-        await configure({ providerId: selectedProviderId, config });
+        const taskId = await configure({ providerId: selectedProviderId, config });
+        return Boolean(taskId);
     }, [
         cloudflareHostnameDraft,
         cloudflareTokenDraft,
@@ -171,15 +177,159 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
         await disable();
     }, [disable, isUnavailable]);
 
+    const selectedProviderNeedsDraftConfig = React.useMemo(() => {
+        if (!snapshot) return true;
+        if (snapshot.configured !== true) return true;
+        if (snapshot.providerId !== selectedProviderId) return true;
+        if (selectedProviderId === 'lan') {
+            return lanUrlDraft.trim().length > 0;
+        }
+        if (selectedProviderId === 'cloudflareNamed') {
+            return cloudflareHostnameDraft.trim().length > 0 || cloudflareTokenDraft.trim().length > 0;
+        }
+        return false;
+    }, [
+        cloudflareHostnameDraft,
+        cloudflareTokenDraft,
+        lanUrlDraft,
+        selectedProviderId,
+        snapshot,
+    ]);
+
+    const selectedProviderDraftValid = React.useMemo(() => {
+        if (!selectedProviderNeedsDraftConfig) return true;
+        if (selectedProviderId === 'lan') {
+            return lanUrlDraft.trim().length > 0;
+        }
+        if (selectedProviderId === 'cloudflareNamed') {
+            return cloudflareHostnameDraft.trim().length > 0 && cloudflareTokenDraft.trim().length > 0;
+        }
+        return true;
+    }, [
+        cloudflareHostnameDraft,
+        cloudflareTokenDraft,
+        lanUrlDraft,
+        selectedProviderId,
+        selectedProviderNeedsDraftConfig,
+    ]);
+
+    const [advanceAfterSaveRequested, setAdvanceAfterSaveRequested] = React.useState(false);
+
+    const handleWizardPrimaryPress = React.useCallback(async () => {
+        if (!selectedProviderNeedsDraftConfig) {
+            onRequestAdvance?.();
+            return;
+        }
+
+        if (!selectedProviderDraftValid) {
+            await save();
+            return;
+        }
+
+        const started = await save();
+        if (!started) {
+            setAdvanceAfterSaveRequested(false);
+            return;
+        }
+        setAdvanceAfterSaveRequested(true);
+    }, [onRequestAdvance, save, selectedProviderDraftValid, selectedProviderNeedsDraftConfig]);
+
+    React.useEffect(() => {
+        if (!advanceAfterSaveRequested) return;
+        if (isBusy) return;
+        if (!snapshot) {
+            setAdvanceAfterSaveRequested(false);
+            return;
+        }
+        if (snapshot.configured === true && snapshot.providerId === selectedProviderId) {
+            setAdvanceAfterSaveRequested(false);
+            onRequestAdvance?.();
+            return;
+        }
+        setAdvanceAfterSaveRequested(false);
+    }, [advanceAfterSaveRequested, isBusy, onRequestAdvance, selectedProviderId, snapshot]);
+
+    React.useEffect(() => {
+        if (presentation !== 'wizard') return;
+        if (!onWizardPrimaryChange) return;
+        onWizardPrimaryChange({
+            label: t('common.continue'),
+            disabled: isBusy || isUnavailable || (!selectedProviderDraftValid && selectedProviderNeedsDraftConfig),
+            onPress: handleWizardPrimaryPress,
+        });
+        return () => {
+            onWizardPrimaryChange?.(null);
+        };
+    }, [
+        handleWizardPrimaryPress,
+        isBusy,
+        isUnavailable,
+        presentation,
+        onWizardPrimaryChange,
+        selectedProviderDraftValid,
+        selectedProviderNeedsDraftConfig,
+    ]);
+
+    const providerChoiceRows = React.useMemo(() => (
+        visibleProviderIds.map((providerId: RelayAccessProviderId) => (
+            <SelectableRow
+                key={providerId}
+                testID={`settings.server.relayAccess.choice:${providerId}`}
+                variant="selectable"
+                selected={selectedProviderId === providerId}
+                disabled={isBusy || isUnavailable}
+                title={t(PROVIDER_TITLE_KEYS[providerId])}
+                subtitle={t(PROVIDER_SUBTITLE_KEYS[providerId])}
+                onPress={() => setSelectedProviderId(providerId)}
+            />
+        ))
+    ), [isBusy, isUnavailable, selectedProviderId, visibleProviderIds]);
+
+    const providerConfigFields = (
+        <>
+            {selectedProviderId === 'lan' ? (
+                <View>
+                    <TextInput
+                        testID="settings.server.relayAccess.lanUrl"
+                        placeholder={t('settings.relayAccess.fields.urlLabel')}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        value={lanUrlDraft}
+                        onChangeText={setLanUrlDraft}
+                    />
+                </View>
+            ) : null}
+
+            {selectedProviderId === 'cloudflareNamed' ? (
+                <View>
+                    <TextInput
+                        testID="settings.server.relayAccess.cloudflareHostname"
+                        placeholder={t('settings.relayAccess.fields.hostnameLabel')}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        value={cloudflareHostnameDraft}
+                        onChangeText={setCloudflareHostnameDraft}
+                    />
+                    <TextInput
+                        testID="settings.server.relayAccess.cloudflareToken"
+                        placeholder={t('settings.relayAccess.fields.tokenLabel')}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        secureTextEntry={true}
+                        value={cloudflareTokenDraft}
+                        onChangeText={setCloudflareTokenDraft}
+                    />
+                </View>
+            ) : null}
+        </>
+    );
+
     if (presentation === 'wizard') {
         const inlineStepLabel = activeTaskSnapshot?.currentStepId ? resolveSystemTaskStepLabel(activeTaskSnapshot.currentStepId) : null;
         const inlineLatestMessage = typeof activeTaskSnapshot?.latestMessage === 'string' ? activeTaskSnapshot.latestMessage : null;
         return (
             <>
                 <View style={{ width: '100%', gap: 12 }}>
-                    <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
-                        {t('settings.relayAccess.footer')}
-                    </Text>
                     {resolvedShareUrl ? (
                         <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
                             {resolvedShareUrl}
@@ -187,89 +337,10 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
                     ) : null}
 
                     <View style={{ width: '100%', gap: 8 }}>
-                        {visibleProviderIds.map((providerId: RelayAccessProviderId) => (
-                            <SelectableRow
-                                key={providerId}
-                                testID={`settings.server.relayAccess.choice:${providerId}`}
-                                variant="selectable"
-                                selected={selectedProviderId === providerId}
-                                disabled={isBusy || isUnavailable}
-                                title={t(PROVIDER_TITLE_KEYS[providerId])}
-                                subtitle={t(PROVIDER_SUBTITLE_KEYS[providerId])}
-                                onPress={() => setSelectedProviderId(providerId)}
-                            />
-                        ))}
+                        {providerChoiceRows}
                     </View>
 
-                    {selectedProviderId === 'lan' ? (
-                        <View>
-                            <TextInput
-                                testID="settings.server.relayAccess.lanUrl"
-                                placeholder={t('settings.relayAccess.fields.urlLabel')}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                value={lanUrlDraft}
-                                onChangeText={setLanUrlDraft}
-                            />
-                        </View>
-                    ) : null}
-
-                    {selectedProviderId === 'cloudflareNamed' ? (
-                        <View>
-                            <TextInput
-                                testID="settings.server.relayAccess.cloudflareHostname"
-                                placeholder={t('settings.relayAccess.fields.hostnameLabel')}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                value={cloudflareHostnameDraft}
-                                onChangeText={setCloudflareHostnameDraft}
-                            />
-                            <TextInput
-                                testID="settings.server.relayAccess.cloudflareToken"
-                                placeholder={t('settings.relayAccess.fields.tokenLabel')}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                secureTextEntry={true}
-                                value={cloudflareTokenDraft}
-                                onChangeText={setCloudflareTokenDraft}
-                            />
-                        </View>
-                    ) : null}
-
-                    <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'center' }}>
-                        <RoundButton
-                            testID="settings.server.relayAccess.refresh"
-                            size="small"
-                            display="inverted"
-                            title={t('settings.relayAccess.refreshAction')}
-                            onPress={() => {
-                                void refreshStatus();
-                            }}
-                            disabled={isBusy || isUnavailable}
-                        />
-                        <RoundButton
-                            testID="settings.server.relayAccess.save"
-                            size="small"
-                            display="inverted"
-                            title={t('settings.relayAccess.saveAction')}
-                            onPress={() => {
-                                void save();
-                            }}
-                            disabled={isBusy || isUnavailable}
-                        />
-                        {resolvedConfigured ? (
-                            <RoundButton
-                                testID="settings.server.relayAccess.disable"
-                                size="small"
-                                display="inverted"
-                                title={t('settings.relayAccess.disableAction')}
-                                onPress={() => {
-                                    void disableAction();
-                                }}
-                                disabled={isBusy || isUnavailable}
-                            />
-                        ) : null}
-                    </View>
+                    {providerConfigFields}
 
                     {lastErrorMessage ? (
                         <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
@@ -355,54 +426,10 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
                 />
 
                 <View>
-                    {visibleProviderIds.map((providerId: RelayAccessProviderId) => (
-                        <SelectableRow
-                            key={providerId}
-                            testID={`settings.server.relayAccess.choice:${providerId}`}
-                            variant="selectable"
-                            selected={selectedProviderId === providerId}
-                            disabled={isBusy || isUnavailable}
-                            title={t(PROVIDER_TITLE_KEYS[providerId])}
-                            subtitle={t(PROVIDER_SUBTITLE_KEYS[providerId])}
-                            onPress={() => setSelectedProviderId(providerId)}
-                        />
-                    ))}
+                    {providerChoiceRows}
                 </View>
 
-                {selectedProviderId === 'lan' ? (
-                    <View>
-                        <TextInput
-                            testID="settings.server.relayAccess.lanUrl"
-                            placeholder={t('settings.relayAccess.fields.urlLabel')}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            value={lanUrlDraft}
-                            onChangeText={setLanUrlDraft}
-                        />
-                    </View>
-                ) : null}
-
-                {selectedProviderId === 'cloudflareNamed' ? (
-                    <View>
-                        <TextInput
-                            testID="settings.server.relayAccess.cloudflareHostname"
-                            placeholder={t('settings.relayAccess.fields.hostnameLabel')}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            value={cloudflareHostnameDraft}
-                            onChangeText={setCloudflareHostnameDraft}
-                        />
-                        <TextInput
-                            testID="settings.server.relayAccess.cloudflareToken"
-                            placeholder={t('settings.relayAccess.fields.tokenLabel')}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            secureTextEntry={true}
-                            value={cloudflareTokenDraft}
-                            onChangeText={setCloudflareTokenDraft}
-                        />
-                    </View>
-                ) : null}
+                {providerConfigFields}
 
                 <Item
                     testID="settings.server.relayAccess.save"

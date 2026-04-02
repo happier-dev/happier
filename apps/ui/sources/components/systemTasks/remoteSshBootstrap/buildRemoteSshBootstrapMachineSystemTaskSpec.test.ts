@@ -6,6 +6,7 @@ describe('buildRemoteSshBootstrapMachineSystemTaskSpec', () => {
     it('respects serviceMode=none', () => {
         const spec = buildRemoteSshBootstrapMachineSystemTaskSpec({
             relayUrl: 'http://localhost:53288',
+            channel: 'stable',
             sshAuth: 'agent',
             sshUsername: 'root',
             sshHost: 'example.com',
@@ -14,5 +15,6 @@ describe('buildRemoteSshBootstrapMachineSystemTaskSpec', () => {
 
         const params = spec.params as Record<string, unknown>;
         expect(params.serviceMode).toBe('none');
+        expect(params.channel).toBe('stable');
     });
 });

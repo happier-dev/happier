@@ -114,6 +114,79 @@ describe('LocalRelayAccessControlSection', () => {
         expect(screen.findAllByType('Item' as never)).toHaveLength(0);
     });
 
+    it('uses the wizard chrome primary action to save relay access changes (no embedded action buttons)', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+
+        const startedSpecs: unknown[] = [];
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    SystemTaskSpecSchema.parse(spec);
+                    startedSpecs.push(spec);
+                    const kind = typeof (spec as any)?.kind === 'string' ? String((spec as any).kind) : 'unknown';
+                    return `task_1:${kind}`;
+                },
+                async subscribe(_taskId, _listenerSet) {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        let primary: { disabled: boolean; onPress: (() => void) | (() => Promise<void>) } | null = null;
+
+        const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+        const screen = await renderScreen(
+            React.createElement(LocalRelayAccessControlSection, {
+                runner,
+                upstreamUrl: 'http://127.0.0.1:3005',
+                presentation: 'wizard',
+                onWizardPrimaryChange: (state) => {
+                    primary = state as any;
+                },
+            }),
+        );
+
+        await renderer.act(async () => {});
+
+        expect(startedSpecs[0]).toEqual({
+            protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+            kind: 'relay.access.status.v1',
+            params: {
+                target: { kind: 'local' },
+            },
+        });
+        expect(screen.findByTestId('settings.server.relayAccess.refresh')).toBeNull();
+        expect(screen.findByTestId('settings.server.relayAccess.save')).toBeNull();
+        expect(screen.findByTestId('settings.server.relayAccess.disable')).toBeNull();
+        expect(primary).toBeTruthy();
+
+        await renderer.act(async () => {
+            screen.findByTestId('settings.server.relayAccess.lanUrl')?.props.onChangeText?.('https://relay.lan.example.test');
+        });
+
+        await renderer.act(async () => {
+            await (primary?.onPress as any)?.();
+        });
+
+        expect(startedSpecs).toHaveLength(2);
+        expect(startedSpecs[1]).toEqual({
+            protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+            kind: 'relay.access.configure.v1',
+            params: {
+                target: { kind: 'local' },
+                providerId: 'lan',
+                config: {
+                    providerId: 'lan',
+                    url: 'https://relay.lan.example.test',
+                },
+                upstreamUrl: 'http://127.0.0.1:3005',
+            },
+        });
+    });
+
     it('filters relay access providers when setup surface policy denies Tailscale and Cloudflare Tunnel', async () => {
         const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relayAccess.allowTailscale,setup.relayAccess.allowCloudflareTunnel';
@@ -294,5 +367,68 @@ describe('LocalRelayAccessControlSection', () => {
                 },
             },
         });
+    });
+
+    it('allows switching relay access providers after an existing configuration is loaded', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+
+        const listeners = new Map<string, {
+            onEvent: (payload: unknown) => void;
+            onResult: (payload: unknown) => void;
+        }>();
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    SystemTaskSpecSchema.parse(spec);
+                    const kind = typeof (spec as any)?.kind === 'string' ? String((spec as any).kind) : 'unknown';
+                    return `task_1:${kind}`;
+                },
+                async subscribe(taskId, listenerSet) {
+                    listeners.set(taskId, listenerSet);
+                    return () => {
+                        listeners.delete(taskId);
+                    };
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+        const screen = await renderScreen(React.createElement(LocalRelayAccessControlSection, { runner }));
+        await renderer.act(async () => {});
+
+        const statusTaskId = 'task_1:relay.access.status.v1';
+        await renderer.act(async () => {
+            listeners.get(statusTaskId)?.onResult({
+                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                taskId: statusTaskId,
+                ok: true,
+                data: {
+                    configured: true,
+                    providerId: 'localOnly',
+                    status: {
+                        state: 'enabled',
+                        shareUrl: 'https://relay.localonly.example.test',
+                        details: null,
+                    },
+                },
+            });
+        });
+
+        expect(screen.findByTestId('settings.server.relayAccess.choice:localOnly')?.props.selected).toBe(true);
+        expect(screen.findByTestId('settings.server.relayAccess.choice:lan')?.props.selected).toBe(false);
+        expect(screen.findByTestId('settings.server.relayAccess.lanUrl')).toBeNull();
+
+        const lanChoice = screen.findByTestId('settings.server.relayAccess.choice:lan');
+        await renderer.act(async () => {
+            lanChoice?.props.onPress?.();
+        });
+
+        expect(screen.findByTestId('settings.server.relayAccess.choice:localOnly')?.props.selected).toBe(false);
+        expect(screen.findByTestId('settings.server.relayAccess.choice:lan')?.props.selected).toBe(true);
+        expect(screen.findByTestId('settings.server.relayAccess.lanUrl')).toBeTruthy();
     });
 });

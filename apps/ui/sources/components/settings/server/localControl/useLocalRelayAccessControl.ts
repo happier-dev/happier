@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { SystemTaskResult } from '@happier-dev/protocol';
-import type { RelayAccessConfig, RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess';
+import type { RelayAccessConfig, RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskSnapshot } from '@happier-dev/cli-common/systemTasks';
 
 import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
@@ -12,8 +12,7 @@ import {
     buildLocalRelayAccessConfigureSystemTaskSpec,
     buildLocalRelayAccessDisableSystemTaskSpec,
     buildLocalRelayAccessStatusSystemTaskSpec,
-} from './buildLocalRelayAccessSystemTaskSpec';
-import { decorateLocalControlSnapshot } from './decorateLocalControlSnapshot';
+} from '@/components/systemTasks/specs/localControl/buildLocalRelayAccessSystemTaskSpec';
 
 function readRelayAccessSnapshot(result: SystemTaskResult | null): RelayAccessTaskSnapshot | null {
     if (!result?.ok) {
@@ -156,7 +155,7 @@ export function useLocalRelayAccessControl(options: Readonly<{
 
     const activeTaskSnapshot = React.useMemo<SystemTaskRunState | null>(() => {
         const snapshot = actionSnapshot?.result ? null : actionSnapshot ?? (statusSnapshot?.result ? null : statusSnapshot);
-        return snapshot ? decorateLocalControlSnapshot(snapshot) : null;
+        return snapshot ?? null;
     }, [actionSnapshot, statusSnapshot]);
 
     const isBusy = activeTaskSnapshot != null && activeTaskSnapshot.result == null;
@@ -164,10 +163,10 @@ export function useLocalRelayAccessControl(options: Readonly<{
     return {
         activeTaskSnapshot,
         configure: React.useCallback(async (payload: Readonly<{ providerId: RelayAccessProviderId; config: RelayAccessConfig }>) => {
-            await runAction('relay.access.configure.v1', payload);
+            return await runAction('relay.access.configure.v1', payload);
         }, [runAction]),
         disable: React.useCallback(async () => {
-            await runAction('relay.access.disable.v1');
+            return await runAction('relay.access.disable.v1');
         }, [runAction]),
         isBusy,
         isUnavailable,

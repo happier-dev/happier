@@ -5,6 +5,7 @@ import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSnapshot';
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
+import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 
 import {
     buildRemoteSshBootstrapMachineSystemTaskSpec,
@@ -134,6 +135,7 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
                 webappUrl: options.webappUrl,
                 publicRelayUrl: options.publicRelayUrl,
                 serviceMode: options.serviceMode,
+                channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(),
                 sshUsername: params.sshUsername,
                 sshHost: params.sshHost,
                 sshPort: params.sshPort,

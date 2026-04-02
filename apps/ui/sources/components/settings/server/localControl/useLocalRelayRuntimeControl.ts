@@ -5,8 +5,7 @@ import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { t } from '@/text';
-import { buildLocalRelayRuntimeSystemTaskSpec } from './buildLocalRelayRuntimeSystemTaskSpec';
-import { decorateLocalControlSnapshot } from './decorateLocalControlSnapshot';
+import { buildLocalRelayRuntimeSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalRelayRuntimeSystemTaskSpec';
 
 type RelayRuntimeStatusData = Readonly<{
     installed: boolean;
@@ -162,7 +161,7 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
 
     const activeTaskSnapshot = React.useMemo<SystemTaskRunState | null>(() => {
         const snapshot = actionSnapshot?.result ? null : actionSnapshot ?? (statusSnapshot?.result ? null : statusSnapshot);
-        return snapshot ? decorateLocalControlSnapshot(snapshot) : null;
+        return snapshot ?? null;
     }, [actionSnapshot, statusSnapshot]);
 
     const isBusy = activeTaskSnapshot != null && activeTaskSnapshot.result == null;

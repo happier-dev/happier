@@ -14,11 +14,12 @@ import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftAct
 import { LocalRelayRuntimeControlSection } from '@/components/settings/server/localControl/LocalRelayRuntimeControlSection';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import { LocalTailscaleSecureAccessSection } from '@/components/settings/server/localControl/LocalTailscaleSecureAccessSection';
-import { resolveKnownLocalRelayUrl } from '@/components/settings/server/localControl/resolveKnownLocalRelayUrl';
+import { resolveKnownLocalRelayUrl } from '@/sync/domains/server/url/resolveKnownLocalRelayUrl';
 import { useServerSettingsScreenController } from '@/components/settings/server/hooks/useServerSettingsScreenController';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t } from '@/text';
+import { buildRelaySetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 const stylesheet = StyleSheet.create((_theme) => ({
     keyboardAvoidingView: {
@@ -95,7 +96,7 @@ export function ServerSettingsScreen() {
                                 testID="settings.server.openSetupWizard"
                                 title={t('setupOnboarding.setupNewRelayAction')}
                                 subtitle={t('setupOnboarding.openSetupWizardSubtitle')}
-                                onPress={() => router.push('/setup/wizard?scope=relay&step=setup_chooser')}
+                                onPress={() => router.push(buildRelaySetupWizardHref({ step: 'setup_chooser' }))}
                             />
                         </ItemGroup>
                     ) : null}

@@ -6,6 +6,12 @@ export {
     mapSystemTaskSnapshotToPlanChecklistExecutionState,
     useSequentialSystemTaskChecklistExecution,
 } from './useSequentialSystemTaskChecklistExecution';
+export {
+    createPlanChecklistLogEntryFromSystemTaskEvent,
+    resolveSystemTaskEventLogLevel,
+    resolveSystemTaskEventStepId,
+    resolveSystemTaskEventTimestamp,
+} from './systemTaskEventLogEntry';
 export type {
     PlanChecklistControllerOptions,
     PlanChecklistControllerResult,

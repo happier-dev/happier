@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { useAllMachines, useMachineListByServerId, useMachineListStatusByServerId, useSetting } from '@/sync/domains/state/storage';
 
@@ -80,4 +81,3 @@ export function usePrimaryMachineFromActiveSelection(): string | null {
         settingsServerSelectionGroups,
     ]);
 }
-

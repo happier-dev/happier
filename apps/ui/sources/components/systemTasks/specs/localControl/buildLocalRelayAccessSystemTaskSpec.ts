@@ -1,5 +1,5 @@
 import { SYSTEM_TASK_PROTOCOL_VERSION, type SystemTaskSpec } from '@happier-dev/protocol';
-import type { RelayAccessConfig, RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess';
+import type { RelayAccessConfig, RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 
 type LocalRelayAccessTaskKind =
     | 'relay.access.status.v1'
