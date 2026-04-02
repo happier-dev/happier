@@ -243,6 +243,8 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             desktop-file-utils \
+            gstreamer1.0-tools \
+            gstreamer1.0-plugins-base \
             squashfs-tools \
             patchelf
 
@@ -256,6 +258,18 @@ jobs:
           fi
           if [ -n "${fuse_pkg}" ]; then
             sudo apt-get install -y --no-install-recommends "${fuse_pkg}"
+          fi
+
+          # Some linuxdeploy AppImage runtimes still rely on fusermount being present. Install fuse utilities
+          # opportunistically (distro-dependent).
+          fuse_utils=""
+          if apt-cache show fuse >/dev/null 2>&1; then
+            fuse_utils="fuse"
+          elif apt-cache show fuse3 >/dev/null 2>&1; then
+            fuse_utils="fuse3"
+          fi
+          if [ -n "${fuse_utils}" ]; then
+            sudo apt-get install -y --no-install-recommends "${fuse_utils}"
           fi
 
       - name: Compute build version
