@@ -123,6 +123,18 @@ function main() {
     configs.push('--config', updaterOverridePath);
   }
 
+  // Tauri `beforeBuildCommand` uses Corepack internally (`corepack yarn -s tauri:prepare:build`) which
+  // has proven flaky on Windows runners (Corepack tries to spawn `yarn` and fails). We avoid that
+  // by running the frontend build ourselves and overriding the hook to a fast no-op.
+  const beforeBuildOverridePath = tempFile(tmpRoot, 'tauri.beforeBuild.override.json');
+  if (opts.dryRun) {
+    console.log(`[dry-run] write ${beforeBuildOverridePath} (disable beforeBuildCommand; already built)`);
+  } else {
+    const payload = { build: { beforeBuildCommand: 'node -p 1' } };
+    fs.writeFileSync(beforeBuildOverridePath, `${JSON.stringify(payload)}\n`, 'utf8');
+  }
+  configs.push('--config', beforeBuildOverridePath);
+
   const appleSigningIdentity = String(process.env.APPLE_SIGNING_IDENTITY ?? '').trim();
   if (process.platform === 'darwin' && appleSigningIdentity) {
     const codesignOverride = tempFile(tmpRoot, 'tauri.codesign.override.json');
@@ -134,6 +146,17 @@ function main() {
     }
     configs.push('--config', codesignOverride);
   }
+
+  const baseTauriEnv = {
+    CI: 'true',
+    APP_ENV: environment,
+    ...(process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : {}),
+    ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
+    ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
+  };
+
+  // Build the frontend assets once, outside of Tauri's internal beforeBuild hook.
+  run(opts, yarn.cmd, [...yarn.prefixArgs, '-s', 'tauri:prepare:build'], { cwd: absUiDir, env: baseTauriEnv });
 
   if (environment !== 'production') {
     const versionOverride = tempFile(tmpRoot, 'tauri.version.override.json');
@@ -151,13 +174,7 @@ function main() {
       [...yarn.prefixArgs, 'tauri', 'build', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
       {
         cwd: absUiDir,
-        env: {
-          CI: 'true',
-          APP_ENV: environment,
-          ...(process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : {}),
-          ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
-          ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
-        },
+        env: baseTauriEnv,
       },
     );
     return;
@@ -165,13 +182,7 @@ function main() {
 
   run(opts, yarn.cmd, [...yarn.prefixArgs, 'tauri', 'build', ...configs, ...targetArgs], {
     cwd: absUiDir,
-    env: {
-      CI: 'true',
-      APP_ENV: environment,
-      ...(process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : {}),
-      ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
-      ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
-    },
+    env: baseTauriEnv,
   });
 }
 
