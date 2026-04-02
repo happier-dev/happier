@@ -343,7 +343,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
         }
 
-        await capturedTurnInterrupt();
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
         expect(interrupt).toHaveBeenCalled();
         expect(repairTranscriptMock).toHaveBeenCalledWith(
             expect.objectContaining({
