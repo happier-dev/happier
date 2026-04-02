@@ -98,8 +98,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Resolve channel metadata
         id: channel_meta
@@ -121,20 +119,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.channel_meta.outputs.source_ref }}
-
-      - name: Enable Corepack (Yarn)
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
-
-      - name: Install dependencies
-        env:
-          YARN_PRODUCTION: "false"
-          npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
-
-      - name: Build internal packages (protocol, agents)
-        run: yarn -s build:packages
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
