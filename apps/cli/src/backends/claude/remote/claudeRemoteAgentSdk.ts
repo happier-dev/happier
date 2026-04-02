@@ -731,22 +731,33 @@ export async function claudeRemoteAgentSdk(opts: {
     };
 
     try {
-        response = createQuery({
-            prompt: messages,
-            options: queryOptions,
-        });
+	        response = createQuery({
+	            prompt: messages,
+	            options: queryOptions,
+	        });
 
-        const interruptTurn = async (): Promise<void> => {
-            try {
-                const interrupt = (response as any)?.interrupt;
-                if (typeof interrupt === 'function') {
-                    await interrupt.call(response);
-                }
-            } catch {
-                // Best-effort: interrupt is optional and should not crash cancellation.
-            } finally {
-                // Ensure UI thinking state is released even if Claude does not emit a clean result.
-                updateThinking(false);
+        let activeTaskId: string | null = null;
+
+	        const interruptTurn = async (): Promise<void> => {
+	            try {
+                    const stopTask = (response as any)?.stopTask;
+                    if (typeof stopTask === 'function') {
+                        const taskId = activeTaskId;
+                        if (typeof taskId === 'string' && taskId.trim().length > 0) {
+                            await stopTask.call(response, taskId);
+                            return;
+                        }
+                    }
+
+	                const interrupt = (response as any)?.interrupt;
+	                if (typeof interrupt === 'function') {
+	                    await interrupt.call(response);
+	                }
+	            } catch {
+	                // Best-effort: interrupt is optional and should not crash cancellation.
+	            } finally {
+	                // Ensure UI thinking state is released even if Claude does not emit a clean result.
+	                updateThinking(false);
                 try {
                     cleanupBufferedAssistantMessages?.(null);
 	                } catch {
@@ -1099,6 +1110,7 @@ export async function claudeRemoteAgentSdk(opts: {
             if (didFinalizeTurn) return;
             didFinalizeTurn = true;
             awaitingNextTurnStart = true;
+            activeTaskId = null;
             updateThinking(false);
             await flushStreamedTranscriptWriter('turn-end');
             logger.debug('[claudeRemoteAgentSdk] Turn summary', {
@@ -1445,24 +1457,49 @@ export async function claudeRemoteAgentSdk(opts: {
                     didFinalizeTurn = false;
                 }
 
-                if (message && message.type === 'system' && message.subtype === 'init') {
-                    const init = message as SDKSystemMessage;
-	                    if (init.session_id) {
-	                        const transcriptPath = join(
-	                            getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
-	                            `${init.session_id}.jsonl`,
-	                        );
-	                        latestClaudeSessionId = init.session_id;
-	                        latestTranscriptPath = transcriptPath;
-	                        logger.debug('[claudeRemoteAgentSdk] Session initialized', {
-	                            claudeSessionId: init.session_id,
-	                            transcriptPath,
-	                        });
-	                        opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
-                        if (isCompactCommand) {
-                            opts.onCompletionEvent?.('Compaction completed');
-                            isCompactCommand = false;
+                if (message && message.type === 'system') {
+                    const system = message as SDKSystemMessage;
+                    const subtype = (system as any).subtype;
+
+                    if (subtype === 'task_started') {
+                        const taskId = (system as any).task_id;
+                        if (typeof taskId === 'string' && taskId.trim().length > 0) {
+                            activeTaskId = taskId;
+                        }
+                    } else if (subtype === 'task_progress') {
+                        const taskId = (system as any).task_id;
+                        if (!activeTaskId && typeof taskId === 'string' && taskId.trim().length > 0) {
+                            activeTaskId = taskId;
+                        }
+                    } else if (subtype === 'task_notification') {
+                        const taskId = (system as any).task_id;
+                        const status = (system as any).status;
+                        if (typeof taskId === 'string' && taskId === activeTaskId) {
+                            activeTaskId = null;
+                        }
+                        if (status === 'stopped' || status === 'failed' || status === 'completed') {
                             await finalizeCurrentTurn();
+                        }
+                    }
+
+                    if (subtype === 'init') {
+                        if (system.session_id) {
+                            const transcriptPath = join(
+                                getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
+                                `${system.session_id}.jsonl`,
+                            );
+                            latestClaudeSessionId = system.session_id;
+                            latestTranscriptPath = transcriptPath;
+                            logger.debug('[claudeRemoteAgentSdk] Session initialized', {
+                                claudeSessionId: system.session_id,
+                                transcriptPath,
+                            });
+                            opts.onSessionFound(system.session_id, { transcript_path: transcriptPath, transcriptPath });
+                            if (isCompactCommand) {
+                                opts.onCompletionEvent?.('Compaction completed');
+                                isCompactCommand = false;
+                                await finalizeCurrentTurn();
+                            }
                         }
                     }
                 }

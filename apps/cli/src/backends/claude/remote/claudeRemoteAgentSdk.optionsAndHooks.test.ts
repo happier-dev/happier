@@ -237,16 +237,22 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.effort).toBe('max');
     });
 
-    it('exposes a turn interrupt handler that calls query.interrupt()', async () => {
-        const interrupt = vi.fn(async () => {});
+    it('exposes a turn interrupt handler that stops the active task via query.stopTask()', async () => {
+        const stopTask = vi.fn(async (_taskId: string) => {});
         let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+        let resolveFinish: (() => void) | null = null;
+        const finish = new Promise<void>((resolve) => {
+            resolveFinish = resolve;
+        });
 
         const createQuery = vi.fn((_params: any) => {
             return {
                 async *[Symbol.asyncIterator]() {
+                    yield { type: 'system', subtype: 'task_started', task_id: 'task_1' } as any;
+                    await finish;
                     yield { type: 'result' } as any;
                 },
-                interrupt,
+                stopTask,
                 close: vi.fn(),
                 setPermissionMode: vi.fn(),
                 setModel: vi.fn(),
@@ -263,7 +269,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
         });
 
-        await claudeRemoteAgentSdk({
+        const runnerPromise = claudeRemoteAgentSdk({
             sessionId: null,
             transcriptPath: null,
             path: '/tmp',
@@ -281,11 +287,16 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             createQuery,
         } as any);
 
-        if (!capturedTurnInterrupt) {
-            throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+        for (let i = 0; i < 50 && !capturedTurnInterrupt; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((r) => setTimeout(r, 5));
         }
-        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
-        expect(interrupt).toHaveBeenCalled();
+        if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+
+        await capturedTurnInterrupt();
+        expect(stopTask).toHaveBeenCalledWith('task_1');
+        resolveFinish?.();
+        await runnerPromise;
     });
 
     it('repairs transcript on turn interrupt even when sessionId is discovered at runtime', async () => {
@@ -318,16 +329,22 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             'utf8',
         );
 
-        const interrupt = vi.fn(async () => {});
+        const stopTask = vi.fn(async (_taskId: string) => {});
         let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+        let resolveFinish: (() => void) | null = null;
+        const finish = new Promise<void>((resolve) => {
+            resolveFinish = resolve;
+        });
 
         const createQuery = vi.fn((_params: any) => {
             return {
                 async *[Symbol.asyncIterator]() {
                     yield { type: 'system', subtype: 'init', session_id: 'sess_1' } as any;
+                    yield { type: 'system', subtype: 'task_started', task_id: 'task_1' } as any;
+                    await finish;
                     yield { type: 'result' } as any;
                 },
-                interrupt,
+                stopTask,
                 close: vi.fn(),
                 setPermissionMode: vi.fn(),
                 setModel: vi.fn(),
@@ -344,7 +361,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
         });
 
-        await claudeRemoteAgentSdk({
+        const runnerPromise = claudeRemoteAgentSdk({
             sessionId: null,
             transcriptPath: null,
             path: workDir,
@@ -362,12 +379,16 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             createQuery,
         } as any);
 
-        if (!capturedTurnInterrupt) {
-            throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+        for (let i = 0; i < 50 && !capturedTurnInterrupt; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((r) => setTimeout(r, 5));
         }
+        if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
 
-        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
-        expect(interrupt).toHaveBeenCalled();
+        await capturedTurnInterrupt();
+        expect(stopTask).toHaveBeenCalledWith('task_1');
+        resolveFinish?.();
+        await runnerPromise;
 
         const updatedTranscript = await readFile(transcriptPath, 'utf8');
         expect(updatedTranscript).toContain('"type":"tool_result"');
