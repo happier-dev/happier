@@ -570,6 +570,10 @@ await server.connect(new StdioServerTransport());
         title: 'Read: read a known file in workspace',
         tier: 'extended',
         yolo: true,
+        // Claude Agent SDK runs can occasionally take >2min to produce their first tool trace event
+        // (network / rate-limit / cold-start). Avoid marking the scenario flaky when it eventually succeeds.
+        waitMs: 240_000,
+        inactivityTimeoutMs: 240_000,
         // Claude may use ToolSearch and/or update the session title as housekeeping.
         // Keep deterministic bounds while tolerating these expected helpers.
         maxTraceEvents: { toolCalls: 3, toolResults: 3, permissionRequests: 1 },
