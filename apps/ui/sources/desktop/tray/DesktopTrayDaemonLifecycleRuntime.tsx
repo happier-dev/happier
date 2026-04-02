@@ -6,7 +6,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { isTauriDesktop, listenTauriEvent } from '@/utils/platform/tauri';
 
-import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/settings/machines/localControl/buildLocalDaemonServiceSystemTaskSpec';
+import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { buildDaemonServiceTaskKind, TRAY_DAEMON_SERVICE_ACTION_EVENT, type TrayDaemonServiceActionPayload } from './trayDaemonLifecycle';
 
 export function DesktopTrayDaemonLifecycleRuntime(): React.ReactElement | null {

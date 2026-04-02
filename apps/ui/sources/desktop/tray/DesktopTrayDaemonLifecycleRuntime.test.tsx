@@ -37,7 +37,7 @@ vi.mock('@/components/systemTasks/systemTaskStartError', () => ({
     readSystemTaskStartErrorMessage: () => null,
 }));
 
-vi.mock('@/components/settings/machines/localControl/buildLocalDaemonServiceSystemTaskSpec', () => ({
+vi.mock('@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec', () => ({
     buildLocalDaemonServiceSystemTaskSpec: (kind: string) => ({ kind }),
 }));
 
