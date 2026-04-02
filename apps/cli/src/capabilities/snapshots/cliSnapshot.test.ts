@@ -610,14 +610,14 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     async () => {
       const binDir = join(workDir, 'bin');
       mkdirSync(binDir, { recursive: true });
-      const claudePath = makeExecutableShim({
-        dir: binDir,
-        name: 'claude',
-        stdout: [
-          'sleep 1',
-          'echo "2.0.70 (Claude Code)"',
-        ].join('\n'),
-      });
+	      const claudePath = makeExecutableShim({
+	        dir: binDir,
+	        name: 'claude',
+	        stdout: [
+	          '/bin/sleep 1',
+	          'echo "2.0.70 (Claude Code)"',
+	        ].join('\n'),
+	      });
       const credentialsDir = join(homeDir, '.claude');
       mkdirSync(credentialsDir, { recursive: true });
       writeFileSync(

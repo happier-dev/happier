@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { maybeUpdateCodexSessionIdMetadata, publishCodexSessionIdMetadata } from './codexSessionIdMetadata';
+
+const DEFAULT_CODEX_HOME_PATH = resolve(join(homedir(), '.codex'));
 
 describe('maybeUpdateCodexSessionIdMetadata', () => {
   it('no-ops when thread id is missing', () => {
@@ -90,23 +94,23 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
         agentRuntimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
-          provider: {
-            backendMode: 'appServer',
-            vendorSessionId: 'thread-app-server',
-            home: 'user',
-            homePath: '/Users/leeroy/.codex',
-            providerExtra: {
-              owner: 'codex',
-              schemaId: 'codex.agentRuntimeDescriptorExtra',
-              v: 1,
-              runtimeAffinity: {
-                backendMode: 'appServer',
-                vendorSessionId: 'thread-app-server',
-                home: 'user',
-                homePath: '/Users/leeroy/.codex',
-              },
-            },
-          },
+	          provider: {
+	            backendMode: 'appServer',
+	            vendorSessionId: 'thread-app-server',
+	            home: 'user',
+	            homePath: DEFAULT_CODEX_HOME_PATH,
+	            providerExtra: {
+	              owner: 'codex',
+	              schemaId: 'codex.agentRuntimeDescriptorExtra',
+	              v: 1,
+	              runtimeAffinity: {
+	                backendMode: 'appServer',
+	                vendorSessionId: 'thread-app-server',
+	                home: 'user',
+	                homePath: DEFAULT_CODEX_HOME_PATH,
+	              },
+	            },
+	          },
         },
       } as Metadata,
     ]);
@@ -141,23 +145,23 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
         agentRuntimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
-          provider: {
-            backendMode: 'mcp',
-            vendorSessionId: 'thread-1',
-            home: 'user',
-            homePath: '/Users/leeroy/.codex',
-            providerExtra: {
-              owner: 'codex',
-              schemaId: 'codex.agentRuntimeDescriptorExtra',
-              v: 1,
-              runtimeAffinity: {
-                backendMode: 'mcp',
-                vendorSessionId: 'thread-1',
-                home: 'user',
-                homePath: '/Users/leeroy/.codex',
-              },
-            },
-          },
+	          provider: {
+	            backendMode: 'mcp',
+	            vendorSessionId: 'thread-1',
+	            home: 'user',
+	            homePath: DEFAULT_CODEX_HOME_PATH,
+	            providerExtra: {
+	              owner: 'codex',
+	              schemaId: 'codex.agentRuntimeDescriptorExtra',
+	              v: 1,
+	              runtimeAffinity: {
+	                backendMode: 'mcp',
+	                vendorSessionId: 'thread-1',
+	                home: 'user',
+	                homePath: DEFAULT_CODEX_HOME_PATH,
+	              },
+	            },
+	          },
         },
       } as Metadata,
       {
@@ -166,23 +170,23 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
         agentRuntimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
-          provider: {
-            backendMode: 'appServer',
-            vendorSessionId: 'thread-1',
-            home: 'user',
-            homePath: '/Users/leeroy/.codex',
-            providerExtra: {
-              owner: 'codex',
-              schemaId: 'codex.agentRuntimeDescriptorExtra',
-              v: 1,
-              runtimeAffinity: {
-                backendMode: 'appServer',
-                vendorSessionId: 'thread-1',
-                home: 'user',
-                homePath: '/Users/leeroy/.codex',
-              },
-            },
-          },
+	          provider: {
+	            backendMode: 'appServer',
+	            vendorSessionId: 'thread-1',
+	            home: 'user',
+	            homePath: DEFAULT_CODEX_HOME_PATH,
+	            providerExtra: {
+	              owner: 'codex',
+	              schemaId: 'codex.agentRuntimeDescriptorExtra',
+	              v: 1,
+	              runtimeAffinity: {
+	                backendMode: 'appServer',
+	                vendorSessionId: 'thread-1',
+	                home: 'user',
+	                homePath: DEFAULT_CODEX_HOME_PATH,
+	              },
+	            },
+	          },
         },
       } as Metadata,
     ]);
