@@ -102,6 +102,39 @@ describe('server selection flags', () => {
     });
   });
 
+  it('reuses an existing matching server profile when --server-url is used with --persist', async () => {
+    await withTempDir('happier-cli-server-select-persist-existing-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_LOCAL_SERVER_URL: undefined,
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+      const { addServerProfile, getActiveServerProfile, listServerProfiles } = await import('./serverProfiles');
+      await addServerProfile({
+        name: 'company',
+        serverUrl: 'https://stack.example.test',
+        webappUrl: 'https://stack.example.test',
+        use: true,
+      });
+
+      const before = await getActiveServerProfile();
+      expect(before.id).not.toBe('cloud');
+
+      const { applyServerSelectionFromArgs } = await import('./serverSelection');
+      await applyServerSelectionFromArgs(['--server-url', 'https://stack.example.test', '--persist']);
+
+      const after = await getActiveServerProfile();
+      expect(after.id).toBe(before.id);
+
+      const profiles = await listServerProfiles();
+      expect(profiles.filter((profile) => profile.serverUrl === 'https://stack.example.test')).toHaveLength(1);
+    });
+  });
+
   it('rejects --persist and --no-persist together', async () => {
     await withTempDir('happier-cli-server-select-both-', async (homeDir) => {
       envScope.patch({

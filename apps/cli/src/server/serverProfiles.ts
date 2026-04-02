@@ -1,7 +1,10 @@
 import { readSettings, updateSettings } from '@/persistence';
 import { deriveServerIdFromName, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
+import { configuration } from '@/configuration';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 export type ServerProfile = Readonly<{
   id: string;
@@ -250,8 +253,40 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
   let resolvedId: string | null = null;
   await updateSettings((current: any) => {
     const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
-    const matchedId = findProfileIdByComparableUrl(servers, serverUrl)
-      ?? (localServerUrl ? findProfileIdByComparableUrl(servers, localServerUrl) : null);
+    const comparableKeys: string[] = [];
+    try {
+      comparableKeys.push(createServerUrlComparableKey(serverUrl));
+      if (localServerUrl) comparableKeys.push(createServerUrlComparableKey(localServerUrl));
+    } catch {
+      // Ignore invalid URLs here; addServerProfile() will enforce validity on new entries.
+    }
+
+    const candidateIds: string[] = [];
+    for (const [id, value] of Object.entries(servers)) {
+      const profile = coerceProfile(value);
+      if (!profile) continue;
+      try {
+        if (comparableKeys.includes(createServerUrlComparableKey(profile.serverUrl))) {
+          candidateIds.push(id);
+          continue;
+        }
+        if (profile.localServerUrl && comparableKeys.includes(createServerUrlComparableKey(profile.localServerUrl))) {
+          candidateIds.push(id);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    const activeId = sanitizeServerIdForFilesystem(current?.activeServerId ?? 'cloud', 'cloud');
+    const activeHasCredentials = candidateIds.includes(activeId) && existsSync(join(configuration.serversDir, activeId, 'access.key'));
+    const credentialedId = candidateIds.find((id) => existsSync(join(configuration.serversDir, id, 'access.key'))) ?? null;
+    const matchedId =
+      activeHasCredentials
+        ? activeId
+        : credentialedId
+          ?? (candidateIds.includes(activeId) ? activeId : candidateIds[0] ?? null);
     if (!matchedId) {
       return current;
     }

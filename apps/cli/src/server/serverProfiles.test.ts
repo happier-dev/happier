@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
@@ -182,6 +184,50 @@ describe('server profiles', () => {
       expect(updated.id).toBe(created.id);
       expect(updated.localServerUrl).toBe('http://127.0.0.1:3012');
       expect(await listServerProfiles()).toHaveLength(2);
+    });
+  });
+
+  it('prefers a credentialed matching profile when multiple profiles share the same comparable URL', async () => {
+    await withTempDir('happier-cli-servers-upsert-url-credentialed-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+      const { addServerProfile, upsertServerProfileByUrl } = await import('./serverProfiles');
+
+      const uncredentialed = await addServerProfile({
+        name: 'uncredentialed',
+        serverUrl: 'https://stack.example.test/api',
+        webappUrl: 'https://app.example.test',
+        use: true,
+      });
+
+      const credentialed = await addServerProfile({
+        name: 'credentialed',
+        serverUrl: 'https://stack.example.test/api',
+        webappUrl: 'https://app.example.test',
+        use: false,
+      });
+
+      mkdirSync(join(homeDir, 'servers', credentialed.id), { recursive: true });
+      writeFileSync(
+        join(homeDir, 'servers', credentialed.id, 'access.key'),
+        JSON.stringify({ token: 't', encryption: { publicKey: 'AA==', machineKey: 'AA==' } }),
+        { encoding: 'utf8' },
+      );
+
+      const updated = await upsertServerProfileByUrl({
+        name: 'custom',
+        serverUrl: 'https://stack.example.test/api',
+        webappUrl: 'https://app.example.test',
+        use: true,
+      });
+
+      expect(uncredentialed.id).not.toBe(credentialed.id);
+      expect(updated.id).toBe(credentialed.id);
     });
   });
 });

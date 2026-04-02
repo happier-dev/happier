@@ -1,5 +1,5 @@
 import { reloadConfiguration, configuration } from '@/configuration';
-import { addServerProfile, getServerProfile, useServerProfile } from '@/server/serverProfiles';
+import { getServerProfile, upsertServerProfileByUrl, useServerProfile } from '@/server/serverProfiles';
 
 function takeFlagValue(args: string[], name: string): { value: string | null; rest: string[] } {
   const rest: string[] = [];
@@ -298,7 +298,7 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
     }
 
     const name = deriveProfileNameFromServerUrl(normalizedServerUrl);
-    await addServerProfile({
+    await upsertServerProfileByUrl({
       name,
       serverUrl: normalizedServerUrl,
       ...(normalizedLocalServerUrl && normalizedLocalServerUrl !== normalizedServerUrl ? { localServerUrl: normalizedLocalServerUrl } : {}),
