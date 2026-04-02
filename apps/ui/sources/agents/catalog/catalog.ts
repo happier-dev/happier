@@ -13,6 +13,7 @@ import {
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
 type RegistryUiModule = typeof import('@/agents/registry/registryUi');
 type AgentIconTintTheme = Parameters<RegistryUiModule['getAgentIconTintColor']>[1];
+import * as RegistryUi from '@/agents/registry/registryUi';
 
 import type { AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import {
@@ -40,10 +41,8 @@ export type AgentCatalogEntry = Readonly<{
     behavior: AgentUiBehavior;
 }>;
 
-function registryUi() {
-    // Lazily load UI assets so Node-side tests can import `@/agents/catalog`
-    // without requiring image files.
-    return require('@/agents/registry/registryUi') as typeof import('@/agents/registry/registryUi');
+function registryUi(): typeof RegistryUi {
+    return RegistryUi;
 }
 
 export function getAgentCore(id: AgentId): AgentCoreConfig {

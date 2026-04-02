@@ -10,7 +10,7 @@ import { buildTerminalResponseV1, buildTerminalResponseV2 } from '@/auth/termina
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
-import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
+import { isSameServerUrl, normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
@@ -61,7 +61,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             });
 
             if (effectiveParsedServerUrl) {
-                if (currentServerUrl !== effectiveParsedServerUrl) {
+                if (currentServerUrl && !isSameServerUrl(currentServerUrl, effectiveParsedServerUrl)) {
                     setPendingTerminalConnect({ publicKeyB64Url: parsed.publicKeyB64Url, serverUrl: effectiveParsedServerUrl });
                     await upsertActivateAndSwitchServer({
                         serverUrl: effectiveParsedServerUrl,

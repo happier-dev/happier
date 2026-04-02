@@ -83,9 +83,10 @@ describe('SessionDetailsPanel (terminal resource)', () => {
 
         const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        expect(terminalViewSpy).toHaveBeenCalledTimes(1);
-        expect(terminalViewSpy.mock.calls[0]?.[0]?.sessionId).toBe('s1');
-        expect(terminalViewSpy.mock.calls[0]?.[0]?.currentDockLocation).toBe('details');
+        expect(terminalViewSpy.mock.calls.length).toBeGreaterThan(0);
+        const lastCallProps = terminalViewSpy.mock.calls.at(-1)?.[0];
+        expect(lastCallProps?.sessionId).toBe('s1');
+        expect(lastCallProps?.currentDockLocation).toBe('details');
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 });

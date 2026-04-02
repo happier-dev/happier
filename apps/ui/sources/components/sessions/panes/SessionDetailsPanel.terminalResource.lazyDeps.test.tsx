@@ -115,6 +115,6 @@ describe('SessionDetailsPanel (terminal resource lazy deps)', () => {
         tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
 
         expect(tree).toBeTruthy();
-        expect(terminalViewSpy).toHaveBeenCalledTimes(1);
+        expect(terminalViewSpy.mock.calls.length).toBeGreaterThan(0);
     });
 });

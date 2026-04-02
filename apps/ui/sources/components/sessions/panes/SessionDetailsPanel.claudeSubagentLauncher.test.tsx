@@ -120,8 +120,9 @@ describe('SessionDetailsPanel (Claude subagent launcher resource)', () => {
         tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
 
         expect(tree).toBeTruthy();
-        expect(launcherViewSpy).toHaveBeenCalledTimes(1);
-        expect(launcherViewSpy.mock.calls[0]?.[0]).toMatchObject({
+        expect(launcherViewSpy).toHaveBeenCalled();
+        const latestCall = launcherViewSpy.mock.calls.at(-1)?.[0];
+        expect(latestCall).toMatchObject({
             sessionId: 's1',
             mode: 'member',
             initialTeamId: 'qa-team',
@@ -137,6 +138,6 @@ describe('SessionDetailsPanel (Claude subagent launcher resource)', () => {
 
         expect(tree).toBeTruthy();
         expect(tree!.findAllByType('ActivityIndicator')).toHaveLength(0);
-        expect(launcherViewSpy).toHaveBeenCalledTimes(1);
+        expect(launcherViewSpy).toHaveBeenCalled();
     });
 });

@@ -20,6 +20,8 @@ import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { config } from '@/config';
 import { resolveAppVariant, type AppVariant } from '@/sync/runtime/appVariant';
+import { resolveCliInvokerNameForCurrentApp, resolvePreferredPublicReleaseRingIdForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
+import { buildMachineSetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 import type { SessionGettingStartedDecisionKind } from './gettingStartedModel';
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
@@ -216,6 +218,7 @@ function buildCliInstallCommand(): string {
     return buildHappierCliInstallCommand({
         appVariant: resolveAppVariantForCliInstall(),
         distTagOverride: config.cliNpmDistTag,
+        publicReleaseRingOverride: resolvePreferredPublicReleaseRingIdForCurrentApp(),
     });
 }
 
@@ -228,6 +231,7 @@ type SessionGettingStartedGuidanceStep = Readonly<{
 }>;
 
 function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGettingStartedGuidanceStep[] {
+    const invoker = resolveCliInvokerNameForCurrentApp();
     switch (model.kind) {
         case 'connect_machine': {
             const steps: SessionGettingStartedGuidanceStep[] = [];
@@ -243,7 +247,7 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
                     id: 'server_setup',
                     title: t('sessionGettingStarted.steps.serverSetup.title'),
                     description: t('sessionGettingStarted.steps.serverSetup.description'),
-                    command: `happier server add --name \"${model.serverName}\" --server-url \"${model.serverUrl}\" --use`,
+                    command: `${invoker} server add --name \"${model.serverName}\" --server-url \"${model.serverUrl}\" --use`,
                     copyLabel: t('sessionGettingStarted.steps.serverSetup.copyLabel'),
                 });
             }
@@ -251,21 +255,21 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
                 id: 'auth_login',
                 title: t('sessionGettingStarted.steps.authLogin.title'),
                 description: t('sessionGettingStarted.steps.authLogin.description'),
-                command: 'happier auth login',
+                command: `${invoker} auth login`,
                 copyLabel: t('sessionGettingStarted.steps.authLogin.copyLabel'),
             });
             steps.push({
                 id: 'daemon_install',
                 title: t('sessionGettingStarted.steps.daemonInstall.title'),
                 description: t('sessionGettingStarted.steps.daemonInstall.description'),
-                command: 'happier daemon install',
+                command: `${invoker} daemon install`,
                 copyLabel: t('sessionGettingStarted.steps.daemonInstall.copyLabel'),
             });
             steps.push({
                 id: 'create_session',
                 title: t('sessionGettingStarted.steps.createSession.title'),
                 description: t('sessionGettingStarted.steps.createSession.description'),
-                command: listSessionGettingStartedCliCommands().join('\n'),
+                command: listSessionGettingStartedCliCommands(invoker).join('\n'),
                 copyLabel: t('sessionGettingStarted.steps.createSession.copyLabel'),
             });
             return steps;
@@ -276,14 +280,14 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
                     id: 'daemon_install',
                     title: t('sessionGettingStarted.steps.daemonInstall.title'),
                     description: t('sessionGettingStarted.steps.startDaemonInstall.description'),
-                    command: 'happier daemon install',
+                    command: `${invoker} daemon install`,
                     copyLabel: t('sessionGettingStarted.steps.daemonInstall.copyLabel'),
                 },
                 {
                     id: 'daemon_start',
                     title: t('sessionGettingStarted.steps.daemonStart.title'),
                     description: t('sessionGettingStarted.steps.daemonStart.description'),
-                    command: 'happier daemon start',
+                    command: `${invoker} daemon start`,
                     copyLabel: t('sessionGettingStarted.steps.daemonStart.copyLabel'),
                 },
             ];
@@ -294,7 +298,7 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
                     id: 'start_session',
                     title: t('sessionGettingStarted.steps.startSession.title'),
                     description: t('sessionGettingStarted.steps.startSession.description'),
-                    command: 'happier',
+                    command: invoker,
                     copyLabel: t('sessionGettingStarted.steps.startSession.copyLabel'),
                 },
             ];
@@ -337,7 +341,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
             model.onOpenSetup();
             return;
         }
-        router.push('/setup/wizard?action=local&step=setup_this_computer&scope=machine' as any);
+        router.push(buildMachineSetupWizardHref({ action: 'local', step: 'setup_this_computer' }) as any);
     }, [model.onOpenSetup, router]);
 
     return (
@@ -475,7 +479,7 @@ function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: Session
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
     const dismissed = useLocalSetting('sessionGettingStartedGuidanceDismissed') === true;
     const onOpenSetup = React.useCallback(() => {
-        router.push('/setup/wizard?action=local&step=setup_this_computer&scope=machine' as any);
+        router.push(buildMachineSetupWizardHref({ action: 'local', step: 'setup_this_computer' }) as any);
     }, [router]);
 
     const onStartNewSession = React.useCallback(() => {

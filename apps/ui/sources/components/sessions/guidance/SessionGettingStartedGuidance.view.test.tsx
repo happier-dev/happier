@@ -63,8 +63,13 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
   RoundButton: (props: any) => React.createElement('RoundButton', props, null),
 }));
 
+const mockAppConfig = vi.hoisted(() => ({
+  variant: 'production' as string,
+  cliNpmDistTag: undefined as unknown,
+}));
+
 vi.mock('@/config', () => ({
-  config: { variant: 'production', cliNpmDistTag: undefined },
+  config: mockAppConfig,
 }));
 
 describe('SessionGettingStartedGuidanceView', () => {
@@ -177,5 +182,25 @@ describe('SessionGettingStartedGuidanceView', () => {
     expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
     await screen.pressByTestIdAsync('session-getting-started-open-setup');
     expect(onOpenSetup).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders dev lane CLI commands using the hdev shim', async () => {
+    const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
+    mockAppConfig.variant = 'publicdev';
+    const screen = await renderScreen(
+      <SessionGettingStartedGuidanceView
+        variant="primaryPane"
+        model={{
+          kind: 'create_session',
+          targetLabel: 'Company',
+          serverUrl: 'https://api.company.example',
+          serverName: 'company',
+          showServerSetup: false,
+        }}
+      />,
+    );
+
+    expect(screen.getTextContent()).toContain('hdev');
+    mockAppConfig.variant = 'production';
   });
 });

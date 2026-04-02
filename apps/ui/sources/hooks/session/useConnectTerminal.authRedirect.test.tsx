@@ -80,12 +80,36 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     isLegacyAuthCredentials: (creds: { secret?: string } | null) => typeof creds?.secret === 'string' && creds.secret.length > 0,
 }));
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerUrl: () => activeServerUrl,
-}));
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+    return {
+        ...actual,
+        getActiveServerUrl: () => activeServerUrl,
+    };
+});
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
+    isSameServerUrl: (left: string, right: string) => {
+        const normalizeLoopback = (raw: string) => {
+            const value = String(raw ?? '').trim().replace(/\/+$/, '');
+            try {
+                const parsed = new URL(value);
+                const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+                const loopback =
+                    host === 'localhost'
+                    || host === '127.0.0.1'
+                    || host === '::1'
+                    || host === '[::1]'
+                    || host.endsWith('.localhost');
+                parsed.hostname = loopback ? 'localhost' : host;
+                return `${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ''}`.replace(/\/+$/, '');
+            } catch {
+                return value;
+            }
+        };
+        return normalizeLoopback(left) === normalizeLoopback(right);
+    },
     upsertActivateAndSwitchServer: upsertActivateAndSwitchServerSpy,
 }));
 
@@ -206,6 +230,41 @@ describe('useConnectTerminal unauthenticated flow', () => {
             }),
         );
         expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+    });
+
+    it('does not switch servers when the link server URL is loopback-equivalent to the active server URL', async () => {
+        upsertActivateAndSwitchServerSpy.mockClear();
+        authApproveSpy.mockClear();
+        modalAlertSpy.mockClear();
+
+        activeServerUrl = 'http://happier-stack.localhost:3121';
+        authCredentials = createDataKeyCredentials({ token: 'token-1', machineKeyByte: 7 });
+        authApproveSpy.mockResolvedValue('approved');
+
+        const terminalSecretKey = new Uint8Array(32).fill(5);
+        const terminalPublicKey = tweetnacl.box.keyPair.fromSecretKey(terminalSecretKey).publicKey;
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        let result = false;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl(buildTerminalConnectUrl({
+                terminalPublicKey,
+                serverUrl: 'http://localhost:3121',
+            }));
+        });
+
+        expect(result).toBe(true);
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+        expect(authApproveSpy).toHaveBeenCalledTimes(1);
     });
 
     it('does not switch to a loopback server URL from the link when the active server is already non-loopback', async () => {
