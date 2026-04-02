@@ -340,4 +340,7 @@ MIT License — see [LICENSE](LICENCE) for details.
 
 Not affiliated with or endorsed by Anthropic, OpenAI, or Google.
 
-[Code faster. Code together. Be Happier.](https://guides.happier.dev/)
+Code faster. Code together. Be Happier.
+
+[Mobile, desktop and web app to run Claude Code, Codex, Gemini, OpenCode (and more) on your computer
+and continue seamlessly from your phone, browser, or desktop app.](https://guides.happier.dev/)
