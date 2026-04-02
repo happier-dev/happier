@@ -13,6 +13,12 @@ export {
   listPublicReleaseRingCatalogEntries,
   listPublicReleaseRingLabels,
   listReleaseRingCatalogEntries,
+  normalizePublicReleaseRingLabel,
   normalizePublicReleaseRingId,
   normalizeReleaseRingId,
+  resolveCliInvokerNameForPublicRing,
+  resolvePublicReleaseRingIdForAnyRingId,
+  resolvePublicReleaseRingIdForCliInvokerName,
+  resolvePublicReleaseRingIdForLabel,
+  resolvePublicReleaseRingLabelForId,
 } from './releaseRings.js';

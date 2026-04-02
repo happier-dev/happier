@@ -148,3 +148,45 @@ export function normalizePublicReleaseRingId(raw: unknown): PublicReleaseRingId 
   }
   return ringId as PublicReleaseRingId;
 }
+
+export function resolvePublicReleaseRingIdForLabel(label: PublicReleaseRingLabel): PublicReleaseRingId {
+  if (label === 'preview') return 'preview';
+  if (label === 'dev') return 'publicdev';
+  return 'stable';
+}
+
+export function resolvePublicReleaseRingLabelForId(id: PublicReleaseRingId): PublicReleaseRingLabel {
+  return getReleaseRingPublicLabel(id);
+}
+
+export function resolvePublicReleaseRingIdForAnyRingId(id: ReleaseRingId): PublicReleaseRingId {
+  const entry = getReleaseRingCatalogEntry(id);
+  if (entry.visibility === 'public') {
+    return entry.id as PublicReleaseRingId;
+  }
+  return resolvePublicReleaseRingIdForLabel(entry.publicLabel);
+}
+
+export function normalizePublicReleaseRingLabel(raw: unknown): PublicReleaseRingLabel | '' {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (!value) return '';
+  if (value === 'stable' || value === 'production' || value === 'prod') return 'stable';
+  if (value === 'preview' || value === 'next') return 'preview';
+  if (value === 'dev' || value === 'publicdev' || value === 'public-dev' || value === 'public_dev') return 'dev';
+  return '';
+}
+
+export function resolveCliInvokerNameForPublicRing(id: PublicReleaseRingId): 'happier' | 'hprev' | 'hdev' {
+  if (id === 'preview') return 'hprev';
+  if (id === 'publicdev') return 'hdev';
+  return 'happier';
+}
+
+export function resolvePublicReleaseRingIdForCliInvokerName(raw: unknown): PublicReleaseRingId | '' {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (!value) return '';
+  if (value === 'hprev') return 'preview';
+  if (value === 'hdev') return 'publicdev';
+  if (value === 'happier') return 'stable';
+  return '';
+}
