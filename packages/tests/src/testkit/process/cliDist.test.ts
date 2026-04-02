@@ -575,6 +575,88 @@ describe('ensureCliDistBuilt', () => {
     expect(rebuildCalls).toBe(0);
   });
 
+  it('fails open when workspace package.json is missing (bundled outputs are still considered healthy)', async () => {
+    const repoRoot = await createRepoRoot();
+    rmSync(join(repoRoot, 'packages', 'cli-common', 'package.json'), { force: true });
+
+    vi.resetModules();
+    const { ensureCliSharedDepsBuilt } = await import('./cliDist');
+
+    let buildCalls = 0;
+    await expect(
+      ensureCliSharedDepsBuilt(
+        { testDir: join(repoRoot, '.project'), env: process.env },
+        {
+          repoRoot,
+          skipSourceFreshnessCheck: true,
+          maxBuildAttempts: 1,
+          runCommand: async () => {
+            buildCalls += 1;
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(buildCalls).toBe(0);
+  });
+
+  it('honors skipSourceFreshnessCheck when validating outputs after a rebuild', async () => {
+    const repoRoot = await createRepoRoot();
+    const sourcePath = join(repoRoot, 'packages', 'cli-common', 'src', 'index.ts');
+    const workspaceCliCommonPackageJsonPath = join(repoRoot, 'packages', 'cli-common', 'package.json');
+    const bundledCliCommonPackageJsonPath = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'cli-common',
+      'package.json',
+    );
+
+    // Force the freshness check to consider sources newer than outputs.
+    const newerSourceTime = new Date('2030-03-09T01:18:00.000Z');
+    utimesSync(sourcePath, newerSourceTime, newerSourceTime);
+    const olderOutputTime = new Date('2030-03-09T01:10:00.000Z');
+
+    // Break the bundled manifests (not repairable via dist symlinks) so ensureCliSharedDepsBuilt has to rebuild.
+    await writeFile(
+      workspaceCliCommonPackageJsonPath,
+      JSON.stringify({ name: '@happier-dev/cli-common', exports: { '.': { default: './dist/index.js' } } }, null, 2),
+      'utf8',
+    );
+    await writeFile(
+      bundledCliCommonPackageJsonPath,
+      JSON.stringify({ name: '@happier-dev/cli-common', exports: { '.': './dist/index.js' } }, null, 2),
+      'utf8',
+    );
+
+    let buildCalls = 0;
+    await expect(
+      ensureCliSharedDepsBuilt(
+        { testDir: join(repoRoot, '.project'), env: process.env },
+        {
+          repoRoot,
+          skipSourceFreshnessCheck: true,
+          maxBuildAttempts: 1,
+          runCommand: async () => {
+            buildCalls += 1;
+            await writeFile(
+              bundledCliCommonPackageJsonPath,
+              JSON.stringify({ name: '@happier-dev/cli-common', exports: { '.': { default: './dist/index.js' } } }, null, 2),
+              'utf8',
+            );
+
+            // Keep the output older than the source: skipSourceFreshnessCheck must still accept it.
+            utimesSync(bundledCliCommonPackageJsonPath, olderOutputTime, olderOutputTime);
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(buildCalls).toBe(1);
+  });
+
   it('returns healthy shared deps without waiting for an unrelated held shared-deps lock', async () => {
     const repoRoot = await createRepoRoot();
     const lockPath = join(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
