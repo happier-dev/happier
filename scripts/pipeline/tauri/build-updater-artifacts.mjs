@@ -56,6 +56,22 @@ export function normalizeTauriBuildVersionForWindows(buildVersion) {
 }
 
 /**
+ * linuxdeploy's AppImage plugin is (still) brittle around spaces/shell quoting in artifact names.
+ * Tauri uses `productName` as the basis for bundle filenames, so we override it on Linux for
+ * preview-like lanes while keeping the human-friendly window title untouched (set in config).
+ *
+ * @param {{ environment: string }} opts
+ * @returns {string | null}
+ */
+export function resolveLinuxProductNameOverride(opts) {
+  const env = String(opts.environment ?? '').trim();
+  if (!env || env === 'production') return null;
+  if (env === 'publicdev') return 'HappierDev';
+  if (env === 'preview') return 'HappierPreview';
+  return null;
+}
+
+/**
  * @param {{ dryRun: boolean }} opts
  * @param {string} cmd
  * @param {string[]} args
@@ -167,6 +183,21 @@ function main() {
   const targetArgs = tauriTarget ? ['--target', tauriTarget] : [];
   /** @type {string[]} */
   const configs = [];
+
+  const linuxProductNameOverride = resolveLinuxProductNameOverride({ environment });
+  if (platform === 'linux' && linuxProductNameOverride) {
+    const linuxProductNameOverridePath = tempFile(tmpRoot, 'tauri.linux.productName.override.json');
+    if (opts.dryRun) {
+      console.log(`[dry-run] write ${linuxProductNameOverridePath} (productName=${linuxProductNameOverride})`);
+    } else {
+      fs.writeFileSync(
+        linuxProductNameOverridePath,
+        `${JSON.stringify({ productName: linuxProductNameOverride })}\n`,
+        'utf8',
+      );
+    }
+    configs.push('--config', linuxProductNameOverridePath);
+  }
 
   const signingKeyValue = String(process.env.TAURI_SIGNING_PRIVATE_KEY ?? '').trim();
   const signingKeyPassword = resolveTauriSigningPrivateKeyPassword(process.env);
