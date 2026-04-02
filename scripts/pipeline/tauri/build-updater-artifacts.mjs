@@ -29,6 +29,33 @@ function parseBool(value, name) {
 }
 
 /**
+ * Windows MSI versioning is stricter than plain semver:
+ * - pre-release identifiers must be numeric-only
+ * - numeric identifiers must fit within a 16-bit unsigned integer (<= 65535)
+ *
+ * Our dev/preview build versions use `-dev.<n>` / `-preview.<n>`, which fails MSI packaging.
+ * This normalizes those versions to `-<n>` for Windows only.
+ *
+ * @param {string} buildVersion
+ * @returns {string}
+ */
+export function normalizeTauriBuildVersionForWindows(buildVersion) {
+  const raw = String(buildVersion ?? '').trim();
+  if (!raw) return raw;
+
+  const match = raw.match(/^(\d+\.\d+\.\d+)-(?:dev|preview)\.(\d+)$/);
+  if (!match) return raw;
+
+  const base = match[1];
+  const nRaw = match[2];
+  const n = Number.parseInt(String(nRaw ?? ''), 10);
+  if (!Number.isFinite(n) || n <= 0) return `${base}-1`;
+
+  const clamped = Math.min(65535, n);
+  return `${base}-${clamped}`;
+}
+
+/**
  * @param {{ dryRun: boolean }} opts
  * @param {string} cmd
  * @param {string[]} args
@@ -202,11 +229,14 @@ function main() {
   }
 
   if (environment !== 'production') {
+    const tauriBuildVersion = platform === 'win32'
+      ? normalizeTauriBuildVersionForWindows(buildVersion)
+      : buildVersion;
     const versionOverride = tempFile(tmpRoot, 'tauri.version.override.json');
     if (opts.dryRun) {
-      console.log(`[dry-run] write ${versionOverride} (version=${buildVersion})`);
+      console.log(`[dry-run] write ${versionOverride} (version=${tauriBuildVersion})`);
     } else {
-      fs.writeFileSync(versionOverride, `${JSON.stringify({ version: buildVersion })}\n`, 'utf8');
+      fs.writeFileSync(versionOverride, `${JSON.stringify({ version: tauriBuildVersion })}\n`, 'utf8');
     }
 
     const configPath = environment === 'publicdev' ? 'src-tauri/tauri.publicdev.conf.json' : 'src-tauri/tauri.preview.conf.json';

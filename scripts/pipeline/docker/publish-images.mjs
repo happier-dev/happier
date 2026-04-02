@@ -419,6 +419,15 @@ function parseBuildxDriver(inspectOutput) {
 }
 
 /**
+ * @template T
+ * @param {readonly T[]} items
+ * @returns {T[]}
+ */
+function uniq(items) {
+  return Array.from(new Set(items));
+}
+
+/**
  * Ensures a docker-container buildx builder exists for multi-platform builds.
  *
  * We avoid mutating global Docker config by using `--builder <name>` on each build rather than `buildx use`.
@@ -481,17 +490,19 @@ async function main() {
   const ghcrNamespaceRaw = String(process.env.GHCR_NAMESPACE ?? 'ghcr.io/happier-dev').trim();
   const ghcrNamespace = ghcrNamespaceRaw.endsWith('/') ? ghcrNamespaceRaw.slice(0, -1) : ghcrNamespaceRaw;
 
-  /** @type {string[]} */
-  const relayBases = [];
-  /** @type {string[]} */
-  const devBases = [];
+  /** @type {Partial<Record<'dockerhub' | 'ghcr', Readonly<{ relayBase: string; devBase: string }>>>} */
+  const basesByRegistry = {};
   if (registries.has('dockerhub')) {
-    relayBases.push('happierdev/relay-server');
-    devBases.push('happierdev/dev-box');
+    basesByRegistry.dockerhub = {
+      relayBase: 'happierdev/relay-server',
+      devBase: 'happierdev/dev-box',
+    };
   }
   if (registries.has('ghcr')) {
-    relayBases.push(`${ghcrNamespace}/relay-server`);
-    devBases.push(`${ghcrNamespace}/dev-box`);
+    basesByRegistry.ghcr = {
+      relayBase: `${ghcrNamespace}/relay-server`,
+      devBase: `${ghcrNamespace}/dev-box`,
+    };
   }
 
   dockerPreflight({ dryRun });
@@ -500,13 +511,89 @@ async function main() {
 
   const builder = ensureMultiarchBuilder({ dryRun });
 
-  /** @type {string[]} */
-  const relayTags = relayBases.flatMap((base) => [`${base}:${channelTag}`, `${base}:${channelTag}-${shortSha}`]);
-  /** @type {string[]} */
-  const devTags = devBases.flatMap((base) => [`${base}:${channelTag}`, `${base}:${channelTag}-${shortSha}`]);
-  if (pushLatest) {
-    for (const base of relayBases) relayTags.push(`${base}:${floatTag}`);
-    for (const base of devBases) devTags.push(`${base}:${floatTag}`);
+  /**
+   * @param {string} base
+   * @returns {string[]}
+   */
+  const buildTagsForBase = (base) => {
+    const tags = [`${base}:${channelTag}`, `${base}:${channelTag}-${shortSha}`];
+    if (pushLatest) tags.push(`${base}:${floatTag}`);
+    return uniq(tags);
+  };
+
+  const allowGhcrFailure = registries.has('dockerhub') && registries.has('ghcr');
+
+  /** @type {ReadonlyArray<Readonly<{ registry: 'dockerhub' | 'ghcr'; tags: string[]; base: string }>>} */
+  const relayTagSets = uniq(
+    /** @type {Array<Readonly<{ registry: 'dockerhub' | 'ghcr'; tags: string[]; base: string }>>} */ ([
+      basesByRegistry.dockerhub
+        ? { registry: 'dockerhub', base: basesByRegistry.dockerhub.relayBase, tags: buildTagsForBase(basesByRegistry.dockerhub.relayBase) }
+        : null,
+      basesByRegistry.ghcr
+        ? { registry: 'ghcr', base: basesByRegistry.ghcr.relayBase, tags: buildTagsForBase(basesByRegistry.ghcr.relayBase) }
+        : null,
+    ]).filter(Boolean),
+  );
+
+  /** @type {ReadonlyArray<Readonly<{ registry: 'dockerhub' | 'ghcr'; tags: string[]; base: string }>>} */
+  const devBoxTagSets = uniq(
+    /** @type {Array<Readonly<{ registry: 'dockerhub' | 'ghcr'; tags: string[]; base: string }>>} */ ([
+      basesByRegistry.dockerhub
+        ? { registry: 'dockerhub', base: basesByRegistry.dockerhub.devBase, tags: buildTagsForBase(basesByRegistry.dockerhub.devBase) }
+        : null,
+      basesByRegistry.ghcr
+        ? { registry: 'ghcr', base: basesByRegistry.ghcr.devBase, tags: buildTagsForBase(basesByRegistry.ghcr.devBase) }
+        : null,
+    ]).filter(Boolean),
+  );
+
+  /**
+   * @param {readonly string[]} tags
+   * @param {{ target: string; file: string; cacheScope: string; extraArgs?: string[]; allowFailure?: boolean }} params
+   */
+  const runBuildxForTags = async (tags, params) => {
+    if (tags.length === 0) return;
+    const args = [
+      'buildx',
+      'build',
+      '--file',
+      params.file,
+      ...(params.target ? ['--target', params.target] : []),
+      '--builder',
+      builder,
+      '--platform',
+      'linux/amd64,linux/arm64',
+      '--push',
+      ...(useGhaCache ? ['--cache-from', `type=gha,scope=${params.cacheScope}`] : []),
+      ...(useGhaCache ? ['--cache-to', `type=gha,mode=max,scope=${params.cacheScope}`] : []),
+      ...(params.extraArgs ?? []),
+      '--label',
+      `org.opencontainers.image.revision=${sha}`,
+      ...tags.flatMap((t) => ['--tag', t]),
+      '.',
+    ];
+
+    try {
+      await runDockerBuildxBuildWithRetry({
+        dockerArgs: args,
+        dryRun,
+        onRetry: (attempt, errorText) => {
+          console.warn(`[pipeline] docker buildx build failed (attempt ${attempt}/${DEFAULT_BUILD_RETRIES}), retrying...`);
+          if (errorText) {
+            const firstLine = String(errorText).split('\n').find(Boolean);
+            if (firstLine) console.warn(`[pipeline] transient error: ${firstLine}`);
+          }
+          dockerPreflight({ dryRun: false });
+        },
+      });
+    } catch (err) {
+      if (params.allowFailure) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[pipeline] docker buildx push failed (ignored): ${msg}`);
+        return;
+      }
+      throw err;
+    }
   }
 
   const useGhaCache = String(process.env.GITHUB_ACTIONS ?? '').toLowerCase() === 'true';
@@ -514,40 +601,22 @@ async function main() {
   if (buildRelay) {
     const defaultSentryRelease = String(process.env.SENTRY_RELEASE ?? '').trim() || sha;
     const optionalBuildArgs = resolveOptionalDockerBuildArgs(process.env, { defaultSentryRelease });
-    const args = [
-      'buildx',
-      'build',
-      '--file',
-      'Dockerfile',
-      '--target',
-      'relay-server',
-      '--builder',
-      builder,
-      '--platform',
-      'linux/amd64,linux/arm64',
-      '--push',
-      ...(useGhaCache ? ['--cache-from', 'type=gha,scope=relay-server'] : []),
-      ...(useGhaCache ? ['--cache-to', 'type=gha,mode=max,scope=relay-server'] : []),
+    const extraArgs = [
       '--build-arg',
       `HAPPIER_EMBEDDED_POLICY_ENV=${policyEnv}`,
       ...optionalBuildArgs,
-      '--label',
-      `org.opencontainers.image.revision=${sha}`,
-      ...relayTags.flatMap((t) => ['--tag', t]),
-      '.',
     ];
-    await runDockerBuildxBuildWithRetry({
-      dockerArgs: args,
-      dryRun,
-      onRetry: (attempt, errorText) => {
-        console.warn(`[pipeline] docker buildx build failed (attempt ${attempt}/${DEFAULT_BUILD_RETRIES}), retrying...`);
-        if (errorText) {
-          const firstLine = String(errorText).split('\n').find(Boolean);
-          if (firstLine) console.warn(`[pipeline] transient error: ${firstLine}`);
-        }
-        dockerPreflight({ dryRun: false });
-      },
-    });
+
+    // Build/push dockerhub first so if GHCR permissions block publishing we still ship to Docker Hub.
+    for (const tagSet of relayTagSets) {
+      await runBuildxForTags(tagSet.tags, {
+        target: 'relay-server',
+        file: 'Dockerfile',
+        cacheScope: 'relay-server',
+        extraArgs,
+        allowFailure: allowGhcrFailure && tagSet.registry === 'ghcr',
+      });
+    }
 
     try {
       const tracked = maybeTrackSentryRelease({
@@ -570,35 +639,14 @@ async function main() {
   }
 
   if (buildDevBox) {
-    const args = [
-      'buildx',
-      'build',
-      '--file',
-      'docker/dev-box/Dockerfile',
-      '--builder',
-      builder,
-      '--platform',
-      'linux/amd64,linux/arm64',
-      '--push',
-      ...(useGhaCache ? ['--cache-from', 'type=gha,scope=dev-box'] : []),
-      ...(useGhaCache ? ['--cache-to', 'type=gha,mode=max,scope=dev-box'] : []),
-      '--label',
-      `org.opencontainers.image.revision=${sha}`,
-      ...devTags.flatMap((t) => ['--tag', t]),
-      '.',
-    ];
-    await runDockerBuildxBuildWithRetry({
-      dockerArgs: args,
-      dryRun,
-      onRetry: (attempt, errorText) => {
-        console.warn(`[pipeline] docker buildx build failed (attempt ${attempt}/${DEFAULT_BUILD_RETRIES}), retrying...`);
-        if (errorText) {
-          const firstLine = String(errorText).split('\n').find(Boolean);
-          if (firstLine) console.warn(`[pipeline] transient error: ${firstLine}`);
-        }
-        dockerPreflight({ dryRun: false });
-      },
-    });
+    for (const tagSet of devBoxTagSets) {
+      await runBuildxForTags(tagSet.tags, {
+        target: '',
+        file: 'docker/dev-box/Dockerfile',
+        cacheScope: 'dev-box',
+        allowFailure: allowGhcrFailure && tagSet.registry === 'ghcr',
+      });
+    }
   }
 }
 
