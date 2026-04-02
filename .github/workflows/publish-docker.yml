@@ -146,17 +146,17 @@ jobs:
         with:
           registry: ghcr.io
           # Prefer a long-lived PAT when org/package settings prevent GitHub Actions tokens from publishing to GHCR.
-          # Fall back to the release bot GitHub App token, then GITHUB_TOKEN.
-          username: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || 'x-access-token' }}
-          password: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || steps.app_token.outputs.token || secrets.GITHUB_TOKEN }}
+          # Fall back to the workflow's GITHUB_TOKEN (packages:write is requested at the workflow level).
+          username: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
+          password: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || github.token }}
 
       - name: Build & push images (pipeline)
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GHCR_NAMESPACE: ghcr.io/happier-dev
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || 'x-access-token' }}
-          GHCR_TOKEN: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || steps.app_token.outputs.token || secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || github.token }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs docker-publish \
