@@ -3,13 +3,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
 import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
 import { resolveYarnInvocation } from './resolve-yarn-invocation.mjs';
 import { formatPublicReleaseChannelChoices, normalizePublicReleaseChannel } from '../release/lib/public-release-rings.mjs';
+import { execFileSyncPortable } from '../lib/exec-file-sync-portable.mjs';
 
 function fail(message) {
   console.error(message);
@@ -40,7 +40,7 @@ function run(opts, cmd, args, extra) {
     return;
   }
 
-  execFileSync(cmd, args, {
+  execFileSyncPortable(cmd, args, {
     cwd: extra.cwd,
     env: { ...process.env, ...(extra.env ?? {}) },
     stdio: extra.stdio ?? 'inherit',
