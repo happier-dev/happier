@@ -4,9 +4,9 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useCodeSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeSyntaxHighlighting';
 import { evaluateCodeHighlightingBudget } from '@/components/ui/code/highlighting/evaluateCodeHighlightingBudget';
 import { CodeBlockViewFrame } from './CodeBlockViewFrame';
-import { Typography } from '@/constants/Typography';
 import { SimpleSyntaxHighlighter } from '@/components/ui/media/SimpleSyntaxHighlighter';
 import { Text } from '@/components/ui/text/Text';
+import { resolveCodeMonoFontFamily } from '../codeTypography';
 
 import type { CodeBlockViewProps } from './codeBlockViewTypes';
 
@@ -19,6 +19,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
     selectable = true,
     wrap = false,
     showCopyButton = false,
+    headerLeft,
     headerRight,
     scrollTestID,
 }) => {
@@ -47,7 +48,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
         <Text
             selectable={selectable}
             style={{
-                fontFamily: Typography.mono().fontFamily,
+                fontFamily: resolveCodeMonoFontFamily(),
                 fontSize: 14,
                 lineHeight: 20,
                 color: theme.colors.text,
@@ -66,6 +67,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             selectable={selectable}
             wrap={wrap}
             showCopyButton={showCopyButton}
+            headerLeft={headerLeft}
             headerRight={headerRight}
             scrollTestID={scrollTestID}
         >

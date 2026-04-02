@@ -101,6 +101,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 8,
         minWidth: 0,
+        alignSelf: 'flex-start',
     },
     titleText: {
         flexGrow: 0,
@@ -187,7 +188,7 @@ export function SelectableRow(props: SelectableRowProps) {
             testID={props.testID}
             onPress={disabled ? undefined : props.onPress}
             accessibilityState={disabled ? ({ disabled: true } as const) : undefined}
-            accessibilityRole={props.onPress ? 'button' : undefined}
+            accessibilityRole={Platform.OS === 'web' ? undefined : (props.onPress ? 'button' : undefined)}
             pointerEvents={disabled && allowChildInteractionWhenDisabled ? 'box-none' : 'auto'}
             style={({ pressed }) => ([
                 styles.row,

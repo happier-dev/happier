@@ -125,6 +125,34 @@ describe('CodeLineRow', () => {
         expect(flattened.some((s: any) => s?.fontWeight === '600' || s?.fontWeight === 600)).toBe(true);
     });
 
+    it('falls back cleanly when Typography.mono is missing from a partial module mock', async () => {
+        vi.resetModules();
+        vi.doMock('@/constants/Typography', () => ({
+            Typography: {
+                default: () => ({}),
+            },
+        }));
+
+        const { CodeLineRow } = await import('./CodeLineRow');
+
+        const screen = await renderScreen(<CodeLineRow
+            line={{
+                id: '1',
+                sourceIndex: 0,
+                kind: 'context',
+                oldLine: 1,
+                newLine: 1,
+                renderPrefixText: '',
+                renderCodeText: 'const x = 1;',
+                renderIsHeaderLine: false,
+                selectable: false,
+            }}
+            selected={false}
+        />);
+
+        expect(screen.findAllByType('Text' as any).length).toBeGreaterThan(0);
+    });
+
     it('shows a close-comment affordance when the inline comment is active', async () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 

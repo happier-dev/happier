@@ -3,8 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
-import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
+import { resolveCodeMonoFontFamily } from '@/components/ui/code/codeTypography';
 
 
 export function CodeGutter(props: { line: CodeLine; showLineNumbers?: boolean }) {
@@ -40,7 +40,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingLeft: 4,
     },
     gutterText: {
-        ...Typography.mono(),
+        fontFamily: resolveCodeMonoFontFamily(),
         fontSize: 11,
         color: theme.colors.textSecondary,
     },

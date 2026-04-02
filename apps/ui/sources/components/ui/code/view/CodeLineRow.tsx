@@ -5,8 +5,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { TextStyle } from 'react-native';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
-import { Typography } from '@/constants/Typography';
 import { tokenizeSimpleSyntaxLine } from '@/components/ui/code/tokenization/simpleSyntaxTokenizer';
+import { resolveCodeMonoFontFamily } from '@/components/ui/code/codeTypography';
 
 import { CodeGutter } from './CodeGutter';
 import { Text } from '@/components/ui/text/Text';
@@ -280,7 +280,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingTop: 2,
     },
     codeText: {
-        ...Typography.mono(),
+        fontFamily: resolveCodeMonoFontFamily(),
         fontSize: 13,
         lineHeight: 20,
     },

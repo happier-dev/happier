@@ -100,6 +100,27 @@ describe('CodeBlockViewFrame', () => {
         expect(flattened.some((s: any) => s?.position === 'absolute')).toBe(false);
     });
 
+    it('keeps copy button in the header when headerLeft is provided', async () => {
+        const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(
+            <CodeBlockViewFrame
+                code={'x'}
+                language={null}
+                wrap={true}
+                showCopyButton={true}
+                headerLeft={<React.Fragment>header-left</React.Fragment>}
+            >
+                <React.Fragment>child</React.Fragment>
+            </CodeBlockViewFrame>,
+        )).tree;
+
+        const pressable = tree.findByProps({ accessibilityLabel: 'common.copy' });
+        const flattened = Array.isArray(pressable.props.style) ? pressable.props.style.flat() : [pressable.props.style];
+        expect(flattened.some((s: any) => s?.position === 'absolute')).toBe(false);
+    });
+
     it('can hide the header row even when a language is provided', async () => {
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 
@@ -143,5 +164,24 @@ describe('CodeBlockViewFrame', () => {
 
         const iconAfter = tree.findByType('Ionicons') as any;
         expect(iconAfter.props.name).toBe('checkmark-outline');
+    });
+
+    it('falls back cleanly when Typography.mono is missing from a partial module mock', async () => {
+        vi.resetModules();
+        vi.doMock('@/constants/Typography', () => ({
+            Typography: {
+                default: () => ({}),
+            },
+        }));
+
+        const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
+
+        const tree = (await renderScreen(
+            <CodeBlockViewFrame code={'hello'} language={'typescript'} wrap={true} showCopyButton={false}>
+                <React.Fragment>child</React.Fragment>
+            </CodeBlockViewFrame>,
+        )).tree;
+
+        expect(tree.findAllByType('Text' as any).length).toBeGreaterThan(0);
     });
 });

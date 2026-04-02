@@ -2,9 +2,9 @@ import React from 'react';
 import { Platform, View, type TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Typography } from '@/constants/Typography';
 import { tokenizeSimpleSyntaxText } from '@/components/ui/code/tokenization/simpleSyntaxTokenizer';
 import { Text } from '@/components/ui/text/Text';
+import { resolveCodeMonoFontFamily } from '@/components/ui/code/codeTypography';
 
 
 interface SimpleSyntaxHighlighterProps {
@@ -36,11 +36,11 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
 
   return (
     <View style={{ flexShrink: 0, alignSelf: 'flex-start' }}>
-      <Text
+        <Text
         selectable={selectable}
         style={[
           {
-            fontFamily: Typography.mono().fontFamily,
+            fontFamily: resolveCodeMonoFontFamily(),
             fontSize: 14,
             lineHeight: 20,
             flexShrink: 0,
@@ -54,7 +54,7 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
             selectable={selectable}
             style={{
               color: resolveTokenColor(theme, token.type, fallback),
-              fontFamily: Typography.mono().fontFamily,
+              fontFamily: resolveCodeMonoFontFamily(),
               fontWeight: token.type === 'keyword' ? '600' : '400',
             }}
           >

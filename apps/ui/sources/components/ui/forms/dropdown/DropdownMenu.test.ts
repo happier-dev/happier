@@ -158,6 +158,39 @@ describe('DropdownMenu', () => {
         expect(onOpenChange).toHaveBeenCalledWith(false);
     });
 
+    it('still opens when requestAnimationFrame is present but does not run', async () => {
+        vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const { Pressable, Text } = await import('react-native');
+
+        const onOpenChange = vi.fn();
+
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: false,
+            onOpenChange,
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: ({ toggle }: any) =>
+                React.createElement(
+                    Pressable,
+                    { onPress: toggle },
+                    React.createElement(Text, null, 'Trigger'),
+                ),
+        }));
+
+        const pressable = screen.findByType(Pressable);
+
+        await act(async () => {
+            pressTestInstance(pressable);
+        });
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, 0);
+        });
+
+        expect(onOpenChange).toHaveBeenCalledWith(true);
+    });
+
     it('closes the menu when an item is selected by default', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const onOpenChange = vi.fn();

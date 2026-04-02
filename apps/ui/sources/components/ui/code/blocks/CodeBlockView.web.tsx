@@ -3,7 +3,6 @@ import type { TextStyle } from 'react-native';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { SimpleSyntaxHighlighter } from '@/components/ui/media/SimpleSyntaxHighlighter';
 import { useCodeSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeSyntaxHighlighting';
@@ -11,6 +10,7 @@ import { evaluateCodeHighlightingBudget } from '@/components/ui/code/highlightin
 import type { ShikiInlineToken } from '@/components/ui/code/highlighting/shiki/shikiTokenize.web';
 import { shikiTokenizeLines } from '@/components/ui/code/highlighting/shiki/shikiTokenize.web';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { resolveCodeMonoFontFamily } from '../codeTypography';
 
 import type { CodeBlockViewProps } from './codeBlockViewTypes';
 import { CodeBlockViewFrame } from './CodeBlockViewFrame';
@@ -22,6 +22,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
     selectable = true,
     wrap = false,
     showCopyButton = false,
+    headerLeft,
     headerRight,
     scrollTestID,
 }) => {
@@ -96,14 +97,14 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
 
     const content = shikiEnabled && lines && tokensByLine ? (
         <View collapsable={false} data-happier-codeblock-rev={String(tokensRevision)}>
-            <Text
-                selectable={selectable}
-                style={[
-                    {
-                        fontFamily: Typography.mono().fontFamily,
-                        fontSize: 14,
-                        lineHeight: 20,
-                        color: theme.colors.text,
+                    <Text
+                        selectable={selectable}
+                        style={[
+                            {
+                                fontFamily: resolveCodeMonoFontFamily(),
+                                fontSize: 14,
+                                lineHeight: 20,
+                                color: theme.colors.text,
                     },
                     webWhitespaceStyle,
                 ]}
@@ -131,7 +132,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             selectable={selectable}
             style={[
                 {
-                    fontFamily: Typography.mono().fontFamily,
+                    fontFamily: resolveCodeMonoFontFamily(),
                     fontSize: 14,
                     lineHeight: 20,
                     color: theme.colors.text,
@@ -151,6 +152,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             selectable={selectable}
             wrap={wrap}
             showCopyButton={showCopyButton}
+            headerLeft={headerLeft}
             headerRight={headerRight}
             scrollTestID={scrollTestID}
         >

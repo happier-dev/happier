@@ -29,6 +29,19 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 describe('SelectableRow (web cursor)', () => {
+  it('does not render the root row as a web <button> (avoids nested button semantics)', async () => {
+    const { SelectableRow } = await import('./SelectableRow');
+
+    const screen = await renderScreen(
+        <SelectableRow testID="selectable-row-role" title="Row" onPress={() => {}} />,
+    );
+    const root = screen.findAll((node) => (
+        node.props?.testID === 'selectable-row-role' && typeof node.props?.style === 'function'
+    ))[0];
+    expect(root).toBeTruthy();
+    expect(root?.props?.accessibilityRole).toBeUndefined();
+  });
+
   it('uses a not-allowed cursor when disabled', async () => {
     const { SelectableRow } = await import('./SelectableRow');
 

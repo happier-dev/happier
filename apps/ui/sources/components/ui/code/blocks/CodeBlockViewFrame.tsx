@@ -4,9 +4,9 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { resolveCodeMonoFontFamily } from '../codeTypography';
 
 export type CodeBlockViewFrameProps = Readonly<{
     code: string;
@@ -15,6 +15,7 @@ export type CodeBlockViewFrameProps = Readonly<{
     selectable?: boolean;
     wrap?: boolean;
     showCopyButton?: boolean;
+    headerLeft?: React.ReactNode;
     headerRight?: React.ReactNode;
     scrollTestID?: string;
     children: React.ReactNode;
@@ -27,6 +28,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     selectable = true,
     wrap = false,
     showCopyButton = false,
+    headerLeft,
     headerRight,
     scrollTestID,
     children,
@@ -60,9 +62,9 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
         };
     }, []);
 
-    const shouldRenderHeaderRow = showHeaderRow && (Boolean(language) || Boolean(headerRight));
+    const shouldRenderHeaderRow = showHeaderRow && (Boolean(language) || Boolean(headerLeft) || Boolean(headerRight));
     const shouldOverlayCopyButton = showCopyButton && !shouldRenderHeaderRow;
-    const contentPaddingStyle = shouldOverlayCopyButton ? [styles.codePadding, styles.codePaddingOverlay] : styles.codePadding;
+    const contentPaddingStyle = shouldOverlayCopyButton ? [styles.codePadding] : styles.codePadding;
 
     const copyButton = showCopyButton ? (
         <Pressable
@@ -88,7 +90,9 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
 
     const header = shouldRenderHeaderRow ? (
         <View style={styles.headerRow}>
-            {language ? (
+            {headerLeft ? (
+                headerLeft
+            ) : language ? (
                 <Text selectable={selectable} style={[styles.headerText, { color: theme.colors.textSecondary }]}>
                     {language}
                 </Text>
@@ -152,7 +156,7 @@ const styles = StyleSheet.create(() => ({
         paddingVertical: 10,
     },
     headerText: {
-        ...Typography.mono(),
+        fontFamily: resolveCodeMonoFontFamily(),
         fontSize: 12,
     },
     headerRight: {
@@ -180,8 +184,5 @@ const styles = StyleSheet.create(() => ({
     codePadding: {
         paddingHorizontal: 12,
         paddingVertical: 12,
-    },
-    codePaddingOverlay: {
-        paddingTop: 18,
     },
 }));

@@ -240,11 +240,19 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const schedule = React.useCallback((cb: () => void) => {
         // Opening an overlay on the same click can sometimes immediately trigger a backdrop close
         // (especially on web). Deferring by one tick ensures the opening press completes first.
+        // Note: some runtimes can throttle or suppress `requestAnimationFrame` (background tabs,
+        // headless automation, etc). Always also schedule a timeout fallback so the menu can open
+        // even if rAF never fires.
+        let fired = false;
+        const runOnce = () => {
+            if (fired) return;
+            fired = true;
+            cb();
+        };
         if (typeof requestAnimationFrame === 'function') {
-            requestAnimationFrame(cb);
-            return;
+            requestAnimationFrame(runOnce);
         }
-        setTimeout(cb, 0);
+        setTimeout(runOnce, 0);
     }, []);
     const openMenu = React.useCallback(() => {
         schedule(() => props.onOpenChange(true));
