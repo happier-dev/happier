@@ -1859,12 +1859,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                             ? 'compute-deploy-plan.mjs'
                             : 'build-ui-web-bundle.mjs';
 
+        const scriptArgs =
+          subcommand === 'release-compute-deploy-plan' ? ['--deploy-environment', deployEnvironment, ...passthrough] : passthrough;
+
         if (dryRun) {
           runReleaseWrappedScript({
             repoRoot,
             env: process.env,
             scriptFile,
-            args: passthrough,
+            args: scriptArgs,
             dryRun: true,
             skipExecOnDryRun: true,
           });
@@ -1890,7 +1893,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           repoRoot,
           env: mergedEnv,
           scriptFile,
-          args: passthrough,
+          args: scriptArgs,
           dryRun: false,
         });
         return;

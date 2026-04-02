@@ -45,3 +45,42 @@ for (const [subcommand, expectedRelPath] of cases) {
   });
 }
 
+test('release-compute-deploy-plan forwards --deploy-environment to the wrapped script', async () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'release-compute-deploy-plan',
+      '--deploy-environment',
+      'production',
+      '--source-ref',
+      'dev',
+      '--force-deploy',
+      'false',
+      '--deploy-ui',
+      'true',
+      '--deploy-server',
+      'true',
+      '--deploy-website',
+      'true',
+      '--deploy-docs',
+      'true',
+      '--dry-run',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        GH_TOKEN: '',
+        GH_REPO: '',
+        GITHUB_REPOSITORY: '',
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /--deploy-environment/);
+  assert.match(out, /production/);
+});
