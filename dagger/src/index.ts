@@ -77,6 +77,7 @@ export class HappierPipeline {
     expoToken: Secret,
     sentryAuthToken: Secret,
     easCliVersion: string = "18.0.1",
+    nodeOptions: string = "--max-old-space-size=3072",
     nodeVersion: string = "22.14.0",
     expoAppSlug: string = "",
     expoAppScheme: string = "",
@@ -136,6 +137,7 @@ export class HappierPipeline {
       .withSecretVariable("EXPO_TOKEN", expoToken)
       .withSecretVariable("SENTRY_AUTH_TOKEN", sentryAuthToken)
       .withEnvVariable("EAS_CLI_VERSION", easCliVersion)
+      .withEnvVariable("NODE_OPTIONS", nodeOptions)
       .withEnvVariable("HAPPIER_INSTALL_SCOPE", "ui,protocol,agents")
       .withEnvVariable("HAPPIER_UI_VENDOR_WEB_ASSETS", "0")
 
