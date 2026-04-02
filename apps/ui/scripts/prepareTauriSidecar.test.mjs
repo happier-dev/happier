@@ -74,11 +74,39 @@ test('prepareTauriSidecar builds app workspace dependencies before compiling hse
   assert.equal(calls[1][0], 'ensure');
   assert.match(String(calls[1][1]), /apps\/bootstrap$/);
   assert.equal(calls[2][0], 'spawn');
-  assert.equal(calls[2][1], process.platform === 'win32' ? 'yarn.cmd' : 'yarn');
+  assert.equal(calls[2][1], 'yarn');
   assert.deepEqual(calls[2][2], ['-s', 'workspace', '@happier-dev/bootstrap', 'build:binary']);
   assert.equal(calls[2][3].env.HAPPIER_BUN_TARGET, 'bun-darwin-arm64');
   assert.equal(calls[3][0], 'runtime');
   assert.equal(calls[4][0], 'entrypoint');
+});
+
+test('prepareTauriSidecar invokes Yarn via a Windows-safe shell so yarn.cmd can be resolved', async () => {
+  const calls = [];
+  const ensureWorkspacePackagesBuiltForComponent = async () => {};
+  const ensureTauriSidecarRuntimeFilesImpl = async () => [];
+  const ensureTauriSidecarEntrypointFileImpl = async (options) => join(options.srcTauriDir, 'binaries', 'hsetup.js');
+  const spawnSyncImpl = (command, args, options) => {
+    calls.push(['spawn', command, args, options]);
+    return { status: 0 };
+  };
+
+  const { prepareTauriSidecar } = await import('./prepareTauriSidecar.mjs');
+
+  await prepareTauriSidecar({
+    env: {},
+    platform: 'win32',
+    ensureWorkspacePackagesBuiltForComponent,
+    ensureTauriSidecarRuntimeFilesImpl,
+    ensureTauriSidecarEntrypointFileImpl,
+    spawnSyncImpl,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'spawn');
+  assert.equal(calls[0][1], 'yarn');
+  assert.deepEqual(calls[0][2], ['-s', 'workspace', '@happier-dev/bootstrap', 'build:binary']);
+  assert.equal(calls[0][3].shell, true);
 });
 
 test('ensureTauriSidecarEntrypointFile copies the compiled hsetup JS companion next to the native wrapper', async () => {
