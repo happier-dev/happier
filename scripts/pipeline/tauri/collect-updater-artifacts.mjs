@@ -59,7 +59,14 @@ function findMatching(files, predicate) {
  */
 function pickSignature(platformKey, matches) {
   if (platformKey.startsWith('windows-')) {
-    const preferred = matches.find((m) => m.endsWith('.nsis.zip.sig')) || matches.find((m) => m.endsWith('.exe.zip.sig')) || matches[0];
+    const preferred =
+      matches.find((m) => m.endsWith('.nsis.zip.sig')) ||
+      matches.find((m) => m.endsWith('.nsis.sig')) ||
+      matches.find((m) => m.endsWith('.exe.zip.sig')) ||
+      matches.find((m) => m.endsWith('.exe.sig')) ||
+      matches.find((m) => m.endsWith('.msi.zip.sig')) ||
+      matches.find((m) => m.endsWith('.msi.sig')) ||
+      matches[0];
     if (!preferred) fail(`Expected at least one Windows updater signature; found 0`);
     if (matches.length > 1) {
       console.error(`Found multiple Windows updater signatures for ${platformKey}; using preferred artifact: ${rel(preferred)}`);
@@ -152,7 +159,14 @@ function main() {
     const lower = p.toLowerCase();
 
     if (platformKey.startsWith('windows-')) {
-      return lower.endsWith('.msi.zip.sig') || lower.endsWith('.exe.zip.sig') || lower.endsWith('.nsis.zip.sig');
+      return (
+        lower.endsWith('.msi.zip.sig') ||
+        lower.endsWith('.msi.sig') ||
+        lower.endsWith('.exe.zip.sig') ||
+        lower.endsWith('.exe.sig') ||
+        lower.endsWith('.nsis.zip.sig') ||
+        lower.endsWith('.nsis.sig')
+      );
     }
     if (platformKey.startsWith('darwin-')) {
       return lower.endsWith('.app.tar.gz.sig');
