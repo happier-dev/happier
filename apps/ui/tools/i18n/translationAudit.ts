@@ -111,6 +111,8 @@ const ALLOW_SAME_STRING_KEYS = new Set<string>([
     // Debug category identifiers are provider-owned technical names.
     'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.hooks.title',
     'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.title',
+    // Technical field labels that are commonly shared across locales.
+    'settings.relayAccess.fields.tokenLabel',
 ]);
 
 const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -131,6 +133,10 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     // Italian/Portuguese: Windows "Console" label is correct and matches English.
     'windowsRemoteSessionLaunchMode.console': new Set(['it', 'pt']),
     'windowsRemoteSessionLaunchMode.shortConsole': new Set(['it', 'pt']),
+    // Spanish/Catalan: the UI term "Error" is correctly localized as the same word.
+    'settings.relayAccess.statusError': new Set(['es', 'ca']),
+    // Portuguese: "Logs" is a commonly used UI term.
+    'common.logs': new Set(['pt']),
 };
 
 function isProviderPluginTitleKey(key: string): boolean {

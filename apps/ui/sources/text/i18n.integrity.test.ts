@@ -16,6 +16,8 @@ import { auditTranslations } from '../../tools/i18n/translationAudit';
 const IGNORED_UNTRANSLATED_KEYS = new Set([
     'promptLibrary.supportingFilePathPlaceholder',
     'settingsSession.handoff.includeIgnoredMode.globsPlaceholder',
+    // Proper nouns: keep the canonical platform label consistent across locales.
+    'setupOnboarding.handoffPlatformPosixLabel',
 ]);
 
 // This test is a drift-stopper: it fails if we introduce any *new* untranslated English strings outside
