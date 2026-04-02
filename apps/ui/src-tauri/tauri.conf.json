@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:8081",
-    "beforeDevCommand": "node ./scripts/runTauriBeforeCommand.mjs dev",
-    "beforeBuildCommand": "node ./scripts/runTauriBeforeCommand.mjs build"
+    "beforeDevCommand": "node ./scripts/runTauriBeforeCommand.mjs tauri:prepare:dev",
+    "beforeBuildCommand": "node ./scripts/runTauriBeforeCommand.mjs tauri:prepare:build"
   },
   "app": {
     "security": {

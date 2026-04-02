@@ -37,8 +37,8 @@ test('apps/ui Tauri config runs beforeBuildCommand/beforeDevCommand via node wra
   const raw = await readFile(join(packageRoot, 'src-tauri', 'tauri.conf.json'), 'utf-8');
   const config = JSON.parse(raw);
 
-  assert.equal(config?.build?.beforeDevCommand, 'node ./scripts/runTauriBeforeCommand.mjs dev');
-  assert.equal(config?.build?.beforeBuildCommand, 'node ./scripts/runTauriBeforeCommand.mjs build');
+  assert.equal(config?.build?.beforeDevCommand, 'node ./scripts/runTauriBeforeCommand.mjs tauri:prepare:dev');
+  assert.equal(config?.build?.beforeBuildCommand, 'node ./scripts/runTauriBeforeCommand.mjs tauri:prepare:build');
 });
 
 test('apps/ui default Tauri capability allows dialog open for SSH identity selection', async () => {

@@ -1,6 +1,7 @@
 // @ts-check
 
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Runs the `tauri:prepare:*` yarn script through a platform shell.
@@ -38,16 +39,24 @@ export function runTauriBeforeCommand(opts) {
 }
 
 function main() {
-  const mode = String(process.argv[2] ?? '').trim();
+  const raw = String(process.argv[2] ?? '').trim();
+  const mode =
+    raw === 'dev' || raw === 'build'
+      ? raw
+      : raw === 'tauri:prepare:dev'
+        ? 'dev'
+        : raw === 'tauri:prepare:build'
+          ? 'build'
+          : '';
+
   if (mode !== 'dev' && mode !== 'build') {
-    console.error('Usage: node ./scripts/runTauriBeforeCommand.mjs <dev|build>');
+    console.error('Usage: node ./scripts/runTauriBeforeCommand.mjs <dev|build|tauri:prepare:dev|tauri:prepare:build>');
     process.exit(1);
   }
 
   runTauriBeforeCommand({ mode });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   main();
 }
-
