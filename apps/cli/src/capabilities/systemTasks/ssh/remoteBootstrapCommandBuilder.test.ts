@@ -66,7 +66,7 @@ describe('buildRemoteBootstrapCommand', () => {
       webappUrl: 'https://app.example.test',
     });
     expect(authRequest).toContain("--server-url 'https://relay.example.test'");
-    expect(authRequest).toContain("--local-server-url 'http://127.0.0.1:3005'");
+    expect(authRequest).not.toContain("--local-server-url 'http://127.0.0.1:3005'");
 
     const daemonInstall = buildRemoteBootstrapCommand({
       label: 'daemon.service.install',
@@ -78,6 +78,34 @@ describe('buildRemoteBootstrapCommand', () => {
     expect(daemonInstall).toContain("HAPPIER_DAEMON_SERVICE_SERVER_URL='http://127.0.0.1:3005'");
     expect(daemonInstall).toContain("HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL='https://relay.example.test'");
     expect(daemonInstall).toContain("HAPPIER_DAEMON_SERVICE_WEBAPP_URL='https://app.example.test'");
+  });
+
+  it('targets Happier Cloud by profile id when bootstrapping against https://api.happier.dev (avoid ad-hoc persisted profiles)', () => {
+    const serverConfigure = buildRemoteBootstrapCommand({
+      label: 'server.configure',
+      serverUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+    });
+    expect(serverConfigure).toContain('server use cloud --json');
+    expect(serverConfigure).not.toContain("server set --server-url 'https://api.happier.dev'");
+
+    const authRequest = buildRemoteBootstrapCommand({
+      label: 'auth.request',
+      serverUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+    });
+    expect(authRequest).toContain('auth request --json --persist --server cloud');
+    expect(authRequest).not.toContain("--server-url 'https://api.happier.dev'");
+
+    const authWait = buildRemoteBootstrapCommand({
+      label: 'auth.wait',
+      serverUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+      data: { publicKey: 'abc' },
+    });
+    expect(authWait).toContain('auth wait --public-key');
+    expect(authWait).toContain('--json --persist --server cloud');
+    expect(authWait).not.toContain("--server-url 'https://api.happier.dev'");
   });
 
   it('never emits hstack self-host install shells (relay runtime is handled out-of-band)', () => {

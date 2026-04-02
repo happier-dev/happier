@@ -17,6 +17,7 @@ import {
 import {
   checkRelayRuntimeHealth,
   extractReleasePayloadRootFromArchive,
+  resolveFirstPartyComponentPublicReleaseVariant,
   resolveRelayRuntimeDefaults,
   type RelayRuntimeHealthResult,
   type RelayRuntimeNormalizedStatus,
@@ -25,6 +26,7 @@ import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
 import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
+import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 type RelayRuntimeTaskParams = Readonly<{
   platform?: NodeJS.Platform;
@@ -111,9 +113,8 @@ function normalizeArch(): 'x64' | 'arm64' {
 }
 
 function resolveReleaseTag(channel: string): string {
-  if (channel === 'preview') return 'server-preview';
-  if (channel === 'publicdev') return 'server-dev';
-  return 'server-stable';
+  const ring: PublicReleaseRingId = normalizePublicReleaseRingId(channel) || 'stable';
+  return resolveFirstPartyComponentPublicReleaseVariant({ componentId: 'happier-server', channel: ring }).releaseTag;
 }
 
 function parsePort(raw: unknown, fallback: number): number {

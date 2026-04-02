@@ -5,15 +5,19 @@ const {
   mkdirSync,
   readFileSync,
   writeFileSync,
+  chmodSync,
   approveTerminalAuthRequest,
   reloadConfiguration,
+  lastInstallRemoteFirstPartyDeps,
 } = vi.hoisted(() => ({
   spawnSync: vi.fn(),
   mkdirSync: vi.fn(),
   readFileSync: vi.fn(),
   writeFileSync: vi.fn(),
+  chmodSync: vi.fn(),
   approveTerminalAuthRequest: vi.fn(async () => undefined),
   reloadConfiguration: vi.fn(),
+  lastInstallRemoteFirstPartyDeps: { current: null as null | unknown },
 }));
 
 const { isLoopbackPortAvailable, findAvailableLoopbackPort } = vi.hoisted(() => ({
@@ -25,15 +29,12 @@ vi.mock('node:child_process', () => ({
   spawnSync,
 }));
 
-vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
-  return {
-    ...actual,
-    mkdirSync,
-    readFileSync,
-    writeFileSync,
-  };
-});
+vi.mock('node:fs', () => ({
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  chmodSync,
+}));
 
 vi.mock('@/auth/terminalAuthApproval', () => ({
   approveTerminalAuthRequest,
@@ -61,16 +62,17 @@ vi.mock('@happier-dev/cli-common/systemTasks', async () => {
       ...args: Parameters<typeof actual.installRemoteFirstPartyComponent>
     ) => {
       const [params, deps] = args;
+      lastInstallRemoteFirstPartyDeps.current = deps;
       return await actual.installRemoteFirstPartyComponent(params, {
         ...deps,
-        preparePayload: async ({ componentId, channel }) => ({
+        preparePayload: deps.preparePayload ?? (async ({ componentId, channel }) => ({
           componentId,
           channel,
           versionId: 'test-version',
           payloadRoot: '/tmp/mock-payload',
           source: 'unit-test',
           cleanup: async () => undefined,
-        }),
+        })),
       });
     },
   };
@@ -95,6 +97,7 @@ function jsonResult(data: Record<string, unknown>) {
 describe('createLiveRemoteSshBootstrapTaskKind', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    lastInstallRemoteFirstPartyDeps.current = null;
     isLoopbackPortAvailable.mockResolvedValue(true);
     findAvailableLoopbackPort.mockImplementation(async (requestedPort: number) => requestedPort + 1);
     readFileSync.mockImplementation(() => {
@@ -213,6 +216,120 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
         data: {},
       });
     });
+  });
+
+  it('uses a local payload root for remote CLI install when HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT is set', async () => {
+    const previous = process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
+    process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT = '/tmp/local-cli-payload';
+    try {
+      const kind = createLiveRemoteSshBootstrapTaskKind();
+      const previousImplementation = spawnSync.getMockImplementation();
+      if (!previousImplementation) {
+        throw new Error('Missing spawnSync mock implementation');
+      }
+      let serverConfigureAttempts = 0;
+      spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+        if (command === 'ssh') {
+          const remoteCommand = String(args.at(-1) ?? '');
+          if (remoteCommand.includes('server set') && serverConfigureAttempts++ === 0) {
+            return {
+              status: 127,
+              stdout: '',
+              stderr: 'bash: happier: command not found\n',
+            };
+          }
+        }
+        return previousImplementation(command, args as any);
+      });
+
+      await kind.run({
+        params: {
+          ssh: {
+            target: 'lima-happier-wsrepl-qa-local',
+            sshConfigFile: '/tmp/lima-ssh.config',
+            auth: 'agent',
+          },
+          relay: {
+            relayUrl: 'https://relay.example.test',
+            webappUrl: 'https://relay.example.test',
+          },
+          channel: 'dev',
+        },
+        signal: new AbortController().signal,
+        emit: () => undefined,
+        prompt: async (prompt: { kind: string }) => {
+          if (prompt.kind === 'ssh.trustHost') return { trusted: true };
+          if (prompt.kind === 'auth.approveRemoteProvisioning') return { approved: true };
+          return {};
+        },
+      } as any);
+
+      const sshRemoteCommands = spawnSync.mock.calls
+        .filter(([command]) => command === 'ssh')
+        .map(([, args]) => String((args as readonly string[]).at(-1) ?? ''));
+      expect(sshRemoteCommands.join('\n')).toContain('local-cli-payload');
+    } finally {
+      if (previous === undefined) delete process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
+      else process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT = previous;
+    }
+  });
+
+  it('does not pass preparePayload: undefined to installRemoteFirstPartyComponent when no local payload override is set', async () => {
+    const previous = process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
+    delete process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
+    try {
+      const kind = createLiveRemoteSshBootstrapTaskKind();
+      const previousImplementation = spawnSync.getMockImplementation();
+      if (!previousImplementation) {
+        throw new Error('Missing spawnSync mock implementation');
+      }
+      let serverConfigureAttempts = 0;
+      spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+        if (command === 'ssh') {
+          const remoteCommand = String(args.at(-1) ?? '');
+          if (remoteCommand.includes('server set') && serverConfigureAttempts++ === 0) {
+            return {
+              status: 127,
+              stdout: '',
+              stderr: 'bash: happier: command not found\n',
+            };
+          }
+        }
+        return previousImplementation(command, args as any);
+      });
+
+      await kind.run({
+        params: {
+          ssh: {
+            target: 'lima-happier-wsrepl-qa-local',
+            sshConfigFile: '/tmp/lima-ssh.config',
+            auth: 'agent',
+          },
+          relay: {
+            relayUrl: 'https://relay.example.test',
+            webappUrl: 'https://relay.example.test',
+          },
+          channel: 'dev',
+        },
+        signal: new AbortController().signal,
+        emit: () => undefined,
+        prompt: async (prompt: { kind: string }) => {
+          if (prompt.kind === 'ssh.trustHost') return { trusted: true };
+          if (prompt.kind === 'auth.approveRemoteProvisioning') return { approved: true };
+          return {};
+        },
+      });
+
+      expect(lastInstallRemoteFirstPartyDeps.current).toBeTruthy();
+      const deps = lastInstallRemoteFirstPartyDeps.current as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(deps, 'preparePayload')).toBe(false);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
+      } else {
+        process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT = previous;
+      }
+    }
   });
 
   it('uses ssh config files to resolve Lima-style SSH aliases and target the real host', async () => {
@@ -506,7 +623,10 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       .map(([, args]) => args as readonly string[]);
 
     expect(transportArgs.every((args) => args.includes('UserKnownHostsFile=/tmp/custom-known_hosts'))).toBe(true);
-    expect(writeFileSync).toHaveBeenCalledWith('/tmp/custom-known_hosts', `${TRUSTED_HOST_KEY}\n`, 'utf8');
+    expect(writeFileSync).toHaveBeenCalledWith('/tmp/custom-known_hosts', `${TRUSTED_HOST_KEY}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
   });
 
   it('honors explicit ssh.port when resolving trusted host keys (even if the ssh config file does not match the target)', async () => {
@@ -785,6 +905,68 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     else delete process.env.HAPPIER_LOCAL_SERVER_URL;
   });
 
+  it('preserves the local/public relay split when the approval target matches the current public relay url', async () => {
+    const kind = createLiveRemoteSshBootstrapTaskKind();
+    const previousServerUrl = process.env.HAPPIER_SERVER_URL;
+    const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    const previousPublicServerUrl = process.env.HAPPIER_PUBLIC_SERVER_URL;
+    const previousLocalServerUrl = process.env.HAPPIER_LOCAL_SERVER_URL;
+
+    process.env.HAPPIER_PUBLIC_SERVER_URL = 'https://public.example.test';
+    process.env.HAPPIER_LOCAL_SERVER_URL = 'http://127.0.0.1:59999';
+    process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:59999';
+    process.env.HAPPIER_WEBAPP_URL = 'https://original-app.example.test';
+
+    let observedServerUrl: string | null = null;
+    let observedPublicServerUrl: string | null = null;
+    let observedLocalServerUrl: string | null = null;
+    let observedWebappUrl: string | null = null;
+
+    approveTerminalAuthRequest.mockImplementation(async () => {
+      observedServerUrl = String(process.env.HAPPIER_SERVER_URL ?? '');
+      observedPublicServerUrl = String(process.env.HAPPIER_PUBLIC_SERVER_URL ?? '');
+      observedLocalServerUrl = String(process.env.HAPPIER_LOCAL_SERVER_URL ?? '');
+      observedWebappUrl = String(process.env.HAPPIER_WEBAPP_URL ?? '');
+    });
+
+    await kind.run({
+      params: {
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        relay: {
+          relayUrl: 'https://public.example.test',
+          webappUrl: 'https://app.example.test',
+        },
+        channel: 'preview',
+        knownHostsMode: 'system',
+        serviceMode: 'none',
+      },
+      emit: () => undefined,
+      prompt: async (request) => {
+        if (request.kind === 'auth.approveRemoteProvisioning') {
+          return { approved: true };
+        }
+        throw new Error(`Unexpected prompt: ${request.kind}`);
+      },
+    });
+
+    expect(observedServerUrl).toBe('http://127.0.0.1:59999');
+    expect(observedPublicServerUrl).toBe('https://public.example.test');
+    expect(observedLocalServerUrl).toBe('http://127.0.0.1:59999');
+    expect(observedWebappUrl).toBe('https://app.example.test');
+
+    if (typeof previousServerUrl === 'string') process.env.HAPPIER_SERVER_URL = previousServerUrl;
+    else delete process.env.HAPPIER_SERVER_URL;
+    if (typeof previousWebappUrl === 'string') process.env.HAPPIER_WEBAPP_URL = previousWebappUrl;
+    else delete process.env.HAPPIER_WEBAPP_URL;
+    if (typeof previousPublicServerUrl === 'string') process.env.HAPPIER_PUBLIC_SERVER_URL = previousPublicServerUrl;
+    else delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+    if (typeof previousLocalServerUrl === 'string') process.env.HAPPIER_LOCAL_SERVER_URL = previousLocalServerUrl;
+    else delete process.env.HAPPIER_LOCAL_SERVER_URL;
+  });
+
   it('opens a loopback relay tunnel over ssh before approving remote provisioning', async () => {
     const kind = createLiveRemoteSshBootstrapTaskKind();
     const previousServerUrl = process.env.HAPPIER_SERVER_URL;
@@ -847,6 +1029,11 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
           args.includes(`${relayPort}:127.0.0.1:${relayPort}`),
       ),
     ).toBe(true);
+    const controlPathArg = spawnSync.mock.calls
+      .filter(([command]) => command === 'ssh')
+      .flatMap(([, args]) => Array.from(args as readonly string[]))
+      .find((arg) => typeof arg === 'string' && arg.startsWith('ControlPath='));
+    expect(controlPathArg).toMatch(/^ControlPath=\/tmp\//u);
     expect(observedServerUrl).toMatch(new RegExp(`^http://(127\\\\.0\\\\.0\\\\.1|localhost):${relayPort}$`, 'u'));
     expect(approveTerminalAuthRequest).toHaveBeenCalledWith({ publicKey: 'pub-key' });
     expect(reloadConfiguration).toHaveBeenCalled();

@@ -242,7 +242,7 @@ async function resolveCliOverridePath(name: DetectCliName): Promise<string | nul
     } catch {
         const runtimeSpec = getProviderCliRuntimeSpec(name);
         if (!runtimeSpec.acceptsJavaScriptFileOverride || isWindows) return null;
-        if (!/\.(?:c?js|mjs)$/i.test(override)) return null;
+        if (!/\.(?:js|cjs|mjs)$/i.test(override)) return null;
         try {
             await access(override, fsConstants.F_OK);
             return override;

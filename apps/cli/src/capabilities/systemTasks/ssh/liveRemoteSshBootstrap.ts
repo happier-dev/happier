@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import * as relayHost from '@happier-dev/cli-common/relayHost';
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
@@ -33,6 +34,7 @@ type JsonRecord = Record<string, unknown>;
 type RemoteCommandResult = Readonly<{ status: number; stdout: string; stderr: string }>;
 
 const ABSOLUTE_PATH_TOKEN_PATTERN = /(^|[\s"'`=:(])((?:~\/|\/|[A-Za-z]:\\)[^\s"'`]+)/gu;
+const LOCAL_REMOTE_CLI_PAYLOAD_ROOT_ENV = 'HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT';
 
 function redactSshStderrForErrorMessage(raw: string): string {
   const base = redactBugReportSensitiveText(String(raw ?? ''));
@@ -41,6 +43,12 @@ function redactSshStderrForErrorMessage(raw: string): string {
     if (!sanitized) return match;
     return `${prefix}${sanitized}`;
   });
+}
+
+function resolveSshTunnelControlDir(): string {
+  return process.platform === 'win32'
+    ? join(tmpdir(), 'happier-ssh-control')
+    : '/tmp/happier-ssh-control';
 }
 
 function resolveAppKnownHostsPath(): string {
@@ -62,7 +70,7 @@ function readKnownHostsText(knownHostsPath: string | undefined): string {
 }
 
 function writeKnownHostsText(knownHostsPath: string | undefined, text: string): void {
-  writeKnownHostsTextSyncWithFs(knownHostsPath, text, { mkdirSync, writeFileSync });
+  writeKnownHostsTextSyncWithFs(knownHostsPath, text, { mkdirSync, writeFileSync, chmodSync });
 }
 
 function parseSshTarget(target: string): Readonly<{ host: string; port?: number }> {
@@ -141,7 +149,7 @@ function withSshLocalPortForward(params: Readonly<{
   remotePort: number;
   fn: () => Promise<void>;
 }>): Promise<void> {
-  const controlDir = join(configuration.happyHomeDir, 'ssh', 'control');
+  const controlDir = resolveSshTunnelControlDir();
   mkdirSync(controlDir, { recursive: true });
   const controlPath = join(controlDir, `tunnel-${process.pid}-${Date.now()}-${params.localPort}.sock`);
 
@@ -304,10 +312,21 @@ async function withEphemeralRelaySelection(
     const publicRelayUrl = String(params.publicRelayUrl ?? '').trim();
     const webappUrl = String(params.webappUrl ?? '').trim();
 
+    const snapshotPublicRelayUrl = String(snapshot.HAPPIER_PUBLIC_SERVER_URL ?? '').trim();
+    const snapshotLocalRelayUrl = String(snapshot.HAPPIER_LOCAL_SERVER_URL ?? '').trim();
+
     if (publicRelayUrl && publicRelayUrl !== relayUrl) {
       process.env.HAPPIER_PUBLIC_SERVER_URL = publicRelayUrl;
       process.env.HAPPIER_SERVER_URL = relayUrl;
       delete process.env.HAPPIER_LOCAL_SERVER_URL;
+    } else if (
+      snapshotPublicRelayUrl
+      && snapshotLocalRelayUrl
+      && relayUrl === snapshotPublicRelayUrl
+    ) {
+      process.env.HAPPIER_PUBLIC_SERVER_URL = snapshotPublicRelayUrl;
+      process.env.HAPPIER_LOCAL_SERVER_URL = snapshotLocalRelayUrl;
+      process.env.HAPPIER_SERVER_URL = snapshotLocalRelayUrl;
     } else {
       process.env.HAPPIER_SERVER_URL = relayUrl;
       delete process.env.HAPPIER_PUBLIC_SERVER_URL;
@@ -754,6 +773,11 @@ async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
   };
 }
 
+function resolveLocalRemoteCliPayloadRootOverride(): string | null {
+  const raw = String(process.env[LOCAL_REMOTE_CLI_PAYLOAD_ROOT_ENV] ?? '').trim();
+  return raw ? raw : null;
+}
+
 export function createLiveRemoteSshBootstrapTaskKind() {
   const baseKind = systemTasks.createRemoteSshBootstrapMachineTaskKind({
     resolveHostTrust: async ({ ssh, knownHostsMode }): Promise<RemoteHostTrustResolution> => {
@@ -823,12 +847,25 @@ export function createLiveRemoteSshBootstrapTaskKind() {
     },
     installRemoteCli: async ({ parsed, auth, knownHostsMode }) => {
       const knownHostsPath = resolveKnownHostsPath(parsed.ssh, knownHostsMode);
+      const localPayloadRootOverride = resolveLocalRemoteCliPayloadRootOverride();
       await systemTasks.installRemoteFirstPartyComponent({
         componentId: 'happier-cli',
         channel: parsed.channel,
         ssh: parsed.ssh,
         knownHostsMode,
       }, {
+        ...(localPayloadRootOverride
+          ? {
+              preparePayload: async ({ componentId, channel }) => ({
+                componentId,
+                channel,
+                versionId: `local-${parsed.channel ?? 'unknown'}-${Date.now()}`,
+                payloadRoot: localPayloadRootOverride,
+                source: `local-payload:${localPayloadRootOverride}`,
+                cleanup: async () => undefined,
+              }),
+            }
+          : {}),
         resolveRemoteReleaseTarget: async () => {
           const preflight = runSshPosixJson<Readonly<{ platform?: unknown; arch?: unknown }>>({
             ssh: parsed.ssh,

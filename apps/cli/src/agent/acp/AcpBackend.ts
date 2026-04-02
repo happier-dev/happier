@@ -1590,7 +1590,7 @@ export class AcpBackend implements AgentBackend {
 
     const handleOneUpdate = (update: SessionUpdate): void => {
       const sessionUpdateType = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
-      this.sessionUpdateShapeLogger.log(
+      this.sessionUpdateShapeLogger?.log?.(
         `inbound:${this.options.agentName}:${sessionUpdateType ?? 'unknown'}`,
         update,
       );
