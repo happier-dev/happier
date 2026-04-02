@@ -44,6 +44,16 @@ function tryExecText(execImpl, cmd, args) {
 }
 
 /**
+ * @param {typeof execFileSync} execImpl
+ * @param {string} absYarnCmd
+ * @returns {boolean}
+ */
+function canRunWindowsYarnCmd(execImpl, absYarnCmd) {
+  const out = tryExecText(execImpl, 'cmd.exe', ['/D', '/S', '/C', `"${absYarnCmd}" --version`]);
+  return /\d+\.\d+\.\d+/.test(out);
+}
+
+/**
  * @param {{ platform: NodeJS.Platform; execImpl: typeof execFileSync; nodeExecPath: string }} opts
  * @returns {string | ''}
  */
@@ -105,7 +115,12 @@ export function resolveYarnInvocation(opts) {
       whereCandidates.find((abs) => !abs.toLowerCase().startsWith(nodeDirLower)) ?? whereCandidates[0] ?? '';
 
     if (preferredWhere) {
-      return { cmd: preferredWhere, prefixArgs: [] };
+      // If the only thing on PATH is a node-adjacent shim, verify it actually runs before using it.
+      if (preferredWhere.toLowerCase().startsWith(nodeDirLower) && !canRunWindowsYarnCmd(execImpl, preferredWhere)) {
+        // fall through
+      } else {
+        return { cmd: preferredWhere, prefixArgs: [] };
+      }
     }
 
     // Prefer an absolute-path yarn shim next to node.exe. This is how `corepack enable`
@@ -114,7 +129,9 @@ export function resolveYarnInvocation(opts) {
     const yarnCmdNearNode = platformPath.join(nodeDir, 'yarn.cmd');
     try {
       if (fs.existsSync(yarnCmdNearNode) && fs.statSync(yarnCmdNearNode).isFile()) {
-        return { cmd: yarnCmdNearNode, prefixArgs: [] };
+        if (canRunWindowsYarnCmd(execImpl, yarnCmdNearNode)) {
+          return { cmd: yarnCmdNearNode, prefixArgs: [] };
+        }
       }
     } catch {
       // ignore
