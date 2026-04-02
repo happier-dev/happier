@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { loadCliCommonDistModule } from '../../../../scripts/ensureCliCommonDistModule.mjs';
 import { listPublicReleaseRingCatalogEntries, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -74,8 +75,23 @@ export async function ensureCleanDir(path) {
 }
 
 export async function fileSha256(path) {
-  const bytes = await readFile(path);
-  return createHash('sha256').update(bytes).digest('hex');
+  const targetPath = String(path ?? '').trim();
+  // Release packaging often runs on developer machines where file providers (or aggressive AV) can
+  // briefly delay visibility of newly created archives. Treat ENOENT as a short, retryable condition.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      const bytes = await readFile(targetPath);
+      return createHash('sha256').update(bytes).digest('hex');
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code ?? '') : '';
+      if (code === 'ENOENT' && attempt < 9) {
+        await delay(50);
+        continue;
+      }
+      throw error;
+    }
+  }
+  // unreachable: loop always returns or throws
 }
 
 export async function createDeterministicArchive({ artifactPath, sourcePath, sourceName }) {
