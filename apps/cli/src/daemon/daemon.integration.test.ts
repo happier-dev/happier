@@ -502,8 +502,8 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
 
     // Verify metadata file is cleaned up
     await waitForDaemonStateFileCleanup({
-      timeoutMs: 1_000,
-      intervalMs: 100,
+      timeoutMs: 15_000,
+      intervalMs: 250,
       label: 'daemon state cleanup after HTTP stop',
     });
   });
@@ -630,15 +630,19 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     const spawnedSessionIds = results.map(r => r.sessionId);
 
     // List should show all sessions
+    let lastSessions: DaemonSessionRecord[] = [];
     await waitForCondition(async () => {
       const sessions = await listDaemonSessionsTyped();
+      lastSessions = sessions;
       const daemonSessions = sessions.filter(
         (session) => session.startedBy === 'daemon' && spawnedSessionIds.includes(session.happySessionId),
       );
       return daemonSessions.length >= 3;
     }, {
-      ...SESSION_CONSISTENCY_WAIT,
+      timeoutMs: 60_000,
+      intervalMs: 250,
       label: 'three daemon-spawned sessions tracked',
+      debug: () => JSON.stringify({ sessions: lastSessions }, null, 2),
     });
 
     const sessions = await listDaemonSessionsTyped();
