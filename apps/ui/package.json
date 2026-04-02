@@ -25,6 +25,7 @@
     "migrate:renderers": "tsx tools/migrations/rewrite-renderer-create-to-renderScreen.ts",
     "migrate:cleanup": "tsx tools/migrations/rewrite-standard-cleanup.ts",
     "postinstall:real": "node ./tools/postinstall.mjs",
+    "eas-build-post-install": "yarn -s postinstall:real",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'ui',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tools/postinstall.mjs'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
     "generate-theme": "tsx sources/theme.gen.ts",
     "// ==== Development/Preview/Production Variants ====": "",

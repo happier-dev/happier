@@ -188,3 +188,24 @@ test('UI fingerprint config strips volatile extra.app keys from expoConfig conte
     else process.env.APP_ENV = originalAppEnv;
   }
 });
+
+test('UI fingerprint config defines ignorePaths for EAS-managed prebuild output and volatile native artifacts', () => {
+  const config = loadUiFingerprintConfig();
+
+  // When EAS runs `expo prebuild`, it generates `android/` and `ios/` directories during the build.
+  // The fingerprint runtimeVersion policy must stay stable between the machine that schedules the build
+  // and the EAS worker that performs the build.
+  assert.ok(Array.isArray(config?.ignorePaths), 'Expected fingerprint.config.js to export ignorePaths[]');
+
+  const ignorePaths = config.ignorePaths.map((p) => String(p));
+
+  // Ignore the generated native directories (both the dir source and its contents).
+  assert.ok(ignorePaths.includes('android') || ignorePaths.includes('android/**'), 'Expected ignorePaths to ignore android');
+  assert.ok(ignorePaths.includes('ios') || ignorePaths.includes('ios/**'), 'Expected ignorePaths to ignore ios');
+
+  // Ignore libsodium build outputs which can differ across environments (macOS vs Linux).
+  assert.ok(
+    ignorePaths.some((p) => p.includes('react-native-libsodium') && p.includes('libsodium') && p.includes('build')),
+    'Expected ignorePaths to ignore react-native-libsodium libsodium/build outputs',
+  );
+});

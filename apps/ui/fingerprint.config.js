@@ -171,6 +171,25 @@ function resolveCanonicalVariantConfig(appEnv) {
  * @type {import('expo/fingerprint').Config}
  */
 const config = {
+  // EAS managed builds run `expo prebuild` during the build, which generates `android/` and `ios/`
+  // directories on the worker. When using runtimeVersion({ policy: 'fingerprint' }), the runtime
+  // version is validated both on the machine that schedules the build and again on the EAS worker.
+  // If these paths are not ignored, the generated native dirs can cause a runtimeVersion mismatch.
+  //
+  // Note: this is intentionally scoped to the UI project root. If we ever commit bare native dirs
+  // for the UI (e.g. switching to bare workflow), we should revisit this.
+  ignorePaths: [
+    // Ignore the generated native directories (both the dir itself and its contents).
+    'android',
+    'android/**',
+    'ios',
+    'ios/**',
+
+    // Ignore libsodium build outputs which can vary by environment and should not affect the
+    // native compatibility signal (the underlying package sources are still hashed).
+    'node_modules/@more-tech/react-native-libsodium/libsodium/build/**',
+    '**/node_modules/@more-tech/react-native-libsodium/libsodium/build/**',
+  ],
   fileHookTransform: (source, chunk, isEndOfFile) => {
     const src = /** @type {FingerprintSource} */ (source ?? {});
     const filePath = normalizeRelPath(src.filePath);
