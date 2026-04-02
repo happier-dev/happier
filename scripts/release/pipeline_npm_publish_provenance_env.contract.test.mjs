@@ -40,7 +40,7 @@ exit 0
     [script, '--channel', 'preview', '--tarball', tarballPath],
     {
       cwd: repoRoot,
-      env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}` },
+      env: { ...process.env, CI: '', GITHUB_ACTIONS: '', PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}` },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -63,4 +63,3 @@ exit 0
 
   assert.match(outGithub, /PROVENANCE=true/);
 });
-

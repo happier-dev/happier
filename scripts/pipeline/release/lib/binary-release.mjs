@@ -85,11 +85,26 @@ export async function createDeterministicArchive({ artifactPath, sourcePath, sou
     const stdout = String(version.stdout ?? '');
     _isGnuTar = stdout.includes('GNU tar');
   }
+  // AppleDouble metadata (files prefixed with `._`) can appear in staging directories (and can even be
+  // checked into repos). Always exclude them to keep archives deterministic and avoid shipping junk.
+  const excludeArgs = ['--exclude=._*', '--exclude=*/._*'];
   if (_isGnuTar) {
-    execOrThrow('tar', ['--sort=name', '--mtime=@0', '--owner=0', '--group=0', '--numeric-owner', '-czf', artifactPath, '-C', sourcePath, sourceName]);
+    execOrThrow('tar', [
+      '--sort=name',
+      '--mtime=@0',
+      '--owner=0',
+      '--group=0',
+      '--numeric-owner',
+      ...excludeArgs,
+      '-czf',
+      artifactPath,
+      '-C',
+      sourcePath,
+      sourceName,
+    ]);
     return;
   }
-  execOrThrow('tar', ['-czf', artifactPath, '-C', sourcePath, sourceName]);
+  execOrThrow('tar', [...excludeArgs, '-czf', artifactPath, '-C', sourcePath, sourceName]);
 }
 
 export async function writeChecksumsFile({ product, version, artifacts, outDir }) {

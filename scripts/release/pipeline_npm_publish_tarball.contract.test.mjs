@@ -29,7 +29,7 @@ test('pipeline npm publish script supports dry-run and derives dist-tag from cha
     ],
     {
       cwd: repoRoot,
-      env: { ...process.env },
+      env: { ...process.env, CI: '', GITHUB_ACTIONS: '' },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
