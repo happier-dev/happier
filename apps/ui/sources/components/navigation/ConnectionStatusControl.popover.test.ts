@@ -91,6 +91,9 @@ installConnectionStatusControlCommonModuleMocks({
                         error: '#ff0000',
                         default: '#999999',
                     },
+                    surface: '#000000',
+                    surfaceHigh: '#111111',
+                    divider: '#222222',
                     text: '#111111',
                     textSecondary: '#666666',
                 },
@@ -193,6 +196,11 @@ vi.mock('@/components/navigation/connectionStatus/useConnectionHealth', () => ({
         isPulsing: false,
         statusLabelKey: 'status.actionRequired',
         machineLabelKey: 'newSession.noMachinesFound',
+        endpointStatus: 'online',
+        machineCount: 0,
+        onlineCount: 0,
+        hasUnknownMachines: false,
+        primaryMachineLabel: null,
     }),
 }));
 
@@ -268,7 +276,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
         });
     });
 
-    it('shows readiness and machines rows in the popover', async () => {
+    it('shows server, realtime, and machines rows in the popover', async () => {
         const ConnectionStatusControl = await importConnectionStatusControl();
         let tree: renderer.ReactTestRenderer | undefined;
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
@@ -279,15 +287,9 @@ describe('ConnectionStatusControl (native popover config)', () => {
             await pressTestInstanceAsync(trigger);
         });
 
-        const textNodes = tree!.findAllByType('Text' as any);
-        const allText = textNodes
-            .map((node: any) => String(node.props.children ?? ''))
-            .join('\n');
-
-        expect(allText).toContain('profile.status');
-        expect(allText).toContain('status.actionRequired');
-        expect(allText).toContain('settings.machines');
-        expect(allText).toContain('newSession.noMachinesFound');
+        expect(tree!.root.findAllByProps({ testID: 'connection-popover-relay' }).length).toBeGreaterThan(0);
+        expect(tree!.root.findAllByProps({ testID: 'connection-popover-realtime' }).length).toBeGreaterThan(0);
+        expect(tree!.root.findAllByProps({ testID: 'connection-popover-machines' }).length).toBeGreaterThan(0);
     });
 
     it('includes server and group target actions when configured', async () => {

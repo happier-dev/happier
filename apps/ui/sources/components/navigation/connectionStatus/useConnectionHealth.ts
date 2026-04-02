@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { useActiveSelectionMachineGroups } from '@/components/settings/server/hooks/useActiveSelectionMachineGroups';
-import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { useActiveSelectionMachineGroups } from '@/components/settings/machines/hooks/useActiveSelectionMachineGroups';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import {
     useAllMachines,
     useMachineListByServerId,
@@ -63,6 +64,25 @@ export function useConnectionHealth() {
         },
     });
 
+    const primaryMachineLabel = React.useMemo(() => {
+        const byId = new Map<string, (typeof activeSelectionMachineGroups.visibleMachineGroups)[number]['machines'][number]>();
+        for (const group of activeSelectionMachineGroups.visibleMachineGroups) {
+            if (group.status === 'loading' || group.status === 'signedOut') continue;
+            for (const machine of group.machines) {
+                if (machine.revokedAt) continue;
+                byId.set(machine.id, machine);
+            }
+        }
+        if (byId.size !== 1) return null;
+        const machine = [...byId.values()][0] ?? null;
+        const metadata = machine?.metadata && typeof machine.metadata === 'object' ? machine.metadata as { displayName?: unknown; host?: unknown } : null;
+        const displayName = typeof metadata?.displayName === 'string' ? metadata.displayName.trim() : '';
+        if (displayName) return displayName;
+        const host = typeof metadata?.host === 'string' ? metadata.host.trim() : '';
+        if (host) return host;
+        return machine?.id ?? null;
+    }, [activeSelectionMachineGroups.visibleMachineGroups]);
+
     const health = React.useMemo(() => {
         return resolveConnectionHealth({
             socketStatus: socketStatus.status,
@@ -103,5 +123,7 @@ export function useConnectionHealth() {
     return {
         ...health,
         ...presentation,
+        primaryMachineLabel,
+        endpointStatus: endpointConnectivity.status,
     };
 }

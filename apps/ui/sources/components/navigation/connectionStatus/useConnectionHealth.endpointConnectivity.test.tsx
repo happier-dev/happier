@@ -85,4 +85,25 @@ describe('useConnectionHealth (endpoint connectivity integration)', () => {
         expect(hook.getCurrent().statusLabelKey).toBe('status.actionRequired');
         expect(hook.getCurrent().machineLabelKey).toBe('status.online');
     });
+
+    it('exposes primaryMachineLabel when exactly one machine is visible', async () => {
+        endpointStatus = 'online';
+        socketStatus = 'connected';
+        hasSyncError = false;
+        machines = [
+            {
+                id: 'm1',
+                active: true,
+                activeAt: Date.now(),
+                revokedAt: null,
+                metadata: { host: 'mbp' },
+                daemonState: { status: 'running' },
+            },
+        ];
+
+        const { useConnectionHealth } = await import('./useConnectionHealth');
+        const hook = await renderHook(() => useConnectionHealth());
+
+        expect(hook.getCurrent().primaryMachineLabel).toBe('mbp');
+    });
 });

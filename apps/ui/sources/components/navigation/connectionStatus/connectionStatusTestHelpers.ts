@@ -46,7 +46,7 @@ export function installConnectionStatusCommonModuleMocks(
         });
     });
 
-    vi.mock('@/components/settings/server/hooks/useActiveSelectionMachineGroups', async () => {
+    vi.mock('@/components/settings/machines/hooks/useActiveSelectionMachineGroups', async () => {
         const activeOptions = connectionStatusModuleState.options;
         if (activeOptions.activeSelectionMachineGroups) {
             return await activeOptions.activeSelectionMachineGroups();

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import { t } from '@/text';
+import { t, type TranslationKeyNoParams } from '@/text';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -24,6 +24,7 @@ import { ConnectionTargetList } from '@/components/navigation/connection/Connect
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { Text } from '@/components/ui/text/Text';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
+import { resolveMachineConnectionSummary } from '@/components/navigation/connectionStatus/resolveMachineConnectionSummary';
 
 type Variant = 'sidebar' | 'header';
 
@@ -58,33 +59,77 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: 1,
         opacity: 0.9,
     },
+    popoverContent: {
+        paddingTop: 8,
+        paddingBottom: 6,
+    },
+    popoverHeader: {
+        paddingHorizontal: 16,
+        paddingBottom: 8,
+    },
     popoverTitle: {
         fontSize: 12,
         color: theme.colors.textSecondary,
         ...Typography.default('semiBold'),
-        marginBottom: 8,
-        paddingHorizontal: 16,
-        paddingTop: 6,
         textTransform: 'uppercase',
     },
-    popoverRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        gap: 12,
-        marginBottom: 6,
-        paddingHorizontal: 16,
+    popoverStatusList: {
+        paddingHorizontal: 12,
+        gap: 10,
     },
-    popoverLabel: {
+    statusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: 14,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderWidth: 1,
+        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.divider,
+    },
+    statusRowLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    statusRowIcon: {
+        width: 28,
+        height: 28,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: theme.colors.surface,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+    },
+    statusRowText: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    statusRowTitle: {
+        fontSize: 13,
+        color: theme.colors.text,
+        ...Typography.default('semiBold'),
+        lineHeight: 16,
+    },
+    statusRowSubtitle: {
         fontSize: 12,
         color: theme.colors.textSecondary,
         ...Typography.default(),
+        lineHeight: 16,
+        marginTop: 2,
     },
-    popoverValue: {
+    statusRowRight: {
+        marginLeft: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    statusRowStatusText: {
         fontSize: 12,
-        color: theme.colors.text,
-        ...Typography.default(),
-        flexShrink: 1,
-        textAlign: 'right',
+        ...Typography.default('semiBold'),
     },
 }));
 
@@ -96,6 +141,93 @@ function formatTime(ts: number | null): string {
         return '—';
     }
 }
+
+function resolveStatusPresentation(
+    theme: { colors: { status: Record<string, string> } },
+    status: 'connected' | 'connecting' | 'disconnected' | 'error' | 'action_required' | 'unknown',
+): { labelKey: TranslationKeyNoParams; color: string; dotColor: string } {
+    switch (status) {
+        case 'connected':
+            return { labelKey: 'status.connected', color: theme.colors.status.connected, dotColor: theme.colors.status.connected };
+        case 'connecting':
+            return { labelKey: 'status.connecting', color: theme.colors.status.connecting, dotColor: theme.colors.status.connecting };
+        case 'action_required':
+            return { labelKey: 'status.actionRequired', color: theme.colors.status.actionRequired, dotColor: theme.colors.status.actionRequired };
+        case 'error':
+            return { labelKey: 'status.error', color: theme.colors.status.error, dotColor: theme.colors.status.error };
+        case 'disconnected':
+            return { labelKey: 'status.disconnected', color: theme.colors.status.disconnected, dotColor: theme.colors.status.disconnected };
+        default:
+            return { labelKey: 'status.unknown', color: theme.colors.status.default, dotColor: theme.colors.status.default };
+    }
+}
+
+function resolveEndpointStatusKey(endpointStatus: unknown): 'connected' | 'connecting' | 'disconnected' | 'action_required' | 'unknown' {
+    switch (endpointStatus) {
+        case 'online':
+            return 'connected';
+        case 'connecting':
+            return 'connecting';
+        case 'auth_failed':
+            return 'action_required';
+        case 'offline':
+        case 'shutting_down':
+            return 'disconnected';
+        default:
+            return 'unknown';
+    }
+}
+
+function resolveSocketStatusKey(socketStatus: unknown): 'connected' | 'connecting' | 'disconnected' | 'error' | 'unknown' {
+    switch (socketStatus) {
+        case 'connected':
+            return 'connected';
+        case 'connecting':
+            return 'connecting';
+        case 'error':
+            return 'error';
+        case 'disconnected':
+            return 'disconnected';
+        default:
+            return 'unknown';
+    }
+}
+
+const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRow(props: Readonly<{
+    testID: string;
+    icon: React.ComponentProps<typeof Ionicons>['name'];
+    title: string;
+    subtitle: string;
+    statusLabel: string;
+    statusColor: string;
+    dotColor: string;
+}>) {
+    const styles = stylesheet;
+    return (
+        <View style={styles.statusRow} testID={props.testID}>
+            <View style={styles.statusRowLeft}>
+                <View style={styles.statusRowIcon}>
+                    <Ionicons name={props.icon} size={16} color={props.dotColor} />
+                </View>
+                <View style={styles.statusRowText}>
+                    <Text style={styles.statusRowTitle} numberOfLines={1}>
+                        {props.title}
+                    </Text>
+                    <Text style={styles.statusRowSubtitle} numberOfLines={1} ellipsizeMode="tail">
+                        {props.subtitle}
+                    </Text>
+                </View>
+            </View>
+            <View style={{ flex: 1 }} />
+            <View style={styles.statusRowRight}>
+                <StatusDot color={props.dotColor} size={6} isPulsing={false} />
+                <Text style={[styles.statusRowStatusText, { color: props.statusColor }]} numberOfLines={1}>
+                    {props.statusLabel}
+                </Text>
+            </View>
+        </View>
+    );
+});
 
 export const ConnectionStatusControl = React.memo(function ConnectionStatusControl(props: {
     variant: Variant;
@@ -336,53 +468,129 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                             keyboardShouldPersistTaps="always"
                             edgeFades={{ top: true, bottom: true, size: 18 }}
                                 edgeIndicators={true}
-                            >
-                                <View style={{ paddingTop: 8 }}>
+                        >
+                            <View style={styles.popoverContent}>
+                                <View style={styles.popoverHeader}>
                                     <Text style={styles.popoverTitle}>{t('connectionStatus.title')}</Text>
+                                </View>
 
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('profile.status')}</Text>
-                                        <Text style={styles.popoverValue}>{t(connectionHealth.statusLabelKey)}</Text>
-                                    </View>
+                                {(() => {
+                                    const endpointPresentation = resolveStatusPresentation(
+                                        theme,
+                                        resolveEndpointStatusKey((connectionHealth as any).endpointStatus),
+                                    );
+                                    const socketPresentation = resolveStatusPresentation(
+                                        theme,
+                                        resolveSocketStatusKey(socketStatus.status),
+                                    );
+                                    const machineCount = typeof (connectionHealth as any).machineCount === 'number'
+                                        ? (connectionHealth as any).machineCount as number
+                                        : 0;
+                                    const onlineCount = typeof (connectionHealth as any).onlineCount === 'number'
+                                        ? (connectionHealth as any).onlineCount as number
+                                        : 0;
+                                    const hasUnknownMachines = Boolean((connectionHealth as any).hasUnknownMachines);
+                                    const primaryMachineLabel =
+                                        typeof (connectionHealth as any).primaryMachineLabel === 'string'
+                                            ? (connectionHealth as any).primaryMachineLabel as string
+                                            : null;
+                                    const machineSummary = resolveMachineConnectionSummary({
+                                        machineCount,
+                                        onlineCount,
+                                        hasUnknownMachines,
+                                        primaryMachineLabel,
+                                    });
 
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('settings.machines')}</Text>
-                                        <Text style={styles.popoverValue}>{t(connectionHealth.machineLabelKey)}</Text>
-                                    </View>
+                                    const machineSubtitle = (() => {
+                                        switch (machineSummary.kind) {
+                                            case 'unknown':
+                                                return t('status.unknown');
+                                            case 'none':
+                                                return t('systemStatus.machines.none');
+                                            case 'single':
+                                                return machineSummary.label;
+                                            case 'multiple':
+                                                if (machineSummary.offlineCount === 0) {
+                                                    return `${machineSummary.onlineCount} ${t('status.online')}`;
+                                                }
+                                                return `${machineSummary.onlineCount} ${t('status.online')} · ${machineSummary.offlineCount} ${t('status.offline')}`;
+                                        }
+                                    })();
 
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.server')}</Text>
-                                        <Text style={styles.popoverValue} numberOfLines={2}>{toServerUrlDisplay(getServerUrl())}</Text>
-                                    </View>
+                                    const machinesPresentation = resolveStatusPresentation(
+                                        theme,
+                                        connectionHealth.kind === 'healthy'
+                                            ? 'connected'
+                                            : connectionHealth.kind === 'connecting'
+                                              ? 'connecting'
+                                              : connectionHealth.kind === 'server_error'
+                                                ? 'error'
+                                                : connectionHealth.kind === 'server_unreachable'
+                                                  ? 'disconnected'
+                                                  : connectionHealth.kind === 'auth_required'
+                                                    ? 'action_required'
+                                                    : connectionHealth.kind === 'no_machine'
+                                                      ? 'action_required'
+                                                      : connectionHealth.kind === 'machine_offline'
+                                                        ? 'action_required'
+                                                        : connectionHealth.kind === 'machine_not_ready'
+                                                          ? 'action_required'
+                                                          : 'unknown',
+                                    );
 
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.socket')}</Text>
-                                        <Text style={styles.popoverValue}>{socketStatus.status}</Text>
-                                    </View>
-
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.authenticated')}</Text>
-                                        <Text style={styles.popoverValue}>{auth.isAuthenticated ? t('common.yes') : t('common.no')}</Text>
-                                    </View>
-
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastSync')}</Text>
-                                        <Text style={styles.popoverValue}>{formatTime(lastSyncAt)}</Text>
-                                    </View>
-
-                                    {syncError?.nextRetryAt ? (
-                                        <View style={styles.popoverRow}>
-                                            <Text style={styles.popoverLabel}>{t('connectionStatus.labels.nextRetry')}</Text>
-                                            <Text style={styles.popoverValue}>{formatTime(syncError.nextRetryAt)}</Text>
+                                    return (
+                                        <View style={styles.popoverStatusList}>
+                                            <ConnectionPopoverStatusRow
+                                                testID="connection-popover-relay"
+                                                icon="server-outline"
+                                                title={t('systemStatus.server.activeServer')}
+                                                subtitle={toServerUrlDisplay(getServerUrl())}
+                                                statusLabel={t(endpointPresentation.labelKey)}
+                                                statusColor={endpointPresentation.color}
+                                                dotColor={endpointPresentation.dotColor}
+                                            />
+                                            <ConnectionPopoverStatusRow
+                                                testID="connection-popover-realtime"
+                                                icon="pulse-outline"
+                                                title={t('systemStatus.ui.realtime')}
+                                                subtitle={t('systemStatus.ui.socket')}
+                                                statusLabel={t(socketPresentation.labelKey)}
+                                                statusColor={socketPresentation.color}
+                                                dotColor={socketPresentation.dotColor}
+                                            />
+                                            <ConnectionPopoverStatusRow
+                                                testID="connection-popover-machines"
+                                                icon="laptop-outline"
+                                                title={t('settings.machines')}
+                                                subtitle={machineSubtitle}
+                                                statusLabel={t(connectionHealth.machineLabelKey)}
+                                                statusColor={machinesPresentation.color}
+                                                dotColor={machinesPresentation.dotColor}
+                                            />
                                         </View>
-                                    ) : null}
+                                    );
+                                })()}
 
+                                <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
+                                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                                            {t('connectionStatus.labels.lastSync')}
+                                        </Text>
+                                        <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default() }}>
+                                            {formatTime(lastSyncAt)}
+                                        </Text>
+                                    </View>
                                     {syncError ? (
-                                        <View style={styles.popoverRow}>
-                                            <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastError')}</Text>
-                                            <Text style={styles.popoverValue} numberOfLines={3}>{syncError.message}</Text>
+                                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginTop: 6 }}>
+                                            <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                                                {t('connectionStatus.labels.lastError')}
+                                            </Text>
+                                            <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default(), flexShrink: 1, textAlign: 'right' }} numberOfLines={2}>
+                                                {syncError.message}
+                                            </Text>
                                         </View>
                                     ) : null}
+                                </View>
 
                                 {serverTargets.length > 0 ? (
                                     <ConnectionTargetList
@@ -390,7 +598,6 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                         actions={targetActions}
                                     />
                                 ) : null}
-
                             </View>
                         </FloatingOverlay>
                     )}
