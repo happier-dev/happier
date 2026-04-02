@@ -179,16 +179,18 @@ const config = {
   // Note: this is intentionally scoped to the UI project root. If we ever commit bare native dirs
   // for the UI (e.g. switching to bare workflow), we should revisit this.
   ignorePaths: [
-    // Ignore the generated native directories (both the dir itself and its contents).
-    'android',
-    'android/**',
-    'ios',
-    'ios/**',
+    // Ignore the generated native directories. When `expo prebuild` generates a real native project
+    // structure under these paths, @expo/fingerprint will otherwise treat them as `bareNativeDir`
+    // sources and include them in the fingerprint (causing EAS/runtimeVersion mismatches).
+    //
+    // Keep these globs aligned with Expo's own guidance (expo-updates uses `android/**/*` / `ios/**/*`).
+    'android/**/*',
+    'ios/**/*',
 
     // Ignore libsodium build outputs which can vary by environment and should not affect the
     // native compatibility signal (the underlying package sources are still hashed).
-    'node_modules/@more-tech/react-native-libsodium/libsodium/build/**',
-    '**/node_modules/@more-tech/react-native-libsodium/libsodium/build/**',
+    'node_modules/@more-tech/react-native-libsodium/libsodium/build/**/*',
+    '**/node_modules/@more-tech/react-native-libsodium/libsodium/build/**/*',
   ],
   fileHookTransform: (source, chunk, isEndOfFile) => {
     const src = /** @type {FingerprintSource} */ (source ?? {});

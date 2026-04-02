@@ -200,8 +200,11 @@ test('UI fingerprint config defines ignorePaths for EAS-managed prebuild output 
   const ignorePaths = config.ignorePaths.map((p) => String(p));
 
   // Ignore the generated native directories (both the dir source and its contents).
-  assert.ok(ignorePaths.includes('android') || ignorePaths.includes('android/**'), 'Expected ignorePaths to ignore android');
-  assert.ok(ignorePaths.includes('ios') || ignorePaths.includes('ios/**'), 'Expected ignorePaths to ignore ios');
+  assert.ok(
+    ignorePaths.includes('android/**/*') || ignorePaths.includes('android/**'),
+    'Expected ignorePaths to ignore android prebuild output',
+  );
+  assert.ok(ignorePaths.includes('ios/**/*') || ignorePaths.includes('ios/**'), 'Expected ignorePaths to ignore ios prebuild output');
 
   // Ignore libsodium build outputs which can differ across environments (macOS vs Linux).
   assert.ok(
