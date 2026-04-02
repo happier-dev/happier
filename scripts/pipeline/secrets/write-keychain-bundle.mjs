@@ -2,6 +2,8 @@
 
 import { execFileSync } from 'node:child_process';
 
+import { assertSecurityCliAvailable } from './security-cli.mjs';
+
 /**
  * Writes (creates or updates) the Keychain bundle secret for the pipeline.
  *
@@ -13,9 +15,7 @@ import { execFileSync } from 'node:child_process';
  * @param {{ service: string; account?: string; bundle: Record<string, string> }} opts
  */
 export function writeKeychainBundle({ service, account, bundle }) {
-  if (process.platform !== 'darwin') {
-    throw new Error('Keychain secrets are only supported on macOS (darwin).');
-  }
+  assertSecurityCliAvailable();
 
   const svc = String(service ?? '').trim();
   if (!svc) {
@@ -40,4 +40,3 @@ export function writeKeychainBundle({ service, account, bundle }) {
     timeout: 30_000,
   });
 }
-

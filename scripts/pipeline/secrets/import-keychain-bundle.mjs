@@ -2,18 +2,11 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 import { parseDotenv } from '../env/parse-dotenv.mjs';
 import { readKeychainBundle } from './read-keychain-bundle.mjs';
+import { assertSecurityCliAvailable } from './security-cli.mjs';
 import { writeKeychainBundle } from './write-keychain-bundle.mjs';
-
-function assertSecurityCliAvailable() {
-  const res = spawnSync('security', [], { stdio: 'ignore' });
-  if (res.error && res.error.code === 'ENOENT') {
-    throw new Error('[pipeline] Keychain import requires the `security` CLI (available by default on macOS).');
-  }
-}
 
 /**
  * @param {unknown} err
