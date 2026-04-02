@@ -1,4 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,11 +25,26 @@ const LEGACY_SESSION_TRANSFER_RPC_TOKENS = [
 ] as const;
 
 async function listFilesRecursively(directory: string): Promise<string[]> {
-    const entries = await readdir(directory, { withFileTypes: true });
+    let entries: Dirent[];
+    try {
+        entries = await readdir(directory, { withFileTypes: true, encoding: 'utf8' });
+    } catch (error) {
+        const code = typeof error === 'object' && error && 'code' in error ? (error as any).code : null;
+        if (code === 'ENOENT') {
+            return [];
+        }
+        throw error;
+    }
     const results: string[] = [];
     for (const entry of entries) {
         const path = join(directory, entry.name);
         if (entry.isDirectory()) {
+            if (entry.name === 'node_modules') {
+                continue;
+            }
+            if (entry.name.includes('__sync_tmp__') || entry.name.includes('__sync_backup__')) {
+                continue;
+            }
             results.push(...(await listFilesRecursively(path)));
         } else {
             results.push(path);
