@@ -112,7 +112,7 @@ export async function createDeterministicArchive({ artifactPath, sourcePath, sou
     '--exclude=*/node_modules/@prisma/client/node_modules/*',
   ];
   if (_isGnuTar) {
-    execOrThrow('tar', [
+    await execTarWithRetry([
       '--sort=name',
       '--mtime=@0',
       '--owner=0',
@@ -127,7 +127,23 @@ export async function createDeterministicArchive({ artifactPath, sourcePath, sou
     ]);
     return;
   }
-  execOrThrow('tar', [...excludeArgs, '-czf', artifactPath, '-C', sourcePath, sourceName]);
+  await execTarWithRetry([...excludeArgs, '-czf', artifactPath, '-C', sourcePath, sourceName]);
+}
+
+async function execTarWithRetry(args) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      execOrThrow('tar', args);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt < 2 && message.includes('tar exited with status')) {
+        await delay(100 * (attempt + 1));
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 export async function writeChecksumsFile({ product, version, artifacts, outDir }) {
