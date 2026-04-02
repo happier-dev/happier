@@ -62,6 +62,63 @@ vi.mock('node:fs', async () => {
     };
 });
 
+describe('claudeLocal abort teardown', () => {
+    beforeEach(() => {
+        mockResolveClaudeCliPath.mockReturnValue('/usr/local/bin/claude');
+        mockIsClaudeCliJavaScriptFile.mockReturnValue(false);
+        vi.clearAllMocks();
+    });
+
+    it('sends SIGINT before escalating termination when the abort signal fires', async () => {
+        vi.useFakeTimers();
+
+        const abortController = new AbortController();
+        const onSessionFound = vi.fn();
+        const kill = vi.fn();
+
+        let exitHandler: ((code: number | null, signal: NodeJS.Signals | null) => void) | null = null;
+
+        mockSpawn.mockReturnValue({
+            stdio: [null, null, null, null],
+            on: vi.fn((event: string, callback: any) => {
+                if (event === 'exit') {
+                    exitHandler = callback;
+                }
+            }),
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            kill,
+            stdout: { on: vi.fn() },
+            stderr: { on: vi.fn() },
+            stdin: {
+                on: vi.fn(),
+                end: vi.fn(),
+            },
+        });
+
+        const runPromise = claudeLocal({
+            abort: abortController.signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+        });
+
+        abortController.abort();
+        await vi.runAllTimersAsync();
+
+        expect(kill).toHaveBeenCalled();
+        expect(kill.mock.calls[0]?.[0]).toBe('SIGINT');
+
+        if (!exitHandler) {
+            throw new Error('exit handler was not registered');
+        }
+
+        (exitHandler as unknown as (code: number | null, signal: NodeJS.Signals | null) => void)(null, 'SIGTERM');
+        await expect(runPromise).resolves.toBeDefined();
+    });
+});
+
 vi.mock('./utils/claudeCheckSession', () => ({
     claudeCheckSession: vi.fn(() => true) // Always return true (session exists)
 }));
