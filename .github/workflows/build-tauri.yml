@@ -110,7 +110,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # AppImage tooling (linuxdeploy/AppImageKit) is significantly more reliable on 22.04 than on ubuntu-latest.
+          - os: ubuntu-22.04
             platform_key: linux-x86_64
             tauri_target: ""
           - os: windows-latest
