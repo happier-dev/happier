@@ -98,6 +98,10 @@ function runExpoOtaUpdateWithStubbedCommands({
         ...process.env,
         PATH: `${stub.binDir}:${process.env.PATH ?? ''}`,
         EXPO_TOKEN: '',
+        // Keep the contract test hermetic: when SENTRY_AUTH_TOKEN is set in the outer environment
+        // (for example from Keychain-loaded pipeline secrets), ota-update will attempt a best-effort
+        // `npx sentry-expo-upload-sourcemaps` run which this stub intentionally rejects.
+        SENTRY_AUTH_TOKEN: '',
         ...extraEnv,
       },
       encoding: 'utf8',
