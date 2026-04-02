@@ -285,7 +285,7 @@ export const MetadataSchema = z.preprocess((value) => {
 
 export type Metadata = z.infer<typeof MetadataSchema>;
 
-export const AgentStateSchema = z.object({
+const AgentStateObjectSchema = z.object({
     controlledByUser: z.boolean().nullish(),
     localControl: z.object({
         attached: z.boolean().nullish(),
@@ -332,6 +332,17 @@ export const AgentStateSchema = z.object({
         permissionsInUiWhileLocal: z.boolean().optional(),
     }).nullish(),
 }).passthrough();
+
+export const AgentStateSchema = z.preprocess((value) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    try {
+        return JSON.parse(trimmed);
+    } catch {
+        return value;
+    }
+}, AgentStateObjectSchema);
 
 export type AgentState = z.infer<typeof AgentStateSchema>;
 
