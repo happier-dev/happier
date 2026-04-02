@@ -32,3 +32,17 @@ test('ui-mobile-release native_submit (cloud) disables waiting for EAS build com
   const src = readRepoFile('scripts/pipeline/run.mjs');
   assert.match(src, /native_submit[\s\S]+--wait/, 'expected ui-mobile-release native_submit to pass --wait to native-build');
 });
+
+test('expo-native-build supports overriding wait (so operators can schedule builds without blocking)', () => {
+  const src = readRepoFile('scripts/pipeline/run.mjs');
+  assert.match(
+    src,
+    /subcommand === 'expo-native-build'[\s\S]{0,1200}\bwait:\s*\{\s*type:\s*'string'/,
+    'expected expo-native-build to accept --wait',
+  );
+  assert.match(
+    src,
+    /subcommand === 'expo-native-build'[\s\S]{0,8000}['"]--wait['"]/,
+    'expected expo-native-build to forward --wait to native-build',
+  );
+});

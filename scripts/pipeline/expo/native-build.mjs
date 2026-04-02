@@ -175,6 +175,7 @@ function runCaptureWithHeartbeat(opts, cmd, args, extra) {
   const rawHeartbeatMs = Number.parseInt(String(process.env.HAPPIER_PIPELINE_HEARTBEAT_MS ?? ''), 10);
   const heartbeatMs = Number.isFinite(rawHeartbeatMs) && rawHeartbeatMs > 0 ? rawHeartbeatMs : 20_000;
   const heartbeatLabel = String(extra?.heartbeatLabel ?? `${cmd} process`);
+  const echoOutput = extra?.echoOutput !== false;
 
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -198,14 +199,14 @@ function runCaptureWithHeartbeat(opts, cmd, args, extra) {
       const text = String(chunk);
       stdout += text;
       lastOutputAt = Date.now();
-      process.stdout.write(text);
+      if (echoOutput) process.stdout.write(text);
     });
 
     child.stderr.on('data', (chunk) => {
       const text = String(chunk);
       stderr += text;
       lastOutputAt = Date.now();
-      process.stderr.write(text);
+      if (echoOutput) process.stderr.write(text);
     });
 
     child.on('error', (error) => {
@@ -389,26 +390,76 @@ function fetchLatestFinishedCloudBuildFingerprint({ opts, uiDir, easCliVersion, 
  *   easCliVersion: string;
  *   platform: string;
  *   profile: string;
+ *   fingerprintHash: string;
  *   env: Record<string, string>;
  * }} params
- * @returns {string}
+ * @returns {{ id: string; status: string } | null}
  */
-function generateCurrentProjectFingerprintHash({ opts, uiDir, easCliVersion, platform, profile, env }) {
-  const fpJson = run(
+function fetchLatestCloudBuildForFingerprint({ opts, uiDir, easCliVersion, platform, profile, fingerprintHash, env }) {
+  const hash = String(fingerprintHash ?? '').trim();
+  if (!hash) return null;
+
+  const listJson = run(
     opts,
     'npx',
     [
       '--yes',
       `eas-cli@${easCliVersion}`,
-      'fingerprint:generate',
+      'build:list',
       '--platform',
       platform,
       '--build-profile',
       profile,
+      '--fingerprint-hash',
+      hash,
+      '--limit',
+      '10',
       '--json',
       '--non-interactive',
     ],
-    { cwd: uiDir, env, stdio: 'pipe', timeoutMs: 10 * 60_000 },
+    { cwd: uiDir, env, stdio: 'pipe', timeoutMs: 5 * 60_000 },
+  ).trim();
+
+  const builds = normalizeBuilds(JSON.parse(listJson))
+    .filter((b) => b && typeof b === 'object')
+    .sort((a, b) => (getBuildCreatedAtMs(b) ?? 0) - (getBuildCreatedAtMs(a) ?? 0));
+  if (builds.length === 0) return null;
+
+  const latest = builds[0];
+  const id = getBuildId(latest);
+  const status = String(latest?.status ?? '').trim();
+  return id ? { id, status } : null;
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   platform: string;
+ *   profile: string;
+ *   env: Record<string, string>;
+ * }} params
+ * @returns {string}
+ */
+async function generateCurrentProjectFingerprintHash({ opts, uiDir, easCliVersion, platform, profile, env }) {
+  const fpJson = (
+    await runCaptureWithHeartbeat(
+      opts,
+      'npx',
+      [
+        '--yes',
+        `eas-cli@${easCliVersion}`,
+        'fingerprint:generate',
+        '--platform',
+        platform,
+        '--build-profile',
+        profile,
+        '--json',
+        '--non-interactive',
+      ],
+      { cwd: uiDir, env, timeoutMs: 10 * 60_000, heartbeatLabel: `Expo fingerprint (${platform})`, echoOutput: false },
+    )
   ).trim();
   if (!fpJson) return '';
   const parsed = JSON.parse(fpJson);
@@ -595,6 +646,14 @@ async function main() {
   }
   /** @type {'always' | 'if-changed'} */
   const fingerprintMode = fingerprintModeRaw;
+  if (buildMode === 'cloud' && fingerprintMode === 'if-changed' && !nonInteractive) {
+    fail(
+      [
+        "Fingerprint-gated cloud builds require non-interactive mode (so we can call 'eas fingerprint:generate' / 'eas build:list' with --json).",
+        "Fix: pass '--interactive false' (or run in CI) and ensure EXPO_TOKEN is set.",
+      ].join('\n'),
+    );
+  }
 
   // Some Expo config/plugins assume NODE_ENV is always set and fail hard when it's missing.
   // Ensure it's set for both cloud and local builds when the operator hasn't explicitly set it.
@@ -843,7 +902,7 @@ async function main() {
       const needed = [];
 
       for (const p of requestedPlatforms) {
-        const currentHash = generateCurrentProjectFingerprintHash({
+        const currentHash = await generateCurrentProjectFingerprintHash({
           opts,
           uiDir,
           easCliVersion,
@@ -851,6 +910,24 @@ async function main() {
           profile,
           env: easCommandEnv,
         });
+        const existing = fetchLatestCloudBuildForFingerprint({
+          opts,
+          uiDir,
+          easCliVersion,
+          platform: p,
+          profile,
+          fingerprintHash: currentHash,
+          env: easCommandEnv,
+        });
+        const existingStatus = String(existing?.status ?? '').trim();
+        const existingOk = Boolean(existing?.id) && existingStatus && existingStatus !== 'ERRORED' && existingStatus !== 'CANCELED';
+        if (existingOk) {
+          console.log(
+            `[pipeline] expo native fingerprint: platform=${p} current=${currentHash || '<missing>'} existingBuild=${existing?.id || '<missing>'} status=${existingStatus} changed=false`,
+          );
+          continue;
+        }
+
         const previous = fetchLatestFinishedCloudBuildFingerprint({
           opts,
           uiDir,
@@ -913,7 +990,9 @@ async function main() {
 
     builds = scheduled;
     if (!dryRun) {
-      writeJson(outPath, platform === 'all' ? builds : builds[0] ?? null);
+      // Contract: cloud builds always write an array (even for single-platform invocations)
+      // so downstream tooling can treat the file uniformly.
+      writeJson(outPath, builds);
     }
   } else {
     const scheduledAfterMs = Date.now();
@@ -972,7 +1051,9 @@ async function main() {
       return resolved;
     });
     if (!dryRun) {
-      writeJson(outPath, platform === 'all' ? builds : builds[0]);
+      // Contract: cloud builds always write an array (even for single-platform invocations)
+      // so downstream tooling can treat the file uniformly.
+      writeJson(outPath, builds);
     }
   }
 

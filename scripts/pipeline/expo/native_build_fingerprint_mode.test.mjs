@@ -20,5 +20,16 @@ test('native-build supports fingerprint-gated builds (if-changed)', () => {
   assert.match(src, /fingerprint:generate/, "expected native-build.mjs to invoke 'eas fingerprint:generate'");
   assert.match(src, /build:list/, "expected native-build.mjs to invoke 'eas build:list'");
   assert.match(src, /--status[\s\S]*finished/, "expected native-build.mjs to filter previous builds by status 'finished'");
-});
+  assert.match(
+    src,
+    /--fingerprint-hash/,
+    "expected native-build.mjs to detect already-scheduled builds via '--fingerprint-hash' to avoid duplicate builds",
+  );
 
+  // Fingerprint JSON output can be large; ensure we don't use execFileSync's default maxBuffer.
+  assert.match(
+    src,
+    /runCaptureWithHeartbeat[\s\S]+fingerprint:generate/,
+    "expected native-build.mjs to capture fingerprint JSON via the streaming runner (avoid ENOBUFS)",
+  );
+});

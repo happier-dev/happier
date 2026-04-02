@@ -158,6 +158,7 @@ jobs:
             --platform android \
             --profile dev-apk \
             --native-build-mode cloud \
+            --fingerprint-mode if-changed \
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
@@ -180,6 +181,7 @@ jobs:
             --platform ios \
             --profile dev \
             --native-build-mode cloud \
+            --fingerprint-mode if-changed \
             --build-json "/tmp/eas_build.ios.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \

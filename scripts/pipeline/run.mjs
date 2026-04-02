@@ -1982,6 +1982,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           interactive: { type: 'string', default: 'auto' },
           'eas-cli-version': { type: 'string', default: '' },
           'dump-view': { type: 'string', default: 'true' },
+          'fingerprint-mode': { type: 'string', default: 'always' },
+          wait: { type: 'string', default: '' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
           'keychain-service': { type: 'string', default: 'happier/pipeline' },
@@ -2025,6 +2027,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
       const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
       const dumpView = String(values['dump-view'] ?? '').trim();
+      const fingerprintModeRaw = String(values['fingerprint-mode'] ?? '').trim().toLowerCase() || 'always';
+      if (fingerprintModeRaw !== 'always' && fingerprintModeRaw !== 'if-changed') {
+        fail(`--fingerprint-mode must be 'always' or 'if-changed' (got: ${values['fingerprint-mode']})`);
+      }
+      const fingerprintMode = fingerprintModeRaw;
+      const waitRaw = String(values.wait ?? '').trim().toLowerCase();
+      if (waitRaw && waitRaw !== 'true' && waitRaw !== 'false') {
+        fail(`--wait must be 'true' or 'false' (got: ${values.wait})`);
+      }
       const buildMode = String(values['build-mode'] ?? '').trim();
       const localRuntime = String(values['local-runtime'] ?? '').trim();
       const artifactOut = String(values['artifact-out'] ?? '').trim();
@@ -2048,6 +2059,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           ...(interactive ? ['--interactive', interactive] : []),
           ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
           ...(dumpView ? ['--dump-view', dumpView] : []),
+          ...(fingerprintMode !== 'always' ? ['--fingerprint-mode', fingerprintMode] : []),
+          ...(waitRaw ? ['--wait', waitRaw] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
       });
@@ -2378,6 +2391,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         interactive: { type: 'string', default: 'auto' },
         'eas-cli-version': { type: 'string', default: '' },
         'dump-view': { type: 'string', default: 'true' },
+        'fingerprint-mode': { type: 'string', default: 'always' },
         'release-message': { type: 'string', default: '' },
         'ui-version-bump': { type: 'string', default: '' },
         'ui-version': { type: 'string', default: '' },
@@ -2434,6 +2448,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const interactive = String(values.interactive ?? '').trim();
     const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
     const dumpView = String(values['dump-view'] ?? '').trim();
+    const fingerprintModeRaw = String(values['fingerprint-mode'] ?? '').trim().toLowerCase() || 'always';
+    if (fingerprintModeRaw !== 'always' && fingerprintModeRaw !== 'if-changed') {
+      fail(`--fingerprint-mode must be 'always' or 'if-changed' (got: ${values['fingerprint-mode']})`);
+    }
+    /** @type {'always' | 'if-changed'} */
+    const fingerprintMode = fingerprintModeRaw;
     const releaseMessage = String(values['release-message'] ?? '').trim();
 
     const uiVersionBump = String(values['ui-version-bump'] ?? '').trim().toLowerCase();
@@ -2610,6 +2630,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               ...(interactive ? ['--interactive', interactive] : []),
               ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
               ...(dumpView ? ['--dump-view', dumpView] : []),
+              ...(fingerprintMode !== 'always' ? ['--fingerprint-mode', fingerprintMode] : []),
               ...(dryRun ? ['--dry-run'] : []),
             ],
           });
@@ -2632,13 +2653,51 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             ...(interactive ? ['--interactive', interactive] : []),
             ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
             ...(dumpView ? ['--dump-view', dumpView] : []),
+            ...(fingerprintMode !== 'always' ? ['--fingerprint-mode', fingerprintMode] : []),
             ...(dryRun ? ['--dry-run'] : []),
           ],
         });
       }
 
+      /** @type {{ android: boolean; ios: boolean; skipped: boolean }} */
+      const cloudBuildPresence = { android: false, ios: false, skipped: false };
+      if (nativeBuildMode === 'cloud' && !dryRun) {
+        const abs = path.isAbsolute(buildJson) ? buildJson : path.join(repoRoot, buildJson);
+        try {
+          if (abs && fs.existsSync(abs)) {
+            const parsed = JSON.parse(fs.readFileSync(abs, 'utf8'));
+            if (parsed && typeof parsed === 'object' && parsed.skipped === true) {
+              cloudBuildPresence.skipped = true;
+            } else {
+              const list = Array.isArray(parsed) ? parsed : [parsed];
+              for (const item of list) {
+                const platRaw = item?.platform ? String(item.platform).trim() : '';
+                const plat = platRaw.toLowerCase() === 'ios' || platRaw.toUpperCase() === 'IOS'
+                  ? 'ios'
+                  : platRaw.toLowerCase() === 'android' || platRaw.toUpperCase() === 'ANDROID'
+                    ? 'android'
+                    : platRaw.toLowerCase();
+                const id = item?.id ? String(item.id).trim() : '';
+                if (!id) continue;
+                if (plat === 'ios') cloudBuildPresence.ios = true;
+                if (plat === 'android') cloudBuildPresence.android = true;
+              }
+            }
+          }
+        } catch {
+          // If buildJson cannot be parsed, downstream steps will fail naturally.
+        }
+      }
+      if (!dryRun && cloudBuildPresence.skipped) {
+        console.log('[pipeline] ui-mobile release: skipped native build (fingerprint unchanged).');
+        return;
+      }
+
       let apkPath = '';
       if (shouldDownloadAndroidApk) {
+        if (!dryRun && nativeBuildMode === 'cloud' && !cloudBuildPresence.android) {
+          console.log('[pipeline] ui-mobile release: skipping APK download (no Android build was scheduled).');
+        } else {
         if (nativeBuildMode === 'local') {
           apkPath = localArtifactOutForPlatform('android', appVersion || '0.0.0');
           if (!apkPath.endsWith('.apk')) {
@@ -2672,9 +2731,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               profile,
             });
         }
+        }
       }
 
       if (shouldPublishApkRelease) {
+        if (!dryRun && nativeBuildMode === 'cloud' && !cloudBuildPresence.android) {
+          console.log('[pipeline] ui-mobile release: skipping APK GitHub release publish (no Android build was scheduled).');
+        } else {
         if (!apkPath.endsWith('.apk')) {
           fail('Android APK release publishing requires a downloaded or locally-built APK artifact.');
         }
@@ -2703,6 +2766,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           ...(dryRun ? ['--dry-run'] : []),
           ],
         });
+      }
       }
 
       if (action === 'native_submit') {
@@ -2768,6 +2832,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const toSubmit = platform === 'all' ? ['android', 'ios'] : [platform];
           for (const p of toSubmit) {
             const explicitId = p === 'ios' ? buildIds.ios : p === 'android' ? buildIds.android : '';
+            if (!explicitId) {
+              console.log(`[pipeline] ui-mobile release: skipping ${p} submit (no build id in build-json).`);
+              continue;
+            }
             runExpoSubmit({
               repoRoot,
               env: mergedEnv,

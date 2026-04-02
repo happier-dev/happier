@@ -145,8 +145,9 @@ test('expo native-build cloud mode can schedule interactively and resolve the cr
   }
 
   const parsed = JSON.parse(fs.readFileSync(outJson, 'utf8'));
-  assert.equal(parsed.id, 'new-build');
-  assert.equal(parsed.platform, 'android');
+  assert.equal(Array.isArray(parsed), true);
+  assert.equal(parsed[0]?.id, 'new-build');
+  assert.equal(parsed[0]?.platform, 'android');
 });
 
 test('expo native-build cloud mode fails closed when build:list does not contain a newly scheduled build', () => {
