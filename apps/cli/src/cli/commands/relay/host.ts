@@ -5,9 +5,11 @@ import { dirname, join } from 'node:path';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createOutputBuilder, ok } from '@happier-dev/cli-common/output';
-import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
+import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
 import { ensureSshAskpassScriptPath, SSH_PASSWORD_ENV } from '@/capabilities/systemTasks/ssh/sshAskpass';
+
+import { readKnownHostsTextSync, sshKeyscanSync, writeKnownHostsTextSync } from '@happier-dev/cli-common/ssh';
 
 import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
@@ -19,10 +21,13 @@ import {
   normalizeRemoteReleaseOs,
   buildSshTarget,
   parseSshTarget,
+  extractFirstScannedSshKnownHostLine,
+  resolveSshKnownHostTrust,
   type RelayRuntimeStatusSnapshot,
   type RelayRuntimeTaskParams,
   type SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
+import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
 type RelayHostStatusJson = Readonly<{
   installed: boolean;
@@ -140,10 +145,7 @@ function normalizeMode(raw: unknown): 'user' | 'system' {
 }
 
 function normalizeChannel(raw: unknown): 'stable' | 'preview' | 'dev' {
-  const value = String(raw ?? '').trim().toLowerCase();
-  if (value === 'preview') return 'preview';
-  if (value === 'dev') return 'dev';
-  return 'stable';
+  return normalizePublicReleaseRingLabel(raw) || 'stable';
 }
 
 function resolveTestFirstPartyPayloadOverride(): Readonly<{ payloadRoot: string; versionId: string }> | null {
@@ -320,6 +322,22 @@ function resolveKnownHostsMode(ssh: SystemTaskSshConnectionConfig): 'app' | 'sys
   return ssh.knownHostsPath ? 'app' : 'system';
 }
 
+function formatSshHostTrustMessage(params: Readonly<{
+  promptKind: 'ssh.trustHost' | 'ssh.replaceHostKey';
+  host: string;
+  keyType: string;
+  fingerprint: string;
+  existingFingerprint?: string;
+}>): string {
+  return [
+    params.promptKind === 'ssh.replaceHostKey' ? 'SSH host key has changed.' : 'Trust remote SSH host key?',
+    params.host ? `Host: ${params.host}` : '',
+    params.keyType ? `Key type: ${params.keyType}` : '',
+    params.fingerprint ? `Fingerprint: ${params.fingerprint}` : '',
+    params.existingFingerprint ? `Existing fingerprint: ${params.existingFingerprint}` : '',
+  ].filter(Boolean).join('\n');
+}
+
 function runCommandCapture(
   command: string,
   args: readonly string[],
@@ -333,7 +351,70 @@ function runCommandCapture(
   };
 }
 
-function buildSshRunner(ssh: SystemTaskSshConnectionConfig, password: string | null) {
+function resolveSshEndpointForKeyscan(params: Readonly<{
+  ssh: SystemTaskSshConnectionConfig;
+}>): Readonly<{ host: string; port?: number }> {
+  const parsedTarget = parseSshTarget(params.ssh.target);
+  const explicitPort = typeof params.ssh.port === 'number' && Number.isFinite(params.ssh.port) && params.ssh.port > 0
+    ? Math.floor(params.ssh.port)
+    : undefined;
+  const baselinePort = explicitPort;
+
+  const sshConfigFile = String(params.ssh.sshConfigFile ?? '').trim();
+  if (!sshConfigFile) {
+    return {
+      host: parsedTarget.host,
+      ...(typeof baselinePort === 'number' ? { port: baselinePort } : {}),
+    };
+  }
+
+  const result = spawnSync('ssh', ['-G', '-F', sshConfigFile, params.ssh.target], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if ((result.status ?? 1) !== 0) {
+    const stderr = String(result.stderr ?? '').trim();
+    const stdout = String(result.stdout ?? '').trim();
+    const detail = stderr || stdout;
+    throw new Error(detail ? `SSH config resolution failed: ${detail}` : 'SSH config resolution failed');
+  }
+
+  const values = new Map<string, string>();
+  for (const line of String(result.stdout ?? '').split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const splitIndex = trimmed.indexOf(' ');
+    if (splitIndex < 0) continue;
+    const key = trimmed.slice(0, splitIndex).trim().toLowerCase();
+    const value = trimmed.slice(splitIndex + 1).trim();
+    if (key && value) {
+      values.set(key, value);
+    }
+  }
+
+  const resolvedPort = Number(values.get('port') ?? '');
+  return {
+    host: values.get('hostname')?.trim() || parsedTarget.host,
+    ...(explicitPort
+      ? { port: explicitPort }
+      : (Number.isFinite(resolvedPort) && resolvedPort > 0
+          ? { port: Math.floor(resolvedPort) }
+          : (typeof baselinePort === 'number' ? { port: baselinePort } : {}))),
+  };
+}
+
+function buildSshRunner(
+  ssh: SystemTaskSshConnectionConfig,
+  password: string | null,
+  params: Readonly<{
+    assumeYes: boolean;
+    interactive: boolean;
+    promptInput: (prompt: string) => Promise<string>;
+  }>,
+) {
   const knownHostsMode = resolveKnownHostsMode(ssh);
   const ensureTrustedHostKey = () => {
     if (knownHostsMode !== 'app') return;
@@ -355,10 +436,82 @@ function buildSshRunner(ssh: SystemTaskSshConnectionConfig, password: string | n
     const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
     writeFileSync(ssh.knownHostsPath, `${existing}${suffix}${trustedHostKey}\n`, 'utf8');
   };
+
+  const ensureHostTrusted = (() => {
+    let resolved = false;
+    return async () => {
+      if (resolved) return;
+      if (knownHostsMode !== 'app') {
+        resolved = true;
+        return;
+      }
+      if (!ssh.knownHostsPath) {
+        throw new Error('knownHostsPath is required when using app-managed known hosts');
+      }
+      // If the caller supplied an explicit trusted host key, preserve the legacy behavior: write it
+      // and let OpenSSH validate it (no extra keyscan required).
+      if (ssh.trustedHostKey) {
+        ensureTrustedHostKey();
+        resolved = true;
+        return;
+      }
+
+      const parsedTarget = parseSshTarget(ssh.target);
+      const host = parsedTarget.host.trim();
+      if (!host) {
+        throw new Error('Missing required SSH host.');
+      }
+
+      const endpoint = resolveSshEndpointForKeyscan({ ssh });
+      const scannedOutput = sshKeyscanSync({
+        host: endpoint.host,
+        ...(typeof endpoint.port === 'number' ? { port: endpoint.port } : {}),
+        timeoutSec: 10,
+      });
+      const scanned = extractFirstScannedSshKnownHostLine(scannedOutput);
+      const trust = resolveSshKnownHostTrust({
+        knownHostsText: readKnownHostsTextSync(ssh.knownHostsPath),
+        scannedHostKeyLine: scanned.line,
+      });
+
+      if (trust.status === 'rejected') {
+        throw new Error(trust.message);
+      }
+
+      if (trust.status === 'prompt') {
+        const message = formatSshHostTrustMessage({
+          promptKind: trust.promptKind,
+          host: trust.scanned.host,
+          keyType: trust.scanned.keyType,
+          fingerprint: trust.scanned.fingerprint,
+          ...(trust.existingFingerprint ? { existingFingerprint: trust.existingFingerprint } : {}),
+        });
+
+        if (!params.assumeYes) {
+          if (!params.interactive) {
+            throw new Error('Non-interactive mode requires --yes for SSH host trust prompts.');
+          }
+          const answer = await params.promptInput(`${message}\nTrust this host key? [y/N]: `);
+          if (!/^y(?:es)?$/i.test(answer.trim())) {
+            throw new Error('SSH host trust was declined.');
+          }
+        }
+
+        writeKnownHostsTextSync(ssh.knownHostsPath, trust.nextKnownHostsText);
+        resolved = true;
+        return;
+      }
+
+      // Trusted (either unchanged or already present).
+      writeKnownHostsTextSync(ssh.knownHostsPath, trust.nextKnownHostsText);
+      resolved = true;
+    };
+  })();
+
   return {
     knownHostsMode,
     runRemoteText: async (remoteCommand: string) => {
-      ensureTrustedHostKey();
+      await ensureHostTrusted();
       const env = ssh.auth === 'password'
         ? {
             ...process.env,
@@ -371,7 +524,7 @@ function buildSshRunner(ssh: SystemTaskSshConnectionConfig, password: string | n
       return runCommandCapture('ssh', buildSshArgs({ ssh, knownHostsMode, remoteCommand }), env);
     },
     copyLocalDirectoryToRemote: async (localPath: string, remotePath: string) => {
-      ensureTrustedHostKey();
+      await ensureHostTrusted();
       const env = ssh.auth === 'password'
         ? {
             ...process.env,
@@ -459,6 +612,8 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   if (!op) {
     throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--ssh-user <user> --ssh-host <host>] [--ssh-auth agent|keyfile|password] [--identity-file <path>] [--ssh-port <port>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--yes] [--json]');
   }
+
+  const interactive = isInteractiveTerminal();
 
   let rest = args.slice(1);
   const channelFlag = takeFlagValue(rest, '--channel');
@@ -572,7 +727,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     const fromEnv = String(process.env[SSH_PASSWORD_ENV] ?? '').trim();
     if (fromEnv) {
       sshPassword = fromEnv;
-    } else if (isInteractiveTerminal()) {
+    } else if (interactive) {
       sshPassword = (await promptSecret('SSH password: ')).trim();
     }
     if (!sshPassword) {
@@ -583,11 +738,12 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   const taskParams = resolveRelayRuntimeTaskParams({ channel, mode, ssh });
   const env = envFlag.values.length > 0 ? parseEnvOverrides(envFlag.values) : null;
   const serverBinaryOverride = String(serverBinaryFlag.value ?? '').trim() || null;
+  const assumeYes = yesFlag.present;
 
   if (op === 'status') {
     const engine = ssh
       ? (() => {
-          const runner = buildSshRunner(ssh, sshPassword);
+          const runner = buildSshRunner(ssh, sshPassword, { assumeYes, interactive, promptInput });
           const resolveRemoteReleaseTarget = createMemoizedResolveRemoteReleaseTarget(runner);
           return createRelayHostEngine({
             resolveRemoteReleaseTarget: async () => await resolveRemoteReleaseTarget(),
@@ -641,7 +797,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     };
     const result = ssh
       ? (() => {
-          const runner = buildSshRunner(ssh, sshPassword);
+          const runner = buildSshRunner(ssh, sshPassword, { assumeYes, interactive, promptInput });
           const resolveRemoteReleaseTarget = createMemoizedResolveRemoteReleaseTarget(runner);
           const override = resolveTestFirstPartyPayloadOverride();
           const engine = createRelayHostEngine({
@@ -691,19 +847,22 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
                 versionId: override.versionId,
                 cleanup: async () => undefined,
               }
-            : await prepareFirstPartyComponentPayloadFromGitHubRelease({
-                componentId: 'happier-server',
-                channel: channel === 'dev' ? 'publicdev' : channel,
-              });
+            : serverBinaryOverride
+                ? null
+                : await prepareFirstPartyComponentPayloadFromGitHubRelease({
+                    componentId: 'happier-server',
+                    channel: channel === 'dev' ? 'publicdev' : channel,
+                  });
           try {
-            const serverBinaryPath = serverBinaryOverride || resolveLocalServerBinaryFromPayloadRoot(prepared.payloadRoot);
+            const serverBinaryPath = serverBinaryOverride
+              || (prepared ? resolveLocalServerBinaryFromPayloadRoot(prepared.payloadRoot) : null);
             if (!serverBinaryPath) {
               throw new Error('Unable to resolve happier-server binary from prepared payload.');
             }
 
             const engine = createLocalRelayHostEngine({
               resolveLocalInstallVersion: async ({ serverBinaryPath: candidate }) => {
-                if (candidate === serverBinaryPath) return prepared.versionId || null;
+                if (prepared && candidate === serverBinaryPath) return prepared.versionId || null;
                 return null;
               },
             });
@@ -713,7 +872,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
               selfHostRelayBinaryOverride: serverBinaryPath,
             });
           } finally {
-            await prepared.cleanup();
+            await prepared?.cleanup?.();
           }
         })();
 
@@ -738,7 +897,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   if (op === 'start' || op === 'stop' || op === 'restart' || op === 'uninstall') {
     const engine = ssh
       ? (() => {
-          const runner = buildSshRunner(ssh, sshPassword);
+          const runner = buildSshRunner(ssh, sshPassword, { assumeYes, interactive, promptInput });
           const resolveRemoteReleaseTarget = createMemoizedResolveRemoteReleaseTarget(runner);
           return createRelayHostEngine({
             resolveRemoteReleaseTarget: async () => await resolveRemoteReleaseTarget(),

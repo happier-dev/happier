@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -261,6 +261,66 @@ describe('happier relay access --json', () => {
         }
     });
 
+    it('enforces 0600 permissions on the persisted local relay access config file (even when it already exists)', async () => {
+        if (process.platform === 'win32') {
+            return;
+        }
+
+        const configDir = join(home, 'relay', 'access');
+        mkdirSync(configDir, { recursive: true, mode: 0o700 });
+        const configPath = join(configDir, 'local.json');
+        writeFileSync(configPath, '{}\n', 'utf8');
+        chmodSync(configPath, 0o644);
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await commandRegistry.relay({
+                args: ['relay', 'access', 'configure', '--provider', 'lan', '--url', 'https://relay.lan.test', '--json'],
+                rawArgv: ['node', 'happier', 'relay', 'access', 'configure', '--provider', 'lan', '--url', 'https://relay.lan.test', '--json'],
+                terminalRuntime: null,
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            const mode = statSync(configPath).mode & 0o777;
+            expect(mode).toBe(0o600);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+        }
+    });
+
+    it('accepts --yes for relay access configure and persists localOnly config', async () => {
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await commandRegistry.relay({
+                args: ['relay', 'access', 'configure', '--provider', 'localOnly', '--yes', '--json'],
+                rawArgv: ['node', 'happier', 'relay', 'access', 'configure', '--provider', 'localOnly', '--yes', '--json'],
+                terminalRuntime: null,
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_access_configure');
+            expect(parsed.data?.configured).toBe(true);
+            expect(parsed.data?.providerId).toBe('localOnly');
+            expect(parsed.data?.state).toBe('disabled');
+            expect(parsed.data?.shareUrl).toBe(null);
+            expect(parsed.data?.config).toEqual({ providerId: 'localOnly' });
+
+            const persistedPath = join(home, 'relay', 'access', 'local.json');
+            const persisted = JSON.parse(readFileSync(persistedPath, 'utf8'));
+            expect(persisted).toEqual({ providerId: 'localOnly' });
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+        }
+    });
+
     it('disables relay access by removing the persisted config file', async () => {
         const persistedPath = join(home, 'relay', 'access', 'local.json');
         mkdirSync(join(home, 'relay', 'access'), { recursive: true });
@@ -273,6 +333,35 @@ describe('happier relay access --json', () => {
             await commandRegistry.relay({
                 args: ['relay', 'access', 'disable', '--json'],
                 rawArgv: ['node', 'happier', 'relay', 'access', 'disable', '--json'],
+                terminalRuntime: null,
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_access_disable');
+            expect(parsed.data?.configured).toBe(false);
+            expect(parsed.data?.state).toBe('disabled');
+            expect(process.exitCode).toBe(0);
+
+            expect(() => readFileSync(persistedPath, 'utf8')).toThrow();
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+        }
+    });
+
+    it('accepts --yes for relay access disable', async () => {
+        const persistedPath = join(home, 'relay', 'access', 'local.json');
+        mkdirSync(join(home, 'relay', 'access'), { recursive: true });
+        writeFileSync(persistedPath, JSON.stringify({ providerId: 'localOnly' }), 'utf8');
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await commandRegistry.relay({
+                args: ['relay', 'access', 'disable', '--yes', '--json'],
+                rawArgv: ['node', 'happier', 'relay', 'access', 'disable', '--yes', '--json'],
                 terminalRuntime: null,
             });
 
@@ -581,6 +670,72 @@ describe('happier relay access --json', () => {
         }
     });
 
+    it('trusts the SSH host key (app-managed known_hosts) before reading relay access config when --known-hosts-path and --yes are provided', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+            ],
+        });
+
+        const knownHostsRoot = mkdtempSync(join(tmpdir(), 'happier-relay-access-known-hosts-'));
+        const knownHostsPath = join(knownHostsRoot, 'known_hosts');
+
+        const keyscanPath = join(fakeSsh.binDir, 'ssh-keyscan');
+        writeFileSync(
+            keyscanPath,
+            '#!/usr/bin/env bash\nset -eu\necho \"example.test ssh-ed25519 AAAANEW\"\n',
+            'utf8',
+        );
+        chmodSync(keyscanPath, 0o755);
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: [
+                        'relay',
+                        'access',
+                        'status',
+                        '--ssh',
+                        'dev@example.test',
+                        '--known-hosts-path',
+                        knownHostsPath,
+                        '--yes',
+                        '--json',
+                    ],
+                    rawArgv: [
+                        'node',
+                        'happier',
+                        'relay',
+                        'access',
+                        'status',
+                        '--ssh',
+                        'dev@example.test',
+                        '--known-hosts-path',
+                        knownHostsPath,
+                        '--yes',
+                        '--json',
+                    ],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+
+            expect(readFileSync(knownHostsPath, 'utf8')).toContain('example.test ssh-ed25519 AAAANEW');
+            const invocations = fakeSsh.readInvocations();
+            expect(invocations[0]?.join(' ')).toContain(`UserKnownHostsFile=${knownHostsPath}`);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+            rmSync(knownHostsRoot, { recursive: true, force: true });
+        }
+    });
+
     it('supports password auth when reading relay access config over ssh', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
@@ -660,6 +815,131 @@ describe('happier relay access --json', () => {
         }
     });
 
+    it('supports --ssh-config-file when scanning host keys for relay access status over ssh', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: 'hostname 127.0.0.1\nport 53621\n' },
+                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+            ],
+        });
+
+        const knownHostsRoot = mkdtempSync(join(tmpdir(), 'happier-relay-access-known-hosts-'));
+        const knownHostsPath = join(knownHostsRoot, 'known_hosts');
+
+        const keyscanPath = join(fakeSsh.binDir, 'ssh-keyscan');
+        writeFileSync(
+            keyscanPath,
+            `#!/usr/bin/env bash
+set -eu
+if [[ "$*" != *"-p 53621"* ]]; then
+  echo "missing expected port flag" >&2
+  exit 1
+fi
+if [[ "$*" != *"127.0.0.1"* ]]; then
+  echo "missing expected host" >&2
+  exit 1
+fi
+if [[ "$*" == *"lima-alias"* ]]; then
+  echo "unexpected alias host in keyscan args" >&2
+  exit 1
+fi
+echo "[127.0.0.1]:53621 ssh-ed25519 AAAATESTKEY"
+`,
+            'utf8',
+        );
+        chmodSync(keyscanPath, 0o755);
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: [
+                        'relay',
+                        'access',
+                        'status',
+                        '--ssh',
+                        'dev@lima-alias',
+                        '--ssh-config-file',
+                        '/tmp/ssh.config',
+                        '--known-hosts-path',
+                        knownHostsPath,
+                        '--yes',
+                        '--json',
+                    ],
+                    rawArgv: [
+                        'node',
+                        'happier',
+                        'relay',
+                        'access',
+                        'status',
+                        '--ssh',
+                        'dev@lima-alias',
+                        '--ssh-config-file',
+                        '/tmp/ssh.config',
+                        '--known-hosts-path',
+                        knownHostsPath,
+                        '--yes',
+                        '--json',
+                    ],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_access_status');
+            expect(parsed.data?.configured).toBe(true);
+            expect(parsed.data?.providerId).toBe('lan');
+            expect(parsed.data?.shareUrl).toBe('https://relay.remote.lan.test');
+
+            const invocations = fakeSsh.readInvocations().map((args) => args.join(' '));
+            expect(invocations.some((invocation) => invocation.includes('-G'))).toBe(true);
+            expect(invocations.some((invocation) => invocation.includes('-F /tmp/ssh.config'))).toBe(true);
+            expect(process.exitCode).toBe(0);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+            rmSync(knownHostsRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('supports --ssh-port when reading relay access config over ssh', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ providerId: 'lan', url: 'https://relay.remote.lan.test' })}\n` },
+            ],
+        });
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: ['relay', 'access', 'status', '--ssh', 'dev@example.test', '--ssh-port', '2222', '--json'],
+                    rawArgv: ['node', 'happier', 'relay', 'access', 'status', '--ssh', 'dev@example.test', '--ssh-port', '2222', '--json'],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+
+            const invocations = fakeSsh.readInvocations();
+            expect(invocations.length).toBe(1);
+            const argv = invocations[0] ?? [];
+            expect(argv.includes('-p')).toBe(true);
+            expect(argv.includes('2222')).toBe(true);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+        }
+    });
+
     it('supports configuring relay access over ssh', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [{ status: 0, stdout: '' }],
@@ -713,9 +993,62 @@ describe('happier relay access --json', () => {
             const args = invocations[0] ?? [];
             expect(args.includes('dev@example.test')).toBe(true);
             expect(args.join(' ')).toContain('relay/access/local.json');
+            expect(args.join(' ')).toContain('mkdir -p ~/.happier/relay/access');
+            expect(args.join(' ')).toContain('chmod 600 ~/.happier/relay/access/local.json');
         } finally {
             output.restore();
             process.exitCode = prevExitCode;
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('does not forward local tailscale bin overrides into ssh relay access status', async () => {
+        const fakeSsh = createFakeSsh({
+            outputs: [
+                { status: 0, stdout: `${JSON.stringify({ providerId: 'tailscaleServe' })}\n` },
+                { status: 0, stdout: '/usr/bin/tailscale\n' },
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({
+                        BackendState: 'NeedsLogin',
+                        AuthURL: 'https://login.tailscale.com/a/example',
+                        Self: {},
+                        CurrentTailnet: {},
+                        TailscaleIPs: [],
+                    })}\n`,
+                },
+            ],
+        });
+
+        const envScope = createEnvKeyScope(['HAPPIER_STACK_TAILSCALE_BIN']);
+        envScope.patch({ HAPPIER_STACK_TAILSCALE_BIN: '/Applications/Tailscale.app/Contents/MacOS/tailscale' });
+
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await commandRegistry.relay({
+                    args: ['relay', 'access', 'status', '--ssh', 'dev@example.test', '--json'],
+                    rawArgv: ['node', 'happier', 'relay', 'access', 'status', '--ssh', 'dev@example.test', '--json'],
+                    terminalRuntime: null,
+                });
+            });
+
+            const parsed = JSON.parse(output.logs.join('\n').trim());
+            expect(parsed.ok).toBe(true);
+            expect(parsed.kind).toBe('relay_access_status');
+            expect(parsed.data?.providerId).toBe('tailscaleServe');
+            expect(parsed.data?.state).toBe('needs_auth');
+
+            const invocations = fakeSsh.readInvocations().map((argv) => argv.join(' '));
+            expect(invocations.some((invocation) => invocation.includes('command -v'))).toBe(true);
+            expect(invocations.some((invocation) => invocation.includes('tailscale'))).toBe(true);
+            expect(invocations.some((invocation) => invocation.includes('/Applications/Tailscale.app/Contents/MacOS'))).toBe(false);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+            envScope.restore();
             fakeSsh.cleanup();
         }
     });

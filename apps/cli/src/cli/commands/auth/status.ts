@@ -4,10 +4,12 @@ import { readCredentials, readSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient';
 import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
+import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { definitionList, fail, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 
 export async function handleAuthStatus(argv: string[] = []): Promise<void> {
-  const json = wantsJson(argv);
+  const resolvedArgv = await applyServerSelectionFromArgs(argv);
+  const json = wantsJson(resolvedArgv);
   const credentials = await readCredentials();
   const settings = await readSettings();
 

@@ -25,7 +25,7 @@ describe('CLI help output standardization', () => {
       expect(text).toContain('happier relay');
       expect(text).toContain('--ssh-user <user>');
       expect(text).toContain('--ssh-host <host>');
-      expect(text).toContain('happier relay access <status|configure|disable>');
+      expect(text).toContain('happier relay access status');
       expect(text).toContain('--ssh-auth agent|keyfile|password');
       expect(text).toContain('--upstream-url <url>');
       expect(text).toContain('happier providers');

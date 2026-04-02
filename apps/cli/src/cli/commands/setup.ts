@@ -11,7 +11,7 @@ import {
     type HelpPageOptions,
 } from '@happier-dev/cli-common/output';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
-import { readCredentials } from '@/persistence';
+import { readCredentials, readSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 
@@ -152,6 +152,7 @@ async function runHappyCliStep(args: readonly string[], opts?: Readonly<{ env?: 
 
 type SetupCommandDeps = Readonly<{
     readCredentialsFn?: typeof readCredentials;
+    readSettingsFn?: typeof readSettings;
     isInteractiveTerminalFn?: typeof isInteractiveTerminal;
     promptInputFn?: typeof promptInput;
     runHappyCliStepFn?: typeof runHappyCliStep;
@@ -188,6 +189,23 @@ function ensurePersistWhenServerUrlIsProvided(args: readonly string[]): string[]
     const hasServerUrl = args.some((a) => a === '--server-url' || String(a).startsWith('--server-url='));
     const hasPersistMode = args.includes('--persist') || args.includes('--no-persist');
     if (!hasServerUrl || hasPersistMode) return [...args];
+
+    const currentServerUrl = normalizeRelayUrl(configuration.serverUrl);
+    for (let index = 0; index < args.length; index += 1) {
+        const current = String(args[index] ?? '');
+        if (current === '--server-url') {
+            const next = String(args[index + 1] ?? '');
+            if (next && !next.startsWith('--') && normalizeRelayUrl(next) === currentServerUrl) {
+                return [...args];
+            }
+        }
+        if (current.startsWith('--server-url=')) {
+            const next = current.slice('--server-url='.length);
+            if (next && normalizeRelayUrl(next) === currentServerUrl) {
+                return [...args];
+            }
+        }
+    }
     const copied = [...args];
     for (let index = 0; index < copied.length; index += 1) {
         const current = String(copied[index] ?? '');
@@ -214,8 +232,33 @@ function readExplicitRelayUrl(args: readonly string[]): string | null {
     );
 }
 
+function stripSetupRelaySelectionArgs(args: readonly string[]): string[] {
+    const out: string[] = [];
+    for (let index = 0; index < args.length; index += 1) {
+        const current = String(args[index] ?? '');
+        if (current === '--relay-url' || current === '--server-url' || current === '--local-server-url' || current === '--webapp-url') {
+            index += 1;
+            continue;
+        }
+        if (current === '--persist' || current === '--no-persist') {
+            continue;
+        }
+        if (
+            current.startsWith('--relay-url=')
+            || current.startsWith('--server-url=')
+            || current.startsWith('--local-server-url=')
+            || current.startsWith('--webapp-url=')
+        ) {
+            continue;
+        }
+        out.push(current);
+    }
+    return out;
+}
+
 export async function handleSetupCommand(args: string[], deps: SetupCommandDeps = {}): Promise<void> {
     const readCredentialsFn = deps.readCredentialsFn ?? readCredentials;
+    const readSettingsFn = deps.readSettingsFn ?? readSettings;
     const isInteractiveTerminalFn = deps.isInteractiveTerminalFn ?? isInteractiveTerminal;
     const promptInputFn = deps.promptInputFn ?? promptInput;
     const runHappyCliStepFn = deps.runHappyCliStepFn ?? runHappyCliStep;
@@ -236,8 +279,26 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
 
     const argsForRun = planMode ? args.slice(1) : args;
     const explicitRelayUrl = readExplicitRelayUrl(argsForRun);
-    let argsAfterServerSelection = ensurePersistWhenServerUrlIsProvided(mapRelayUrlToServerSelectionArgs(argsForRun));
-    argsAfterServerSelection = await applyServerSelectionFromArgsFn(argsAfterServerSelection);
+    const currentRelayUrl = normalizeRelayUrl(configuration.serverUrl);
+    const explicitRelayUrlMatchesCurrent = explicitRelayUrl != null && normalizeRelayUrl(explicitRelayUrl) === currentRelayUrl;
+    const hasRelaySelectionOverrides =
+        argsForRun.some((arg) => {
+            const value = String(arg ?? '');
+            return (
+                value === '--server'
+                || value.startsWith('--server=')
+                || value === '--local-server-url'
+                || value.startsWith('--local-server-url=')
+                || value === '--webapp-url'
+                || value.startsWith('--webapp-url=')
+            );
+        });
+
+    let argsAfterServerSelection = stripSetupRelaySelectionArgs(argsForRun);
+    if (!explicitRelayUrlMatchesCurrent || hasRelaySelectionOverrides) {
+        argsAfterServerSelection = ensurePersistWhenServerUrlIsProvided(mapRelayUrlToServerSelectionArgs(argsForRun));
+        argsAfterServerSelection = await applyServerSelectionFromArgsFn(argsAfterServerSelection);
+    }
 
     const relayUrl = normalizeRelayUrl(explicitRelayUrl ?? configuration.serverUrl);
 
@@ -247,7 +308,10 @@ export async function handleSetupCommand(args: string[], deps: SetupCommandDeps 
     const { present: yesFlag } = takeFlag(remaining, '--yes');
 
     const credentials = await readCredentialsFn().catch(() => null);
-    const includeAuth = credentials == null;
+    const settings = await readSettingsFn().catch(() => null);
+    const machineId = settings?.machineId;
+    const machineRegistered = typeof machineId === 'string' && machineId.trim().length > 0;
+    const includeAuth = credentials == null || !machineRegistered;
 
     const plan = buildSetupPlan({
         relayUrl,

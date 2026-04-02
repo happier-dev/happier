@@ -5,9 +5,9 @@ export function showMachineHelp(): void {
     title: 'happier machine',
     subtitle: 'Set up remote machines (SSH)',
     usage: [
-      { label: 'happier machine setup --ssh <user@host> [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]', description: 'Bootstrap a remote machine' },
+      { label: 'happier machine setup --ssh <user@host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]', description: 'Bootstrap a remote machine' },
       { label: 'happier machine setup --ssh-user <user> --ssh-host <host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>]', description: 'Bootstrap a remote machine with split SSH fields' },
-      { label: 'happier machine setup --ssh <user@host> [--service-mode <user|none>] [--install-relay-runtime] [--relay-runtime-mode <user|system>] [--require-local-approval] [--yes] [--json] [--preview|--dev|--channel stable|preview|dev]', description: 'Bootstrap + install the relay runtime and daemon' },
+      { label: 'happier machine setup --ssh <user@host> [--ssh-port <number>] [--ssh-auth=agent|keyfile|password] [--identity-file <path>] [--ssh-config-file <path>] [--known-hosts-path <path>] [--trusted-host-key <line>] [--service-mode <user|none>] [--install-relay-runtime] [--relay-runtime-mode <user|system>] [--require-local-approval] [--yes] [--json] [--preview|--dev|--channel stable|preview|dev]', description: 'Bootstrap + install the relay runtime and daemon' },
       { label: 'happier machine setup --server-url <url> [--local-server-url <url>] --ssh <user@host> [...]', description: 'Bootstrap a remote machine against a specific Relay profile' },
     ],
     notes: [

@@ -239,6 +239,64 @@ describe('handleMachineCommand', () => {
     expect(output).toContain('happier relay set https://relay.remote.example.test --use');
   });
 
+  it('does not suggest switching to a loopback relay URL after installing a remote relay runtime', async () => {
+    const result: SystemTaskResult = {
+      protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+      taskId: 'task-loopback',
+      ok: true,
+      data: {
+        machineId: 'machine-loopback',
+        relayRuntime: {
+          relayUrl: 'http://127.0.0.1:53388',
+          mode: 'user',
+        },
+      },
+    };
+
+    const poll = vi.fn()
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result: null,
+        pendingPrompt: null,
+      })
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result,
+        pendingPrompt: null,
+      });
+
+    await handleMachineCommand(
+      ['setup', '--ssh', 'dev@example.test', '--install-relay-runtime'],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start: vi.fn(async () => ({ taskId: 'task-loopback' })),
+          poll,
+          respond: vi.fn(async () => undefined),
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => {
+          throw new Error('prompt should not be used');
+        },
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
+        isInteractiveTerminal: () => false,
+        sleep: async () => undefined,
+      },
+    );
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('Remote relay URL: http://127.0.0.1:53388');
+    expect(output).not.toContain('happier relay set http://127.0.0.1:53388 --use');
+    expect(output.toLowerCase()).toContain('remote machine');
+  });
+
   it('supports password-based SSH auth and answers the password prompt securely', async () => {
     const respond = vi.fn(async () => undefined);
     const promptSecret = vi.fn(async () => 'super-secret');
@@ -312,6 +370,87 @@ describe('handleMachineCommand', () => {
     expect(promptSecret).toHaveBeenCalled();
     expect(respond).toHaveBeenCalledWith({
       taskId: 'task-password',
+      answer: {
+        password: 'super-secret',
+      },
+    });
+  });
+
+  it('accepts --ssh-port with legacy --ssh target syntax', async () => {
+    const respond = vi.fn(async () => undefined);
+    const promptSecret = vi.fn(async () => 'super-secret');
+    const start = vi.fn(async () => ({ taskId: 'task-ssh-port' }));
+    const poll = vi.fn()
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result: null,
+        pendingPrompt: {
+          kind: 'ssh.password',
+          data: {
+            target: 'dev@example.test',
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        events: [],
+        nextCursor: 1,
+        result: {
+          protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+          taskId: 'task-ssh-port',
+          ok: true,
+          data: {
+            machineId: 'machine-ssh-port',
+          },
+        } satisfies SystemTaskResult,
+        pendingPrompt: null,
+      });
+
+    await handleMachineCommand(
+      [
+        'setup',
+        '--ssh',
+        'dev@example.test',
+        '--ssh-port',
+        '2222',
+        '--ssh-auth=password',
+      ],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start,
+          poll,
+          respond,
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => {
+          throw new Error('promptInput should not be used for SSH password auth');
+        },
+        promptSecret,
+        isInteractiveTerminal: () => true,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(start).toHaveBeenCalledWith({
+      spec: {
+        protocolVersion: 1,
+        kind: 'remote.ssh.bootstrapMachine.v1',
+        params: expect.objectContaining({
+          ssh: expect.objectContaining({
+            target: 'dev@example.test',
+            port: 2222,
+            auth: 'password',
+          }),
+        }),
+      },
+    });
+    expect(promptSecret).toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith({
+      taskId: 'task-ssh-port',
       answer: {
         password: 'super-secret',
       },
@@ -542,6 +681,99 @@ describe('handleMachineCommand', () => {
       answer: { trusted: true },
     });
     expect(logSpy.mock.calls.flat().join('\n')).toContain('Remote machine ready.');
+  });
+
+  it('auto-answers prompts in --yes mode even when the runner does not surface pendingPrompt', async () => {
+    const respond = vi.fn(async () => {
+      responded = true;
+    });
+    let responded = false;
+    let pollCount = 0;
+
+    const promptEvent: SystemTaskEvent = {
+      protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+      taskId: 'task-1',
+      tsMs: 1,
+      type: 'prompt',
+      stepId: 'ssh.hostTrust',
+      message: 'Trust this SSH host?',
+      data: {
+        kind: 'ssh.trustHost',
+        host: '[127.0.0.1]:56494',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:example',
+      },
+    };
+
+    const result: SystemTaskResult = {
+      protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+      taskId: 'task-1',
+      ok: true,
+      data: {},
+    };
+
+    const poll = vi.fn(async () => {
+      pollCount += 1;
+      if (pollCount === 1) {
+        return {
+          events: [promptEvent],
+          nextCursor: 1,
+          result: null,
+          pendingPrompt: null,
+        };
+      }
+
+      if (responded) {
+        return {
+          events: [],
+          nextCursor: 1,
+          result,
+          pendingPrompt: null,
+        };
+      }
+
+      return {
+        events: [],
+        nextCursor: 1,
+        result: null,
+        pendingPrompt: null,
+      };
+    });
+
+    await handleMachineCommand(
+      ['setup', '--ssh', 'dev@example.test', '--yes', '--json'],
+      {
+        applyServerSelectionFromArgs: async (args) => args,
+        createRunner: () => ({
+          start: vi.fn(async () => ({ taskId: 'task-1' })),
+          poll,
+          respond,
+        }),
+        readRelaySelection: () => ({
+          relayUrl: 'https://relay.example.test',
+          webappUrl: 'https://app.example.test',
+        }),
+        promptInput: async () => {
+          throw new Error('prompt should not be used');
+        },
+        promptSecret: async () => {
+          throw new Error('promptSecret should not be used');
+        },
+        isInteractiveTerminal: () => false,
+        sleep: async () => {
+          if (pollCount > 3) {
+            throw new Error('loop guard: prompt was not answered');
+          }
+        },
+      },
+    );
+
+    expect(respond).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      answer: { trusted: true },
+    });
+    expect(logSpy.mock.calls.map((call) => call[0])).toContain(JSON.stringify(promptEvent));
+    expect(logSpy.mock.calls.map((call) => call[0])).toContain(JSON.stringify(result));
   });
 
   it('fails closed in non-interactive mode without --yes when a prompt is required', async () => {

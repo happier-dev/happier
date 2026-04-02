@@ -1,7 +1,7 @@
 import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { cmd, createOutputBuilder, errorFrame, ok } from '@happier-dev/cli-common/output';
+import { cmd, createOutputBuilder, errorFrame, ok, warn } from '@happier-dev/cli-common/output';
 import { buildSshTarget, parseSshTarget } from '@happier-dev/cli-common/systemTasks';
 import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
@@ -9,6 +9,7 @@ import { configuration } from '@/configuration';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
+import { resolvePublicReleaseRingLabelForId } from '@happier-dev/release-runtime/releaseRings';
 import type {
   SystemTaskEvent,
   SystemTaskJsonObject,
@@ -129,14 +130,30 @@ function normalizeSshAuth(raw: string | null): 'agent' | 'keyfile' | 'password' 
   throw new Error(`Unsupported SSH auth mode: ${raw}`);
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = String(hostname ?? '').trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized === 'localhost'
+    || normalized === '127.0.0.1'
+    || normalized === '0.0.0.0'
+    || normalized === '::1';
+}
+
+function isLoopbackUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return isLoopbackHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function normalizeTaskChannel(args: readonly string[]): 'stable' | 'preview' | 'dev' {
   const ring = resolvePublicReleaseRingIdFromCliArgs({
     args,
     invokedPath: process.argv[1] ?? '',
   });
-  if (ring === 'preview') return 'preview';
-  if (ring === 'publicdev') return 'dev';
-  return 'stable';
+  return resolvePublicReleaseRingLabelForId(ring);
 }
 
 function buildMachineSetupSpec(params: Readonly<{
@@ -167,8 +184,8 @@ function buildMachineSetupSpec(params: Readonly<{
   if (!ssh.value && !sshHost.value) {
     throw new Error('Missing required flag: --ssh <user@host> or --ssh-host <host>.');
   }
-  if (ssh.value && (sshUser.value || sshHost.value || sshPort.value)) {
-    throw new Error('Do not combine --ssh with --ssh-user/--ssh-host/--ssh-port.');
+  if (ssh.value && (sshUser.value || sshHost.value)) {
+    throw new Error('Do not combine --ssh with --ssh-user/--ssh-host.');
   }
   const parsedLegacyTarget = parseSshTarget(ssh.value ?? '');
   const parsedHostTarget = parseSshTarget(sshHost.value ?? '');
@@ -375,6 +392,7 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
   const { taskId } = await runner.start({ spec });
   let cursor = 0;
   let lastPromptMessage = '';
+  let lastPromptEnvelopeFromEvents: Readonly<{ kind: string; data: SystemTaskJsonObject }> | null = null;
 
   while (true) {
     const snapshot = await runner.poll({
@@ -382,23 +400,40 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
       cursor,
     });
     cursor = snapshot.nextCursor;
+    lastPromptEnvelopeFromEvents = null;
 
     for (const event of snapshot.events) {
-      if (json) {
-        console.log(JSON.stringify(event));
-        continue;
-      }
       if (event.type === 'prompt') {
         lastPromptMessage = event.message ?? '';
+        if (event.data && typeof event.data === 'object' && !Array.isArray(event.data)) {
+          const kind = typeof (event.data as SystemTaskJsonObject).kind === 'string'
+            ? String((event.data as SystemTaskJsonObject).kind).trim()
+            : '';
+          if (kind) {
+            lastPromptEnvelopeFromEvents = {
+              kind,
+              data: event.data as SystemTaskJsonObject,
+            };
+          }
+        }
+        if (json) {
+          console.log(JSON.stringify(event));
+        }
+        continue;
+      }
+
+      if (json) {
+        console.log(JSON.stringify(event));
         continue;
       }
       printHumanEvent(event);
     }
 
-    if (snapshot.pendingPrompt) {
-      const promptMessage = formatPromptMessage(snapshot.pendingPrompt, lastPromptMessage);
+    const pendingPrompt = snapshot.pendingPrompt ?? lastPromptEnvelopeFromEvents;
+    if (pendingPrompt) {
+      const promptMessage = formatPromptMessage(pendingPrompt, lastPromptMessage);
       const answer = await resolvePromptAnswer({
-        prompt: snapshot.pendingPrompt,
+        prompt: pendingPrompt,
         interactive: deps.isInteractiveTerminal() && !json,
         assumeYes: yes.present,
         promptInput: deps.promptInput,
@@ -442,13 +477,20 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
       if (relayRuntimeUrl) {
         details.push({ label: 'Remote relay URL', value: relayRuntimeUrl });
       }
+      const relayRuntimeIsLoopback = relayRuntimeUrl ? isLoopbackUrl(relayRuntimeUrl) : false;
       const out = createOutputBuilder();
       out.line(ok('Remote machine ready.'));
       if (details.length > 0) {
         out.definitionList(details, { indent: '  ' });
       }
       if (relayRuntimeUrl) {
-        out.line(`  Switch this computer to it with: ${cmd(`happier relay set ${relayRuntimeUrl} --use`)}`);
+        if (relayRuntimeIsLoopback) {
+          out.blank();
+          out.line(warn('The remote relay URL is a loopback address and is only reachable from the remote machine.'));
+          out.line('  Set up remote access (Tailscale/Cloudflare/reverse proxy) before switching other devices to it.');
+        } else {
+          out.line(`  Switch this computer to it with: ${cmd(`happier relay set ${relayRuntimeUrl} --use`)}`);
+        }
       }
       console.log(out.render());
       return;

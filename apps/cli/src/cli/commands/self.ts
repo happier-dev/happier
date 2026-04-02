@@ -19,7 +19,12 @@ import {
   writeUpdateCache,
 } from '@happier-dev/cli-common/update';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
-import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import {
+  normalizePublicReleaseRingId,
+  resolveCliInvokerNameForPublicRing,
+  resolvePublicReleaseRingLabelForId,
+  type PublicReleaseRingId,
+} from '@happier-dev/release-runtime/releaseRings';
 import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
 import {
   resolveCliBinaryAssetBundleFromReleaseAssets,
@@ -119,6 +124,10 @@ export function detectInstallSource(path: string): 'npm' | 'binary' {
   return 'binary';
 }
 
+export function resolveSelfUpdateCommandForRing(ring: SelfChannel): string {
+  return `${resolveCliInvokerNameForPublicRing(ring)} self update`;
+}
+
 function resolveBinaryUpdateRepo(env: NodeJS.ProcessEnv): string {
   const raw = String(env.HAPPIER_GITHUB_REPO ?? '').trim();
   return raw || 'happier-dev/happier';
@@ -155,18 +164,14 @@ function npmUpgradeCommand(params: Readonly<{ packageName: string; channel: Self
   return `npm install -g ${pkg}@${resolveSelfNpmDistTag(params.channel)}`;
 }
 
-function resolvePublicReleaseRingSuffix(ring: SelfChannel): 'stable' | 'preview' | 'dev' {
-  return ring === 'publicdev' ? 'dev' : ring;
-}
-
 function updateCachePath(channel: SelfChannel): string {
-  const suffix = resolvePublicReleaseRingSuffix(channel);
+  const suffix = resolvePublicReleaseRingLabelForId(channel);
   const fileName = suffix === 'stable' ? 'update.json' : `update.${suffix}.json`;
   return join(configuration.happyHomeDir, 'cache', fileName);
 }
 
 function runtimeDir(channel: SelfChannel): string {
-  const suffix = resolvePublicReleaseRingSuffix(channel);
+  const suffix = resolvePublicReleaseRingLabelForId(channel);
   return suffix === 'stable'
     ? join(configuration.happyHomeDir, 'runtime')
     : join(configuration.happyHomeDir, `runtime.${suffix}`);
@@ -215,7 +220,7 @@ async function cmdCheck(argv: string[]): Promise<void> {
 
     if (updateAvailable) {
       console.log(chalk.yellow(`Update available: ${current ?? 'current'} → ${latest}`));
-      console.log(chalk.gray('Run:'), chalk.cyan('happier self update'));
+      console.log(chalk.gray('Run:'), chalk.cyan(resolveSelfUpdateCommandForRing(channel)));
       return;
     }
     console.log(chalk.green('Up to date.'));

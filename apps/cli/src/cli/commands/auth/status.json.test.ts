@@ -98,4 +98,50 @@ describe('happier auth status --json', () => {
       process.exitCode = prevExitCode;
     }
   });
+
+  it('honors --server-url passed after the subcommand (server selection) when resolving credentials', async () => {
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const extendedEnvKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL'] as const;
+    const extendedScope = createEnvKeyScope(extendedEnvKeys);
+    try {
+      await withTempDir('happier-auth-status-json-server-url-', async (home) => {
+        const output = captureConsoleText();
+        try {
+          extendedScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'http://example.invalid' });
+          reloadConfiguration();
+
+          const machineKey = new Uint8Array(32).fill(9);
+
+          extendedScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'https://api.happier.dev' });
+          reloadConfiguration();
+          await writeCredentialsDataKey({
+            token: 'token_super_secret',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKey),
+            machineKey,
+          });
+
+          extendedScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'http://example.invalid' });
+          reloadConfiguration();
+
+          await handleAuthCommand(['status', '--json', '--server-url', 'https://api.happier.dev']);
+
+          const raw = output.text().trim();
+          const parsed = JSON.parse(raw) as { ok: boolean; kind: string; data?: { authenticated?: boolean; token?: string } };
+          expect(parsed.ok).toBe(true);
+          expect(parsed.kind).toBe('auth_status');
+          expect(parsed.data?.authenticated).toBe(true);
+          expect(parsed.data?.token).toBeUndefined();
+          expect(raw).not.toContain('token_super_secret');
+          expect(process.exitCode).toBe(0);
+        } finally {
+          output.restore();
+        }
+      });
+    } finally {
+      extendedScope.restore();
+      reloadConfiguration();
+      process.exitCode = prevExitCode;
+    }
+  });
 });

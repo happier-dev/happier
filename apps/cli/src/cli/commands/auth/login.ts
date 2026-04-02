@@ -7,9 +7,15 @@ import { logger } from '@/ui/logger';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { createOutputBuilder, definitionList, errorFrame, ok, warn } from '@happier-dev/cli-common/output';
 
+import { showAuthHelp } from './help';
 import { resolveAuthMethodFlag } from './methodFlag';
 
 export async function handleAuthLogin(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    showAuthHelp();
+    return;
+  }
+
   args = await applyServerSelectionFromArgs(args);
 
   const forceAuth = args.includes('--force') || args.includes('-f');

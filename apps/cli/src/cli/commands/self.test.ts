@@ -5,6 +5,7 @@ import {
   detectInstallSource,
   packageJsonPathForNodeModules,
   parseSelfChannel,
+  resolveSelfUpdateCommandForRing,
 } from './self';
 
 describe('self command helpers', () => {
@@ -70,5 +71,11 @@ describe('self command helpers', () => {
   it('detects binary install source from standalone executable paths', () => {
     expect(detectInstallSource('/usr/local/bin/happier')).toBe('binary');
     expect(detectInstallSource('/opt/happier/bin/happier')).toBe('binary');
+  });
+
+  it('resolves the correct self update invoker name for each public ring', () => {
+    expect(resolveSelfUpdateCommandForRing('stable')).toBe('happier self update');
+    expect(resolveSelfUpdateCommandForRing('preview')).toBe('hprev self update');
+    expect(resolveSelfUpdateCommandForRing('publicdev')).toBe('hdev self update');
   });
 });

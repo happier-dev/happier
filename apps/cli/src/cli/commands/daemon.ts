@@ -172,6 +172,45 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     process.exit(0);
   }
 
+  if (daemonSubcommand === 'restart') {
+    if (args.includes('--all')) {
+      console.error(errorFrame('Error:', ['`happier daemon restart --all` is not supported yet.']));
+      process.exit(1);
+    }
+
+    const stopSessions = args.includes('--kill-sessions');
+    try {
+      await stopDaemon({ stopSessions });
+    } catch {
+      // best-effort; restart should still attempt to start even if the daemon wasn't running
+    }
+
+    const child = await spawnDetachedDaemonStartSync();
+    child.unref();
+
+    const timeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS', 5000);
+    const pollMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_POLL_MS', 100);
+    const started = await waitForDaemonRunningWithinBudget({
+      isRunning: () => checkIfDaemonRunningAndCleanupStaleState(),
+      timeoutMs,
+      pollMs,
+    });
+
+    if (started) {
+      console.log(ok('Daemon restarted successfully'));
+      console.log(`  ${kv('Server:', configuration.serverUrl)}`);
+      console.log(`  ${kv('Server ID:', configuration.activeServerId)}`);
+      process.exit(0);
+    }
+
+    console.error(errorFrame('Failed to restart daemon', []));
+    const latestDaemonLog = await getLatestDaemonLog().catch(() => null);
+    if (latestDaemonLog?.path) {
+      console.error(`  ${kv('Latest daemon log:', latestDaemonLog.path)}`);
+    }
+    process.exit(1);
+  }
+
   if (daemonSubcommand === 'status') {
       if (args.includes('--json')) {
       if (args.includes('--all')) {
@@ -293,6 +332,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     '',
     sectionTitle('Usage:'),
     `  ${cmd('happier daemon start')}                 Start the daemon (detached)`,
+    `  ${cmd('happier daemon restart')}               Restart the daemon (stop → start)`,
     `  ${cmd('happier daemon stop')}                  Stop the daemon (sessions stay alive)`,
     `  ${cmd('happier daemon stop --kill-sessions')}  Stop the daemon and its tracked sessions`,
     `  ${cmd('happier daemon stop --all')}            Stop daemons for all configured servers`,
