@@ -23,6 +23,15 @@ const inboxState = vi.hoisted(() => ({
     hasContent: false,
 }));
 
+const socketStatusState = vi.hoisted(() => ({
+    status: 'connected' as 'connected' | 'connecting' | 'disconnected' | 'error',
+    lastError: null as string | null,
+}));
+
+const syncErrorState = vi.hoisted(() => ({
+    value: null as null | { message: string; retryable?: boolean; kind?: string; at?: number },
+}));
+
 installNavigationShellCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -56,10 +65,10 @@ installNavigationShellCommonModuleMocks({
     storage: async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {
-            useSocketStatus: () => ({ status: 'connected', lastError: null }),
+            useSocketStatus: () => ({ status: socketStatusState.status, lastError: socketStatusState.lastError }),
             useFriendRequests: () => friendRequestsState.items,
             useSetting: () => false,
-            useSyncError: () => null,
+            useSyncError: () => syncErrorState.value as any,
             useRealtimeStatus: () => 'disconnected',
         });
     },
@@ -256,6 +265,9 @@ describe('SidebarView header automations button', () => {
         featureEnabledState.voice = false;
         friendRequestsState.items = [];
         inboxState.hasContent = false;
+        socketStatusState.status = 'connected';
+        socketStatusState.lastError = null;
+        syncErrorState.value = null;
     });
 
     it('navigates to home when logo is pressed', async () => {
@@ -352,6 +364,27 @@ describe('SidebarView header automations button', () => {
             maxWidth: '100%',
             minWidth: 0,
         });
+    });
+
+    it('does not surface raw socket errors in the sidebar banner', async () => {
+        socketStatusState.status = 'error';
+        socketStatusState.lastError = 'xhr poll error';
+
+        const { SidebarView } = await import('./SidebarView');
+        const screen = await renderScreen(<SidebarView sidebarWidthPx={600} />);
+
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'xhr poll error')).toBeUndefined();
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'status.error')).toBeTruthy();
+    });
+
+    it('does not surface raw socket poll errors when they arrive as syncError messages', async () => {
+        syncErrorState.value = { message: 'xhr poll error', retryable: true, kind: 'unknown', at: Date.now() };
+
+        const { SidebarView } = await import('./SidebarView');
+        const screen = await renderScreen(<SidebarView sidebarWidthPx={600} />);
+
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'xhr poll error')).toBeUndefined();
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Connection error')).toBeTruthy();
     });
 
     it('shows the header icons inline when the sidebar is wide enough', async () => {

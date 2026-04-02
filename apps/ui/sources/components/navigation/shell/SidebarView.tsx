@@ -25,6 +25,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/resolveSocketErrorClassification';
 import { SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -269,6 +270,10 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
         }
     })();
 
+    const visibleSyncErrorMessage = syncError?.message
+        ? resolveSocketErrorClassification(syncError.message).message
+        : null;
+
     const voiceEnabled = useFeatureEnabled('voice');
     const environmentBadge = resolveVisibleAppEnvironmentBadge({
         showEnvironmentBadge,
@@ -486,8 +491,7 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                 {(syncError || socketStatus.status === 'error' || socketStatus.status === 'disconnected') && (
                     <View style={styles.banner}>
                         <Text style={styles.bannerText} numberOfLines={2}>
-                            {syncError?.message
-                                ?? socketStatus.lastError
+                            {visibleSyncErrorMessage
                                 ?? (socketStatus.status === 'disconnected' ? t('status.disconnected') : t('status.error'))}
                         </Text>
                         {syncError?.kind === 'auth' ? (
