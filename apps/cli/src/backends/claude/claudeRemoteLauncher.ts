@@ -34,6 +34,7 @@ import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPush
 import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { getProjectPath } from './utils/path';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
@@ -269,12 +270,15 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 await turnInterrupt();
             } catch (error) {
                 logger.debug('[remote]: turn interrupt failed; falling back to process abort', { error });
+                session.client.sendAgentMessage('claude', { type: 'turn_aborted', id: randomUUID() });
                 await abort();
                 return;
             }
+            session.client.sendAgentMessage('claude', { type: 'turn_aborted', id: randomUUID() });
             session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
             return;
         }
+        session.client.sendAgentMessage('claude', { type: 'turn_aborted', id: randomUUID() });
         await abort();
     }
 
@@ -284,6 +288,13 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             exitReason = 'switch';
         }
         await ensureSessionInfoBeforeSwitch({ session });
+        if (turnInterrupt) {
+            try {
+                await turnInterrupt();
+            } catch (error) {
+                logger.debug('[remote]: turn interrupt failed during switch (non-fatal); continuing with abort', { error });
+            }
+        }
         await abort();
     }
 
@@ -745,6 +756,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             }
 
             previousSessionId = session.sessionId;
+            const sessionIdAtLaunchStart = session.sessionId;
             const controller = new AbortController();
             abortController = controller;
             abortFuture = new Future<void>();
@@ -963,6 +975,17 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     if (controller.signal.aborted) {
                         session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
                     }
+                    // Claude Code sometimes exits in a non-resumable state after a force-abort. If this abort was
+                    // explicitly user-initiated (not a mode switch), clear the stored session ID so the next launch
+                    // doesn't get stuck trying to resume a dead session.
+                    if (
+                        controller.signal.aborted
+                        && session.wasUserAbortRequestedRecently(15_000)
+                        && !exitReason
+                    ) {
+                        forceNewSession = true;
+                        session.clearSessionId();
+                    }
                     continue;
                 } else {
                     const exitCode = resolveClaudeCodeExitCode(e);
@@ -974,6 +997,30 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             ? `${base}\n\n${tailText}`
                             : base;
                         session.client.sendSessionEvent({ type: 'message', message });
+                        if (
+                            controller.signal.aborted
+                            && session.wasUserAbortRequestedRecently(15_000)
+                            && !exitReason
+                        ) {
+                            forceNewSession = true;
+                            session.clearSessionId();
+                        } else if (
+                            // If we attempted to resume an existing Claude Code session and it immediately exited with
+                            // code 1 (common for non-resumable sessions after interrupts/crashes), avoid getting stuck
+                            // in a permanent loop where we keep passing `--resume <dead-session-id>` forever.
+                            //
+                            // In that case, clear the stored session ID so the next launch creates a fresh Claude Code
+                            // session. This is a best-effort recovery path: if the underlying session is resumable, a
+                            // non-aborted run will keep the session id stable and this will not trigger.
+                            !controller.signal.aborted
+                            && typeof sessionIdAtLaunchStart === 'string'
+                            && sessionIdAtLaunchStart.trim().length > 0
+                            && session.sessionId === sessionIdAtLaunchStart
+                            && !exitReason
+                        ) {
+                            forceNewSession = true;
+                            session.clearSessionId();
+                        }
                         waitForMessageBeforeNextLaunch = true;
                         continue;
                     } else {

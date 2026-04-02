@@ -11,6 +11,7 @@ import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/disc
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import { resolvePermissionIntentFromMetadataSnapshot, resolveSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
+import { repairClaudeSessionJsonlToolResults } from '@/backends/claude/utils/repairClaudeSessionJsonlToolResults';
 import { configuration } from '@/configuration';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { resolveClaudeCodeExperimentalEnvOverlay } from './spawn/resolveClaudeCodeExperimentalEnvOverlay';
@@ -165,6 +166,11 @@ export async function claudeLocalLauncher(
             // Abort
             await ensureSessionInfoBeforeSwitch({ session });
             await abort();
+            await repairClaudeSessionJsonlToolResults({
+                transcriptPath: session.transcriptPath,
+                cwd: session.path,
+                sessionId: session.sessionId,
+            });
         }
 
         async function doSwitch() {
@@ -179,6 +185,11 @@ export async function claudeLocalLauncher(
             // Abort
             await ensureSessionInfoBeforeSwitch({ session });
             await abort();
+            await repairClaudeSessionJsonlToolResults({
+                transcriptPath: session.transcriptPath,
+                cwd: session.path,
+                sessionId: session.sessionId,
+            });
         }
 
         // When to abort

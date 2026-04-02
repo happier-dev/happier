@@ -12,6 +12,33 @@ async function writeJsonl(path: string, entries: unknown[]): Promise<void> {
 }
 
 describe('repairClaudeSessionJsonlToolResults', () => {
+  it('truncates trailing partial JSON so transcript stays valid JSONL', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-claude-repair-jsonl-truncate-'));
+    const transcriptPath = join(baseDir, 'sess_1.jsonl');
+
+    const validEntry = {
+      type: 'assistant',
+      uuid: 'asst_1',
+      isSidechain: false,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+    };
+
+    await mkdir(dirname(transcriptPath), { recursive: true });
+    await writeFile(transcriptPath, `${JSON.stringify(validEntry)}\n{\"type\":\"assistant\",`, 'utf8');
+
+    await repairClaudeSessionJsonlToolResults({
+      transcriptPath,
+      cwd: baseDir,
+      sessionId: 'sess_1',
+    });
+
+    const contents = await readFile(transcriptPath, 'utf8');
+    expect(contents.endsWith('\n')).toBe(true);
+    const lines = contents.trimEnd().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toEqual(validEntry);
+  });
+
   it('appends missing tool_result blocks for interrupted tool_use entries', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-claude-repair-jsonl-'));
     const transcriptPath = join(baseDir, 'sess_1.jsonl');
@@ -127,4 +154,3 @@ describe('repairClaudeSessionJsonlToolResults', () => {
     expect(contents).not.toMatch(/\"tool_use_id\":\"toolu_1\"/);
   });
 });
-

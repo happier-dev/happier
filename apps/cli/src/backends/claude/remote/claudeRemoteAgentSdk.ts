@@ -886,21 +886,29 @@ export async function claudeRemoteAgentSdk(opts: {
             return existing;
         };
 
-        const flushBufferedStreamEventAssistantMessage = (incoming: unknown) => {
-            const flushOne = (pending: {
-                sessionId: string;
-                parentToolUseId: string | null;
-                text: string;
-                thinking: string;
-                lastUuid: string | null;
-            }) => {
-                const pendingAssistantText = pending.text.trim();
-                const pendingThinkingText = pending.thinking.trim();
-                if (pendingAssistantText.length === 0 && pendingThinkingText.length === 0) return;
+	        const flushBufferedStreamEventAssistantMessage = (incoming: unknown) => {
+	            const flushOne = (pending: {
+	                sessionId: string;
+	                parentToolUseId: string | null;
+	                text: string;
+	                thinking: string;
+	                lastUuid: string | null;
+	            }) => {
+	                const pendingAssistantText = pending.text.trim();
+	                const pendingThinkingText = pending.thinking.trim();
+	                if (pendingAssistantText.length === 0 && pendingThinkingText.length === 0) return;
 
-                const incomingAssistant = extractAssistantAndThinkingTextFromAssistantMessage(incoming);
-                const incomingAssistantText = incomingAssistant.assistantText?.trim() ?? '';
-                const incomingThinkingText = incomingAssistant.thinkingText?.trim() ?? '';
+	                // When we have a streamed transcript writer, it is the single source of truth for assistant/thinking
+	                // content. Stream-event buffering exists only to support legacy flows (no streamed writer) and to
+	                // help with tool-block reconstruction. Never emit buffered assistant content in writer mode.
+	                if (streamedTranscriptWriter) {
+	                    markAssistantTextPublished(pendingAssistantText);
+	                    return;
+	                }
+	
+	                const incomingAssistant = extractAssistantAndThinkingTextFromAssistantMessage(incoming);
+	                const incomingAssistantText = incomingAssistant.assistantText?.trim() ?? '';
+	                const incomingThinkingText = incomingAssistant.thinkingText?.trim() ?? '';
 
                 if (
                     incoming &&

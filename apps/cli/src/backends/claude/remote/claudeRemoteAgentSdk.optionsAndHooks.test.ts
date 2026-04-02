@@ -411,6 +411,76 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(assistantMessagesWithText).toHaveLength(0);
     });
 
+    it('does not emit buffered assistant text on AgentSdkAbortError when streamed transcript writer is present', async () => {
+        const { AbortError: AgentSdkAbortError } = await import('@anthropic-ai/claude-agent-sdk');
+
+        const assistantText = 'hello from stream events';
+        const emittedMessages: any[] = [];
+
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(async () => {}),
+            appendThinkingDelta: vi.fn(async () => {}),
+            overrideAssistantText: vi.fn(() => true),
+            overrideThinkingText: vi.fn(() => true),
+            flushAll: vi.fn(async () => {}),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        event: { type: 'content_block_start', content_block: { type: 'text', text: assistantText } },
+                    } as any;
+
+                    throw new AgentSdkAbortError();
+                },
+                stopTask: vi.fn(async () => {}),
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: (message: any) => emittedMessages.push(message),
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        const assistantMessagesWithText = emittedMessages.filter(
+            (msg) =>
+                msg &&
+                typeof msg === 'object' &&
+                msg.type === 'assistant' &&
+                Array.isArray((msg as any).message?.content) &&
+                (msg as any).message.content.some((b: any) => b?.type === 'text' && typeof b?.text === 'string' && b.text.length > 0),
+        );
+        expect(assistantMessagesWithText).toHaveLength(0);
+    });
+
     it('repairs transcript on turn interrupt even when sessionId is discovered at runtime', async () => {
         const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-interrupt-repair-'));
         process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;

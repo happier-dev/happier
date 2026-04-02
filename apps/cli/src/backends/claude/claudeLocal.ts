@@ -347,16 +347,77 @@ export async function claudeLocal(opts: {
 
             const child = spawn(invocation.command, invocation.args, {
                 stdio: shouldUseNodeLauncher ? ['inherit', 'inherit', 'inherit', 'pipe'] : ['inherit', 'inherit', 'inherit', 'ignore'],
-                signal: opts.abort,
                 cwd: opts.path,
                 env,
                 windowsHide: true,
                 ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
             });
 
+            // Prefer a graceful shutdown path when the launcher is aborted (mode switching, UI takeover).
+            // Node's `signal:` AbortSignal option would immediately SIGTERM the child; that can leave
+            // Claude transcripts in a less resumable state (and may cause resume to fail under Agent SDK).
+            // Instead: send SIGINT first, then escalate if needed.
+            const abortFirstSignal: NodeJS.Signals = process.platform === 'win32' ? 'SIGTERM' : 'SIGINT';
+            const abortSecondSignal: NodeJS.Signals = 'SIGTERM';
+            const abortThirdSignal: NodeJS.Signals = 'SIGKILL';
+            const abortEscalateAfterMs = 2000;
+            const abortKillAfterMs = 6000;
+
+            let abortEscalateTimer: NodeJS.Timeout | null = null;
+            let abortKillTimer: NodeJS.Timeout | null = null;
+            const clearAbortTimers = () => {
+                if (abortEscalateTimer) {
+                    clearTimeout(abortEscalateTimer);
+                    abortEscalateTimer = null;
+                }
+                if (abortKillTimer) {
+                    clearTimeout(abortKillTimer);
+                    abortKillTimer = null;
+                }
+            };
+
+            let abortListenerAttached = false;
+            const abortListener = () => {
+                if (!child.pid || child.killed) return;
+                try {
+                    child.kill(abortFirstSignal);
+                } catch {
+                    // ignore
+                }
+
+                clearAbortTimers();
+
+                abortEscalateTimer = setTimeout(() => {
+                    if (!child.pid || child.killed) return;
+                    try {
+                        child.kill(abortSecondSignal);
+                    } catch {
+                        // ignore
+                    }
+                }, abortEscalateAfterMs);
+                abortEscalateTimer.unref?.();
+
+                abortKillTimer = setTimeout(() => {
+                    if (!child.pid || child.killed) return;
+                    try {
+                        child.kill(abortThirdSignal);
+                    } catch {
+                        // ignore
+                    }
+                }, abortKillAfterMs);
+                abortKillTimer.unref?.();
+            };
+
+            if (opts.abort.aborted) {
+                abortListener();
+            } else {
+                opts.abort.addEventListener('abort', abortListener, { once: true });
+                abortListenerAttached = true;
+            }
+
             // Forward signals to child process to prevent orphaned processes
-            // Note: signal: opts.abort handles programmatic abort (mode switching),
-            // but direct OS signals (e.g., kill, Ctrl+C) need explicit forwarding
+            // Note: we implement programmatic abort (AbortSignal) ourselves above to be graceful.
+            // Direct OS signals (e.g., kill, Ctrl+C) still need explicit forwarding.
             attachProcessSignalForwardingToChild(child);
 
             // Listen to the custom fd (fd 3) for thinking state tracking
@@ -430,9 +491,22 @@ export async function claudeLocal(opts: {
                 // Ignore
             });
             child.on('exit', (code, signal) => {
-                if (opts.abort.aborted && (signal === 'SIGTERM' || code === 143)) {
+                if (abortListenerAttached) {
+                    try {
+                        opts.abort.removeEventListener('abort', abortListener);
+                    } catch {
+                        // ignore
+                    }
+                    abortListenerAttached = false;
+                }
+                clearAbortTimers();
+
+                if (
+                    opts.abort.aborted &&
+                    (signal === 'SIGTERM' || signal === 'SIGINT' || code === 143 || code === 130)
+                ) {
                     // Normal termination due to abort signal.
-                    // Some runtimes surface SIGTERM as exit code 143 instead of `signal`.
+                    // Some runtimes surface SIGTERM as exit code 143 instead of `signal`, and SIGINT as 130.
                     r();
                 } else if (signal) {
                     reject(new Error(`Process terminated with signal: ${signal}`));

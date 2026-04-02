@@ -5,6 +5,9 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { Session } from './session';
 import { EventEmitter } from 'node:events';
 import type { EnhancedMode } from './loop';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
   createHappierMcpBridge: vi.fn(async () => ({
@@ -203,6 +206,30 @@ describe('claudeLocalLauncher', () => {
         message: expect.any(String),
       }),
     );
+  });
+
+  it('repairs the Claude transcript tail after a local abort before switching to remote', async () => {
+    const { session, switchHandlerReady } = createLocalHarness();
+
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-claude-local-switch-repair-'));
+    const transcriptPath = join(baseDir, 'sess_1.jsonl');
+
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      await writeFile(transcriptPath, `{\"type\":\"assistant\",\"uuid\":\"asst_1\"}\n{\"type\":\"assistant\",`, 'utf8');
+      session.onSessionFound('sess_1', hookWithTranscript(transcriptPath));
+      await waitForAbort(opts.abort);
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const promise = claudeLocalLauncher(session);
+
+    const switchHandler = await switchHandlerReady;
+    await switchHandler({ to: 'remote' });
+    await expect(promise).resolves.toEqual({ type: 'switch' });
+
+    const repaired = await readFile(transcriptPath, 'utf8');
+    expect(repaired.endsWith('\n')).toBe(true);
+    expect(repaired.trimEnd().split('\n')).toHaveLength(1);
   });
 
   it('seeds the local Claude spawn permission mode from session metadata before the first launch', async () => {

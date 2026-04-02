@@ -673,6 +673,55 @@ describe('claudeLocal --continue handling', () => {
         })).resolves.toBeTruthy();
     });
 
+    it(
+        'sends SIGINT to the Claude process when abort is requested after spawn (best-effort graceful shutdown)',
+        async () => {
+        const controller = new AbortController();
+
+        let exitCallback: ((code: number | null, signal: NodeJS.Signals | null) => void) | null = null;
+        const kill = vi.fn((signal?: NodeJS.Signals) => {
+            if (signal === 'SIGINT') {
+                process.nextTick(() => exitCallback?.(0, 'SIGINT'));
+            }
+            return true;
+        });
+
+        mockSpawn.mockReturnValueOnce({
+            pid: 4242,
+            killed: false,
+            stdio: [null, null, null, null],
+            on: vi.fn((event, callback) => {
+                if (event === 'exit') {
+                    exitCallback = callback;
+                }
+            }),
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            kill,
+            stdout: { on: vi.fn() },
+            stderr: { on: vi.fn() },
+            stdin: {
+                on: vi.fn(),
+                end: vi.fn(),
+            },
+        });
+
+        const promise = claudeLocal({
+            abort: controller.signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+        });
+
+        controller.abort();
+
+        await expect(promise).resolves.toBeTruthy();
+        expect(kill).toHaveBeenCalledWith('SIGINT');
+        },
+        2000,
+    );
+
     it('places positional prompts after flags (so Claude can parse flags correctly)', async () => {
         mockClaudeFindLastSession.mockReturnValue(null);
 

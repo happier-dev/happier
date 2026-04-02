@@ -78,6 +78,59 @@ async function readTailUtf8(path: string, maxBytes: number): Promise<{ text: str
   }
 }
 
+async function repairJsonlTail(params: Readonly<{ transcriptPath: string }>): Promise<void> {
+  const maxBytes = configuration.filesReadMaxBytes;
+  const effectiveMaxBytes = Number.isFinite(maxBytes) ? Math.max(1, Math.trunc(maxBytes)) : 1;
+
+  const handle = await open(params.transcriptPath, 'r+');
+  try {
+    const stat = await handle.stat();
+    const size = Number.isFinite(stat.size) ? Math.max(0, Math.trunc(stat.size)) : 0;
+    if (size === 0) return;
+
+    const readSize = Math.min(size, effectiveMaxBytes);
+    const start = Math.max(0, size - readSize);
+    const length = size - start;
+    const buf = Buffer.alloc(length);
+    await handle.read(buf, 0, length, start);
+
+    // If the file already ends in a newline, we treat it as a complete JSONL record boundary.
+    if (buf.length > 0 && buf[buf.length - 1] === 0x0a) {
+      return;
+    }
+
+    const lastNewlineIndex = buf.lastIndexOf(0x0a);
+    if (lastNewlineIndex === -1) {
+      // Avoid destructive truncation when we cannot safely identify a record boundary.
+      return;
+    }
+
+    const tailLine = buf.slice(lastNewlineIndex + 1).toString('utf8').trim();
+    if (tailLine.length === 0) {
+      // There is trailing whitespace after the last newline but no newline terminator.
+      await appendFile(params.transcriptPath, '\n');
+      return;
+    }
+
+    try {
+      JSON.parse(tailLine);
+      // Complete last line but missing newline terminator.
+      await appendFile(params.transcriptPath, '\n');
+      return;
+    } catch {
+      // Incomplete/invalid last line: truncate back to the previous record boundary.
+      const truncateTo = start + lastNewlineIndex + 1;
+      if (truncateTo >= 0 && truncateTo < size) {
+        await handle.truncate(truncateTo);
+      }
+    }
+  } catch {
+    // Best-effort: transcript tail repair should never crash callers.
+  } finally {
+    await handle.close();
+  }
+}
+
 async function waitForToolUseIdsToAppear(params: Readonly<{ transcriptPath: string; toolUseIds: ReadonlySet<string> | null }>): Promise<void> {
   const timeoutMs = configuration.claudeTranscriptRepairWaitForToolUseIdsTimeoutMs;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
@@ -138,6 +191,7 @@ export async function repairClaudeSessionJsonlToolResults(params: {
   })();
 
   try {
+    await repairJsonlTail({ transcriptPath });
     await waitForToolUseIdsToAppear({ transcriptPath, toolUseIds: onlyToolUseIdsSet });
 
     const { text, truncatedPrefix } = await readTailUtf8(transcriptPath, configuration.filesReadMaxBytes);
