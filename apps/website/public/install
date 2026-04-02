@@ -9,6 +9,7 @@ WITH_DAEMON="${HAPPIER_WITH_DAEMON:-1}"
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
 ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart
+RUN_ACTION="${HAPPIER_INSTALLER_RUN_ACTION:-}"
 DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
 VERBOSE_MODE="${HAPPIER_INSTALLER_VERBOSE:-0}"
 PURGE_INSTALL_DIR="${HAPPIER_INSTALLER_PURGE:-0}"
@@ -535,11 +536,17 @@ Dev channel:
   curl -fsSL https://happier.dev/install | HAPPIER_CHANNEL=dev bash
   curl -fsSL https://happier.dev/install-dev | bash
 
+Relay setup (install CLI if needed, then host a relay locally):
+  curl -fsSL https://happier.dev/install | bash -s -- --setup-relay
+  curl -fsSL https://happier.dev/install | bash -s -- --channel dev --setup-relay
+
 Options:
   --channel <stable|preview|dev>
   --stable
   --preview
   --dev
+  --run <setup-relay|setup|auth-login|daemon-install|providers-setup>
+  --setup-relay
   --with-daemon
   --without-daemon
   --check
@@ -553,6 +560,9 @@ Options:
   -h, --help
 EOF
 }
+
+RUN_ACTION_DEFAULT_ARGS=()
+RUN_ACTION_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -592,6 +602,29 @@ while [[ $# -gt 0 ]]; do
       ;;
     --without-daemon)
       WITH_DAEMON="0"
+      shift 1
+      ;;
+    --run)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "Missing value for --run" >&2
+        usage >&2
+        exit 1
+      fi
+      RUN_ACTION="${2}"
+      shift 2
+      ;;
+    --run=*)
+      RUN_ACTION="${1#*=}"
+      if [[ -z "${RUN_ACTION}" ]]; then
+        echo "Missing value for --run" >&2
+        usage >&2
+        exit 1
+      fi
+      shift 1
+      ;;
+    --setup-relay)
+      RUN_ACTION="setup-relay"
+      RUN_ACTION_DEFAULT_ARGS=(--mode user --yes)
       shift 1
       ;;
     --check)
@@ -638,6 +671,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --)
       shift 1
+      RUN_ACTION_ARGS+=("$@")
       break
       ;;
     *)
@@ -660,6 +694,122 @@ if [[ "${PRODUCT}" != "cli" && "${PRODUCT}" != "server" && "${PRODUCT}" != "stac
   exit 1
 fi
 
+resolve_installed_cli_invoker_for_channel() {
+  local channel="$1"
+  local shim_name=""
+  shim_name="$(cli_shim_name "${channel}" 2>/dev/null || true)"
+  if [[ -z "${shim_name}" ]]; then
+    return 1
+  fi
+
+  local managed_root=""
+  managed_root="$(cli_managed_install_root "${channel}" 2>/dev/null || true)"
+  if [[ -n "${managed_root}" ]]; then
+    local managed_bin="${INSTALL_DIR}/${managed_root}/current/happier"
+    if [[ -x "${managed_bin}" ]]; then
+      printf '%s' "${managed_bin}"
+      return 0
+    fi
+  fi
+
+  local installed_shim="${INSTALL_DIR}/bin/${shim_name}"
+  if [[ -x "${installed_shim}" ]]; then
+    printf '%s' "${installed_shim}"
+    return 0
+  fi
+
+  local global_shim="${BIN_DIR}/${shim_name}"
+  if [[ -x "${global_shim}" ]]; then
+    printf '%s' "${global_shim}"
+    return 0
+  fi
+
+  local from_path=""
+  from_path="$(command -v "${shim_name}" 2>/dev/null || true)"
+  if [[ -n "${from_path}" ]] && [[ -x "${from_path}" ]]; then
+    printf '%s' "${from_path}"
+    return 0
+  fi
+
+  return 1
+}
+
+run_post_install_action() {
+  local cli_bin="$1"
+
+  if [[ "${PRODUCT}" != "cli" ]]; then
+    echo "--run is only supported when installing the CLI." >&2
+    return 1
+  fi
+
+  local op="${RUN_ACTION}"
+  local -a cmd=()
+  local required_subcommand=""
+  case "${op}" in
+    setup-relay|relay-host-install)
+      cmd=(relay host install)
+      required_subcommand="relay"
+      ;;
+    setup)
+      cmd=(setup)
+      required_subcommand="setup"
+      ;;
+    auth-login)
+      cmd=(auth login)
+      required_subcommand="auth"
+      ;;
+    daemon-install)
+      cmd=(daemon install)
+      required_subcommand="daemon"
+      ;;
+    providers-setup)
+      cmd=(providers setup)
+      required_subcommand="providers"
+      ;;
+    *)
+      echo "Unknown --run action: ${op}" >&2
+      echo "Expected one of: setup-relay, setup, auth-login, daemon-install, providers-setup" >&2
+      return 1
+      ;;
+  esac
+
+  # Guard against older CLI builds where unknown subcommands fall through into the
+  # default "start a session" path (which can prompt for authentication).
+  # We fail fast with a clear message instead of launching an unrelated flow.
+  if [[ -n "${required_subcommand}" ]]; then
+    local help_output=""
+    help_output="$("${cli_bin}" --help 2>/dev/null || true)"
+    local help_prefix=""
+    help_prefix="$(basename "${cli_bin}" 2>/dev/null || true)"
+    if [[ -z "${help_prefix}" ]]; then
+      help_prefix="happier"
+    fi
+    if ! printf '%s\n' "${help_output}" | grep -Eq "^[[:space:]]*(${help_prefix}|happier)[[:space:]]+${required_subcommand}\\b"; then
+      echo "Installed Happier CLI does not support the '${required_subcommand}' command surface required for --run ${op}." >&2
+      echo "Update your Happier CLI (or switch installer channel) and try again." >&2
+      return 1
+    fi
+  fi
+
+  local -a args=()
+  if [[ ${#RUN_ACTION_DEFAULT_ARGS[@]} -gt 0 ]]; then
+    args+=("${RUN_ACTION_DEFAULT_ARGS[@]}")
+  fi
+  if [[ ${#RUN_ACTION_ARGS[@]} -gt 0 ]]; then
+    args+=("${RUN_ACTION_ARGS[@]}")
+  fi
+
+  local -a env_cmd=(env "HAPPIER_HOME_DIR=${INSTALL_DIR}")
+  if [[ -n "${HAPPIER_NONINTERACTIVE:-}" ]]; then
+    env_cmd+=("HAPPIER_NONINTERACTIVE=${HAPPIER_NONINTERACTIVE}")
+  fi
+  env_cmd+=("${cli_bin}" "${cmd[@]}")
+  if [[ ${#args[@]} -gt 0 ]]; then
+    env_cmd+=("${args[@]}")
+  fi
+  "${env_cmd[@]}"
+}
+
 if [[ "${ACTION}" == "check" ]]; then
   action_check
   exit $?
@@ -675,6 +825,22 @@ fi
 if [[ "${ACTION}" == "uninstall" ]]; then
   action_uninstall
   exit $?
+fi
+
+if [[ -n "${RUN_ACTION}" ]]; then
+  if [[ "${PRODUCT}" != "cli" ]]; then
+    echo "--run is only supported when installing the CLI." >&2
+    exit 1
+  fi
+  if [[ "${ACTION}" != "install" ]]; then
+    echo "--run cannot be combined with installer actions like --check/--version/--uninstall." >&2
+    exit 1
+  fi
+  INSTALLED_CLI_BIN="$(resolve_installed_cli_invoker_for_channel "${CHANNEL}" 2>/dev/null || true)"
+  if [[ -n "${INSTALLED_CLI_BIN}" ]]; then
+    run_post_install_action "${INSTALLED_CLI_BIN}"
+    exit $?
+  fi
 fi
 
 if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" && "${CHANNEL}" != "publicdev" ]]; then
@@ -1140,4 +1306,9 @@ if [[ "${NONINTERACTIVE}" != "1" ]]; then
   else
     "${DISPLAY_BINARY_PATH}" --version || true
   fi
+fi
+
+if [[ -n "${RUN_ACTION}" ]]; then
+  echo
+  run_post_install_action "${DISPLAY_SHIM_PATH}"
 fi

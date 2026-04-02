@@ -82,7 +82,7 @@ export const COMMAND_HELP_EXPO = {
     examples: [
       'node scripts/pipeline/run.mjs expo-ota --environment internaldev --message "Internal dev OTA"',
       'node scripts/pipeline/run.mjs expo-ota --environment internalpreview --message "Internal preview OTA"',
-      'node scripts/pipeline/run.mjs expo-ota --environment dev --message "Public dev OTA"',
+      'node scripts/pipeline/run.mjs expo-ota --environment dev --message "Dev OTA"',
       'node scripts/pipeline/run.mjs expo-ota --environment preview --message "Preview OTA"',
     ],
   },

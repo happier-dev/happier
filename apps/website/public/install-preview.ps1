@@ -1,8 +1,16 @@
 param(
-  [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "preview" })
+  [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "preview" }),
+  [switch] $SetupRelay,
+  [string] $Run = $(if ($env:HAPPIER_INSTALLER_RUN_ACTION) { $env:HAPPIER_INSTALLER_RUN_ACTION } else { "" }),
+  [Parameter(ValueFromRemainingArguments = $true)]
+  [string[]] $RunArgs = @()
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($env:HAPPIER_INSTALLER_SETUP_RELAY -and $env:HAPPIER_INSTALLER_SETUP_RELAY -ne "0") {
+  $SetupRelay = $true
+}
 
 function Normalize-Channel {
   param (
@@ -45,6 +53,129 @@ RWQ85PZ7FyiukYbL3qv/bKnwgbT68wLVzotapeMFIb8n+c7pBQ7U8W2t
 "@
 $MinisignPubKey = if ($env:HAPPIER_MINISIGN_PUBKEY) { $env:HAPPIER_MINISIGN_PUBKEY } else { $DefaultMinisignPubKey.Trim() }
 $MinisignPubKeyUrl = if ($env:HAPPIER_MINISIGN_PUBKEY_URL) { $env:HAPPIER_MINISIGN_PUBKEY_URL } else { "https://happier.dev/happier-release.pub" }
+
+$target = Join-Path $InstallDir "bin\happier.exe"
+
+function Resolve-CliShimName {
+  if ($Channel -eq "preview") { return "hprev" }
+  if ($Channel -eq "publicdev") { return "hdev" }
+  return "happier"
+}
+
+function Resolve-InstalledCliInvoker {
+  $shim = Resolve-CliShimName
+
+  $candidates = @(
+    (Join-Path $BinDir "$shim.exe"),
+    (Join-Path $BinDir $shim),
+    (Join-Path $InstallDir "bin\\$shim.exe"),
+    (Join-Path $InstallDir "bin\\$shim"),
+    $target
+  )
+
+  foreach ($candidate in $candidates) {
+    if ($candidate -and (Test-Path $candidate)) {
+      return $candidate
+    }
+  }
+
+  foreach ($name in @($shim, "$shim.exe")) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -and (Test-Path $cmd.Source)) {
+      return $cmd.Source
+    }
+  }
+
+  return $null
+}
+
+function Invoke-PostInstallAction {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath
+  )
+
+  $setupRelayDefaultArgs = @()
+  if ($SetupRelay -and -not $Run) {
+    $Run = "setup-relay"
+    $setupRelayDefaultArgs = @("--mode", "user", "--yes")
+  }
+  if (-not $Run) {
+    return
+  }
+
+  $runValue = $Run.Trim().ToLowerInvariant()
+  $requiredSubcommand = $null
+  $argsToPass = @()
+  switch ($runValue) {
+    "setup-relay" {
+      $argsToPass = @("relay", "host", "install") + $setupRelayDefaultArgs + $RunArgs
+      $requiredSubcommand = "relay"
+    }
+    "relay-host-install" {
+      $argsToPass = @("relay", "host", "install") + $RunArgs
+      $requiredSubcommand = "relay"
+    }
+    "setup" {
+      $argsToPass = @("setup") + $RunArgs
+      $requiredSubcommand = "setup"
+    }
+    "auth-login" {
+      $argsToPass = @("auth", "login") + $RunArgs
+      $requiredSubcommand = "auth"
+    }
+    "daemon-install" {
+      $argsToPass = @("daemon", "install") + $RunArgs
+      $requiredSubcommand = "daemon"
+    }
+    "providers-setup" {
+      $argsToPass = @("providers", "setup") + $RunArgs
+      $requiredSubcommand = "providers"
+    }
+    default {
+      throw "Unknown -Run action '$Run'. Expected one of: setup-relay, setup, auth-login, daemon-install, providers-setup."
+    }
+  }
+
+  $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
+  $previousNoninteractive = $env:HAPPIER_NONINTERACTIVE
+  $env:HAPPIER_HOME_DIR = $InstallDir
+  try {
+    if ($requiredSubcommand) {
+      $invokerName = (Split-Path -Leaf $CliPath)
+      if ([string]::IsNullOrWhiteSpace($invokerName)) { $invokerName = "happier" }
+      $helpOutput = ""
+      try {
+        $helpOutput = (& $CliPath --help 2>$null | Out-String)
+      } catch {
+        $helpOutput = ""
+      }
+      $pattern = "(?m)^\\s*($([Regex]::Escape($invokerName))|happier)\\s+$([Regex]::Escape($requiredSubcommand))\\b"
+      if (-not ($helpOutput -match $pattern)) {
+        throw "Installed Happier CLI does not support the '$requiredSubcommand' command surface required for -Run $runValue. Update your Happier CLI (or switch installer channel) and try again."
+      }
+    }
+    & $CliPath @argsToPass
+  }
+  finally {
+    if ($null -eq $previousHappyHomeDir) {
+      Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_HOME_DIR = $previousHappyHomeDir
+    }
+    if ($null -eq $previousNoninteractive) {
+      Remove-Item Env:HAPPIER_NONINTERACTIVE -ErrorAction SilentlyContinue
+    }
+    else {
+      $env:HAPPIER_NONINTERACTIVE = $previousNoninteractive
+    }
+  }
+}
+
+if (($SetupRelay -or $Run) -and ($existing = Resolve-InstalledCliInvoker)) {
+  Invoke-PostInstallAction -CliPath $existing
+  exit 0
+}
 
 function Get-AssetByPattern {
   param (
@@ -103,7 +234,7 @@ try {
   $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
 }
 catch {
-  if ($Channel -eq "preview") {
+  if ($Channel -eq "stable") {
     throw "No stable releases found for Happier CLI."
   }
   if ($Channel -eq "publicdev") {
@@ -178,7 +309,6 @@ try {
 
   New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
-  $target = Join-Path $InstallDir "bin\happier.exe"
   $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
   $env:HAPPIER_HOME_DIR = $InstallDir
   $promotionOutput = & $binary self __install-payload --component happier-cli --payload-root $payloadRoot --version $version --channel $Channel 2>&1 | Out-String
@@ -219,17 +349,24 @@ try {
     Write-Host "Added $BinDir to user PATH."
   }
 
-  Write-Host "Happier CLI installed at $target"
-  & $target --version
+  $invoker = Resolve-InstalledCliInvoker
+  if (-not $invoker) {
+    $invoker = $target
+  }
+
+  Write-Host "Happier CLI installed at $invoker"
+  & $invoker --version
 
   if ($WithDaemon -ne "0") {
     Write-Host "Installing daemon service (user-mode)..."
     try {
-      & $target daemon service install *> $null
+      & $invoker daemon service install *> $null
     } catch {
-      Write-Warning "daemon service install failed. You can retry manually: `"$target daemon service install`""
+      Write-Warning "daemon service install failed. You can retry manually: `"$invoker daemon service install`""
     }
   }
+
+  Invoke-PostInstallAction -CliPath $invoker
 }
 finally {
   Remove-Item -Path $tmpDir.FullName -Recurse -Force -ErrorAction SilentlyContinue

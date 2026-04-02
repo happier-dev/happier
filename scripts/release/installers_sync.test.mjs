@@ -25,7 +25,8 @@ function fixtureForSource(name) {
   if (name.endsWith('.ps1')) {
     return [
       `fixture:${name}`,
-      'param([string] $Channel = "stable")',
+      'param([string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "stable" }))',
+      'if ($Channel -eq "stable") { Write-Host "stable-check" }',
       '',
     ].join('\n');
   }
@@ -39,12 +40,12 @@ function expectedFixtureForTarget(target) {
       if (spec.transform === 'preview-default-channel') {
         return base
           .replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview')
-          .replace('$Channel = "stable"', '$Channel = "preview"');
+          .replace('else { "stable" }', 'else { "preview" }');
       }
       if (spec.transform === 'publicdev-default-channel') {
         return base
           .replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-dev')
-          .replace('$Channel = "stable"', '$Channel = "dev"');
+          .replace('else { "stable" }', 'else { "dev" }');
       }
       return base;
     }
