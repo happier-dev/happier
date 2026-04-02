@@ -102,7 +102,7 @@ export class SocketCollector {
 
 export function createUserScopedSocketCollector(baseUrl: string, token: string): SocketCollector {
   const socket = io(baseUrl, {
-    path: '/v1/updates',
+    path: '/v1/updates/',
     auth: { token, clientType: 'user-scoped' as const },
     transports: ['websocket'],
     reconnection: true,
@@ -121,7 +121,7 @@ export function createSessionScopedSocketCollector(
   machineId?: string,
 ): SocketCollector {
   const socket = io(baseUrl, {
-    path: '/v1/updates',
+    path: '/v1/updates/',
     auth: {
       token,
       clientType: 'session-scoped' as const,

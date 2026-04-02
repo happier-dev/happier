@@ -80,7 +80,7 @@ describe('core e2e: capabilities.invoke(cli.* probeModels) machine RPC transport
     ui.connect();
 
     const machineSock = socketIo(server.baseUrl, {
-      path: '/v1/updates',
+      path: '/v1/updates/',
       transports: ['websocket'],
       reconnection: false,
       auth: { token: auth.token, clientType: 'machine-scoped', machineId },

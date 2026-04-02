@@ -90,24 +90,20 @@ test.describe('ui e2e: web onboarding wizard', () => {
         }
         await gotoCommittedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 240_000);
         try {
-            await expect(page.getByTestId('onboarding-wizard')).toBeVisible({ timeout: 180_000 });
-            const viewport = page.viewportSize();
-            if (viewport) {
-                // The wizard renders as a full-screen sheet on phone-sized viewports (no backdrop scrim).
-                // On larger desktop viewports, it renders as a centered card with a full-viewport scrim.
-                if (viewport.width > 430) {
-                    const scrim = page.getByTestId('onboarding-wizard-scrim');
-                    await expect(scrim).toBeVisible({ timeout: 120_000 });
-                    const box = await scrim.boundingBox();
-                    expect(box, 'expected onboarding wizard scrim to cover the viewport').toBeTruthy();
-                    if (box) {
-                        expect(box.x).toBeLessThanOrEqual(1);
-                        expect(box.y).toBeLessThanOrEqual(1);
-                        expect(box.width).toBeGreaterThanOrEqual(viewport.width - 2);
-                        expect(box.height).toBeGreaterThanOrEqual(viewport.height - 2);
+            const wizard = page.getByTestId('onboarding-wizard');
+            await expect(wizard).toBeVisible({ timeout: 180_000 });
+            const size = page.viewportSize();
+            if (size) {
+                // Desktop viewports: wizard renders as a centered card within a modal (backdrop handled by BaseModal).
+                // Phone-sized viewports may vary (safe areas, scroll host, embedded chrome), so avoid brittle geometry asserts.
+                const box = await wizard.boundingBox();
+                expect(box, 'expected onboarding wizard to have a bounding box').toBeTruthy();
+                if (box) {
+                    if (size.width > 430) {
+                        expect(box.width).toBeLessThan(size.width - 40);
+                        expect(box.height).toBeLessThanOrEqual(size.height);
+                        expect(box.x).toBeGreaterThan(10);
                     }
-                } else {
-                    await expect(page.getByTestId('onboarding-wizard-scrim')).toHaveCount(0);
                 }
             }
         } catch (error) {
@@ -242,21 +238,60 @@ test.describe('ui e2e: web onboarding wizard', () => {
         await expect(page.getByTestId('onboarding-wizard-relay-url-input')).toHaveCount(1, { timeout: 120_000 });
     });
 
-    test('web onboarding renders a full-viewport scrim on desktop viewports', async ({ page }) => {
+    test('web onboarding renders a centered modal card on desktop viewports', async ({ page }) => {
         test.setTimeout(300_000);
         await openRoot(page, 'desktop');
-        await expect(page.getByTestId('onboarding-wizard-scrim')).toBeVisible({ timeout: 120_000 });
+        const wizard = page.getByTestId('onboarding-wizard');
         const viewport = page.viewportSize();
-        const scrim = page.getByTestId('onboarding-wizard-scrim');
-        const box = await scrim.boundingBox();
+        const box = await wizard.boundingBox();
         expect(viewport).toBeTruthy();
-        expect(box, 'expected onboarding wizard scrim to cover the viewport').toBeTruthy();
+        expect(box, 'expected onboarding wizard to render as a centered card on desktop').toBeTruthy();
         if (viewport && box) {
-            expect(box.x).toBeLessThanOrEqual(1);
-            expect(box.y).toBeLessThanOrEqual(1);
-            expect(box.width).toBeGreaterThanOrEqual(viewport.width - 2);
-            expect(box.height).toBeGreaterThanOrEqual(viewport.height - 2);
+            expect(box.width).toBeLessThan(viewport.width - 40);
+            expect(box.x).toBeGreaterThan(10);
         }
+    });
+
+    test('web onboarding surfaces unreachable relay state and returns to relay selection to reconfigure', async ({ page }) => {
+        test.setTimeout(300_000);
+        await openRootAndGoToRelaySelect(page, 'mobile');
+
+        await expect(page.getByTestId('onboarding-wizard-relay:customUrl')).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId('onboarding-wizard-relay:customUrl').click();
+
+        const urlInput = page.getByTestId('onboarding-wizard-relay-url-input');
+        await expect(urlInput).toBeVisible({ timeout: 120_000 });
+        await urlInput.fill('http://127.0.0.1:59999');
+
+        await expect(page.getByTestId('onboarding-wizard-primary')).toBeEnabled({ timeout: 120_000 });
+        await page.getByTestId('onboarding-wizard-primary').click();
+
+        await expect(page.getByTestId('welcome-server-unavailable')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('welcome-configure-server')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('welcome-retry-server')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-relay-hint-line')).toContainText('127.0.0.1:59999', { timeout: 120_000 });
+
+        await page.getByTestId('welcome-configure-server').click();
+        await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-primary')).toBeDisabled({ timeout: 120_000 });
+    });
+
+    test('web onboarding login with secret key instead navigates within the wizard', async ({ page }) => {
+        test.setTimeout(300_000);
+        await advanceWizardToAuthEntry(page, 'guided', 'mobile');
+
+        const loginWithMobile = page.getByTestId('welcome-restore');
+        await expect(loginWithMobile).toBeVisible({ timeout: 120_000 });
+        await expect(loginWithMobile).toBeEnabled({ timeout: 120_000 });
+        await loginWithMobile.click();
+
+        const openManual = page.getByTestId('restore-open-manual');
+        await expect(openManual).toBeVisible({ timeout: 120_000 });
+        await expect(openManual).toBeEnabled({ timeout: 120_000 });
+        await openManual.click();
+
+        await expect(page.getByTestId('restore-manual-secret-input')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('restore-open-manual')).toHaveCount(0, { timeout: 120_000 });
     });
 
     test('web onboarding remote relay-host handoff serializes split SSH fields and keeps code blocks scrollable', async ({ page }) => {

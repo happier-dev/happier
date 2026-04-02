@@ -50,6 +50,25 @@ function writeSharedDepsOutputs(repoRoot: string) {
   }
 
   for (const packageName of ['agents', 'cli-common', 'protocol', 'release-runtime'] as const) {
+    const workspacePackageDir = resolve(repoRoot, 'packages', packageName);
+    mkdirSync(workspacePackageDir, { recursive: true });
+    writeFileSync(
+      resolve(workspacePackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: `@happier-dev/${packageName}`,
+          type: 'module',
+          exports: {
+            '.': {
+              default: './dist/index.js',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
     writeCliBundledWorkspacePackage(repoRoot, packageName);
   }
 }
