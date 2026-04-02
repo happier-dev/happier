@@ -154,7 +154,8 @@ function updateRollingTagViaGithubApi(params) {
   if (oldSha) {
     run(
       'gh',
-      ['api', '-X', 'PATCH', `repos/${repo}/git/refs/tags/${tag}`, '-f', `sha=${sha}`, '-f', 'force=true'],
+      // `force` must be a JSON boolean; GitHub rejects `-f force=true` with HTTP 422.
+      ['api', '-X', 'PATCH', `repos/${repo}/git/refs/tags/${tag}`, '-f', `sha=${sha}`, '-F', 'force=true'],
       { env: params.env, dryRun: params.dryRun },
     );
     return true;

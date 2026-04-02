@@ -129,8 +129,10 @@ exit 0
 
   const log = fs.readFileSync(ghLog, 'utf8');
   assert.match(log, /gh api -X PATCH repos\/test\/test\/git\/refs\/tags\/dev-test/);
+  // `force` must be a JSON boolean, not the string "true" (GitHub API rejects `-f force=true` with HTTP 422).
+  assert.match(log, /\s-F\s+force=true\b/);
+  assert.doesNotMatch(log, /\s-f\s+force=true\b/);
 
   const gitCalls = fs.readFileSync(gitLog, 'utf8');
   assert.doesNotMatch(gitCalls, /\bgit push\b/);
 });
-
