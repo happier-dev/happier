@@ -25,4 +25,30 @@ describe('isRuntimeActive', () => {
         appState.currentState = 'background';
         expect(isRuntimeActive()).toBe(false);
     });
+
+    it('treats web document.visibilityState=hidden as inactive', async () => {
+        const { isRuntimeActive } = await import('./isRuntimeActive');
+        appState.currentState = 'active';
+        const prev = (globalThis as any).document;
+        (globalThis as any).document = { visibilityState: 'hidden' };
+        try {
+            expect(isRuntimeActive()).toBe(false);
+        } finally {
+            (globalThis as any).document = prev;
+        }
+    });
+
+    it('treats a Tauri webview as active even when document.visibilityState=hidden', async () => {
+        const { isRuntimeActive } = await import('./isRuntimeActive');
+        appState.currentState = 'active';
+        const prev = (globalThis as any).document;
+        (globalThis as any).document = { visibilityState: 'hidden' };
+        (globalThis as any).__TAURI__ = {};
+        try {
+            expect(isRuntimeActive()).toBe(true);
+        } finally {
+            delete (globalThis as any).__TAURI__;
+            (globalThis as any).document = prev;
+        }
+    });
 });
