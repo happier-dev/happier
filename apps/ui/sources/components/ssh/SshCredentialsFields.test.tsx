@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { installMachinesSettingsCommonModuleMocks } from '../machinesSettingsTestHelpers';
+import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 
 installMachinesSettingsCommonModuleMocks({
     reactNative: async () => {

@@ -148,11 +148,11 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
 
-vi.mock('@/components/settings/server/hooks/useActiveSelectionMachineGroups', () => ({
+vi.mock('@/components/settings/machines/hooks/useActiveSelectionMachineGroups', () => ({
     useActiveSelectionMachineGroups: () => activeSelectionMachineGroupsState.value,
 }));
 
-vi.mock('@/components/settings/server/sections/ActiveSelectionMachinesSection', () => ({
+vi.mock('@/components/settings/machines/sections/ActiveSelectionMachinesSection', () => ({
     ActiveSelectionMachinesSection: ({ visibleMachineGroups }: any) =>
         React.createElement(
             React.Fragment,

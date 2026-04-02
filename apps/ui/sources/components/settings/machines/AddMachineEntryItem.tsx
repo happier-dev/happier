@@ -6,7 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 
-import { buildMachineSetupWizardHref } from './setupWizardRoute';
+import { buildMachineSetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 export const AddMachineEntryItem = React.memo(function AddMachineEntryItem() {
     const router = useRouter();

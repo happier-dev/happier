@@ -4,12 +4,11 @@ import type { SystemTaskResult } from '@happier-dev/protocol';
 import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { t } from '@/text';
 
-import { buildLocalDaemonServiceSystemTaskSpec } from './buildLocalDaemonServiceSystemTaskSpec';
+import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { buildRelayDriftRepairSystemTaskSpec } from '@/sync/domains/server/relayDrift/relayDriftSystemTask';
-import { decorateLocalControlSnapshot } from '@/components/settings/server/localControl/decorateLocalControlSnapshot';
 import { resolveWebappUrlFromServerUrl } from '@/sync/domains/server/url/resolveWebappUrlFromServerUrl';
 
 type LocalDaemonStatusData = Readonly<{
@@ -57,7 +56,7 @@ export function useLocalDaemonControl(options: Readonly<{
     runner?: SystemTaskRunner;
 }> = {}) {
     const runner = options.runner ?? getDefaultSystemTaskRunner();
-    const activeServerSnapshot = getActiveServerSnapshot();
+    const activeServerSnapshot = useActiveServerSnapshot();
     const [bridgeUnavailable, setBridgeUnavailable] = React.useState(false);
     const isUnavailable = runner.mode === 'unavailable' || bridgeUnavailable;
     const [statusTaskId, setStatusTaskId] = React.useState<string | null>(null);
@@ -207,7 +206,7 @@ export function useLocalDaemonControl(options: Readonly<{
 
     const activeTaskSnapshot = React.useMemo<SystemTaskRunState | null>(() => {
         const snapshot = repairSnapshot?.result ? null : repairSnapshot ?? (startSnapshot?.result ? null : startSnapshot);
-        return snapshot ? decorateLocalControlSnapshot(snapshot) : null;
+        return snapshot ?? null;
     }, [repairSnapshot, startSnapshot]);
 
     const activeTaskTitle = React.useMemo(() => {
@@ -231,6 +230,7 @@ export function useLocalDaemonControl(options: Readonly<{
         && Boolean(activeServerSnapshot.serverUrl);
 
     return {
+        activeRelayUrl: activeServerSnapshot.serverUrl,
         activeTaskSnapshot,
         activeTaskTitle,
         canInstall,

@@ -21,10 +21,12 @@ import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
 import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSnapshot';
 import { SystemTaskProgressCard } from '@/components/systemTasks/SystemTaskProgressCard';
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
+import { useSshSystemTaskPromptModals } from '@/components/systemTasks/ssh/useSshSystemTaskPromptModals';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import { RemoteHostForm } from './RemoteHostForm';
 import { buildRemoteSshManageHostSystemTaskSpec } from './buildRemoteSshManageHostSystemTaskSpec';
+import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 
 function sortByLastUsedDesc(hosts: readonly RemoteHost[]): RemoteHost[] {
     return [...hosts].sort((left, right) => (right.lastUsedAt ?? 0) - (left.lastUsedAt ?? 0));
@@ -54,145 +56,6 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
     useSettings(); // Ensure settings are hydrated for feature decisions.
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const secretMaterialAllowed = useFeatureEnabled('remoteHosts.secretMaterial');
-
-    const runner = getDefaultSystemTaskRunner();
-    const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
-    const [activeTaskTitle, setActiveTaskTitle] = React.useState<string | null>(null);
-    const [activeTaskAction, setActiveTaskAction] = React.useState<string | null>(null);
-    const activeTaskSnapshot = useSystemTaskSnapshot(runner, activeTaskId);
-    const latestPrompt = React.useMemo(() => readLatestSystemTaskPrompt(activeTaskSnapshot), [activeTaskSnapshot]);
-    const handledPromptRef = React.useRef<string | null>(null);
-
-    React.useEffect(() => {
-        if (!activeTaskId || !latestPrompt || activeTaskSnapshot?.result) return;
-        const promptKey = `${activeTaskId}:${latestPrompt.kind}:${JSON.stringify(latestPrompt.data)}`;
-        if (handledPromptRef.current === promptKey) return;
-        handledPromptRef.current = promptKey;
-
-        if (latestPrompt.kind === 'ssh.trustHost' || latestPrompt.kind === 'ssh.replaceHostKey') {
-            void (async () => {
-                const fingerprint = typeof latestPrompt.data.fingerprint === 'string' ? latestPrompt.data.fingerprint.trim() : '';
-                const host = typeof latestPrompt.data.host === 'string' ? latestPrompt.data.host.trim() : '';
-                const accepted = await Modal.confirm(
-                    latestPrompt.message || t('settings.remoteHostsHostTrustTitle'),
-                    `${host}\n${fingerprint}`.trim(),
-                    { confirmText: t('setupOnboarding.remoteSshChecklist.trustHostTitle'), cancelText: t('common.cancel') },
-                );
-                if (!accepted) {
-                    await runner.cancel(activeTaskId).catch(() => {});
-                    return;
-                }
-                await runner.respond(activeTaskId, { trusted: true });
-            })();
-            return;
-        }
-
-        if (latestPrompt.kind === 'ssh.password') {
-            void (async () => {
-                const password = await Modal.prompt(
-                    latestPrompt.message || t('settings.remoteHostsPasswordRequiredTitle'),
-                    undefined,
-                    { inputType: 'secure-text', confirmText: t('common.continue'), cancelText: t('common.cancel') },
-                );
-                if (password == null) {
-                    await runner.cancel(activeTaskId).catch(() => {});
-                    return;
-                }
-                await runner.respond(activeTaskId, { password });
-            })();
-            return;
-        }
-    }, [activeTaskId, activeTaskSnapshot?.result, latestPrompt, runner]);
-
-    React.useEffect(() => {
-        if (!activeTaskId) return;
-        const result = activeTaskSnapshot?.result;
-        if (!result) return;
-        void (async () => {
-            try {
-                if (result.ok) {
-                    if (activeTaskAction === 'testConnection') {
-                        Modal.alert(t('common.success'), t('settings.remoteHostsConnectionSucceeded'));
-                    } else {
-                        Modal.alert(t('common.success'), activeTaskTitle ?? t('common.success'));
-                    }
-                } else {
-                    const message = result.error.message || t('settings.remoteHostsConnectionFailed');
-                    Modal.alert(t('common.error'), message);
-                }
-            } finally {
-                handledPromptRef.current = null;
-                setActiveTaskId(null);
-                setActiveTaskTitle(null);
-                setActiveTaskAction(null);
-            }
-        })();
-    }, [activeTaskAction, activeTaskId, activeTaskSnapshot?.result, activeTaskTitle]);
-
-    const startManageHostAction = React.useCallback(async (remoteHost: RemoteHost, action: Parameters<typeof buildRemoteSshManageHostSystemTaskSpec>[0]['action'], title: string) => {
-        try {
-            const localOverrides = getRemoteHostLocalOverrides(remoteHost.id);
-            const resolved = await resolveRemoteHostEffectiveSshConfig({
-                remoteHost,
-                localOverrides,
-                secretMaterialAllowed,
-                decryptSecretValue: (input) => sync.decryptSecretValue(input),
-            });
-            if (!resolved.ok) {
-                Modal.alert(t('common.error'), resolved.error.message);
-                return;
-            }
-
-            const spec = buildRemoteSshManageHostSystemTaskSpec({
-                action,
-                sshTarget: resolved.value.sshTarget,
-                sshPort: resolved.value.sshPort ? String(resolved.value.sshPort) : '',
-                sshAuth: resolved.value.sshAuth,
-                identityFilePath: resolved.value.identityFilePath,
-                identityPrivateKey: resolved.value.identityPrivateKey,
-                sshConfigFilePath: resolved.value.sshConfigFilePath,
-                sshPassword: resolved.value.password,
-                knownHostsMode: 'app',
-                serviceMode: 'user',
-                relayRuntime: {
-                    channel: 'stable',
-                    mode: 'user',
-                },
-            });
-            const taskId = await runner.start(spec);
-            setActiveTaskId(taskId);
-            setActiveTaskTitle(title);
-            setActiveTaskAction(action);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error ?? '');
-            Modal.alert(t('common.error'), message || t('settings.remoteHostsConnectionFailed'));
-        }
-    }, [runner, secretMaterialAllowed]);
-
-    const openEditor = React.useCallback((remoteHostId: string | null) => {
-        const existing = remoteHostId ? hosts.find((entry) => entry.id === remoteHostId) ?? null : null;
-        const localOverrides = existing ? getRemoteHostLocalOverrides(existing.id) : null;
-
-        Modal.show({
-            component: RemoteHostForm,
-            props: {
-                remoteHost: existing,
-                localOverrides,
-                secretMaterialAllowed,
-                onSave: ({ remoteHost, localOverrides }) => {
-                    const nextList = upsertRemoteHost(remoteHosts ?? [], remoteHost);
-                    setRemoteHosts(nextList);
-                    upsertRemoteHostLocalOverrides(remoteHost.id, localOverrides);
-                },
-                onDelete: (id) => {
-                    setRemoteHosts(removeRemoteHost(remoteHosts ?? [], id));
-                    deleteRemoteHostLocalOverrides(id);
-                },
-                onTestConnection: (host) => void startManageHostAction(host, 'testConnection', t('settings.remoteHostsTestConnectionTitle')),
-            },
-            closeOnBackdrop: true,
-        });
-    }, [hosts, remoteHosts, secretMaterialAllowed, setRemoteHosts, startManageHostAction]);
 
     if (!isDesktop) {
         return (
@@ -227,9 +90,136 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
     }
 
     return (
+        <RemoteHostsScreenBody
+            hosts={hosts}
+            remoteHosts={remoteHosts}
+            setRemoteHosts={setRemoteHosts}
+            secretMaterialAllowed={secretMaterialAllowed}
+            supportsWholeRowPress={supportsWholeRowPress}
+            themeTextSecondary={theme.colors.textSecondary}
+        />
+    );
+});
+
+const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: Readonly<{
+    hosts: RemoteHost[];
+    remoteHosts: RemoteHost[] | null;
+    setRemoteHosts: (value: RemoteHost[]) => void;
+    secretMaterialAllowed: boolean;
+    supportsWholeRowPress: boolean;
+    themeTextSecondary: string;
+}>) {
+    const runner = getDefaultSystemTaskRunner();
+    const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
+    const [activeTaskTitle, setActiveTaskTitle] = React.useState<string | null>(null);
+    const [activeTaskAction, setActiveTaskAction] = React.useState<string | null>(null);
+    const activeTaskSnapshot = useSystemTaskSnapshot(runner, activeTaskId);
+    const latestPrompt = React.useMemo(() => readLatestSystemTaskPrompt(activeTaskSnapshot), [activeTaskSnapshot]);
+    useSshSystemTaskPromptModals({
+        runner,
+        taskId: activeTaskId,
+        snapshot: activeTaskSnapshot,
+        prompt: latestPrompt,
+    });
+
+    React.useEffect(() => {
+        if (!activeTaskId) return;
+        const result = activeTaskSnapshot?.result;
+        if (!result) return;
+        void (async () => {
+            try {
+                if (result.ok) {
+                    if (activeTaskAction === 'testConnection') {
+                        Modal.alert(t('common.success'), t('settings.remoteHostsConnectionSucceeded'));
+                    } else {
+                        Modal.alert(t('common.success'), activeTaskTitle ?? t('common.success'));
+                    }
+                } else {
+                    const message = result.error.message || t('settings.remoteHostsConnectionFailed');
+                    Modal.alert(t('common.error'), message);
+                }
+            } finally {
+                setActiveTaskId(null);
+                setActiveTaskTitle(null);
+                setActiveTaskAction(null);
+            }
+        })();
+    }, [activeTaskAction, activeTaskId, activeTaskSnapshot?.result, activeTaskTitle]);
+
+    const startManageHostAction = React.useCallback(async (
+        remoteHost: RemoteHost,
+        action: Parameters<typeof buildRemoteSshManageHostSystemTaskSpec>[0]['action'],
+        title: string,
+    ) => {
+        try {
+            const localOverrides = getRemoteHostLocalOverrides(remoteHost.id);
+            const resolved = await resolveRemoteHostEffectiveSshConfig({
+                remoteHost,
+                localOverrides,
+                secretMaterialAllowed: props.secretMaterialAllowed,
+                decryptSecretValue: (input) => sync.decryptSecretValue(input),
+            });
+            if (!resolved.ok) {
+                Modal.alert(t('common.error'), resolved.error.message);
+                return;
+            }
+
+            const spec = buildRemoteSshManageHostSystemTaskSpec({
+                action,
+                channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(),
+                sshTarget: resolved.value.sshTarget,
+                sshPort: resolved.value.sshPort ? String(resolved.value.sshPort) : '',
+                sshAuth: resolved.value.sshAuth,
+                identityFilePath: resolved.value.identityFilePath,
+                identityPrivateKey: resolved.value.identityPrivateKey,
+                sshConfigFilePath: resolved.value.sshConfigFilePath,
+                sshPassword: resolved.value.password,
+                knownHostsMode: 'app',
+                serviceMode: 'user',
+                relayRuntime: {
+                    channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(),
+                    mode: 'user',
+                },
+            });
+            const taskId = await runner.start(spec);
+            setActiveTaskId(taskId);
+            setActiveTaskTitle(title);
+            setActiveTaskAction(action);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error ?? '');
+            Modal.alert(t('common.error'), message || t('settings.remoteHostsConnectionFailed'));
+        }
+    }, [props.secretMaterialAllowed, runner]);
+
+    const openEditor = React.useCallback((remoteHostId: string | null) => {
+        const existing = remoteHostId ? props.hosts.find((entry) => entry.id === remoteHostId) ?? null : null;
+        const localOverrides = existing ? getRemoteHostLocalOverrides(existing.id) : null;
+
+        Modal.show({
+            component: RemoteHostForm,
+            props: {
+                remoteHost: existing,
+                localOverrides,
+                secretMaterialAllowed: props.secretMaterialAllowed,
+                onSave: ({ remoteHost, localOverrides }) => {
+                    const nextList = upsertRemoteHost(props.remoteHosts ?? [], remoteHost);
+                    props.setRemoteHosts(nextList);
+                    upsertRemoteHostLocalOverrides(remoteHost.id, localOverrides);
+                },
+                onDelete: (id) => {
+                    props.setRemoteHosts(removeRemoteHost(props.remoteHosts ?? [], id));
+                    deleteRemoteHostLocalOverrides(id);
+                },
+                onTestConnection: (host) => void startManageHostAction(host, 'testConnection', t('settings.remoteHostsTestConnectionTitle')),
+            },
+            closeOnBackdrop: true,
+        });
+    }, [props.hosts, props.remoteHosts, props.secretMaterialAllowed, props.setRemoteHosts, startManageHostAction]);
+
+    return (
         <ItemList>
             <ItemGroup title={t('settings.remoteHostsTitle')}>
-                {hosts.length === 0 ? (
+                {props.hosts.length === 0 ? (
                     <Item
                         testID="settings.remoteHosts.empty"
                         title={t('settings.remoteHostsEmptyTitle')}
@@ -238,7 +228,7 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
                         showChevron={false}
                     />
                 ) : null}
-                {hosts.map((host) => (
+                {props.hosts.map((host) => (
                     (() => {
                         const actions: ItemAction[] = [
                             {
@@ -329,7 +319,7 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
                                             { destructive: true, confirmText: t('common.remove'), cancelText: t('common.cancel') },
                                         );
                                         if (!confirmed) return;
-                                        setRemoteHosts(removeRemoteHost(remoteHosts ?? [], host.id));
+                                        props.setRemoteHosts(removeRemoteHost(props.remoteHosts ?? [], host.id));
                                         deleteRemoteHostLocalOverrides(host.id);
                                     })();
                                 },
@@ -344,25 +334,25 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
                         ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0).join('\n');
 
                         return (
-                    <Item
-                        key={host.id}
-                        testID={`settings.remoteHosts.hostRow.${host.id}`}
-                        title={host.name}
-                        subtitle={subtitle}
-                        subtitleLines={0}
-                        icon={<Ionicons name="desktop-outline" size={18} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                        onPress={supportsWholeRowPress ? () => openEditor(host.id) : undefined}
-                        rightElement={(
-                            <ItemRowActions
+                            <Item
+                                key={host.id}
+                                testID={`settings.remoteHosts.hostRow.${host.id}`}
                                 title={host.name}
-                                actions={actions}
-                                compactActionIds={['testConnection']}
-                                pinnedActionIds={['testConnection']}
-                                overflowPosition="beforePinned"
+                                subtitle={subtitle}
+                                subtitleLines={0}
+                                icon={<Ionicons name="desktop-outline" size={18} color={props.themeTextSecondary} />}
+                                showChevron={false}
+                                onPress={props.supportsWholeRowPress ? () => openEditor(host.id) : undefined}
+                                rightElement={(
+                                    <ItemRowActions
+                                        title={host.name}
+                                        actions={actions}
+                                        compactActionIds={['testConnection']}
+                                        pinnedActionIds={['testConnection']}
+                                        overflowPosition="beforePinned"
+                                    />
+                                )}
                             />
-                        )}
-                    />
                         );
                     })()
                 ))}

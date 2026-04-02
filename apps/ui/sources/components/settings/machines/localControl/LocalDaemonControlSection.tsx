@@ -5,7 +5,6 @@ import { SystemTaskProgressCard } from '@/components/systemTasks';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 
 import { useLocalDaemonControl } from './useLocalDaemonControl';
@@ -39,6 +38,7 @@ export const LocalDaemonControlSection = React.memo(function LocalDaemonControlS
     runner?: SystemTaskRunner;
 }>) {
     const {
+        activeRelayUrl,
         activeTaskSnapshot,
         activeTaskTitle,
         canRepair,
@@ -57,7 +57,6 @@ export const LocalDaemonControlSection = React.memo(function LocalDaemonControlS
     } = useLocalDaemonControl({
         ...(props.runner ? { runner: props.runner } : {}),
     });
-    const activeServerSnapshot = getActiveServerSnapshot();
 
     return (
         <>
@@ -65,7 +64,7 @@ export const LocalDaemonControlSection = React.memo(function LocalDaemonControlS
                 <Item
                     testID="settings.localDaemonControl.status"
                     title={t('machine.status')}
-                    subtitle={isUnavailable ? t('settings.systemTaskBridgeUnavailable') : resolveStatusSubtitle(status, activeServerSnapshot.serverUrl)}
+                    subtitle={isUnavailable ? t('settings.systemTaskBridgeUnavailable') : resolveStatusSubtitle(status, activeRelayUrl || null)}
                     showChevron={false}
                     mode="info"
                 />

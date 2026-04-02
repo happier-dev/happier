@@ -101,7 +101,7 @@ vi.mock('@/components/settings/server/RelayDriftActionCard', () => ({
     RelayDriftActionCard: (props: any) => React.createElement('RelayDriftActionCard', props),
 }));
 
-vi.mock('@/components/settings/server/sections/ActiveSelectionMachinesSection', () => ({
+vi.mock('@/components/settings/machines/sections/ActiveSelectionMachinesSection', () => ({
     ActiveSelectionMachinesSection: ({ visibleMachineGroups, allMachines, showMachinesGroupedByServer, machinesTitle }: any) => {
         const groups = showMachinesGroupedByServer
             ? visibleMachineGroups ?? []

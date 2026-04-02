@@ -1,5 +1,5 @@
 import type { SystemTaskSpec } from '@happier-dev/protocol';
-import { buildSshTarget, parseSshTarget } from '@happier-dev/cli-common/systemTasks';
+import { buildSshTarget, parseSshTarget } from '@happier-dev/protocol';
 
 export function buildRemoteSshManageHostSystemTaskSpec(params: Readonly<{
     action:
@@ -25,6 +25,7 @@ export function buildRemoteSshManageHostSystemTaskSpec(params: Readonly<{
     identityPrivateKey?: string;
     knownHostsMode?: 'app' | 'system';
     serviceMode?: 'user' | 'none';
+    channel: 'stable' | 'preview' | 'dev';
     relayRuntime?: Readonly<{
         channel?: 'stable' | 'preview' | 'dev';
         mode?: 'user' | 'system';
@@ -48,6 +49,7 @@ export function buildRemoteSshManageHostSystemTaskSpec(params: Readonly<{
         kind: 'remote.ssh.manageHost.v1',
         params: {
             action: params.action,
+            channel: params.channel,
             ssh: {
                 target,
                 ...(Number.isInteger(port) && port > 0 ? { port } : {}),

@@ -12,10 +12,13 @@ import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const activeServerSnapshot = vi.hoisted(() => ({
-    serverId: 'relay-example',
-    serverUrl: 'https://relay.example.test',
-    activeLocalRelayUrl: null as string | null,
-    generation: 1,
+    current: {
+        serverId: 'relay-example',
+        serverUrl: 'https://relay.example.test',
+        activeLocalRelayUrl: null as string | null,
+        generation: 1,
+    },
+    listeners: new Set<(snapshot: unknown) => void>(),
 }));
 
 installMachinesSettingsCommonModuleMocks({
@@ -81,16 +84,24 @@ vi.mock('@/sync/domains/server/serverProfiles', async () => {
     const actual = await vi.importActual<typeof import('@/sync/domains/server/serverProfiles')>('@/sync/domains/server/serverProfiles');
     return {
         ...actual,
-        getActiveServerSnapshot: () => activeServerSnapshot,
+        getActiveServerSnapshot: () => activeServerSnapshot.current,
+        subscribeActiveServer: (listener: (snapshot: unknown) => void) => {
+            activeServerSnapshot.listeners.add(listener);
+            return () => {
+                activeServerSnapshot.listeners.delete(listener);
+            };
+        },
     };
 });
 
 describe('LocalDaemonControlSection', () => {
     beforeEach(() => {
-        activeServerSnapshot.serverId = 'relay-example';
-        activeServerSnapshot.serverUrl = 'https://relay.example.test';
-        activeServerSnapshot.activeLocalRelayUrl = null;
-        activeServerSnapshot.generation = 1;
+        activeServerSnapshot.current = {
+            serverId: 'relay-example',
+            serverUrl: 'https://relay.example.test',
+            activeLocalRelayUrl: null,
+            generation: 1,
+        };
     });
 
     it('loads daemon status on mount and starts the local daemon service from the control row', async () => {
@@ -327,5 +338,53 @@ describe('LocalDaemonControlSection', () => {
         expect(screen.findByTestId('settings.localDaemonControl.status')?.props.subtitle).toBe('machine.daemonStatus.unknown');
         expect(screen.findByProps({ subtitle: 'daemon status request failed' })).toBeTruthy();
         expect(screen.findByTestId('settings.localDaemonControl.repair')?.props.disabled).toBe(false);
+    });
+
+    it('uses the latest active relay url when starting a repair after a server switch', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+
+        let nextTaskId = 1;
+        const starts: unknown[] = [];
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start(spec) {
+                    const parsed = SystemTaskSpecSchema.parse(spec);
+                    starts.push(parsed);
+                    return `task_${nextTaskId++}:${parsed.kind}`;
+                },
+                async subscribe() {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalDaemonControlSection } = await import('./LocalDaemonControlSection');
+        const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner }));
+
+        await renderer.act(async () => {});
+
+        activeServerSnapshot.current = {
+            ...activeServerSnapshot.current,
+            serverUrl: 'https://relay-updated.example.test',
+            generation: activeServerSnapshot.current.generation + 1,
+        };
+        await renderer.act(async () => {
+            for (const listener of activeServerSnapshot.listeners) {
+                listener(activeServerSnapshot.current);
+            }
+        });
+
+        await screen.pressByTestIdAsync('settings.localDaemonControl.repair');
+
+        expect(starts).toContainEqual(expect.objectContaining({
+            kind: 'setup.repairThisComputer.v1',
+            params: expect.objectContaining({
+                activeRelayUrl: 'https://relay-updated.example.test',
+            }),
+        }));
     });
 });

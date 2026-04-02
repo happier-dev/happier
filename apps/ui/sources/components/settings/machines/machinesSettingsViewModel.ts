@@ -1,8 +1,9 @@
 import * as React from 'react';
 
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
-import { useActiveSelectionMachineGroups } from '@/components/settings/server/hooks/useActiveSelectionMachineGroups';
-import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { useActiveSelectionMachineGroups } from '@/components/settings/machines/hooks/useActiveSelectionMachineGroups';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import {
     useAllMachines,
     useMachineListByServerId,

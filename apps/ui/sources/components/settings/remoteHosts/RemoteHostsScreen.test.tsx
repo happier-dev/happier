@@ -26,7 +26,7 @@ const remoteHostsState = vi.hoisted(() => ({
         lastUsedAt: number | null;
     }>,
 }));
-const startMock = vi.hoisted(() => vi.fn(async () => 'task_1'));
+const startMock = vi.hoisted(() => vi.fn(async (_spec: any) => 'task_1'));
 const itemRowActionsSpy = vi.hoisted(() => ({ props: null as any }));
 
 function setTauriDesktop(enabled: boolean) {
@@ -226,6 +226,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
             kind: 'remote.ssh.manageHost.v1',
             params: expect.objectContaining({
                 action: 'testConnection',
+                channel: 'stable',
                 ssh: expect.objectContaining({
                     target: 'dev@10.0.0.1',
                     port: 2222,
@@ -233,5 +234,58 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
                 }),
             }),
         }));
+    });
+
+    it('does not include a plaintext password in the SystemTask spec when secret material is disabled (password auth prompts instead)', async () => {
+        setTauriDesktop(true);
+        featureGateState.managementEnabled = true;
+        featureGateState.secretMaterialEnabled = false;
+        remoteHostsState.value = [
+            {
+                id: 'host-password',
+                name: 'Password Host',
+                ssh: {
+                    target: 'dev@10.0.0.2',
+                    port: 22,
+                    authMode: 'password',
+                },
+                linkedMachineId: null,
+                linkedRelayProfileId: null,
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: null,
+            },
+        ];
+
+        const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
+        const screen = await renderScreen(React.createElement(RemoteHostsScreen));
+
+        expect(screen.findByTestId('settings.remoteHosts.hostRow.host-password')).toBeTruthy();
+
+        const rowActionsProps = itemRowActionsSpy.props as { actions?: Array<{ id: string; onPress: () => void }> } | null;
+        expect(rowActionsProps?.actions).toBeTruthy();
+        const actions = rowActionsProps!.actions!;
+        const testConnection = actions.find((action) => action.id === 'testConnection');
+        expect(testConnection).toBeTruthy();
+
+        testConnection!.onPress();
+        await flushHookEffects({ cycles: 1, turns: 6 });
+
+        expect(startMock).toHaveBeenCalledWith(expect.objectContaining({
+            kind: 'remote.ssh.manageHost.v1',
+            params: expect.objectContaining({
+                action: 'testConnection',
+                channel: 'stable',
+                ssh: expect.objectContaining({
+                    target: 'dev@10.0.0.2',
+                    port: 22,
+                    auth: 'password',
+                }),
+            }),
+        }));
+
+        const spec = startMock.mock.calls[0]?.[0] as any;
+        expect(spec).toBeTruthy();
+        expect(spec.params.ssh).not.toHaveProperty('password');
     });
 });

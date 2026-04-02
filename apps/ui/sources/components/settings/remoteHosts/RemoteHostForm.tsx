@@ -11,11 +11,11 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
 import { randomUUID } from '@/platform/randomUUID';
-import { parseSshTarget, buildSshTarget } from '@happier-dev/cli-common/systemTasks';
+import { parseSshTarget, buildSshTarget } from '@happier-dev/protocol';
 
-import { MachineSetupTextField } from '@/components/settings/machines/shared/MachineSetupTextField';
-import { SshCredentialsFields, type SshCredentialsDraft } from '@/components/settings/machines/shared/SshCredentialsFields';
-import { createDefaultSshCredentialsDraft, parseSshPortNumber } from '@/components/settings/machines/shared/sshCredentialsDraft';
+import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
+import { SshCredentialsFields, type SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
+import { createDefaultSshCredentialsDraft, parseSshPortNumber } from '@/components/ssh/sshCredentialsDraft';
 
 import type { RemoteHost, RemoteHostAuthMode } from '@/sync/domains/remoteHosts/remoteHostModel';
 import type { RemoteHostLocalOverrides } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';

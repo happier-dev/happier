@@ -223,7 +223,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     },
 }));
 
-vi.mock('@/components/settings/server/hooks/useActiveSelectionMachineGroups', () => ({
+vi.mock('@/components/settings/machines/hooks/useActiveSelectionMachineGroups', () => ({
     useActiveSelectionMachineGroups: () => ({
         hasAnyVisibleMachines: false,
         showMachinesGroupedByServer: false,
@@ -231,7 +231,7 @@ vi.mock('@/components/settings/server/hooks/useActiveSelectionMachineGroups', ()
     }),
 }));
 
-vi.mock('@/components/settings/server/sections/ActiveSelectionMachinesSection', () => ({
+vi.mock('@/components/settings/machines/sections/ActiveSelectionMachinesSection', () => ({
     ActiveSelectionMachinesSection: () => null,
 }));
 

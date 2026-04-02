@@ -2,12 +2,14 @@ import React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { parseSshTarget } from '@happier-dev/cli-common/systemTasks';
+import { parseSshTarget } from '@happier-dev/protocol';
 import { t, tLoose } from '@/text';
 import { lightTheme } from '@/theme';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { MachineSetupTextField } from '@/components/settings/machines/shared/MachineSetupTextField';
+import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
+import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
+import { Text } from '@/components/ui/text/Text';
 
 export type SshAuthMode = 'agent' | 'keyfile' | 'password';
 
@@ -28,10 +30,12 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
         | 'sshUsername'
         | 'sshHost'
         | 'sshPort'
+        | 'sshAuthMethod'
         | 'sshAuthAgent'
         | 'sshAuthKeyfile'
         | 'sshAuthPassword'
         | 'sshIdentityFile'
+        | 'sshPrivateKeyMaterial'
         | 'sshPassword'
         | 'chooseIdentityFile',
         string
@@ -43,6 +47,8 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
     onChange: (next: SshCredentialsDraft) => void;
     onChooseIdentityFile?: () => void;
     afterAuthGroups?: React.ReactNode;
+    privateKeyMaterial?: string;
+    onChangePrivateKeyMaterial?: (next: string) => void;
 }>) {
     const { theme } = useUnistyles();
     const formDisabled = Boolean(props.disabled);
@@ -116,7 +122,7 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
             {supportsPasswordAuth ? (
                 <Item
                     testID={testIDs.sshAuthPassword ?? resolveTestID('sshAuthPassword')}
-                    title={tLoose('settings.machineSetupRemoteSshPasswordAuthLabel')}
+                    title={t('settings.machineSetupRemoteSshPasswordAuthLabel')}
                     selected={value.authMode === 'password'}
                     disabled={formDisabled}
                     onPress={() => handleAuthModeChange('password')}
@@ -124,6 +130,20 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
             ) : null}
         </>
     );
+
+    const authTabs = React.useMemo((): ReadonlyArray<SegmentedTab<SshAuthMode>> => {
+        const tabs: Array<SegmentedTab<SshAuthMode>> = [];
+        if (supportsAgentAuth) {
+            tabs.push({ id: 'agent', label: t('settings.machineSetupRemoteSshAgentAuthLabel') });
+        }
+        if (supportsKeyfileAuth) {
+            tabs.push({ id: 'keyfile', label: t('settings.machineSetupRemoteSshKeyFileAuthLabel') });
+        }
+        if (supportsPasswordAuth) {
+            tabs.push({ id: 'password', label: t('settings.machineSetupRemoteSshPasswordAuthLabel') });
+        }
+        return tabs;
+    }, [supportsAgentAuth, supportsKeyfileAuth, supportsPasswordAuth]);
 
     const renderIdentityFileField = () => (
         <>
@@ -153,10 +173,28 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
         </>
     );
 
+    const renderPrivateKeyPasteField = () => {
+        if (!props.onChangePrivateKeyMaterial) {
+            return null;
+        }
+        return (
+            <MachineSetupTextField
+                testID={testIDs.sshPrivateKeyMaterial ?? resolveTestID('sshPrivateKeyMaterialInput')}
+                label={t('settings.machineSetupRemoteSshPrivateKeyMaterialLabel')}
+                value={props.privateKeyMaterial ?? ''}
+                editable={!formDisabled}
+                multiline
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={props.onChangePrivateKeyMaterial}
+            />
+        );
+    };
+
     const renderPasswordField = () => (
         <MachineSetupTextField
             testID={testIDs.sshPassword ?? resolveTestID('sshPasswordInput')}
-            label={tLoose('settings.machineSetupRemoteSshPasswordLabel')}
+            label={t('settings.machineSetupRemoteSshPasswordLabel')}
             value={value.password}
             editable={!formDisabled}
             secureTextEntry
@@ -177,7 +215,7 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                 <View style={{ gap: margins.sm }}>
                     <MachineSetupTextField
                         testID={testIDs.sshUsername ?? resolveTestID('sshUsernameInput')}
-                        label={tLoose('settings.machineSetupRemoteSshUsernameLabel')}
+                        label={t('settings.machineSetupRemoteSshUsernameLabel')}
                         placeholder={t('settings.machineSetupRemoteSshUsernamePlaceholder')}
                         value={value.username}
                         editable={!formDisabled}
@@ -189,34 +227,40 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                             });
                         }}
                     />
-                    <MachineSetupTextField
-                        testID={testIDs.sshHost ?? resolveTestID('sshHostInput')}
-                        label={tLoose('settings.machineSetupRemoteSshHostLabel')}
-                        placeholder={tLoose('settings.machineSetupRemoteSshHostPlaceholder')}
-                        value={value.host}
-                        editable={!formDisabled}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        onChangeText={handleHostChange}
-                    />
-                    <MachineSetupTextField
-                        testID={testIDs.sshPort ?? resolveTestID('sshPortInput')}
-                        label={tLoose('settings.machineSetupRemoteSshPortLabel')}
-                        placeholder={tLoose('settings.machineSetupRemoteSshPortPlaceholder')}
-                        value={value.port}
-                        editable={!formDisabled}
-                        keyboardType="number-pad"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        onChangeText={handlePortChange}
-                    />
+                    <View style={{ flexDirection: 'row', gap: margins.sm }}>
+                        <View style={{ flex: 1 }}>
+                            <MachineSetupTextField
+                                testID={testIDs.sshHost ?? resolveTestID('sshHostInput')}
+                                label={t('settings.machineSetupRemoteSshHostLabel')}
+                                placeholder={t('settings.machineSetupRemoteSshHostPlaceholder')}
+                                value={value.host}
+                                editable={!formDisabled}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                onChangeText={handleHostChange}
+                            />
+                        </View>
+                        <View style={{ width: 110 }}>
+                            <MachineSetupTextField
+                                testID={testIDs.sshPort ?? resolveTestID('sshPortInput')}
+                                label={t('settings.machineSetupRemoteSshPortLabel')}
+                                placeholder={t('settings.machineSetupRemoteSshPortPlaceholder')}
+                                value={value.port}
+                                editable={!formDisabled}
+                                keyboardType="number-pad"
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                onChangeText={handlePortChange}
+                            />
+                        </View>
+                    </View>
                 </View>
             ) : (
                 <ItemGroup>
                     <View style={{ paddingHorizontal: margins.lg, paddingVertical: margins.sm, gap: margins.sm }}>
                         <MachineSetupTextField
                             testID={testIDs.sshUsername ?? resolveTestID('sshUsernameInput')}
-                            label={tLoose('settings.machineSetupRemoteSshUsernameLabel')}
+                            label={t('settings.machineSetupRemoteSshUsernameLabel')}
                             placeholder={t('settings.machineSetupRemoteSshUsernamePlaceholder')}
                             value={value.username}
                             editable={!formDisabled}
@@ -230,8 +274,8 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                         />
                         <MachineSetupTextField
                             testID={testIDs.sshHost ?? resolveTestID('sshHostInput')}
-                            label={tLoose('settings.machineSetupRemoteSshHostLabel')}
-                            placeholder={tLoose('settings.machineSetupRemoteSshHostPlaceholder')}
+                            label={t('settings.machineSetupRemoteSshHostLabel')}
+                            placeholder={t('settings.machineSetupRemoteSshHostPlaceholder')}
                             value={value.host}
                             editable={!formDisabled}
                             autoCapitalize="none"
@@ -240,8 +284,8 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                         />
                         <MachineSetupTextField
                             testID={testIDs.sshPort ?? resolveTestID('sshPortInput')}
-                            label={tLoose('settings.machineSetupRemoteSshPortLabel')}
-                            placeholder={tLoose('settings.machineSetupRemoteSshPortPlaceholder')}
+                            label={t('settings.machineSetupRemoteSshPortLabel')}
+                            placeholder={t('settings.machineSetupRemoteSshPortPlaceholder')}
                             value={value.port}
                             editable={!formDisabled}
                             keyboardType="number-pad"
@@ -255,7 +299,16 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
 
             {isWizardLayout ? (
                 <View style={{ gap: margins.sm }}>
-                    {renderAuthModeItems()}
+                    <Text style={{ color: theme.colors.textSecondary }}>
+                        {t('settings.machineSetupRemoteSshAuthMethodLabel')}
+                    </Text>
+                    <SegmentedTabBar
+                        tabs={authTabs}
+                        activeTabId={value.authMode}
+                        onSelectTab={handleAuthModeChange}
+                        testIDPrefix={testIDs.sshAuthMethod ?? resolveTestID('sshAuthMethod')}
+                        compact={true}
+                    />
                 </View>
             ) : (
                 <ItemGroup>
@@ -270,6 +323,7 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                     {isWizardLayout ? (
                         <View style={{ gap: margins.sm }}>
                             {renderIdentityFileField()}
+                            {renderPrivateKeyPasteField()}
                         </View>
                     ) : (
                         <ItemGroup>
@@ -315,7 +369,7 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                         <View style={{ paddingHorizontal: margins.lg, paddingVertical: margins.sm }}>
                             <MachineSetupTextField
                                 testID={testIDs.sshPassword ?? resolveTestID('sshPasswordInput')}
-                                label={tLoose('settings.machineSetupRemoteSshPasswordLabel')}
+                                label={t('settings.machineSetupRemoteSshPasswordLabel')}
                                 value={value.password}
                                 editable={!formDisabled}
                                 secureTextEntry

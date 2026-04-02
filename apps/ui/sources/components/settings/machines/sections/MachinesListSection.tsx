@@ -3,13 +3,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { ActiveSelectionMachinesSection } from '@/components/settings/server/sections/ActiveSelectionMachinesSection';
+import { ActiveSelectionMachinesSection } from '@/components/settings/machines/sections/ActiveSelectionMachinesSection';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
-import type { useMachinesSettingsViewModel } from './machinesSettingsViewModel';
-import { buildMachineSetupWizardHref } from './setupWizardRoute';
+import type { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
+import { buildMachineSetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 type MachinesSettingsViewModel = ReturnType<typeof useMachinesSettingsViewModel>;
 

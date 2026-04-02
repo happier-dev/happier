@@ -10,10 +10,10 @@ import { isTauriDesktop } from '@/utils/platform/tauri';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t } from '@/text';
 
-import { MachineSetupActionsSection } from './MachineSetupActionsSection';
-import { MachinesListSection } from './MachinesListSection';
+import { MachineSetupActionsSection } from './sections/MachineSetupActionsSection';
+import { MachinesListSection } from './sections/MachinesListSection';
 import { useMachinesSettingsViewModel } from './machinesSettingsViewModel';
-import { buildMachineSetupWizardHref } from './setupWizardRoute';
+import { buildMachineSetupWizardHref, buildSetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 type MachineSetupWizardAction = 'local' | 'remote';
 type MachineSetupWizardStep = 'setup_this_computer' | 'remote_ssh_setup';
@@ -29,7 +29,7 @@ export const MachinesSettingsView = React.memo(function MachinesSettingsView() {
         action: MachineSetupWizardAction;
     }>) => {
         if (!params?.step || !params?.action) {
-            router.push('/setup/wizard');
+            router.push(buildSetupWizardHref());
             return;
         }
         router.push(buildMachineSetupWizardHref({
