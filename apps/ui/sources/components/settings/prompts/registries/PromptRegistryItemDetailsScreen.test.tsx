@@ -211,6 +211,37 @@ describe('PromptRegistryItemDetailsScreen', () => {
     machinePromptAssetsListTypesMock.mockClear();
   });
 
+  it('renders the utf8 bundle preview without depending on Buffer.from at runtime (web)', async () => {
+    const originalBufferFrom = Buffer.from;
+    Buffer.from = ((...args: any[]) => {
+      const stack = new Error().stack ?? '';
+      if (stack.includes('decodeUtf8BundleEntry')) {
+        throw new Error('Buffer.from should not be used for web preview decoding');
+      }
+      return originalBufferFrom(...(args as [any]));
+    }) as any;
+
+    try {
+      const { PromptRegistryItemDetailsScreen } = await import('./PromptRegistryItemDetailsScreen');
+
+      const tree = (await renderScreen(React.createElement(PromptRegistryItemDetailsScreen, {
+        machineId: 'machine-1',
+        sourceId: 'skills_sh:featured',
+        itemId: 'skills_sh:featured:item-1',
+        configuredSources: [],
+      }))).tree;
+      await act(async () => {});
+
+      const previewNodes = tree.root.findAll((node) =>
+        typeof node.props.children === 'string'
+        && node.props.children.includes('# Frontend design')
+      );
+      expect(previewNodes.length).toBeGreaterThan(0);
+    } finally {
+      Buffer.from = originalBufferFrom;
+    }
+  });
+
   it('loads registry item details and imports the fetched skill bundle into the library', async () => {
     const { PromptRegistryItemDetailsScreen } = await import('./PromptRegistryItemDetailsScreen');
 

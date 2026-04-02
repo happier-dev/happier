@@ -7,7 +7,7 @@ import { isTauriDesktop } from '@/utils/platform/tauri';
 import { getProviderCliSetupSupportedIds, type AgentId } from '@happier-dev/agents';
 import { getProviderLocalAuthPlugin } from '@/agents/providers/registry/providerLocalAuthRegistry';
 import { getAgentCore } from '@/agents/catalog/catalog';
-import { ProvidersLogoMultiSelect } from '@/components/onboardingWizard/ProvidersLogoMultiSelect';
+import { ProvidersLogoMultiSelect, WizardTerminalHandoff, WebDesktopDownloadCta } from '@/components/onboarding';
 import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
 import { ActionCard } from '@/components/ui/cards/ActionCard';
 import { Item } from '@/components/ui/lists/Item';
@@ -21,9 +21,11 @@ import { t } from '@/text';
 import { ProviderAuthenticationCard } from '../authentication/ProviderAuthenticationCard';
 import { ProviderAuthenticationTerminalPane } from '../authentication/ProviderAuthenticationTerminalPane';
 import { useProviderAuthenticationState } from '../authentication/useProviderAuthenticationState';
+import {
+    buildCliInstallAndRunCommandForCurrentApp,
+    buildCliInstallAndRunPowershellCommandForCurrentApp,
+} from '@/components/onboarding/commands/wizardCliCommands';
 import { buildProviderSetupWizardPrimaryOverride } from './resolveProviderSetupWizardPrimaryOverride';
-import { WizardTerminalHandoff } from '@/components/onboardingWizard/WizardTerminalHandoff';
-import { WebDesktopDownloadCta } from '@/components/onboardingWizard/WebDesktopDownloadCta';
 import {
     completeActiveProviderSetupStep,
     createProviderSetupQueueStateFromInstallSummary,
@@ -61,10 +63,20 @@ const ProviderSetupFlowWizardWebHandoff = React.memo(function ProviderSetupFlowW
         });
     }, []);
 
-    const providersSetupCommand = React.useMemo(() => {
-        if (selectedProviderIds.length === 0) return 'happier providers setup --yes';
-        return `happier providers setup --providers ${selectedProviderIds.join(',')} --yes`;
+    const providerArgv = React.useMemo(() => {
+        if (selectedProviderIds.length === 0) return ['--yes'];
+        return ['--providers', selectedProviderIds.join(','), '--yes'];
     }, [selectedProviderIds]);
+
+    const providersSetupCommand = React.useMemo(() => buildCliInstallAndRunCommandForCurrentApp({
+        action: 'providers-setup',
+        args: providerArgv,
+    }), [providerArgv]);
+
+    const providersSetupWindowsCommand = React.useMemo(() => buildCliInstallAndRunPowershellCommandForCurrentApp({
+        action: 'providers-setup',
+        args: providerArgv,
+    }), [providerArgv]);
 
     return (
         <View testID="setupWizard.providers.webHandoff" style={{ gap: 14 }}>
@@ -86,6 +98,8 @@ const ProviderSetupFlowWizardWebHandoff = React.memo(function ProviderSetupFlowW
                         title: t('settingsProviders.setup.startTitle'),
                         subtitle: t('settingsProviders.setup.startDescription'),
                         code: providersSetupCommand,
+                        windowsCode: providersSetupWindowsCommand,
+                        windowsLanguage: 'powershell',
                         scrollTestIDSuffix: 'providers-setup',
                     },
                 ]}

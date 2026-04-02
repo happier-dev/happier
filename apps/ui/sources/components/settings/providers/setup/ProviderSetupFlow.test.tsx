@@ -156,15 +156,15 @@ vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
     getProviderLocalAuthPlugin: () => null,
 }));
 
-vi.mock('@/components/onboardingWizard/WizardTerminalHandoff', () => ({
+vi.mock('@/components/onboarding/ui/WizardTerminalHandoff', () => ({
     WizardTerminalHandoff: (props: Record<string, unknown>) => React.createElement('WizardTerminalHandoff', props),
 }));
 
-vi.mock('@/components/onboardingWizard/ProvidersLogoMultiSelect', () => ({
+vi.mock('@/components/onboarding/steps/ProvidersLogoMultiSelect', () => ({
     ProvidersLogoMultiSelect: (props: Record<string, unknown>) => React.createElement('ProvidersLogoMultiSelect', props),
 }));
 
-vi.mock('@/components/onboardingWizard/WebDesktopDownloadCta', () => ({
+vi.mock('@/components/onboarding/steps/webDesktop/WebDesktopDownloadCta', () => ({
     WebDesktopDownloadCta: (props: Record<string, unknown>) => React.createElement('WebDesktopDownloadCta', props),
 }));
 
@@ -218,6 +218,15 @@ describe('ProviderSetupFlow', () => {
         expect(screen.findByTestId('provider-setup-start-card')).toBeNull();
         expect(screen.findByTestId('provider-setup-queue-card')).toBeNull();
         expect(screen.findByTestId('provider-setup-option-codex')).toBeNull();
+
+        const handoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
+            props: { steps?: Array<{ code?: unknown }> };
+        };
+        const codes = (handoff.props.steps ?? [])
+            .map((step) => (typeof step.code === 'string' ? step.code : ''))
+            .join('\n');
+        expect(codes).toContain('curl -fsSL https://happier.dev/install | bash');
+        expect(codes).toContain('--run providers-setup');
     });
 
     it('renders a wizard-friendly CLI handoff on web when running in wizard presentation', async () => {

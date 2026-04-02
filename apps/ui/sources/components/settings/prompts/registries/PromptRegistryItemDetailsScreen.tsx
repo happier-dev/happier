@@ -12,6 +12,7 @@ import type {
   PromptRegistryFetchedItemV1,
 } from '@happier-dev/protocol';
 
+import { decodeBase64 } from '@/encryption/base64';
 import { defaultPromptAssetTargetInput } from '@/components/settings/prompts/assets/promptAssetExportDefaults';
 import { ContextBar } from '@/components/settings/contextBar/ContextBar';
 import { useContextBarSelection } from '@/components/settings/contextBar/useContextBarSelection';
@@ -79,7 +80,8 @@ function decodeUtf8BundleEntry(item: PromptRegistryFetchedItemV1 | null, path: s
   const entry = item?.bundleBody.entries.find((candidate) => candidate.path === path && candidate.contentKind === 'utf8') ?? null;
   if (!entry) return null;
   try {
-    return Buffer.from(entry.contentBase64, 'base64').toString('utf8');
+    const bytes = decodeBase64(entry.contentBase64, 'base64');
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   } catch {
     return null;
   }
