@@ -8,25 +8,12 @@ import { parseArgs } from 'node:util';
 
 import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
 import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
+import { resolveYarnInvocation } from './resolve-yarn-invocation.mjs';
 import { formatPublicReleaseChannelChoices, normalizePublicReleaseChannel } from '../release/lib/public-release-rings.mjs';
 
 function fail(message) {
   console.error(message);
   process.exit(1);
-}
-
-function resolveYarnInvocation() {
-  try {
-    execFileSync('yarn', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 });
-    return { cmd: 'yarn', prefixArgs: [] };
-  } catch (err) {
-    const anyErr = /** @type {{ code?: unknown }} */ (err);
-    if (anyErr && anyErr.code === 'ENOENT') {
-      return { cmd: 'corepack', prefixArgs: ['yarn'] };
-    }
-    // If yarn exists but fails, still attempt to run it normally so we surface the real error.
-    return { cmd: 'yarn', prefixArgs: [] };
-  }
 }
 
 /**
@@ -167,6 +154,7 @@ function main() {
         env: {
           CI: 'true',
           APP_ENV: environment,
+          ...(process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : {}),
           ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
           ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
         },
@@ -180,6 +168,7 @@ function main() {
     env: {
       CI: 'true',
       APP_ENV: environment,
+      ...(process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : {}),
       ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
       ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
     },

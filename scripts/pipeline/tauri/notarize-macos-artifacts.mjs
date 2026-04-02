@@ -8,6 +8,7 @@ import { parseArgs } from 'node:util';
 
 import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
 import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
+import { resolveYarnInvocation } from './resolve-yarn-invocation.mjs';
 
 function fail(message) {
   console.error(message);
@@ -175,20 +176,18 @@ function main() {
     fs.renameSync(newTar, artifactPath);
   }
 
-  const sigValue = run(
-    opts,
-    'yarn',
-    ['--silent', 'tauri', 'signer', 'sign', path.resolve(absUiDir, artifactPath)],
-    {
-      cwd: absUiDir,
-      env: {
-        ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
-        ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
-      },
-      stdio: ['ignore', 'pipe', 'inherit'],
-      timeoutMs: 10 * 60_000,
-    },
-  )
+  const yarn = resolveYarnInvocation();
+  /** @type {string[]} */
+  const signArgs = [...yarn.prefixArgs, '--silent', 'tauri', 'signer', 'sign'];
+  if (signingKeyPath) signArgs.push('--private-key-path', signingKeyPath);
+  if (signingKeyPassword) signArgs.push('--password', signingKeyPassword);
+  signArgs.push(path.resolve(absUiDir, artifactPath));
+
+  const sigValue = run(opts, yarn.cmd, signArgs, {
+    cwd: absUiDir,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    timeoutMs: 10 * 60_000,
+  })
     .trim()
     .replaceAll('\r', '')
     .replaceAll('\n', '');
