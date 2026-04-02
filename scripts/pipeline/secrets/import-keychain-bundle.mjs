@@ -2,10 +2,18 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { parseDotenv } from '../env/parse-dotenv.mjs';
 import { readKeychainBundle } from './read-keychain-bundle.mjs';
 import { writeKeychainBundle } from './write-keychain-bundle.mjs';
+
+function assertSecurityCliAvailable() {
+  const res = spawnSync('security', [], { stdio: 'ignore' });
+  if (res.error && res.error.code === 'ENOENT') {
+    throw new Error('[pipeline] Keychain import requires the `security` CLI (available by default on macOS).');
+  }
+}
 
 /**
  * @param {unknown} err
@@ -79,9 +87,7 @@ function readEnvFile(opts) {
  * }}
  */
 export function importDotenvIntoKeychainBundle(opts) {
-  if (process.platform !== 'darwin') {
-    throw new Error('[pipeline] Keychain import is only supported on macOS (darwin).');
-  }
+  assertSecurityCliAvailable();
 
   const repoRoot = path.resolve(String(opts.repoRoot ?? ''));
   const service = String(opts.keychainService ?? '').trim();
@@ -166,4 +172,3 @@ export function importDotenvIntoKeychainBundle(opts) {
     wrote,
   };
 }
-
