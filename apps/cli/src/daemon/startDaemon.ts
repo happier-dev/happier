@@ -28,6 +28,7 @@ import {
   DaemonLocallyPersistedState,
   acquireDaemonLock,
   releaseDaemonLock,
+  clearDaemonState,
   readCredentials,
   readSettings,
 } from '@/persistence';
@@ -1760,6 +1761,7 @@ export async function startDaemon(): Promise<void> {
       fileState,
       currentCliVersion: configuration.currentCliVersion,
       requestShutdown,
+      isShuttingDown: () => shutdownInitiated,
     });
 
             // Setup signal handlers
@@ -1779,6 +1781,15 @@ export async function startDaemon(): Promise<void> {
           if (restartOnStaleVersionAndHeartbeat) {
             clearInterval(restartOnStaleVersionAndHeartbeat);
         logger.debug('[DAEMON RUN] Health check interval cleared');
+      }
+
+      // Clear daemon.state.json early in shutdown so callers observing "stop" don't race a later
+      // heartbeat tick or long tail cleanup work (and to satisfy daemon stop integration tests).
+      try {
+        await clearDaemonState();
+        logger.debug('[DAEMON RUN] Daemon state file removed');
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Error cleaning up daemon metadata', error);
       }
       if (connectedServiceRefreshLoopHandle) {
         connectedServiceRefreshLoopHandle.stop();
