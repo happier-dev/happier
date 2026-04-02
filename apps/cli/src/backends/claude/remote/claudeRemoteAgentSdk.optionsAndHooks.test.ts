@@ -9,12 +9,17 @@ import { makeMode } from './claudeRemoteAgentSdk.testkit';
 import { resolveClaudeProjectId } from '../utils/path';
 
 const ORIGINAL_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
-const { ensureJavaScriptRuntimeExecutableMock } = vi.hoisted(() => ({
+const { ensureJavaScriptRuntimeExecutableMock, repairTranscriptMock } = vi.hoisted(() => ({
     ensureJavaScriptRuntimeExecutableMock: vi.fn(async () => '/managed/js-runtime'),
+    repairTranscriptMock: vi.fn(async () => ({ appendedToolUseIds: [] as string[] })),
 }));
 
 vi.mock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
     ensureJavaScriptRuntimeExecutable: ensureJavaScriptRuntimeExecutableMock,
+}));
+
+vi.mock('@/backends/claude/utils/repairClaudeSessionJsonlToolResults', () => ({
+    repairClaudeSessionJsonlToolResults: repairTranscriptMock,
 }));
 
 afterEach(() => {
@@ -29,6 +34,8 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
     afterEach(() => {
         ensureJavaScriptRuntimeExecutableMock.mockReset();
         ensureJavaScriptRuntimeExecutableMock.mockResolvedValue('/managed/js-runtime');
+        repairTranscriptMock.mockReset();
+        repairTranscriptMock.mockResolvedValue({ appendedToolUseIds: [] });
     });
 
     it('yields stream-json user messages as objects (Agent SDK stringifies them)', async () => {
@@ -286,6 +293,65 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         }
         await (capturedTurnInterrupt as unknown as () => Promise<void>)();
         expect(interrupt).toHaveBeenCalled();
+    });
+
+    it('invokes transcript repair on turn interrupt', async () => {
+        const interrupt = vi.fn(async () => {});
+        let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                interrupt,
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: 'session-1',
+            transcriptPath: '/tmp/session-1.jsonl',
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            setTurnInterrupt: (next: (() => Promise<void>) | null) => {
+                if (next) capturedTurnInterrupt = next;
+            },
+            createQuery,
+        } as any);
+
+        if (!capturedTurnInterrupt) {
+            throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+        }
+
+        await capturedTurnInterrupt();
+        expect(interrupt).toHaveBeenCalled();
+        expect(repairTranscriptMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionId: 'session-1',
+                transcriptPath: '/tmp/session-1.jsonl',
+                cwd: '/tmp',
+            }),
+        );
     });
 
     it('omits effort when the mode specifies reasoningEffort=high (provider default)', async () => {

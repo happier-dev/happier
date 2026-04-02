@@ -16,6 +16,7 @@ import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/se
 import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
 import { resolveClaudeCodeExperimentalEnvOverlay } from '@/backends/claude/spawn/resolveClaudeCodeExperimentalEnvOverlay';
 import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
+import { repairClaudeSessionJsonlToolResults } from '@/backends/claude/utils/repairClaudeSessionJsonlToolResults';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import { resolveClaudeEffortForModel } from '@/backends/claude/utils/claudeEffort';
@@ -153,15 +154,19 @@ export async function claudeRemoteAgentSdk(opts: {
         return;
     }
 
-    let isCompactCommand = false;
-    if (specialCommand.type === 'compact') {
-        logger.debug('[claudeRemoteAgentSdk] /compact command detected - will process as normal but with compaction behavior');
-        isCompactCommand = true;
-        opts.onCompletionEvent?.('Compaction started');
-    }
+	    let isCompactCommand = false;
+	    if (specialCommand.type === 'compact') {
+	        logger.debug('[claudeRemoteAgentSdk] /compact command detected - will process as normal but with compaction behavior');
+	        isCompactCommand = true;
+	        opts.onCompletionEvent?.('Compaction started');
+	    }
 
-    let mode = initial.mode;
-    let response: any;
+	    let mode = initial.mode;
+	    let response: any;
+	    let latestClaudeSessionId: string | null =
+	        typeof opts.sessionId === 'string' && opts.sessionId.trim().length > 0 ? opts.sessionId.trim() : startFrom ?? null;
+	    let latestTranscriptPath: string | null =
+	        typeof opts.transcriptPath === 'string' && opts.transcriptPath.trim().length > 0 ? opts.transcriptPath.trim() : null;
 
     const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
         baseMcpServers: (opts.happierMcpServers ?? Object.create(null)) as Record<string, unknown>,
@@ -632,11 +637,11 @@ export async function claudeRemoteAgentSdk(opts: {
     const streamedTranscriptWriter = opts.streamedTranscriptWriter ?? null;
     let cleanupBufferedAssistantMessages: ((incoming: unknown) => void) | null = null;
 
-    const flushStreamedTranscriptWriter = async (
-        reason: 'tool-call-boundary' | 'turn-end' | 'abort',
-        interruptedReason?: string,
-    ) => {
-        if (!streamedTranscriptWriter) return;
+	    const flushStreamedTranscriptWriter = async (
+	        reason: 'tool-call-boundary' | 'turn-end' | 'abort',
+	        interruptedReason?: string,
+	    ) => {
+	        if (!streamedTranscriptWriter) return;
         try {
             await streamedTranscriptWriter.flushAll({
                 reason,
@@ -644,13 +649,25 @@ export async function claudeRemoteAgentSdk(opts: {
             });
         } catch (error) {
             logger.debug('[claudeRemoteAgentSdk] Failed flushing streamed transcript writer (non-fatal)', { error, reason });
-        }
-    };
+	        }
+	    };
 
-    const normalizeSidechainIdForStream = (message: unknown): string | null => {
-        if (!message || typeof message !== 'object') return null;
-        const raw = (message as any).parent_tool_use_id;
-        if (raw === null || raw === undefined) return null;
+	    const repairTranscriptAfterAbort = async () => {
+	        try {
+	            await repairClaudeSessionJsonlToolResults({
+	                transcriptPath: latestTranscriptPath,
+	                cwd: opts.path,
+	                sessionId: latestClaudeSessionId,
+	            });
+	        } catch {
+	            // Best-effort: transcript repair should never crash the runner.
+	        }
+	    };
+
+	    const normalizeSidechainIdForStream = (message: unknown): string | null => {
+	        if (!message || typeof message !== 'object') return null;
+	        const raw = (message as any).parent_tool_use_id;
+	        if (raw === null || raw === undefined) return null;
         if (typeof raw !== 'string') return null;
         const trimmed = raw.trim();
         return trimmed.length > 0 ? trimmed : null;
@@ -732,13 +749,14 @@ export async function claudeRemoteAgentSdk(opts: {
                 updateThinking(false);
                 try {
                     cleanupBufferedAssistantMessages?.(null);
-                } catch {
-                    // ignore
-                }
-                await flushStreamedTranscriptWriter('abort', 'turn-interrupt');
-            }
-        };
-        opts.setTurnInterrupt?.(interruptTurn);
+	                } catch {
+	                    // ignore
+	                }
+	                await flushStreamedTranscriptWriter('abort', 'turn-interrupt');
+	                await repairTranscriptAfterAbort();
+	            }
+	        };
+	        opts.setTurnInterrupt?.(interruptTurn);
 
         updateThinking(true);
         const streamingToolUses = new Map<
@@ -1429,16 +1447,18 @@ export async function claudeRemoteAgentSdk(opts: {
 
                 if (message && message.type === 'system' && message.subtype === 'init') {
                     const init = message as SDKSystemMessage;
-                    if (init.session_id) {
-                        const transcriptPath = join(
-                            getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
-                            `${init.session_id}.jsonl`,
-                        );
-                        logger.debug('[claudeRemoteAgentSdk] Session initialized', {
-                            claudeSessionId: init.session_id,
-                            transcriptPath,
-                        });
-                        opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
+	                    if (init.session_id) {
+	                        const transcriptPath = join(
+	                            getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
+	                            `${init.session_id}.jsonl`,
+	                        );
+	                        latestClaudeSessionId = init.session_id;
+	                        latestTranscriptPath = transcriptPath;
+	                        logger.debug('[claudeRemoteAgentSdk] Session initialized', {
+	                            claudeSessionId: init.session_id,
+	                            transcriptPath,
+	                        });
+	                        opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
                         if (isCompactCommand) {
                             opts.onCompletionEvent?.('Compaction completed');
                             isCompactCommand = false;
@@ -1497,12 +1517,13 @@ export async function claudeRemoteAgentSdk(opts: {
                 await finalizeCurrentTurn();
             }
         }
-    } catch (e) {
-        if (e instanceof AgentSdkAbortError) {
-            logger.debug('[claudeRemoteAgentSdk] Aborted');
-            await flushStreamedTranscriptWriter('abort', 'agent-sdk-abort');
-            return;
-        }
+	    } catch (e) {
+	        if (e instanceof AgentSdkAbortError) {
+	            logger.debug('[claudeRemoteAgentSdk] Aborted');
+	            await flushStreamedTranscriptWriter('abort', 'agent-sdk-abort');
+	            await repairTranscriptAfterAbort();
+	            return;
+	        }
         if (e && typeof e === 'object') {
             const err = e as any;
             if (!err.happierClaudeCodeArtifacts) {
@@ -1513,16 +1534,17 @@ export async function claudeRemoteAgentSdk(opts: {
             }
         }
         throw e;
-    } finally {
-        opts.setUserMessageSender?.(null);
-        opts.setTurnInterrupt?.(null);
-        updateThinking(false);
-        cleanupBufferedAssistantMessages?.(null);
-        await flushStreamedTranscriptWriter('abort', 'runner-finalize');
-        abortController.abort();
-        await swallowOptionalPromise(nextMessagePump);
-        try {
-            response?.close();
+	    } finally {
+	        opts.setUserMessageSender?.(null);
+	        opts.setTurnInterrupt?.(null);
+	        updateThinking(false);
+	        cleanupBufferedAssistantMessages?.(null);
+	        await flushStreamedTranscriptWriter('abort', 'runner-finalize');
+	        await repairTranscriptAfterAbort();
+	        abortController.abort();
+	        await swallowOptionalPromise(nextMessagePump);
+	        try {
+	            response?.close();
         } catch {
             // ignore
         }
