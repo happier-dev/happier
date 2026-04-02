@@ -48,7 +48,7 @@ describe('sync socket transports', () => {
     expect(ioSpy).toHaveBeenCalledWith(
       'https://server.example.test',
       expect.objectContaining({
-        path: '/v1/updates',
+        path: '/v1/updates/',
       }),
     );
     const opts = ioSpy.mock.calls[0]?.[1] as any;
@@ -57,6 +57,26 @@ describe('sync socket transports', () => {
     expect(opts.autoConnect).toBe(false);
     expect(opts.forceNew).toBe(true);
     expect(opts.multiplex).toBe(false);
+  });
+
+  it('does not override transports in web runtimes by default', async () => {
+    const fakeSocket = createSocketStub();
+    ioSpy.mockReturnValue(fakeSocket);
+
+    (globalThis as any).window = {};
+    (globalThis as any).document = {};
+    try {
+      const { resolveSocketIoTransports } = await import('@/sync/runtime/socketIoTransports');
+      const { createSyncSocketTransport } = await import('./connection/createSyncSocketTransport');
+      const transports = resolveSocketIoTransports();
+      createSyncSocketTransport({ endpoint: 'https://server.example.test', token: 'token-1', transports });
+
+      const opts = ioSpy.mock.calls[0]?.[1] as any;
+      expect(opts).not.toHaveProperty('transports');
+    } finally {
+      delete (globalThis as any).window;
+      delete (globalThis as any).document;
+    }
   });
 
   it('can force websocket-only via config flag', async () => {
@@ -76,5 +96,20 @@ describe('sync socket transports', () => {
     expect(opts.autoConnect).toBe(false);
     expect(opts.forceNew).toBe(true);
     expect(opts.multiplex).toBe(false);
+  });
+
+  it('normalizes trailing slashes in the socket endpoint before connecting', async () => {
+    const fakeSocket = createSocketStub();
+    ioSpy.mockReturnValue(fakeSocket);
+
+    const { createSyncSocketTransport } = await import('./connection/createSyncSocketTransport');
+    createSyncSocketTransport({ endpoint: 'https://server.example.test/', token: 'token-1' });
+
+    expect(ioSpy).toHaveBeenCalledWith(
+      'https://server.example.test',
+      expect.objectContaining({
+        path: '/v1/updates/',
+      }),
+    );
   });
 });

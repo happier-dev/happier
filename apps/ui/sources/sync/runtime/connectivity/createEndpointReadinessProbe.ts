@@ -14,6 +14,10 @@ function normalizeAbsoluteHttpBaseUrl(raw: string): string | null {
         if (url.protocol !== 'http:' && url.protocol !== 'https:') {
             return null;
         }
+        if (url.username || url.password) {
+            url.username = '';
+            url.password = '';
+        }
         url.hash = '';
         url.search = '';
         return url.toString().replace(/\/+$/, '');

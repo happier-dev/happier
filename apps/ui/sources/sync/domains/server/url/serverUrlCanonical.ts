@@ -8,6 +8,9 @@ export function canonicalizeServerUrl(raw: string): string {
     const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value);
     try {
         const parsed = new URL(hasScheme ? value : `https://${value}`);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+        parsed.username = '';
+        parsed.password = '';
         if (!hasScheme) {
             parsed.protocol = isLocalishHostname(parsed.hostname) ? 'http:' : 'https:';
         }

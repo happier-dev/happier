@@ -124,6 +124,29 @@ describe('serverProfiles', () => {
         expect(profiles.isActiveServerSelectionExplicit()).toBe(true);
     });
 
+    it('emits active server changes when selection becomes explicit without changing the URL', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('null');
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({
+            serverUrl: 'https://device.example.test',
+            name: 'Device',
+        });
+
+        expect(profiles.getActiveServerSnapshot().serverId).toBe(created.id);
+        expect(profiles.isActiveServerSelectionExplicit()).toBe(false);
+
+        const listener = vi.fn();
+        profiles.subscribeActiveServer(listener);
+
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+
+        expect(profiles.isActiveServerSelectionExplicit()).toBe(true);
+        expect(listener).toHaveBeenCalled();
+    });
+
     it('persists a shareable relay URL on the active server snapshot', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
@@ -455,6 +478,44 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().some((p) => p.id === remote.id)).toBe(false);
     });
 
+    it('emits a server profile generation update when profiles change', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const before = profiles.getServerProfilesGeneration();
+        const generations: number[] = [];
+        const unsubscribe = profiles.subscribeServerProfiles((generation: number) => {
+            generations.push(generation);
+        });
+
+        const remote = profiles.upsertServerProfile({ serverUrl: 'https://relay-gen.example.test', name: 'remote-gen' });
+        profiles.removeServerProfile(remote.id);
+        unsubscribe();
+
+        const after = profiles.getServerProfilesGeneration();
+        expect(after).toBeGreaterThan(before);
+        expect(generations.length).toBeGreaterThan(0);
+        expect(generations[generations.length - 1]!).toBe(after);
+    });
+
+    it('does not bump server profiles generation when reading an existing Happier Cloud profile', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const before = profiles.getServerProfilesGeneration();
+
+        profiles.getOrCreateHappierCloudServerProfile();
+        const afterCreate = profiles.getServerProfilesGeneration();
+
+        profiles.getOrCreateHappierCloudServerProfile();
+        const afterRead = profiles.getServerProfilesGeneration();
+
+        expect(afterCreate).toBeGreaterThanOrEqual(before);
+        expect(afterRead).toBe(afterCreate);
+    });
+
     it('treats a happier-*.localhost web origin as stack context even if EXPO_PUBLIC_HAPPY_SERVER_CONTEXT is unset', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
@@ -542,7 +603,7 @@ describe('serverProfiles', () => {
         });
 
         expect(second.id).toBe(first.id);
-        expect(second.serverUrl).toBe('https://admin:secret@example.com:8443/path');
+        expect(second.serverUrl).toBe('https://example.com:8443/path');
         expect(profiles.listServerProfiles().filter((p) => p.id === first.id)).toHaveLength(1);
     });
 

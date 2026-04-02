@@ -107,6 +107,23 @@ describe('createEndpointReadinessProbe', () => {
         expect(runtimeFetchMock).toHaveBeenCalledTimes(0);
     });
 
+    it('strips username/password userinfo from the endpoint before probing', async () => {
+        runtimeFetchMock
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })) // /health
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })); // /v1/auth/ping
+
+        const { createEndpointReadinessProbe } = await import('./createEndpointReadinessProbe');
+        const probe = createEndpointReadinessProbe({
+            endpoint: 'https://user:pass@server.example.test',
+            token: 'token-1',
+            timeoutMs: 50,
+        });
+
+        await expect(probe()).resolves.toEqual(expect.objectContaining({ status: 'ready' }));
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
+        expect(runtimeFetchMock.mock.calls[0]?.[0]).toBe('https://server.example.test/health');
+    });
+
     it('returns server_unreachable when readiness probes are non-ok', async () => {
         runtimeFetchMock
             .mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 404 })); // /health
@@ -226,6 +243,21 @@ describe('createEndpointReadinessProbe', () => {
         } finally {
             globalWithLocation.location = originalLocation;
         }
+    });
+
+    it('strips userinfo credentials from probe URLs before issuing network calls', async () => {
+        runtimeFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 })); // /health
+
+        const { createEndpointReadinessProbe } = await import('./createEndpointReadinessProbe');
+        const probe = createEndpointReadinessProbe({
+            endpoint: 'https://admin:secret@custom.example.test:9443/base?token=abc#frag',
+            token: null,
+            timeoutMs: 50,
+        });
+
+        await expect(probe()).resolves.toEqual(expect.objectContaining({ status: 'ready' }));
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+        expect(runtimeFetchMock.mock.calls[0]?.[0]).toBe('https://custom.example.test:9443/base/health');
     });
 
     it('sanitizes error messages from runtimeFetch failures', async () => {

@@ -143,6 +143,7 @@ describe('sync socket offline tracking', () => {
     (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' };
     (sync as any).encryption = {
       decryptEncryptionKey: async () => null,
+      initializeMachines: async () => {},
       initializeSessions: async () => {},
       getSessionEncryption: () => null,
     };

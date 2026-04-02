@@ -17,4 +17,3 @@ describe('AgentStateSchema', () => {
         expect(parsed.data.controlledByUser).toBe(true);
     });
 });
-

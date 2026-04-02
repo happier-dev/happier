@@ -26,6 +26,7 @@ export type ActiveServerSnapshot = Readonly<{
     serverUrl: string;
     activeShareableServerUrl?: string | null;
     activeLocalRelayUrl?: string | null;
+    isSelectionExplicit?: boolean;
     generation: number;
 }>;
 
@@ -48,6 +49,14 @@ const STATE_KEY = 'server-state-v1';
 let activeServerGeneration = 0;
 const activeServerListeners = new Set<(snapshot: ActiveServerSnapshot) => void>();
 let activeServerSnapshotCache: ActiveServerSnapshot | null = null;
+
+let serverProfilesGeneration = 0;
+const serverProfilesListeners = new Set<(generation: number) => void>();
+
+function emitServerProfilesChanged(): void {
+    serverProfilesGeneration += 1;
+    for (const listener of serverProfilesListeners) listener(serverProfilesGeneration);
+}
 
 function isWebRuntime(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -554,6 +563,8 @@ function getWebSameOriginServerUrl(): string | null {
 
 function buildActiveSnapshotFromState(state: Required<PersistedServerState>): ActiveServerSnapshot {
     const tabId = readTabActiveServerId();
+    const tabExplicit = Boolean(tabId && state.servers[tabId]);
+    const isSelectionExplicit = tabExplicit || state.activeServerIdIsExplicit === true;
     const selectedId = tabId && state.servers[tabId]
         ? tabId
         : resolvePrimaryActiveServerId(state.servers, state.activeServerId);
@@ -568,6 +579,7 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
             activeLocalRelayUrl: sameOriginUrl && comparableUrlKey(sameOriginUrl) !== comparableUrlKey(selected.serverUrl)
                 ? sameOriginUrl
                 : null,
+            isSelectionExplicit,
             generation: activeServerGeneration,
         };
     }
@@ -577,6 +589,7 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
         serverUrl: sameOriginUrl ?? '',
         activeShareableServerUrl: null,
         activeLocalRelayUrl: sameOriginUrl,
+        isSelectionExplicit,
         generation: activeServerGeneration,
     };
 }
@@ -589,6 +602,7 @@ function getStableActiveServerSnapshot(next: ActiveServerSnapshot): ActiveServer
         && cached.serverUrl === next.serverUrl
         && (cached.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
         && (cached.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
+        && (cached.isSelectionExplicit ?? null) === (next.isSelectionExplicit ?? null)
         && cached.generation === next.generation
     ) {
         return cached;
@@ -605,6 +619,7 @@ function emitActiveServerChanged(previous: ActiveServerSnapshot | null): void {
         && previous.serverUrl === next.serverUrl
         && (previous.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
         && (previous.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
+        && (previous.isSelectionExplicit ?? null) === (next.isSelectionExplicit ?? null)
     ) return;
     activeServerGeneration += 1;
     const emitted: ActiveServerSnapshot = getStableActiveServerSnapshot({ ...next, generation: activeServerGeneration });
@@ -613,6 +628,17 @@ function emitActiveServerChanged(previous: ActiveServerSnapshot | null): void {
 
 export function listServerProfiles(): ServerProfile[] {
     return Object.values(readPersistedState().servers);
+}
+
+export function getServerProfilesGeneration(): number {
+    return serverProfilesGeneration;
+}
+
+export function subscribeServerProfiles(listener: (generation: number) => void): () => void {
+    serverProfilesListeners.add(listener);
+    return () => {
+        serverProfilesListeners.delete(listener);
+    };
 }
 
 export function getServerProfileById(idRaw: string): ServerProfile | null {
@@ -671,11 +697,16 @@ export function upsertServerProfile(
             [id]: profile,
         },
     });
+    emitServerProfilesChanged();
     emitActiveServerChanged(previousSnapshot);
     return profile;
 }
 
 export function getOrCreateHappierCloudServerProfile(): ServerProfile {
+    const state = readPersistedState();
+    const existing = findProfileByEquivalentUrl(state.servers, HAPPIER_CLOUD_SERVER_URL);
+    if (existing) return existing;
+
     return upsertServerProfile({
         serverUrl: HAPPIER_CLOUD_SERVER_URL,
         name: 'Happier Cloud',
@@ -718,6 +749,7 @@ export function setActiveServerId(
             [id]: { ...existing, lastUsedAt: now, updatedAt: now },
         },
     });
+    emitServerProfilesChanged();
     emitActiveServerChanged(previousSnapshot);
 }
 
@@ -802,6 +834,7 @@ export function removeServerProfile(idRaw: string): void {
         activeServerIdIsExplicit: true,
         servers: rest,
     });
+    emitServerProfilesChanged();
     emitActiveServerChanged(previousSnapshot);
 }
 
@@ -829,6 +862,7 @@ export function renameServerProfile(idRaw: string, nameRaw: string): void {
             [id]: updated,
         },
     });
+    emitServerProfilesChanged();
     emitActiveServerChanged(previousSnapshot);
 }
 
@@ -854,5 +888,6 @@ export function setServerProfileShareableUrl(idRaw: string, shareableServerUrl: 
             },
         },
     });
+    emitServerProfilesChanged();
     emitActiveServerChanged(previousSnapshot);
 }

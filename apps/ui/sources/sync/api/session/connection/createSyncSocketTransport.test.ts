@@ -73,7 +73,7 @@ describe('createSyncSocketTransport', () => {
         expect(ioSpy).toHaveBeenCalledWith(
             'https://api.example.test',
             expect.objectContaining({
-                path: '/v1/updates',
+                path: '/v1/updates/',
                 auth: expect.objectContaining({
                     token: 'token-a',
                     clientType: 'user-scoped',
@@ -83,6 +83,7 @@ describe('createSyncSocketTransport', () => {
                 forceNew: true,
                 multiplex: false,
                 reconnection: false,
+                withCredentials: false,
                 autoConnect: false,
             }),
         );

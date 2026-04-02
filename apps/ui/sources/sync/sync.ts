@@ -18,6 +18,7 @@ import {
     stopServerReachabilitySupervisors,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { applyInitialAppStateConnectivityGate } from '@/sync/runtime/connectivity/appStateConnectivityGate';
+import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/resolveSocketErrorClassification';
 import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
 import {
     computeSessionMessagesPaginationUpdateFromPage,
@@ -3668,12 +3669,10 @@ async function syncInit(credentials: AuthCredentials, restore: boolean) {
         const msg = error.message || 'Connection error';
         storage.getState().setSocketError(msg);
 
-        // Prefer explicit status if provided by the socket error (depends on server implementation).
-        const status = (error as any)?.data?.status;
-        const statusNum = typeof status === 'number' ? status : null;
+        const classification = resolveSocketErrorClassification(error);
         const kind: 'auth' | 'config' | 'network' | 'server' | 'unknown' =
-            statusNum === 401 || statusNum === 403 ? 'auth' : 'unknown';
-        const retryable = kind !== 'auth';
+            classification.kind === 'auth' ? 'auth' : 'unknown';
+        const retryable = classification.retryable;
 
         storage.getState().setSyncError({ message: msg, retryable, kind, at: Date.now() });
     });

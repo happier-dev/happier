@@ -159,7 +159,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         createSocket: overrides?.createSocket ?? ((params) => {
             const transports = resolveSocketIoTransports();
             return io(params.serverUrl, {
-                path: '/v1/updates',
+                path: '/v1/updates/',
                 auth: {
                     token: params.token,
                     clientType: 'user-scoped' as const,
@@ -168,6 +168,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
                 forceNew: true,
                 ...(transports ? { transports } : null),
                 reconnection: false,
+                withCredentials: false,
                 autoConnect: false,
             }) as unknown as SocketLike;
         }),

@@ -17,13 +17,14 @@ export function createConcurrentServerSocketTransport(params: Readonly<{
 }> {
     const transports = resolveSocketIoTransports();
     const socket = io(params.serverUrl, {
-        path: '/v1/updates',
+        path: '/v1/updates/',
         auth: {
             token: params.token,
             clientType: 'user-scoped' as const,
             clientPurpose: 'concurrent-server-cache' as const,
         },
         ...(transports ? { transports } : null),
+        withCredentials: false,
         // Avoid the socket.io global Manager cache. This transport is frequently created/destroyed as
         // servers enter/exit the concurrent session cache, and cached Managers can retain listeners.
         forceNew: true,

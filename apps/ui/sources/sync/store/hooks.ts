@@ -372,10 +372,14 @@ export function useMachineListByServerId(): Record<string, Machine[] | null> {
   const machineListByServerIdRaw = getStorage()(useShallow((state) => state.machineListByServerId));
   const machineListByServerId = machineListByServerIdRaw ?? EMPTY_MACHINE_LIST_BY_SERVER_ID;
   return React.useMemo(() => {
+    const source: Record<string, Machine[] | null> =
+      machineListByServerId && typeof machineListByServerId === 'object'
+        ? (machineListByServerId as unknown as Record<string, Machine[] | null>)
+        : {};
     let hasChanges = false;
     const nextByServerId: Record<string, Machine[] | null> = {};
 
-    for (const [serverId, machines] of Object.entries(machineListByServerId)) {
+    for (const [serverId, machines] of Object.entries(source)) {
       if (!Array.isArray(machines)) {
         nextByServerId[serverId] = machines;
         continue;
@@ -394,12 +398,17 @@ export function useMachineListByServerId(): Record<string, Machine[] | null> {
       nextByServerId[serverId] = machines;
     }
 
-    return hasChanges ? nextByServerId : machineListByServerId;
+    return hasChanges ? nextByServerId : source;
   }, [machineListByServerId]);
 }
 
 export function useMachineListStatusByServerId(): Record<string, 'idle' | 'loading' | 'signedOut' | 'error'> {
-  return getStorage()(useShallow((state) => state.machineListStatusByServerId));
+  const machineListStatusByServerId = getStorage()(useShallow((state) => state.machineListStatusByServerId));
+  return React.useMemo(() => {
+    return machineListStatusByServerId && typeof machineListStatusByServerId === 'object'
+      ? (machineListStatusByServerId as unknown as Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>)
+      : {};
+  }, [machineListStatusByServerId]);
 }
 
 export function useMachine(machineId: string): Machine | null {

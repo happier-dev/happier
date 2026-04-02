@@ -245,7 +245,7 @@ describe('concurrent session cache supervised sockets', () => {
         expect(ioSpy).toHaveBeenCalledWith(
             'https://stack-b.example.test',
             expect.objectContaining({
-                path: '/v1/updates',
+                path: '/v1/updates/',
                 auth: expect.objectContaining({
                     token: 'token-b',
                     clientType: 'user-scoped',

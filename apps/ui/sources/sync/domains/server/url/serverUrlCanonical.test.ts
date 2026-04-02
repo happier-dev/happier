@@ -8,10 +8,10 @@ import {
 import { toServerUrlDisplay } from './serverUrlDisplay';
 
 describe('serverUrlCanonical', () => {
-    it('strips query and hash while preserving userinfo for request usage', () => {
+    it('strips userinfo, query, and hash', () => {
         expect(
             canonicalizeServerUrl('https://admin:secret@example.com:8443/api?token=abc#frag'),
-        ).toBe('https://admin:secret@example.com:8443/api');
+        ).toBe('https://example.com:8443/api');
     });
 
     it('accepts remote hostnames without a scheme and defaults to https', () => {
@@ -19,8 +19,9 @@ describe('serverUrlCanonical', () => {
         expect(canonicalizeServerUrl('example.com:8443/path')).toBe('https://example.com:8443/path');
     });
 
-    it('accepts localish hostnames without a scheme and defaults to http', () => {
+    it('defaults to http for loopback + private LAN hosts when the scheme is omitted', () => {
         expect(canonicalizeServerUrl('localhost:3005')).toBe('http://localhost:3005');
+        expect(canonicalizeServerUrl('qa-stack.localhost:3012')).toBe('http://qa-stack.localhost:3012');
         expect(canonicalizeServerUrl('127.0.0.1:3005')).toBe('http://127.0.0.1:3005');
         expect(canonicalizeServerUrl('192.168.1.20:3005')).toBe('http://192.168.1.20:3005');
         expect(canonicalizeServerUrl('10.0.0.5:53288')).toBe('http://10.0.0.5:53288');

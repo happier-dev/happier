@@ -65,6 +65,44 @@ describe('serverScopedRpcSocketPool', () => {
         vi.useRealTimers();
     });
 
+    it('uses the canonical Socket.IO updates path', async () => {
+        vi.resetModules();
+        const { socket } = createFakeSocket();
+        const ioSpy = vi.fn(() => socket);
+        vi.doMock('socket.io-client', () => ({
+            io: ioSpy,
+        }));
+
+        const { createServerScopedRpcSocketPool } = await import('./serverScopedRpcSocketPool');
+        const pool = createServerScopedRpcSocketPool({
+            reachability: {
+                waitForReachable: async () => {},
+                startReachability: async () => {},
+                reportUnreachable: () => {},
+                subscribeNetworkAllowed: () => () => {},
+            },
+            readIdleDisconnectMs: () => 0,
+        });
+
+        const client: ScopedSocketClient = await pool.acquire({
+            serverUrl: 'https://server.example.test',
+            token: 'token-a',
+            timeoutMs: 1000,
+        });
+        client.disconnect();
+
+        expect(ioSpy).toHaveBeenCalledWith(
+            'https://server.example.test',
+            expect.objectContaining({
+                path: '/v1/updates/',
+                withCredentials: false,
+            }),
+        );
+
+        await pool.stopAll();
+        pool.resetForTests();
+    });
+
     it('reuses a single underlying socket across sequential acquires within the idle window', async () => {
         const ioSpy = vi.fn();
         const { socket, disconnectSpy } = createFakeSocket();

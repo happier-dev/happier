@@ -3,8 +3,8 @@ import { z } from 'zod';
 
 import { RemoteHostSchema } from '@/sync/domains/remoteHosts/remoteHostModel';
 
-function arrayCount(value: readonly unknown[]) {
-    return value.length;
+function arrayCount(value: unknown): number {
+    return Array.isArray(value) ? value.length : 0;
 }
 
 export const ACCOUNT_REMOTE_HOSTS_SETTING_DEFINITIONS = defineSettingDefinitions({
