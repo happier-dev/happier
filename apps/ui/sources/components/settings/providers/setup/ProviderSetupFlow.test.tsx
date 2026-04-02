@@ -2,14 +2,11 @@ import * as React from 'react';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { createModalModuleMock, renderScreen } from '@/dev/testkit';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const tauriDesktopState = vi.hoisted(() => ({ value: true }));
-const modalState = vi.hoisted(() => ({
-    confirm: vi.fn(async () => true),
-}));
 const capabilitiesState = vi.hoisted(() => ({
     invoke: vi.fn(async () => ({
         supported: true as const,
@@ -51,11 +48,12 @@ vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriDesktopState.value,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: modalState.confirm,
+const modalMock = createModalModuleMock({
+    spies: {
+        confirm: vi.fn(async () => true),
     },
-}));
+});
+vi.mock('@/modal', () => modalMock.module);
 
 vi.mock('@/capabilities/ensureAgentInstallablesBackground', () => ({
     machineCapabilitiesInvoke: capabilitiesState.invoke,
@@ -94,14 +92,17 @@ vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection
     usePrimaryMachineFromActiveSelection: () => 'machine-1',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useMachine: () => ({
-        id: 'machine-1',
-        metadata: {
-            displayName: 'Primary Machine',
-        },
-    }),
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        useMachine: () => ({
+            id: 'machine-1',
+            metadata: {
+                displayName: 'Primary Machine',
+            },
+        }),
+    });
+});
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerId: () => 'server-a',
@@ -154,7 +155,7 @@ vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
 describe('ProviderSetupFlow', () => {
     beforeEach(() => {
         tauriDesktopState.value = true;
-        modalState.confirm.mockClear();
+        modalMock.spies.confirm.mockClear();
         capabilitiesState.invoke.mockClear();
     });
 
@@ -183,7 +184,7 @@ describe('ProviderSetupFlow', () => {
 
         await screen.pressByTestIdAsync('provider-setup-start-card');
 
-        expect(modalState.confirm).toHaveBeenCalledTimes(1);
+        expect(modalMock.spies.confirm).toHaveBeenCalledTimes(1);
         expect(capabilitiesState.invoke).toHaveBeenCalledTimes(2);
     });
 

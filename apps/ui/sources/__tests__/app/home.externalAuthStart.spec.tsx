@@ -58,18 +58,16 @@ vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriDesktopState.value,
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('react-native')>();
-    return {
-        ...actual,
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
         Platform: {
-            ...actual.Platform,
             get OS() {
                 return platformState.os;
             },
             select: (options: Record<string, unknown>) => options?.[platformState.os] ?? options?.default,
         },
-    };
+    });
 });
 
 vi.mock('react-native-safe-area-context', () => ({
