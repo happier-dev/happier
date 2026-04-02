@@ -8,7 +8,7 @@ test('resolveYarnInvocation prefers yarn.cmd on Windows when yarn is available i
     platform: 'win32',
     execFileSync: (cmd, args, opts) => {
       void opts;
-      if (cmd !== 'cmd') throw new Error(`unexpected exec: ${cmd}`);
+      if (cmd !== 'cmd.exe') throw new Error(`unexpected exec: ${cmd}`);
       assert.deepEqual(args, ['/D', '/S', '/C', 'yarn --version']);
       return '1.22.22\n';
     },
@@ -16,4 +16,3 @@ test('resolveYarnInvocation prefers yarn.cmd on Windows when yarn is available i
 
   assert.deepEqual(yarn, { cmd: 'yarn.cmd', prefixArgs: [] });
 });
-

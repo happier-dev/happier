@@ -64,7 +64,7 @@ export function resolveYarnInvocation(opts) {
   if (platform === 'win32') {
     // Prefer a PATH-resolved yarn.cmd invoked through cmd.exe.
     // This avoids Corepack's internal `spawn('yarn')` checks which can fail on Windows runners.
-    if (canExec(execImpl, 'cmd', ['/D', '/S', '/C', 'yarn --version'])) {
+    if (canExec(execImpl, 'cmd.exe', ['/D', '/S', '/C', 'yarn --version'])) {
       return { cmd: 'yarn.cmd', prefixArgs: [] };
     }
   }
