@@ -103,6 +103,40 @@ function tempFile(dir, filename) {
   return path.join(dir, filename);
 }
 
+/**
+ * When caches restore previous bundle outputs, multiple updater signatures can exist under the same
+ * `target/<tauri-target>` directory. We prefer the newest signature to ensure we notarize the
+ * artifacts produced by the current build run.
+ *
+ * @param {readonly string[]} paths
+ * @param {{ statSync?: typeof fs.statSync }} [opts]
+ * @returns {string}
+ */
+export function pickNewestFile(paths, opts) {
+  const statSyncImpl = opts?.statSync ?? fs.statSync;
+  if (!Array.isArray(paths) || paths.length === 0) {
+    fail('pickNewestFile expected at least one path');
+  }
+
+  let bestPath = paths[0];
+  let bestMtime = -Infinity;
+
+  for (const p of paths) {
+    try {
+      const stat = statSyncImpl(p);
+      const mtime = Number(stat?.mtimeMs ?? 0);
+      if (Number.isFinite(mtime) && mtime >= bestMtime) {
+        bestMtime = mtime;
+        bestPath = p;
+      }
+    } catch {
+      // ignore missing/stat failures; we'll keep the current best.
+    }
+  }
+
+  return bestPath;
+}
+
 function main() {
   const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
@@ -165,9 +199,15 @@ function main() {
     .filter((p) => p.replaceAll(path.sep, '/').includes('/release/bundle/') && p.toLowerCase().endsWith('.app.tar.gz.sig'))
     .sort((a, b) => a.localeCompare(b));
 
-  const sigPath = opts.dryRun ? path.join(searchDir, 'DRY_RUN.app.tar.gz.sig') : sigMatches[0];
-  if (!opts.dryRun && sigMatches.length !== 1) {
-    fail(`Expected exactly one macOS updater signature under ${searchDir}; found ${sigMatches.length}`);
+  let sigPath = opts.dryRun ? path.join(searchDir, 'DRY_RUN.app.tar.gz.sig') : '';
+  if (!opts.dryRun) {
+    if (sigMatches.length === 0) {
+      fail(`Expected at least one macOS updater signature under ${searchDir}; found 0`);
+    }
+    sigPath = sigMatches.length === 1 ? sigMatches[0] : pickNewestFile(sigMatches);
+    if (sigMatches.length > 1) {
+      console.warn(`Found multiple macOS updater signatures under ${searchDir}; using newest: ${sigPath}`);
+    }
   }
 
   const artifactPath = sigPath.endsWith('.sig') ? sigPath.slice(0, -'.sig'.length) : sigPath;
