@@ -2,6 +2,19 @@ import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+export function resolveDefaultShellForCommand(cmd, { platform = process.platform } = {}) {
+  if (platform !== 'win32') return false;
+  const raw = String(cmd ?? '').trim();
+  if (!raw) return false;
+  const normalized = raw.toLowerCase();
+  if (normalized === 'yarn' || normalized.endsWith('\\yarn') || normalized.endsWith('/yarn')) {
+    // Corepack installs Yarn as a yarn.cmd shim on Windows. Without a shell, Node's spawn cannot
+    // execute the .cmd wrapper (CreateProcess only handles .exe directly).
+    return true;
+  }
+  return normalized.endsWith('.cmd') || normalized.endsWith('.bat') || normalized.endsWith('.ps1');
+}
+
 function nextLineBreakIndex(s) {
   const n = s.indexOf('\n');
   const r = s.indexOf('\r');
@@ -48,6 +61,9 @@ export function spawnProc(label, cmd, args, env, options = {}) {
     ...spawnOptions
   } = options ?? {};
 
+  const { shell: shellOverride, ...spawnOptionsRest } = spawnOptions ?? {};
+  const shell = typeof shellOverride === 'boolean' ? shellOverride : resolveDefaultShellForCommand(cmd);
+
   const outState = { buf: '' };
   const errState = { buf: '' };
   const outPrefix = `[${label}] `;
@@ -77,10 +93,10 @@ export function spawnProc(label, cmd, args, env, options = {}) {
   const child = spawn(cmd, args, {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: false,
+    shell,
     // Create a new process group so we can kill the whole tree reliably on shutdown.
     detached: process.platform !== 'win32',
-    ...spawnOptions,
+    ...spawnOptionsRest,
   });
 
   child.stdout?.on('data', (d) => {
@@ -142,7 +158,8 @@ export function killProcessTree(child, signal) {
 }
 
 export async function run(cmd, args, options = {}) {
-  const { timeoutMs, input, ...spawnOptions } = options ?? {};
+  const { timeoutMs, input, shell: shellOverride, ...spawnOptions } = options ?? {};
+  const shell = typeof shellOverride === 'boolean' ? shellOverride : resolveDefaultShellForCommand(cmd);
   await new Promise((resolvePromise, rejectPromise) => {
     const baseStdio = spawnOptions.stdio ?? 'inherit';
     const stdio =
@@ -152,7 +169,7 @@ export async function run(cmd, args, options = {}) {
           : ['pipe', baseStdio, baseStdio]
         : baseStdio;
 
-    const proc = spawn(cmd, args, { stdio, shell: false, ...spawnOptions });
+    const proc = spawn(cmd, args, { stdio, shell, ...spawnOptions });
     if (input != null && proc.stdin) {
       try {
         proc.stdin.write(String(input));
@@ -183,9 +200,10 @@ export async function run(cmd, args, options = {}) {
 }
 
 export async function runCapture(cmd, args, options = {}) {
-  const { timeoutMs, ...spawnOptions } = options ?? {};
+  const { timeoutMs, shell: shellOverride, ...spawnOptions } = options ?? {};
+  const shell = typeof shellOverride === 'boolean' ? shellOverride : resolveDefaultShellForCommand(cmd);
   return await new Promise((resolvePromise, rejectPromise) => {
-    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: false, ...spawnOptions });
+    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], shell, ...spawnOptions });
     let out = '';
     let err = '';
     const t =
