@@ -14,8 +14,7 @@
     "withGlobalTauri": true,
     "security": {
       "capabilities": [
-        "default",
-        "mcp-dev"
+        "default"
       ]
     },
     "windows": [
