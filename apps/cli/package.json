@@ -63,6 +63,11 @@
       }
     }
   },
+  "bin": {
+    "happier": "./bin/happier.mjs",
+    "happier-mcp": "./bin/happier-mcp.mjs",
+    "happier-dev": "./bin/happier-dev.mjs"
+  },
   "files": [
     "dist",
     "dist/**",

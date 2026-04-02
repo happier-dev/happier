@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { resolveClaudeProjectId } from '../utils/path';
 import { exportClaudeSessionBundle } from './exportClaudeSessionBundle';
 import { importClaudeSessionBundle } from './importClaudeSessionBundle';
 
@@ -57,7 +58,7 @@ describe('claude session handoff bundle', () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-export-happier-config-'));
     const workspacePath = join(root, 'workspace');
     const claudeConfigDir = join(root, '.claude-source');
-    const projectId = workspacePath.replace(/[^a-zA-Z0-9-]/g, '-');
+    const projectId = resolveClaudeProjectId(workspacePath);
     const transcriptPath = join(claudeConfigDir, 'projects', projectId, 'claude_session_env.jsonl');
     await mkdir(join(claudeConfigDir, 'projects', projectId), { recursive: true });
     await writeFile(transcriptPath, '{"type":"assistant","text":"from-happier-config"}\n', 'utf8');
@@ -163,7 +164,7 @@ describe('claude session handoff bundle', () => {
     });
 
     expect(result.remoteSessionId).toBe('claude_session_1');
-    const projectId = targetPath.replace(/[^a-zA-Z0-9-]/g, '-');
+    const projectId = resolveClaudeProjectId(targetPath);
     expect(result.directSource).toEqual({
       kind: 'claudeConfig',
       configDir: join(root, '.claude-target'),
@@ -265,7 +266,7 @@ describe('claude session handoff bundle', () => {
     expect(result.directSource).toEqual({
       kind: 'claudeConfig',
       configDir,
-      projectId: targetPath.replace(/[^a-zA-Z0-9-]/g, '-'),
+      projectId: resolveClaudeProjectId(targetPath),
     });
       expect(result.resume).toEqual({
         directory: targetPath,
@@ -279,7 +280,7 @@ describe('claude session handoff bundle', () => {
         approvedNewDirectoryCreation: true,
       });
 
-    const projectId = targetPath.replace(/[^a-zA-Z0-9-]/g, '-');
+    const projectId = resolveClaudeProjectId(targetPath);
     const importedPath = join(configDir, 'projects', projectId, 'claude_session_happier_override.jsonl');
     await expect(readFile(importedPath, 'utf8')).resolves.toBe('{"type":"assistant","text":"override"}\n');
   });
@@ -305,14 +306,14 @@ describe('claude session handoff bundle', () => {
       expect(result.directSource).toEqual({
         kind: 'claudeConfig',
         configDir: join(root, '.claude'),
-        projectId: targetPath.replace(/[^a-zA-Z0-9-]/g, '-'),
+        projectId: resolveClaudeProjectId(targetPath),
       });
       expect(result.resume.environmentVariables).toEqual({
         CLAUDE_CONFIG_DIR: join(root, '.claude'),
         HAPPIER_STARTUP_TRANSCRIPT_CATCH_UP_LOOKBACK_MS: '60000',
       });
 
-      const projectId = targetPath.replace(/[^a-zA-Z0-9-]/g, '-');
+      const projectId = resolveClaudeProjectId(targetPath);
       const importedPath = join(root, '.claude', 'projects', projectId, 'claude_session_home_fallback.jsonl');
       await expect(readFile(importedPath, 'utf8')).resolves.toBe('{"type":"assistant","text":"home-fallback"}\n');
     } finally {
