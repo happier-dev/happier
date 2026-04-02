@@ -19,6 +19,13 @@ test('shouldStageRepoForEasLocalBuild returns false when DAGGER_SESSION_PORT is 
   assert.equal(shouldStageRepoForEasLocalBuild({ env: { DAGGER_SESSION_PORT: '1234' }, dryRun: false }), false);
 });
 
-test('shouldStageRepoForEasLocalBuild returns true on host runs', () => {
-  assert.equal(shouldStageRepoForEasLocalBuild({ env: {}, dryRun: false }), true);
+test('shouldStageRepoForEasLocalBuild returns false on host runs by default (opt-in)', () => {
+  assert.equal(shouldStageRepoForEasLocalBuild({ env: {}, dryRun: false }), false);
+});
+
+test('shouldStageRepoForEasLocalBuild returns true when explicitly enabled', () => {
+  assert.equal(
+    shouldStageRepoForEasLocalBuild({ env: { HAPPIER_PIPELINE_STAGE_EAS_LOCAL_BUILD: '1' }, dryRun: false }),
+    true,
+  );
 });

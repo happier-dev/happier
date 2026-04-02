@@ -9,7 +9,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 async function loadQaUrlModule() {
   const repoRoot = resolve(join(__dirname, '../../../../'));
-  const modPath = resolve(join(repoRoot, '.project/scripts/qa/resolveQaUiUrl.mjs'));
+  const modPath = resolve(join(repoRoot, 'scripts/qa/resolveQaUiUrl.mjs'));
   return import(pathToFileURL(modPath).href);
 }
 

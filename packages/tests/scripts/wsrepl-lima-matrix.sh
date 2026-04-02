@@ -1346,8 +1346,8 @@ import { pathToFileURL } from 'node:url';
 
 const repoDir = process.argv[2];
 const serverUrlHint = String(process.argv[3] ?? '').trim();
-const authPathsModuleUrl = pathToFileURL(path.join(repoDir, '.project/scripts/qa/resolveStackAuthPaths.mjs')).href;
-const matrixCredentialsModuleUrl = pathToFileURL(path.join(repoDir, '.project/scripts/qa/wsreplMatrixCredentials.mjs')).href;
+const authPathsModuleUrl = pathToFileURL(path.join(repoDir, 'scripts/qa/resolveStackAuthPaths.mjs')).href;
+const matrixCredentialsModuleUrl = pathToFileURL(path.join(repoDir, 'scripts/qa/wsreplMatrixCredentials.mjs')).href;
 const { resolveQaStackName, resolveStackNameFromServerPort } = await import(authPathsModuleUrl);
 const { resolveStackCliAccessKeyCandidatesForUi } = await import(matrixCredentialsModuleUrl);
 
@@ -3734,10 +3734,10 @@ seed_guest_fake_claude_cli_if_needed
 
 if [[ -z "${HAPPIER_UI_URL:-}" ]]; then
   # Keep the wrapper's stack selection in lock-step with the Playwright runner: it uses
-  # `.project/scripts/qa/resolveQaUiUrl.mjs` under the same env surface. Without this, the
+  # `scripts/qa/resolveQaUiUrl.mjs` under the same env surface. Without this, the
   # wrapper can restart daemons against one stack while Playwright targets another.
   HAPPIER_UI_URL="$(cd "${REPO_DIR}" && node --input-type=module -e \
-    "import { resolveQaUiUrl, ensureQaUiUrlHasHmrDisabled } from './.project/scripts/qa/resolveQaUiUrl.mjs'; console.log(ensureQaUiUrlHasHmrDisabled(resolveQaUiUrl()));" \
+    "import { resolveQaUiUrl, ensureQaUiUrlHasHmrDisabled } from './scripts/qa/resolveQaUiUrl.mjs'; console.log(ensureQaUiUrlHasHmrDisabled(resolveQaUiUrl()));" \
     2>/dev/null || true)"
   export HAPPIER_UI_URL
 fi
@@ -4165,7 +4165,7 @@ run_playwright_attempt() {
 
   HAPPIER_QA_OUTDIR="${outdir}" \
     run_with_timeout_ms "${HAPPIER_QA_TIMEOUT_MS}" \
-      node "${REPO_DIR}/.project/scripts/qa/playwright-session-handoff-wsrepl-matrix.mjs" \
+      node "${REPO_DIR}/scripts/qa/playwright-session-handoff-wsrepl-matrix.mjs" \
       2>&1 | tee "${outdir}/runner.log"
   local status="${PIPESTATUS[0]}"
 

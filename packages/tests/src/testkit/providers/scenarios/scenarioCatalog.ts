@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { AcpPermissionMode, ProviderScenario, ProviderUnderTest } from '../types';
 import { hasStringSubstring, waitForAcpSidechainMessages } from '../assertions';
 import { shapeOf, stableStringifyShape } from '../shape';
-import { fetchSessionV2, patchSessionMetadataWithRetry } from '../../sessions';
+import { fetchAllMessages, fetchSessionV2, patchSessionMetadataWithRetry } from '../../sessions';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
 import { sleep } from '../../timing';
 import { repoRootDir } from '../../paths';
@@ -209,7 +209,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       title: 'mcp: injected Happy MCP config does not hide user MCP tools (merge + no forced allowlist)',
       tier: 'extended',
       yolo: true,
-      maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
+      // Claude may use ToolSearch as a helper before invoking the MCP tool.
+      // Keep the scenario deterministic by allowing exactly these two tool calls.
+      maxTraceEvents: { toolCalls: 2, toolResults: 2, permissionRequests: 1 },
       setup: async ({ workspaceDir }) => {
         const scriptPath = join(workspaceDir, scriptFilename);
 
@@ -300,6 +302,36 @@ await server.connect(new StdioServerTransport());
         ].join('\n'),
       requiredFixtureKeys: ['claude/claude/tool-call/mcp__fixture__ping', 'claude/claude/tool-result/mcp__fixture__ping'],
       requiredTraceSubstrings: [sentinel],
+      verify: async ({ traceEvents }) => {
+        const relevant = traceEvents.filter(
+          (e) =>
+            e?.v === 1
+            && e.protocol === 'claude'
+            && e.provider === 'claude'
+            && (e.kind === 'tool-call' || e.kind === 'tool-result'),
+        ) as Array<{ kind: string; payload?: any }>;
+
+        const toolCalls = relevant.filter((e) => e.kind === 'tool-call');
+        const toolResults = relevant.filter((e) => e.kind === 'tool-result');
+        if (toolCalls.length !== 2) {
+          throw new Error(`Expected exactly 2 tool calls (ToolSearch + mcp__fixture__ping); got ${toolCalls.length}`);
+        }
+        if (toolResults.length !== 2) {
+          throw new Error(`Expected exactly 2 tool results (ToolSearch + mcp__fixture__ping); got ${toolResults.length}`);
+        }
+
+        const toolNames = toolCalls.map((e) => String(e.payload?.name ?? '')).filter(Boolean);
+        const allowed = new Set(['ToolSearch', 'mcp__fixture__ping']);
+        const unexpected = toolNames.filter((name) => !allowed.has(name));
+        if (unexpected.length > 0) {
+          throw new Error(`Unexpected tool call(s): ${unexpected.join(', ')}`);
+        }
+        const toolSearchCount = toolNames.filter((n) => n === 'ToolSearch').length;
+        const pingCount = toolNames.filter((n) => n === 'mcp__fixture__ping').length;
+        if (toolSearchCount !== 1 || pingCount !== 1) {
+          throw new Error(`Expected exactly one ToolSearch + one mcp__fixture__ping; got ${toolNames.join(', ')}`);
+        }
+      },
     };
   },
 
@@ -538,7 +570,9 @@ await server.connect(new StdioServerTransport());
         title: 'Read: read a known file in workspace',
         tier: 'extended',
         yolo: true,
-        maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
+        // Claude may use ToolSearch and/or update the session title as housekeeping.
+        // Keep deterministic bounds while tolerating these expected helpers.
+        maxTraceEvents: { toolCalls: 3, toolResults: 3, permissionRequests: 1 },
         setup: async ({ workspaceDir }) => {
           await writeFile(join(workspaceDir, 'e2e-read.txt'), `READ_SENTINEL_CLAUDE_${randomUUID()}\n`, 'utf8');
         },
@@ -552,7 +586,7 @@ await server.connect(new StdioServerTransport());
             '2) DONE',
           ].join('\n'),
         requiredFixtureKeys: ['claude/claude/tool-call/Read', 'claude/claude/tool-result/Read'],
-        verify: async ({ fixtures, workspaceDir }) => {
+        verify: async ({ fixtures, workspaceDir, traceEvents }) => {
           const examples = fixtures?.examples;
           if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
           const calls = (examples['claude/claude/tool-call/Read'] ?? []) as any[];
@@ -560,6 +594,20 @@ await server.connect(new StdioServerTransport());
           const expectedPath = join(workspaceDir, 'e2e-read.txt');
           const hasPath = calls.some((e) => hasStringSubstring(e?.payload?.input, expectedPath));
           if (!hasPath) throw new Error('Read tool-call did not include expected file path');
+
+          const relevant = traceEvents.filter(
+            (e) =>
+              e?.v === 1
+              && e.protocol === 'claude'
+              && e.provider === 'claude'
+              && e.kind === 'tool-call',
+          ) as Array<{ payload?: any }>;
+          const toolNames = relevant.map((e) => String(e.payload?.name ?? '')).filter(Boolean);
+          const allowed = new Set(['Read', 'ToolSearch', 'mcp__happier__change_title']);
+          const unexpected = toolNames.filter((name) => !allowed.has(name));
+          if (unexpected.length > 0) {
+            throw new Error(`Unexpected tool call(s) during read_known_file: ${unexpected.join(', ')}`);
+          }
         },
       };
 
@@ -1508,6 +1556,96 @@ await server.connect(new StdioServerTransport());
     };
   },
 
+  agent_sdk_partial_messages_smoke: (provider) => {
+    assertProviderId(provider, 'claude');
+    const marker = `AGENTSDK_PARTIAL_${randomUUID()}`;
+    return {
+      id: 'agent_sdk_partial_messages_smoke',
+      title: 'agent sdk: streaming: surfaces partial assistant chunks as agent messages',
+      tier: 'extended',
+      yolo: true,
+      messageMeta: agentSdkRemoteMetaBase,
+      requiredMessageSubstrings: [marker],
+      waitMs: 120_000,
+      prompt: () =>
+        [
+          'This is an automated test for validating Claude Agent SDK streaming.',
+          `Include this marker verbatim in your response: ${marker}`,
+          '',
+          'Write a markdown table with 60 rows and 3 columns.',
+          `Every row MUST include the marker string: ${marker}`,
+          '',
+          'Do not use any tools.',
+          'Finish by replying DONE.',
+        ].join('\n'),
+      verify: async ({ baseUrl, token, sessionId, secret }) => {
+        await waitForAssistantMessageContaining({
+          baseUrl,
+          token,
+          sessionId,
+          secret,
+          requiredSubstring: marker,
+          timeoutMs: 120_000,
+        });
+
+        const rows = await fetchAllMessages(baseUrl, token, sessionId);
+        const streamedTextByKey = new Map<string, string>();
+        const streamedChunkCountByKey = new Map<string, number>();
+
+        for (const row of rows) {
+          let decrypted: any;
+          try {
+            decrypted = decryptLegacyBase64(row.content.c, secret);
+          } catch {
+            continue;
+          }
+          if (!decrypted || typeof decrypted !== 'object') continue;
+
+          const role = typeof decrypted.role === 'string' ? decrypted.role : '';
+          if (role !== 'agent') continue;
+
+          const meta =
+            decrypted.meta && typeof decrypted.meta === 'object' && !Array.isArray(decrypted.meta)
+              ? (decrypted.meta as Record<string, unknown>)
+              : null;
+          const streamKey = meta && typeof meta.happierStreamKey === 'string' ? String(meta.happierStreamKey) : null;
+          if (!streamKey) continue;
+
+          const contentObj =
+            decrypted.content && typeof decrypted.content === 'object' && !Array.isArray(decrypted.content)
+              ? (decrypted.content as Record<string, unknown>)
+              : null;
+          if (!contentObj || contentObj.type !== 'acp') continue;
+          const data =
+            contentObj.data && typeof contentObj.data === 'object' && !Array.isArray(contentObj.data)
+              ? (contentObj.data as Record<string, unknown>)
+              : null;
+          if (!data || data.type !== 'message' || typeof data.message !== 'string') continue;
+
+          streamedChunkCountByKey.set(streamKey, (streamedChunkCountByKey.get(streamKey) ?? 0) + 1);
+          streamedTextByKey.set(streamKey, (streamedTextByKey.get(streamKey) ?? '') + data.message);
+        }
+
+        const matching = [...streamedTextByKey.entries()].filter(([, text]) => text.includes(marker));
+        if (matching.length === 0) {
+          throw new Error('Expected marker to appear in a streamed agent message with happierStreamKey meta');
+        }
+
+        const [matchedKey, matchedText] = matching[0]!;
+        const chunks = streamedChunkCountByKey.get(matchedKey) ?? 0;
+        if (chunks < 2) {
+          throw new Error(`Expected streamed response to be chunked (>=2 messages) but got ${chunks}`);
+        }
+
+        const hasTableSeparator = matchedText.includes('| ---') || matchedText.includes('|---');
+        const hasAnyPipeRow = matchedText.includes('|') && matchedText.includes('\n|');
+        if (!hasTableSeparator || !hasAnyPipeRow) {
+          throw new Error('Expected streamed response to include a markdown table');
+        }
+      },
+    };
+  },
+
   agent_sdk_checkpoint_and_rewind_restores_fs: (provider) => {
     assertProviderId(provider, 'claude');
     return {
@@ -1803,6 +1941,77 @@ await server.connect(new StdioServerTransport());
       id: 'agent_sdk_abort_turn_then_continue',
       title: 'agent sdk: abort running turn then continue same session',
     });
+  },
+
+  agent_sdk_local_start_then_takeover_remote: (provider) => {
+    assertProviderId(provider, 'claude');
+    const readySentinel = `TAKEOVER_READY_${randomUUID().slice(0, 10)}`;
+    const followupSentinel = `TAKEOVER_FOLLOWUP_${randomUUID().slice(0, 10)}`;
+
+    return withAgentSdkRemoteMeta(
+      {
+        id: 'agent_sdk_local_start_then_takeover_remote',
+        title: 'agent sdk: start in local mode and successfully take over remote prompts',
+        tier: 'extended',
+        yolo: true,
+        // Override the provider default starting mode (providerSpec.json uses remote).
+        // This forces a local Claude process to spawn and then be cleanly switched to remote
+        // when the harness posts the first prompt.
+        cliArgs: ['--happy-starting-mode', 'local'],
+        requiredFixtureKeys: [],
+        prompt: () => `Reply with EXACTLY this token and nothing else: ${readySentinel}`,
+        postSatisfy: {
+          timeoutMs: 240_000,
+          run: async ({ baseUrl, token, sessionId, secret }) => {
+            await waitForAssistantMessageContaining({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              requiredSubstring: readySentinel,
+              timeoutMs: 180_000,
+            });
+
+            const before = await fetchSessionV2(baseUrl, token, sessionId);
+            const metadataBefore = decryptLegacyBase64(before.metadata, secret) as any;
+            const claudeSessionIdBefore =
+              typeof metadataBefore?.claudeSessionId === 'string' ? metadataBefore.claudeSessionId : null;
+
+            await enqueueSessionPromptForScenario({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              text: `Reply with EXACTLY this token and nothing else: ${followupSentinel}`,
+            });
+
+            await waitForAssistantMessageContaining({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              requiredSubstring: followupSentinel,
+              timeoutMs: 180_000,
+            });
+
+            if (claudeSessionIdBefore) {
+              const after = await fetchSessionV2(baseUrl, token, sessionId);
+              const metadataAfter = decryptLegacyBase64(after.metadata, secret) as any;
+              const claudeSessionIdAfter =
+                typeof metadataAfter?.claudeSessionId === 'string' ? metadataAfter.claudeSessionId : null;
+              if (claudeSessionIdAfter && claudeSessionIdAfter !== claudeSessionIdBefore) {
+                throw new Error('Expected Claude session id to remain stable after local->remote takeover');
+              }
+            }
+          },
+        },
+        verify: async () => {},
+      },
+      {
+        id: 'agent_sdk_local_start_then_takeover_remote',
+        title: 'agent sdk: start local then take over remote prompts',
+      },
+    );
   },
 
   // --------------------

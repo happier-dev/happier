@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildProviderDevCommandArgs } from '../../src/testkit/providers/harness';
 
 describe('providers harness: buildProviderDevCommandArgs', () => {
-  it('includes scenario cli args before provider cli extra args', () => {
+  it('includes provider cli extra args before scenario cli args (so scenarios can override provider defaults)', () => {
     const args = buildProviderDevCommandArgs({
       providerSubcommand: 'claude',
       sessionId: 'sess_1',
@@ -28,13 +28,12 @@ describe('providers harness: buildProviderDevCommandArgs', () => {
       'default',
       '--model',
       'x',
-      '--resume',
-      'abc',
-      '--mcp-config',
-      '{"mcpServers":{}}',
       '--started-by',
       'terminal',
+      '--mcp-config',
+      '{"mcpServers":{}}',
+      '--resume',
+      'abc',
     ]);
   });
 });
-
