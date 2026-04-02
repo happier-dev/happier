@@ -1180,6 +1180,12 @@ export {
 } from './systemTasks/promptKindCatalog.js';
 
 export {
+  buildSshTarget,
+  parseSshTarget,
+  type ParsedSshTarget,
+} from './ssh/sshTarget.js';
+
+export {
   LlmTaskRunnerConfigV1Schema,
   type LlmTaskRunnerConfigV1,
 } from './llmTasks/llmTaskRunnerConfigV1.js';
