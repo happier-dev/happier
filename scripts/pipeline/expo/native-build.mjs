@@ -279,6 +279,17 @@ function getBuildCreatedAtMs(build) {
 }
 
 /**
+ * @param {any} build
+ * @returns {string}
+ */
+function getBuildFingerprintHash(build) {
+  const a = build?.fingerprint?.hash;
+  const b = build?.fingerprintHash;
+  const c = build?.runtimeVersion; // runtimeVersion policy=fingerprint often matches, but prefer explicit fingerprint hash.
+  return String(a ?? b ?? c ?? '').trim();
+}
+
+/**
  * @param {{ repoRoot: string; opts: { dryRun: boolean } }} params
  * @returns {string}
  */
@@ -325,6 +336,83 @@ function fetchCloudBuildList({ opts, uiDir, easCliVersion, platform, profile, gi
     { cwd: uiDir, env: withEasGitCaseSensitiveEnv(process.env), stdio: 'pipe', timeoutMs: 5 * 60_000 },
   ).trim();
   return normalizeBuilds(JSON.parse(listJson));
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   platform: string;
+ *   profile: string;
+ *   env: Record<string, string>;
+ * }} params
+ * @returns {{ id: string; fingerprintHash: string } | null}
+ */
+function fetchLatestFinishedCloudBuildFingerprint({ opts, uiDir, easCliVersion, platform, profile, env }) {
+  const listJson = run(
+    opts,
+    'npx',
+    [
+      '--yes',
+      `eas-cli@${easCliVersion}`,
+      'build:list',
+      '--platform',
+      platform,
+      '--build-profile',
+      profile,
+      '--status',
+      'finished',
+      '--limit',
+      '10',
+      '--json',
+      '--non-interactive',
+    ],
+    { cwd: uiDir, env, stdio: 'pipe', timeoutMs: 5 * 60_000 },
+  ).trim();
+
+  const builds = normalizeBuilds(JSON.parse(listJson))
+    .filter((b) => b && typeof b === 'object')
+    .sort((a, b) => (getBuildCreatedAtMs(b) ?? 0) - (getBuildCreatedAtMs(a) ?? 0));
+  if (builds.length === 0) return null;
+
+  const latest = builds[0];
+  const id = getBuildId(latest);
+  const fingerprintHash = getBuildFingerprintHash(latest);
+  return { id, fingerprintHash };
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   platform: string;
+ *   profile: string;
+ *   env: Record<string, string>;
+ * }} params
+ * @returns {string}
+ */
+function generateCurrentProjectFingerprintHash({ opts, uiDir, easCliVersion, platform, profile, env }) {
+  const fpJson = run(
+    opts,
+    'npx',
+    [
+      '--yes',
+      `eas-cli@${easCliVersion}`,
+      'fingerprint:generate',
+      '--platform',
+      platform,
+      '--build-profile',
+      profile,
+      '--json',
+      '--non-interactive',
+    ],
+    { cwd: uiDir, env, stdio: 'pipe', timeoutMs: 10 * 60_000 },
+  ).trim();
+  if (!fpJson) return '';
+  const parsed = JSON.parse(fpJson);
+  return String(parsed?.hash ?? parsed?.fingerprintHash ?? '').trim();
 }
 
 /**
@@ -444,6 +532,7 @@ async function main() {
       interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'dump-view': { type: 'string', default: 'true' },
+      'fingerprint-mode': { type: 'string', default: 'always' },
       wait: { type: 'string', default: 'true' },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -499,6 +588,13 @@ async function main() {
   const waitForBuild = parseBool(values.wait, '--wait');
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
+
+  const fingerprintModeRaw = String(values['fingerprint-mode'] ?? '').trim().toLowerCase() || 'always';
+  if (fingerprintModeRaw !== 'always' && fingerprintModeRaw !== 'if-changed') {
+    fail(`--fingerprint-mode must be 'always' or 'if-changed' (got: ${values['fingerprint-mode']})`);
+  }
+  /** @type {'always' | 'if-changed'} */
+  const fingerprintMode = fingerprintModeRaw;
 
   // Some Expo config/plugins assume NODE_ENV is always set and fail hard when it's missing.
   // Ensure it's set for both cloud and local builds when the operator hasn't explicitly set it.
@@ -737,37 +833,103 @@ async function main() {
   const preloadedViews = new Map();
 
   if (nonInteractive) {
-    const easJson = (
-      await runCaptureWithHeartbeat(
-        opts,
-        'npx',
-        [
-          '--yes',
-          `eas-cli@${easCliVersion}`,
-          'build',
-          '--platform',
-          platform,
-          '--profile',
+    /** @type {('android' | 'ios')[]} */
+    const requestedPlatforms = platform === 'all' ? ['android', 'ios'] : [/** @type {'android' | 'ios'} */ (platform)];
+    /** @type {('android' | 'ios')[]} */
+    let platformsToBuild = requestedPlatforms;
+
+    if (fingerprintMode === 'if-changed') {
+      /** @type {('android' | 'ios')[]} */
+      const needed = [];
+
+      for (const p of requestedPlatforms) {
+        const currentHash = generateCurrentProjectFingerprintHash({
+          opts,
+          uiDir,
+          easCliVersion,
+          platform: p,
           profile,
-          ...(waitForBuild ? ['--wait'] : ['--no-wait']),
-          '--non-interactive',
-          '--json',
-        ],
-        { cwd: uiDir, env: easCommandEnv, heartbeatLabel: 'Expo cloud build scheduling' },
-      )
-    ).trim();
+          env: easCommandEnv,
+        });
+        const previous = fetchLatestFinishedCloudBuildFingerprint({
+          opts,
+          uiDir,
+          easCliVersion,
+          platform: p,
+          profile,
+          env: easCommandEnv,
+        });
 
-    if (dryRun) return;
+        const previousHash = String(previous?.fingerprintHash ?? '').trim();
+        const changed = !currentHash || !previousHash ? true : currentHash !== previousHash;
+        console.log(
+          `[pipeline] expo native fingerprint: platform=${p} current=${currentHash || '<missing>'} latest=${previousHash || '<missing>'} changed=${changed}`,
+        );
+        if (changed) needed.push(p);
+      }
 
-    builds = normalizeBuilds(JSON.parse(easJson));
-    fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
-    fs.writeFileSync(outPath, `${easJson}\n`, 'utf8');
+      platformsToBuild = needed;
+      if (platformsToBuild.length === 0) {
+        if (dryRun) return;
+        writeJson(outPath, {
+          mode: 'cloud',
+          platform,
+          profile,
+          fingerprintMode,
+          skipped: true,
+          reason: 'fingerprint unchanged (no native build needed)',
+        });
+        return;
+      }
+    }
+
+    /** @type {any[]} */
+    const scheduled = [];
+    for (const p of platformsToBuild) {
+      const easJson = (
+        await runCaptureWithHeartbeat(
+          opts,
+          'npx',
+          [
+            '--yes',
+            `eas-cli@${easCliVersion}`,
+            'build',
+            '--platform',
+            p,
+            '--profile',
+            profile,
+            ...(waitForBuild ? ['--wait'] : ['--no-wait']),
+            '--non-interactive',
+            '--json',
+          ],
+          { cwd: uiDir, env: easCommandEnv, heartbeatLabel: `Expo cloud build scheduling (${p})` },
+        )
+      ).trim();
+
+      if (dryRun) return;
+
+      scheduled.push(...normalizeBuilds(JSON.parse(easJson)));
+    }
+
+    builds = scheduled;
+    if (!dryRun) {
+      writeJson(outPath, platform === 'all' ? builds : builds[0] ?? null);
+    }
   } else {
     const scheduledAfterMs = Date.now();
     run(
       opts,
       'npx',
-      ['--yes', `eas-cli@${easCliVersion}`, 'build', '--platform', platform, '--profile', profile],
+      [
+        '--yes',
+        `eas-cli@${easCliVersion}`,
+        'build',
+        '--platform',
+        platform,
+        '--profile',
+        profile,
+        ...(waitForBuild ? ['--wait'] : ['--no-wait']),
+      ],
       { cwd: uiDir, env: easCommandEnv, stdio: 'inherit' },
     );
     console.log('[pipeline] expo native build (cloud): resolving scheduled build metadata from EAS build:list/build:view');
