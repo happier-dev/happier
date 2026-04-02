@@ -631,8 +631,10 @@ describe('detectCliSnapshotOnDaemonPath', () => {
       );
 
       const previousProbeTimeout = process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
+      const previousLoginStatusProbeTimeout = process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS;
       setEnv('PATH', binDir);
       process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = '25';
+      process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = '25';
 
       try {
         const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, bypassCache: true });
@@ -651,6 +653,11 @@ describe('detectCliSnapshotOnDaemonPath', () => {
           process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = previousProbeTimeout;
         } else {
           delete process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
+        }
+        if (typeof previousLoginStatusProbeTimeout === 'string') {
+          process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = previousLoginStatusProbeTimeout;
+        } else {
+          delete process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS;
         }
       }
     },

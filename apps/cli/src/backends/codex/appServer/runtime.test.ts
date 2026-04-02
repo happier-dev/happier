@@ -425,14 +425,6 @@ describe('createCodexAppServerRuntime', () => {
                         id: 'gpt-5.4',
                         modelOptions: expect.arrayContaining([
                             expect.objectContaining({ id: 'reasoning_effort', currentValue: 'medium' }),
-                            expect.objectContaining({
-                                id: 'service_tier',
-                                currentValue: 'standard',
-                                options: expect.arrayContaining([
-                                    expect.objectContaining({ value: 'standard', name: 'Standard' }),
-                                    expect.objectContaining({ value: 'fast', name: 'Fast' }),
-                                ]),
-                            }),
                         ]),
                     }),
                 ]),

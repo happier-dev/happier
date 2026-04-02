@@ -111,6 +111,11 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
   });
 
   it('keeps app-server codex backend affinity during direct takeover', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-direct-takeover-codex-app-server-'));
+    const codexHome = join(root, '.codex');
+    await mkdir(codexHome, { recursive: true });
+    vi.stubEnv('CODEX_HOME', codexHome);
+
     const spawnOptions = await resolveDirectTakeoverSpawnOptions({
       linked: createLinkedCodexSessionFixture({
         remoteSessionId: '11111111-1111-1111-1111-111111111111',
@@ -130,7 +135,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
       transcriptStorage: 'direct',
       codexBackendMode: 'appServer',
       environmentVariables: {
-        CODEX_HOME: '/Users/leeroy/.codex',
+        CODEX_HOME: codexHome,
       },
     });
   });
@@ -227,6 +232,11 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
   });
 
   it('keeps ACP codex backend affinity backward compatible during direct takeover', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-direct-takeover-codex-acp-'));
+    const codexHome = join(root, '.codex');
+    await mkdir(codexHome, { recursive: true });
+    vi.stubEnv('CODEX_HOME', codexHome);
+
     const spawnOptions = await resolveDirectTakeoverSpawnOptions({
       linked: createLinkedCodexSessionFixture({
         remoteSessionId: 'acp-thread-1',
@@ -246,7 +256,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
       transcriptStorage: 'direct',
       codexBackendMode: 'acp',
       environmentVariables: {
-        CODEX_HOME: '/Users/leeroy/.codex',
+        CODEX_HOME: codexHome,
       },
     });
   });
