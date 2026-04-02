@@ -65,19 +65,6 @@ export function loadSecrets({ baseEnv, secretsSource, keychainService, keychainA
   }
 
   if (secretsSource === 'keychain' || secretsSource === 'auto') {
-    if (process.platform !== 'darwin') {
-      if (secretsSource === 'keychain') {
-        throw new Error(
-          [
-            "[pipeline] secretsSource 'keychain' requires macOS Keychain access (the `security` CLI).",
-            '',
-            "Use '--secrets-source env' in CI, or run the pipeline locally on macOS.",
-          ].join('\n'),
-        );
-      }
-      return { env: baseEnv, usedKeychain: false };
-    }
-
     const { baseAccount, envAccount } = resolveKeychainBundleAccounts({
       accountPrefix: keychainAccount,
       deployEnvironment,

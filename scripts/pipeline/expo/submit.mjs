@@ -387,7 +387,10 @@ function main() {
     if (nonInteractive) submitArgs.push('--non-interactive');
     submitArgs.push(waitForSubmit ? '--wait' : '--no-wait');
 
-    const appEnv = String(process.env.APP_ENV ?? '').trim() || formatMobileReleaseEnvironment(environment);
+    // CI workflows often set a repo-global APP_ENV (for example preview). For submit we must default
+    // to the requested pipeline environment, otherwise we can end up submitting a mismatched variant.
+    const appEnvOverride = String(process.env.HAPPIER_EXPO_SUBMIT_APP_ENV ?? '').trim();
+    const appEnv = appEnvOverride || formatMobileReleaseEnvironment(environment);
     const result = run(opts, 'npx', submitArgs, {
       cwd: uiDir,
       env: {

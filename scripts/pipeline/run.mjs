@@ -3960,16 +3960,18 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const releaseMessage = String(values['release-message'] ?? '').trim();
           console.log(`[pipeline] release: environment=${deployEnvironment} confirm=${action}`);
 
-          // Ensure all preview release steps compute the same preview.<run>.<attempt> suffix when running locally.
-          if (deployEnvironment === 'preview' && !String(releaseEnv.GITHUB_RUN_NUMBER ?? '').trim()) {
-            const runNumber = String(Math.floor(Date.now() / 1000));
-            releaseEnv.GITHUB_RUN_NUMBER = runNumber;
-            if (!String(releaseEnv.GITHUB_RUN_ATTEMPT ?? '').trim()) {
-              releaseEnv.GITHUB_RUN_ATTEMPT = '1';
-            }
-            console.log(
-              `[pipeline] preview version suffix: preview.${releaseEnv.GITHUB_RUN_NUMBER}.${releaseEnv.GITHUB_RUN_ATTEMPT}`,
-            );
+          if (deployEnvironment === 'preview') {
+            // Ensure all preview release steps compute the same preview.<run>.<attempt> suffix.
+            // Locally we synthesize the missing run vars; in GitHub Actions we rely on the provided ones.
+            const runNumberRaw = String(releaseEnv.GITHUB_RUN_NUMBER ?? '').trim();
+            const runNumber = runNumberRaw || String(Math.floor(Date.now() / 1000));
+            if (!runNumberRaw) releaseEnv.GITHUB_RUN_NUMBER = runNumber;
+
+            const attemptRaw = String(releaseEnv.GITHUB_RUN_ATTEMPT ?? '').trim();
+            const attempt = attemptRaw || '1';
+            if (!attemptRaw) releaseEnv.GITHUB_RUN_ATTEMPT = attempt;
+
+            console.log(`[pipeline] preview version suffix: preview.${runNumber}.${attempt}`);
           }
 
             // Plan: compute changed components (main..dev) and resolve bump/publish plan.
