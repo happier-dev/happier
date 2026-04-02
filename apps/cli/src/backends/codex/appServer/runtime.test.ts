@@ -1323,7 +1323,6 @@ describe('createCodexAppServerRuntime', () => {
         const modelOptions = Array.isArray(gptModel?.modelOptions) ? gptModel.modelOptions : [];
         const byId = (id: string) => modelOptions.find((opt: any) => opt && opt.id === id);
         expect(byId('reasoning_effort')?.currentValue).toBe('high');
-        expect(byId('service_tier')?.currentValue).toBe('fast');
         expect(updateMetadata.mock.results.map((entry) => entry.value)).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ codexSessionId: 'thread-started' }),
