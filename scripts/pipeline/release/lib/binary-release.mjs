@@ -165,6 +165,7 @@ export async function maybeSignFile({ path, trustedComment = '' }) {
   }
   const preparedKey = await prepareMinisignSecretKeyFile(keyRaw);
   const sigPath = `${path}.minisig`;
+  const hasPassphrase = Object.prototype.hasOwnProperty.call(process.env, 'MINISIGN_PASSPHRASE');
   const passphrase = String(process.env.MINISIGN_PASSPHRASE ?? '');
   const keyPath = preparedKey.path;
   const args = ['-S', '-s', keyPath, '-m', path, '-x', sigPath];
@@ -174,7 +175,9 @@ export async function maybeSignFile({ path, trustedComment = '' }) {
   try {
     execOrThrow('minisign', args, {
       stdio: ['pipe', 'inherit', 'inherit'],
-      input: passphrase ? `${passphrase}\n` : undefined,
+      // Support empty passphrases (operators sometimes intentionally leave the key unencrypted).
+      // If the env var is present, always feed a newline to avoid minisign prompting/hanging.
+      input: hasPassphrase ? `${passphrase}\n` : undefined,
     });
   } finally {
     if (preparedKey.temp) {
