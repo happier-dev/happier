@@ -81,7 +81,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const hasGlobalOperationInFlight = Boolean(inFlightScmOperation);
     const sessionPath = resolveSessionWorkspacePath({
         sessionPath: session?.metadata?.path ?? null,
-        projectPath: project?.key?.path ?? null,
+        projectPath: project?.key?.rootPath ?? null,
     });
     const { machineReachable, machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId);
     const isSessionInactive = session?.active === false;

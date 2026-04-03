@@ -22,7 +22,7 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
             allSessions,
             params.sessionId,
             project?.key?.machineId,
-            project?.key?.path,
+            project?.key?.rootPath,
             session?.metadata?.homeDir,
             session?.metadata?.host,
             session?.metadata?.machineId,

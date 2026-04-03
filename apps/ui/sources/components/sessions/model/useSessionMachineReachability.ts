@@ -21,7 +21,7 @@ export function useSessionMachineReachability(sessionId: string): Readonly<{
             allMachines,
             allSessions,
             project?.key?.machineId,
-            project?.key?.path,
+            project?.key?.rootPath,
             session?.metadata?.homeDir,
             session?.metadata?.host,
             session?.metadata?.machineId,

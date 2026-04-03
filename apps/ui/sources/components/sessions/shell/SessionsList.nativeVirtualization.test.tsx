@@ -15,6 +15,8 @@ let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
 let workspaceLabelsV1: Record<string, string> = {};
 const setWorkspaceLabelsV1 = vi.fn();
+let workspaceRefsV1: any[] = [];
+const setWorkspaceRefsV1 = vi.fn();
 let collapsedGroupKeysV1: Record<string, boolean> = {};
 const setCollapsedGroupKeysV1 = vi.fn();
 let allMachines = [
@@ -289,6 +291,7 @@ installSessionShellCommonModuleMocks({
                     if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
                     if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
                     if (key === 'workspaceLabelsV1') return [workspaceLabelsV1, setWorkspaceLabelsV1];
+                    if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
                     if (key === 'collapsedGroupKeysV1') return [collapsedGroupKeysV1, setCollapsedGroupKeysV1];
                     if (key === 'sessionListGroupOrderV1') return [{}, vi.fn()];
                     return [null, vi.fn()];
@@ -427,15 +430,29 @@ function expectPresent<T>(value: T | null | undefined, label: string): T {
     return value;
 }
 
+function findFirstDropdownMenuItems(screen: Awaited<ReturnType<typeof renderSessionsList>>): any[] {
+    const menus = screen.findAll((node) => String(node.type) === 'DropdownMenu');
+    for (const menu of menus) {
+        const items = (menu.props as any)?.items;
+        if (!Array.isArray(items)) continue;
+        if (items.some((i: any) => i?.id === 'rename')) {
+            return items;
+        }
+    }
+    return [];
+}
+
 describe('SessionsList (native virtualization)', () => {
     beforeEach(() => {
         pinnedSessionKeysV1 = [];
         sessionTagsV1 = {};
         workspaceLabelsV1 = {};
+        workspaceRefsV1 = [];
         collapsedGroupKeysV1 = {};
         setPinnedSessionKeysV1.mockClear();
         setSessionTagsV1.mockClear();
         setWorkspaceLabelsV1.mockClear();
+        setWorkspaceRefsV1.mockClear();
         setCollapsedGroupKeysV1.mockClear();
         mockAllowedServerIds = ['server_a'];
         readMachineTargetForSessionMock.mockReset();
@@ -524,6 +541,35 @@ describe('SessionsList (native virtualization)', () => {
                 serverName: 'Server A',
             },
         ];
+    });
+
+    it('shows an Open project action for project headers with a resolvable WorkspaceRef', async () => {
+        workspaceRefsV1 = [
+            {
+                id: 'wr_1',
+                serverId: 'server_a',
+                machineId: 'machine_1',
+                rootPath: '/repo',
+                label: 'Repo',
+                createdAtMs: 1,
+                lastOpenedAtMs: null,
+            },
+        ];
+        mockVisibleSessionListViewData = [
+            {
+                type: 'header',
+                title: 'Repo',
+                headerKind: 'project',
+                groupKey: 'project:machine_1:/repo',
+                workspaceScopeHint: { serverId: 'server_a', machineId: 'machine_1', rootPath: '/repo' },
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+        ];
+
+        const screen = await renderSessionsList();
+        const items = findFirstDropdownMenuItems(screen);
+        expect(items.some((item) => item?.id === 'openProject')).toBe(true);
     });
 
     it('wires pin toggling via pinnedSessionKeysV1', async () => {

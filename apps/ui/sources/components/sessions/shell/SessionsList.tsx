@@ -17,6 +17,9 @@ import { layout } from '@/components/ui/layout/layout';
 import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import { SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { resolveSessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
+import { resolveWorkspaceDisplayLabel } from '@/sync/domains/workspaces/workspaceLabel';
+import { migrateLegacyWorkspaceLabelsToWorkspaceRefs } from '@/sync/domains/workspaces/workspaceLabelsMigration';
+import { findWorkspaceRefByScope, upsertWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { useSessionInlineDrag } from './useSessionInlineDrag';
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
@@ -315,28 +318,34 @@ const SessionListRow = React.memo(function SessionListRow(props: SessionListRowP
 const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonly<{
     item: Extract<SessionListViewItem, { type: 'header' }>;
     hasMultipleMachines: boolean;
-    workspaceLabelsV1: Record<string, string>;
-    onRenameWorkspace: (workspaceKey: string, currentLabel: string) => void;
-    onResetWorkspaceName: (workspaceKey: string) => void;
+    displayTitle: string;
+    hasCustomLabel: boolean;
+    canOpenProject: boolean;
+    onOpenProject: () => void;
+    onRename: () => void;
+    onReset: () => void;
     collapsed: boolean;
     onToggleCollapse: () => void;
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const { item, hasMultipleMachines, workspaceLabelsV1, onRenameWorkspace, onResetWorkspaceName, collapsed, onToggleCollapse } = props;
+    const { item, hasMultipleMachines, displayTitle, hasCustomLabel, canOpenProject, onOpenProject, onRename, onReset, collapsed, onToggleCollapse } = props;
     const [isRowHovered, setIsRowHovered] = React.useState(false);
     const [isActionsHovered, setIsActionsHovered] = React.useState(false);
     const [menuOpen, setMenuOpen] = React.useState(false);
     const isWeb = Platform.OS === 'web';
     const showActions = !isWeb || isRowHovered || isActionsHovered || menuOpen;
-    const workspaceKey = item.workspaceKey ?? '';
-    const customLabel = workspaceKey ? workspaceLabelsV1[workspaceKey] : undefined;
-    const displayTitle = customLabel || item.title;
-    const hasCustomLabel = Boolean(customLabel);
+    const workspaceKey = String(item.workspaceKey ?? '').trim();
+    const menuEnabled = Boolean(workspaceKey) || Boolean(item.workspaceScopeHint);
     const actionIconColor = theme.colors.textSecondary;
 
     const menuItems = React.useMemo((): DropdownMenuItem[] => {
         const items: DropdownMenuItem[] = [
+            ...(canOpenProject ? [{
+                id: 'openProject',
+                title: t('sessionsList.openProject'),
+                icon: <Ionicons name="folder-outline" size={16} color={actionIconColor} />,
+            } satisfies DropdownMenuItem] : []),
             {
                 id: 'rename',
                 title: t('sessionsList.renameWorkspace'),
@@ -351,15 +360,17 @@ const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonl
             });
         }
         return items;
-    }, [hasCustomLabel, actionIconColor]);
+    }, [canOpenProject, hasCustomLabel, actionIconColor]);
 
     const handleMenuSelect = React.useCallback((itemId: string) => {
-        if (itemId === 'rename') {
-            onRenameWorkspace(workspaceKey, displayTitle);
+        if (itemId === 'openProject') {
+            onOpenProject();
+        } else if (itemId === 'rename') {
+            onRename();
         } else if (itemId === 'reset') {
-            onResetWorkspaceName(workspaceKey);
+            onReset();
         }
-    }, [workspaceKey, displayTitle, onRenameWorkspace, onResetWorkspaceName]);
+    }, [onOpenProject, onRename, onReset]);
 
     const chevronColor = theme.colors.textSecondary;
     return (
@@ -394,7 +405,7 @@ const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonl
                     onPointerEnter={isWeb ? () => setIsActionsHovered(true) : undefined}
                     onPointerLeave={isWeb ? () => setIsActionsHovered(false) : undefined}
                 >
-                    {showActions && workspaceKey ? (
+                    {showActions && menuEnabled ? (
                         <DropdownMenu
                             open={menuOpen}
                             onOpenChange={setMenuOpen}
@@ -407,15 +418,20 @@ const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonl
                             showCategoryTitles={false}
                             popoverPortalWebTarget="body"
                             trigger={({ toggle }) => (
-                                <Pressable
-                                    style={styles.groupHeaderActionButton}
-                                    onPress={(event) => {
-                                        (event as any)?.stopPropagation?.();
+                                    <Pressable
+                                        style={styles.groupHeaderActionButton}
+                                        onPress={(event) => {
+                                        if (event && typeof event === 'object' && 'stopPropagation' in event) {
+                                            const stopPropagation = (event as { stopPropagation?: unknown }).stopPropagation;
+                                            if (typeof stopPropagation === 'function') {
+                                                stopPropagation();
+                                            }
+                                        }
                                         toggle();
                                     }}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={t('common.moreActions')}
-                                    hitSlop={8}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={t('common.moreActions')}
+                                        hitSlop={8}
                                 >
                                     <Octicons name="kebab-horizontal" size={12} color={actionIconColor} />
                                 </Pressable>
@@ -476,6 +492,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
     const [sessionTagsV1, setSessionTagsV1] = useSettingMutable('sessionTagsV1');
     const sessionTagsEnabled = useSetting('sessionTagsEnabled');
     const [workspaceLabelsV1, setWorkspaceLabelsV1] = useSettingMutable('workspaceLabelsV1');
+    const [workspaceRefsV1, setWorkspaceRefsV1] = useSettingMutable('workspaceRefsV1');
     const [collapsedGroupKeysV1, setCollapsedGroupKeysV1] = useSettingMutable('collapsedGroupKeysV1');
     const sessionListDensity = useSetting('sessionListDensity');
     const profile = useProfile();
@@ -656,27 +673,54 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         setDraggingSessionKey(sessionKey);
     }, []);
 
-    const handleRenameWorkspace = React.useCallback(async (workspaceKey: string, currentLabel: string) => {
+    const handleRenameWorkspace = React.useCallback(async (params: Readonly<{
+        legacyWorkspaceKey: string;
+        scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
+        currentLabel: string;
+    }>) => {
         const newName = await Modal.prompt(
             t('sessionsList.renameWorkspacePromptTitle'),
             undefined,
             {
-                defaultValue: currentLabel,
+                defaultValue: params.currentLabel,
                 placeholder: t('sessionsList.renameWorkspacePromptPlaceholder'),
                 confirmText: t('common.save'),
                 cancelText: t('common.cancel'),
             },
         );
         if (newName !== null && newName.trim()) {
-            setWorkspaceLabelsV1({ ...workspaceLabelsV1, [workspaceKey]: newName.trim() });
+            if (params.scopeHint) {
+                setWorkspaceRefsV1(upsertWorkspaceRefByScope(workspaceRefsV1 ?? [], {
+                    scope: params.scopeHint,
+                    nowMs: Date.now(),
+                    patch: { label: newName.trim() },
+                }));
+                return;
+            }
+            const legacyKey = params.legacyWorkspaceKey;
+            if (!legacyKey) return;
+            setWorkspaceLabelsV1({ ...(workspaceLabelsV1 ?? {}), [legacyKey]: newName.trim() });
         }
-    }, [workspaceLabelsV1, setWorkspaceLabelsV1]);
+    }, [setWorkspaceLabelsV1, setWorkspaceRefsV1, workspaceLabelsV1, workspaceRefsV1]);
 
-    const handleResetWorkspaceName = React.useCallback((workspaceKey: string) => {
-        const next = { ...workspaceLabelsV1 };
-        delete next[workspaceKey];
+    const handleResetWorkspaceName = React.useCallback((params: Readonly<{
+        legacyWorkspaceKey: string;
+        scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
+    }>) => {
+        if (params.scopeHint) {
+            setWorkspaceRefsV1(upsertWorkspaceRefByScope(workspaceRefsV1 ?? [], {
+                scope: params.scopeHint,
+                nowMs: Date.now(),
+                patch: { label: null },
+            }));
+            return;
+        }
+        const legacyKey = params.legacyWorkspaceKey;
+        if (!legacyKey) return;
+        const next = { ...(workspaceLabelsV1 ?? {}) };
+        delete next[legacyKey];
         setWorkspaceLabelsV1(next);
-    }, [workspaceLabelsV1, setWorkspaceLabelsV1]);
+    }, [setWorkspaceLabelsV1, setWorkspaceRefsV1, workspaceLabelsV1, workspaceRefsV1]);
 
     const handleToggleCollapse = React.useCallback((collapseKey: string) => {
         const current = collapsedGroupKeysV1 ?? {};
@@ -698,6 +742,41 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
 
     const listItems = (visibleListItems ?? []) as Array<SessionListViewItem | (SessionListSessionItem & { selected?: boolean })>;
 
+    const scopeHintByLegacyWorkspaceKey = React.useMemo(() => {
+        const map = new Map<string, Readonly<{ serverId: string; machineId: string; rootPath: string }>>();
+        for (const item of listItems) {
+            if (!item || item.type !== 'header') continue;
+            if (item.headerKind !== 'project') continue;
+            const legacyKey = String(item.workspaceKey ?? '').trim();
+            if (!legacyKey) continue;
+            const hint = item.workspaceScopeHint ?? null;
+            if (!hint) continue;
+            map.set(legacyKey, hint);
+        }
+        return map;
+    }, [listItems]);
+
+    React.useEffect(() => {
+        const legacyKeys = workspaceLabelsV1 ? Object.keys(workspaceLabelsV1) : [];
+        if (legacyKeys.length === 0) return;
+
+        const result = migrateLegacyWorkspaceLabelsToWorkspaceRefs({
+            legacyWorkspaceLabels: workspaceLabelsV1 ?? {},
+            workspaceRefs: workspaceRefsV1 ?? [],
+            nowMs: Date.now(),
+            resolveScopeForLegacyKey: (legacyKey) => scopeHintByLegacyWorkspaceKey.get(legacyKey) ?? null,
+        });
+        if (result.migratedCount <= 0) return;
+        setWorkspaceRefsV1(result.nextWorkspaceRefs);
+        setWorkspaceLabelsV1(result.nextLegacyWorkspaceLabels);
+    }, [
+        scopeHintByLegacyWorkspaceKey,
+        setWorkspaceLabelsV1,
+        setWorkspaceRefsV1,
+        workspaceLabelsV1,
+        workspaceRefsV1,
+    ]);
+
     const listItemKeyExtractor = (item: SessionListViewItem, index: number) => {
         if (item.type === 'header') {
             const gk = String(item.groupKey ?? '').trim();
@@ -717,13 +796,30 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
     const renderHeaderItem = React.useCallback((item: Extract<SessionListViewItem, { type: 'header' }>) => {
         if (item.title && item.headerKind === 'project') {
             const collapseKey = item.groupKey ?? '';
+            const legacyWorkspaceKey = String(item.workspaceKey ?? '').trim();
+            const scopeHint = item.workspaceScopeHint ?? null;
+            const workspaceRef = scopeHint ? findWorkspaceRefByScope(workspaceRefsV1 ?? [], scopeHint) : null;
+            const workspaceRefId = String(workspaceRef?.id ?? '').trim();
+            const legacyCustomLabel = legacyWorkspaceKey ? (workspaceLabelsV1 ?? {})[legacyWorkspaceKey] : null;
+            const displayTitle = scopeHint
+                ? resolveWorkspaceDisplayLabel({ scope: scopeHint, workspaceRef, fallbackPathLabel: item.title })
+                : (legacyCustomLabel ?? item.title);
+            const hasCustomLabel = scopeHint
+                ? Boolean(workspaceRef && String(workspaceRef.label ?? '').trim())
+                : Boolean(legacyCustomLabel && String(legacyCustomLabel).trim());
             return (
                 <ProjectGroupHeader
                     item={item}
                     hasMultipleMachines={hasMultipleMachines}
-                    workspaceLabelsV1={workspaceLabelsV1}
-                    onRenameWorkspace={handleRenameWorkspace}
-                    onResetWorkspaceName={handleResetWorkspaceName}
+                    displayTitle={displayTitle}
+                    hasCustomLabel={hasCustomLabel}
+                    canOpenProject={Boolean(workspaceRefId)}
+                    onOpenProject={() => {
+                        if (!workspaceRefId) return;
+                        router.push(`/projects/${encodeURIComponent(workspaceRefId)}`);
+                    }}
+                    onRename={() => handleRenameWorkspace({ legacyWorkspaceKey, scopeHint, currentLabel: displayTitle })}
+                    onReset={() => handleResetWorkspaceName({ legacyWorkspaceKey, scopeHint })}
                     collapsed={Boolean(collapsedKeys[collapseKey])}
                     onToggleCollapse={() => handleToggleCollapse(collapseKey)}
                 />
@@ -746,7 +842,16 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
                 onPress={() => handleToggleCollapse(collapseKey)}
             />
         );
-    }, [hasMultipleMachines, workspaceLabelsV1, handleRenameWorkspace, handleResetWorkspaceName, collapsedKeys, handleToggleCollapse]);
+    }, [
+        collapsedKeys,
+        handleRenameWorkspace,
+        handleResetWorkspaceName,
+        handleToggleCollapse,
+        hasMultipleMachines,
+        router,
+        workspaceLabelsV1,
+        workspaceRefsV1,
+    ]);
 
     const renderSessionItem = React.useCallback((item: Extract<SessionListViewItem, { type: 'session' }>, index: number) => {
         const groupKeyForAdjacency = String(item.groupKey ?? '').trim();
