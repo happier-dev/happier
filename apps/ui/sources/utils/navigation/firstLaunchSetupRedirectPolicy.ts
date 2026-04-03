@@ -10,3 +10,4 @@ export function shouldAutoRedirectToSetupOnFirstLaunch(input: FirstLaunchSetupRe
     }
     return input.isDesktopTauri === true;
 }
+

@@ -34,7 +34,7 @@ import { getPendingSetupIntent, setPendingSetupIntent } from "@/sync/domains/pen
 import { isTauriDesktop } from "@/utils/platform/tauri";
 import { isAuthenticatedRootDeepLinkRedirectAllowed } from "@/auth/routing/isAuthenticatedRootDeepLinkRedirectAllowed";
 
-import { shouldAutoRedirectToSetupOnFirstLaunch } from "./_firstLaunchSetupRedirectPolicy";
+import { shouldAutoRedirectToSetupOnFirstLaunch } from "@/utils/navigation/firstLaunchSetupRedirectPolicy";
 
 const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
 const DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = 1_000;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldAutoRedirectToSetupOnFirstLaunch } from './_firstLaunchSetupRedirectPolicy';
+import { shouldAutoRedirectToSetupOnFirstLaunch } from './firstLaunchSetupRedirectPolicy';
 
 describe('shouldAutoRedirectToSetupOnFirstLaunch', () => {
     it('returns false on iOS/Android even when Tauri is available', () => {
@@ -16,3 +16,4 @@ describe('shouldAutoRedirectToSetupOnFirstLaunch', () => {
         expect(shouldAutoRedirectToSetupOnFirstLaunch({ platformOs: 'web', isDesktopTauri: true })).toBe(true);
     });
 });
+
