@@ -274,7 +274,7 @@ function main() {
 
     if (platform === 'win32') {
       const tauri = resolveTauriCliInvocation({ platform, absUiDir });
-      run(opts, tauri.cmd, ['build', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs], {
+      run(opts, tauri.cmd, ['build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs], {
         cwd: absUiDir,
         env: baseTauriEnv,
       });
@@ -282,7 +282,7 @@ function main() {
       run(
         opts,
         yarn.cmd,
-        [...yarn.prefixArgs, 'tauri', 'build', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
+        [...yarn.prefixArgs, 'tauri', 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
         {
           cwd: absUiDir,
           env: baseTauriEnv,
@@ -294,14 +294,14 @@ function main() {
 
   if (platform === 'win32') {
     const tauri = resolveTauriCliInvocation({ platform, absUiDir });
-    run(opts, tauri.cmd, ['build', ...configs, ...targetArgs], {
+    run(opts, tauri.cmd, ['build', '-v', ...configs, ...targetArgs], {
       cwd: absUiDir,
       env: baseTauriEnv,
     });
     return;
   }
 
-  run(opts, yarn.cmd, [...yarn.prefixArgs, 'tauri', 'build', ...configs, ...targetArgs], {
+  run(opts, yarn.cmd, [...yarn.prefixArgs, 'tauri', 'build', '-v', ...configs, ...targetArgs], {
     cwd: absUiDir,
     env: baseTauriEnv,
   });
