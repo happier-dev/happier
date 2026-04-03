@@ -96,12 +96,10 @@ const shouldUseAndroidBuildProperties =
 
 const androidBuildPropertiesPlugin = shouldUseAndroidBuildProperties
     ? [
-        'expo-build-properties',
+        require("./plugins/withAndroidReleaseShrinker.js"),
         {
-            android: {
-                ...(androidEnableMinifyInReleaseBuilds ? { enableProguardInReleaseBuilds: true } : {}),
-                ...(androidEnableShrinkResourcesInReleaseBuilds ? { enableShrinkResourcesInReleaseBuilds: true } : {}),
-            },
+            enableMinifyInReleaseBuilds: androidEnableMinifyInReleaseBuilds === true,
+            enableShrinkResourcesInReleaseBuilds: androidEnableShrinkResourcesInReleaseBuilds === true,
         },
     ]
     : null;
