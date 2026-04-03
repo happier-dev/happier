@@ -55,9 +55,13 @@ const modalMock = createModalModuleMock({
 });
 vi.mock('@/modal', () => modalMock.module);
 
-vi.mock('@/capabilities/ensureAgentInstallablesBackground', () => ({
-    machineCapabilitiesInvoke: capabilitiesState.invoke,
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/ops')>();
+    return {
+        ...original,
+        machineCapabilitiesInvoke: capabilitiesState.invoke,
+    };
+});
 
 vi.mock('@/components/ui/cards/ActionCard', () => ({
     ActionCard: (props: Record<string, unknown> & { primaryAction?: { onPress?: () => void } }) =>

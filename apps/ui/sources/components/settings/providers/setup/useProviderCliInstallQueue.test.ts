@@ -8,9 +8,13 @@ const capabilitiesState = vi.hoisted(() => ({
     invoke: vi.fn(),
 }));
 
-vi.mock('@/capabilities/ensureAgentInstallablesBackground', () => ({
-    machineCapabilitiesInvoke: capabilitiesState.invoke,
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/ops')>();
+    return {
+        ...original,
+        machineCapabilitiesInvoke: capabilitiesState.invoke,
+    };
+});
 
 describe('useProviderCliInstallQueue', () => {
     beforeEach(() => {
