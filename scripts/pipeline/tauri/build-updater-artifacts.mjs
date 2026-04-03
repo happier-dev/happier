@@ -114,8 +114,8 @@ export function resolveLinuxHsetupResourcesOverrideConfig() {
     bundle: {
       // Remove externalBin so Tauri does not place hsetup into AppDir/usr/bin.
       externalBin: [],
-      // Include the target-suffixed sidecar produced by `build.rs` as a normal bundle resource instead.
-      resources: ['binaries/hsetup-*'],
+      // Include the gzip sidecar produced by `build.rs` as a normal bundle resource instead.
+      resources: ['binaries/hsetup-*.gz'],
     },
   };
 }

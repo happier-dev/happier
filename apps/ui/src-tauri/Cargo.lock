@@ -94,6 +94,7 @@ checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
 name = "app"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "libc",
  "log",
  "serde",
@@ -107,6 +108,7 @@ dependencies = [
  "tauri-plugin-mcp-bridge",
  "tauri-plugin-notification",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
 ]
 

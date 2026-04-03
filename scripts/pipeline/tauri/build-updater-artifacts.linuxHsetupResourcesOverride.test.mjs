@@ -7,8 +7,7 @@ test('resolveLinuxHsetupResourcesOverrideConfig moves hsetup out of externalBin 
   assert.deepEqual(resolveLinuxHsetupResourcesOverrideConfig(), {
     bundle: {
       externalBin: [],
-      resources: ['binaries/hsetup-*'],
+      resources: ['binaries/hsetup-*.gz'],
     },
   });
 });
-
