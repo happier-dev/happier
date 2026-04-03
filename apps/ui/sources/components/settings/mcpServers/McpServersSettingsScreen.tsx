@@ -278,8 +278,8 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
     );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     footerSpacer: {
         height: 16,
     },
-});
+}));

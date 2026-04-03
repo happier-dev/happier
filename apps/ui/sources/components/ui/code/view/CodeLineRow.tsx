@@ -31,6 +31,7 @@ export function CodeLineRow(props: {
     advancedTokens?: readonly Readonly<{ text: string; color: string }>[];
 }) {
     const { theme } = useUnistyles();
+    const styles = stylesheet;
     const { line, selected, onPressLine, onPressAddComment } = props;
     const wrapLines = props.wrapLines ?? true;
     const showLineNumbers = props.showLineNumbers ?? true;
@@ -138,25 +139,25 @@ export function CodeLineRow(props: {
         <View
             nativeID={line.id}
             style={[
-            styles(theme).row,
-            highlighted ? styles(theme).rowHighlighted : null,
+            styles.row,
+            highlighted ? styles.rowHighlighted : null,
             { backgroundColor },
             ]}
         >
             <Pressable
-                style={styles(theme).rowPressable}
+                style={styles.rowPressable}
                 onPress={onPress}
                 onLongPress={onLongPress}
                 onHoverIn={isWeb && onPressAddComment ? () => setIsHovered(true) : undefined}
                 onHoverOut={isWeb && onPressAddComment ? () => setIsHovered(false) : undefined}
             >
                 <CodeGutter line={line} showLineNumbers={showLineNumbers} />
-                <View style={styles(theme).codeContainer}>
+                <View style={styles.codeContainer}>
                     {showPrefix && line.renderPrefixText ? (
                         <Text
                             numberOfLines={wrapLines ? undefined : 1}
                             ellipsizeMode={wrapLines ? undefined : 'clip'}
-                            style={[styles(theme).codeText, webWhitespaceStyle, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
+                            style={[styles.codeText, webWhitespaceStyle, { color: textColor }, !wrapLines ? styles.noWrap : null]}
                         >
                             {line.renderPrefixText}
                         </Text>
@@ -164,7 +165,7 @@ export function CodeLineRow(props: {
                     <Text
                         numberOfLines={wrapLines ? undefined : 1}
                         ellipsizeMode={wrapLines ? undefined : 'clip'}
-                        style={[styles(theme).codeText, webWhitespaceStyle, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
+                        style={[styles.codeText, webWhitespaceStyle, { color: textColor }, !wrapLines ? styles.noWrap : null]}
                     >
                         {(props.syntaxHighlighting?.mode === 'advanced' && props.advancedTokens && !line.renderIsHeaderLine)
                             ? props.advancedTokens.map((token, idx) => (
@@ -235,12 +236,12 @@ export function CodeLineRow(props: {
                     onHoverIn={() => setIsHovered(true)}
                     onHoverOut={() => setIsHovered(false)}
                     onPress={() => onPressAddComment(line)}
-                      hitSlop={8}
-                      style={styles(theme).commentButton}
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                          commentActive ? t('files.reviewComments.closeCommentA11y') : t('files.reviewComments.addCommentA11y')
-                      }
+	                  hitSlop={8}
+	                  style={styles.commentButton}
+	                  accessibilityRole="button"
+	                  accessibilityLabel={
+	                      commentActive ? t('files.reviewComments.closeCommentA11y') : t('files.reviewComments.addCommentA11y')
+	                  }
                   >
                     <Ionicons
                         name={commentActive ? 'close-circle-outline' : 'add-circle-outline'}
@@ -253,7 +254,7 @@ export function CodeLineRow(props: {
     );
 }
 
-const styles = (theme: any) => StyleSheet.create({
+const stylesheet = StyleSheet.create((theme) => ({
     row: {
         flexDirection: 'row',
         paddingVertical: 1,
@@ -262,7 +263,7 @@ const styles = (theme: any) => StyleSheet.create({
     },
     rowHighlighted: {
         borderLeftWidth: 3,
-        borderLeftColor: theme.colors.textLink ?? theme.colors.link ?? theme.colors.textSecondary,
+        borderLeftColor: theme.colors.textLink ?? theme.colors.textSecondary,
         paddingLeft: 5,
     },
     rowPressable: {
@@ -286,4 +287,4 @@ const styles = (theme: any) => StyleSheet.create({
     noWrap: {
         flexShrink: 0,
     },
-});
+}));

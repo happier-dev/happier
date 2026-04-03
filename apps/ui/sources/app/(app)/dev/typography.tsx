@@ -138,7 +138,7 @@ export default function TypographyScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     container: {
         flex: 1,
         backgroundColor: 'white',
@@ -175,4 +175,4 @@ const styles = StyleSheet.create({
         padding: 16,
         borderRadius: 8,
     },
-});
+}));

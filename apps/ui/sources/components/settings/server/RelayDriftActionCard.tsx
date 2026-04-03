@@ -8,11 +8,11 @@ import { ActionCard } from '@/components/ui/cards/ActionCard';
 import { t } from '@/text';
 import type { RelayDriftBanner } from './relayDriftTypes';
 
-const stylesheet = StyleSheet.create({
+const stylesheet = StyleSheet.create(() => ({
     container: {
         gap: 12,
     },
-});
+}));
 
 export const RelayDriftActionCard = React.memo(function RelayDriftActionCard(props: Readonly<{
     banner: RelayDriftBanner;

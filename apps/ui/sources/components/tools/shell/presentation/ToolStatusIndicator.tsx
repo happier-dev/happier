@@ -39,10 +39,10 @@ function StatusIndicator({ tool, theme }: { tool: ToolCall; theme: Theme }) {
     }
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     container: {
         width: 22,
         alignItems: 'center',
         justifyContent: 'center',
     },
-});
+}));

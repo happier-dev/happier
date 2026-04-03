@@ -153,7 +153,7 @@ const groupedBackground = '#F2F2F7';`}
     );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     container: {
         flex: 1,
         backgroundColor: 'white',
@@ -195,4 +195,4 @@ const styles = StyleSheet.create({
     colorItemTextDark: {
         color: '#111827',
     },
-});
+}));

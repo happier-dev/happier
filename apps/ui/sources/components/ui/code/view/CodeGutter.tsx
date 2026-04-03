@@ -9,28 +9,29 @@ import { Text } from '@/components/ui/text/Text';
 
 export function CodeGutter(props: { line: CodeLine; showLineNumbers?: boolean }) {
     const { theme } = useUnistyles();
+    const styles = stylesheet;
     const { line } = props;
     const showLineNumbers = props.showLineNumbers ?? true;
 
     if (line.renderIsHeaderLine) {
-        return <View style={styles(theme).gutter} />;
+        return <View style={styles.gutter} />;
     }
     if (!showLineNumbers) {
-        return <View style={styles(theme).gutter} />;
+        return <View style={styles.gutter} />;
     }
 
     const left = line.oldLine ? String(line.oldLine) : '';
     const right = line.newLine ? String(line.newLine) : '';
 
     return (
-        <View style={styles(theme).gutter}>
-            <Text style={styles(theme).gutterText}>{left}</Text>
-            <Text style={styles(theme).gutterText}>{right}</Text>
+        <View style={styles.gutter}>
+            <Text style={styles.gutterText}>{left}</Text>
+            <Text style={styles.gutterText}>{right}</Text>
         </View>
     );
 }
 
-const styles = (theme: any) => StyleSheet.create({
+const stylesheet = StyleSheet.create((theme) => ({
     gutter: {
         width: 64,
         flexDirection: 'row',
@@ -43,4 +44,4 @@ const styles = (theme: any) => StyleSheet.create({
         fontSize: 11,
         color: theme.colors.textSecondary,
     },
-});
+}));

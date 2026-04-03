@@ -68,7 +68,7 @@ export const SplitActionButtons = React.memo(function SplitActionButtons(props: 
     );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     actionsRow: {
         flexDirection: 'row',
         gap: 12,
@@ -76,4 +76,4 @@ const styles = StyleSheet.create({
     buttonContainer: {
         flex: 1,
     },
-});
+}));

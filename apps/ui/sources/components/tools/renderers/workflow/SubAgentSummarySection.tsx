@@ -70,6 +70,49 @@ function coerceTaskResultText(result: unknown): string | null {
     return joined.length > 0 ? joined : null;
 }
 
+const stylesheet = StyleSheet.create((theme) => ({
+    container: {
+        paddingVertical: 4,
+    },
+    summaryItem: {
+        paddingVertical: 6,
+        paddingHorizontal: 4,
+    },
+    summaryText: {
+        fontSize: 14,
+        color: theme.colors.textSecondary,
+        lineHeight: 18,
+    },
+    toolItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 4,
+        paddingLeft: 4,
+        paddingRight: 2,
+    },
+    toolTitle: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: theme.colors.textSecondary,
+        fontFamily: 'monospace',
+        flex: 1,
+    },
+    statusContainer: {
+        marginLeft: 'auto',
+        paddingLeft: 8,
+    },
+    moreToolsItem: {
+        paddingVertical: 4,
+        paddingHorizontal: 4,
+    },
+    moreToolsText: {
+        fontSize: 14,
+        color: theme.colors.textSecondary,
+        fontStyle: 'italic',
+        opacity: 0.7,
+    },
+}));
+
 export const SubAgentSummarySection = React.memo<{
     tool: ToolCall;
     metadata: Metadata | null;
@@ -82,6 +125,7 @@ export const SubAgentSummarySection = React.memo<{
     }>;
 }>(function SubAgentSummarySection({ tool, metadata, messages, detailLevel = 'summary', sessionId, messageId, opts }) {
     const { theme } = useUnistyles();
+    const styles = stylesheet;
     const router = useRouter();
 
     const filtered = React.useMemo(
@@ -119,49 +163,6 @@ export const SubAgentSummarySection = React.memo<{
 
     const hasAnyContent = Boolean(summary) || Boolean(taskResultContent) || filtered.length > 0 || threadTextMessages.length > 0;
     if (!hasAnyContent) return null;
-
-    const styles = StyleSheet.create({
-        container: {
-            paddingVertical: 4,
-        },
-        summaryItem: {
-            paddingVertical: 6,
-            paddingHorizontal: 4,
-        },
-        summaryText: {
-            fontSize: 14,
-            color: theme.colors.textSecondary,
-            lineHeight: 18,
-        },
-        toolItem: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            paddingVertical: 4,
-            paddingLeft: 4,
-            paddingRight: 2,
-        },
-        toolTitle: {
-            fontSize: 14,
-            fontWeight: '500',
-            color: theme.colors.textSecondary,
-            fontFamily: 'monospace',
-            flex: 1,
-        },
-        statusContainer: {
-            marginLeft: 'auto',
-            paddingLeft: 8,
-        },
-        moreToolsItem: {
-            paddingVertical: 4,
-            paddingHorizontal: 4,
-        },
-        moreToolsText: {
-            fontSize: 14,
-            color: theme.colors.textSecondary,
-            fontStyle: 'italic',
-            opacity: 0.7,
-        },
-    });
 
     return (
         <View style={styles.container}>

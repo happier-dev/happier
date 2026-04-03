@@ -166,7 +166,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     );
 };
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     container: {
         position: 'relative',
         zIndex: 100,
@@ -234,4 +234,4 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
     },
-});
+}));

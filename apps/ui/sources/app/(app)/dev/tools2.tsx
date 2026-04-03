@@ -35,7 +35,7 @@ export default function Tools2Screen() {
     );
 };
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     container: {
         height: 60,
         backgroundColor: '#fff',
@@ -582,7 +582,7 @@ export function formatTime(date: Date): string {
     );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     container: {
         flex: 1,
         backgroundColor: '#F2F2F7',
@@ -641,4 +641,4 @@ const styles = StyleSheet.create({
         marginBottom: 16,
         lineHeight: 20,
     },
-});
+}));
