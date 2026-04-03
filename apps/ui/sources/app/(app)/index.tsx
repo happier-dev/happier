@@ -7,7 +7,7 @@ import { MainView } from '@/components/navigation/shell/MainView';
 import { BaseModal } from '@/modal/components/BaseModal';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 import { resolvePostAuthSetupRoute, PreAuthOnboardingWizardEntry } from '@/components/onboarding';
 import { SetupWizardSurface } from '@/components/onboarding/surfaces/SetupWizardSurface';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
@@ -25,6 +25,10 @@ const stylesheet = StyleSheet.create({
 
 export default function Home() {
     const auth = useAuth();
+    React.useEffect(() => {
+        if (!isTauriDesktop()) return;
+        void invokeTauri('desktop_set_window_mode', { mode: auth.isAuthenticated ? 'main' : 'preAuth' });
+    }, [auth.isAuthenticated]);
     if (!auth.isAuthenticated) {
         return <PreAuthOnboardingWizardEntry enableFirstLaunchSetupRedirect />;
     }

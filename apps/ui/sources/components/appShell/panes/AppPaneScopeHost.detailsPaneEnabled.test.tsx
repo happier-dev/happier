@@ -1,0 +1,71 @@
+import * as React from 'react';
+
+import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
+
+
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+let lastMultiPaneLayout: any = null;
+
+installAppPaneScopeHostCommonModuleMocks({
+    getDimensions: () => ({ width: 1200, height: 800 }),
+    getLocalSetting: (key: string) => {
+        if (key === 'uiMultiPanePanelsEnabled') return true;
+        if (key === 'editorFocusModeEnabled') return false;
+        if (key === 'rightPaneWidthPx') return 360;
+        if (key === 'rightPaneWidthBasisPx') return 1200;
+        if (key === 'detailsPaneWidthPx') return 420;
+        if (key === 'detailsPaneWidthBasisPx') return 1200;
+        if (key === 'bottomPaneHeightPx') return 320;
+        if (key === 'bottomPaneHeightBasisPx') return 900;
+        return null;
+    },
+});
+
+vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
+    MultiPaneHostWithBottom: (props: any) => {
+        lastMultiPaneLayout = props.layout;
+        return React.createElement('MultiPaneHostStub');
+    },
+}));
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => 'tablet',
+}));
+
+vi.mock('./AppPaneProvider', () => ({
+    useAppPaneContext: () => ({
+        dispatch: vi.fn(),
+        state: {
+            scopes: {
+                scope1: {
+                    right: { isOpen: false },
+                    details: { isOpen: true },
+                    bottom: { isOpen: false },
+                },
+            },
+        },
+        getDriver: () => null,
+        driverRegistryVersion: 1,
+    }),
+}));
+
+describe('AppPaneScopeHost (detailsPaneEnabled)', () => {
+    it('treats details as closed when detailsPaneEnabled is false', async () => {
+        const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
+        lastMultiPaneLayout = null;
+
+        await renderScreen(<AppPaneScopeHost
+            scopeId="scope1"
+            main={<div />}
+            rightPane={null}
+            detailsPane={<div />}
+            detailsPaneEnabled={false}
+        />);
+
+        expect(lastMultiPaneLayout).not.toBeNull();
+        expect(lastMultiPaneLayout.details).toBe('hidden');
+    });
+});

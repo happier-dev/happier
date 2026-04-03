@@ -1,0 +1,1 @@
+export { WorkspaceSourceControlView } from './WorkspaceSourceControlView';

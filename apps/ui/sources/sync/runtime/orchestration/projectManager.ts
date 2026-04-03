@@ -11,27 +11,30 @@ import {
     ScmWorkingSnapshot,
 } from '@/sync/domains/state/storageTypes';
 import {
-    clearSessionScmCommitSelectionPatches,
-    clearSessionScmCommitSelectionPaths,
-    getSessionScmCommitSelectionPatches,
-    getSessionScmCommitSelectionPaths,
-    getSessionScmTouchedPaths,
-    markSessionScmCommitSelectionPaths,
-    markSessionScmTouchedPaths,
-    pruneSessionScmCommitSelectionPatches,
-    pruneSessionScmCommitSelectionPaths,
-    pruneSessionScmTouchedPaths,
-    removeSessionScmCommitSelectionPatch,
-    unmarkSessionScmCommitSelectionPaths,
-    upsertSessionScmCommitSelectionPatch,
+    clearWorkspaceScmCommitSelectionPatches,
+    clearWorkspaceScmCommitSelectionPaths,
+    getWorkspaceScmCommitSelectionPatches,
+    getWorkspaceScmCommitSelectionPaths,
+    getWorkspaceScmTouchedPaths,
+    markWorkspaceScmCommitSelectionPaths,
+    markWorkspaceScmTouchedPaths,
+    pruneWorkspaceScmCommitSelectionPatches,
+    pruneWorkspaceScmCommitSelectionPaths,
+    pruneWorkspaceScmTouchedPaths,
+    removeWorkspaceScmCommitSelectionPatch,
+    unmarkWorkspaceScmCommitSelectionPaths,
+    upsertWorkspaceScmCommitSelectionPatch,
 } from './projectScmSelectionState';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { normalizeWorkspaceScopeBase, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 
 /**
  * Unique project identifier based on machine ID and path
  */
 export interface ProjectKey {
+    serverId: string;
     machineId: string;
-    path: string;
+    rootPath: string;
 }
 
 export function resolveProjectMachineScopeId(metadata: { machineId?: string | null; host?: string | null }): string {
@@ -100,12 +103,12 @@ export interface Project {
     scmSnapshot?: ScmWorkingSnapshot | null;
     /** Last error encountered while refreshing source-control snapshot for this project */
     scmSnapshotError?: ProjectScmSnapshotError | null;
-    /** Paths touched by each session (sessionId -> path -> timestamp) */
-    scmTouchedPathsBySession?: Record<string, Record<string, number>>;
-    /** Virtual commit selection paths by session (sessionId -> path -> timestamp) */
-    scmCommitSelectionBySession?: Record<string, Record<string, number>>;
-    /** Virtual commit selection patches by session (sessionId -> path -> { path, patch, selectedAt }) */
-    scmCommitSelectionPatchesBySession?: Record<string, Record<string, ScmCommitSelectionPatch & { selectedAt: number }>>;
+    /** Paths touched in this project/workspace (path -> timestamp) */
+    scmTouchedPaths?: Record<string, number>;
+    /** Virtual commit selection paths for this project/workspace (path -> timestamp) */
+    scmCommitSelection?: Record<string, number>;
+    /** Virtual commit selection patches for this project/workspace (path -> { path, patch, selectedAt }) */
+    scmCommitSelectionPatches?: Record<string, ScmCommitSelectionPatch & { selectedAt: number }>;
     /** Bounded operation log for auditability */
     scmOperationLog?: ScmProjectOperationLogEntry[];
     /** Single in-flight write operation lock */
@@ -132,7 +135,11 @@ class ProjectManager {
      * Generate a unique key string from machine ID and path
      */
     private getProjectKeyString(key: ProjectKey): string {
-        return `${key.machineId}:${key.path}`;
+        return tryBuildWorkspaceCacheKey({
+            serverId: key.serverId,
+            machineId: key.machineId,
+            rootPath: key.rootPath,
+        }) ?? '';
     }
 
     /**
@@ -147,6 +154,9 @@ class ProjectManager {
      */
     private getOrCreateProject(key: ProjectKey, machineMetadata?: MachineMetadata | null): Project {
         const keyString = this.getProjectKeyString(key);
+        if (!keyString) {
+            throw new Error('Invalid project key');
+        }
         let projectId = this.projectKeyToId.get(keyString);
 
         if (!projectId) {
@@ -184,18 +194,34 @@ class ProjectManager {
     /**
      * Add or update a session in the project system
      */
-    addSession(session: Session, machineMetadata?: MachineMetadata | null): void {
+    addSession(
+        session: Session,
+        params?: MachineMetadata | null | Readonly<{ serverId?: string | null; machineMetadata?: MachineMetadata | null }>,
+    ): void {
         // Session must have metadata path (machine id may be absent for legacy/terminal sessions).
         if (!session.metadata?.path) {
             return;
         }
 
+        const serverId =
+            params && typeof params === 'object' && 'serverId' in params
+                ? String((params as { serverId?: unknown }).serverId ?? '').trim()
+                : '';
+        const effectiveServerId = serverId || 'unknown';
+        const machineMetadata =
+            params && typeof params === 'object' && 'serverId' in params
+                ? ((params as { machineMetadata?: MachineMetadata | null }).machineMetadata ?? null)
+                : (params as MachineMetadata | null | undefined);
+
         const projectKey: ProjectKey = {
+            serverId: effectiveServerId,
             machineId: resolveProjectMachineScopeId(session.metadata),
-            path: session.metadata.path
+            rootPath: session.metadata.path,
         };
 
-        const project = this.getOrCreateProject(projectKey, machineMetadata);
+        const normalized = normalizeWorkspaceScopeBase(projectKey);
+        if (!normalized) return;
+        const project = this.getOrCreateProject(normalized, machineMetadata);
 
         // Remove session from previous project if it was in one
         const previousProjectId = this.sessionToProject.get(session.id);
@@ -207,15 +233,6 @@ class ProjectManager {
                     previousProject.sessionIds.splice(index, 1);
                     if (previousProject.scmOperationInFlight?.sessionId === session.id) {
                         previousProject.scmOperationInFlight = null;
-                    }
-                    if (previousProject.scmTouchedPathsBySession) {
-                        delete previousProject.scmTouchedPathsBySession[session.id];
-                    }
-                    if (previousProject.scmCommitSelectionBySession) {
-                        delete previousProject.scmCommitSelectionBySession[session.id];
-                    }
-                    if (previousProject.scmCommitSelectionPatchesBySession) {
-                        delete previousProject.scmCommitSelectionPatchesBySession[session.id];
                     }
                     previousProject.updatedAt = Date.now();
                     
@@ -259,16 +276,6 @@ class ProjectManager {
                 project.scmOperationInFlight = null;
             }
             project.updatedAt = Date.now();
-        }
-
-        if (project.scmTouchedPathsBySession) {
-            delete project.scmTouchedPathsBySession[sessionId];
-        }
-        if (project.scmCommitSelectionBySession) {
-            delete project.scmCommitSelectionBySession[sessionId];
-        }
-        if (project.scmCommitSelectionPatchesBySession) {
-            delete project.scmCommitSelectionPatchesBySession[sessionId];
         }
 
         this.sessionToProject.delete(sessionId);
@@ -336,7 +343,12 @@ class ProjectManager {
     /**
      * Update multiple sessions at once (for bulk operations)
      */
-    updateSessions(sessions: Session[], machineMetadataMap?: Map<string, MachineMetadata>): void {
+    updateSessions(
+        sessions: Session[],
+        machineMetadataMap?: Map<string, MachineMetadata>,
+        serverIdRaw?: string | null,
+    ): void {
+        const serverId = String(serverIdRaw ?? '').trim() || 'unknown';
         // Track which sessions are still active
         const activeSessionIds = new Set(sessions.map(s => s.id));
         
@@ -353,7 +365,7 @@ class ProjectManager {
             const machineMetadata = session.metadata?.machineId 
                 ? machineMetadataMap?.get(session.metadata.machineId)
                 : undefined;
-            this.addSession(session, machineMetadata);
+            this.addSession(session, { serverId, machineMetadata: machineMetadata ?? null });
         }
     }
 
@@ -362,17 +374,8 @@ class ProjectManager {
      */
     updateProjectScmStatus(projectKey: ProjectKey, scmStatus: ScmStatus | null): void {
         const keyString = this.getProjectKeyString(projectKey);
-        const projectId = this.projectKeyToId.get(keyString);
-        
-        if (!projectId) {
-            // No project exists for this key, skip update
-            return;
-        }
-
-        const project = this.projects.get(projectId);
-        if (!project) {
-            return;
-        }
+        if (!keyString) return;
+        const project = this.getOrCreateProject(normalizeWorkspaceScopeBase(projectKey) ?? projectKey);
 
         // Update source-control status and timestamp
         project.scmStatus = scmStatus;
@@ -385,15 +388,222 @@ class ProjectManager {
      */
     updateProjectScmSnapshot(projectKey: ProjectKey, scmSnapshot: ScmWorkingSnapshot | null): void {
         const keyString = this.getProjectKeyString(projectKey);
-        const projectId = this.projectKeyToId.get(keyString);
-        if (!projectId) return;
-
-        const project = this.projects.get(projectId);
-        if (!project) return;
+        if (!keyString) return;
+        const project = this.getOrCreateProject(normalizeWorkspaceScopeBase(projectKey) ?? projectKey);
 
         project.scmSnapshot = scmSnapshot;
         project.lastScmStatusUpdate = Date.now();
         project.updatedAt = Date.now();
+    }
+
+    private getProjectForWorkspace(scope: WorkspaceScopeBase): Project | null {
+        const keyString = tryBuildWorkspaceCacheKey(scope);
+        if (!keyString) return null;
+        const projectId = this.projectKeyToId.get(keyString);
+        return projectId ? (this.projects.get(projectId) ?? null) : null;
+    }
+
+    private getOrCreateProjectForWorkspace(scope: WorkspaceScopeBase): Project | null {
+        const normalized = normalizeWorkspaceScopeBase(scope);
+        if (!normalized) return null;
+        return this.getOrCreateProject(normalized);
+    }
+
+    markWorkspaceScmTouchedPaths(scope: WorkspaceScopeBase, paths: string[], touchedAt: number = Date.now()): void {
+        const project = this.getOrCreateProjectForWorkspace(scope);
+        if (!project) return;
+        markWorkspaceScmTouchedPaths(project, paths, touchedAt);
+    }
+
+    getWorkspaceScmTouchedPaths(scope: WorkspaceScopeBase): string[] {
+        return getWorkspaceScmTouchedPaths(this.getProjectForWorkspace(scope));
+    }
+
+    pruneWorkspaceScmTouchedPaths(scope: WorkspaceScopeBase, activePaths: Set<string>): void {
+        const project = this.getProjectForWorkspace(scope);
+        if (!project) return;
+        pruneWorkspaceScmTouchedPaths(project, activePaths);
+    }
+
+    getWorkspaceScmStatus(scope: WorkspaceScopeBase): ScmStatus | null {
+        const project = this.getProjectForWorkspace(scope);
+        return project?.scmStatus ?? null;
+    }
+
+    updateWorkspaceScmStatus(scope: WorkspaceScopeBase, scmStatus: ScmStatus | null): void {
+        const project = this.getOrCreateProjectForWorkspace(scope);
+        if (!project) return;
+        project.scmStatus = scmStatus;
+        project.lastScmStatusUpdate = Date.now();
+        project.updatedAt = Date.now();
+    }
+
+    getWorkspaceScmSnapshot(scope: WorkspaceScopeBase): ScmWorkingSnapshot | null {
+        const project = this.getProjectForWorkspace(scope);
+        return project?.scmSnapshot ?? null;
+    }
+
+    updateWorkspaceScmSnapshot(scope: WorkspaceScopeBase, scmSnapshot: ScmWorkingSnapshot | null): void {
+        const project = this.getOrCreateProjectForWorkspace(scope);
+        if (!project) return;
+        project.scmSnapshot = scmSnapshot;
+        project.lastScmStatusUpdate = Date.now();
+        project.updatedAt = Date.now();
+    }
+
+    getWorkspaceScmSnapshotError(scope: WorkspaceScopeBase): ProjectScmSnapshotError | null {
+        const project = this.getProjectForWorkspace(scope);
+        return project?.scmSnapshotError ?? null;
+    }
+
+    updateWorkspaceScmSnapshotError(scope: WorkspaceScopeBase, error: ProjectScmSnapshotError | null): void {
+        const project = this.getOrCreateProjectForWorkspace(scope);
+        if (!project) return;
+        project.scmSnapshotError = error;
+        project.updatedAt = Date.now();
+    }
+
+    markWorkspaceScmCommitSelectionPaths(
+        scope: WorkspaceScopeBase,
+        paths: string[],
+        selectedAt: number = Date.now(),
+    ): void {
+        const project = this.getOrCreateProjectForWorkspace(scope);
+        if (!project) return;
+        markWorkspaceScmCommitSelectionPaths(project, paths, selectedAt);
+    }
+
+    unmarkWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase, paths: string[]): void {
+        const project = this.getProjectForWorkspace(scope);
+        if (!project) return;
+        unmarkWorkspaceScmCommitSelectionPaths(project, paths);
+    }
+
+    clearWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase): void {
+        const project = this.getProjectForWorkspace(scope);
+        if (!project) return;
+        clearWorkspaceScmCommitSelectionPaths(project);
+    }
+
+    getWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase): string[] {
+        const project = this.getProjectForWorkspace(scope);
+        return getWorkspaceScmCommitSelectionPaths(project);
+    }
+
+    pruneWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase, activePaths: Set<string>): void {
+        const project = this.getProjectForWorkspace(scope);
+        if (!project) return;
+        pruneWorkspaceScmCommitSelectionPaths(project, activePaths);
+    }
+
+    upsertWorkspaceScmCommitSelectionPatch(
+        scope: WorkspaceScopeBase,
+        patchSelection: ScmCommitSelectionPatch,
+        selectedAt: number = Date.now(),
+    ): void {
+        const project = this.getOrCreateProjectForWorkspace(scope);
+        if (!project) return;
+        upsertWorkspaceScmCommitSelectionPatch(project, patchSelection, selectedAt);
+    }
+
+    getWorkspaceScmCommitSelectionPatches(scope: WorkspaceScopeBase): ScmCommitSelectionPatch[] {
+        const project = this.getProjectForWorkspace(scope);
+        return getWorkspaceScmCommitSelectionPatches(project);
+    }
+
+    removeWorkspaceScmCommitSelectionPatch(scope: WorkspaceScopeBase, path: string): void {
+        const project = this.getProjectForWorkspace(scope);
+        if (!project) return;
+        removeWorkspaceScmCommitSelectionPatch(project, path);
+    }
+
+    clearWorkspaceScmCommitSelectionPatches(scope: WorkspaceScopeBase): void {
+        const project = this.getProjectForWorkspace(scope);
+        if (!project) return;
+        clearWorkspaceScmCommitSelectionPatches(project);
+    }
+
+    pruneWorkspaceScmCommitSelectionPatches(scope: WorkspaceScopeBase, activePaths: Set<string>): void {
+        const project = this.getProjectForWorkspace(scope);
+        if (!project) return;
+        pruneWorkspaceScmCommitSelectionPatches(project, activePaths);
+    }
+
+    appendWorkspaceScmOperation(
+        scope: WorkspaceScopeBase,
+        entry: Omit<ScmProjectOperationLogEntry, 'id' | 'sessionId'>,
+    ): ScmProjectOperationLogEntry | null {
+        const project = this.getOrCreateProjectForWorkspace(scope);
+        if (!project) return null;
+
+        if (!project.scmOperationLog) {
+            project.scmOperationLog = [];
+        }
+
+        const next: ScmProjectOperationLogEntry = {
+            id: `${entry.timestamp}-${Math.random().toString(36).slice(2, 10)}`,
+            sessionId: 'workspace',
+            operation: entry.operation,
+            status: entry.status,
+            timestamp: entry.timestamp,
+            ...(entry.path ? { path: entry.path } : {}),
+            ...(entry.detail ? { detail: entry.detail } : {}),
+        };
+
+        project.scmOperationLog.push(next);
+        if (project.scmOperationLog.length > ProjectManager.MAX_SCM_OPERATION_LOG) {
+            project.scmOperationLog = project.scmOperationLog.slice(
+                project.scmOperationLog.length - ProjectManager.MAX_SCM_OPERATION_LOG
+            );
+        }
+
+        project.updatedAt = Date.now();
+        return next;
+    }
+
+    getWorkspaceScmOperationLog(scope: WorkspaceScopeBase): ScmProjectOperationLogEntry[] {
+        const project = this.getProjectForWorkspace(scope);
+        if (!project?.scmOperationLog) return [];
+        return [...project.scmOperationLog].sort((a, b) => b.timestamp - a.timestamp);
+    }
+
+    beginWorkspaceScmOperation(
+        scope: WorkspaceScopeBase,
+        operation: ScmProjectOperationKind,
+        startedAt: number = Date.now(),
+    ): BeginScmProjectOperationResult {
+        const project = this.getOrCreateProjectForWorkspace(scope);
+        if (!project) {
+            return { started: false, reason: 'missing_project', inFlight: null };
+        }
+
+        if (project.scmOperationInFlight) {
+            return { started: false, reason: 'operation_in_flight', inFlight: project.scmOperationInFlight };
+        }
+
+        const inFlight: ScmProjectInFlightOperation = {
+            id: `${startedAt}-${Math.random().toString(36).slice(2, 10)}`,
+            startedAt,
+            sessionId: 'workspace',
+            operation,
+        };
+        project.scmOperationInFlight = inFlight;
+        project.updatedAt = startedAt;
+        return { started: true, operation: inFlight };
+    }
+
+    finishWorkspaceScmOperation(scope: WorkspaceScopeBase, operationId: string): boolean {
+        const project = this.getProjectForWorkspace(scope);
+        if (!project?.scmOperationInFlight) return false;
+        if (project.scmOperationInFlight.id !== operationId) return false;
+        project.scmOperationInFlight = null;
+        project.updatedAt = Date.now();
+        return true;
+    }
+
+    getWorkspaceScmInFlightOperation(scope: WorkspaceScopeBase): ScmProjectInFlightOperation | null {
+        const project = this.getProjectForWorkspace(scope);
+        return project?.scmOperationInFlight ?? null;
     }
 
     /**
@@ -522,7 +732,7 @@ class ProjectManager {
     markSessionProjectScmTouchedPaths(sessionId: string, paths: string[], touchedAt: number = Date.now()): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        markSessionScmTouchedPaths(project, sessionId, paths, touchedAt);
+        markWorkspaceScmTouchedPaths(project, paths, touchedAt);
     }
 
     /**
@@ -530,7 +740,7 @@ class ProjectManager {
      */
     getSessionProjectScmTouchedPaths(sessionId: string): string[] {
         const project = this.getProjectForSession(sessionId);
-        return getSessionScmTouchedPaths(project, sessionId);
+        return getWorkspaceScmTouchedPaths(project);
     }
 
     /**
@@ -539,7 +749,7 @@ class ProjectManager {
     pruneSessionProjectScmTouchedPaths(sessionId: string, activePaths: Set<string>): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        pruneSessionScmTouchedPaths(project, sessionId, activePaths);
+        pruneWorkspaceScmTouchedPaths(project, activePaths);
     }
 
     /**
@@ -552,7 +762,7 @@ class ProjectManager {
     ): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        markSessionScmCommitSelectionPaths(project, sessionId, paths, selectedAt);
+        markWorkspaceScmCommitSelectionPaths(project, paths, selectedAt);
     }
 
     /**
@@ -561,7 +771,7 @@ class ProjectManager {
     unmarkSessionProjectScmCommitSelectionPaths(sessionId: string, paths: string[]): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        unmarkSessionScmCommitSelectionPaths(project, sessionId, paths);
+        unmarkWorkspaceScmCommitSelectionPaths(project, paths);
     }
 
     /**
@@ -570,7 +780,7 @@ class ProjectManager {
     clearSessionProjectScmCommitSelectionPaths(sessionId: string): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        clearSessionScmCommitSelectionPaths(project, sessionId);
+        clearWorkspaceScmCommitSelectionPaths(project);
     }
 
     /**
@@ -578,7 +788,7 @@ class ProjectManager {
      */
     getSessionProjectScmCommitSelectionPaths(sessionId: string): string[] {
         const project = this.getProjectForSession(sessionId);
-        return getSessionScmCommitSelectionPaths(project, sessionId);
+        return getWorkspaceScmCommitSelectionPaths(project);
     }
 
     /**
@@ -587,7 +797,7 @@ class ProjectManager {
     pruneSessionProjectScmCommitSelectionPaths(sessionId: string, activePaths: Set<string>): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        pruneSessionScmCommitSelectionPaths(project, sessionId, activePaths);
+        pruneWorkspaceScmCommitSelectionPaths(project, activePaths);
     }
 
     /**
@@ -600,7 +810,7 @@ class ProjectManager {
     ): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        upsertSessionScmCommitSelectionPatch(project, sessionId, patchSelection, selectedAt);
+        upsertWorkspaceScmCommitSelectionPatch(project, patchSelection, selectedAt);
     }
 
     /**
@@ -608,7 +818,7 @@ class ProjectManager {
      */
     getSessionProjectScmCommitSelectionPatches(sessionId: string): ScmCommitSelectionPatch[] {
         const project = this.getProjectForSession(sessionId);
-        return getSessionScmCommitSelectionPatches(project, sessionId);
+        return getWorkspaceScmCommitSelectionPatches(project);
     }
 
     /**
@@ -617,7 +827,7 @@ class ProjectManager {
     removeSessionProjectScmCommitSelectionPatch(sessionId: string, path: string): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        removeSessionScmCommitSelectionPatch(project, sessionId, path);
+        removeWorkspaceScmCommitSelectionPatch(project, path);
     }
 
     /**
@@ -626,7 +836,7 @@ class ProjectManager {
     clearSessionProjectScmCommitSelectionPatches(sessionId: string): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        clearSessionScmCommitSelectionPatches(project, sessionId);
+        clearWorkspaceScmCommitSelectionPatches(project);
     }
 
     /**
@@ -635,7 +845,7 @@ class ProjectManager {
     pruneSessionProjectScmCommitSelectionPatches(sessionId: string, activePaths: Set<string>): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        pruneSessionScmCommitSelectionPatches(project, sessionId, activePaths);
+        pruneWorkspaceScmCommitSelectionPatches(project, activePaths);
     }
 
     appendSessionProjectScmOperation(
@@ -762,8 +972,8 @@ export const projectManager = new ProjectManager();
 /**
  * Helper function to create a project key
  */
-export function createProjectKey(machineId: string, path: string): ProjectKey {
-    return { machineId, path };
+export function createProjectKey(machineId: string, rootPath: string): ProjectKey {
+    return { serverId: 'unknown', machineId, rootPath };
 }
 
 /**
@@ -771,7 +981,7 @@ export function createProjectKey(machineId: string, path: string): ProjectKey {
  */
 export function getProjectDisplayName(project: Project): string {
     // Try to extract folder name from path
-    const pathParts = project.key.path.split('/').filter(Boolean);
+    const pathParts = project.key.rootPath.split('/').filter(Boolean);
     const folderName = pathParts[pathParts.length - 1];
     
     if (folderName) {
@@ -779,7 +989,7 @@ export function getProjectDisplayName(project: Project): string {
     }
 
     // Fallback to path
-    return project.key.path || 'Unknown Project';
+    return project.key.rootPath || 'Unknown Project';
 }
 
 /**
@@ -787,5 +997,5 @@ export function getProjectDisplayName(project: Project): string {
  */
 export function getProjectFullPath(project: Project): string {
     const machineName = project.machineMetadata?.displayName || project.machineMetadata?.host || project.key.machineId;
-    return `${machineName}: ${project.key.path}`;
+    return `${machineName}: ${project.key.rootPath}`;
 }

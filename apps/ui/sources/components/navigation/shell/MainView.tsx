@@ -15,6 +15,7 @@ import { InboxView } from '@/components/navigation/shell/InboxView';
 import { FriendsView } from '@/components/navigation/shell/FriendsView';
 import { SettingsViewWrapper } from '@/components/settings/shell/SettingsViewWrapper';
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
+import { ProjectsListView } from '@/components/projects/ProjectsListView';
 import { Header } from '@/components/navigation/Header';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
@@ -160,13 +161,14 @@ const SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID = 'app.ui.sessionGettingStarte
 // Tab header configuration (zen excluded as that tab is disabled)
 const TAB_TITLES = {
     sessions: 'tabs.sessions',
+    projects: 'tabs.projects',
     inbox: 'tabs.inbox',
     friends: 'tabs.friends',
     settings: 'tabs.settings',
 } as const;
 
 // Active tabs (excludes zen which is disabled)
-type ActiveTabType = 'sessions' | 'inbox' | 'friends' | 'settings';
+type ActiveTabType = 'sessions' | 'projects' | 'inbox' | 'friends' | 'settings';
 
 // Header title component with connection status
 const HeaderTitle = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => {
@@ -237,6 +239,11 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
         return <View style={styles.headerButton} />;
     }
 
+    if (activeTab === 'projects') {
+        // Empty view to maintain header centering (project add flow lands in Phase 4.2).
+        return <View style={styles.headerButton} />;
+    }
+
     if (activeTab === 'settings') {
         if (!isCustomServer) {
             // Empty view to maintain header centering
@@ -282,7 +289,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     }, [activeTab, friendsEnabled, inboxEnabled, setActiveTab]);
 
     const headerTab: ActiveTabType = React.useMemo(() => {
-        const normalized = (activeTab === 'inbox' || activeTab === 'friends' || activeTab === 'sessions' || activeTab === 'settings')
+        const normalized = (activeTab === 'inbox' || activeTab === 'friends' || activeTab === 'projects' || activeTab === 'sessions' || activeTab === 'settings')
             ? activeTab
             : 'sessions';
         if (!inboxEnabled && normalized === 'inbox') return 'sessions';
@@ -305,6 +312,8 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                 return inboxEnabled ? <InboxView /> : <SessionsListWrapper />;
             case 'friends':
                 return friendsEnabled ? <FriendsView /> : <SessionsListWrapper />;
+            case 'projects':
+                return <ProjectsListView />;
             case 'settings':
                 return <SettingsViewWrapper />;
             case 'sessions':

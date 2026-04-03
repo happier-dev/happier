@@ -1,48 +1,43 @@
 import type { ScmCommitSelectionPatch } from '@/sync/domains/state/storageTypes';
 
-export interface ScmSelectionProjectState {
-    scmTouchedPathsBySession?: Record<string, Record<string, number>>;
-    scmCommitSelectionBySession?: Record<string, Record<string, number>>;
-    scmCommitSelectionPatchesBySession?: Record<string, Record<string, ScmCommitSelectionPatch & { selectedAt: number }>>;
+export interface ScmSelectionWorkspaceState {
+    scmTouchedPaths?: Record<string, number>;
+    scmCommitSelection?: Record<string, number>;
+    scmCommitSelectionPatches?: Record<string, ScmCommitSelectionPatch & { selectedAt: number }>;
     updatedAt: number;
 }
 
-export function markSessionScmTouchedPaths(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function markWorkspaceScmTouchedPaths(
+    workspace: ScmSelectionWorkspaceState,
     paths: string[],
     touchedAt: number = Date.now(),
 ): void {
     if (paths.length === 0) return;
 
-    if (!project.scmTouchedPathsBySession) {
-        project.scmTouchedPathsBySession = {};
-    }
-    if (!project.scmTouchedPathsBySession[sessionId]) {
-        project.scmTouchedPathsBySession[sessionId] = {};
+    if (!workspace.scmTouchedPaths) {
+        workspace.scmTouchedPaths = {};
     }
 
     for (const path of paths) {
         if (!path) continue;
-        project.scmTouchedPathsBySession[sessionId]![path] = touchedAt;
+        workspace.scmTouchedPaths[path] = touchedAt;
     }
-    project.updatedAt = Date.now();
+    workspace.updatedAt = Date.now();
 }
 
-export function getSessionScmTouchedPaths(
-    project: ScmSelectionProjectState | null | undefined,
-    sessionId: string,
+export function getWorkspaceScmTouchedPaths(
+    workspace: ScmSelectionWorkspaceState | null | undefined,
 ): string[] {
-    if (!project?.scmTouchedPathsBySession?.[sessionId]) return [];
-    return Object.keys(project.scmTouchedPathsBySession[sessionId]!).sort((a, b) => a.localeCompare(b));
+    const touched = workspace?.scmTouchedPaths;
+    if (!touched) return [];
+    return Object.keys(touched).sort((a, b) => a.localeCompare(b));
 }
 
-export function pruneSessionScmTouchedPaths(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function pruneWorkspaceScmTouchedPaths(
+    workspace: ScmSelectionWorkspaceState,
     activePaths: Set<string>,
 ): void {
-    const touched = project.scmTouchedPathsBySession?.[sessionId];
+    const touched = workspace.scmTouchedPaths;
     if (!touched) return;
 
     for (const path of Object.keys(touched)) {
@@ -51,40 +46,35 @@ export function pruneSessionScmTouchedPaths(
         }
     }
 
-    if (Object.keys(touched).length === 0 && project.scmTouchedPathsBySession) {
-        delete project.scmTouchedPathsBySession[sessionId];
+    if (Object.keys(touched).length === 0) {
+        delete workspace.scmTouchedPaths;
     }
-    project.updatedAt = Date.now();
+    workspace.updatedAt = Date.now();
 }
 
-export function markSessionScmCommitSelectionPaths(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function markWorkspaceScmCommitSelectionPaths(
+    workspace: ScmSelectionWorkspaceState,
     paths: string[],
     selectedAt: number = Date.now(),
 ): void {
     if (paths.length === 0) return;
 
-    if (!project.scmCommitSelectionBySession) {
-        project.scmCommitSelectionBySession = {};
-    }
-    if (!project.scmCommitSelectionBySession[sessionId]) {
-        project.scmCommitSelectionBySession[sessionId] = {};
+    if (!workspace.scmCommitSelection) {
+        workspace.scmCommitSelection = {};
     }
 
     for (const path of paths) {
         if (!path) continue;
-        project.scmCommitSelectionBySession[sessionId]![path] = selectedAt;
+        workspace.scmCommitSelection[path] = selectedAt;
     }
-    project.updatedAt = Date.now();
+    workspace.updatedAt = Date.now();
 }
 
-export function unmarkSessionScmCommitSelectionPaths(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function unmarkWorkspaceScmCommitSelectionPaths(
+    workspace: ScmSelectionWorkspaceState,
     paths: string[],
 ): void {
-    const selection = project.scmCommitSelectionBySession?.[sessionId];
+    const selection = workspace.scmCommitSelection;
     if (!selection) return;
     if (paths.length === 0) return;
 
@@ -93,35 +83,33 @@ export function unmarkSessionScmCommitSelectionPaths(
         delete selection[path];
     }
 
-    if (Object.keys(selection).length === 0 && project.scmCommitSelectionBySession) {
-        delete project.scmCommitSelectionBySession[sessionId];
+    if (Object.keys(selection).length === 0) {
+        delete workspace.scmCommitSelection;
     }
-    project.updatedAt = Date.now();
+    workspace.updatedAt = Date.now();
 }
 
-export function clearSessionScmCommitSelectionPaths(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function clearWorkspaceScmCommitSelectionPaths(
+    workspace: ScmSelectionWorkspaceState,
 ): void {
-    if (!project.scmCommitSelectionBySession?.[sessionId]) return;
-    delete project.scmCommitSelectionBySession[sessionId];
-    project.updatedAt = Date.now();
+    if (!workspace.scmCommitSelection) return;
+    delete workspace.scmCommitSelection;
+    workspace.updatedAt = Date.now();
 }
 
-export function getSessionScmCommitSelectionPaths(
-    project: ScmSelectionProjectState | null | undefined,
-    sessionId: string,
+export function getWorkspaceScmCommitSelectionPaths(
+    workspace: ScmSelectionWorkspaceState | null | undefined,
 ): string[] {
-    if (!project?.scmCommitSelectionBySession?.[sessionId]) return [];
-    return Object.keys(project.scmCommitSelectionBySession[sessionId]!).sort((a, b) => a.localeCompare(b));
+    const selection = workspace?.scmCommitSelection;
+    if (!selection) return [];
+    return Object.keys(selection).sort((a, b) => a.localeCompare(b));
 }
 
-export function pruneSessionScmCommitSelectionPaths(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function pruneWorkspaceScmCommitSelectionPaths(
+    workspace: ScmSelectionWorkspaceState,
     activePaths: Set<string>,
 ): void {
-    const selection = project.scmCommitSelectionBySession?.[sessionId];
+    const selection = workspace.scmCommitSelection;
     if (!selection) return;
 
     for (const path of Object.keys(selection)) {
@@ -130,15 +118,14 @@ export function pruneSessionScmCommitSelectionPaths(
         }
     }
 
-    if (Object.keys(selection).length === 0 && project.scmCommitSelectionBySession) {
-        delete project.scmCommitSelectionBySession[sessionId];
+    if (Object.keys(selection).length === 0) {
+        delete workspace.scmCommitSelection;
     }
-    project.updatedAt = Date.now();
+    workspace.updatedAt = Date.now();
 }
 
-export function upsertSessionScmCommitSelectionPatch(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function upsertWorkspaceScmCommitSelectionPatch(
+    workspace: ScmSelectionWorkspaceState,
     patchSelection: ScmCommitSelectionPatch,
     selectedAt: number = Date.now(),
 ): void {
@@ -146,62 +133,55 @@ export function upsertSessionScmCommitSelectionPatch(
     const patch = patchSelection.patch;
     if (!path || !patch.trim()) return;
 
-    if (!project.scmCommitSelectionPatchesBySession) {
-        project.scmCommitSelectionPatchesBySession = {};
+    if (!workspace.scmCommitSelectionPatches) {
+        workspace.scmCommitSelectionPatches = {};
     }
-    if (!project.scmCommitSelectionPatchesBySession[sessionId]) {
-        project.scmCommitSelectionPatchesBySession[sessionId] = {};
-    }
-    project.scmCommitSelectionPatchesBySession[sessionId]![path] = {
+    workspace.scmCommitSelectionPatches[path] = {
         path,
         patch,
         selectedAt,
     };
-    project.updatedAt = Date.now();
+    workspace.updatedAt = Date.now();
 }
 
-export function getSessionScmCommitSelectionPatches(
-    project: ScmSelectionProjectState | null | undefined,
-    sessionId: string,
+export function getWorkspaceScmCommitSelectionPatches(
+    workspace: ScmSelectionWorkspaceState | null | undefined,
 ): ScmCommitSelectionPatch[] {
-    const selection = project?.scmCommitSelectionPatchesBySession?.[sessionId];
+    const selection = workspace?.scmCommitSelectionPatches;
     if (!selection) return [];
     return Object.values(selection).sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export function removeSessionScmCommitSelectionPatch(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function removeWorkspaceScmCommitSelectionPatch(
+    workspace: ScmSelectionWorkspaceState,
     path: string,
 ): void {
     const normalizedPath = path.trim();
     if (!normalizedPath) return;
 
-    const patches = project.scmCommitSelectionPatchesBySession?.[sessionId];
+    const patches = workspace.scmCommitSelectionPatches;
     if (!patches) return;
 
     delete patches[normalizedPath];
-    if (Object.keys(patches).length === 0 && project.scmCommitSelectionPatchesBySession) {
-        delete project.scmCommitSelectionPatchesBySession[sessionId];
+    if (Object.keys(patches).length === 0) {
+        delete workspace.scmCommitSelectionPatches;
     }
-    project.updatedAt = Date.now();
+    workspace.updatedAt = Date.now();
 }
 
-export function clearSessionScmCommitSelectionPatches(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function clearWorkspaceScmCommitSelectionPatches(
+    workspace: ScmSelectionWorkspaceState,
 ): void {
-    if (!project.scmCommitSelectionPatchesBySession?.[sessionId]) return;
-    delete project.scmCommitSelectionPatchesBySession[sessionId];
-    project.updatedAt = Date.now();
+    if (!workspace.scmCommitSelectionPatches) return;
+    delete workspace.scmCommitSelectionPatches;
+    workspace.updatedAt = Date.now();
 }
 
-export function pruneSessionScmCommitSelectionPatches(
-    project: ScmSelectionProjectState,
-    sessionId: string,
+export function pruneWorkspaceScmCommitSelectionPatches(
+    workspace: ScmSelectionWorkspaceState,
     activePaths: Set<string>,
 ): void {
-    const selection = project.scmCommitSelectionPatchesBySession?.[sessionId];
+    const selection = workspace.scmCommitSelectionPatches;
     if (!selection) return;
 
     for (const path of Object.keys(selection)) {
@@ -210,8 +190,8 @@ export function pruneSessionScmCommitSelectionPatches(
         }
     }
 
-    if (Object.keys(selection).length === 0 && project.scmCommitSelectionPatchesBySession) {
-        delete project.scmCommitSelectionPatchesBySession[sessionId];
+    if (Object.keys(selection).length === 0) {
+        delete workspace.scmCommitSelectionPatches;
     }
-    project.updatedAt = Date.now();
+    workspace.updatedAt = Date.now();
 }

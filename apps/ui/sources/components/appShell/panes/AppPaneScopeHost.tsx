@@ -16,6 +16,7 @@ export type AppPaneScopeHostProps = Readonly<{
     rightPane?: React.ReactNode | null;
     detailsPane?: React.ReactNode | null;
     bottomPane?: React.ReactNode | null;
+    detailsPaneEnabled?: boolean;
 }>;
 
 export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
@@ -56,6 +57,8 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     const rightOpen = Boolean(scopeState?.right.isOpen);
     const detailsOpen = Boolean(scopeState?.details.isOpen);
     const bottomOpen = Boolean(scopeState?.bottom?.isOpen);
+    const detailsPaneEnabled = props.detailsPaneEnabled !== false;
+    const effectiveDetailsOpen = detailsPaneEnabled ? detailsOpen : false;
 
     const driver = React.useMemo(() => getDriver(props.scopeId), [driverRegistryVersion, getDriver, props.scopeId]);
 
@@ -66,7 +69,7 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
             ? (props.rightPane ?? driver?.renderRightPane?.({ scopeId: props.scopeId }) ?? null)
             : null;
     const detailsPane =
-        detailsOpen
+        effectiveDetailsOpen
             ? (props.detailsPane ?? driver?.renderDetailsPane?.({ scopeId: props.scopeId }) ?? null)
             : null;
     const bottomPane =
@@ -173,7 +176,7 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
         deviceType: multiPaneDeviceType,
         multiPaneEnabled,
         rightOpen,
-        detailsOpen,
+        detailsOpen: effectiveDetailsOpen,
         rightPreferOverlayWhenPreferredDoesNotFit: preferOverlayWhenPreferredDoesNotFit.right,
         detailsPreferOverlayWhenPreferredDoesNotFit: preferOverlayWhenPreferredDoesNotFit.details,
         mainMinPx: editorFocusModeEnabled ? 0 : PANE_SIZING_DEFAULTS.mainMinPx,
@@ -187,7 +190,7 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     const resolvedLayout = applyEditorFocusModePaneLayoutOverride({
         editorFocusModeEnabled,
         rightOpen,
-        detailsOpen,
+        detailsOpen: effectiveDetailsOpen,
         baseLayout: resolvedLayoutBase,
     });
 
@@ -202,9 +205,9 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
         // auto-disabling focus mode during this transient state, otherwise the toggle can
         // appear to "do nothing" while pane scopes are re-activating.
         if (!scopeState) return;
-        if (rightOpen || detailsOpen) return;
+        if (rightOpen || effectiveDetailsOpen) return;
         setEditorFocusModeEnabled(false);
-    }, [detailsOpen, editorFocusModeEnabled, rightOpen, scopeState, setEditorFocusModeEnabled]);
+    }, [effectiveDetailsOpen, editorFocusModeEnabled, rightOpen, scopeState, setEditorFocusModeEnabled]);
 
     const dockSizing = resolveDockedPaneSizing({
         containerWidthPx,
@@ -411,7 +414,7 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
         >
             <MultiPaneHostWithBottom
                 main={props.main}
-                hideMain={editorFocusModeEnabled && (rightOpen || detailsOpen)}
+                hideMain={editorFocusModeEnabled && (rightOpen || effectiveDetailsOpen)}
                 rightPane={rightPane}
                 detailsPane={detailsPane}
                 layout={resolvedLayout}
