@@ -264,12 +264,12 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
     async function doAbort() {
         logger.debug('[remote]: doAbort');
-        session.noteUserAbortRequested();
         if (turnInterrupt) {
             try {
                 await turnInterrupt();
             } catch (error) {
                 logger.debug('[remote]: turn interrupt failed; falling back to process abort', { error });
+                session.noteUserAbortRequested();
                 session.client.sendAgentMessage('claude', { type: 'turn_aborted', id: randomUUID() });
                 await abort();
                 return;
@@ -278,6 +278,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
             return;
         }
+        session.noteUserAbortRequested();
         session.client.sendAgentMessage('claude', { type: 'turn_aborted', id: randomUUID() });
         await abort();
     }

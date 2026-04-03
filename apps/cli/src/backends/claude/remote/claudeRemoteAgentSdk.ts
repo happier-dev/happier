@@ -1,5 +1,6 @@
 import { query as agentSdkQuery, AbortError as AgentSdkAbortError, type Query as AgentSdkQueryType } from '@anthropic-ai/claude-agent-sdk';
 
+import { configuration } from '@/configuration';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { logger } from '@/ui/logger';
 import { PushableAsyncIterable } from '@/utils/PushableAsyncIterable';
@@ -29,6 +30,7 @@ import type { JsRuntime } from '@/backends/claude/runClaude';
 import { createSubprocessStderrAppender, resolveSubprocessArtifactsDir } from '@/agent/runtime/subprocessArtifacts';
 import { join } from 'node:path';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
+import { readTailTextFile } from '@/utils/fs/readTailTextFile';
 import { buildClaudeAgentSdkHooks } from './agentSdk/buildClaudeAgentSdkHooks';
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
 import { parseExplicitSpawnEnvKeysFromProcessEnv } from './agentSdk/explicitSpawnEnvKeysMarker';
@@ -1583,12 +1585,30 @@ export async function claudeRemoteAgentSdk(opts: {
 	        }
         if (e && typeof e === 'object') {
             const err = e as any;
-            if (!err.happierClaudeCodeArtifacts) {
-                err.happierClaudeCodeArtifacts = {
-                    debugFilePath: debugFilePath ?? null,
-                    stderrFilePath: stderrAppender?.path ?? null,
-                };
+            const existing = err.happierClaudeCodeArtifacts;
+            const artifacts =
+                existing && typeof existing === 'object' && !Array.isArray(existing)
+                    ? (existing as Record<string, unknown>)
+                    : ({} as Record<string, unknown>);
+
+            if (artifacts.debugFilePath === undefined) artifacts.debugFilePath = debugFilePath ?? null;
+            if (artifacts.stderrFilePath === undefined) artifacts.stderrFilePath = stderrAppender?.path ?? null;
+
+            const debugPath = typeof artifacts.debugFilePath === 'string' ? artifacts.debugFilePath : null;
+            const stderrPath = typeof artifacts.stderrFilePath === 'string' ? artifacts.stderrFilePath : null;
+
+            if (typeof artifacts.debugTail !== 'string') {
+                artifacts.debugTail = debugPath
+                    ? await readTailTextFile({ path: debugPath, maxBytes: configuration.filesReadMaxBytes }).catch(() => '')
+                    : '';
             }
+            if (typeof artifacts.stderrTail !== 'string') {
+                artifacts.stderrTail = stderrPath
+                    ? await readTailTextFile({ path: stderrPath, maxBytes: configuration.filesReadMaxBytes }).catch(() => '')
+                    : '';
+            }
+
+            err.happierClaudeCodeArtifacts = artifacts;
         }
         throw e;
 	    } finally {

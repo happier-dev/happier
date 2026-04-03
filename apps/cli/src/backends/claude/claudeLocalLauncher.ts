@@ -112,6 +112,7 @@ export async function claudeLocalLauncher(
     const processAbortController = new AbortController();
     let exitFuture = new Future<void>();
     let syncLastPermissionModeFromMetadata: (() => void) | null = null;
+    const pendingQueueTakeoverAbortController = new AbortController();
     try {
         const clientEmitter = session.client as unknown as {
             getMetadataSnapshot?: () => Metadata | null | undefined;
@@ -207,6 +208,29 @@ export async function claudeLocalLauncher(
             // Switch to remote mode when message received
             void doSwitch();
         }); // When any message is received, abort current process, clean queue and switch to remote mode
+
+        // Local sessions started from the terminal can become “stuck” in local mode when remote/UI prompts
+        // are queued server-side but not delivered to this runner (for example, when socket wakeups are missed).
+        // Poll the pending queue v2 in the background and switch to remote when prompts are waiting.
+        if (entry === 'initial' && configuration.pendingQueueIdleWakePollIntervalMs > 0) {
+            const pollIntervalMs = configuration.pendingQueueIdleWakePollIntervalMs;
+            void (async () => {
+                while (!pendingQueueTakeoverAbortController.signal.aborted) {
+                    if (exitReason) return;
+                    try {
+                        const pendingCount = await session.client.peekPendingMessageQueueV2Count();
+                        if (pendingCount > 0) {
+                            logger.debug('[local]: pending queue v2 non-empty during local mode; switching to remote', { pendingCount });
+                            void doSwitch();
+                            return;
+                        }
+                    } catch {
+                        // best-effort only
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+                }
+            })();
+        }
 
         if (entry === 'switch') {
             const pendingGateStartMs = configuration.startupTimingEnabled ? Date.now() : null;
@@ -349,6 +373,7 @@ export async function claudeLocalLauncher(
             logger.debug('[local]: launch done');
         }
     } finally {
+        pendingQueueTakeoverAbortController.abort();
         const clientEmitter = session.client as unknown as {
             off?: (event: string, listener: () => void) => void;
         };

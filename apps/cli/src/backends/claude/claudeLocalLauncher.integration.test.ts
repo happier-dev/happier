@@ -266,19 +266,47 @@ describe('claudeLocalLauncher', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
-  it('does not block initial local startup on pending-queue inspection', async () => {
+  it('does not block initial local startup while a pending-queue probe is in-flight', async () => {
     const { session, client } = createLocalHarness();
 
-    client.peekPendingMessageQueueV2Count = vi.fn(async () => {
-      throw new Error('pending queue inspection should not run for initial local startup');
+    const peekDeferred = createDeferred<number>();
+    client.peekPendingMessageQueueV2Count = vi.fn(async () => await peekDeferred.promise);
+
+    const localStarted = createDeferred<void>();
+    mockClaudeLocal.mockImplementationOnce(async () => {
+      localStarted.resolve(undefined);
     });
 
-    mockClaudeLocal.mockImplementationOnce(async () => {});
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const launcherPromise = claudeLocalLauncher(session);
+
+    await localStarted.promise;
+    peekDeferred.resolve(0);
+
+    await expect(launcherPromise).resolves.toEqual({ type: 'exit', code: 0 });
+  });
+
+  it('switches to remote when pending-queue v2 is non-empty during initial local mode (remote takeover)', async () => {
+    const { session, client } = createLocalHarness();
+
+    client.peekPendingMessageQueueV2Count = vi.fn(async () => 1);
+
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-claude-local-takeover-pending-'));
+    const transcriptPath = join(baseDir, 'sess_takeover.jsonl');
+    await writeFile(transcriptPath, `{\"type\":\"assistant\",\"uuid\":\"asst_1\"}\n`, 'utf8');
+
+    const localStarted = createDeferred<void>();
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      session.onSessionFound('sess_takeover', hookWithTranscript(transcriptPath));
+      localStarted.resolve(undefined);
+      await waitForAbort(opts.abort);
+    });
 
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
-    const result = await claudeLocalLauncher(session);
+    const launcherPromise = claudeLocalLauncher(session);
 
-    expect(result).toEqual({ type: 'exit', code: 0 });
+    await localStarted.promise;
+    await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
   });
 
   it('does not pass a strict allowedTools allowlist to local Claude spawns by default', async () => {

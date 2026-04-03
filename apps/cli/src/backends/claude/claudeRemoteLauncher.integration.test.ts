@@ -288,6 +288,49 @@ describe.sequential('claudeRemoteLauncher', () => {
     await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
   });
 
+  it('does not mark the session as abort-requested when abort is handled via a turn interrupt handler', async () => {
+    const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(label)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    };
+
+    const harness = createRemoteHarness();
+    const noteAbortRequestedSpy = vi.spyOn(harness.session, 'noteUserAbortRequested');
+    harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+
+    const dispatchObserved = createDeferred<void>();
+    const interruptObserved = createDeferred<void>();
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      opts.onRunnerSelected?.('agentSdk');
+      opts.onSessionFound?.('sess_agent_sdk', hookWithTranscript('/tmp/sess_agent_sdk.jsonl'));
+      opts.setTurnInterrupt?.(async () => {
+        interruptObserved.resolve(undefined);
+      });
+      dispatchObserved.resolve(undefined);
+      await waitForAbort(opts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(harness.session);
+
+    await waitWithin(dispatchObserved.promise, 'remote dispatch mock did not run');
+    const abortHandler = await waitWithin(harness.abortHandlerReady, 'abort handler was not registered');
+    await abortHandler();
+    await waitWithin(interruptObserved.promise, 'turn interrupt was not invoked during abort');
+
+    expect(noteAbortRequestedSpy).not.toHaveBeenCalled();
+
+    const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
+  });
+
   it('clears the stored Claude session id after an exit-code-1 resume failure so subsequent launches do not loop on a dead session', async () => {
     const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
       return await Promise.race([
