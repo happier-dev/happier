@@ -101,6 +101,26 @@ export function resolveLinuxTauriBundlerEnvOverrides(env = process.env) {
 }
 
 /**
+ * linuxdeploy (via Tauri's AppImage bundling) can fail when it tries to run `ldd` on our bundled
+ * `hsetup` sidecar binary. On Linux, we don't need `hsetup` to be an `externalBin` in `usr/bin`:
+ * the Tauri runtime can resolve and execute it from the app's resource directory.
+ *
+ * Bundling it as a resource avoids linuxdeploy attempting to patch/scan the binary during AppImage creation.
+ *
+ * @returns {{ bundle: { externalBin: string[]; resources: string[] } }}
+ */
+export function resolveLinuxHsetupResourcesOverrideConfig() {
+  return {
+    bundle: {
+      // Remove externalBin so Tauri does not place hsetup into AppDir/usr/bin.
+      externalBin: [],
+      // Include the target-suffixed sidecar produced by `build.rs` as a normal bundle resource instead.
+      resources: ['binaries/hsetup-*'],
+    },
+  };
+}
+
+/**
  * @param {{ dryRun: boolean }} opts
  * @param {string} cmd
  * @param {string[]} args
@@ -366,6 +386,20 @@ function main() {
       );
     }
     configs.push('--config', linuxProductNameOverridePath);
+  }
+
+  if (platform === 'linux') {
+    const linuxHsetupOverridePath = tempFile(tmpRoot, 'tauri.linux.hsetup.resources.override.json');
+    if (opts.dryRun) {
+      console.log(`[dry-run] write ${linuxHsetupOverridePath} (bundle hsetup as resource)`);
+    } else {
+      fs.writeFileSync(
+        linuxHsetupOverridePath,
+        `${JSON.stringify(resolveLinuxHsetupResourcesOverrideConfig())}\n`,
+        'utf8',
+      );
+    }
+    configs.push('--config', linuxHsetupOverridePath);
   }
 
   const signingKeyValue = String(process.env.TAURI_SIGNING_PRIVATE_KEY ?? '').trim();
