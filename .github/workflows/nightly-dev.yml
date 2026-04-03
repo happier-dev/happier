@@ -75,7 +75,7 @@ jobs:
       publish_ota: true
       publish_android_apk: true
       submit_ios_testflight: true
-      eas_builder: eas_cloud
+      eas_builder: eas_local
       release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
 
   ui_desktop:
