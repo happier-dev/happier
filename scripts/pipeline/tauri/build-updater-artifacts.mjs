@@ -160,6 +160,31 @@ function dumpLinuxAppImageDiagnostics(opts) {
   const appDirPath = path.join(absUiDir, 'src-tauri', 'target', 'release', 'bundle', 'appimage', `${productName}.AppDir`);
   const hsetupPath = path.join(appDirPath, 'usr', 'bin', 'hsetup');
 
+  /**
+   * @param {unknown} error
+   */
+  function formatExecErrorOutput(error) {
+    if (!error || typeof error !== 'object') return String(error);
+    const stdout = /** @type {{ stdout?: unknown }} */ (error).stdout;
+    const stderr = /** @type {{ stderr?: unknown }} */ (error).stderr;
+    const stdoutText =
+      typeof stdout === 'string'
+        ? stdout
+        : stdout instanceof Uint8Array
+          ? Buffer.from(stdout).toString('utf8')
+          : '';
+    const stderrText =
+      typeof stderr === 'string'
+        ? stderr
+        : stderr instanceof Uint8Array
+          ? Buffer.from(stderr).toString('utf8')
+          : '';
+    const parts = [String(error)];
+    if (stdoutText.trim()) parts.push(`stdout:\n${stdoutText}`);
+    if (stderrText.trim()) parts.push(`stderr:\n${stderrText}`);
+    return parts.join('\n');
+  }
+
   console.log('::group::[pipeline] tauri linux diagnostics');
   try {
     if (!fs.existsSync(appDirPath)) {
@@ -180,6 +205,19 @@ function dumpLinuxAppImageDiagnostics(opts) {
     }
 
     try {
+      const out = execFileSyncPortable('bash', ['-lc', `ls -l ${JSON.stringify(hsetupPath)}`], {
+        cwd: repoRoot || process.cwd(),
+        env: process.env,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 10_000,
+      });
+      process.stdout.write(`[pipeline] perms ${hsetupPath}\n${out}`);
+    } catch (error) {
+      console.log(`[pipeline] perms failed for ${hsetupPath}: ${formatExecErrorOutput(error)}`);
+    }
+
+    try {
       const out = execFileSyncPortable('file', [hsetupPath], {
         cwd: repoRoot || process.cwd(),
         env: process.env,
@@ -189,11 +227,12 @@ function dumpLinuxAppImageDiagnostics(opts) {
       });
       process.stdout.write(`[pipeline] file ${hsetupPath}\n${out}`);
     } catch (error) {
-      console.log(`[pipeline] file failed for ${hsetupPath}: ${String(error)}`);
+      console.log(`[pipeline] file failed for ${hsetupPath}: ${formatExecErrorOutput(error)}`);
     }
 
     try {
-      const out = execFileSyncPortable('ldd', [hsetupPath], {
+      // Use bash so we can capture ldd stderr reliably even when it exits non-zero.
+      const out = execFileSyncPortable('bash', ['-lc', `ldd ${JSON.stringify(hsetupPath)} 2>&1 || true`], {
         cwd: repoRoot || process.cwd(),
         env: process.env,
         encoding: 'utf8',
@@ -202,7 +241,7 @@ function dumpLinuxAppImageDiagnostics(opts) {
       });
       process.stdout.write(`[pipeline] ldd ${hsetupPath}\n${out}`);
     } catch (error) {
-      console.log(`[pipeline] ldd failed for ${hsetupPath}: ${String(error)}`);
+      console.log(`[pipeline] ldd failed for ${hsetupPath}: ${formatExecErrorOutput(error)}`);
     }
 
     try {
