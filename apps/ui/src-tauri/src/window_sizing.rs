@@ -13,12 +13,14 @@ use std::{
 use tauri::{
     path::BaseDirectory,
     App,
+    AppHandle,
     LogicalPosition,
     LogicalSize,
     Manager,
     PhysicalPosition,
     PhysicalSize,
     Runtime,
+    State,
     WindowEvent,
 };
 
@@ -36,6 +38,12 @@ const MIN_WINDOW_WIDTH_PX: f64 = 520.0;
 
 #[cfg(desktop)]
 const MIN_WINDOW_HEIGHT_PX: f64 = 520.0;
+
+#[cfg(desktop)]
+const PREAUTH_WINDOW_WIDTH_PX: f64 = 520.0;
+
+#[cfg(desktop)]
+const PREAUTH_WINDOW_HEIGHT_PX: f64 = 760.0;
 
 #[cfg(desktop)]
 const WRITE_DEBOUNCE: Duration = Duration::from_millis(400);
@@ -61,6 +69,34 @@ struct PersistedWindowState {
     maximized: bool,
     #[serde(default)]
     units: PersistedWindowUnits,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum WindowMode {
+    PreAuth,
+    Main,
+}
+
+#[cfg(desktop)]
+impl Default for WindowMode {
+    fn default() -> Self {
+        Self::Main
+    }
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedWindowMode {
+    mode: WindowMode,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Default)]
+pub struct WindowSizingState {
+    mode: Arc<Mutex<WindowMode>>,
 }
 
 #[cfg(desktop)]
@@ -128,9 +164,34 @@ fn resolve_state_path<R: Runtime>(app: &App<R>) -> tauri::Result<PathBuf> {
 }
 
 #[cfg(desktop)]
+fn resolve_state_path_handle(app: &AppHandle) -> tauri::Result<PathBuf> {
+    app.path()
+        .resolve("window-state/main.json", BaseDirectory::AppConfig)
+}
+
+#[cfg(desktop)]
+fn resolve_mode_path<R: Runtime>(app: &App<R>) -> tauri::Result<PathBuf> {
+    app.path()
+        .resolve("window-state/mode.json", BaseDirectory::AppConfig)
+}
+
+#[cfg(desktop)]
+fn resolve_mode_path_handle(app: &AppHandle) -> tauri::Result<PathBuf> {
+    app.path()
+        .resolve("window-state/mode.json", BaseDirectory::AppConfig)
+}
+
+#[cfg(desktop)]
 fn read_json(path: &Path) -> Option<PersistedWindowState> {
     let bytes = fs::read(path).ok()?;
     serde_json::from_slice::<PersistedWindowState>(&bytes).ok()
+}
+
+#[cfg(desktop)]
+fn read_mode(path: &Path) -> Option<WindowMode> {
+    let bytes = fs::read(path).ok()?;
+    let persisted = serde_json::from_slice::<PersistedWindowMode>(&bytes).ok()?;
+    Some(persisted.mode)
 }
 
 #[cfg(desktop)]
@@ -144,6 +205,22 @@ fn write_json(path: &Path, state: &PersistedWindowState) {
     }
 
     if let Ok(payload) = serde_json::to_vec_pretty(state) {
+        let _ = fs::write(path, payload);
+    }
+}
+
+#[cfg(desktop)]
+fn write_mode(path: &Path, mode: WindowMode) {
+    let parent = match path.parent() {
+        Some(parent) => parent,
+        None => return,
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+
+    let state = PersistedWindowMode { mode };
+    if let Ok(payload) = serde_json::to_vec_pretty(&state) {
         let _ = fs::write(path, payload);
     }
 }
@@ -220,14 +297,104 @@ fn resolve_launch_window_rect(monitor_rect: Rect, persisted: Option<&PersistedWi
 }
 
 #[cfg(desktop)]
+fn resolve_initial_window_mode(persisted_mode: Option<WindowMode>, has_main_state: bool) -> WindowMode {
+    if let Some(mode) = persisted_mode {
+        return mode;
+    }
+    if has_main_state {
+        return WindowMode::Main;
+    }
+    WindowMode::PreAuth
+}
+
+#[cfg(desktop)]
+fn resolve_preauth_window_rect(monitor_rect: Rect) -> Rect {
+    let max_width = monitor_rect.width.max(1.0);
+    let max_height = monitor_rect.height.max(1.0);
+    let width = PREAUTH_WINDOW_WIDTH_PX.min(max_width);
+    let height = PREAUTH_WINDOW_HEIGHT_PX.min(max_height);
+    clamp_window_rect_to_monitor(
+        Rect {
+            x: monitor_rect.x + ((monitor_rect.width - width) / 2.0).max(0.0),
+            y: monitor_rect.y + ((monitor_rect.height - height) / 2.0).max(0.0),
+            width,
+            height,
+        },
+        monitor_rect,
+    )
+}
+
+#[cfg(desktop)]
+fn apply_main_window_rect<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    monitor_logical: Rect,
+    persisted: Option<PersistedWindowState>,
+    scale_factor: f64,
+) {
+    let persisted_logical = persisted.as_ref().map(|state| {
+        let rect = normalize_persisted_rect_to_logical(state, scale_factor);
+        PersistedWindowState {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            maximized: state.maximized,
+            units: PersistedWindowUnits::Logical,
+        }
+    });
+
+    let clamped = resolve_launch_window_rect(monitor_logical, persisted_logical.as_ref());
+    let _ = window.set_resizable(true);
+    let _ = window.set_min_size(None::<LogicalSize<f64>>);
+    let _ = window.set_max_size(None::<LogicalSize<f64>>);
+    let _ = window.unmaximize();
+    let _ = window.set_size(tauri::Size::Logical(LogicalSize {
+        width: clamped.width.round().max(1.0),
+        height: clamped.height.round().max(1.0),
+    }));
+    let _ = window.set_position(tauri::Position::Logical(LogicalPosition {
+        x: clamped.x.round(),
+        y: clamped.y.round(),
+    }));
+
+    if persisted.as_ref().is_some_and(|state| state.maximized) {
+        let _ = window.maximize();
+    }
+}
+
+#[cfg(desktop)]
+fn apply_preauth_window_rect<R: Runtime>(window: &tauri::WebviewWindow<R>, monitor_logical: Rect) {
+    let rect = resolve_preauth_window_rect(monitor_logical);
+    let _ = window.unmaximize();
+    let _ = window.set_resizable(false);
+    let fixed_size = tauri::Size::Logical(LogicalSize {
+        width: rect.width.round().max(1.0),
+        height: rect.height.round().max(1.0),
+    });
+    let _ = window.set_min_size(Some(fixed_size.clone()));
+    let _ = window.set_max_size(Some(fixed_size.clone()));
+    let _ = window.set_size(fixed_size);
+    let _ = window.set_position(tauri::Position::Logical(LogicalPosition {
+        x: rect.x.round(),
+        y: rect.y.round(),
+    }));
+}
+
+#[cfg(desktop)]
 pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
 
     let state_path = resolve_state_path(app)?;
+    let mode_path = resolve_mode_path(app)?;
     let persisted = read_json(&state_path);
+    let persisted_mode = read_mode(&mode_path);
+    let initial_mode = resolve_initial_window_mode(persisted_mode, persisted.is_some());
     let scale_factor = window.scale_factor().unwrap_or(1.0);
+    if let Ok(mut guard) = app.state::<WindowSizingState>().mode.lock() {
+        *guard = initial_mode;
+    }
 
     let monitor = window
         .current_monitor()?
@@ -242,37 +409,15 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             width: monitor_rect.width / scale_factor,
             height: monitor_rect.height / scale_factor,
         };
-        let persisted_logical = persisted
-            .as_ref()
-            .map(|state| {
-                let rect = normalize_persisted_rect_to_logical(state, scale_factor);
-                PersistedWindowState {
-                    x: rect.x,
-                    y: rect.y,
-                    width: rect.width,
-                    height: rect.height,
-                    maximized: state.maximized,
-                    units: PersistedWindowUnits::Logical,
-                }
-            });
-
-        let clamped = resolve_launch_window_rect(monitor_logical, persisted_logical.as_ref());
-        let _ = window.set_size(tauri::Size::Logical(LogicalSize {
-            width: clamped.width.round().max(1.0),
-            height: clamped.height.round().max(1.0),
-        }));
-        let _ = window.set_position(tauri::Position::Logical(LogicalPosition {
-            x: clamped.x.round(),
-            y: clamped.y.round(),
-        }));
-    }
-
-    if persisted.as_ref().is_some_and(|state| state.maximized) {
-        let _ = window.maximize();
+        match initial_mode {
+            WindowMode::Main => apply_main_window_rect(&window, monitor_logical, persisted.clone(), scale_factor),
+            WindowMode::PreAuth => apply_preauth_window_rect(&window, monitor_logical),
+        }
     }
 
     let last_write = Arc::new(Mutex::new(Instant::now() - WRITE_DEBOUNCE));
     let state_path = Arc::new(state_path);
+    let mode = app.state::<WindowSizingState>().mode.clone();
     let window_for_events = window.clone();
     window.on_window_event(move |event| {
         if !matches!(
@@ -282,6 +427,14 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                 | WindowEvent::ScaleFactorChanged { .. }
                 | WindowEvent::CloseRequested { .. }
         ) {
+            return;
+        }
+
+        let current_mode = match mode.lock() {
+            Ok(guard) => *guard,
+            Err(poisoned) => *poisoned.into_inner(),
+        };
+        if current_mode != WindowMode::Main {
             return;
         }
 
@@ -324,6 +477,87 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
         );
     });
 
+    // Persist the last known mode so the next launch can start at the right size with no visible jumps.
+    write_mode(&mode_path, initial_mode);
+
+    let _ = window.show();
+    Ok(())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn desktop_set_window_mode(
+    app: AppHandle,
+    state: State<'_, WindowSizingState>,
+    mode: WindowMode,
+) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+
+    let mode_path = resolve_mode_path_handle(&app).map_err(|e| e.to_string())?;
+    write_mode(&mode_path, mode);
+
+    {
+        let mut guard = state
+            .mode
+            .lock()
+            .map_err(|_| "WindowSizingState poisoned".to_string())?;
+        *guard = mode;
+    }
+
+    let scale_factor = window.scale_factor().unwrap_or(1.0);
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        return Ok(());
+    };
+    let monitor_rect = monitor_to_rect(&monitor);
+    let monitor_logical = Rect {
+        x: monitor_rect.x / scale_factor,
+        y: monitor_rect.y / scale_factor,
+        width: monitor_rect.width / scale_factor,
+        height: monitor_rect.height / scale_factor,
+    };
+
+    match mode {
+        WindowMode::Main => {
+            let state_path = resolve_state_path_handle(&app).map_err(|e| e.to_string())?;
+            let persisted = read_json(&state_path);
+            apply_main_window_rect(&window, monitor_logical, persisted, scale_factor);
+        }
+        WindowMode::PreAuth => {
+            // Ensure we keep the most recent main window geometry for the next login.
+            if let Ok(pos) = window.outer_position() {
+                if let Ok(size) = window.outer_size() {
+                    let rect = physical_size_to_rect(pos, size);
+                    let logical = Rect {
+                        x: rect.x / scale_factor,
+                        y: rect.y / scale_factor,
+                        width: rect.width / scale_factor,
+                        height: rect.height / scale_factor,
+                    };
+                    if let Ok(state_path) = resolve_state_path_handle(&app) {
+                        write_json(
+                            &state_path,
+                            &PersistedWindowState {
+                                x: logical.x,
+                                y: logical.y,
+                                width: logical.width,
+                                height: logical.height,
+                                maximized: window.is_maximized().unwrap_or(false),
+                                units: PersistedWindowUnits::Logical,
+                            },
+                        );
+                    }
+                }
+            }
+            apply_preauth_window_rect(&window, monitor_logical);
+        }
+    }
+
     Ok(())
 }
 
@@ -331,6 +565,34 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn resolve_initial_window_mode_prefers_persisted_value() {
+        assert_eq!(
+            resolve_initial_window_mode(Some(WindowMode::PreAuth), true),
+            WindowMode::PreAuth
+        );
+        assert_eq!(
+            resolve_initial_window_mode(Some(WindowMode::Main), false),
+            WindowMode::Main
+        );
+    }
+
+    #[test]
+    fn resolve_initial_window_mode_defaults_to_main_when_main_state_exists() {
+        assert_eq!(
+            resolve_initial_window_mode(None, true),
+            WindowMode::Main
+        );
+    }
+
+    #[test]
+    fn resolve_initial_window_mode_defaults_to_preauth_when_no_state_exists() {
+        assert_eq!(
+            resolve_initial_window_mode(None, false),
+            WindowMode::PreAuth
+        );
+    }
 
     #[test]
     fn compute_default_window_size_respects_caps() {

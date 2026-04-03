@@ -27,6 +27,7 @@ pub fn run() {
         builder = builder
             .manage(app_updates::PendingUpdate::default())
             .manage(system_tasks::SystemTasksState::default())
+            .manage(window_sizing::WindowSizingState::default())
             .invoke_handler(tauri::generate_handler![
                 app_updates::desktop_fetch_update,
                 app_updates::desktop_install_update,
@@ -38,7 +39,8 @@ pub fn run() {
                 system_tasks::cancel_system_task,
                 system_tasks::get_system_task_snapshot,
                 system_tasks::system_tasks_open_log_path,
-                system_tasks::respond_system_task_prompt
+                system_tasks::respond_system_task_prompt,
+                window_sizing::desktop_set_window_mode
             ]);
     }
 
