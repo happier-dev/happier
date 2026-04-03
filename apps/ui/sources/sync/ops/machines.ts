@@ -377,6 +377,33 @@ export async function machineGetBugReportLogTail(
     }
 }
 
+export type MachineReadSessionLogTailResult =
+    | { success: true; path: string; tail: string; truncated?: boolean }
+    | { success: false; error: string; errorCode?: string };
+
+export async function machineReadSessionLogTail(
+    machineId: string,
+    params: { path: string; maxBytes?: number },
+    options?: { timeoutMs?: number },
+): Promise<MachineReadSessionLogTailResult> {
+    try {
+        return await apiSocket.machineRPC<MachineReadSessionLogTailResult, { path: string; maxBytes?: number }>(
+            machineId,
+            RPC_METHODS.SESSION_LOG_TAIL,
+            {
+                path: params.path,
+                maxBytes: params.maxBytes,
+            },
+            options,
+        );
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to read session log tail',
+        };
+    }
+}
+
 /**
  * Update machine metadata with optimistic concurrency control and automatic retry
  */

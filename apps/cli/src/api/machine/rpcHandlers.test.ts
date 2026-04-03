@@ -774,6 +774,83 @@ describe('registerMachineRpcHandlers', () => {
     expect(registered.has(RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT)).toBe(true);
   });
 
+  it('registers session log tail handler (machine-scoped)', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    expect(registered.has(RPC_METHODS.SESSION_LOG_TAIL)).toBe(true);
+  });
+
+  it('reads session log tails from paths under happyHomeDir', async () => {
+    const root = '/tmp/happier-test-home';
+    const logPath = join(root, 'stacks', 'stack-1', 'cli', 'logs', 'session.log');
+    await mkdir(join(root, 'stacks', 'stack-1', 'cli', 'logs'), { recursive: true });
+    await writeFile(logPath, 'line 1\nline 2\nline 3\n', 'utf8');
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SESSION_LOG_TAIL);
+    expect(handler).toBeDefined();
+    const result = await handler!({ path: logPath, maxBytes: 128 });
+    expect(result).toMatchObject({ success: true });
+    expect(String((result as any).tail ?? '')).toContain('line 3');
+  });
+
+  it('rejects session log tail reads for paths outside happyHomeDir', async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), 'rpc-sessionlog-deny-'));
+    const outsideLogPath = join(sandbox, 'outside.log');
+    await writeFile(outsideLogPath, 'outside log\n', 'utf8');
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SESSION_LOG_TAIL);
+    expect(handler).toBeDefined();
+    const result = await handler!({ path: outsideLogPath, maxBytes: 2048 });
+    expect(result).toMatchObject({ success: false });
+    expect(String((result as any).error ?? '')).toContain('allowed');
+  });
+
   it('registers daemon terminal handlers (disabled when explicitly configured off)', async () => {
     const prev = process.env.HAPPIER_DAEMON_TERMINAL_ENABLED;
     process.env.HAPPIER_DAEMON_TERMINAL_ENABLED = '0';

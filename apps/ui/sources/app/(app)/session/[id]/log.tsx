@@ -8,10 +8,13 @@ import { CodeView } from '@/components/ui/media/CodeView';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { Typography } from '@/constants/Typography';
+import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { Modal } from '@/modal';
 import { useIsDataReady, useSession } from '@/sync/domains/state/storage';
-import { sessionReadLogTail } from '@/sync/ops';
+import { machineReadSessionLogTail } from '@/sync/ops';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
@@ -22,7 +25,9 @@ const LOG_TAIL_MAX_BYTES = 200_000;
 export default function SessionLogScreen() {
     const { theme } = useUnistyles();
     const { id } = useLocalSearchParams<{ id: string }>();
-    const session = useSession(id);
+    const sessionId = String(id ?? '').trim();
+    const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionLogRoute.ensureSessionVisible');
+    const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
 
     const metadataLogPath = React.useMemo(() => {
@@ -31,6 +36,17 @@ export default function SessionLogScreen() {
             : '';
         return raw.length > 0 ? raw : null;
     }, [session?.metadata]);
+
+    const machineIdFromSession = React.useMemo(() => {
+        const raw = session?.metadata && typeof (session.metadata as any).machineId === 'string'
+            ? (session.metadata as any).machineId.trim()
+            : '';
+        return raw.length > 0 ? raw : null;
+    }, [session?.metadata]);
+
+    const resolvedMachineId = React.useMemo(() => {
+        return machineIdFromSession || (session?.id ? readMachineTargetForSession(session.id)?.machineId ?? null : null);
+    }, [machineIdFromSession, session?.id]);
 
     const [tailText, setTailText] = React.useState('');
     const [resolvedLogPath, setResolvedLogPath] = React.useState<string | null>(null);
@@ -49,14 +65,24 @@ export default function SessionLogScreen() {
 
     const refreshTail = React.useCallback(async () => {
         if (!session?.id) return;
+        if (!sessionHydrated) return;
+        if (!metadataLogPath) return;
+        if (!resolvedMachineId) {
+            setError(t('sessionLog.readFailed'));
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
-            const response = await sessionReadLogTail(session.id, { maxBytes: LOG_TAIL_MAX_BYTES });
+            const response = await machineReadSessionLogTail(resolvedMachineId, {
+                path: metadataLogPath,
+                maxBytes: LOG_TAIL_MAX_BYTES,
+            });
             if (!response.success) {
                 setError(response.error || t('sessionLog.readFailed'));
                 setTailText('');
                 setTruncated(false);
+                setResolvedLogPath(metadataLogPath || null);
                 return;
             }
             setResolvedLogPath(response.path || metadataLogPath || null);
@@ -65,15 +91,20 @@ export default function SessionLogScreen() {
         } finally {
             setLoading(false);
         }
-    }, [metadataLogPath, session?.id]);
+    }, [metadataLogPath, resolvedMachineId, session?.id, sessionHydrated]);
 
     React.useEffect(() => {
         if (!session?.id) return;
+        if (!sessionHydrated) return;
         if (!metadataLogPath) return;
         void refreshTail();
-    }, [metadataLogPath, refreshTail, session?.id]);
+    }, [metadataLogPath, refreshTail, session?.id, sessionHydrated]);
 
-    if (!isDataReady) {
+    if (!sessionId) {
+        return <SessionInvalidLinkFallback />;
+    }
+
+    if (!isDataReady || !sessionHydrated) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <Ionicons name="hourglass-outline" size={48} color={theme.colors.textSecondary} />

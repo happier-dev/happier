@@ -1,5 +1,6 @@
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { logger } from '@/ui/logger';
 import { readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
 import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from '@/diagnostics/bugReportMachineDiagnosticsRecipe';
@@ -139,6 +140,11 @@ async function toCanonicalPath(path: string): Promise<string | null> {
 
 function isKnownAgentId(value: string): value is CatalogAgentId {
   return (CATALOG_AGENT_IDS as readonly string[]).includes(value);
+}
+
+function isPathInside(targetPath: string, allowedDir: string): boolean {
+  const rel = relative(allowedDir, targetPath);
+  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
 }
 
 function parseEnvBoundedInt(
@@ -1094,6 +1100,68 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }, 100);
 
     return { message: 'Daemon stop request acknowledged, starting shutdown sequence...' };
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_LOG_TAIL, async (params: any) => {
+    const maxBytes = typeof params?.maxBytes === 'number' && Number.isFinite(params.maxBytes)
+      ? Math.min(Math.max(Math.floor(params.maxBytes), 1024), 1_000_000)
+      : 200_000;
+    const path = typeof params?.path === 'string' && params.path.trim().length > 0 ? params.path.trim() : '';
+    if (!path) {
+      return {
+        success: false,
+        error: 'Session log path is required',
+      };
+    }
+    if (!path.toLowerCase().endsWith('.log')) {
+      return {
+        success: false,
+        error: 'Session log path must point to a .log file',
+      };
+    }
+
+    const canonicalRequestedPath = await toCanonicalPath(path);
+    if (!canonicalRequestedPath) {
+      return {
+        success: false,
+        error: 'Session log path is unavailable on this machine',
+      };
+    }
+
+    const canonicalHappyHomeDir = await toCanonicalPath(resolve(configuration.happyHomeDir));
+    if (!canonicalHappyHomeDir) {
+      return {
+        success: false,
+        error: 'Happy home directory is unavailable for log validation',
+      };
+    }
+
+    const allowedRoots = [
+      resolve(canonicalHappyHomeDir, 'logs'),
+      resolve(canonicalHappyHomeDir, 'stacks'),
+    ];
+    if (!allowedRoots.some((dir) => isPathInside(canonicalRequestedPath, dir))) {
+      return {
+        success: false,
+        error: 'Requested log path is outside allowed Happier directories',
+      };
+    }
+
+    try {
+      const fileStat = await stat(canonicalRequestedPath);
+      const tail = await readBugReportLogTail(canonicalRequestedPath, maxBytes);
+      return {
+        success: true,
+        path: canonicalRequestedPath,
+        tail,
+        truncated: fileStat.size > maxBytes,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS, async () => {

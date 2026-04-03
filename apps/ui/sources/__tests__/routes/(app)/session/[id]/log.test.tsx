@@ -7,13 +7,27 @@ import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers'
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const sessionReadLogTailMock = vi.fn(async (_sessionId?: string, _options?: unknown) => ({
-    success: true,
+type MachineReadSessionLogTailMockResponse =
+    | Readonly<{ success: true; path: string; tail: string }>
+    | Readonly<{ success: false; error: string }>;
+
+const machineReadSessionLogTailMock = vi.fn(
+    async (_machineId?: string, _params?: unknown, _options?: unknown): Promise<MachineReadSessionLogTailMockResponse> => ({
+        success: true,
+        path: '/tmp/.happier/logs/session.log',
+        tail: 'tail line',
+    }),
+);
+
+const machineGetBugReportLogTailMock = vi.fn(async (_machineId?: string, _params?: unknown, _options?: unknown) => ({
+    ok: false,
     path: '/tmp/.happier/logs/session.log',
     tail: 'tail line',
 }));
 
 let sessionLogPath: string | null = null;
+let sessionMachineId: string | null = null;
+let sessionHydrated = true;
 
 installSessionRouteCommonModuleMocks({
     reactNative: async () => {
@@ -38,7 +52,7 @@ installSessionRouteCommonModuleMocks({
                     (sessionLogPath
                         ? {
                               id: 'session-1',
-                              metadata: { sessionLogPath },
+                              metadata: { sessionLogPath, machineId: sessionMachineId },
                           }
                         : {
                               id: 'session-1',
@@ -49,6 +63,10 @@ installSessionRouteCommonModuleMocks({
         });
     },
 });
+
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: () => sessionHydrated,
+}));
 
 vi.mock('@expo/vector-icons', async () => {
     const Ionicons = (props: any) => React.createElement('Ionicons', props);
@@ -72,13 +90,31 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 }));
 
 vi.mock('@/sync/ops', () => ({
-    sessionReadLogTail: (sessionId: string, options?: unknown) => sessionReadLogTailMock(sessionId, options),
+    machineReadSessionLogTail: (machineId: string, params?: unknown, options?: unknown) =>
+        machineReadSessionLogTailMock(machineId, params, options),
+    machineGetBugReportLogTail: (machineId: string, params?: unknown, options?: unknown) =>
+        machineGetBugReportLogTailMock(machineId, params, options),
 }));
 
 describe('Session log screen', () => {
     beforeEach(() => {
         sessionLogPath = null;
-        sessionReadLogTailMock.mockClear();
+        sessionMachineId = null;
+        sessionHydrated = true;
+        machineReadSessionLogTailMock.mockClear();
+        machineGetBugReportLogTailMock.mockClear();
+    });
+
+    it('does not fetch log tail until session hydration is ready', async () => {
+        sessionHydrated = false;
+        sessionLogPath = '/tmp/.happier/logs/session.log';
+        sessionMachineId = 'machine-1';
+        const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
+
+        await renderScreen(React.createElement(SessionLogScreen));
+
+        expect(machineReadSessionLogTailMock).not.toHaveBeenCalled();
+        expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
     });
 
     it('does not fetch log tail when log path is unavailable', async () => {
@@ -86,15 +122,26 @@ describe('Session log screen', () => {
 
         await renderScreen(React.createElement(SessionLogScreen));
 
-        expect(sessionReadLogTailMock).not.toHaveBeenCalled();
+        expect(machineReadSessionLogTailMock).not.toHaveBeenCalled();
     });
 
     it('fetches session log tail when log path exists', async () => {
         sessionLogPath = '/tmp/.happier/logs/session.log';
+        sessionMachineId = 'machine-1';
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
         await renderScreen(React.createElement(SessionLogScreen));
 
-        expect(sessionReadLogTailMock).toHaveBeenCalledWith('session-1', { maxBytes: 200000 });
+        expect(machineReadSessionLogTailMock).toHaveBeenCalledWith('machine-1', { path: sessionLogPath, maxBytes: 200000 }, undefined);
+    });
+
+    it('does not call bug report log tail RPC for session logs', async () => {
+        sessionLogPath = '/tmp/.happier/logs/session.log';
+        sessionMachineId = 'machine-1';
+        const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
+
+        await renderScreen(React.createElement(SessionLogScreen));
+
+        expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
     });
 });
