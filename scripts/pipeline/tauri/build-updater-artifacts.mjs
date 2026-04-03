@@ -242,7 +242,15 @@ function main() {
   const baseTauriEnv = {
     CI: 'true',
     APP_ENV: environment,
-    ...(process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : {}),
+    ...(process.platform === 'linux'
+      ? {
+          // AppImage tooling is frequently the flakiest part of Linux packaging on CI runners.
+          // Ensure we get actionable backtraces in logs when linuxdeploy/AppImageKit fails.
+          APPIMAGE_EXTRACT_AND_RUN: '1',
+          RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? '1',
+          RUST_LOG: process.env.RUST_LOG ?? 'tauri_bundler=debug',
+        }
+      : {}),
     ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
     ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
   };
