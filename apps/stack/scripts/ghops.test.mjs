@@ -76,3 +76,88 @@ process.stdout.write(JSON.stringify(payload));
   assert.equal(out.env.GH_PROMPT_DISABLED, '1');
   assert.equal(out.env.GH_CONFIG_DIR, configDir);
 });
+
+test('loads token from macOS Keychain when env var is missing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-keychain-test-'));
+  const fakeGh = join(dir, 'fake-gh');
+  const fakeSecurity = join(dir, 'fake-security');
+  const configDir = join(dir, 'gh-config');
+
+  writeFileSync(
+    fakeGh,
+    `#!/usr/bin/env node
+const payload = {
+  argv: process.argv.slice(2),
+  env: {
+    GH_TOKEN: process.env.GH_TOKEN ?? null,
+    GH_PROMPT_DISABLED: process.env.GH_PROMPT_DISABLED ?? null,
+    GH_CONFIG_DIR: process.env.GH_CONFIG_DIR ?? null,
+  },
+};
+process.stdout.write(JSON.stringify(payload));
+`,
+    'utf8',
+  );
+  chmodSync(fakeGh, 0o755);
+
+  const token = 'test-bot-token-from-keychain';
+  writeFileSync(
+    fakeSecurity,
+    `#!/usr/bin/env node
+if (process.argv.includes('find-generic-password') && process.argv.includes('-w')) {
+  process.stdout.write(${JSON.stringify(token)});
+  process.exit(0);
+}
+process.stderr.write('unexpected security args: ' + JSON.stringify(process.argv.slice(2)) + '\\n');
+process.exit(1);
+`,
+    'utf8',
+  );
+  chmodSync(fakeSecurity, 0o755);
+
+  const res = runGhop(['api', 'repos/happier-dev/happier'], {
+    HAPPIER_GITHUB_BOT_TOKEN: '',
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    HAPPIER_GHOPS_SECURITY_PATH: fakeSecurity,
+    HAPPIER_GHOPS_CONFIG_DIR: configDir,
+    GH_TOKEN: 'personal-token-should-not-be-used',
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.deepEqual(out.argv, ['api', 'repos/happier-dev/happier']);
+  assert.equal(out.env.GH_TOKEN, token);
+  assert.equal(out.env.GH_PROMPT_DISABLED, '1');
+  assert.equal(out.env.GH_CONFIG_DIR, configDir);
+});
+
+test('set-token stores token via keychain helper without requiring env var', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-set-token-test-'));
+  const fakeSecurity = join(dir, 'fake-security');
+
+  writeFileSync(
+    fakeSecurity,
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ argv: process.argv.slice(2) }));
+`,
+    'utf8',
+  );
+  chmodSync(fakeSecurity, 0o755);
+
+  const token = 'tok_123';
+  const res = runGhop(['set-token', '--token', token], {
+    HAPPIER_GITHUB_BOT_TOKEN: '',
+    HAPPIER_GHOPS_SECURITY_PATH: fakeSecurity,
+    GH_TOKEN: '',
+    GITHUB_TOKEN: '',
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.argv[0], 'add-generic-password');
+  assert.ok(out.argv.includes('-U'));
+  assert.ok(out.argv.includes('-s'));
+  assert.ok(out.argv.includes('-a'));
+  assert.ok(out.argv.includes('-w'));
+  assert.equal(out.argv[out.argv.length - 1], token);
+});
