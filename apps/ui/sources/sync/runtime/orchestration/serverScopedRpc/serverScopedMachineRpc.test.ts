@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { resetScopedMachineDataKeyCacheForTests } from './serverScopedRpcPool';
 
 const machineRpcSpy = vi.hoisted(() => vi.fn());
 const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
+const getReadyServerFeaturesSpy = vi.hoisted(() => vi.fn());
 const getCredentialsSpy = vi.hoisted(() => vi.fn());
 const createEncryptionSpy = vi.hoisted(() => vi.fn());
 const listServerProfilesSpy = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotSpy = vi.hoisted(() => vi.fn());
+
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: (...args: unknown[]) => getReadyServerFeaturesSpy(...args),
+}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', () => ({
     createEphemeralServerSocketClient: (...args: unknown[]) => createEphemeralSocketSpy(...args),
@@ -42,6 +48,7 @@ describe('machineRpcWithServerScope', () => {
     afterEach(() => {
         machineRpcSpy.mockReset();
         createEphemeralSocketSpy.mockReset();
+        getReadyServerFeaturesSpy.mockReset();
         getCredentialsSpy.mockReset();
         createEncryptionSpy.mockReset();
         listServerProfilesSpy.mockReset();
@@ -81,6 +88,52 @@ describe('machineRpcWithServerScope', () => {
             status: 'viable',
         }));
         expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed: forces scoped route for guarded methods when transfer feature payload is unavailable', async () => {
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
+        getReadyServerFeaturesSpy.mockResolvedValueOnce(null);
+        machineRpcSpy.mockResolvedValueOnce({ ok: true });
+        getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+
+        const machineEncryption = {
+            encryptRaw: vi.fn(async () => 'encrypted-payload'),
+            decryptRaw: vi.fn(async () => ({ decoded: true })),
+        };
+        createEncryptionSpy.mockResolvedValue({
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeMachines: vi.fn(async () => {}),
+            getMachineEncryption: vi.fn(() => machineEncryption),
+        });
+
+        vi.stubGlobal('fetch', vi.fn(async () => ({
+            ok: true,
+            json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
+        })));
+
+        const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
+        const fakeSocket = {
+            timeout: vi.fn(() => ({ emitWithAck })),
+            emit: vi.fn(),
+            disconnect: vi.fn(),
+        };
+        createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
+
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        const result = await machineRpcWithServerScope({
+            machineId: 'machine-1',
+            method: RPC_METHODS.LIST_DIRECTORY,
+            payload: { path: '/tmp' },
+        });
+
+        expect(result).toEqual({ decoded: true });
+        expect(machineRpcSpy).not.toHaveBeenCalled();
+        expect(createEphemeralSocketSpy).toHaveBeenCalled();
     });
 
     it('routes RPC through a scoped socket when target server differs from active server', async () => {

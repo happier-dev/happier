@@ -28,6 +28,7 @@ import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewC
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
 import { buildSessionMessageRouteId, resolveSessionMessageRouteId } from '../domains/messages/messageRouteIds';
 import { useApplyLocalSettings, useApplySettings } from './settingsWriters';
+import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 
 import { getStorage } from '../domains/state/storageStore';
 import type { KnownEntitlements } from '../domains/state/storageStore';
@@ -232,6 +233,21 @@ export function useSessionListMeaningfulActivityAt(sessionId: string): number | 
 export function useSessionReviewCommentsDrafts(sessionId: string): ReviewCommentDraft[] {
   return getStorage()(
     useShallow((state) => state.reviewCommentsDraftsBySessionId[sessionId] ?? emptyReviewCommentDrafts)
+  );
+}
+
+export function useWorkspaceReviewCommentsDrafts(scope: WorkspaceScopeBase | null): ReviewCommentDraft[] {
+  const cacheKey = React.useMemo(() => {
+    if (!scope) return null;
+    try {
+      return buildWorkspaceCacheKey(scope);
+    } catch {
+      return null;
+    }
+  }, [scope]);
+
+  return getStorage()(
+    useShallow((state) => (cacheKey ? (state.reviewCommentsDraftsByWorkspaceCacheKey?.[cacheKey] ?? emptyReviewCommentDrafts) : emptyReviewCommentDrafts))
   );
 }
 
@@ -495,6 +511,40 @@ export function useSessionProjectScmSnapshotError(
   return getStorage()(
     useShallow((state) => (sessionId ? state.getSessionProjectScmSnapshotError(sessionId) : null))
   );
+}
+
+export function useWorkspaceScmStatus(scope: WorkspaceScopeBase | null): ScmStatus | null {
+  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmStatus(scope) : null)));
+}
+
+export function useWorkspaceScmSnapshot(scope: WorkspaceScopeBase | null): ScmWorkingSnapshot | null {
+  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmSnapshot(scope) : null)));
+}
+
+export function useWorkspaceScmSnapshotError(
+  scope: WorkspaceScopeBase | null
+): import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null {
+  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmSnapshotError(scope) : null)));
+}
+
+export function useWorkspaceScmTouchedPaths(scope: WorkspaceScopeBase | null): string[] {
+  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmTouchedPaths(scope) : [])));
+}
+
+export function useWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase | null): string[] {
+  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmCommitSelectionPaths(scope) : [])));
+}
+
+export function useWorkspaceScmCommitSelectionPatches(scope: WorkspaceScopeBase | null): ScmCommitSelectionPatch[] {
+  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmCommitSelectionPatches(scope) : [])));
+}
+
+export function useWorkspaceScmOperationLog(scope: WorkspaceScopeBase | null) {
+  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmOperationLog(scope) : [])));
+}
+
+export function useWorkspaceScmInFlightOperation(scope: WorkspaceScopeBase | null) {
+  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmInFlightOperation(scope) : null)));
 }
 
 export function useSessionProjectScmTouchedPaths(sessionId: string | null): string[] {

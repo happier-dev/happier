@@ -9,7 +9,7 @@ import type { Machine, Session } from '../domains/state/storageTypes';
 type ProjectLookupResult = {
     key?: {
         machineId?: string | null;
-        path?: string | null;
+        rootPath?: string | null;
     } | null;
 } | null;
 
@@ -53,7 +53,7 @@ export function applyReachableTargetsToSessionListRenderables(
             path: normalizeNonEmptyString(metadata?.path),
             homeDir: normalizeNonEmptyString(metadata?.homeDir),
             projectMachineId: normalizeNonEmptyString(project?.key?.machineId),
-            projectPath: normalizeNonEmptyString(project?.key?.path),
+            projectPath: normalizeNonEmptyString(project?.key?.rootPath),
         };
     });
 
@@ -74,7 +74,7 @@ export function applyReachableTargetsToSessionListRenderables(
                 sessionPath: normalizeNonEmptyString(metadata?.path),
                 sessionHomeDir: normalizeNonEmptyString(metadata?.homeDir),
                 projectMachineId: normalizeNonEmptyString(project?.key?.machineId),
-                projectPath: normalizeNonEmptyString(project?.key?.path),
+                projectPath: normalizeNonEmptyString(project?.key?.rootPath),
                 machines,
                 peerSessions,
             });

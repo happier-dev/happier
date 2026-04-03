@@ -1,6 +1,8 @@
 import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 
+import { WorkspaceRefV1Schema } from '@/sync/domains/workspaces/workspaceRefModel';
+
 function objectKeyCount(value: unknown): number {
     return value && typeof value === 'object' && !Array.isArray(value)
         ? Object.keys(value as Record<string, unknown>).length
@@ -131,6 +133,34 @@ export const ACCOUNT_COLLECTION_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: z.array(z.string()).default([]),
         default: [],
         description: 'Pinned session keys (format: serverId:sessionId)',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrent: arrayCount,
+        },
+    },
+    workspaceRefsV1: {
+        schema: z.array(WorkspaceRefV1Schema).default([]),
+        default: [],
+        description: 'Saved workspace (project) references for first-class Projects UI',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrent: arrayCount,
+        },
+    },
+    pinnedWorkspaceRefIdsV1: {
+        schema: z.array(z.string()).default([]),
+        default: [],
+        description: 'Pinned workspace ref ids (Projects)',
         storageScope: 'account',
         analytics: {
             trackCurrentState: true,

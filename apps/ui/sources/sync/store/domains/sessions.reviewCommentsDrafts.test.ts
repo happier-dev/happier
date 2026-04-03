@@ -12,6 +12,7 @@ function createHarness() {
         sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},
         reviewCommentsDraftsBySessionId: {},
+        reviewCommentsDraftsByWorkspaceCacheKey: {},
         isDataReady: false,
         machines: {},
         sessionMessages: {},
@@ -46,5 +47,24 @@ describe('sessions domain: review comment drafts', () => {
 
         domain.deleteSessionReviewCommentDraft('s1', 'c1');
         expect(get().reviewCommentsDraftsBySessionId.s1 ?? []).toHaveLength(0);
+    });
+
+    it('upserts and deletes review comment drafts per workspace cache key', () => {
+        const { get, domain } = createHarness();
+
+        domain.upsertWorkspaceReviewCommentDraft('srv1:m1:/repo', {
+            id: 'c1',
+            filePath: 'src/a.ts',
+            source: 'file',
+            anchor: { kind: 'fileLine', startLine: 1 },
+            snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+            body: 'nit',
+            createdAt: 1,
+        });
+
+        expect(get().reviewCommentsDraftsByWorkspaceCacheKey['srv1:m1:/repo']).toHaveLength(1);
+
+        domain.deleteWorkspaceReviewCommentDraft('srv1:m1:/repo', 'c1');
+        expect(get().reviewCommentsDraftsByWorkspaceCacheKey['srv1:m1:/repo'] ?? []).toHaveLength(0);
     });
 });

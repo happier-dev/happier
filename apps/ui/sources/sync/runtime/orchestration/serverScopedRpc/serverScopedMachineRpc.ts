@@ -12,6 +12,7 @@ import { resolveScopedMachineDataKey } from '@/sync/runtime/orchestration/server
 import { delay } from '@/utils/timing/time';
 
 import type { ServerScopedMachineRpcParams, SocketRpcResult } from './serverScopedRpcTypes';
+import { isGuardedMachineRpcMethod, resolveTransferPolicyAllowsMachineRpcDirect } from './guardedMachineRpcPolicy';
 
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
@@ -77,15 +78,23 @@ function shouldFallbackToScopedMachineRpc(error: unknown): boolean {
 }
 
 export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachineRpcParams<A>): Promise<R> {
+    const guarded = isGuardedMachineRpcMethod(params.method);
+    const allowDirect = guarded && params.skipTransferPolicyEvaluation !== true
+        ? await resolveTransferPolicyAllowsMachineRpcDirect({ serverId: params.serverId ?? undefined })
+        : true;
+    const policyPreferScoped = guarded && !allowDirect;
+    const initialPreferScoped = params.preferScoped === true || policyPreferScoped;
+
     const runOnce = async (options?: { forceScoped?: boolean }): Promise<R> => {
+        const preferScoped = options?.forceScoped === true || initialPreferScoped;
         const context = await resolveServerScopedContext({
             machineId: params.machineId,
             serverId: params.serverId,
-            forceScoped: options?.forceScoped === true || params.preferScoped === true,
+            forceScoped: preferScoped,
             timeoutMs: params.timeoutMs,
         });
 
-        if (context.scope === 'active' && params.preferScoped !== true) {
+        if (context.scope === 'active' && !preferScoped) {
             try {
                 const result = await withMachineRpcTimeout(
                     apiSocket.machineRPC<R, A>(

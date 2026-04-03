@@ -31,6 +31,7 @@ import type {
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { SessionActionDraftStatus } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
+import type { WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 
 export type KnownEntitlements = 'voice' | 'pro';
 export type SessionListItem = string | Session;
@@ -66,6 +67,7 @@ export interface SessionsDomainSlice {
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
+    reviewCommentsDraftsByWorkspaceCacheKey: Record<string, ReviewCommentDraft[]>;
     actionDraftsBySessionId: Record<string, SessionActionDraft[]>;
     isDataReady: boolean;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
@@ -85,6 +87,9 @@ export interface SessionsDomainSlice {
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
     deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;
     clearSessionReviewCommentDrafts: (sessionId: string) => void;
+    upsertWorkspaceReviewCommentDraft: (workspaceCacheKey: string, draft: ReviewCommentDraft) => void;
+    deleteWorkspaceReviewCommentDraft: (workspaceCacheKey: string, commentId: string) => void;
+    clearWorkspaceReviewCommentDrafts: (workspaceCacheKey: string) => void;
     createSessionActionDraft: (
         sessionId: string,
         draft: Readonly<{ actionId: string; input?: Record<string, unknown> }>,
@@ -233,6 +238,40 @@ export interface ProjectDomainSlice {
         operation: import('../runtime/orchestration/projectManager').ScmProjectOperationKind,
     ) => import('../runtime/orchestration/projectManager').BeginScmProjectOperationResult;
     finishSessionProjectScmOperation: (sessionId: string, operationId: string) => boolean;
+
+    getWorkspaceScmStatus: (scope: WorkspaceScopeBase) => ScmStatus | null;
+    updateWorkspaceScmStatus: (scope: WorkspaceScopeBase, status: ScmStatus | null) => void;
+    getWorkspaceScmSnapshot: (scope: WorkspaceScopeBase) => ScmWorkingSnapshot | null;
+    getWorkspaceScmSnapshotError: (scope: WorkspaceScopeBase) => import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null;
+    updateWorkspaceScmSnapshot: (scope: WorkspaceScopeBase, snapshot: ScmWorkingSnapshot | null) => void;
+    updateWorkspaceScmSnapshotError: (
+        scope: WorkspaceScopeBase,
+        error: import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null
+    ) => void;
+    getWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase) => string[];
+    markWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase, paths: string[], touchedAt?: number) => void;
+    pruneWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase, activePaths: Set<string>) => void;
+    getWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase) => string[];
+    markWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, paths: string[], selectedAt?: number) => void;
+    unmarkWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;
+    clearWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase) => void;
+    pruneWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, activePaths: Set<string>) => void;
+    getWorkspaceScmCommitSelectionPatches: (scope: WorkspaceScopeBase) => ScmCommitSelectionPatch[];
+    upsertWorkspaceScmCommitSelectionPatch: (scope: WorkspaceScopeBase, patchSelection: ScmCommitSelectionPatch, selectedAt?: number) => void;
+    removeWorkspaceScmCommitSelectionPatch: (scope: WorkspaceScopeBase, path: string) => void;
+    clearWorkspaceScmCommitSelectionPatches: (scope: WorkspaceScopeBase) => void;
+    pruneWorkspaceScmCommitSelectionPatches: (scope: WorkspaceScopeBase, activePaths: Set<string>) => void;
+    getWorkspaceScmOperationLog: (scope: WorkspaceScopeBase) => import('../runtime/orchestration/projectManager').ScmProjectOperationLogEntry[];
+    appendWorkspaceScmOperation: (
+        scope: WorkspaceScopeBase,
+        entry: Omit<import('../runtime/orchestration/projectManager').ScmProjectOperationLogEntry, 'id' | 'sessionId'>,
+    ) => void;
+    getWorkspaceScmInFlightOperation: (scope: WorkspaceScopeBase) => import('../runtime/orchestration/projectManager').ScmProjectInFlightOperation | null;
+    beginWorkspaceScmOperation: (
+        scope: WorkspaceScopeBase,
+        operation: import('../runtime/orchestration/projectManager').ScmProjectOperationKind,
+    ) => import('../runtime/orchestration/projectManager').BeginScmProjectOperationResult;
+    finishWorkspaceScmOperation: (scope: WorkspaceScopeBase, operationId: string) => boolean;
 }
 
 export interface FriendsDomainSlice {

@@ -24,7 +24,12 @@ const sessionRpcWithServerScopeSpy = vi.fn(
 );
 
 const machineRpcWithServerScopeSpy = vi.fn(
-    async (_params: unknown) => ({ success: true } as const),
+    async (_params: unknown) => {
+        if (enforcePolicyConsultedBeforeMachineRpc) {
+            expect(policyConsulted).toBe(true);
+        }
+        return { success: true } as const;
+    },
 );
 
 const getReadyServerFeaturesSpy = vi.fn(async (_params: unknown): Promise<FeaturesResponse | null> => {
@@ -168,18 +173,23 @@ describe('sessionFileSystem policy choke point', () => {
             },
         });
 
-        machineRPCSpy.mockClear();
         sessionRpcWithServerScopeSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
         getReadyServerFeaturesSpy.mockClear();
 
         const res = await sessionRenamePath('s1', { from: 'README.md', to: 'README2.md' });
         expect(res).toEqual({ success: true });
         expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.RENAME_PATH, {
-            from: '~/repo/README.md',
-            to: '~/repo/README2.md',
-            overwrite: undefined,
-        });
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            method: RPC_METHODS.RENAME_PATH,
+            payload: {
+                from: '~/repo/README.md',
+                to: '~/repo/README2.md',
+                overwrite: undefined,
+            },
+        }));
         expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
     });
 
@@ -200,17 +210,22 @@ describe('sessionFileSystem policy choke point', () => {
             },
         });
 
-        machineRPCSpy.mockClear();
         sessionRpcWithServerScopeSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
         getReadyServerFeaturesSpy.mockClear();
 
         const res = await sessionDeletePath('s1', { path: 'tmp/a.txt', recursive: true });
         expect(res).toEqual({ success: true });
         expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.DELETE_PATH, {
-            path: '~/repo/tmp/a.txt',
-            recursive: true,
-        });
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            method: RPC_METHODS.DELETE_PATH,
+            payload: {
+                path: '~/repo/tmp/a.txt',
+                recursive: true,
+            },
+        }));
         expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
     });
 
@@ -231,23 +246,28 @@ describe('sessionFileSystem policy choke point', () => {
             },
         });
 
-        machineRPCSpy.mockClear();
         sessionRpcWithServerScopeSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
         getReadyServerFeaturesSpy.mockClear();
 
         const response: GetDirectoryTreeRpcResponse = {
             success: true,
             tree: { name: 'repo', children: [] },
         };
-        machineRPCSpy.mockResolvedValueOnce(response);
+        machineRpcWithServerScopeSpy.mockResolvedValueOnce(response);
 
         const res = await sessionGetDirectoryTree('s1', 'src', 3);
         expect(res).toEqual(response);
         expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.GET_DIRECTORY_TREE, {
-            path: '~/repo/src',
-            maxDepth: 3,
-        });
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            method: RPC_METHODS.GET_DIRECTORY_TREE,
+            payload: {
+                path: '~/repo/src',
+                maxDepth: 3,
+            },
+        }));
         expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
     });
 
@@ -268,16 +288,21 @@ describe('sessionFileSystem policy choke point', () => {
             },
         });
 
-        machineRPCSpy.mockClear();
         sessionRpcWithServerScopeSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
         getReadyServerFeaturesSpy.mockClear();
 
         const res = await sessionCreateDirectory('s1', 'tmp/new-dir');
         expect(res).toEqual({ success: true });
         expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.CREATE_DIRECTORY, {
-            path: '~/repo/tmp/new-dir',
-        });
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            method: RPC_METHODS.CREATE_DIRECTORY,
+            payload: {
+                path: '~/repo/tmp/new-dir',
+            },
+        }));
         expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
     });
 
@@ -298,22 +323,27 @@ describe('sessionFileSystem policy choke point', () => {
             },
         });
 
-        machineRPCSpy.mockClear();
         sessionRpcWithServerScopeSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
         getReadyServerFeaturesSpy.mockClear();
 
         const response = {
             success: true,
             entries: [],
         } as const;
-        machineRPCSpy.mockResolvedValueOnce(response);
+        machineRpcWithServerScopeSpy.mockResolvedValueOnce(response);
 
         const res = await sessionListDirectory('s1', 'src');
         expect(res).toEqual(response);
         expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.LIST_DIRECTORY, {
-            path: '~/repo/src',
-        });
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            method: RPC_METHODS.LIST_DIRECTORY,
+            payload: {
+                path: '~/repo/src',
+            },
+        }));
         expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
     });
 
@@ -334,8 +364,8 @@ describe('sessionFileSystem policy choke point', () => {
             },
         });
 
-        machineRPCSpy.mockClear();
         sessionRpcWithServerScopeSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
         getReadyServerFeaturesSpy.mockClear();
 
         const response = {
@@ -345,14 +375,19 @@ describe('sessionFileSystem policy choke point', () => {
             sizeBytes: 123,
             modifiedMs: 456,
         } as const;
-        machineRPCSpy.mockResolvedValueOnce(response);
+        machineRpcWithServerScopeSpy.mockResolvedValueOnce(response);
 
         const res = await sessionStatFile('s1', 'package.json');
         expect(res).toEqual(response);
         expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.STAT_FILE, {
-            path: '~/repo/package.json',
-        });
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            method: RPC_METHODS.STAT_FILE,
+            payload: {
+                path: '~/repo/package.json',
+            },
+        }));
         expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
     });
 });

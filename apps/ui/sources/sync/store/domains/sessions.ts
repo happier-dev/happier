@@ -53,6 +53,7 @@ import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import type { SessionActionDraftStatus } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 import type { StoreGet, StoreSet } from './_shared';
 import { applyAgentStateUpdateToSessionMessages } from './messages';
@@ -92,6 +93,7 @@ export type SessionsDomain = {
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
+    reviewCommentsDraftsByWorkspaceCacheKey: Record<string, ReviewCommentDraft[]>;
     actionDraftsBySessionId: Record<string, SessionActionDraft[]>;
     isDataReady: boolean;
 
@@ -121,6 +123,9 @@ export type SessionsDomain = {
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
     deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;
     clearSessionReviewCommentDrafts: (sessionId: string) => void;
+    upsertWorkspaceReviewCommentDraft: (workspaceCacheKey: string, draft: ReviewCommentDraft) => void;
+    deleteWorkspaceReviewCommentDraft: (workspaceCacheKey: string, commentId: string) => void;
+    clearWorkspaceReviewCommentDrafts: (workspaceCacheKey: string) => void;
     createSessionActionDraft: (
         sessionId: string,
         draft: Readonly<{ actionId: string; input?: Record<string, unknown> }>,
@@ -168,6 +173,31 @@ export type SessionsDomain = {
         operation: import('../../runtime/orchestration/projectManager').ScmProjectOperationKind,
     ) => BeginScmOperationResult;
     finishSessionProjectScmOperation: (sessionId: string, operationId: string) => boolean;
+
+    getWorkspaceScmStatus: (scope: WorkspaceScopeBase) => ScmStatus | null;
+    updateWorkspaceScmStatus: (scope: WorkspaceScopeBase, status: ScmStatus | null) => void;
+    getWorkspaceScmSnapshot: (scope: WorkspaceScopeBase) => ScmWorkingSnapshot | null;
+    getWorkspaceScmSnapshotError: (scope: WorkspaceScopeBase) => ProjectScmSnapshotError | null;
+    updateWorkspaceScmSnapshot: (scope: WorkspaceScopeBase, snapshot: ScmWorkingSnapshot | null) => void;
+    updateWorkspaceScmSnapshotError: (scope: WorkspaceScopeBase, error: ProjectScmSnapshotError | null) => void;
+    getWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase) => string[];
+    markWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase, paths: string[], touchedAt?: number) => void;
+    pruneWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase, activePaths: Set<string>) => void;
+    getWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase) => string[];
+    markWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, paths: string[], selectedAt?: number) => void;
+    unmarkWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;
+    clearWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase) => void;
+    pruneWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, activePaths: Set<string>) => void;
+    getWorkspaceScmCommitSelectionPatches: (scope: WorkspaceScopeBase) => ScmCommitSelectionPatch[];
+    upsertWorkspaceScmCommitSelectionPatch: (scope: WorkspaceScopeBase, patchSelection: ScmCommitSelectionPatch, selectedAt?: number) => void;
+    removeWorkspaceScmCommitSelectionPatch: (scope: WorkspaceScopeBase, path: string) => void;
+    clearWorkspaceScmCommitSelectionPatches: (scope: WorkspaceScopeBase) => void;
+    pruneWorkspaceScmCommitSelectionPatches: (scope: WorkspaceScopeBase, activePaths: Set<string>) => void;
+    getWorkspaceScmOperationLog: (scope: WorkspaceScopeBase) => ScmOperationLogEntry[];
+    appendWorkspaceScmOperation: (scope: WorkspaceScopeBase, entry: Omit<ScmOperationLogEntry, 'id' | 'sessionId'>) => void;
+    getWorkspaceScmInFlightOperation: (scope: WorkspaceScopeBase) => ScmInFlightOperation | null;
+    beginWorkspaceScmOperation: (scope: WorkspaceScopeBase, operation: import('../../runtime/orchestration/projectManager').ScmProjectOperationKind) => BeginScmOperationResult;
+    finishWorkspaceScmOperation: (scope: WorkspaceScopeBase, operationId: string) => boolean;
 
     deleteSession: (sessionId: string) => void;
 };
@@ -260,6 +290,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     let sessionModelModeUpdatedAts = loadSessionModelModeUpdatedAts();
     let sessionLastViewed = loadSessionLastViewed();
     let reviewCommentsDraftsBySessionId = loadSessionReviewCommentsDrafts();
+    let reviewCommentsDraftsByWorkspaceCacheKey: Record<string, ReviewCommentDraft[]> = {};
     let sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]> = {};
     let actionDraftsBySessionId: Record<string, SessionActionDraft[]> = loadSessionActionDrafts();
 
@@ -273,6 +304,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         sessionLastViewed,
         sessionRepositoryTreeExpandedPathsBySessionId,
         reviewCommentsDraftsBySessionId,
+        reviewCommentsDraftsByWorkspaceCacheKey,
         actionDraftsBySessionId,
         isDataReady: false,
         getActiveSessions: () => {
@@ -624,7 +656,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         machineMetadataMap.set(machine.id, machine.metadata);
                     }
                 });
-                projectManager.updateSessions(Object.values(mergedSessions), machineMetadataMap);
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                projectManager.updateSessions(Object.values(mergedSessions), machineMetadataMap, activeServerId);
             }
 
             const nextState = {
@@ -816,6 +849,37 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             reviewCommentsDraftsBySessionId = merged;
             saveSessionReviewCommentsDrafts(merged);
             return { ...state, reviewCommentsDraftsBySessionId: merged };
+        }),
+        upsertWorkspaceReviewCommentDraft: (workspaceCacheKey: string, draft: ReviewCommentDraft) => set((state) => {
+            const key = String(workspaceCacheKey ?? '').trim();
+            if (!key) return state;
+            const existing = state.reviewCommentsDraftsByWorkspaceCacheKey[key] ?? [];
+            const next = existing.some((d) => d.id === draft.id)
+                ? existing.map((d) => (d.id === draft.id ? draft : d))
+                : [...existing, draft];
+            const merged = { ...state.reviewCommentsDraftsByWorkspaceCacheKey, [key]: next };
+            reviewCommentsDraftsByWorkspaceCacheKey = merged;
+            return { ...state, reviewCommentsDraftsByWorkspaceCacheKey: merged };
+        }),
+        deleteWorkspaceReviewCommentDraft: (workspaceCacheKey: string, commentId: string) => set((state) => {
+            const key = String(workspaceCacheKey ?? '').trim();
+            if (!key) return state;
+            const existing = state.reviewCommentsDraftsByWorkspaceCacheKey[key] ?? [];
+            const next = existing.filter((d) => d.id !== commentId);
+            const merged = { ...state.reviewCommentsDraftsByWorkspaceCacheKey };
+            if (next.length > 0) merged[key] = next;
+            else delete merged[key];
+            reviewCommentsDraftsByWorkspaceCacheKey = merged;
+            return { ...state, reviewCommentsDraftsByWorkspaceCacheKey: merged };
+        }),
+        clearWorkspaceReviewCommentDrafts: (workspaceCacheKey: string) => set((state) => {
+            const key = String(workspaceCacheKey ?? '').trim();
+            if (!key) return state;
+            if (!(key in state.reviewCommentsDraftsByWorkspaceCacheKey)) return state;
+            const merged = { ...state.reviewCommentsDraftsByWorkspaceCacheKey };
+            delete merged[key];
+            reviewCommentsDraftsByWorkspaceCacheKey = merged;
+            return { ...state, reviewCommentsDraftsByWorkspaceCacheKey: merged };
         }),
 
         createSessionActionDraft: (sessionId: string, draft) => {
@@ -1165,6 +1229,84 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         },
         finishSessionProjectScmOperation: (sessionId: string, operationId: string) => {
             const finished = projectManager.finishSessionProjectScmOperation(sessionId, operationId);
+            if (finished) {
+                set((state) => ({ ...state }));
+            }
+            return finished;
+        },
+        getWorkspaceScmStatus: (scope) => projectManager.getWorkspaceScmStatus(scope),
+        updateWorkspaceScmStatus: (scope, status) => {
+            projectManager.updateWorkspaceScmStatus(scope, status);
+            set((state) => ({ ...state }));
+        },
+        getWorkspaceScmSnapshot: (scope) => projectManager.getWorkspaceScmSnapshot(scope),
+        getWorkspaceScmSnapshotError: (scope) => projectManager.getWorkspaceScmSnapshotError(scope),
+        updateWorkspaceScmSnapshot: (scope, snapshot) => {
+            projectManager.updateWorkspaceScmSnapshot(scope, snapshot);
+            set((state) => ({ ...state }));
+        },
+        updateWorkspaceScmSnapshotError: (scope, error) => {
+            projectManager.updateWorkspaceScmSnapshotError(scope, error);
+            set((state) => ({ ...state }));
+        },
+        getWorkspaceScmTouchedPaths: (scope) => projectManager.getWorkspaceScmTouchedPaths(scope),
+        markWorkspaceScmTouchedPaths: (scope, paths, touchedAt) => {
+            projectManager.markWorkspaceScmTouchedPaths(scope, paths, touchedAt);
+            set((state) => ({ ...state }));
+        },
+        pruneWorkspaceScmTouchedPaths: (scope, activePaths) => {
+            projectManager.pruneWorkspaceScmTouchedPaths(scope, activePaths);
+            set((state) => ({ ...state }));
+        },
+        getWorkspaceScmCommitSelectionPaths: (scope) => projectManager.getWorkspaceScmCommitSelectionPaths(scope),
+        markWorkspaceScmCommitSelectionPaths: (scope, paths, selectedAt) => {
+            projectManager.markWorkspaceScmCommitSelectionPaths(scope, paths, selectedAt);
+            set((state) => ({ ...state }));
+        },
+        unmarkWorkspaceScmCommitSelectionPaths: (scope, paths) => {
+            projectManager.unmarkWorkspaceScmCommitSelectionPaths(scope, paths);
+            set((state) => ({ ...state }));
+        },
+        clearWorkspaceScmCommitSelectionPaths: (scope) => {
+            projectManager.clearWorkspaceScmCommitSelectionPaths(scope);
+            set((state) => ({ ...state }));
+        },
+        pruneWorkspaceScmCommitSelectionPaths: (scope, activePaths) => {
+            projectManager.pruneWorkspaceScmCommitSelectionPaths(scope, activePaths);
+            set((state) => ({ ...state }));
+        },
+        getWorkspaceScmCommitSelectionPatches: (scope) => projectManager.getWorkspaceScmCommitSelectionPatches(scope),
+        upsertWorkspaceScmCommitSelectionPatch: (scope, patchSelection, selectedAt) => {
+            projectManager.upsertWorkspaceScmCommitSelectionPatch(scope, patchSelection, selectedAt);
+            set((state) => ({ ...state }));
+        },
+        removeWorkspaceScmCommitSelectionPatch: (scope, path) => {
+            projectManager.removeWorkspaceScmCommitSelectionPatch(scope, path);
+            set((state) => ({ ...state }));
+        },
+        clearWorkspaceScmCommitSelectionPatches: (scope) => {
+            projectManager.clearWorkspaceScmCommitSelectionPatches(scope);
+            set((state) => ({ ...state }));
+        },
+        pruneWorkspaceScmCommitSelectionPatches: (scope, activePaths) => {
+            projectManager.pruneWorkspaceScmCommitSelectionPatches(scope, activePaths);
+            set((state) => ({ ...state }));
+        },
+        getWorkspaceScmOperationLog: (scope) => projectManager.getWorkspaceScmOperationLog(scope),
+        appendWorkspaceScmOperation: (scope, entry) => {
+            projectManager.appendWorkspaceScmOperation(scope, entry);
+            set((state) => ({ ...state }));
+        },
+        getWorkspaceScmInFlightOperation: (scope) => projectManager.getWorkspaceScmInFlightOperation(scope),
+        beginWorkspaceScmOperation: (scope, operation) => {
+            const result = projectManager.beginWorkspaceScmOperation(scope, operation);
+            if (result.started || result.reason === 'operation_in_flight') {
+                set((state) => ({ ...state }));
+            }
+            return result;
+        },
+        finishWorkspaceScmOperation: (scope, operationId) => {
+            const finished = projectManager.finishWorkspaceScmOperation(scope, operationId);
             if (finished) {
                 set((state) => ({ ...state }));
             }

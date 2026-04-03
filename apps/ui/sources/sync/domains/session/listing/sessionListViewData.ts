@@ -18,6 +18,7 @@ export type SessionListViewItem =
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned';
         groupKey?: string;
         workspaceKey?: string;
+        workspaceScopeHint?: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
         serverId?: string;
         serverName?: string;
         subtitle?: string;
@@ -108,6 +109,8 @@ type ProjectGroup = {
     key: string;
     displayPath: string;
     machine: MachineDisplayRenderable;
+    workspaceMachineId: string | null;
+    workspaceRootPath: string | null;
     latestCreatedAt: number;
     sessions: SessionListRenderableSession[];
 };
@@ -149,6 +152,8 @@ function groupSessionsByProject(params: Readonly<{
         const pathKey = normalizeSessionPathForProjectGrouping(displayPath, homeDir);
         const machineGroupId = host ? `host:${host}` : displayMachineId ? `id:${displayMachineId}` : 'unknown';
         const key = `${machineGroupId}:${pathKey}`;
+        const normalizedMachineId = typeof displayMachineId === 'string' && displayMachineId.trim().length > 0 ? displayMachineId.trim() : null;
+        const normalizedRootPath = typeof displayPath === 'string' && displayPath.trim().length > 0 ? displayPath.trim() : null;
 
         const existing = groups.get(key);
         if (!existing) {
@@ -165,12 +170,20 @@ function groupSessionsByProject(params: Readonly<{
                 key,
                 displayPath: pathKey ? formatPathRelativeToHome(pathKey, homeDir ?? undefined) : '',
                 machine: displayMachine,
+                workspaceMachineId: normalizedMachineId,
+                workspaceRootPath: normalizedRootPath,
                 latestCreatedAt: session.createdAt,
                 sessions: [session],
             });
         } else {
             existing.sessions.push(session);
             existing.latestCreatedAt = Math.max(existing.latestCreatedAt, session.createdAt);
+            if (!existing.workspaceMachineId && normalizedMachineId) {
+                existing.workspaceMachineId = normalizedMachineId;
+            }
+            if (!existing.workspaceRootPath && normalizedRootPath) {
+                existing.workspaceRootPath = normalizedRootPath;
+            }
         }
     }
 
@@ -207,6 +220,13 @@ function pushProjectGroupsToList(params: Readonly<{
                 headerKind: 'project',
                 groupKey,
                 workspaceKey,
+                workspaceScopeHint: params.serverScopeMeta.serverId && group.workspaceMachineId && group.workspaceRootPath
+                    ? {
+                        serverId: params.serverScopeMeta.serverId,
+                        machineId: group.workspaceMachineId,
+                        rootPath: group.workspaceRootPath,
+                    }
+                    : null,
                 machine: group.machine,
                 subtitle: group.machine.metadata?.displayName || group.machine.metadata?.host || group.machine.id,
                 ...params.serverScopeMeta,

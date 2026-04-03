@@ -18,7 +18,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
-import { canUseSessionRpc } from '@/sync/ops/sessionMachineTarget';
+import { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR, canUseSessionRpc } from '@/sync/ops/sessionMachineTarget';
 
 export type SessionExecutionRunActionResult =
     | ExecutionRunActionResponse
@@ -43,8 +43,6 @@ export type SessionExecutionRunListResult =
 export type SessionExecutionRunGetResult =
     | ExecutionRunGetResponse
     | { ok: false; error: string; errorCode?: string };
-
-const INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR = 'Session RPC unavailable for inactive session';
 
 function readErrorResponseShape(response: unknown): { ok: false; error: string; errorCode?: string } | null {
     if (!response || typeof response !== 'object') return null;

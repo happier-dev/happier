@@ -9,6 +9,7 @@ export type ServerScopedMachineRpcParams<A> = Readonly<{
     serverId?: string | null;
     timeoutMs?: number;
     preferScoped?: boolean;
+    skipTransferPolicyEvaluation?: boolean;
 }>;
 
 export type ActiveServerRpcContext = Readonly<{
