@@ -72,6 +72,28 @@ export function resolveLinuxProductNameOverride(opts) {
 }
 
 /**
+ * Linux AppImage bundling uses linuxdeploy + appimagetool. On modern distros, the bundled `strip`
+ * binary can fail on newer ELF sections (for example `.relr.dyn`) which can abort the linuxdeploy
+ * plugin execution. For dev/preview lanes, prefer reliable builds over marginal size savings.
+ *
+ * @param {Record<string, string | undefined>} [env]
+ */
+export function resolveLinuxTauriBundlerEnvOverrides(env = process.env) {
+  return {
+    // AppImage tooling is frequently the flakiest part of Linux packaging on CI runners.
+    // Ensure we get actionable backtraces in logs when linuxdeploy/AppImageKit fails.
+    APPIMAGE_EXTRACT_AND_RUN: env.APPIMAGE_EXTRACT_AND_RUN ?? '1',
+
+    // Disable stripping to avoid failures from older AppImageKit/tooling when encountering
+    // newer ELF metadata/sections. Size impact is acceptable for rolling dev builds.
+    NO_STRIP: env.NO_STRIP ?? '1',
+
+    RUST_BACKTRACE: env.RUST_BACKTRACE ?? '1',
+    RUST_LOG: env.RUST_LOG ?? 'tauri_bundler=debug',
+  };
+}
+
+/**
  * @param {{ dryRun: boolean }} opts
  * @param {string} cmd
  * @param {string[]} args
@@ -242,15 +264,7 @@ function main() {
   const baseTauriEnv = {
     CI: 'true',
     APP_ENV: environment,
-    ...(process.platform === 'linux'
-      ? {
-          // AppImage tooling is frequently the flakiest part of Linux packaging on CI runners.
-          // Ensure we get actionable backtraces in logs when linuxdeploy/AppImageKit fails.
-          APPIMAGE_EXTRACT_AND_RUN: '1',
-          RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? '1',
-          RUST_LOG: process.env.RUST_LOG ?? 'tauri_bundler=debug',
-        }
-      : {}),
+    ...(process.platform === 'linux' ? resolveLinuxTauriBundlerEnvOverrides(process.env) : {}),
     ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
     ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
   };
