@@ -478,7 +478,52 @@ export const es: TranslationStructure = {
     inbox: "Bandeja",
     friends: "Amigos",
     sessions: "Sesiones",
+    projects: "Proyectos",
     settings: "Configuración",
+  },
+
+  projects: {
+    emptyTitle: "Aún no hay proyectos",
+    emptyDescription: "Los proyectos te permiten explorar archivos y Git en tus máquinas fuera de las sesiones.",
+    groups: {
+      pinned: "Fijados",
+      addFirst: "Añadir un proyecto",
+    },
+    actions: {
+      addProjectToMachine: "Añadir proyecto a esta máquina",
+      addProject: "Añadir proyecto",
+      pin: "Fijar",
+      unpin: "Desfijar",
+      remove: "Eliminar",
+    },
+    sourceControl: {
+      noSessionAvailableDetails: "Inicia una sesión en esta carpeta para habilitar Control de código fuente en Proyectos.",
+    },
+    details: {
+      emptyBody: "Abre Archivos o Control de código fuente para previsualizar archivos y diffs aquí.",
+      placeholderFileBody: "La vista previa del archivo “{title}” aparecerá aquí.",
+      placeholderScmReviewBody: "Las vistas previas de los diffs aparecerán aquí.",
+      placeholderCommitBody: "Los detalles del commit aparecerán aquí.",
+      placeholderUnsupportedBody: "Esta pestaña de detalles aún no es compatible con Proyectos.",
+    },
+    detail: {
+      notFoundTitle: "Proyecto no encontrado",
+      notFoundDescription: "Este proyecto puede haber sido eliminado o pertenece a otro servidor.",
+      groupTitle: "Proyecto",
+      fields: {
+        name: "Nombre",
+        machine: "Máquina",
+        path: "Ruta",
+      },
+      comingSoonGroupTitle: "Próximamente",
+      comingSoonFooter:
+        "Archivos, Control de código fuente, diffs y terminal aparecerán aquí en la próxima fase del refactor.",
+      comingSoon: {
+        filesAndScmTitle: "Archivos y Control de código fuente",
+        filesAndScmSubtitle:
+          "Esta pantalla reutilizará la barra lateral y los paneles de detalles existentes, pero con alcance de espacio de trabajo en lugar de sesión.",
+      },
+    },
   },
 
   inbox: {
@@ -1682,6 +1727,12 @@ export const es: TranslationStructure = {
       saveAction: 'Guardar método de acceso',
       disableAction: 'Desactivar acceso al Relay',
       refreshAction: 'Actualizar estado de acceso',
+      progressStepInspect: 'Inspeccionar la configuración actual',
+      progressStepCheck: 'Comprobar el estado de acceso',
+      progressStepPersist: 'Guardar la configuración de acceso',
+      progressStepApply: 'Aplicar la configuración de acceso',
+      progressStepVerify: 'Verificar la URL de acceso',
+      progressStepDisable: 'Desactivar el acceso al Relay',
       providers: {
         localOnly: {
           title: 'Solo local',
@@ -4389,6 +4440,7 @@ export const es: TranslationStructure = {
     renameWorkspacePromptTitle: 'Renombrar espacio de trabajo',
     renameWorkspacePromptPlaceholder: 'Introduce un nombre...',
     resetWorkspaceName: 'Restablecer nombre',
+    openProject: 'Abrir proyecto',
   },
 
   directSessions: {
@@ -7198,8 +7250,14 @@ settingsSession: {
 	          relayOnYourComputerSubtitle: 'Ejecuta el relay localmente en tu ordenador y añade Tailscale para acceso desde el teléfono',
 	          relayOnRemoteComputerTitle: 'Configura un relay en un ordenador remoto',
 	          relayOnRemoteComputerSubtitle: 'Aloja el relay en un ordenador remoto por SSH',
-          remoteRelayHostInstallTitle: 'Aloja un Relay en el ordenador remoto',
-          relayAccessWizardTitle: '¿Cómo debería tu teléfono acceder a este relay?',
+	          remoteRelayHostInstallTitle: 'Aloja un Relay en el ordenador remoto',
+	          relayAccessWizardTitle: '¿Cómo debería tu teléfono acceder a este relay?',
+	          relayAccessUrlTitle: 'URL del relay',
+	          relayAccessUrlSubtitle: 'Introduce un URL al que tu teléfono pueda acceder.',
+	          relayAccessUrlBody: 'Puede ser una dirección LAN, un dominio personalizado o un URL de túnel, siempre que tu teléfono pueda abrirlo.',
+	          relayAccessCloudflareTitle: 'Túnel de Cloudflare',
+	          relayAccessCloudflareSubtitle: 'Expón tu relay mediante un túnel con nombre de Cloudflare.',
+	          relayAccessCloudflareBody: 'Crea o selecciona un túnel con nombre y lo configuraremos para reenviar al relay local.',
           changeRelay: 'Cambiar relay',
           relayCustomUrlTitle: 'Relay existente',
           relayCustomUrlSubtitle: 'Usa una URL de relay que ya tengas en marcha',
@@ -7214,14 +7272,17 @@ settingsSession: {
           webDesktopOnlyTitle: 'Se requiere la app de escritorio',
           webDesktopOnlyBody: 'Abre la app de escritorio para configurar este ordenador. La app web puede mostrar el estado, pero no puede instalar ni configurar el servicio en segundo plano.',
           webDesktopOnlyPrimary: 'Tengo una URL de Relay',
-          webDesktopOnlyDesktopAppTitle: 'O consigue la app de escritorio',
-          webDesktopOnlyDesktopAppSubtitle: 'Instala Happier en este ordenador para alojar un Relay y configurar el servicio en segundo plano.',
+          webDesktopOnlyDesktopAppTitle: 'Continúa esta configuración en la app de escritorio',
+          webDesktopOnlyDesktopAppSubtitle: 'Descarga y abre Happier para configurar este ordenador con una guía.',
           webDesktopOnlyDesktopAppButton: 'Descargar app de escritorio',
           webDesktopOnlyCliTitle: 'Instala la CLI en este ordenador',
           webDesktopOnlyCliSubtitle: 'Ejecuta esto una vez en un terminal (no se requiere Node).',
           handoffPlatformPosixLabel: 'macOS/Linux',
+          handoffPlatformMacosLabel: 'macOS',
+          handoffPlatformLinuxLabel: 'Linux',
           handoffPlatformWindowsLabel: 'Windows',
-          webDesktopOnlySetupCommandTitle: 'Configura este ordenador',
+          orDividerLabel: 'o',
+          webDesktopOnlySetupCommandTitle: 'Configura este ordenador usando la CLI',
           webDesktopOnlySetupCommandSubtitle: 'Ejecuta un solo comando para configurar el relay, iniciar sesión si es necesario e instalar el servicio en segundo plano.',
           webDesktopOnlySetupRemotePrereqsSubtitle: 'Ejecuta un solo comando para configurar el relay e iniciar sesión antes de configurar un equipo remoto por SSH.',
           webDesktopHandoffDesktopAppOption: 'Usar la app de escritorio (recomendado)',

@@ -18,6 +18,8 @@ const IGNORED_UNTRANSLATED_KEYS = new Set([
     'settingsSession.handoff.includeIgnoredMode.globsPlaceholder',
     // Proper nouns: keep the canonical platform label consistent across locales.
     'setupOnboarding.handoffPlatformPosixLabel',
+    'setupOnboarding.handoffPlatformMacosLabel',
+    'setupOnboarding.handoffPlatformLinuxLabel',
 ]);
 
 // This test is a drift-stopper: it fails if we introduce any *new* untranslated English strings outside

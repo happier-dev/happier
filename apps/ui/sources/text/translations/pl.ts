@@ -489,7 +489,52 @@ export const pl: TranslationStructure = {
     inbox: "Skrzynka",
     friends: "Przyjaciele",
     sessions: "Sesje",
+    projects: "Projekty",
     settings: "Ustawienia",
+  },
+
+  projects: {
+    emptyTitle: "Brak projektów",
+    emptyDescription: "Projekty pozwalają przeglądać pliki i Git na Twoich maszynach poza sesjami.",
+    groups: {
+      pinned: "Przypięte",
+      addFirst: "Dodaj projekt",
+    },
+    actions: {
+      addProjectToMachine: "Dodaj projekt do tej maszyny",
+      addProject: "Dodaj projekt",
+      pin: "Przypnij",
+      unpin: "Odepnij",
+      remove: "Usuń",
+    },
+    sourceControl: {
+      noSessionAvailableDetails: "Uruchom sesję w tym folderze, aby włączyć Kontrolę wersji w Projektach.",
+    },
+    details: {
+      emptyBody: "Otwórz Pliki lub Kontrolę wersji, aby podglądać tutaj pliki i różnice.",
+      placeholderFileBody: "Podgląd pliku „{title}” pojawi się tutaj.",
+      placeholderScmReviewBody: "Podglądy diffów pojawią się tutaj.",
+      placeholderCommitBody: "Szczegóły commita pojawią się tutaj.",
+      placeholderUnsupportedBody: "Ta karta szczegółów nie jest jeszcze obsługiwana w Projektach.",
+    },
+    detail: {
+      notFoundTitle: "Nie znaleziono projektu",
+      notFoundDescription: "Ten projekt mógł zostać usunięty lub należy do innego serwera.",
+      groupTitle: "Projekt",
+      fields: {
+        name: "Nazwa",
+        machine: "Maszyna",
+        path: "Ścieżka",
+      },
+      comingSoonGroupTitle: "Wkrótce",
+      comingSoonFooter:
+        "Pliki, kontrola wersji, różnice i terminal pojawią się tutaj w kolejnej fazie refaktoryzacji.",
+      comingSoon: {
+        filesAndScmTitle: "Pliki i kontrola wersji",
+        filesAndScmSubtitle:
+          "Ten ekran ponownie wykorzysta istniejący pasek boczny i panele szczegółów, ale w zakresie przestrzeni roboczej zamiast sesji.",
+      },
+    },
   },
 
   inbox: {
@@ -1712,6 +1757,12 @@ export const pl: TranslationStructure = {
       saveAction: 'Zapisz metodę dostępu',
       disableAction: 'Wyłącz dostęp do Relay',
       refreshAction: 'Odśwież stan dostępu',
+      progressStepInspect: 'Sprawdź bieżącą konfigurację',
+      progressStepCheck: 'Sprawdź stan dostępu',
+      progressStepPersist: 'Zapisz konfigurację dostępu',
+      progressStepApply: 'Zastosuj konfigurację dostępu',
+      progressStepVerify: 'Zweryfikuj URL dostępu',
+      progressStepDisable: 'Wyłącz dostęp do Relay',
       providers: {
         localOnly: {
           title: 'Tylko lokalnie',
@@ -4402,6 +4453,7 @@ export const pl: TranslationStructure = {
     renameWorkspacePromptTitle: 'Zmień nazwę przestrzeni roboczej',
     renameWorkspacePromptPlaceholder: 'Wprowadź nazwę...',
     resetWorkspaceName: 'Resetuj nazwę',
+    openProject: 'Otwórz projekt',
   },
 
   directSessions: {
@@ -7204,8 +7256,14 @@ settingsSession: {
 	          relayOnYourComputerSubtitle: 'Uruchom Relay lokalnie na Twoim komputerze i dodaj Tailscale, aby telefon mógł się łączyć',
 	          relayOnRemoteComputerTitle: 'Skonfiguruj Relay na zdalnym komputerze',
 	          relayOnRemoteComputerSubtitle: 'Hostuj Relay na zdalnym komputerze przez SSH',
-          remoteRelayHostInstallTitle: 'Hostuj Relay na zdalnym komputerze',
-          relayAccessWizardTitle: 'Jak telefon ma łączyć się z tym Relay?',
+	          remoteRelayHostInstallTitle: 'Hostuj Relay na zdalnym komputerze',
+	          relayAccessWizardTitle: 'Jak telefon ma łączyć się z tym Relay?',
+	          relayAccessUrlTitle: 'URL Relay',
+	          relayAccessUrlSubtitle: 'Wpisz adres URL, do którego telefon ma dostęp.',
+	          relayAccessUrlBody: 'Może to być adres LAN, własna domena lub URL tunelu — ważne, aby telefon mógł go otworzyć.',
+	          relayAccessCloudflareTitle: 'Tunel Cloudflare',
+	          relayAccessCloudflareSubtitle: 'Udostępnij Relay przez Cloudflare Named Tunnel.',
+	          relayAccessCloudflareBody: 'Utwórz lub wybierz Named Tunnel, a my skonfigurujemy przekierowanie do lokalnego Relay.',
           changeRelay: 'Zmień Relay',
           relayCustomUrlTitle: 'Istniejący Relay',
           relayCustomUrlSubtitle: 'Użyj adresu URL Relay, który już masz uruchomiony',
@@ -7220,14 +7278,17 @@ settingsSession: {
           webDesktopOnlyTitle: 'Wymagana aplikacja desktopowa',
           webDesktopOnlyBody: 'Otwórz aplikację desktopową, aby skonfigurować ten komputer. Aplikacja webowa może pokazywać status, ale nie może zainstalować ani skonfigurować usługi w tle.',
           webDesktopOnlyPrimary: 'Mam URL Relay',
-          webDesktopOnlyDesktopAppTitle: 'Lub pobierz aplikację desktopową',
-          webDesktopOnlyDesktopAppSubtitle: 'Zainstaluj Happier na tym komputerze, aby hostować Relay i skonfigurować usługę w tle.',
+          webDesktopOnlyDesktopAppTitle: 'Kontynuuj tę konfigurację w aplikacji desktopowej',
+          webDesktopOnlyDesktopAppSubtitle: 'Pobierz i otwórz Happier, aby skonfigurować ten komputer w trybie przewodnika.',
           webDesktopOnlyDesktopAppButton: 'Pobierz aplikację desktopową',
           webDesktopOnlyCliTitle: 'Zainstaluj CLI na tym komputerze',
           webDesktopOnlyCliSubtitle: 'Uruchom to raz w terminalu (Node nie jest wymagany).',
           handoffPlatformPosixLabel: 'macOS/Linux',
+          handoffPlatformMacosLabel: 'macOS',
+          handoffPlatformLinuxLabel: 'Linux',
           handoffPlatformWindowsLabel: 'Windows',
-          webDesktopOnlySetupCommandTitle: 'Skonfiguruj ten komputer',
+          orDividerLabel: 'lub',
+          webDesktopOnlySetupCommandTitle: 'Skonfiguruj ten komputer za pomocą CLI',
           webDesktopOnlySetupCommandSubtitle: 'Uruchom jedną komendę, aby skonfigurować Relay, zalogować się (jeśli trzeba) i zainstalować usługę w tle.',
           webDesktopOnlySetupRemotePrereqsSubtitle: 'Uruchom jedną komendę, aby skonfigurować Relay i zalogować się przed konfiguracją zdalnego komputera przez SSH.',
           webDesktopHandoffDesktopAppOption: 'Korzystaj z aplikacji desktopowej (Polecane)',
