@@ -22,6 +22,7 @@ import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../pendingQueueV2'
 import { seedCliAuthForServer } from '../../cliAuth';
 
 import { runWithFlakeRetry } from './flakeRetry';
+import { resolveProviderCliSpawnSpec } from './resolveProviderCliSpawnSpec';
 
 import type {
   ProviderContractMatrixResult,
@@ -691,22 +692,27 @@ async function runOneScenario(params: {
 	      }
 
       const proc: SpawnedProcess = spawnLoggedProcess({
-        command: yarnCommand(),
-        args: buildProviderDevCommandArgs({
-          providerSubcommand: provider.cli.subcommand,
-          sessionId: params.sessionId,
-          yoloCliArgs,
-          permissionCliArgs: cliPermissionArgs,
-          modelCliArgs,
-          extraCliArgs: params.extraCliArgs ?? [],
-          scenarioCliArgs,
-          providerCliExtraArgs: provider.cli.extraArgs ?? [],
+        ...resolveProviderCliSpawnSpec({
+          platform: process.platform,
+          scriptPath: which('script'),
+          baseCommand: yarnCommand(),
+          baseArgs: buildProviderDevCommandArgs({
+            providerSubcommand: provider.cli.subcommand,
+            sessionId: params.sessionId,
+            yoloCliArgs,
+            permissionCliArgs: cliPermissionArgs,
+            modelCliArgs,
+            extraCliArgs: params.extraCliArgs ?? [],
+            scenarioCliArgs,
+            providerCliExtraArgs: provider.cli.extraArgs ?? [],
+          }),
+          scenario,
         }),
         cwd: repoRootDir(),
-      env: cliEnv,
-      stdoutPath: params.stdoutPath,
-      stderrPath: params.stderrPath,
-    });
+        env: cliEnv,
+        stdoutPath: params.stdoutPath,
+        stderrPath: params.stderrPath,
+      });
 
       let uiSocket: Awaited<ReturnType<typeof waitForPermissionRpcReady>>['socket'] | null = null;
     try {
@@ -887,6 +893,8 @@ async function runOneScenario(params: {
       let lastSeenMessageSeq = 0;
       let lastMessagePollAt = 0;
       let lastProviderActivityAt = Date.now();
+      const messageSignatureById = new Map<string, string>();
+      const messageUpdateLookbackSeq = 50;
       let lastTraceRawLength = -1;
       let lastRelevantTraceCount = -1;
 	      let blockedPermissionSinceAt: number | null = null;
@@ -931,17 +939,40 @@ async function runOneScenario(params: {
 
         if (Date.now() - lastMessagePollAt >= 1_000) {
           lastMessagePollAt = Date.now();
+          const pollAfterSeq = Math.max(0, lastSeenMessageSeq - messageUpdateLookbackSeq);
           const newMessages = await fetchMessagesSince({
             baseUrl: server.baseUrl,
             token: auth.token,
             sessionId: params.sessionId,
-            afterSeq: lastSeenMessageSeq,
+            afterSeq: pollAfterSeq,
           }).catch(() => []);
 
           if (newMessages.length > 0) {
-            lastProviderActivityAt = Date.now();
+            const resolveMessageId = (m: { localId: string | null; seq: number }): string =>
+              typeof m.localId === 'string' && m.localId.length > 0 ? `local:${m.localId}` : `seq:${m.seq}`;
+
+            const windowIds = new Set<string>();
+            const changedMessages = newMessages.filter((m) => {
+              const id = resolveMessageId(m);
+              windowIds.add(id);
+              const signature = `${m.seq}:${m.content?.t ?? ''}:${m.content?.c ?? ''}`;
+              const prev = messageSignatureById.get(id);
+              if (prev === signature) return false;
+              messageSignatureById.set(id, signature);
+              return true;
+            });
+
+            for (const id of messageSignatureById.keys()) {
+              if (!windowIds.has(id)) {
+                messageSignatureById.delete(id);
+              }
+            }
+
+            if (changedMessages.length > 0) {
+              lastProviderActivityAt = Date.now();
+            }
             lastSeenMessageSeq = Math.max(lastSeenMessageSeq, ...newMessages.map((m) => m.seq));
-            const decodedMessages = newMessages.flatMap((m) => {
+            const decodedMessages = changedMessages.flatMap((m) => {
               try {
                 return [normalizeDecodedTranscriptValue(decryptLegacyBase64(m.content.c, secret))];
               } catch {

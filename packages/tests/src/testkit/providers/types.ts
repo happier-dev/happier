@@ -125,6 +125,11 @@ export type ProviderScenario = {
    * without relying on writing global config into the host HOME directory.
    */
   cliArgs?: string[] | ((ctx: { workspaceDir: string }) => string[]);
+  /**
+   * When true, the provider CLI must be spawned with a pseudo TTY so backends that require an
+   * interactive terminal (for example, starting Claude in local mode) can boot successfully.
+   */
+  cliRequiresTty?: boolean;
   // Optional provider-specific message meta to attach to every prompt for this scenario.
   // Useful for enabling experimental provider features (e.g. Claude Agent SDK).
   messageMeta?: Record<string, unknown> | ((ctx: { workspaceDir: string }) => Record<string, unknown>);

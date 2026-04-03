@@ -448,14 +448,8 @@ await server.connect(new StdioServerTransport());
 
         const sendMessages = (examples['claude/claude/tool-call/AgentTeamSendMessage'] ?? []) as any[];
         if (!Array.isArray(sendMessages) || sendMessages.length === 0) throw new Error('Missing SendMessage tool-call fixtures');
-        const hasBroadcast = sendMessages.some((e) => {
-          const input = e?.payload?.input;
-          if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
-          return (input as any).type === 'broadcast';
-        });
-        if (!hasBroadcast) {
-          throw new Error('SendMessage tool-call did not include a broadcast payload');
-        }
+        const hasSentinelMessage = sendMessages.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), broadcastSentinel));
+        if (!hasSentinelMessage) throw new Error('SendMessage tool-call did not include expected broadcast sentinel text');
 
         const deletes = (examples['claude/claude/tool-call/AgentTeamDelete'] ?? []) as any[];
         if (!Array.isArray(deletes) || deletes.length === 0) throw new Error('Missing TeamDelete tool-call fixtures');
@@ -1576,8 +1570,9 @@ await server.connect(new StdioServerTransport());
           'This is an automated test for validating Claude Agent SDK streaming.',
           `Include this marker verbatim in your response: ${marker}`,
           '',
-          'Write a markdown table with 60 rows and 3 columns.',
-          `Every row MUST include the marker string: ${marker}`,
+          'Write a markdown table with exactly 80 rows and 3 columns: `index`, `alpha`, `notes`.',
+          `Include the marker string exactly once: in row 1, column \`notes\`: ${marker}`,
+          'Each `notes` cell must be at least 10 words (do not shorten/omit rows).',
           '',
           'Do not use any tools.',
           'Finish by replying DONE.',
@@ -1612,7 +1607,15 @@ await server.connect(new StdioServerTransport());
             decrypted.meta && typeof decrypted.meta === 'object' && !Array.isArray(decrypted.meta)
               ? (decrypted.meta as Record<string, unknown>)
               : null;
-          const streamKey = meta && typeof meta.happierStreamKey === 'string' ? String(meta.happierStreamKey) : null;
+          const streamSegmentV1 =
+            meta && typeof meta.happierStreamSegmentV1 === 'object' && meta.happierStreamSegmentV1 && !Array.isArray(meta.happierStreamSegmentV1)
+              ? (meta.happierStreamSegmentV1 as Record<string, unknown>)
+              : null;
+          const streamSegmentLocalId =
+            streamSegmentV1 && typeof streamSegmentV1.segmentLocalId === 'string' ? String(streamSegmentV1.segmentLocalId) : null;
+          const streamKey =
+            streamSegmentLocalId
+            ?? (meta && typeof meta.happierStreamKey === 'string' ? String(meta.happierStreamKey) : null);
           if (!streamKey) continue;
 
           const contentObj =
@@ -1627,18 +1630,31 @@ await server.connect(new StdioServerTransport());
           if (!data || data.type !== 'message' || typeof data.message !== 'string') continue;
 
           streamedChunkCountByKey.set(streamKey, (streamedChunkCountByKey.get(streamKey) ?? 0) + 1);
-          streamedTextByKey.set(streamKey, (streamedTextByKey.get(streamKey) ?? '') + data.message);
+
+          // `StreamedTranscriptWriter` commits *cumulative* durable snapshots (not deltas) and reuses `localId`.
+          // Prefer the longest snapshot text we see for the stream key.
+          if (streamSegmentLocalId) {
+            const previous = streamedTextByKey.get(streamKey) ?? '';
+            if (data.message.length >= previous.length) {
+              streamedTextByKey.set(streamKey, data.message);
+            }
+          } else {
+            streamedTextByKey.set(streamKey, (streamedTextByKey.get(streamKey) ?? '') + data.message);
+          }
         }
 
         const matching = [...streamedTextByKey.entries()].filter(([, text]) => text.includes(marker));
         if (matching.length === 0) {
-          throw new Error('Expected marker to appear in a streamed agent message with happierStreamKey meta');
+          throw new Error('Expected marker to appear in a streamed agent message with stream-segment metadata');
         }
 
         const [matchedKey, matchedText] = matching[0]!;
         const chunks = streamedChunkCountByKey.get(matchedKey) ?? 0;
-        if (chunks < 2) {
-          throw new Error(`Expected streamed response to be chunked (>=2 messages) but got ${chunks}`);
+        if (chunks < 1) {
+          throw new Error('Expected at least one streamed agent message snapshot');
+        }
+        if (matchedText.length < 800) {
+          throw new Error(`Expected streamed snapshot text to be substantial (>=800 chars) but got ${matchedText.length}`);
         }
 
         const hasTableSeparator = matchedText.includes('| ---') || matchedText.includes('|---');
@@ -1953,6 +1969,7 @@ await server.connect(new StdioServerTransport());
         // Override the provider default starting mode (providerSpec.json uses remote).
         // This forces a local Claude process to spawn and then be cleanly switched to remote
         // when the harness posts the first prompt.
+        cliRequiresTty: true,
         cliArgs: ['--happy-starting-mode', 'local'],
         requiredFixtureKeys: [],
         prompt: () => `Reply with EXACTLY this token and nothing else: ${readySentinel}`,
