@@ -136,14 +136,18 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
     onCancel?: () => void;
     title?: string | null;
     variant?: 'detailed' | 'checklistOnly';
+    showStepMessages?: boolean;
+    showOpenLogs?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const variant = props.variant ?? 'detailed';
+    const showStepMessages = props.showStepMessages ?? true;
+    const showOpenLogs = props.showOpenLogs ?? true;
     const canCancel = Boolean(props.onCancel) && (props.snapshot.status === 'running' || props.snapshot.status === 'canceling');
     const stepLabel = resolveSystemTaskStepLabel(props.snapshot.currentStepId);
     const latestMessage = props.snapshot.latestMessage;
     const checklistSteps = React.useMemo(() => buildChecklistSteps(props.snapshot), [props.snapshot]);
-    const canOpenLogs = isTauriDesktop();
+    const canOpenLogs = showOpenLogs && isTauriDesktop();
     const handleOpenLogs = React.useCallback(async () => {
         if (!canOpenLogs) {
             return;
@@ -205,7 +209,7 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
                                 : theme.colors.textTertiary;
 
                     const title = renderValue(resolveSystemTaskStepLabel(step.stepId));
-                    const subtitle = (typeof step.message === 'string' && step.message.trim())
+                    const subtitle = showStepMessages && (typeof step.message === 'string' && step.message.trim())
                         ? step.message.trim()
                         : null;
 

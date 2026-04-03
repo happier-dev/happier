@@ -1,12 +1,11 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 
 import { getDefaultSystemTaskRunner, SystemTaskProgressCard } from '@/components/systemTasks';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
-import { resolveSystemTaskStepLabel } from '@/components/systemTasks/resolveSystemTaskStepLabel';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
@@ -14,6 +13,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { setActiveShareableServerUrl } from '@/sync/domains/server/serverRuntime';
+import { Ionicons } from '@expo/vector-icons';
+import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t, type TranslationKey } from '@/text';
 
@@ -58,6 +59,9 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
     presentation?: 'settings' | 'wizard';
     onWizardPrimaryChange?: (state: Readonly<{ label: string; disabled: boolean; onPress: (() => void) | (() => Promise<void>) }> | null) => void;
     onRequestAdvance?: () => void;
+    onWizardRequestProviderDetails?: (providerId: RelayAccessProviderId) => void;
+    onWizardSelectedProviderIdChange?: (providerId: RelayAccessProviderId) => void;
+    wizardSelectedProviderId?: RelayAccessProviderId | null;
 }>) {
     const runner = props.runner ?? getDefaultSystemTaskRunner();
     const presentation = props.presentation ?? 'settings';
@@ -82,7 +86,10 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
     const resolvedConfigured = snapshot?.configured === true;
 
     const [selectedProviderId, setSelectedProviderId] = React.useState<RelayAccessProviderId>(() => (
-        resolvedProviderId ?? 'lan'
+        resolvedProviderId
+            ?? (presentation === 'wizard'
+                ? (props.wizardSelectedProviderId ?? 'localOnly')
+                : 'lan')
     ));
     const [lanUrlDraft, setLanUrlDraft] = React.useState('');
     const [cloudflareHostnameDraft, setCloudflareHostnameDraft] = React.useState('');
@@ -94,6 +101,14 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
         }
         setSelectedProviderId(resolvedProviderId);
     }, [resolvedProviderId]);
+
+    React.useEffect(() => {
+        if (presentation !== 'wizard') return;
+        const next = props.wizardSelectedProviderId;
+        if (!next) return;
+        if (resolvedProviderId) return;
+        setSelectedProviderId(next);
+    }, [presentation, props.wizardSelectedProviderId, resolvedProviderId]);
 
     const visibleProviderIds = React.useMemo(() => {
         return relayAccessProviderIds.filter((providerId) => {
@@ -113,6 +128,11 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
         }
         setSelectedProviderId(visibleProviderIds[0] ?? 'lan');
     }, [selectedProviderId, visibleProviderIds]);
+
+    React.useEffect(() => {
+        if (presentation !== 'wizard') return;
+        props.onWizardSelectedProviderIdChange?.(selectedProviderId);
+    }, [presentation, props.onWizardSelectedProviderIdChange, selectedProviderId]);
 
     React.useEffect(() => {
         props.onShareUrlChange?.(resolvedShareUrl);
@@ -216,6 +236,10 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
     const [advanceAfterSaveRequested, setAdvanceAfterSaveRequested] = React.useState(false);
 
     const handleWizardPrimaryPress = React.useCallback(async () => {
+        if (presentation === 'wizard' && (selectedProviderId === 'lan' || selectedProviderId === 'cloudflareNamed')) {
+            props.onWizardRequestProviderDetails?.(selectedProviderId);
+            return;
+        }
         if (!selectedProviderNeedsDraftConfig) {
             onRequestAdvance?.();
             return;
@@ -252,9 +276,10 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
     React.useEffect(() => {
         if (presentation !== 'wizard') return;
         if (!onWizardPrimaryChange) return;
+        const requiresDetailsStep = selectedProviderId === 'lan' || selectedProviderId === 'cloudflareNamed';
         onWizardPrimaryChange({
             label: t('common.continue'),
-            disabled: isBusy || isUnavailable || (!selectedProviderDraftValid && selectedProviderNeedsDraftConfig),
+            disabled: isBusy || isUnavailable || (!requiresDetailsStep && !selectedProviderDraftValid && selectedProviderNeedsDraftConfig),
             onPress: handleWizardPrimaryPress,
         });
         return () => {
@@ -266,9 +291,18 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
         isUnavailable,
         presentation,
         onWizardPrimaryChange,
+        selectedProviderId,
         selectedProviderDraftValid,
         selectedProviderNeedsDraftConfig,
     ]);
+
+    const providerIconById = React.useMemo(() => ({
+        localOnly: 'lock-closed-outline',
+        lan: 'wifi-outline',
+        tailscaleServe: 'shield-checkmark-outline',
+        tailscaleFunnel: 'globe-outline',
+        cloudflareNamed: 'cloud-outline',
+    } satisfies Record<RelayAccessProviderId, React.ComponentProps<typeof Ionicons>['name']>), []);
 
     const providerChoiceRows = React.useMemo(() => (
         visibleProviderIds.map((providerId: RelayAccessProviderId) => (
@@ -278,12 +312,19 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
                 variant="selectable"
                 selected={selectedProviderId === providerId}
                 disabled={isBusy || isUnavailable}
+                left={(
+                    <Ionicons
+                        name={providerIconById[providerId]}
+                        size={18}
+                        color={selectedProviderId === providerId ? theme.colors.accent.blue : theme.colors.textSecondary}
+                    />
+                )}
                 title={t(PROVIDER_TITLE_KEYS[providerId])}
                 subtitle={t(PROVIDER_SUBTITLE_KEYS[providerId])}
                 onPress={() => setSelectedProviderId(providerId)}
             />
         ))
-    ), [isBusy, isUnavailable, selectedProviderId, visibleProviderIds]);
+    ), [isBusy, isUnavailable, providerIconById, selectedProviderId, theme.colors.accent.blue, theme.colors.textSecondary, visibleProviderIds]);
 
     const providerConfigFields = (
         <>
@@ -325,50 +366,87 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
     );
 
     if (presentation === 'wizard') {
-        const inlineStepLabel = activeTaskSnapshot?.currentStepId ? resolveSystemTaskStepLabel(activeTaskSnapshot.currentStepId) : null;
-        const inlineLatestMessage = typeof activeTaskSnapshot?.latestMessage === 'string' ? activeTaskSnapshot.latestMessage : null;
+        const overlayScrimColor = theme.colors.overlay?.scrimWizard ?? theme.colors.surface;
+        const showBusyOverlay = isBusy && activeTaskSnapshot != null;
         return (
             <>
-                <View style={{ width: '100%', gap: 12 }}>
-                    {resolvedShareUrl ? (
-                        <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
-                            {resolvedShareUrl}
-                        </Text>
-                    ) : null}
+                <View style={{ width: '100%', gap: 12, position: 'relative' }}>
+                    <View style={{ width: '100%', gap: 12 }}>
+                        <View style={{ width: '100%', gap: 8 }}>
+                            {providerChoiceRows}
+                        </View>
 
-                    <View style={{ width: '100%', gap: 8 }}>
-                        {providerChoiceRows}
+                        {lastErrorMessage ? (
+                            <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                                {lastErrorMessage}
+                            </Text>
+                        ) : null}
                     </View>
 
-                    {providerConfigFields}
+                    {showBusyOverlay ? (
+                        <View
+                            testID="settings.server.relayAccess.busyOverlay"
+                            style={[
+                                StyleSheet.absoluteFillObject,
+                                {
+                                    position: 'absolute',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    padding: 12,
+                                    borderRadius: 12,
+                                    overflow: 'hidden',
+                                },
+                            ]}
+                        >
+                            {Platform.OS !== 'web' ? (
+                                (() => {
+                                    try {
+                                        // eslint-disable-next-line @typescript-eslint/no-var-requires
+                                        const { BlurView } = require('expo-blur');
+                                        if (BlurView) {
+                                            return (
+                                                <BlurView
+                                                    testID="settings.server.relayAccess.busyOverlay.frosted"
+                                                    intensity={Platform.OS === 'ios' ? 12 : 3}
+                                                    tint="default"
+                                                    pointerEvents="none"
+                                                    style={StyleSheet.absoluteFillObject}
+                                                />
+                                            );
+                                        }
+                                    } catch {
+                                        // fall back
+                                    }
+                                    return (
+                                        <View
+                                            testID="settings.server.relayAccess.busyOverlay.fallback"
+                                            pointerEvents="none"
+                                            style={[
+                                                StyleSheet.absoluteFillObject,
+                                                createBackdropNativeStyle({ backgroundColor: overlayScrimColor }),
+                                            ]}
+                                        />
+                                    );
+                                })()
+                            ) : (
+                                <View
+                                    testID="settings.server.relayAccess.busyOverlay.frosted"
+                                    pointerEvents="none"
+                                    style={[
+                                        StyleSheet.absoluteFillObject,
+                                        (createBackdropWebStyle({ backgroundColor: overlayScrimColor, blurPx: 12 }) as unknown as Record<string, unknown>),
+                                    ]}
+                                />
+                            )}
 
-                    {lastErrorMessage ? (
-                        <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
-                            {lastErrorMessage}
-                        </Text>
-                    ) : null}
-                    {activeTaskSnapshot ? (
-                        <View style={{ width: '100%', gap: 6 }}>
-                            <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
-                                {t('settings.relayAccess.statusWorking')}
-                            </Text>
-                            {inlineStepLabel ? (
-                                <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
-                                    {inlineStepLabel}
-                                </Text>
-                            ) : null}
-                            {inlineLatestMessage ? (
-                                <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
-                                    {inlineLatestMessage}
-                                </Text>
-                            ) : null}
-                            <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
-                                <RoundButton
-                                    testID="settings.server.relayAccess.cancel"
-                                    size="small"
-                                    display="inverted"
-                                    title={t('common.cancel')}
-                                    onPress={cancel}
+                            <View style={{ width: '100%', maxWidth: 420 }}>
+                                <SystemTaskProgressCard
+                                    snapshot={activeTaskSnapshot}
+                                    variant="checklistOnly"
+                                    title={null}
+                                    showStepMessages={false}
+                                    showOpenLogs={false}
+                                    onCancel={cancel}
                                 />
                             </View>
                         </View>

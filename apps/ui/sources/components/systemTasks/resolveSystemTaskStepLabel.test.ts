@@ -20,6 +20,11 @@ describe('resolveSystemTaskStepLabel', () => {
         expect(resolveSystemTaskStepLabel('tailscale.verifyUrl')).not.toBe('tailscale.verifyUrl');
     });
 
+    it('translates known relay access step ids', () => {
+        expect(resolveSystemTaskStepLabel('relay.access.status.inspect')).not.toBe('relay.access.status.inspect');
+        expect(resolveSystemTaskStepLabel('relay.access.configure.apply')).not.toBe('relay.access.configure.apply');
+    });
+
     it('returns null for unknown step ids', () => {
         expect(resolveSystemTaskStepLabel('unknown.step.id')).toBe('unknown.step.id');
     });

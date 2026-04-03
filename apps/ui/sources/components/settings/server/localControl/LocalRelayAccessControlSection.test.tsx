@@ -36,10 +36,16 @@ installMachinesSettingsCommonModuleMocks({
                     accent: {
                         blue: 'blue',
                     },
+                    success: 'success',
+                    warningCritical: 'warningCritical',
                     textSecondary: 'gray',
+                    textTertiary: 'textTertiary',
                     divider: 'divider',
                     surface: 'surface',
                     text: 'text',
+                    overlay: {
+                        scrimWizard: 'scrimWizard',
+                    },
                 },
             },
         });
@@ -110,11 +116,14 @@ describe('LocalRelayAccessControlSection', () => {
             }),
         );
 
-        expect(screen.findAllByType('Group' as never)).toHaveLength(0);
-        expect(screen.findAllByType('Item' as never)).toHaveLength(0);
+        const groups = screen.findAllByType('Group' as never);
+        expect(groups.some((group: any) => group?.props?.title === 'settings.relayAccess.title')).toBe(false);
+        expect(screen.findByTestId('settings.server.relayAccess.refresh')).toBeNull();
+        expect(screen.findByTestId('settings.server.relayAccess.save')).toBeNull();
+        expect(screen.findByTestId('settings.server.relayAccess.disable')).toBeNull();
     });
 
-    it('uses the wizard chrome primary action to save relay access changes (no embedded action buttons)', async () => {
+    it('uses the wizard chrome primary action to advance into provider details for LAN (no embedded fields)', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
         const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
 
@@ -136,6 +145,7 @@ describe('LocalRelayAccessControlSection', () => {
         });
 
         let primary: { disabled: boolean; onPress: (() => void) | (() => Promise<void>) } | null = null;
+        const requestDetails = vi.fn();
 
         const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
         const screen = await renderScreen(
@@ -146,6 +156,7 @@ describe('LocalRelayAccessControlSection', () => {
                 onWizardPrimaryChange: (state) => {
                     primary = state as any;
                 },
+                onWizardRequestProviderDetails: requestDetails,
             }),
         );
 
@@ -164,27 +175,18 @@ describe('LocalRelayAccessControlSection', () => {
         expect(primary).toBeTruthy();
 
         await renderer.act(async () => {
-            screen.findByTestId('settings.server.relayAccess.lanUrl')?.props.onChangeText?.('https://relay.lan.example.test');
+            screen.findByTestId('settings.server.relayAccess.choice:lan')?.props.onPress?.();
         });
 
         await renderer.act(async () => {
             await (primary?.onPress as any)?.();
         });
 
-        expect(startedSpecs).toHaveLength(2);
-        expect(startedSpecs[1]).toEqual({
-            protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-            kind: 'relay.access.configure.v1',
-            params: {
-                target: { kind: 'local' },
-                providerId: 'lan',
-                config: {
-                    providerId: 'lan',
-                    url: 'https://relay.lan.example.test',
-                },
-                upstreamUrl: 'http://127.0.0.1:3005',
-            },
-        });
+        expect(screen.findByTestId('settings.server.relayAccess.lanUrl')).toBeNull();
+        expect(screen.findByTestId('settings.server.relayAccess.cloudflareHostname')).toBeNull();
+        expect(screen.findByTestId('settings.server.relayAccess.cloudflareToken')).toBeNull();
+        expect(requestDetails).toHaveBeenCalledWith('lan');
+        expect(startedSpecs).toHaveLength(1);
     });
 
     it('filters relay access providers when setup surface policy denies Tailscale and Cloudflare Tunnel', async () => {
