@@ -315,11 +315,10 @@ jobs:
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
 
-      - name: Xcode + iOS SDK version (audit)
-        run: |
-          set -euo pipefail
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
+      - name: Setup Xcode (pin)
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode_version: "26.2"
 
       - name: iOS TestFlight submit (dev lane) (best-effort)
         env:

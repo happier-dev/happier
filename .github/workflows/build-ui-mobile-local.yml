@@ -251,6 +251,11 @@ jobs:
           ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
           fetch-depth: 0
 
+      - name: Setup Xcode (pin)
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode_version: "26.2"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -312,6 +317,11 @@ jobs:
         with:
           ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
           fetch-depth: 0
+
+      - name: Setup Xcode (pin)
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode_version: "26.2"
 
       - name: Setup Node
         uses: actions/setup-node@v4

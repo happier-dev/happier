@@ -1,0 +1,22 @@
+name: Setup Xcode
+description: Select a specific preinstalled Xcode version on GitHub macOS runners.
+
+inputs:
+  xcode_version:
+    description: Xcode version to select (must be preinstalled on the runner image)
+    required: false
+    default: "26.2"
+
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode ${{ inputs.xcode_version }}
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: ${{ inputs.xcode_version }}
+
+    - name: Xcode version (audit)
+      shell: bash
+      run: |
+        set -euo pipefail
+        xcodebuild -version

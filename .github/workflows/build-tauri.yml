@@ -130,6 +130,12 @@ jobs:
           ref: ${{ needs.resolve_source.outputs.source_sha }}
           fetch-depth: 1
 
+      - name: Setup Xcode (pin) (macOS only)
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode_version: "26.2"
+
       - name: Enforce trusted refs for manual dispatch
         run: |
           set -euo pipefail
