@@ -194,9 +194,22 @@ const baseExpoConfig = {
         name,
         slug,
         version: versionOverride || packageJsonVersion || "0.1.0",
-        runtimeVersion: {
-            policy: "fingerprint"
-        },
+        runtimeVersion: (() => {
+            const overrideRaw = String(process.env.HAPPIER_EXPO_RUNTIME_VERSION_POLICY ?? '').trim().toLowerCase();
+            const override =
+                overrideRaw === 'fingerprint' ? 'fingerprint' :
+                overrideRaw === 'appversion' || overrideRaw === 'app_version' || overrideRaw === 'app-version' ? 'appVersion' :
+                '';
+
+            // Store-facing lanes (preview/production) should prefer the app version train so OTA behavior is
+            // easy to reason about for end users. Internal lanes keep the fingerprint policy so OTA safety
+            // follows native-compatible changes.
+            const resolved =
+                override ||
+                (appIdentityVariant === 'production' || appIdentityVariant === 'preview' ? 'appVersion' : 'fingerprint');
+
+            return { policy: resolved };
+        })(),
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme: resolvedScheme,
