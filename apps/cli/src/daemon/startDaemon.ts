@@ -85,6 +85,7 @@ import { resolveDaemonDiagnosticSubsystemGates } from './startup/diagnosticSubsy
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
 import { buildSpawnChildProcessEnv } from './spawn/buildSpawnChildProcessEnv';
+import { resolveStackProcessKindOverrideForSessionSpawn } from './spawn/resolveStackProcessKindOverrideForSessionSpawn';
 import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from './spawn/spawnRequestCoalescer';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
@@ -694,6 +695,7 @@ export async function startDaemon(): Promise<void> {
               sessionAttachCleanup = attach.cleanup;
             }
 
+            const stackProcessKindOverride = resolveStackProcessKindOverrideForSessionSpawn(process.env);
             const extraEnvForChildWithMessage = {
               ...extraEnvForChild,
               ...(sessionAttachFilePath
@@ -702,6 +704,7 @@ export async function startDaemon(): Promise<void> {
               ...(normalizedInitialPrompt
                 ? { [HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY]: normalizedInitialPrompt }
                 : {}),
+              ...stackProcessKindOverride,
             };
 
             // Check if tmux is available and should be used
