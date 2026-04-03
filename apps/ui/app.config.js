@@ -91,6 +91,7 @@ const appEnvironmentConfig = getAppEnvironmentConfig(rawAppEnvironment);
 // Prefer controlling these knobs from EAS build profile env so store builds (AAB) keep their defaults.
 const androidEnableMinifyInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_MINIFY', false);
 const androidEnableShrinkResourcesInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_SHRINK_RESOURCES', false);
+const androidGradleJvmArgsOverride = String(process.env.HAPPIER_ANDROID_GRADLE_JVMARGS ?? '').trim();
 const shouldUseAndroidBuildProperties =
     androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
 
@@ -100,6 +101,7 @@ const androidBuildPropertiesPlugin = shouldUseAndroidBuildProperties
         {
             enableMinifyInReleaseBuilds: androidEnableMinifyInReleaseBuilds === true,
             enableShrinkResourcesInReleaseBuilds: androidEnableShrinkResourcesInReleaseBuilds === true,
+            ...(androidGradleJvmArgsOverride ? { gradleJvmArgs: androidGradleJvmArgsOverride } : {}),
         },
     ]
     : null;

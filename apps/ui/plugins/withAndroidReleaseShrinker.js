@@ -17,7 +17,12 @@ function upsertGradleProperty(props, key, value) {
 
 function applyAndroidReleaseShrinkerSettingsToGradleProperties(
   props,
-  { enableMinifyInReleaseBuilds, enableProguardInReleaseBuilds, enableShrinkResourcesInReleaseBuilds } = {}
+  {
+    enableMinifyInReleaseBuilds,
+    enableProguardInReleaseBuilds,
+    enableShrinkResourcesInReleaseBuilds,
+    gradleJvmArgs,
+  } = {}
 ) {
   // Expo/RN templates use android.enableMinifyInReleaseBuilds to control `minifyEnabled`.
   // Keep a small compatibility alias for the old "proguard" naming.
@@ -36,6 +41,10 @@ function applyAndroidReleaseShrinkerSettingsToGradleProperties(
   }
   if (shrinkEnabled) {
     upsertGradleProperty(props, 'android.enableShrinkResourcesInReleaseBuilds', 'true');
+  }
+  if (typeof gradleJvmArgs === 'string' && gradleJvmArgs.trim()) {
+    // R8 can be memory hungry; allow release build profiles to raise the heap.
+    upsertGradleProperty(props, 'org.gradle.jvmargs', gradleJvmArgs.trim());
   }
 
   return props;
