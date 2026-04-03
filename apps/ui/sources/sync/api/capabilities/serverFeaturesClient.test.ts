@@ -65,7 +65,13 @@ describe('serverFeaturesClient', () => {
         }) as unknown as typeof fetch;
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        // Stop supervisor state before clearing module cache so that async
+        // supervisors spawned during the test don't bleed into the next test.
+        const { resetServerReachabilitySupervisors } = await import(
+            '@/sync/runtime/connectivity/serverReachabilitySupervisorPool'
+        );
+        await resetServerReachabilitySupervisors();
         vi.useRealTimers();
         globalThis.fetch = originalFetch;
         vi.restoreAllMocks();

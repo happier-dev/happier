@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Resolved once at module load; both vendored-artifact tests share this check.
+const kokoroWorkerPath = new URL('../../../../public/vendor/kokoro/kokoroTtsWorker.js', import.meta.url);
+const kokoroWorkerExists = fs.existsSync(kokoroWorkerPath);
+
 describe('synthesizeKokoroWav (web)', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -13,17 +17,13 @@ describe('synthesizeKokoroWav (web)', () => {
     expect(source).not.toContain('import.meta');
   });
 
-  it('closes the TextSplitterStream so streaming requests complete', () => {
-    const workerPath = new URL('../../../../public/vendor/kokoro/kokoroTtsWorker.js', import.meta.url);
-    if (!fs.existsSync(workerPath)) return; // vendored artifact not yet built
-    const workerSource = fs.readFileSync(workerPath, 'utf8');
+  it.skipIf(!kokoroWorkerExists)('closes the TextSplitterStream so streaming requests complete', () => {
+    const workerSource = fs.readFileSync(kokoroWorkerPath, 'utf8');
     expect(workerSource).toContain('splitter.close');
   });
 
-  it('supports kokoro-js stream chunk audio shapes', () => {
-    const workerPath = new URL('../../../../public/vendor/kokoro/kokoroTtsWorker.js', import.meta.url);
-    if (!fs.existsSync(workerPath)) return; // vendored artifact not yet built
-    const workerSource = fs.readFileSync(workerPath, 'utf8');
+  it.skipIf(!kokoroWorkerExists)('supports kokoro-js stream chunk audio shapes', () => {
+    const workerSource = fs.readFileSync(kokoroWorkerPath, 'utf8');
     expect(workerSource).toContain('audioObj?.audio');
     expect(workerSource).toContain('audioObj?.sampling_rate');
   });
