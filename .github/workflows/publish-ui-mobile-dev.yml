@@ -26,7 +26,7 @@ on:
       eas_builder:
         description: "Runner — EAS build runner"
         required: true
-        default: eas_cloud
+        default: eas_local
         type: choice
         options:
           - eas_cloud
@@ -56,7 +56,7 @@ on:
         type: boolean
       eas_builder:
         required: false
-        default: eas_cloud
+        default: eas_local
         type: string
       release_message:
         required: false
@@ -126,6 +126,8 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+          # Keep builds mobile-focused (desktop/web builds happen elsewhere).
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           # Dev lane uses preview-like embedded policy and does not need web-asset vendoring.
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
@@ -243,6 +245,7 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
 
@@ -308,8 +311,15 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Xcode + iOS SDK version (audit)
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
 
       - name: iOS TestFlight submit (dev lane) (best-effort)
         env:
