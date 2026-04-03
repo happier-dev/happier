@@ -171,6 +171,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+          # Desktop builds should not require installing backend/CLI workspaces (which can pull native deps
+          # that are flaky on Windows runners). Keep installs focused on UI + shared packages.
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           # Prefer the npm registry over the Yarn registry to avoid transient 5xx fetch failures
           # that can break long cross-platform build workflows.
           npm_config_registry: https://registry.npmjs.org
