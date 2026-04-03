@@ -17,7 +17,7 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
 COPY package.json yarn.lock ./
-RUN mkdir -p apps/cli apps/stack packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers
+RUN mkdir -p apps/cli apps/stack packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers scripts/pipeline/expo
 COPY apps/cli/package.json apps/cli/
 COPY apps/stack/package.json apps/stack/
 COPY packages/agents/package.json packages/agents/
@@ -26,6 +26,7 @@ COPY packages/connection-supervisor/package.json packages/connection-supervisor/
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/release-runtime/package.json packages/release-runtime/
 COPY packages/transfers/package.json packages/transfers/
+COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
 COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
