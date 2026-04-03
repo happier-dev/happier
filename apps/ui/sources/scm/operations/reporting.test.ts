@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { reportSessionScmOperation, trackBlockedScmOperation } from './reporting';
+import { reportSessionScmOperation, reportWorkspaceScmOperation, trackBlockedScmOperation } from './reporting';
 
 describe('reportSessionScmOperation', () => {
     it('appends operation log entry and captures sanitized telemetry', () => {
@@ -98,6 +98,45 @@ describe('reportSessionScmOperation', () => {
                 raw_error: 'fatal: unable to write new index file',
                 raw_error_length: 37,
             })
+        );
+    });
+});
+
+describe('reportWorkspaceScmOperation', () => {
+    it('appends operation log entry and captures sanitized telemetry', () => {
+        const appendWorkspaceScmOperation = vi.fn();
+        const capture = vi.fn();
+
+        reportWorkspaceScmOperation({
+            state: {
+                appendWorkspaceScmOperation,
+            },
+            scope: { serverId: 'server-1', machineId: 'machine-1', rootPath: '/repo' },
+            operation: 'commit',
+            status: 'success',
+            detail: 'abc123',
+            surface: 'files',
+            tracking: { capture },
+            now: 321,
+        });
+
+        expect(appendWorkspaceScmOperation).toHaveBeenCalledWith(
+            expect.objectContaining({ machineId: 'machine-1', rootPath: '/repo' }),
+            {
+                operation: 'commit',
+                status: 'success',
+                detail: 'abc123',
+                timestamp: 321,
+            },
+        );
+
+        expect(capture).toHaveBeenCalledWith(
+            'scm_operation_result',
+            expect.objectContaining({
+                operation: 'commit',
+                status: 'success',
+                surface: 'files',
+            }),
         );
     });
 });

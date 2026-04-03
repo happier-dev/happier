@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { withSessionProjectScmOperationLock } from './withOperationLock';
+import { withSessionProjectScmOperationLock, withWorkspaceScmOperationLock } from './withOperationLock';
 
 describe('withSessionProjectScmOperationLock', () => {
     it('returns blocked result when a project lock is already held', async () => {
@@ -81,5 +81,31 @@ describe('withSessionProjectScmOperationLock', () => {
         ).rejects.toThrow('boom');
 
         expect(finish).toHaveBeenCalledWith('s1', 'op-2');
+    });
+});
+
+describe('withWorkspaceScmOperationLock', () => {
+    it('finishes the lock after a successful operation', async () => {
+        const finish = vi.fn(() => true);
+        const result = await withWorkspaceScmOperationLock({
+            state: {
+                beginWorkspaceScmOperation: () => ({
+                    started: true as const,
+                    operation: {
+                        id: 'op-ws-1',
+                        startedAt: 10,
+                        sessionId: 's1',
+                        operation: 'commit' as const,
+                    },
+                }),
+                finishWorkspaceScmOperation: finish,
+            },
+            scope: { serverId: 'server-1', machineId: 'machine-1', rootPath: '/repo' },
+            operation: 'commit',
+            run: async () => 'done',
+        });
+
+        expect(result).toEqual({ started: true, value: 'done' });
+        expect(finish).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine-1', rootPath: '/repo' }), 'op-ws-1');
     });
 });

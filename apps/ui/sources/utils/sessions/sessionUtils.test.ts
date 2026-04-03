@@ -701,7 +701,7 @@ describe('getSessionName', () => {
                 ? {
                     key: {
                         machineId: 'machine-target',
-                        path: '/Users/test/workspace/live-name',
+                        rootPath: '/Users/test/workspace/live-name',
                     },
                 }
                 : null;
@@ -744,7 +744,7 @@ describe('reachable target session display helpers', () => {
                 ? {
                     key: {
                         machineId: 'machine-target',
-                        path: '/Users/test/workspace/live',
+                        rootPath: '/Users/test/workspace/live',
                     },
                 }
                 : null;
@@ -785,7 +785,7 @@ describe('reachable target session display helpers', () => {
                 ? {
                     key: {
                         machineId: 'machine-target',
-                        path: '/Users/test/workspace/live',
+                        rootPath: '/Users/test/workspace/live',
                     },
                 }
                 : null;
