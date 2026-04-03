@@ -121,6 +121,28 @@ export function resolveLinuxHsetupResourcesOverrideConfig() {
 }
 
 /**
+ * @param {{ environment: string }} opts
+ * @returns {{
+ *   productName: string;
+ *   appRelativePath: string;
+ *   legacyHsetupRelativePath: string;
+ *   resourceHsetupDirRelativePath: string;
+ *   resourceHsetupPrefix: string;
+ * }}
+ */
+export function resolveLinuxAppImageDiagnosticsLayout(opts) {
+  const environment = String(opts.environment ?? '').trim();
+  const productName = resolveLinuxProductNameOverride({ environment }) ?? 'Happier';
+  return {
+    productName,
+    appRelativePath: path.join('usr', 'bin', 'app'),
+    legacyHsetupRelativePath: path.join('usr', 'bin', 'hsetup'),
+    resourceHsetupDirRelativePath: path.join('usr', 'lib', productName, 'binaries'),
+    resourceHsetupPrefix: 'hsetup-',
+  };
+}
+
+/**
  * @param {{ dryRun: boolean }} opts
  * @param {string} cmd
  * @param {string[]} args
@@ -176,9 +198,12 @@ function dumpLinuxAppImageDiagnostics(opts) {
   const absUiDir = String(opts.absUiDir ?? '').trim();
   const environment = String(opts.environment ?? '').trim();
 
-  const productName = resolveLinuxProductNameOverride({ environment }) ?? 'Happier';
+  const layout = resolveLinuxAppImageDiagnosticsLayout({ environment });
+  const productName = layout.productName;
   const appDirPath = path.join(absUiDir, 'src-tauri', 'target', 'release', 'bundle', 'appimage', `${productName}.AppDir`);
-  const hsetupPath = path.join(appDirPath, 'usr', 'bin', 'hsetup');
+  const appPath = path.join(appDirPath, layout.appRelativePath);
+  const legacyHsetupPath = path.join(appDirPath, layout.legacyHsetupRelativePath);
+  const resourceHsetupDirPath = path.join(appDirPath, layout.resourceHsetupDirRelativePath);
 
   /**
    * @param {unknown} error
@@ -219,56 +244,74 @@ function dumpLinuxAppImageDiagnostics(opts) {
       // ignore
     }
 
-    if (!fs.existsSync(hsetupPath)) {
-      console.log(`[pipeline] AppDir missing expected hsetup path: ${hsetupPath}`);
-      return;
+    /** @type {string[]} */
+    const candidates = [];
+    if (fs.existsSync(appPath)) candidates.push(appPath);
+    if (fs.existsSync(legacyHsetupPath)) candidates.push(legacyHsetupPath);
+
+    if (fs.existsSync(resourceHsetupDirPath)) {
+      try {
+        const entries = fs.readdirSync(resourceHsetupDirPath).filter((name) => name.startsWith(layout.resourceHsetupPrefix));
+        console.log(`[pipeline] AppDir resource hsetup entries: ${entries.join(', ') || '<none>'}`);
+        for (const entry of entries) {
+          candidates.push(path.join(resourceHsetupDirPath, entry));
+        }
+      } catch {
+        // ignore
+      }
+    } else {
+      console.log(`[pipeline] AppDir resource hsetup dir missing: ${resourceHsetupDirPath}`);
     }
 
-    try {
-      const out = execFileSyncPortable('bash', ['-lc', `ls -l ${JSON.stringify(hsetupPath)}`], {
-        cwd: repoRoot || process.cwd(),
-        env: process.env,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10_000,
-      });
-      process.stdout.write(`[pipeline] perms ${hsetupPath}\n${out}`);
-    } catch (error) {
-      console.log(`[pipeline] perms failed for ${hsetupPath}: ${formatExecErrorOutput(error)}`);
-    }
+    for (const candidatePath of candidates) {
+      try {
+        const out = execFileSyncPortable('bash', ['-lc', `ls -l ${JSON.stringify(candidatePath)}`], {
+          cwd: repoRoot || process.cwd(),
+          env: process.env,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 10_000,
+        });
+        process.stdout.write(`[pipeline] perms ${candidatePath}\n${out}`);
+      } catch (error) {
+        console.log(`[pipeline] perms failed for ${candidatePath}: ${formatExecErrorOutput(error)}`);
+      }
 
-    try {
-      const out = execFileSyncPortable('file', [hsetupPath], {
-        cwd: repoRoot || process.cwd(),
-        env: process.env,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10_000,
-      });
-      process.stdout.write(`[pipeline] file ${hsetupPath}\n${out}`);
-    } catch (error) {
-      console.log(`[pipeline] file failed for ${hsetupPath}: ${formatExecErrorOutput(error)}`);
-    }
+      try {
+        const out = execFileSyncPortable('file', [candidatePath], {
+          cwd: repoRoot || process.cwd(),
+          env: process.env,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 10_000,
+        });
+        process.stdout.write(`[pipeline] file ${candidatePath}\n${out}`);
+      } catch (error) {
+        console.log(`[pipeline] file failed for ${candidatePath}: ${formatExecErrorOutput(error)}`);
+      }
 
-    try {
-      // Use bash so we can capture ldd stderr reliably even when it exits non-zero.
-      const out = execFileSyncPortable('bash', ['-lc', `ldd ${JSON.stringify(hsetupPath)} 2>&1 || true`], {
-        cwd: repoRoot || process.cwd(),
-        env: process.env,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10_000,
-      });
-      process.stdout.write(`[pipeline] ldd ${hsetupPath}\n${out}`);
-    } catch (error) {
-      console.log(`[pipeline] ldd failed for ${hsetupPath}: ${formatExecErrorOutput(error)}`);
+      try {
+        // Use bash so we can capture ldd stderr reliably even when it exits non-zero.
+        const out = execFileSyncPortable('bash', ['-lc', `ldd ${JSON.stringify(candidatePath)} 2>&1 || true`], {
+          cwd: repoRoot || process.cwd(),
+          env: process.env,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 10_000,
+        });
+        process.stdout.write(`[pipeline] ldd ${candidatePath}\n${out}`);
+      } catch (error) {
+        console.log(`[pipeline] ldd failed for ${candidatePath}: ${formatExecErrorOutput(error)}`);
+      }
     }
 
     try {
       for (const rel of ['usr/lib', 'usr/lib64']) {
         const dir = path.join(appDirPath, rel);
         if (!fs.existsSync(dir)) continue;
-        const entries = fs.readdirSync(dir).filter((name) => name.includes('libc') || name.includes('ld-linux'));
+        const entries = fs
+          .readdirSync(dir)
+          .filter((name) => name === 'libc.so.6' || name.startsWith('ld-linux') || name.startsWith('ld-musl'));
         if (entries.length > 0) {
           console.log(`[pipeline] ${rel} glibc-ish entries: ${entries.join(', ')}`);
         }
