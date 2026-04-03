@@ -350,6 +350,63 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
+  it('tags daemon-spawned session runners as stack process kind=session (does not inherit infra)', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    const stackEnvFileOriginal = process.env.HAPPIER_STACK_ENV_FILE;
+    const stackProcessKindOriginal = process.env.HAPPIER_STACK_PROCESS_KIND;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    process.env.HAPPIER_STACK_ENV_FILE = '/tmp/stack.env';
+    process.env.HAPPIER_STACK_PROCESS_KIND = 'infra';
+
+    try {
+      const { startDaemon } = await import('./startDaemon');
+
+      const run = startDaemon();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const spawnSession = harness.getSpawnSession();
+      if (!spawnSession) {
+        throw new Error('Expected spawnSession to be registered');
+      }
+
+      await spawnSession({
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        token: 't',
+        codexBackendMode: 'acp',
+      });
+
+      expect(spawnHappyCLI).toHaveBeenCalledTimes(1);
+      const firstCall = spawnHappyCLI.mock.calls[0];
+      if (!firstCall) {
+        throw new Error('Expected spawnHappyCLI to be called');
+      }
+      const opts = firstCall[1] as { env?: NodeJS.ProcessEnv } | undefined;
+      expect(opts?.env?.HAPPIER_STACK_PROCESS_KIND).toBe('session');
+
+      harness.requestShutdown('happier-cli');
+      await run;
+    } finally {
+      if (refreshEnvOriginal === undefined) {
+        delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      } else {
+        process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      }
+      if (stackEnvFileOriginal === undefined) {
+        delete process.env.HAPPIER_STACK_ENV_FILE;
+      } else {
+        process.env.HAPPIER_STACK_ENV_FILE = stackEnvFileOriginal;
+      }
+      if (stackProcessKindOriginal === undefined) {
+        delete process.env.HAPPIER_STACK_PROCESS_KIND;
+      } else {
+        process.env.HAPPIER_STACK_PROCESS_KIND = stackProcessKindOriginal;
+      }
+      exitSpy.mockRestore();
+    }
+  });
+
   it('passes the canonical existing session id hint through to the webhook waiter for attach spawns', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;

@@ -131,6 +131,13 @@ export async function claudeRemote(opts: {
      */
     happierMcpConfigJson?: string,
     signal?: AbortSignal,
+    /**
+     * Registers a best-effort interrupt handler that can stop the current turn without
+     * terminating the underlying Claude Code subprocess.
+     *
+     * Used by the remote launcher to implement UI "Abort" without losing context.
+     */
+    setTurnInterrupt?: ((handler: (() => Promise<void>) | null) => void) | null,
     canCallTool: (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }) => Promise<PermissionResult>,
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
     hookSettingsPath: string,
@@ -275,6 +282,20 @@ export async function claudeRemote(opts: {
         },
     });
 
+    const interruptTurn = async (): Promise<void> => {
+        try {
+            const interrupt = (response as any)?.interrupt;
+            if (typeof interrupt === 'function') {
+                await interrupt.call(response);
+            }
+        } catch {
+            // Best-effort: interrupt is optional and should not crash cancellation.
+        } finally {
+            updateThinking(false);
+        }
+    };
+    opts.setTurnInterrupt?.(interruptTurn);
+
     updateThinking(true);
     try {
         logger.debug(`[claudeRemote] Starting to iterate over response`);
@@ -345,6 +366,7 @@ export async function claudeRemote(opts: {
             throw e;
         }
     } finally {
+        opts.setTurnInterrupt?.(null);
         opts.setUserMessageSender?.(null);
         updateThinking(false);
     }

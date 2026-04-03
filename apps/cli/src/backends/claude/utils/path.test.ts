@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getProjectPath } from './path';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 let previousClaudeConfigDir: string | undefined;
@@ -78,6 +79,26 @@ describe('getProjectPath', () => {
 
     expect(projectId).not.toBe(rawProjectId);
     expect(projectId.length).toBeLessThan(120);
+  });
+
+  it('normalizes workingDirectory via realpath when available (macOS /tmp → /private/tmp)', () => {
+    if (process.platform === 'win32') return;
+    process.env.CLAUDE_CONFIG_DIR = '/test/home/.claude';
+
+    const root = mkdtempSync('/tmp/happier-claude-project-id-test-');
+    const realDir = join(root, 'real');
+    const linkDir = join(root, 'link');
+    mkdirSync(realDir, { recursive: true });
+    symlinkSync(realDir, linkDir, 'dir');
+
+    try {
+      const expectedPhysical = realpathSync(linkDir);
+      const expectedProjectId = expectedPhysical.replace(/[^a-zA-Z0-9-]/g, '-');
+      const result = getProjectPath(linkDir);
+      expect(result).toBe(join('/test/home/.claude', 'projects', expectedProjectId));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('should handle relative paths by resolving them first', () => {

@@ -93,6 +93,7 @@ type RemoteHarness = {
   client: SessionClientStub;
   sendToAllDevices: ReturnType<typeof vi.fn>;
   sendClaudeSessionMessage: ReturnType<typeof vi.fn>;
+  abortHandlerReady: Promise<RpcHandler>;
   switchHandlerReady: Promise<RpcHandler>;
 };
 
@@ -125,6 +126,7 @@ function hookWithTranscript(transcriptPath: string): SessionFoundHookData {
 
 function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHarness {
   const switchDeferred = createDeferred<RpcHandler>();
+  const abortDeferred = createDeferred<RpcHandler>();
   const sendClaudeSessionMessage = vi.fn();
 
   const client: SessionClientStub = {
@@ -135,6 +137,9 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     updateAgentState: vi.fn((updater) => updater({})),
     rpcHandlerManager: {
       registerHandler: vi.fn((method: string, handler: any) => {
+        if (method === 'abort') {
+          abortDeferred.resolve(handler);
+        }
         if (method === 'switch') {
           switchDeferred.resolve(handler);
         }
@@ -175,19 +180,25 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     client,
     sendToAllDevices,
     sendClaudeSessionMessage,
+    abortHandlerReady: abortDeferred.promise,
     switchHandlerReady: switchDeferred.promise,
   };
 }
 
-describe.sequential('claudeRemoteLauncher', () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-    setActiveAccountSettingsSnapshot({
-      source: 'none',
-      settings: accountSettingsParse({}),
-      settingsVersion: 0,
-      loadedAtMs: 0,
+	describe.sequential('claudeRemoteLauncher', () => {
+	  const previousGraceMsEnv = process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS;
+
+	  beforeEach(() => {
+	    vi.resetModules();
+	    vi.clearAllMocks();
+	    // Keep integration tests fast: disable the switch/exit grace window by default.
+	    // Individual tests can opt back in by setting the env var before importing the launcher.
+	    process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS = '0';
+	    setActiveAccountSettingsSnapshot({
+	      source: 'none',
+	      settings: accountSettingsParse({}),
+	      settingsVersion: 0,
+	      loadedAtMs: 0,
       settingsSecretsReadKeys: [],
     });
     mockConvert.mockReturnValue(null);
@@ -196,7 +207,248 @@ describe.sequential('claudeRemoteLauncher', () => {
     mockClaudeRemoteDispatch.mockImplementation(async (opts: unknown) => {
       const dispatchOpts = opts as RemoteDispatchMockOptions;
       await waitForAbort(dispatchOpts.signal);
+	    });
+	  });
+	
+	  afterEach(() => {
+	    if (previousGraceMsEnv === undefined) {
+	      delete process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS;
+	    } else {
+	      process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS = previousGraceMsEnv;
+	    }
+	  });
+
+	  it('interrupts the current turn before switching to local mode when a turn interrupt handler is available', async () => {
+    const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(label)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    };
+
+    const harness = createRemoteHarness();
+    harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+
+    const dispatchObserved = createDeferred<void>();
+    const interruptObserved = createDeferred<void>();
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      opts.onRunnerSelected?.('agentSdk');
+      opts.onSessionFound?.('sess_agent_sdk', hookWithTranscript('/tmp/sess_agent_sdk.jsonl'));
+      opts.setTurnInterrupt?.(async () => {
+        interruptObserved.resolve();
+      });
+      dispatchObserved.resolve();
+      await waitForAbort(opts.signal);
     });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(harness.session);
+
+    const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+    await waitWithin(dispatchObserved.promise, 'remote dispatch mock did not run');
+
+    await waitWithin(Promise.resolve(switchHandler({ to: 'local' })), 'switch handler did not resolve');
+    await waitWithin(interruptObserved.promise, 'turn interrupt was not invoked during switch');
+
+    await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
+  });
+
+  it('does not force-abort the remote runner when switching if the turn interrupt causes the runner to exit quickly (grace window)', async () => {
+    const previousGraceMsEnv = process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS;
+    try {
+      process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS = '1500';
+
+      const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+        return await Promise.race([
+          promise,
+          new Promise<T>((_resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error(label)), ms);
+            timer.unref?.();
+          }),
+        ]);
+      };
+
+      const harness = createRemoteHarness();
+      harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+
+      const dispatchObserved = createDeferred<void>();
+      const interruptGate = createDeferred<void>();
+      let observedSignalAborted: boolean | null = null;
+
+      mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+        observedSignalAborted =
+          opts.signal && typeof opts.signal === 'object' && typeof (opts.signal as any).aborted === 'boolean'
+            ? (opts.signal as any).aborted
+            : null;
+        opts.onRunnerSelected?.('agentSdk');
+        opts.onSessionFound?.('sess_agent_sdk', hookWithTranscript('/tmp/sess_agent_sdk.jsonl'));
+        opts.setTurnInterrupt?.(async () => {
+          interruptGate.resolve(undefined);
+        });
+        dispatchObserved.resolve(undefined);
+        await interruptGate.promise;
+        // Simulate the runner exiting cleanly after interrupt without requiring a process abort.
+        return;
+      });
+
+      const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+      const launcherPromise = claudeRemoteLauncher(harness.session);
+
+      const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+      await waitWithin(dispatchObserved.promise, 'remote dispatch mock did not run');
+
+      await waitWithin(Promise.resolve(switchHandler({ to: 'local' })), 'switch handler did not resolve');
+      await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
+
+      if (observedSignalAborted === null) throw new Error('observed signal aborted state was unexpectedly null');
+      expect(observedSignalAborted).toBe(false);
+    } finally {
+      if (previousGraceMsEnv === undefined) {
+        delete process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS;
+      } else {
+        process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS = previousGraceMsEnv;
+      }
+    }
+  });
+
+  it('surfaces a turn_aborted agent message when abort is requested and a turn interrupt handler is available', async () => {
+    const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(label)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    };
+
+    const harness = createRemoteHarness();
+    harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+
+    const dispatchObserved = createDeferred<void>();
+    const interruptObserved = createDeferred<void>();
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      opts.onRunnerSelected?.('agentSdk');
+      opts.onSessionFound?.('sess_agent_sdk', hookWithTranscript('/tmp/sess_agent_sdk.jsonl'));
+      opts.setTurnInterrupt?.(async () => {
+        interruptObserved.resolve(undefined);
+      });
+      dispatchObserved.resolve(undefined);
+      await waitForAbort(opts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(harness.session);
+
+    await waitWithin(dispatchObserved.promise, 'remote dispatch mock did not run');
+    const abortHandler = await waitWithin(harness.abortHandlerReady, 'abort handler was not registered');
+    await abortHandler();
+    await waitWithin(interruptObserved.promise, 'turn interrupt was not invoked during abort');
+
+    const agentMessages = (harness.client.sendAgentMessage as any).mock.calls.map((call: any[]) => call?.[1]);
+    const hasTurnAborted = agentMessages.some((msg: any) => msg?.type === 'turn_aborted');
+    expect(hasTurnAborted).toBe(true);
+
+    const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
+  });
+
+  it('marks the session as abort-requested when abort is requested, even if handled via a turn interrupt handler', async () => {
+    const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(label)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    };
+
+    const harness = createRemoteHarness();
+    const noteAbortRequestedSpy = vi.spyOn(harness.session, 'noteUserAbortRequested');
+    harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+
+    const dispatchObserved = createDeferred<void>();
+    const interruptObserved = createDeferred<void>();
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      opts.onRunnerSelected?.('agentSdk');
+      opts.onSessionFound?.('sess_agent_sdk', hookWithTranscript('/tmp/sess_agent_sdk.jsonl'));
+      opts.setTurnInterrupt?.(async () => {
+        interruptObserved.resolve(undefined);
+      });
+      dispatchObserved.resolve(undefined);
+      await waitForAbort(opts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(harness.session);
+
+    await waitWithin(dispatchObserved.promise, 'remote dispatch mock did not run');
+    const abortHandler = await waitWithin(harness.abortHandlerReady, 'abort handler was not registered');
+    await abortHandler();
+    await waitWithin(interruptObserved.promise, 'turn interrupt was not invoked during abort');
+
+    expect(noteAbortRequestedSpy).toHaveBeenCalled();
+
+    const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
+  });
+
+  it('clears the stored Claude session id after an exit-code-1 resume failure so subsequent launches do not loop on a dead session', async () => {
+    const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(label)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    };
+
+    const deadSessionId = 'dead-session-id';
+    const harness = createRemoteHarness({ sessionId: deadSessionId });
+    harness.session.queue.push('first', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+
+    const firstDispatchObserved = createDeferred<void>();
+    const secondDispatchObserved = createDeferred<void>();
+    const secondDispatchSessionIdObserved = createDeferred<string | null>();
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      opts.onRunnerSelected?.('agentSdk');
+      firstDispatchObserved.resolve();
+      expect(opts.sessionId).toBe(deadSessionId);
+      throw new Error('Claude Code process exited with code 1');
+    });
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      opts.onRunnerSelected?.('agentSdk');
+      opts.onSessionFound?.('fresh-session-id', hookWithTranscript('/tmp/fresh-session.jsonl'));
+      secondDispatchSessionIdObserved.resolve(opts.sessionId ?? null);
+      secondDispatchObserved.resolve();
+      await waitForAbort(opts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(harness.session);
+
+    const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+    await waitWithin(firstDispatchObserved.promise, 'first dispatch did not run');
+
+    harness.session.queue.push('second', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+    await waitWithin(secondDispatchObserved.promise, 'second dispatch did not run');
+
+    await expect(waitWithin(secondDispatchSessionIdObserved.promise, 'did not observe second dispatch session id')).resolves.toBeNull();
+
+    await waitWithin(Promise.resolve(switchHandler({ to: 'local' })), 'switch handler did not resolve');
+    await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
   });
 
   it('does not strip assistant text/thinking blocks when the legacy runner is selected (even if streamed transcript writer is available)', async () => {
@@ -258,6 +510,47 @@ describe.sequential('claudeRemoteLauncher', () => {
     const blocks = Array.isArray(convertedArg?.message?.content) ? convertedArg.message.content : [];
     expect(blocks.some((b: any) => b?.type === 'text' && b?.text === 'Hello from legacy.')).toBe(true);
     expect(blocks.some((b: any) => b?.type === 'thinking' && b?.thinking === 'Thinking...')).toBe(true);
+  });
+
+  it('creates a streamed transcript writer even when sendAgentMessageCommitted is unavailable (best-effort)', async () => {
+    const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(label)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    };
+
+    const harness = createRemoteHarness();
+    harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+
+    let capturedWriter: any = null;
+    const dispatchObserved = createDeferred<void>();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      opts.onRunnerSelected?.('agentSdk');
+      capturedWriter = (opts as any).streamedTranscriptWriter as any;
+      dispatchObserved.resolve(undefined);
+      await waitForAbort(opts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(harness.session);
+
+    const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+    await waitWithin(dispatchObserved.promise, 'remote dispatch mock did not run');
+
+    expect(capturedWriter).toBeTruthy();
+    capturedWriter.appendAssistantDelta('Hello');
+    await capturedWriter.flushAll({ reason: 'turn-end' });
+
+    expect(harness.client.sendAgentMessage).toHaveBeenCalled();
+    const [, , sendOpts] = (harness.client.sendAgentMessage as any).mock.calls[0] ?? [];
+    expect(sendOpts?.meta?.happierStreamSegmentV1).toBeTruthy();
+
+    await waitWithin(Promise.resolve(switchHandler({ to: 'local' })), 'switch handler did not resolve');
+    await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
   });
 
   it('does not strip assistant text/thinking blocks when the Agent SDK runner is selected', async () => {
@@ -729,6 +1022,54 @@ describe.sequential('claudeRemoteLauncher', () => {
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
+  it('clears the Claude session id after an abort-triggered exit code 1 so the next launch does not keep resuming a dead session', async () => {
+    const exitError = new Error('Claude Code process exited with code 1');
+
+    const firstDispatchStarted = createDeferred<void>();
+    const secondDispatchObserved = createDeferred<any>();
+
+    // Simulate a long delay between user abort and the eventual exit-code-1 failure, which can happen
+    // in practice when Claude is still shutting down. The launcher must still clear the dead session id.
+    const dateNowSpy = vi.spyOn(Date, 'now');
+    let nowMs = 1_000;
+    dateNowSpy.mockImplementation(() => nowMs);
+
+    mockClaudeRemoteDispatch
+      .mockImplementationOnce(async (opts: any) => {
+        firstDispatchStarted.resolve(undefined);
+        await waitForAbort(opts.signal);
+        nowMs += 20_000;
+        throw exitError;
+      })
+      .mockImplementationOnce(async (opts: any) => {
+        secondDispatchObserved.resolve({ sessionId: opts.sessionId, transcriptPath: opts.transcriptPath });
+        await waitForAbort(opts.signal);
+      });
+
+    const { session, abortHandlerReady, switchHandlerReady } = createRemoteHarness({ sessionId: 'dead-session-id' });
+    session.queue.push('hello', { permissionMode: 'default' } satisfies EnhancedMode);
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    try {
+      await firstDispatchStarted.promise;
+      const abortHandler = await abortHandlerReady;
+      await abortHandler();
+
+      session.queue.push('after abort', { permissionMode: 'default' } satisfies EnhancedMode);
+
+      const secondDispatch = await secondDispatchObserved.promise;
+      expect(secondDispatch.sessionId).toBeNull();
+
+      const switchHandler = await switchHandlerReady;
+      expect(await switchHandler({ to: 'local' })).toBe(true);
+      await expect(launcherPromise).resolves.toBe('switch');
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  }, 30_000);
+
   it('relaunches between turns when a spawn-only setting changes (reasoning effort), preserving message order', async () => {
     const firstSeen = createDeferred<any>();
     const secondDispatchFirstSeen = createDeferred<any>();
@@ -971,11 +1312,11 @@ describe.sequential('claudeRemoteLauncher', () => {
   }, 30_000);
 
   it('does not mount Ink UI for daemon-started sessions even when a TTY is available', async () => {
-    const originalStdoutIsTTY = process.stdout.isTTY;
-    const originalStdinIsTTY = process.stdin.isTTY;
-
-    process.stdout.isTTY = true;
-    process.stdin.isTTY = true;
+    // `process.stdout.isTTY` is not reliably writable across Node versions. Mock the decision helper
+    // instead to simulate a TTY-capable environment.
+    vi.doMock('@/ui/tty/resolveHasTTY', () => ({
+      resolveHasTTY: () => true,
+    }));
 
     const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
     (session as any).startedBy = 'daemon';
@@ -986,23 +1327,18 @@ describe.sequential('claudeRemoteLauncher', () => {
       await waitForAbort(dispatchOpts.signal);
     });
 
-    try {
-      const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
-      const launcherPromise = claudeRemoteLauncher(session);
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
 
-      await vi.waitFor(() => {
-        expect(mockClaudeRemoteDispatch).toHaveBeenCalledTimes(1);
-      });
+    await vi.waitFor(() => {
+      expect(mockClaudeRemoteDispatch).toHaveBeenCalledTimes(1);
+    });
 
-      expect(mockInkRender).not.toHaveBeenCalled();
+    expect(mockInkRender).not.toHaveBeenCalled();
 
-      const switchHandler = await switchHandlerReady;
-      expect(await switchHandler({ to: 'local' })).toBe(true);
-      await expect(launcherPromise).resolves.toBe('switch');
-    } finally {
-      process.stdout.isTTY = originalStdoutIsTTY;
-      process.stdin.isTTY = originalStdinIsTTY;
-    }
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
   it('respects switch RPC params and is idempotent', async () => {

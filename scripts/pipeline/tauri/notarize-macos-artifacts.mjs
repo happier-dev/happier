@@ -5,13 +5,43 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
 import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
 import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
+import { resolveYarnInvocation } from './resolve-yarn-invocation.mjs';
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+/**
+ * Extracts the base64 updater signature from `tauri signer sign` stdout.
+ *
+ * Tauri CLI may print additional log lines (or prefix the signature with a label), so we can't
+ * assume stdout is only the base64 blob.
+ *
+ * @param {string} stdout
+ * @returns {string}
+ */
+export function extractTauriUpdaterSignature(stdout) {
+  const raw = String(stdout ?? '').replaceAll('\r', '');
+  const lines = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  // Prefer explicit "Signature: <base64>" lines when present.
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    const m = /^signature:\s*([A-Za-z0-9+/=]+)$/i.exec(line);
+    if (m?.[1]) return m[1];
+  }
+
+  // Fallback: pick the last plausible base64 token of signature-like length.
+  const matches = raw.match(/[A-Za-z0-9+/=]{80,256}/g) ?? [];
+  return matches.length > 0 ? matches[matches.length - 1] : '';
 }
 
 /**
@@ -71,6 +101,40 @@ function listFilesRecursive(dir) {
 function tempFile(dir, filename) {
   fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, filename);
+}
+
+/**
+ * When caches restore previous bundle outputs, multiple updater signatures can exist under the same
+ * `target/<tauri-target>` directory. We prefer the newest signature to ensure we notarize the
+ * artifacts produced by the current build run.
+ *
+ * @param {readonly string[]} paths
+ * @param {{ statSync?: typeof fs.statSync }} [opts]
+ * @returns {string}
+ */
+export function pickNewestFile(paths, opts) {
+  const statSyncImpl = opts?.statSync ?? fs.statSync;
+  if (!Array.isArray(paths) || paths.length === 0) {
+    fail('pickNewestFile expected at least one path');
+  }
+
+  let bestPath = paths[0];
+  let bestMtime = -Infinity;
+
+  for (const p of paths) {
+    try {
+      const stat = statSyncImpl(p);
+      const mtime = Number(stat?.mtimeMs ?? 0);
+      if (Number.isFinite(mtime) && mtime >= bestMtime) {
+        bestMtime = mtime;
+        bestPath = p;
+      }
+    } catch {
+      // ignore missing/stat failures; we'll keep the current best.
+    }
+  }
+
+  return bestPath;
 }
 
 function main() {
@@ -135,9 +199,15 @@ function main() {
     .filter((p) => p.replaceAll(path.sep, '/').includes('/release/bundle/') && p.toLowerCase().endsWith('.app.tar.gz.sig'))
     .sort((a, b) => a.localeCompare(b));
 
-  const sigPath = opts.dryRun ? path.join(searchDir, 'DRY_RUN.app.tar.gz.sig') : sigMatches[0];
-  if (!opts.dryRun && sigMatches.length !== 1) {
-    fail(`Expected exactly one macOS updater signature under ${searchDir}; found ${sigMatches.length}`);
+  let sigPath = opts.dryRun ? path.join(searchDir, 'DRY_RUN.app.tar.gz.sig') : '';
+  if (!opts.dryRun) {
+    if (sigMatches.length === 0) {
+      fail(`Expected at least one macOS updater signature under ${searchDir}; found 0`);
+    }
+    sigPath = sigMatches.length === 1 ? sigMatches[0] : pickNewestFile(sigMatches);
+    if (sigMatches.length > 1) {
+      console.warn(`Found multiple macOS updater signatures under ${searchDir}; using newest: ${sigPath}`);
+    }
   }
 
   const artifactPath = sigPath.endsWith('.sig') ? sigPath.slice(0, -'.sig'.length) : sigPath;
@@ -175,23 +245,20 @@ function main() {
     fs.renameSync(newTar, artifactPath);
   }
 
-  const sigValue = run(
-    opts,
-    'yarn',
-    ['--silent', 'tauri', 'signer', 'sign', path.resolve(absUiDir, artifactPath)],
-    {
-      cwd: absUiDir,
-      env: {
-        ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
-        ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
-      },
-      stdio: ['ignore', 'pipe', 'inherit'],
-      timeoutMs: 10 * 60_000,
-    },
-  )
-    .trim()
-    .replaceAll('\r', '')
-    .replaceAll('\n', '');
+  const yarn = resolveYarnInvocation();
+  /** @type {string[]} */
+  const signArgs = [...yarn.prefixArgs, '--silent', 'tauri', 'signer', 'sign'];
+  if (signingKeyPath) signArgs.push('--private-key-path', signingKeyPath);
+  if (signingKeyPassword) signArgs.push('--password', signingKeyPassword);
+  signArgs.push(path.resolve(absUiDir, artifactPath));
+
+  const sigRaw = run(opts, yarn.cmd, signArgs, {
+    cwd: absUiDir,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    timeoutMs: 10 * 60_000,
+  });
+
+  const sigValue = extractTauriUpdaterSignature(sigRaw);
 
   if (opts.dryRun) {
     console.log(`[dry-run] write ${sigPath} (updated signature)`);
@@ -242,4 +309,6 @@ function findAppDir(workDir) {
   fail(`Unable to find .app inside updater artifact (work dir: ${workDir})`);
 }
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}

@@ -26,3 +26,27 @@ test('dagger expoAndroidLocalBuild does not place exported artifacts under /tmp 
   assert.ok(!internalArtifact.startsWith('/tmp/'), `internalArtifact must not be under /tmp (got: ${internalArtifact})`);
   assert.ok(!internalOutJson.startsWith('/tmp/'), `internalOutJson must not be under /tmp (got: ${internalOutJson})`);
 });
+
+test('dagger expoAndroidLocalBuild clears the EAS local workingdir between runs', () => {
+  const src = readRepoFile('dagger/src/index.ts');
+
+  // The Android local build uses a Dagger cache volume mounted under /tmp for scratch space.
+  // Cache volumes persist across runs, but the EAS local build plugin requires the *working dir*
+  // itself to be empty. For robustness, we must point EAS at a subdirectory under the cache mount
+  // (not the cache root), so previous build residues cannot block the next build.
+  assert.ok(
+    !/withEnvVariable\(\s*["']EAS_LOCAL_BUILD_WORKINGDIR["']\s*,\s*["']\/tmp\/eas-workdir["']\s*\)/.test(src),
+    'expected expoAndroidLocalBuild to avoid using /tmp/eas-workdir as the exact EAS_LOCAL_BUILD_WORKINGDIR value',
+  );
+  assert.match(src, /const\s+easWorkdirRoot\s*=\s*["']\/tmp\/eas-workdir["']/, 'expected easWorkdirRoot to be /tmp/eas-workdir');
+  assert.match(
+    src,
+    /const\s+easWorkdir\s*=\s*`[^`]*\$\{easWorkdirRoot\}\/[^`]+`/,
+    'expected easWorkdir to be a template string under easWorkdirRoot (subdirectory)',
+  );
+  assert.match(
+    src,
+    /withEnvVariable\(\s*["']EAS_LOCAL_BUILD_WORKINGDIR["']\s*,\s*easWorkdir\s*\)/,
+    'expected expoAndroidLocalBuild to set EAS_LOCAL_BUILD_WORKINGDIR from easWorkdir',
+  );
+});

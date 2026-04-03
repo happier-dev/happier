@@ -38,6 +38,24 @@ type SecureAccessTailscaleDeps = Readonly<{
   now: () => number;
 }>;
 
+function parseNonNegativeIntEnv(name: string, fallback: number): number {
+  const raw = String(process.env[name] ?? '').trim();
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function resolveTailscaleApprovalPollConfigFromEnv(): Readonly<{
+  timeoutMs: number;
+  intervalMs: number;
+}> {
+  return {
+    timeoutMs: parseNonNegativeIntEnv('HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS', DEFAULT_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS),
+    intervalMs: parseNonNegativeIntEnv('HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS', DEFAULT_TAILSCALE_APPROVAL_POLL_INTERVAL_MS),
+  };
+}
+
 export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAccessTailscaleDeps>) {
   const deps = createSecureAccessTailscaleDeps(overrides);
 
@@ -196,7 +214,23 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       };
 
       let approvedUrl: string | null = null;
-      const maxAttempts = Math.max(1, Math.ceil(TAILSCALE_APPROVAL_POLL_TIMEOUT_MS / TAILSCALE_APPROVAL_POLL_INTERVAL_MS));
+      const pollConfig = resolveTailscaleApprovalPollConfigFromEnv();
+      const maxAttempts =
+        pollConfig.timeoutMs <= 0 || pollConfig.intervalMs <= 0
+          ? 1
+          : Math.max(1, Math.ceil(pollConfig.timeoutMs / pollConfig.intervalMs));
+
+      if (maxAttempts <= 1) {
+        return {
+          tailscaleInstalled: true,
+          tailscaleLoggedIn: true,
+          serveEnabled: false,
+          shareableHttpsUrl: null,
+          requiresApproval: {
+            url: enable.approvalUrl,
+          },
+        };
+      }
 
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (context?.signal?.aborted) {
@@ -215,7 +249,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
           message: attempt === 0 ? 'Waiting for Tailscale Serve approval' : 'Still waiting for Tailscale Serve approval',
         };
         if (attempt < maxAttempts - 1) {
-          await deps.sleep(TAILSCALE_APPROVAL_POLL_INTERVAL_MS, context?.signal);
+          await deps.sleep(pollConfig.intervalMs, context?.signal);
         }
       }
 
@@ -290,8 +324,8 @@ function createSecureAccessTailscaleDeps(overrides?: Partial<SecureAccessTailsca
   };
 }
 
-const TAILSCALE_APPROVAL_POLL_TIMEOUT_MS = 60_000;
-const TAILSCALE_APPROVAL_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS = 60_000;
+const DEFAULT_TAILSCALE_APPROVAL_POLL_INTERVAL_MS = 1_000;
 
 async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   const duration = Number.isFinite(ms) ? Math.max(0, Math.floor(ms)) : 0;

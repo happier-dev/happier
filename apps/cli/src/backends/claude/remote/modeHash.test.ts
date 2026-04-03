@@ -43,6 +43,56 @@ describe('hashClaudeEnhancedModeForQueue', () => {
         expect(next).not.toBe(base);
     });
 
+    it('changes when claudeRemoteDebugEnabled changes (Agent SDK enabled)', () => {
+        const base = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            claudeRemoteDebugEnabled: false,
+        }));
+
+        const next = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            claudeRemoteDebugEnabled: true,
+        }));
+
+        expect(next).not.toBe(base);
+    });
+
+    it('changes when claudeRemoteVerboseEnabled changes (Agent SDK enabled)', () => {
+        const base = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            claudeRemoteVerboseEnabled: false,
+        }));
+
+        const next = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            claudeRemoteVerboseEnabled: true,
+        }));
+
+        expect(next).not.toBe(base);
+    });
+
+    it('changes when claudeRemoteDebugCategories changes (Agent SDK enabled)', () => {
+        const base = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            claudeRemoteDebugEnabled: true,
+            claudeRemoteDebugCategories: ['api'],
+        }));
+
+        const next = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            claudeRemoteDebugEnabled: true,
+            claudeRemoteDebugCategories: ['mcp'],
+        }));
+
+        expect(next).not.toBe(base);
+    });
+
     it('changes when settingSources changes (Agent SDK enabled)', () => {
         const base = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
@@ -100,6 +150,20 @@ describe('hashClaudeEnhancedModeForQueue', () => {
         const next = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: false,
             claudeRemoteDisableTodos: true,
+        }));
+
+        expect(next).not.toBe(base);
+    });
+
+    it('changes when claudeRemoteDebugEnabled changes (Agent SDK disabled)', () => {
+        const base = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: false,
+            claudeRemoteDebugEnabled: false,
+        }));
+
+        const next = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: false,
+            claudeRemoteDebugEnabled: true,
         }));
 
         expect(next).not.toBe(base);

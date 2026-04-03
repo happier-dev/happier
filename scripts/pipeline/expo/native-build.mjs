@@ -14,10 +14,36 @@ import { ensureStagedGitRepo } from '../git/ensure-staged-git-repo.mjs';
 import { shouldStageRepoForEasLocalBuild } from './should-stage-eas-local-build-repo.mjs';
 import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
 import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
+import {
+  normalizeMobileReleaseEnvironment,
+  normalizeMobileReleaseProfile,
+  resolveMobileBuildNodeEnvironment,
+} from './mobile-release-environments.mjs';
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+/**
+ * @param {string} profile
+ * @returns {string}
+ */
+function resolveNodeEnvironmentForProfile(profile) {
+  const raw = String(profile ?? '').trim();
+  if (!raw) return '';
+
+  // Prefer parsing via the canonical mobile release profile/env normalizers so:
+  // - public labels like "dev" map to internal ids like "publicdev"
+  // - "-apk" / "-store" suffixes are handled consistently
+  const normalizedProfile = normalizeMobileReleaseProfile(raw) || raw;
+  const withoutSuffix = normalizedProfile.replace(/-(apk|store)$/, '');
+  const environment =
+    normalizeMobileReleaseEnvironment(withoutSuffix) ||
+    normalizeMobileReleaseEnvironment(normalizedProfile);
+  if (!environment) return '';
+
+  return resolveMobileBuildNodeEnvironment(environment);
 }
 
 /**
@@ -149,6 +175,7 @@ function runCaptureWithHeartbeat(opts, cmd, args, extra) {
   const rawHeartbeatMs = Number.parseInt(String(process.env.HAPPIER_PIPELINE_HEARTBEAT_MS ?? ''), 10);
   const heartbeatMs = Number.isFinite(rawHeartbeatMs) && rawHeartbeatMs > 0 ? rawHeartbeatMs : 20_000;
   const heartbeatLabel = String(extra?.heartbeatLabel ?? `${cmd} process`);
+  const echoOutput = extra?.echoOutput !== false;
 
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -172,14 +199,14 @@ function runCaptureWithHeartbeat(opts, cmd, args, extra) {
       const text = String(chunk);
       stdout += text;
       lastOutputAt = Date.now();
-      process.stdout.write(text);
+      if (echoOutput) process.stdout.write(text);
     });
 
     child.stderr.on('data', (chunk) => {
       const text = String(chunk);
       stderr += text;
       lastOutputAt = Date.now();
-      process.stderr.write(text);
+      if (echoOutput) process.stderr.write(text);
     });
 
     child.on('error', (error) => {
@@ -253,6 +280,17 @@ function getBuildCreatedAtMs(build) {
 }
 
 /**
+ * @param {any} build
+ * @returns {string}
+ */
+function getBuildFingerprintHash(build) {
+  const a = build?.fingerprint?.hash;
+  const b = build?.fingerprintHash;
+  const c = build?.runtimeVersion; // runtimeVersion policy=fingerprint often matches, but prefer explicit fingerprint hash.
+  return String(a ?? b ?? c ?? '').trim();
+}
+
+/**
  * @param {{ repoRoot: string; opts: { dryRun: boolean } }} params
  * @returns {string}
  */
@@ -299,6 +337,133 @@ function fetchCloudBuildList({ opts, uiDir, easCliVersion, platform, profile, gi
     { cwd: uiDir, env: withEasGitCaseSensitiveEnv(process.env), stdio: 'pipe', timeoutMs: 5 * 60_000 },
   ).trim();
   return normalizeBuilds(JSON.parse(listJson));
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   platform: string;
+ *   profile: string;
+ *   env: Record<string, string>;
+ * }} params
+ * @returns {{ id: string; fingerprintHash: string } | null}
+ */
+function fetchLatestFinishedCloudBuildFingerprint({ opts, uiDir, easCliVersion, platform, profile, env }) {
+  const listJson = run(
+    opts,
+    'npx',
+    [
+      '--yes',
+      `eas-cli@${easCliVersion}`,
+      'build:list',
+      '--platform',
+      platform,
+      '--build-profile',
+      profile,
+      '--status',
+      'finished',
+      '--limit',
+      '10',
+      '--json',
+      '--non-interactive',
+    ],
+    { cwd: uiDir, env, stdio: 'pipe', timeoutMs: 5 * 60_000 },
+  ).trim();
+
+  const builds = normalizeBuilds(JSON.parse(listJson))
+    .filter((b) => b && typeof b === 'object')
+    .sort((a, b) => (getBuildCreatedAtMs(b) ?? 0) - (getBuildCreatedAtMs(a) ?? 0));
+  if (builds.length === 0) return null;
+
+  const latest = builds[0];
+  const id = getBuildId(latest);
+  const fingerprintHash = getBuildFingerprintHash(latest);
+  return { id, fingerprintHash };
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   platform: string;
+ *   profile: string;
+ *   fingerprintHash: string;
+ *   env: Record<string, string>;
+ * }} params
+ * @returns {{ id: string; status: string } | null}
+ */
+function fetchLatestCloudBuildForFingerprint({ opts, uiDir, easCliVersion, platform, profile, fingerprintHash, env }) {
+  const hash = String(fingerprintHash ?? '').trim();
+  if (!hash) return null;
+
+  const listJson = run(
+    opts,
+    'npx',
+    [
+      '--yes',
+      `eas-cli@${easCliVersion}`,
+      'build:list',
+      '--platform',
+      platform,
+      '--build-profile',
+      profile,
+      '--fingerprint-hash',
+      hash,
+      '--limit',
+      '10',
+      '--json',
+      '--non-interactive',
+    ],
+    { cwd: uiDir, env, stdio: 'pipe', timeoutMs: 5 * 60_000 },
+  ).trim();
+
+  const builds = normalizeBuilds(JSON.parse(listJson))
+    .filter((b) => b && typeof b === 'object')
+    .sort((a, b) => (getBuildCreatedAtMs(b) ?? 0) - (getBuildCreatedAtMs(a) ?? 0));
+  if (builds.length === 0) return null;
+
+  const latest = builds[0];
+  const id = getBuildId(latest);
+  const status = String(latest?.status ?? '').trim();
+  return id ? { id, status } : null;
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   platform: string;
+ *   profile: string;
+ *   env: Record<string, string>;
+ * }} params
+ * @returns {string}
+ */
+async function generateCurrentProjectFingerprintHash({ opts, uiDir, easCliVersion, platform, profile, env }) {
+  const fpJson = (
+    await runCaptureWithHeartbeat(
+      opts,
+      'npx',
+      [
+        '--yes',
+        `eas-cli@${easCliVersion}`,
+        'fingerprint:generate',
+        '--platform',
+        platform,
+        '--build-profile',
+        profile,
+        '--json',
+        '--non-interactive',
+      ],
+      { cwd: uiDir, env, timeoutMs: 10 * 60_000, heartbeatLabel: `Expo fingerprint (${platform})`, echoOutput: false },
+    )
+  ).trim();
+  if (!fpJson) return '';
+  const parsed = JSON.parse(fpJson);
+  return String(parsed?.hash ?? parsed?.fingerprintHash ?? '').trim();
 }
 
 /**
@@ -418,6 +583,8 @@ async function main() {
       interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'dump-view': { type: 'string', default: 'true' },
+      'fingerprint-mode': { type: 'string', default: 'always' },
+      wait: { type: 'string', default: 'true' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -464,13 +631,38 @@ async function main() {
     fail("Interactive Expo local builds are not supported with --local-runtime dagger. Use --local-runtime host or --interactive false.");
   }
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
-  if ((localRuntime === 'dagger' || (buildMode === 'cloud' && nonInteractive) || isCi) && !expoToken) {
+  // Expo token is required for non-interactive cloud builds (CI/default) and for dagger-powered local builds.
+  // Interactive cloud builds can rely on the operator's local EAS auth (contract tests stub `npx eas`).
+  if ((localRuntime === 'dagger' || (buildMode === 'cloud' && nonInteractive)) && !expoToken) {
     fail('EXPO_TOKEN is required for Expo native builds.');
   }
 
   const dumpView = parseBool(values['dump-view'], '--dump-view');
+  const waitForBuild = parseBool(values.wait, '--wait');
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
+
+  const fingerprintModeRaw = String(values['fingerprint-mode'] ?? '').trim().toLowerCase() || 'always';
+  if (fingerprintModeRaw !== 'always' && fingerprintModeRaw !== 'if-changed') {
+    fail(`--fingerprint-mode must be 'always' or 'if-changed' (got: ${values['fingerprint-mode']})`);
+  }
+  /** @type {'always' | 'if-changed'} */
+  const fingerprintMode = fingerprintModeRaw;
+  if (buildMode === 'cloud' && fingerprintMode === 'if-changed' && !nonInteractive) {
+    fail(
+      [
+        "Fingerprint-gated cloud builds require non-interactive mode (so we can call 'eas fingerprint:generate' / 'eas build:list' with --json).",
+        "Fix: pass '--interactive false' (or run in CI) and ensure EXPO_TOKEN is set.",
+      ].join('\n'),
+    );
+  }
+
+  // Some Expo config/plugins assume NODE_ENV is always set and fail hard when it's missing.
+  // Ensure it's set for both cloud and local builds when the operator hasn't explicitly set it.
+  const resolvedNodeEnv = resolveNodeEnvironmentForProfile(profile);
+  if (resolvedNodeEnv && !String(process.env.NODE_ENV ?? '').trim()) {
+    process.env.NODE_ENV = resolvedNodeEnv;
+  }
 
   console.log(
     `[pipeline] expo native build: mode=${buildMode}${buildMode === 'local' ? ` runtime=${localRuntime}` : ''} platform=${platform} profile=${profile}`,
@@ -507,24 +699,29 @@ async function main() {
       const exportedOutJsonAbs = path.join(exportDirAbs, outJsonName);
 
       const expoAppSlug = String(process.env.EXPO_APP_SLUG ?? '').trim();
-      const expoAppScheme = String(process.env.EXPO_APP_SCHEME ?? '').trim();
-      const expoAppName = String(process.env.EXPO_APP_NAME ?? '').trim();
-      const expoAppBundleId = String(process.env.EXPO_APP_BUNDLE_ID ?? '').trim();
-      const sentryAuthToken = String(process.env.SENTRY_AUTH_TOKEN ?? '').trim();
+	      const expoAppScheme = String(process.env.EXPO_APP_SCHEME ?? '').trim();
+	      const expoAppName = String(process.env.EXPO_APP_NAME ?? '').trim();
+	      const expoAppBundleId = String(process.env.EXPO_APP_BUNDLE_ID ?? '').trim();
+	      const sentryAuthToken = String(process.env.SENTRY_AUTH_TOKEN ?? '').trim();
 
-      const staged = dryRun ? null : stageRepoForDagger({ repoRoot });
-      const daggerRepoArg = dryRun ? '.' : staged?.stagedRepoDir;
+	      const staged = dryRun ? null : stageRepoForDagger({ repoRoot });
+	      const daggerRepoArg = dryRun ? '.' : staged?.stagedRepoDir;
 
-      try {
-        if (!dryRun) {
-          fs.mkdirSync(exportDirAbs, { recursive: true });
-        }
+	      try {
+	        if (!dryRun) {
+	          fs.mkdirSync(exportDirAbs, { recursive: true });
+	        }
 
-        run(
-          opts,
-          'dagger',
-          [
-            '--progress',
+          // Dagger secret args use `env://NAME` indirections. Ensure the dagger CLI process
+          // environment contains the referenced vars so they don't resolve as Missing.
+          const daggerEnv = { ...process.env, EXPO_TOKEN: expoToken };
+          if (sentryAuthToken) daggerEnv.SENTRY_AUTH_TOKEN = sentryAuthToken;
+
+	        run(
+	          opts,
+	          'dagger',
+	          [
+	            '--progress',
             'plain',
             '-m',
             './dagger',
@@ -551,15 +748,15 @@ async function main() {
 	            ...(expoAppSlug ? ['--expo-app-slug', expoAppSlug] : []),
             ...(expoAppScheme ? ['--expo-app-scheme', expoAppScheme] : []),
             ...(expoAppName ? ['--expo-app-name', expoAppName] : []),
-            ...(expoAppBundleId ? ['--expo-app-bundle-id', expoAppBundleId] : []),
-          ],
-          { cwd: repoRoot, stdio: 'inherit' },
-        );
-      } finally {
-        if (staged) {
-          staged.cleanup();
-        }
-      }
+	            ...(expoAppBundleId ? ['--expo-app-bundle-id', expoAppBundleId] : []),
+	          ],
+	          { cwd: repoRoot, stdio: 'inherit', env: daggerEnv },
+	        );
+	      } finally {
+	        if (staged) {
+	          staged.cleanup();
+	        }
+	      }
 
 	      if (!dryRun) {
 	        if (!fs.existsSync(artifactAbs)) fail(`Missing build artifact at: ${artifactAbs}`);
@@ -697,36 +894,123 @@ async function main() {
   const preloadedViews = new Map();
 
   if (nonInteractive) {
-    const easJson = (
-      await runCaptureWithHeartbeat(
-        opts,
-        'npx',
-        [
-          '--yes',
-          `eas-cli@${easCliVersion}`,
-          'build',
-          '--platform',
-          platform,
-          '--profile',
+    /** @type {('android' | 'ios')[]} */
+    const requestedPlatforms = platform === 'all' ? ['android', 'ios'] : [/** @type {'android' | 'ios'} */ (platform)];
+    /** @type {('android' | 'ios')[]} */
+    let platformsToBuild = requestedPlatforms;
+
+    if (fingerprintMode === 'if-changed') {
+      /** @type {('android' | 'ios')[]} */
+      const needed = [];
+
+      for (const p of requestedPlatforms) {
+        const currentHash = await generateCurrentProjectFingerprintHash({
+          opts,
+          uiDir,
+          easCliVersion,
+          platform: p,
           profile,
-          '--non-interactive',
-          '--json',
-        ],
-        { cwd: uiDir, env: easCommandEnv, heartbeatLabel: 'Expo cloud build scheduling' },
-      )
-    ).trim();
+          env: easCommandEnv,
+        });
+        const existing = fetchLatestCloudBuildForFingerprint({
+          opts,
+          uiDir,
+          easCliVersion,
+          platform: p,
+          profile,
+          fingerprintHash: currentHash,
+          env: easCommandEnv,
+        });
+        const existingStatus = String(existing?.status ?? '').trim();
+        const existingOk = Boolean(existing?.id) && existingStatus && existingStatus !== 'ERRORED' && existingStatus !== 'CANCELED';
+        if (existingOk) {
+          console.log(
+            `[pipeline] expo native fingerprint: platform=${p} current=${currentHash || '<missing>'} existingBuild=${existing?.id || '<missing>'} status=${existingStatus} changed=false`,
+          );
+          continue;
+        }
 
-    if (dryRun) return;
+        const previous = fetchLatestFinishedCloudBuildFingerprint({
+          opts,
+          uiDir,
+          easCliVersion,
+          platform: p,
+          profile,
+          env: easCommandEnv,
+        });
 
-    builds = normalizeBuilds(JSON.parse(easJson));
-    fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
-    fs.writeFileSync(outPath, `${easJson}\n`, 'utf8');
+        const previousHash = String(previous?.fingerprintHash ?? '').trim();
+        const changed = !currentHash || !previousHash ? true : currentHash !== previousHash;
+        console.log(
+          `[pipeline] expo native fingerprint: platform=${p} current=${currentHash || '<missing>'} latest=${previousHash || '<missing>'} changed=${changed}`,
+        );
+        if (changed) needed.push(p);
+      }
+
+      platformsToBuild = needed;
+      if (platformsToBuild.length === 0) {
+        if (dryRun) return;
+        writeJson(outPath, {
+          mode: 'cloud',
+          platform,
+          profile,
+          fingerprintMode,
+          skipped: true,
+          reason: 'fingerprint unchanged (no native build needed)',
+        });
+        return;
+      }
+    }
+
+    /** @type {any[]} */
+    const scheduled = [];
+    for (const p of platformsToBuild) {
+      const easJson = (
+        await runCaptureWithHeartbeat(
+          opts,
+          'npx',
+          [
+            '--yes',
+            `eas-cli@${easCliVersion}`,
+            'build',
+            '--platform',
+            p,
+            '--profile',
+            profile,
+            ...(waitForBuild ? ['--wait'] : ['--no-wait']),
+            '--non-interactive',
+            '--json',
+          ],
+          { cwd: uiDir, env: easCommandEnv, heartbeatLabel: `Expo cloud build scheduling (${p})` },
+        )
+      ).trim();
+
+      if (dryRun) return;
+
+      scheduled.push(...normalizeBuilds(JSON.parse(easJson)));
+    }
+
+    builds = scheduled;
+    if (!dryRun) {
+      // Contract: cloud builds always write an array (even for single-platform invocations)
+      // so downstream tooling can treat the file uniformly.
+      writeJson(outPath, builds);
+    }
   } else {
     const scheduledAfterMs = Date.now();
     run(
       opts,
       'npx',
-      ['--yes', `eas-cli@${easCliVersion}`, 'build', '--platform', platform, '--profile', profile],
+      [
+        '--yes',
+        `eas-cli@${easCliVersion}`,
+        'build',
+        '--platform',
+        platform,
+        '--profile',
+        profile,
+        ...(waitForBuild ? ['--wait'] : ['--no-wait']),
+      ],
       { cwd: uiDir, env: easCommandEnv, stdio: 'inherit' },
     );
     console.log('[pipeline] expo native build (cloud): resolving scheduled build metadata from EAS build:list/build:view');
@@ -769,7 +1053,9 @@ async function main() {
       return resolved;
     });
     if (!dryRun) {
-      writeJson(outPath, platform === 'all' ? builds : builds[0]);
+      // Contract: cloud builds always write an array (even for single-platform invocations)
+      // so downstream tooling can treat the file uniformly.
+      writeJson(outPath, builds);
     }
   }
 

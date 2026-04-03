@@ -21,10 +21,14 @@ export type ClaudeRemoteMetaState = Readonly<{
     claudeRemoteMaxThinkingTokens: number | null;
     claudeRemoteDisableTodos: boolean;
     claudeRemoteStrictMcpServerConfig: boolean;
+    claudeRemoteDebugEnabled: boolean;
+    claudeRemoteVerboseEnabled: boolean;
+    claudeRemoteDebugCategories: readonly ('api' | 'mcp' | 'hooks' | 'file' | '1p')[];
     claudeRemoteAdvancedOptionsJson: string;
 }>;
 
 const SETTING_SOURCES_V2_ORDER = ['user', 'project', 'local'] as const;
+const DEBUG_CATEGORIES_ORDER = ['api', 'mcp', 'hooks', 'file', '1p'] as const;
 
 function normalizeSettingSourcesV2(raw: unknown): ('user' | 'project' | 'local')[] | null {
     if (!Array.isArray(raw)) return null;
@@ -35,6 +39,20 @@ function normalizeSettingSourcesV2(raw: unknown): ('user' | 'project' | 'local')
     }
     const out: ('user' | 'project' | 'local')[] = [];
     for (const key of SETTING_SOURCES_V2_ORDER) {
+        if (set.has(key)) out.push(key);
+    }
+    return out;
+}
+
+function normalizeDebugCategories(raw: unknown): Array<'api' | 'mcp' | 'hooks' | 'file' | '1p'> | null {
+    if (!Array.isArray(raw)) return null;
+    const set = new Set<string>();
+    for (const value of raw) {
+        if (typeof value !== 'string') continue;
+        set.add(value);
+    }
+    const out: Array<'api' | 'mcp' | 'hooks' | 'file' | '1p'> = [];
+    for (const key of DEBUG_CATEGORIES_ORDER) {
         if (set.has(key)) out.push(key);
     }
     return out;
@@ -54,6 +72,9 @@ export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.fr
     claudeRemoteMaxThinkingTokens: null,
     claudeRemoteDisableTodos: false,
     claudeRemoteStrictMcpServerConfig: false,
+    claudeRemoteDebugEnabled: false,
+    claudeRemoteVerboseEnabled: false,
+    claudeRemoteDebugCategories: [] as const,
     claudeRemoteAdvancedOptionsJson: '',
 });
 
@@ -74,7 +95,7 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
         next.claudeRemoteAgentSdkEnabled = record.claudeRemoteAgentSdkEnabled;
     }
 
-    const normalizedV2 = normalizeSettingSourcesV2((record as any).claudeRemoteSettingSourcesV2);
+    const normalizedV2 = normalizeSettingSourcesV2(record.claudeRemoteSettingSourcesV2);
     if (normalizedV2 !== null) {
         next.claudeRemoteSettingSourcesV2 = normalizedV2;
     }
@@ -128,6 +149,19 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
 
     if (typeof record.claudeRemoteStrictMcpServerConfig === 'boolean') {
         next.claudeRemoteStrictMcpServerConfig = record.claudeRemoteStrictMcpServerConfig;
+    }
+
+    if (typeof record.claudeRemoteDebugEnabled === 'boolean') {
+        next.claudeRemoteDebugEnabled = record.claudeRemoteDebugEnabled;
+    }
+
+    if (typeof record.claudeRemoteVerboseEnabled === 'boolean') {
+        next.claudeRemoteVerboseEnabled = record.claudeRemoteVerboseEnabled;
+    }
+
+    const normalizedDebugCategories = normalizeDebugCategories(record.claudeRemoteDebugCategories);
+    if (normalizedDebugCategories !== null) {
+        next.claudeRemoteDebugCategories = normalizedDebugCategories;
     }
 
     if (typeof record.claudeRemoteAdvancedOptionsJson === 'string') {

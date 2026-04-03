@@ -1410,11 +1410,17 @@ describe('createHsetupSystemTaskRegistry', () => {
     const previousTailscaleBin = process.env.HAPPIER_TAILSCALE_BIN;
     const previousStatePath = process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH;
     const previousLogPath = process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH;
+    const previousPollTimeout = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS;
+    const previousPollInterval = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS;
     const events: unknown[] = [];
     try {
       process.env.HAPPIER_TAILSCALE_BIN = fakeCli.cliPath;
       process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
       process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
+      // Avoid long approval polling in this registry integration test. The handler still returns the approval URL,
+      // and the UX layer can re-run or poll separately if desired.
+      process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS = '0';
+      process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS = '0';
 
       const result = await executeSystemTask({
         spec: {
@@ -1450,11 +1456,11 @@ describe('createHsetupSystemTaskRegistry', () => {
       expect(events).toEqual([
         expect.objectContaining({ type: 'progress', stepId: 'detect' }),
         expect.objectContaining({
-          type: 'progress',
+          type: 'prompt',
           stepId: 'login',
           data: {
-            kind: 'tailscaleLogin',
-            actionUrl: 'https://login.tailscale.com/a/example',
+            kind: 'needsUserAction.scanQr',
+            url: 'https://login.tailscale.com/a/example',
             usedQr: true,
           },
         }),
@@ -1482,6 +1488,8 @@ describe('createHsetupSystemTaskRegistry', () => {
       restoreEnvVar('HAPPIER_TAILSCALE_BIN', previousTailscaleBin);
       restoreEnvVar('HAPPIER_FAKE_TAILSCALE_STATE_PATH', previousStatePath);
       restoreEnvVar('HAPPIER_FAKE_TAILSCALE_LOG_PATH', previousLogPath);
+      restoreEnvVar('HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS', previousPollTimeout);
+      restoreEnvVar('HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS', previousPollInterval);
       fakeCli.cleanup();
     }
   });

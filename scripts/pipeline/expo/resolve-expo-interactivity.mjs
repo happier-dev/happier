@@ -22,7 +22,9 @@ export function normalizeInteractiveOverride(value) {
  */
 export function resolveExpoInteractivity(opts = {}) {
   const env = opts.env ?? process.env;
-  const isCi = String(env.CI ?? '').trim().toLowerCase() === 'true' || String(env.GITHUB_ACTIONS ?? '').trim() === 'true';
+  // We intentionally key off `CI=true` rather than `GITHUB_ACTIONS=true` so contract tests can
+  // simulate local behavior inside GitHub Actions by setting `CI=''` for child processes.
+  const isCi = String(env.CI ?? '').trim().toLowerCase() === 'true';
   const hasInteractiveTty = Boolean(opts.stdinIsTty ?? process.stdin.isTTY) && Boolean(opts.stdoutIsTty ?? process.stdout.isTTY);
   const defaultMode = opts.defaultMode === 'non-interactive' ? 'non-interactive' : 'tty';
   const interactiveOverride = normalizeInteractiveOverride(opts.interactiveOverride);
@@ -31,6 +33,26 @@ export function resolveExpoInteractivity(opts = {}) {
   const forceNonInteractive = rawOverride === '0' || rawOverride === 'false';
 
   if (isCi) {
+    // CI defaults to non-interactive, but we still allow explicit overrides so local
+    // contract tests (and rare manual CI runs) can exercise interactive code paths.
+    if (interactiveOverride === 'true' || forceInteractive) {
+      return {
+        isCi,
+        hasInteractiveTty,
+        nonInteractive: false,
+        source: interactiveOverride === 'true' ? 'ci-arg-force-interactive' : 'ci-env-force-interactive',
+      };
+    }
+
+    if (interactiveOverride === 'false' || forceNonInteractive) {
+      return {
+        isCi,
+        hasInteractiveTty,
+        nonInteractive: true,
+        source: interactiveOverride === 'false' ? 'ci-arg-force-non-interactive' : 'ci-env-force-non-interactive',
+      };
+    }
+
     return {
       isCi,
       hasInteractiveTty,

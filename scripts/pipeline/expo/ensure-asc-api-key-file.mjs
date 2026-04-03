@@ -12,7 +12,11 @@ function fail(message) {
  * @returns {string}
  */
 export function normalizeAscPrivateKeyPem(raw) {
-  const trimmed = String(raw ?? '').trim();
+  const trimmedRaw = String(raw ?? '').trim();
+  // Key material is often stored in env vars with literal "\n" sequences.
+  // Convert those into real newlines so OpenSSL / fastlane can parse the PEM.
+  const trimmed =
+    trimmedRaw.includes('\\n') && !trimmedRaw.includes('\n') ? trimmedRaw.replace(/\\n/g, '\n').trim() : trimmedRaw;
   if (!trimmed) fail('Missing App Store Connect private key.');
 
   if (/BEGIN PRIVATE KEY/.test(trimmed)) {
@@ -22,7 +26,9 @@ export function normalizeAscPrivateKeyPem(raw) {
   // Some operators store the .p8 PEM as base64 in env vars for easier transport.
   // If no PEM headers are present, treat the value as base64 and decode it.
   try {
-    const decoded = Buffer.from(trimmed, 'base64').toString('utf8').trim();
+    const decodedRaw = Buffer.from(trimmed, 'base64').toString('utf8').trim();
+    const decoded =
+      decodedRaw.includes('\\n') && !decodedRaw.includes('\n') ? decodedRaw.replace(/\\n/g, '\n').trim() : decodedRaw;
     if (!/BEGIN PRIVATE KEY/.test(decoded)) {
       fail('App Store Connect private key did not contain PEM headers after base64 decoding.');
     }
@@ -52,4 +58,3 @@ export function ensureAscApiKeyFile(opts) {
   fs.writeFileSync(outPath, pem, { encoding: 'utf8', mode: 0o600 });
   return outPath;
 }
-

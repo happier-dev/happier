@@ -26,7 +26,8 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
             maestroStubPath,
             [
                 '#!/usr/bin/env sh',
-                'set -euo pipefail',
+                // `/bin/sh` is `dash` on Ubuntu and does not support `pipefail`.
+                'set -eu',
                 'if [ -n "${MAESTRO_ARGS_LOG_PATH:-}" ]; then',
                 '  printf "%s\\n" "$@" > "$MAESTRO_ARGS_LOG_PATH"',
                 'fi',
@@ -97,7 +98,8 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
             maestroStubPath,
             [
                 '#!/usr/bin/env sh',
-                'set -euo pipefail',
+                // `/bin/sh` is `dash` on Ubuntu and does not support `pipefail`.
+                'set -eu',
                 'if [ -n "${MAESTRO_ARGS_LOG_PATH:-}" ]; then',
                 '  printf "%s\\n" "$@" > "$MAESTRO_ARGS_LOG_PATH"',
                 'fi',
@@ -114,7 +116,8 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
             adbStubPath,
             [
                 '#!/usr/bin/env sh',
-                'set -euo pipefail',
+                // `/bin/sh` is `dash` on Ubuntu and does not support `pipefail`.
+                'set -eu',
                 'if [ -n "${ADB_ARGS_LOG_PATH:-}" ]; then',
                 '  printf "%s\\n" "$@" >> "$ADB_ARGS_LOG_PATH"',
                 'fi',
@@ -144,6 +147,9 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
                 cwd: scratch,
                 env: {
                     ...process.env,
+                    // Some CI lanes set a device-host override for real device runs; this unit test
+                    // must remain self-contained and validate the adb-reverse loopback behavior.
+                    HAPPIER_E2E_MOBILE_DEVICE_HOST: '',
                     HAPPIER_E2E_MAESTRO_BIN: maestroStubPath,
                     HAPPIER_E2E_ADB_BIN: adbStubPath,
                     HAPPIER_E2E_ANDROID_ADB_REVERSE: '1',
@@ -200,7 +206,8 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
             maestroStubPath,
             [
                 '#!/usr/bin/env sh',
-                'set -euo pipefail',
+                // `/bin/sh` is `dash` on Ubuntu and does not support `pipefail`.
+                'set -eu',
                 `exec node "${maestroStubJsPath}" "$@"`,
                 '',
             ].join('\n'),

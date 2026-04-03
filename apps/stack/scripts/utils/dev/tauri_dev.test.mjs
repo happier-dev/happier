@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   buildStackTauriDevProcessInvocation,
   buildTauriDevInvocation,
@@ -9,6 +11,10 @@ import {
   resolveTauriDevUrl,
 } from './tauri_dev.mjs';
 import { getDefaultAutostartPaths } from '../paths/paths.mjs';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const repoRootDir = resolve(join(__dirname, '../../../../..'));
+const stackRootDir = join(repoRootDir, 'apps', 'stack');
 
 function splitPathEntries(pathValue) {
   return String(pathValue ?? '')
@@ -45,9 +51,7 @@ test('buildTauriDevInvocation disables beforeDevCommand and reuses the existing 
 });
 
 test('buildStackTauriDevProcessInvocation launches tauri from apps/ui/src-tauri with the repo-local binary', () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
-  const repoRoot = '/Users/leeroy/Documents/Development/happier/dev';
-  const expectedTauriEntrypoint = `${repoRoot}/node_modules/@tauri-apps/cli/tauri.js`;
+  const expectedTauriEntrypoint = join(repoRootDir, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
 
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
@@ -76,11 +80,10 @@ test('buildStackTauriDevProcessInvocation launches tauri from apps/ui/src-tauri 
       devUrl: 'http://localhost:8081',
     },
   });
-  assert.equal(invocation.cwd, `${repoRoot}/apps/ui/src-tauri`);
+  assert.equal(invocation.cwd, join(repoRootDir, 'apps', 'ui', 'src-tauri'));
 });
 
 test('buildStackTauriDevProcessInvocation scopes the cargo target directory to the active stack', () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const stackName = 'codex-bootstrap-qa-24534';
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
@@ -104,15 +107,13 @@ test('buildStackTauriDevProcessInvocation scopes the cargo target directory to t
 });
 
 test('buildStackTauriDevProcessInvocation uses the explicitly resolved UI dir even when stack env points elsewhere', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
-  const repoRoot = '/Users/leeroy/Documents/Development/happier/dev';
-  const explicitUiDir = `${repoRoot}/apps/ui`;
-  const expectedTauriEntrypoint = `${repoRoot}/node_modules/@tauri-apps/cli/tauri.js`;
+  const explicitUiDir = join(repoRootDir, 'apps', 'ui');
+  const expectedTauriEntrypoint = join(repoRootDir, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
   const fakeRepo = await mkdir(`${tmpdir()}/happier-tauri-bad-repo-${Date.now()}`, { recursive: true });
 
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
-    repoRootDir: repoRoot,
+    repoRootDir: repoRootDir,
     uiDir: explicitUiDir,
     env: {
       ...process.env,
@@ -127,12 +128,11 @@ test('buildStackTauriDevProcessInvocation uses the explicitly resolved UI dir ev
     },
   });
 
-  assert.equal(invocation.cwd, `${explicitUiDir}/src-tauri`);
+  assert.equal(invocation.cwd, join(explicitUiDir, 'src-tauri'));
   assert.equal(invocation.args[0], expectedTauriEntrypoint);
 });
 
 test('buildStackTauriDevProcessInvocation prepends the cargo bin directory when cargo is outside PATH', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const cargoHome = await mkdir(`${tmpdir()}/happier-tauri-cargo-${Date.now()}`, { recursive: true });
   const cargoBinDir = `${cargoHome}/bin`;
   await mkdir(cargoBinDir, { recursive: true });
@@ -164,7 +164,6 @@ test('buildStackTauriDevProcessInvocation prepends the cargo bin directory when 
 });
 
 test('buildStackTauriDevProcessInvocation detects cargo under the real user home when HOME is stack-isolated', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-realhome-${Date.now()}`, { recursive: true });
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-isolatedhome-${Date.now()}`, { recursive: true });
   const cargoBinDir = `${realHome}/.cargo/bin`;
@@ -201,7 +200,6 @@ test('buildStackTauriDevProcessInvocation detects cargo under the real user home
 });
 
 test('buildStackTauriDevProcessInvocation prefers cargo under the resolved user home when HOME is isolated even if PATH contains a cargo shim', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-realhome-prefer-${Date.now()}`, { recursive: true });
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-isolatedhome-prefer-${Date.now()}`, { recursive: true });
   const realCargoBinDir = `${realHome}/.cargo/bin`;
@@ -240,7 +238,6 @@ test('buildStackTauriDevProcessInvocation prefers cargo under the resolved user 
 });
 
 test('buildStackTauriDevProcessInvocation exports rustup homes for the detected user cargo toolchain', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-rustup-home-${Date.now()}`, { recursive: true });
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-rustup-isolated-${Date.now()}`, { recursive: true });
   const cargoBinDir = `${realHome}/.cargo/bin`;
@@ -301,7 +298,6 @@ test('buildTauriRuntimeEnv infers rustup home when cargo comes from an explicit 
 });
 
 test('buildStackTauriDevProcessInvocation preserves the host PATH while keeping stack and cargo entries', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-host-path-home-${Date.now()}`, { recursive: true });
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-host-path-isolated-${Date.now()}`, { recursive: true });
   const cargoBinDir = `${realHome}/.cargo/bin`;
@@ -427,7 +423,6 @@ test('buildTauriRuntimeEnv overrides a non-path CARGO env var with the resolved 
 });
 
 test('buildStackTauriDevProcessInvocation fails fast with a friendly error when cargo is unavailable', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-missing-cargo-${Date.now()}`, { recursive: true });
   const originalPath = process.env.PATH;
 
@@ -466,7 +461,6 @@ test('buildStackTauriDevProcessInvocation rejects a cargo binary that cannot exe
     return;
   }
 
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const cargoHome = await mkdir(`${tmpdir()}/happier-tauri-broken-cargo-${Date.now()}`, { recursive: true });
   const cargoBinDir = `${cargoHome}/bin`;
   await mkdir(cargoBinDir, { recursive: true });

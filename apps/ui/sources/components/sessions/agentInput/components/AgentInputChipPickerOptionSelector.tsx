@@ -15,6 +15,11 @@ import type {
   AgentInputChipPickerOptionSection,
 } from "./AgentInputChipPickerTypes";
 
+type WebHoverablePressableState = Readonly<{
+  pressed: boolean;
+  hovered?: boolean;
+}>;
+
 export type AgentInputChipPickerOptionSelectorProps = Readonly<{
   sections: ReadonlyArray<AgentInputChipPickerOptionSection>;
   focusedOptionId: string | null;
@@ -97,20 +102,25 @@ function AgentInputChipPickerOptionButton(
       accessibilityRole="button"
       accessibilityLabel={props.option.label}
       onPress={props.onPress}
-      style={({ pressed, hovered }) => [
-        styles.optionRow,
-        props.compact ? styles.optionRowCompact : null,
-        Platform.OS === "web"
-          && hovered
-          && !props.focused
-          && !props.option.disabled
-          && !props.option.muted
-          ? styles.optionRowHovered
-          : null,
-        props.focused ? styles.optionRowFocused : null,
-        pressed ? styles.optionRowPressed : null,
-        (props.option.disabled || props.option.muted) ? styles.optionRowDisabled : null,
-      ]}
+      style={(state) => {
+        const { pressed } = state;
+        // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
+        const hovered = (state as WebHoverablePressableState).hovered === true;
+        return [
+          styles.optionRow,
+          props.compact ? styles.optionRowCompact : null,
+          Platform.OS === "web"
+            && hovered
+            && !props.focused
+            && !props.option.disabled
+            && !props.option.muted
+            ? styles.optionRowHovered
+            : null,
+          props.focused ? styles.optionRowFocused : null,
+          pressed ? styles.optionRowPressed : null,
+          (props.option.disabled || props.option.muted) ? styles.optionRowDisabled : null,
+        ];
+      }}
     >
       <View style={styles.optionLeft}>
         {props.option.icon ? (

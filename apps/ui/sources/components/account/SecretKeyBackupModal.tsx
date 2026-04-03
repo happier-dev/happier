@@ -19,6 +19,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 16,
         gap: 12,
     },
+    footerContent: {
+        paddingHorizontal: 16,
+        paddingTop: 12,
+        paddingBottom: 16,
+        alignItems: 'stretch',
+    },
     description: {
         fontSize: 14,
         color: theme.colors.textSecondary,
@@ -90,7 +96,9 @@ export function SecretKeyBackupModal(props: Props) {
     }, [formattedSecret]);
 
     const footer = React.useMemo(() => (
-        <RoundButton title={t('common.ok')} onPress={props.onClose} size="normal" />
+        <View style={styles.footerContent}>
+            <RoundButton title={t('common.ok')} onPress={props.onClose} size="normal" />
+        </View>
     ), [props.onClose]);
 
     const chrome = React.useMemo(() => ({

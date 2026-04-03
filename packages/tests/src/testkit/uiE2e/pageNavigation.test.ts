@@ -94,15 +94,22 @@ describe('gotoCommittedWithRetries', () => {
       throw new Error('page.goto: Timeout 90000ms exceeded.');
     });
 
-    const page = {
+    const waitForTimeout = vi.fn(async () => {});
+    type PageStub = {
+      goto: typeof goto;
+      waitForTimeout: typeof waitForTimeout;
+      url: () => string;
+    };
+
+    const page: PageStub = {
       goto,
-      waitForTimeout: vi.fn(async () => {}),
+      waitForTimeout,
       url: () => targetUrl,
     };
 
     const helper = (pageNavigation as Record<string, unknown>).gotoCommittedWithRetries;
     expect(helper).toBeTypeOf('function');
-    await expect((helper as (page: typeof page, url: string, timeoutMs?: number) => Promise<void>)(page, targetUrl)).resolves.toBeUndefined();
+    await expect((helper as (page: PageStub, url: string, timeoutMs?: number) => Promise<void>)(page, targetUrl)).resolves.toBeUndefined();
     expect(goto).toHaveBeenCalledTimes(1);
   });
 });

@@ -18,11 +18,15 @@ vi.mock('node:child_process', () => ({
   spawnSync,
 }));
 
-vi.mock('node:fs', () => ({
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    mkdirSync,
+    readFileSync,
+    writeFileSync,
+  };
+});
 
 vi.mock('@/auth/terminalAuthApproval', () => ({
   approveTerminalAuthRequest,

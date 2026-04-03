@@ -18,6 +18,7 @@ import { isEmbeddedBunBundlePath } from "@/runtime/js/isEmbeddedBunBundlePath";
 import { resolveWindowsCommandInvocation, type CommandInvocation } from '@happier-dev/cli-common/process';
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
 import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from '@happier-dev/protocol';
+import { configuration } from '@/configuration';
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -347,16 +348,89 @@ export async function claudeLocal(opts: {
 
             const child = spawn(invocation.command, invocation.args, {
                 stdio: shouldUseNodeLauncher ? ['inherit', 'inherit', 'inherit', 'pipe'] : ['inherit', 'inherit', 'inherit', 'ignore'],
-                signal: opts.abort,
                 cwd: opts.path,
                 env,
                 windowsHide: true,
                 ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
             });
 
+            // Prefer a graceful shutdown path when the launcher is aborted (mode switching, UI takeover).
+            // Node's `signal:` AbortSignal option would immediately SIGTERM the child; that can leave
+            // Claude transcripts in a less resumable state (and may cause resume to fail under Agent SDK).
+            // Instead: send SIGINT first, then escalate if needed.
+            const abortFirstSignal: NodeJS.Signals = process.platform === 'win32' ? 'SIGTERM' : 'SIGINT';
+            const abortSecondSignal: NodeJS.Signals = 'SIGTERM';
+            const abortThirdSignal: NodeJS.Signals = 'SIGKILL';
+            const abortEscalateAfterMsRaw = configuration.claudeLocalAbortEscalateAfterMs;
+            const abortKillAfterMsRaw = configuration.claudeLocalAbortKillAfterMs;
+            const abortEscalateAfterMs =
+                Number.isFinite(abortEscalateAfterMsRaw) && abortEscalateAfterMsRaw > 0 ? abortEscalateAfterMsRaw : 0;
+            const abortKillAfterMs =
+                Number.isFinite(abortKillAfterMsRaw) && abortKillAfterMsRaw > 0 ? abortKillAfterMsRaw : 0;
+            const effectiveAbortKillAfterMs =
+                abortKillAfterMs > 0 && abortEscalateAfterMs > 0 ? Math.max(abortKillAfterMs, abortEscalateAfterMs + 1) : abortKillAfterMs;
+
+            let abortTeardownRequested = false;
+            let abortEscalateTimer: NodeJS.Timeout | null = null;
+            let abortKillTimer: NodeJS.Timeout | null = null;
+            const clearAbortTimers = () => {
+                if (abortEscalateTimer) {
+                    clearTimeout(abortEscalateTimer);
+                    abortEscalateTimer = null;
+                }
+                if (abortKillTimer) {
+                    clearTimeout(abortKillTimer);
+                    abortKillTimer = null;
+                }
+            };
+
+            let abortListenerAttached = false;
+            const abortListener = () => {
+                abortTeardownRequested = true;
+                if (!child.pid || child.killed) return;
+                try {
+                    child.kill(abortFirstSignal);
+                } catch {
+                    // ignore
+                }
+
+                clearAbortTimers();
+
+                if (abortEscalateAfterMs > 0) {
+                    abortEscalateTimer = setTimeout(() => {
+                        if (!child.pid || child.killed) return;
+                        try {
+                            child.kill(abortSecondSignal);
+                        } catch {
+                            // ignore
+                        }
+                    }, abortEscalateAfterMs);
+                    abortEscalateTimer.unref?.();
+                }
+
+                if (effectiveAbortKillAfterMs > 0) {
+                    abortKillTimer = setTimeout(() => {
+                        if (!child.pid || child.killed) return;
+                        try {
+                            child.kill(abortThirdSignal);
+                        } catch {
+                            // ignore
+                        }
+                    }, effectiveAbortKillAfterMs);
+                    abortKillTimer.unref?.();
+                }
+            };
+
+            if (opts.abort.aborted) {
+                abortListener();
+            } else {
+                opts.abort.addEventListener('abort', abortListener, { once: true });
+                abortListenerAttached = true;
+            }
+
             // Forward signals to child process to prevent orphaned processes
-            // Note: signal: opts.abort handles programmatic abort (mode switching),
-            // but direct OS signals (e.g., kill, Ctrl+C) need explicit forwarding
+            // Note: we implement programmatic abort (AbortSignal) ourselves above to be graceful.
+            // Direct OS signals (e.g., kill, Ctrl+C) still need explicit forwarding.
             attachProcessSignalForwardingToChild(child);
 
             // Listen to the custom fd (fd 3) for thinking state tracking
@@ -430,9 +504,20 @@ export async function claudeLocal(opts: {
                 // Ignore
             });
             child.on('exit', (code, signal) => {
-                if (opts.abort.aborted && (signal === 'SIGTERM' || code === 143)) {
-                    // Normal termination due to abort signal.
-                    // Some runtimes surface SIGTERM as exit code 143 instead of `signal`.
+                if (abortListenerAttached) {
+                    try {
+                        opts.abort.removeEventListener('abort', abortListener);
+                    } catch {
+                        // ignore
+                    }
+                    abortListenerAttached = false;
+                }
+                clearAbortTimers();
+
+                if (abortTeardownRequested) {
+                    // Normal termination due to programmatic abort teardown (switching modes / UI takeover).
+                    // Do not treat exit codes as fatal while aborting: vendor CLIs sometimes exit with non-zero
+                    // after SIGINT/SIGTERM even when shutdown is intentional.
                     r();
                 } else if (signal) {
                     reject(new Error(`Process terminated with signal: ${signal}`));

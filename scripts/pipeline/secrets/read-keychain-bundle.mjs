@@ -2,6 +2,8 @@
 
 import { execFileSync } from 'node:child_process';
 
+import { assertSecurityCliAvailable } from './security-cli.mjs';
+
 /**
  * Reads the Keychain bundle secret for the pipeline.
  *
@@ -9,6 +11,8 @@ import { execFileSync } from 'node:child_process';
  * @returns {Record<string, string>}
  */
 export function readKeychainBundle({ service, account }) {
+  assertSecurityCliAvailable();
+
   const args = ['find-generic-password', '-s', service, '-w'];
   if (account) args.push('-a', account);
 
@@ -35,4 +39,3 @@ export function readKeychainBundle({ service, account }) {
   }
   return out;
 }
-

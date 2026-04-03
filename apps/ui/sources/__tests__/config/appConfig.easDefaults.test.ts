@@ -65,7 +65,7 @@ describe('app.config.js', () => {
         expect(exp.extra?.app?.identityVariant).toBe('internaldev');
         expect(exp.owner).toBe('happier-dev');
         expect(exp.slug).toBe('happier');
-        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.internaldev');
+        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.dev.internal');
         expect(exp.android?.package).toBe('dev.happier.app.internaldev');
         expect(exp.scheme).toBe('happier-internaldev');
     });
@@ -153,9 +153,25 @@ describe('app.config.js', () => {
         expect(envValue).toBe('production');
     });
 
-    it('uses Expo fingerprint runtime policy so OTA compatibility follows native-compatible changes', () => {
+    it('uses Expo fingerprint runtime policy by default for internal/non-store lanes', () => {
         const exp = withCleanEnv(() => getPublicConfig());
         expect(exp.runtimeVersion).toEqual({ policy: 'fingerprint' });
+    });
+
+    it('uses Expo appVersion runtime policy for preview lane OTA updates', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'preview';
+            return getPublicConfig();
+        });
+        expect(exp.runtimeVersion).toEqual({ policy: 'appVersion' });
+    });
+
+    it('uses Expo appVersion runtime policy for production lane OTA updates', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'production';
+            return getPublicConfig();
+        });
+        expect(exp.runtimeVersion).toEqual({ policy: 'appVersion' });
     });
 
     it('uses EXPO_PUBLIC_EAS_PROJECT_ID with highest precedence for updates linkage', () => {

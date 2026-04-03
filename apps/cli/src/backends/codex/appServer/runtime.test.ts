@@ -425,14 +425,6 @@ describe('createCodexAppServerRuntime', () => {
                         id: 'gpt-5.4',
                         modelOptions: expect.arrayContaining([
                             expect.objectContaining({ id: 'reasoning_effort', currentValue: 'medium' }),
-                            expect.objectContaining({
-                                id: 'service_tier',
-                                currentValue: 'standard',
-                                options: expect.arrayContaining([
-                                    expect.objectContaining({ value: 'standard', name: 'Standard' }),
-                                    expect.objectContaining({ value: 'fast', name: 'Fast' }),
-                                ]),
-                            }),
                         ]),
                     }),
                 ]),
@@ -1323,27 +1315,14 @@ describe('createCodexAppServerRuntime', () => {
                 configOptions: [],
             }),
         });
-        expect((latestMetadata as Record<string, unknown>)[SESSION_MODELS_STATE_KEY]).toEqual(
-            expect.objectContaining({
-                currentModelId: 'gpt-5.4',
-                availableModels: expect.arrayContaining([
-                    expect.objectContaining({
-                        id: 'gpt-5.4',
-                        modelOptions: expect.arrayContaining([
-                            expect.objectContaining({ id: 'reasoning_effort', currentValue: 'high' }),
-                            expect.objectContaining({
-                                id: 'service_tier',
-                                currentValue: 'fast',
-                                options: expect.arrayContaining([
-                                    expect.objectContaining({ value: 'standard', name: 'Standard' }),
-                                    expect.objectContaining({ value: 'fast', name: 'Fast' }),
-                                ]),
-                            }),
-                        ]),
-                    }),
-                ]),
-            }),
-        );
+        const modelsState = (latestMetadata as Record<string, unknown>)[SESSION_MODELS_STATE_KEY] as any;
+        expect(modelsState).toMatchObject({ currentModelId: 'gpt-5.4' });
+        const availableModels = Array.isArray(modelsState?.availableModels) ? modelsState.availableModels : [];
+        const gptModel = availableModels.find((model: any) => model && model.id === 'gpt-5.4');
+        expect(gptModel).toBeTruthy();
+        const modelOptions = Array.isArray(gptModel?.modelOptions) ? gptModel.modelOptions : [];
+        const byId = (id: string) => modelOptions.find((opt: any) => opt && opt.id === id);
+        expect(byId('reasoning_effort')?.currentValue).toBe('high');
         expect(updateMetadata.mock.results.map((entry) => entry.value)).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ codexSessionId: 'thread-started' }),

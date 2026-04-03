@@ -232,6 +232,34 @@ describe('claudeRemote', () => {
     expect(call?.options?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
   });
 
+  it('exposes a turn interrupt handler that calls the underlying query interrupt()', async () => {
+    const interrupt = vi.fn(async () => {});
+    let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+
+    mockQuery.mockReturnValue({
+      async *[Symbol.asyncIterator]() {
+        yield resultMessage();
+      },
+      interrupt,
+    } as any);
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    await claudeRemote(
+      createBaseOptions({
+        setTurnInterrupt: (next: (() => Promise<void>) | null) => {
+          if (next) capturedTurnInterrupt = next;
+        },
+      } as any),
+    );
+
+    if (!capturedTurnInterrupt) {
+      throw new Error('Expected claudeRemote to register a turn interrupt handler');
+    }
+    await (capturedTurnInterrupt as unknown as () => Promise<void>)();
+    expect(interrupt).toHaveBeenCalled();
+  });
+
   it('forwards --setting-sources when claudeRemoteSettingSourcesV2 selects a subset', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 

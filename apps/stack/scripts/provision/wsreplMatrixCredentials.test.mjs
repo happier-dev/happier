@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import {
   buildServerProfilesSeedEntries,
   buildTokenStorageCredentialKeys,
-} from '../../../../.project/scripts/qa/wsreplMatrixCredentials.mjs';
+} from '../../../../scripts/qa/wsreplMatrixCredentials.mjs';
 
 function sha256Base64Url(value) {
   const hash = crypto.createHash('sha256').update(String(value ?? ''), 'utf8').digest();

@@ -3,9 +3,13 @@ import { existsSync } from 'node:fs';
 
 import { resolvePackagedRuntimeEntrypoint } from './resolvePackagedRuntimeEntrypoint';
 
-vi.mock('node:fs', () => ({
-    existsSync: vi.fn(() => false),
-}));
+vi.mock('node:fs', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return {
+        ...actual,
+        existsSync: vi.fn(() => false),
+    };
+});
 
 vi.mock('@/projectPath', () => ({
     projectPath: () => '/repo',

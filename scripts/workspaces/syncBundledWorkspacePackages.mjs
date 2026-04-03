@@ -33,6 +33,55 @@ function sanitizeBundledPackageJsonFallback(raw) {
   };
 }
 
+function collectPackageJsonRelativeFileTargets(value, result) {
+  if (typeof value === 'string') {
+    if (value.startsWith('./') && !value.includes('*')) {
+      result.add(value.slice(2));
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectPackageJsonRelativeFileTargets(item, result);
+    return;
+  }
+  for (const nested of Object.values(value)) collectPackageJsonRelativeFileTargets(nested, result);
+}
+
+function syncBundledWorkspaceReferencedFiles({ srcPackageDir, destPackageDir, packageJsonRaw, fsOps = {} }) {
+  const exists = fsOps.existsSync ?? existsSync;
+  const cp = fsOps.cpSync ?? cpSync;
+  const mkdir = fsOps.mkdirSync ?? mkdirSync;
+  const stat = fsOps.statSync ?? statSync;
+
+  const relativeTargets = new Set();
+  collectPackageJsonRelativeFileTargets(packageJsonRaw?.main, relativeTargets);
+  collectPackageJsonRelativeFileTargets(packageJsonRaw?.module, relativeTargets);
+  collectPackageJsonRelativeFileTargets(packageJsonRaw?.types, relativeTargets);
+  collectPackageJsonRelativeFileTargets(packageJsonRaw?.exports, relativeTargets);
+
+  for (const relPath of relativeTargets) {
+    // `dist/**` is synced separately with extra staging/atomicity; skip it here.
+    if (relPath.startsWith('dist/')) continue;
+
+    const srcPath = resolve(srcPackageDir, relPath);
+    if (!exists(srcPath)) continue;
+    const destPath = resolve(destPackageDir, relPath);
+
+    try {
+      mkdir(dirname(destPath), { recursive: true });
+      const stats = stat(srcPath);
+      if (stats.isDirectory()) {
+        cp(srcPath, destPath, { recursive: true, force: true });
+      } else {
+        cp(srcPath, destPath, { force: true });
+      }
+    } catch {
+      // Best-effort: keep local bundled deps usable even if extra file sync fails.
+    }
+  }
+}
+
 let sanitizeBundledPackageJsonImpl = sanitizeBundledPackageJsonFallback;
 let readBundledWorkspacePackageNamesImpl = null;
 
@@ -296,6 +345,12 @@ export function syncBundledWorkspacePackages(opts = {}) {
         const raw = JSON.parse(readFile(srcPackageJsonPath, 'utf8'));
         const sanitized = sanitizeBundledWorkspacePackageJson(raw);
         writeFile(destPackageJsonPath, `${JSON.stringify(sanitized, null, 2)}\n`, 'utf8');
+        syncBundledWorkspaceReferencedFiles({
+          srcPackageDir: dirname(srcPackageJsonPath),
+          destPackageDir,
+          packageJsonRaw: raw,
+          fsOps: { existsSync: exists, cpSync: cp, mkdirSync: mkdir, statSync },
+        });
       } catch {
         // Best-effort: keep local bundled deps usable even if package.json sync fails.
       }

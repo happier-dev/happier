@@ -425,12 +425,6 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="settings/channel-bridges"
-                options={{
-                    headerTitle: t('settings.channelBridges'),
-                }}
-            />
-            <Stack.Screen
                 name="settings/source-control"
                 options={{
                     headerTitle: t('navigation.sourceControl'),

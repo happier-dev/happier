@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { loadCliCommonDistModule } from '../../../../scripts/ensureCliCommonDistModule.mjs';
 import { listPublicReleaseRingCatalogEntries, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -74,8 +75,23 @@ export async function ensureCleanDir(path) {
 }
 
 export async function fileSha256(path) {
-  const bytes = await readFile(path);
-  return createHash('sha256').update(bytes).digest('hex');
+  const targetPath = String(path ?? '').trim();
+  // Release packaging often runs on developer machines where file providers (or aggressive AV) can
+  // briefly delay visibility of newly created archives. Treat ENOENT as a short, retryable condition.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      const bytes = await readFile(targetPath);
+      return createHash('sha256').update(bytes).digest('hex');
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code ?? '') : '';
+      if (code === 'ENOENT' && attempt < 9) {
+        await delay(50);
+        continue;
+      }
+      throw error;
+    }
+  }
+  // unreachable: loop always returns or throws
 }
 
 export async function createDeterministicArchive({ artifactPath, sourcePath, sourceName }) {
@@ -85,11 +101,49 @@ export async function createDeterministicArchive({ artifactPath, sourcePath, sou
     const stdout = String(version.stdout ?? '');
     _isGnuTar = stdout.includes('GNU tar');
   }
+  // AppleDouble metadata (files prefixed with `._`) can appear in staging directories (and can even be
+  // checked into repos). Always exclude them to keep archives deterministic and avoid shipping junk.
+  const excludeArgs = [
+    '--exclude=._*',
+    '--exclude=*/._*',
+    // @prisma/client includes a nested node_modules used for tooling shims. It is not required at runtime,
+    // and excluding it avoids flaky tar walks when file providers or tooling mutate it during packaging.
+    '--exclude=*/node_modules/@prisma/client/node_modules',
+    '--exclude=*/node_modules/@prisma/client/node_modules/*',
+  ];
   if (_isGnuTar) {
-    execOrThrow('tar', ['--sort=name', '--mtime=@0', '--owner=0', '--group=0', '--numeric-owner', '-czf', artifactPath, '-C', sourcePath, sourceName]);
+    await execTarWithRetry([
+      '--sort=name',
+      '--mtime=@0',
+      '--owner=0',
+      '--group=0',
+      '--numeric-owner',
+      ...excludeArgs,
+      '-czf',
+      artifactPath,
+      '-C',
+      sourcePath,
+      sourceName,
+    ]);
     return;
   }
-  execOrThrow('tar', ['-czf', artifactPath, '-C', sourcePath, sourceName]);
+  await execTarWithRetry([...excludeArgs, '-czf', artifactPath, '-C', sourcePath, sourceName]);
+}
+
+async function execTarWithRetry(args) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      execOrThrow('tar', args);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt < 2 && message.includes('tar exited with status')) {
+        await delay(100 * (attempt + 1));
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 export async function writeChecksumsFile({ product, version, artifacts, outDir }) {
@@ -111,6 +165,7 @@ export async function maybeSignFile({ path, trustedComment = '' }) {
   }
   const preparedKey = await prepareMinisignSecretKeyFile(keyRaw);
   const sigPath = `${path}.minisig`;
+  const hasPassphrase = Object.prototype.hasOwnProperty.call(process.env, 'MINISIGN_PASSPHRASE');
   const passphrase = String(process.env.MINISIGN_PASSPHRASE ?? '');
   const keyPath = preparedKey.path;
   const args = ['-S', '-s', keyPath, '-m', path, '-x', sigPath];
@@ -120,7 +175,9 @@ export async function maybeSignFile({ path, trustedComment = '' }) {
   try {
     execOrThrow('minisign', args, {
       stdio: ['pipe', 'inherit', 'inherit'],
-      input: passphrase ? `${passphrase}\n` : undefined,
+      // Support empty passphrases (operators sometimes intentionally leave the key unencrypted).
+      // If the env var is present, always feed a newline to avoid minisign prompting/hanging.
+      input: hasPassphrase ? `${passphrase}\n` : undefined,
     });
   } finally {
     if (preparedKey.temp) {

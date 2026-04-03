@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
@@ -17,8 +18,17 @@ function resolveShortClaudeProjectId(resolvedWorkingDirectory: string): string {
   return `${shortDirectoryName}-${digest}`;
 }
 
-export function resolveClaudeProjectId(workingDirectory: string): string {
+function resolveWorkingDirectoryForClaudeProjectId(workingDirectory: string): string {
   const resolvedWorkingDirectory = resolve(workingDirectory);
+  try {
+    return realpathSync(resolvedWorkingDirectory);
+  } catch {
+    return resolvedWorkingDirectory;
+  }
+}
+
+export function resolveClaudeProjectId(workingDirectory: string): string {
+  const resolvedWorkingDirectory = resolveWorkingDirectoryForClaudeProjectId(workingDirectory);
   const projectId = sanitizeClaudeProjectId(resolvedWorkingDirectory);
   if (projectId.length <= CLAUDE_PROJECT_ID_MAX_LENGTH) {
     return projectId;

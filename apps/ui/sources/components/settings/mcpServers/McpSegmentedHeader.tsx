@@ -41,7 +41,7 @@ export const McpSegmentedHeader = React.memo(function McpSegmentedHeader(props: 
     );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     wrapper: {
         alignItems: 'center',
     },
@@ -72,4 +72,4 @@ const styles = StyleSheet.create({
     tabsContainer: {
         paddingHorizontal: 8,
     },
-});
+}));

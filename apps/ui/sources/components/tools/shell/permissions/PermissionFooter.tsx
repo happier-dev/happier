@@ -34,6 +34,110 @@ interface PermissionFooterProps {
     embedded?: boolean;
 }
 
+const stylesheet = StyleSheet.create((theme) => ({
+    container: {
+        justifyContent: 'center',
+        gap: 10,
+    },
+    containerEmbedded: {
+        paddingHorizontal: 0,
+        paddingVertical: 0,
+    },
+    containerStandalone: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
+    buttonContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 6,
+    },
+    button: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 8,
+        backgroundColor: 'transparent',
+        borderLeftWidth: 3,
+        borderLeftColor: 'transparent',
+        flexShrink: 1,
+        maxWidth: '100%',
+    },
+    buttonAllow: {
+        backgroundColor: 'transparent',
+    },
+    buttonDeny: {
+        backgroundColor: 'transparent',
+    },
+    buttonAllowAll: {
+        backgroundColor: 'transparent',
+    },
+    buttonSelected: {
+        backgroundColor: 'transparent',
+        borderLeftColor: theme.colors.text,
+    },
+    buttonInactive: {
+        opacity: 0.3,
+    },
+    buttonContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        minHeight: 18,
+        flexShrink: 1,
+    },
+    icon: {
+        marginRight: 2,
+    },
+    buttonText: {
+        fontSize: 13,
+        fontWeight: '400',
+        color: theme.colors.textSecondary,
+        flexShrink: 1,
+    },
+    buttonTextAllow: {
+        color: theme.colors.permissionButton.allow.background,
+        fontWeight: '500',
+    },
+    buttonTextDeny: {
+        color: theme.colors.permissionButton.deny.background,
+        fontWeight: '500',
+    },
+    buttonTextAllowAll: {
+        color: theme.colors.permissionButton.allowAll.background,
+        fontWeight: '500',
+    },
+    buttonTextSelected: {
+        color: theme.colors.text,
+        fontWeight: '500',
+    },
+    buttonForSession: {
+        backgroundColor: 'transparent',
+    },
+    buttonTextForSession: {
+        color: theme.colors.permissionButton.allowAll.background,
+        fontWeight: '500',
+    },
+    loadingIndicatorAllow: {
+        color: theme.colors.permissionButton.allow.background,
+    },
+    loadingIndicatorDeny: {
+        color: theme.colors.permissionButton.deny.background,
+    },
+    loadingIndicatorAllowAll: {
+        color: theme.colors.permissionButton.allowAll.background,
+    },
+    loadingIndicatorForSession: {
+        color: theme.colors.permissionButton.allowAll.background,
+    },
+    iconApproved: {
+        color: theme.colors.permissionButton.allow.background,
+    },
+    iconDenied: {
+        color: theme.colors.permissionButton.deny.background,
+    },
+}));
+
 export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     permission,
     sessionId,
@@ -45,6 +149,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     embedded = false,
 }) => {
     const { theme } = useUnistyles();
+    const styles = stylesheet;
     const [loadingButton, setLoadingButton] = useState<'allow' | 'deny' | 'abort' | null>(null);
     const [loadingAllEdits, setLoadingAllEdits] = useState(false);
     const [loadingForSession, setLoadingForSession] = useState(false);
@@ -498,109 +603,10 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const isCodexApprovedExecPolicy = isCodexDecision && isApproved && permission.decision === 'approved_execpolicy_amendment';
     const isCodexAborted = isCodexDecision && isDenied && permission.decision === 'abort';
 
-    //merge default styles with custom styles
-    const styles = StyleSheet.create({
-        container: {
-            justifyContent: 'center',
-            gap: 10,
-            paddingHorizontal: embedded ? 0 : 12,
-            paddingVertical: embedded ? 0 : 8,
-        },
-        buttonContainer: {
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            gap: 6,
-        },
-        button: {
-            paddingHorizontal: 10,
-            paddingVertical: 6,
-            borderRadius: 8,
-            backgroundColor: 'transparent',
-            borderLeftWidth: 3,
-            borderLeftColor: 'transparent',
-            flexShrink: 1,
-            maxWidth: '100%',
-        },
-        buttonAllow: {
-            backgroundColor: 'transparent',
-        },
-        buttonDeny: {
-            backgroundColor: 'transparent',
-        },
-        buttonAllowAll: {
-            backgroundColor: 'transparent',
-        },
-        buttonSelected: {
-            backgroundColor: 'transparent',
-            borderLeftColor: theme.colors.text,
-        },
-        buttonInactive: {
-            opacity: 0.3,
-        },
-        buttonContent: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 4,
-            minHeight: 18,
-            flexShrink: 1,
-        },
-        icon: {
-            marginRight: 2,
-        },
-        buttonText: {
-            fontSize: 13,
-            fontWeight: '400',
-            color: theme.colors.textSecondary,
-            flexShrink: 1,
-        },
-        buttonTextAllow: {
-            color: theme.colors.permissionButton.allow.background,
-            fontWeight: '500',
-        },
-        buttonTextDeny: {
-            color: theme.colors.permissionButton.deny.background,
-            fontWeight: '500',
-        },
-        buttonTextAllowAll: {
-            color: theme.colors.permissionButton.allowAll.background,
-            fontWeight: '500',
-        },
-        buttonTextSelected: {
-            color: theme.colors.text,
-            fontWeight: '500',
-        },
-        buttonForSession: {
-            backgroundColor: 'transparent',
-        },
-        buttonTextForSession: {
-            color: theme.colors.permissionButton.allowAll.background,
-            fontWeight: '500',
-        },
-        loadingIndicatorAllow: {
-            color: theme.colors.permissionButton.allow.background,
-        },
-        loadingIndicatorDeny: {
-            color: theme.colors.permissionButton.deny.background,
-        },
-        loadingIndicatorAllowAll: {
-            color: theme.colors.permissionButton.allowAll.background,
-        },
-        loadingIndicatorForSession: {
-            color: theme.colors.permissionButton.allowAll.background,
-        },
-        iconApproved: {
-            color: theme.colors.permissionButton.allow.background,
-        },
-        iconDenied: {
-            color: theme.colors.permissionButton.deny.background,
-        },
-    });
-
     // Render Codex-style decision buttons if the agent uses the Codex decision protocol.
     if (copy.protocol === 'codexDecision') {
         return (
-            <View style={styles.container}>
+            <View style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
                 <View style={styles.buttonContainer}>
                     {/* Decision protocol: Yes button */}
                     <TouchableOpacity
@@ -771,7 +777,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     })();
     const showAllowForSessionCommandName = isShellTool && typeof commandForShell === 'string' && commandForShell.length > 0 && Boolean(stripSimpleEnvPrelude(String(commandForShell)).split(/\s+/).filter(Boolean)[0]);
     return (
-            <View style={styles.container}>
+        <View style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
             <View style={styles.buttonContainer}>
                 <TouchableOpacity
                     testID="permission-footer.allow"

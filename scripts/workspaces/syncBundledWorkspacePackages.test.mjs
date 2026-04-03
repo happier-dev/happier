@@ -415,3 +415,39 @@ test('syncBundledWorkspacePackages preserves fresh staged sync directories owned
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test('syncBundledWorkspacePackages syncs non-dist exported file targets referenced by package.json', () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-sync-bundled-workspaces-extra-files-'));
+  try {
+    const srcPackageDir = resolve(repoRoot, 'packages', 'release-runtime');
+    const srcDist = resolve(srcPackageDir, 'dist');
+    const srcPackageJsonPath = resolve(srcPackageDir, 'package.json');
+    const srcExtra = resolve(srcPackageDir, 'releaseRings.cjs');
+
+    mkdirSync(srcDist, { recursive: true });
+    mkdirSync(resolve(repoRoot, 'apps', 'cli'), { recursive: true });
+    writeFileSync(resolve(srcDist, 'index.js'), 'export const ok = true;\n', 'utf8');
+    writeFileSync(srcExtra, 'module.exports = { ring: \"stable\" };\n', 'utf8');
+    writeFileSync(srcPackageJsonPath, JSON.stringify({
+      name: '@happier-dev/release-runtime',
+      version: '0.0.0',
+      type: 'module',
+      exports: {
+        '.': { default: './dist/index.js' },
+        './releaseRings': { require: './releaseRings.cjs', default: './dist/index.js' },
+      },
+    }));
+
+    syncBundledWorkspacePackages({
+      repoRoot,
+      packages: ['release-runtime'],
+      hostApps: ['cli'],
+    });
+
+    const destExtra = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'release-runtime', 'releaseRings.cjs');
+    assert.equal(existsSync(destExtra), true);
+    assert.equal(readFileSync(destExtra, 'utf8'), 'module.exports = { ring: \"stable\" };\n');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});

@@ -246,11 +246,10 @@ describe('claudeLocalLauncher', () => {
       throw new Error('pending queue inspection should not run for initial local startup');
     });
 
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     mockClaudeLocal.mockImplementationOnce(async () => {});
 
-    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const result = await claudeLocalLauncher(session);
-
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
@@ -672,5 +671,30 @@ describe('claudeLocalLauncher', () => {
         message: expect.any(String),
       }),
     );
+  });
+
+  it('auto-discards queued messages in provider/e2e mode without prompting, then continues into local mode', async () => {
+    const { session } = createLocalHarness();
+
+    const prev = process.env.HAPPIER_E2E_PROVIDERS;
+    process.env.HAPPIER_E2E_PROVIDERS = '1';
+    try {
+      Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+      Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+
+      // Default readlineAnswer is 'n' in this suite; if we still prompt, we'd decline and not start.
+      session.queue.push('hello from app', defaultMode);
+
+      mockClaudeLocal.mockImplementationOnce(async () => {});
+
+      const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+      const result = await claudeLocalLauncher(session, { entry: 'switch' });
+
+      expect(result).toEqual({ type: 'exit', code: 0 });
+      expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+      expect(session.queue.size()).toBe(0);
+    } finally {
+      process.env.HAPPIER_E2E_PROVIDERS = prev;
+    }
   });
 });

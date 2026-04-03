@@ -9,7 +9,7 @@ import {
   resolveServerPortFromUiUrl,
   resolveStackCliAccessKeyCandidates,
   resolveStackNameFromServerPort,
-} from '../../../../.project/scripts/qa/resolveStackAuthPaths.mjs';
+} from '../../../../scripts/qa/resolveStackAuthPaths.mjs';
 
 test('resolveServerPortFromUiUrl extracts server port from server= query param', () => {
   const uiUrl = 'http://localhost:19364/?server=http%3A%2F%2Flocalhost%3A53288&happier_hmr=0';

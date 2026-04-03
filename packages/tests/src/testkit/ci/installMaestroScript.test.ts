@@ -29,7 +29,8 @@ describe('scripts/ci/install_maestro.sh', () => {
             maestroBin,
             [
                 '#!/usr/bin/env sh',
-                'set -euo pipefail',
+                // `/bin/sh` is `dash` on Ubuntu and does not support `pipefail`.
+                'set -eu',
                 'script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
                 'if [ ! -f "$script_dir/../lib/marker.txt" ]; then',
                 '  echo "missing-marker" >&2',
@@ -83,7 +84,8 @@ describe('scripts/ci/install_maestro.sh', () => {
             maestroBin,
             [
                 '#!/usr/bin/env sh',
-                'set -euo pipefail',
+                // `/bin/sh` is `dash` on Ubuntu and does not support `pipefail`.
+                'set -eu',
                 'script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
                 'if [ ! -f "$script_dir/../lib/marker.txt" ]; then',
                 '  echo "missing-marker" >&2',

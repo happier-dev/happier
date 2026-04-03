@@ -330,7 +330,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
   );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
   codeRow: {
     borderWidth: 1,
     borderRadius: 12,
@@ -357,4 +357,4 @@ const styles = StyleSheet.create({
   copyButtonText: {
     fontSize: 12,
   },
-});
+}));

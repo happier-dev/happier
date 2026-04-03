@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
+import { resolveClaudeProjectId } from '../utils/path';
 
 const ORIGINAL_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
 const { ensureJavaScriptRuntimeExecutableMock } = vi.hoisted(() => ({
@@ -132,6 +133,62 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.allowedTools).toBeUndefined();
     });
 
+    it('passes debug and verbose flags via extraArgs when enabled', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return {
+                message: 'hello',
+                mode: makeMode({
+                    permissionMode: 'default',
+                    claudeRemoteDebugEnabled: true,
+                    claudeRemoteVerboseEnabled: true,
+                    claudeRemoteDebugCategories: ['mcp', 'api', 'bogus', 'file'],
+                } as any),
+            };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions).toBeTruthy();
+        // Debug categories normalized to stable order, invalid dropped.
+        expect(capturedOptions.extraArgs).toMatchObject({
+            debug: 'api,mcp,file',
+            verbose: null,
+        });
+    });
+
     it('passes effort when the mode specifies a reasoningEffort', async () => {
         let capturedOptions: any = null;
 
@@ -178,6 +235,346 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions).toBeTruthy();
         expect(capturedOptions.model).toBe('claude-opus-4-6');
         expect(capturedOptions.effort).toBe('max');
+    });
+
+    it('exposes a turn interrupt handler that stops the active task via query.stopTask()', async () => {
+        const stopTask = vi.fn(async (_taskId: string) => {});
+        let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+        let resolveFinish: (() => void) | null = null;
+        const finish = new Promise<void>((resolve) => {
+            resolveFinish = () => resolve();
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'system', subtype: 'task_started', task_id: 'task_1' } as any;
+                    await finish;
+                    yield { type: 'result' } as any;
+                },
+                stopTask,
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            setTurnInterrupt: (next: (() => Promise<void>) | null) => {
+                if (next) capturedTurnInterrupt = next;
+            },
+            createQuery,
+        } as any);
+
+        for (let i = 0; i < 50 && !capturedTurnInterrupt; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((r) => setTimeout(r, 5));
+        }
+        if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
+        expect(stopTask).toHaveBeenCalledWith('task_1');
+        (resolveFinish as unknown as (() => void) | null)?.();
+        await runnerPromise;
+    });
+
+    it('does not emit duplicate assistant text after stopTask interrupt when streamed text already covered it', async () => {
+        const stopTask = vi.fn(async (_taskId: string) => {});
+        let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+
+        const assistantText = 'hello';
+        const emittedMessages: any[] = [];
+        let writerClosed = false;
+
+        let resolveAfterTaskStarted: (() => void) | null = null;
+        const afterTaskStarted = new Promise<void>((resolve) => {
+            resolveAfterTaskStarted = () => resolve();
+        });
+
+        let resolveContinue: (() => void) | null = null;
+        const continueIterator = new Promise<void>((resolve) => {
+            resolveContinue = () => resolve();
+        });
+
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(async () => {}),
+            appendThinkingDelta: vi.fn(async () => {}),
+            overrideAssistantText: vi.fn((text: string) => !writerClosed && text === assistantText),
+            overrideThinkingText: vi.fn(() => false),
+            flushAll: vi.fn(async (params: { reason: string }) => {
+                if (params.reason === 'abort') writerClosed = true;
+            }),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        event: { type: 'content_block_start', content_block: { type: 'text', text: assistantText } },
+                    } as any;
+
+                    yield { type: 'system', subtype: 'task_started', task_id: 'task_1' } as any;
+                    resolveAfterTaskStarted?.();
+                    await continueIterator;
+
+                    yield {
+                        type: 'assistant',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        message: { role: 'assistant', content: [{ type: 'text', text: assistantText }] },
+                    } as any;
+
+                    yield { type: 'system', subtype: 'task_notification', task_id: 'task_1', status: 'stopped' } as any;
+                    yield { type: 'result' } as any;
+                },
+                stopTask,
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: (message: any) => emittedMessages.push(message),
+            streamedTranscriptWriter,
+            setTurnInterrupt: (next: (() => Promise<void>) | null) => {
+                if (next) capturedTurnInterrupt = next;
+            },
+            createQuery,
+        } as any);
+
+        for (let i = 0; i < 50 && !capturedTurnInterrupt; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((r) => setTimeout(r, 5));
+        }
+        if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+
+        await afterTaskStarted;
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
+        expect(stopTask).toHaveBeenCalledWith('task_1');
+
+        (resolveContinue as unknown as (() => void) | null)?.();
+        await runnerPromise;
+
+        const assistantMessagesWithText = emittedMessages.filter(
+            (msg) =>
+                msg &&
+                typeof msg === 'object' &&
+                msg.type === 'assistant' &&
+                Array.isArray((msg as any).message?.content) &&
+                (msg as any).message.content.some((b: any) => b?.type === 'text' && typeof b?.text === 'string' && b.text.length > 0),
+        );
+        expect(assistantMessagesWithText).toHaveLength(0);
+    });
+
+    it('does not emit buffered assistant text on AgentSdkAbortError when streamed transcript writer is present', async () => {
+        const { AbortError: AgentSdkAbortError } = await import('@anthropic-ai/claude-agent-sdk');
+
+        const assistantText = 'hello from stream events';
+        const emittedMessages: any[] = [];
+
+        const streamedTranscriptWriter = {
+            appendAssistantDelta: vi.fn(async () => {}),
+            appendThinkingDelta: vi.fn(async () => {}),
+            overrideAssistantText: vi.fn(() => true),
+            overrideThinkingText: vi.fn(() => true),
+            flushAll: vi.fn(async () => {}),
+        };
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        session_id: '',
+                        parent_tool_use_id: null,
+                        event: { type: 'content_block_start', content_block: { type: 'text', text: assistantText } },
+                    } as any;
+
+                    throw new AgentSdkAbortError();
+                },
+                stopTask: vi.fn(async () => {}),
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: (message: any) => emittedMessages.push(message),
+            streamedTranscriptWriter,
+            createQuery,
+        } as any);
+
+        const assistantMessagesWithText = emittedMessages.filter(
+            (msg) =>
+                msg &&
+                typeof msg === 'object' &&
+                msg.type === 'assistant' &&
+                Array.isArray((msg as any).message?.content) &&
+                (msg as any).message.content.some((b: any) => b?.type === 'text' && typeof b?.text === 'string' && b.text.length > 0),
+        );
+        expect(assistantMessagesWithText).toHaveLength(0);
+    });
+
+    it('repairs transcript on turn interrupt even when sessionId is discovered at runtime', async () => {
+        const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-interrupt-repair-'));
+        process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+
+        const workDir = await mkdtemp(join(tmpdir(), 'happier-claude-interrupt-repair-workdir-'));
+        const projectDir = join(claudeConfigDir, 'projects', resolveClaudeProjectId(workDir));
+        const transcriptPath = join(projectDir, 'sess_1.jsonl');
+        await mkdir(projectDir, { recursive: true });
+
+        await writeFile(
+            transcriptPath,
+            JSON.stringify({
+                type: 'assistant',
+                uuid: 'asst_1',
+                isSidechain: false,
+                message: {
+                    role: 'assistant',
+                    content: [
+                        {
+                            type: 'tool_use',
+                            id: 'toolu_1',
+                            name: 'Bash',
+                            input: { command: 'sleep 1000' },
+                        },
+                    ],
+                },
+            }) + '\n',
+            'utf8',
+        );
+
+        const stopTask = vi.fn(async (_taskId: string) => {});
+        let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+        let resolveFinish: (() => void) | null = null;
+        const finish = new Promise<void>((resolve) => {
+            resolveFinish = () => resolve();
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'system', subtype: 'init', session_id: 'sess_1' } as any;
+                    yield { type: 'system', subtype: 'task_started', task_id: 'task_1' } as any;
+                    await finish;
+                    yield { type: 'result' } as any;
+                },
+                stopTask,
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: workDir,
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            setTurnInterrupt: (next: (() => Promise<void>) | null) => {
+                if (next) capturedTurnInterrupt = next;
+            },
+            createQuery,
+        } as any);
+
+        for (let i = 0; i < 50 && !capturedTurnInterrupt; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((r) => setTimeout(r, 5));
+        }
+        if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
+        expect(stopTask).toHaveBeenCalledWith('task_1');
+        (resolveFinish as unknown as (() => void) | null)?.();
+        await runnerPromise;
+
+        const updatedTranscript = await readFile(transcriptPath, 'utf8');
+        expect(updatedTranscript).toContain('"type":"tool_result"');
+        expect(updatedTranscript).toContain('"tool_use_id":"toolu_1"');
     });
 
     it('omits effort when the mode specifies reasoningEffort=high (provider default)', async () => {
@@ -1097,7 +1494,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(onSessionFound).toHaveBeenCalledWith(
             'sess_999',
             expect.objectContaining({
-                transcript_path: '/tmp/claude_cfg/projects/-tmp/sess_999.jsonl',
+                transcript_path: `/tmp/claude_cfg/projects/${resolveClaudeProjectId('/tmp')}/sess_999.jsonl`,
             }),
         );
     });
@@ -1161,7 +1558,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(onSessionFound).toHaveBeenCalledWith(
             'sess_abc',
             expect.objectContaining({
-                transcript_path: '/tmp/claude_cfg/projects/-tmp/sess_abc.jsonl',
+                transcript_path: `/tmp/claude_cfg/projects/${resolveClaudeProjectId('/tmp')}/sess_abc.jsonl`,
             }),
         );
     });
@@ -1269,7 +1666,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(onSessionFound).toHaveBeenCalledWith(
             'sess_init',
             expect.objectContaining({
-                transcript_path: '/tmp/claude_cfg/projects/-tmp/sess_init.jsonl',
+                transcript_path: `/tmp/claude_cfg/projects/${resolveClaudeProjectId('/tmp')}/sess_init.jsonl`,
             }),
         );
     });

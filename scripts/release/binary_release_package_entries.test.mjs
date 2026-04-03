@@ -131,3 +131,33 @@ test('packagePreparedTargetBinary excludes AppleDouble metadata files from archi
     await rm(workspace, { recursive: true, force: true });
   }
 });
+
+test('packagePreparedTargetBinary excludes nested @prisma/client node_modules (not needed at runtime, avoids tar flake)', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'binary-release-prisma-client-nodemodules-'));
+  const stageRoot = join(workspace, 'stage');
+  const stageDir = join(stageRoot, 'happier-server-v0.0.0-test-linux-x64');
+  const outDir = join(workspace, 'out');
+
+  const prismaNested = join(stageDir, 'node_modules', '@prisma', 'client', 'node_modules');
+  await mkdir(join(prismaNested, '.bin'), { recursive: true });
+  await mkdir(outDir, { recursive: true });
+  await writeFile(join(stageDir, 'happier-server'), '#!/usr/bin/env bash\necho server\n', 'utf-8');
+  await writeFile(join(prismaNested, '.bin', 'dummy'), 'ok', 'utf-8');
+
+  try {
+    const artifact = await packagePreparedTargetBinary({
+      product: 'happier-server',
+      version: '0.0.0-test',
+      target: { os: 'linux', arch: 'x64', exeExt: '' },
+      stageDir,
+      outDir,
+    });
+
+    const listing = spawnSync('tar', ['-tzf', artifact.path], { encoding: 'utf-8' });
+    assert.equal(listing.status, 0, listing.stderr);
+    assert.match(listing.stdout, /\/happier-server(?:\n|$)/);
+    assert.doesNotMatch(listing.stdout, /\/node_modules\/@prisma\/client\/node_modules(?:\/|\n|$)/);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});

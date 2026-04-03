@@ -32,7 +32,7 @@ test('buildMobileDevClientInstallInvocation sets EXPO_APP_SCHEME for dev-client 
     baseEnv: { USER: 'leeroy', EXPO_APP_SLUG: 'custom-slug' },
   });
 
-  assert.equal(invocation.env.EXPO_APP_SCHEME, 'happier-dev');
+  assert.equal(invocation.env.EXPO_APP_SCHEME, invocation.identity.scheme);
   assert.equal(
     invocation.env.EXPO_APP_SLUG,
     '',

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join, resolve } from 'node:path';
 
@@ -7,6 +7,23 @@ import { writePnpmNodeBridge } from '@/testkit/fs/executableShim';
 import type { DetectCliRequest } from './cliSnapshot';
 
 describe('detectCliSnapshotOnDaemonPath (cache)', () => {
+  const previousOpenCodePath = process.env.HAPPIER_OPENCODE_PATH;
+
+  beforeEach(() => {
+    // Some CLI unit lanes provide a default OpenCode stub for machine-agnostic tests.
+    // Cache behavior tests need full control over PATH vs overrides, so clear the global
+    // override by default and let individual tests set it when needed.
+    delete process.env.HAPPIER_OPENCODE_PATH;
+  });
+
+  afterEach(() => {
+    if (previousOpenCodePath === undefined) {
+      delete process.env.HAPPIER_OPENCODE_PATH;
+    } else {
+      process.env.HAPPIER_OPENCODE_PATH = previousOpenCodePath;
+    }
+  });
+
   it('returns a timed-out auth status instead of hanging when a CLI auth probe never settles', async () => {
     vi.resetModules();
 

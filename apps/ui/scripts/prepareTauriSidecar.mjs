@@ -134,6 +134,7 @@ const bootstrapDir = join(repoRoot, 'apps', 'bootstrap');
 
 export async function prepareTauriSidecar({
   env = process.env,
+  platform = process.platform,
   ensureWorkspacePackagesBuiltForComponent = ensureWorkspacePackagesBuiltForComponentDefault,
   ensureTauriSidecarEntrypointFileImpl = ensureTauriSidecarEntrypointFile,
   ensureTauriSidecarRuntimeFilesImpl = ensureTauriSidecarRuntimeFiles,
@@ -152,12 +153,13 @@ export async function prepareTauriSidecar({
   };
 
   const result = spawnSyncImpl(
-    process.platform === 'win32' ? 'yarn.cmd' : 'yarn',
+    'yarn',
     ['-s', 'workspace', '@happier-dev/bootstrap', 'build:binary'],
     {
       stdio: 'inherit',
       env: nextEnv,
       cwd: repoRoot,
+      ...(platform === 'win32' ? { shell: true } : {}),
     },
   );
 

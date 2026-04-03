@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { execSync, spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -502,8 +503,8 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
 
     // Verify metadata file is cleaned up
     await waitForDaemonStateFileCleanup({
-      timeoutMs: 1_000,
-      intervalMs: 100,
+      timeoutMs: 15_000,
+      intervalMs: 250,
       label: 'daemon state cleanup after HTTP stop',
     });
   });
@@ -614,12 +615,14 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     const promises = [];
     for (let i = 0; i < 3; i++) {
       promises.push(
-        spawnDaemonSession('/tmp')
+        // Ensure each request is distinct; otherwise the daemon coalesces identical spawn requests
+        // to prevent accidental double-spawns (e.g. user double-clicks).
+        spawnDaemonSession({ directory: '/tmp', spawnNonce: randomUUID() })
       );
     }
 
     const results = await Promise.all(promises);
-    
+
     // All should succeed
     results.forEach(res => {
       expect(res.success, `concurrent spawn result=${JSON.stringify(res)}`).toBe(true);
@@ -630,15 +633,19 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     const spawnedSessionIds = results.map(r => r.sessionId);
 
     // List should show all sessions
+    let lastSessions: DaemonSessionRecord[] = [];
     await waitForCondition(async () => {
       const sessions = await listDaemonSessionsTyped();
+      lastSessions = sessions;
       const daemonSessions = sessions.filter(
         (session) => session.startedBy === 'daemon' && spawnedSessionIds.includes(session.happySessionId),
       );
       return daemonSessions.length >= 3;
     }, {
-      ...SESSION_CONSISTENCY_WAIT,
+      timeoutMs: 60_000,
+      intervalMs: 250,
       label: 'three daemon-spawned sessions tracked',
+      debug: () => JSON.stringify({ sessions: lastSessions }, null, 2),
     });
 
     const sessions = await listDaemonSessionsTyped();

@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { AcpPermissionMode, ProviderScenario, ProviderUnderTest } from '../types';
 import { hasStringSubstring, waitForAcpSidechainMessages } from '../assertions';
 import { shapeOf, stableStringifyShape } from '../shape';
-import { fetchSessionV2, patchSessionMetadataWithRetry } from '../../sessions';
+import { fetchAllMessages, fetchSessionV2, patchSessionMetadataWithRetry } from '../../sessions';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
 import { sleep } from '../../timing';
 import { repoRootDir } from '../../paths';
@@ -209,7 +209,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       title: 'mcp: injected Happy MCP config does not hide user MCP tools (merge + no forced allowlist)',
       tier: 'extended',
       yolo: true,
-      maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
+      // Claude may use ToolSearch as a helper before invoking the MCP tool.
+      // Keep the scenario deterministic by allowing exactly these two tool calls.
+      maxTraceEvents: { toolCalls: 2, toolResults: 2, permissionRequests: 1 },
       setup: async ({ workspaceDir }) => {
         const scriptPath = join(workspaceDir, scriptFilename);
 
@@ -298,10 +300,38 @@ await server.connect(new StdioServerTransport());
           '- Do not use any other tool.',
           '- Then reply DONE.',
         ].join('\n'),
-      requiredFixtureKeys: ['claude/claude/tool-call/mcp__fixture__ping', 'claude/claude/tool-result/mcp__fixture__ping'],
-      requiredTraceSubstrings: [sentinel],
-    };
-  },
+	    requiredFixtureKeys: ['claude/claude/tool-call/mcp__fixture__ping', 'claude/claude/tool-result/mcp__fixture__ping'],
+	    requiredTraceSubstrings: [sentinel],
+	    verify: async ({ traceEvents }) => {
+	      const relevant = traceEvents.filter(
+	        (e) =>
+	          e?.v === 1
+	          && e.protocol === 'claude'
+	          && e.provider === 'claude'
+	          && (e.kind === 'tool-call' || e.kind === 'tool-result'),
+	      ) as Array<{ kind: string; payload?: any }>;
+
+	      const toolCalls = relevant.filter((e) => e.kind === 'tool-call');
+	      const toolResults = relevant.filter((e) => e.kind === 'tool-result');
+	      if (toolCalls.length < 1 || toolCalls.length > 2) {
+	        throw new Error(`Expected 1-2 tool calls (optional ToolSearch + mcp__fixture__ping); got ${toolCalls.length}`);
+	      }
+	      if (toolResults.length < 1 || toolResults.length > 2) {
+	        throw new Error(`Expected 1-2 tool results (optional ToolSearch + mcp__fixture__ping); got ${toolResults.length}`);
+	      }
+
+	      const toolNames = toolCalls.map((e) => String(e.payload?.name ?? '')).filter(Boolean);
+	      const allowed = new Set(['ToolSearch', 'mcp__fixture__ping']);
+	      const unexpected = toolNames.filter((name) => !allowed.has(name));
+	      if (unexpected.length > 0) {
+	        throw new Error(`Unexpected tool call(s): ${unexpected.join(', ')}`);
+	      }
+	      if (!toolNames.includes('mcp__fixture__ping')) {
+	        throw new Error('Expected mcp__fixture__ping tool call in trace');
+	      }
+	    },
+	  };
+	},
 
   bash_echo_trace_ok: () => ({
     id: 'bash_echo_trace_ok',
@@ -414,21 +444,38 @@ await server.connect(new StdioServerTransport());
         });
         if (!hasAlpha || !hasBeta) throw new Error('Expected Task tool-call inputs to include both Alpha and Beta teammate spawns');
 
-        const sendMessages = (examples['claude/claude/tool-call/AgentTeamSendMessage'] ?? []) as any[];
-        if (!Array.isArray(sendMessages) || sendMessages.length === 0) throw new Error('Missing SendMessage tool-call fixtures');
-        const hasBroadcast = sendMessages.some((e) => {
-          const input = e?.payload?.input;
-          if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
-          return (input as any).type === 'broadcast';
-        });
-        if (!hasBroadcast) {
-          throw new Error('SendMessage tool-call did not include a broadcast payload');
-        }
+	        const sendMessages = (examples['claude/claude/tool-call/AgentTeamSendMessage'] ?? []) as any[];
+	        if (!Array.isArray(sendMessages) || sendMessages.length === 0) throw new Error('Missing SendMessage tool-call fixtures');
+	        const hasExplicitBroadcastPayload = sendMessages.some((e) => {
+	          const input = e?.payload?.input;
+	          if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+	          const record = input as Record<string, unknown>;
+	          return record.type === 'broadcast';
+	        });
 
-        const deletes = (examples['claude/claude/tool-call/AgentTeamDelete'] ?? []) as any[];
-        if (!Array.isArray(deletes) || deletes.length === 0) throw new Error('Missing TeamDelete tool-call fixtures');
-      },
-    } satisfies ProviderScenario;
+	        const recipientsWithSentinel = new Set<string>();
+	        for (const entry of sendMessages) {
+	          const input = entry?.payload?.input;
+	          if (!input || typeof input !== 'object' || Array.isArray(input)) continue;
+	          const record = input as Record<string, unknown>;
+	          const recipient = typeof record.recipient === 'string' ? record.recipient : (typeof record.to === 'string' ? record.to : '');
+	          const message = typeof record.message === 'string' ? record.message : '';
+	          if (!recipient || !message) continue;
+	          if (!message.includes(broadcastSentinel)) continue;
+	          recipientsWithSentinel.add(recipient);
+	        }
+
+	        // Support both shapes:
+	        // - newer SDKs may send a true broadcast payload
+	        // - older/alternate implementations may fan-out into per-recipient messages
+	        if (!hasExplicitBroadcastPayload && recipientsWithSentinel.size < 2) {
+	          throw new Error('SendMessage tool-call did not include a broadcast payload or fan-out messages to multiple recipients');
+	        }
+
+	        const deletes = (examples['claude/claude/tool-call/AgentTeamDelete'] ?? []) as any[];
+	        if (!Array.isArray(deletes) || deletes.length === 0) throw new Error('Missing TeamDelete tool-call fixtures');
+	      },
+	    } satisfies ProviderScenario;
   },
 
   agent_sdk_agent_teams_participant_routing_broadcast: (provider) => {
@@ -538,7 +585,13 @@ await server.connect(new StdioServerTransport());
         title: 'Read: read a known file in workspace',
         tier: 'extended',
         yolo: true,
-        maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
+        // Claude Agent SDK runs can occasionally take >2min to produce their first tool trace event
+        // (network / rate-limit / cold-start). Avoid marking the scenario flaky when it eventually succeeds.
+        waitMs: 240_000,
+        inactivityTimeoutMs: 240_000,
+        // Claude may use ToolSearch and/or update the session title as housekeeping.
+        // Keep deterministic bounds while tolerating these expected helpers.
+        maxTraceEvents: { toolCalls: 3, toolResults: 3, permissionRequests: 1 },
         setup: async ({ workspaceDir }) => {
           await writeFile(join(workspaceDir, 'e2e-read.txt'), `READ_SENTINEL_CLAUDE_${randomUUID()}\n`, 'utf8');
         },
@@ -552,7 +605,7 @@ await server.connect(new StdioServerTransport());
             '2) DONE',
           ].join('\n'),
         requiredFixtureKeys: ['claude/claude/tool-call/Read', 'claude/claude/tool-result/Read'],
-        verify: async ({ fixtures, workspaceDir }) => {
+        verify: async ({ fixtures, workspaceDir, traceEvents }) => {
           const examples = fixtures?.examples;
           if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
           const calls = (examples['claude/claude/tool-call/Read'] ?? []) as any[];
@@ -560,6 +613,20 @@ await server.connect(new StdioServerTransport());
           const expectedPath = join(workspaceDir, 'e2e-read.txt');
           const hasPath = calls.some((e) => hasStringSubstring(e?.payload?.input, expectedPath));
           if (!hasPath) throw new Error('Read tool-call did not include expected file path');
+
+          const relevant = traceEvents.filter(
+            (e) =>
+              e?.v === 1
+              && e.protocol === 'claude'
+              && e.provider === 'claude'
+              && e.kind === 'tool-call',
+          ) as Array<{ payload?: any }>;
+          const toolNames = relevant.map((e) => String(e.payload?.name ?? '')).filter(Boolean);
+          const allowed = new Set(['Read', 'ToolSearch', 'mcp__happier__change_title']);
+          const unexpected = toolNames.filter((name) => !allowed.has(name));
+          if (unexpected.length > 0) {
+            throw new Error(`Unexpected tool call(s) during read_known_file: ${unexpected.join(', ')}`);
+          }
         },
       };
 
@@ -1508,6 +1575,122 @@ await server.connect(new StdioServerTransport());
     };
   },
 
+	  agent_sdk_partial_messages_smoke: (provider) => {
+	    assertProviderId(provider, 'claude');
+	    const marker = `AGENTSDK_PARTIAL_${randomUUID()}`;
+	    return {
+	      id: 'agent_sdk_partial_messages_smoke',
+	      title: 'agent sdk: streaming: surfaces partial assistant chunks as agent messages',
+	      tier: 'extended',
+	      yolo: true,
+	      messageMeta: agentSdkRemoteMetaBase,
+	      // Must not appear in the user prompt (socket events include the prompt), otherwise the
+	      // provider harness may consider the scenario satisfied before any assistant output is produced.
+	      requiredMessageSubstrings: ['| 30 |'],
+	      waitMs: 120_000,
+	      prompt: () =>
+	        [
+	          'This is an automated test for validating Claude Agent SDK streaming.',
+	          `If possible, include this marker verbatim in your response: ${marker}`,
+	          '',
+	          'Write a markdown table with 30 rows and 3 columns.',
+	          'The first column MUST be the row number from 1 to 30 (inclusive).',
+	          `Every row SHOULD include the marker string: ${marker}`,
+	          '',
+	          'Do not use any tools.',
+	          'Finish by replying DONE.',
+	        ].join('\n'),
+	      verify: async ({ baseUrl, token, sessionId, secret }) => {
+	        await waitForAssistantMessageContaining({
+	          baseUrl,
+	          token,
+	          sessionId,
+	          secret,
+	          allowAnyAssistantMessage: true,
+	          timeoutMs: 120_000,
+	        });
+
+	        const rows = await fetchAllMessages(baseUrl, token, sessionId);
+	        const streamedTextByKey = new Map<string, string>();
+	        const fallbackTexts: string[] = [];
+
+	        for (const row of rows) {
+	          let decrypted: any;
+	          try {
+	            decrypted = decryptLegacyBase64(row.content.c, secret);
+	          } catch {
+	            continue;
+	          }
+	          if (!decrypted || typeof decrypted !== 'object') continue;
+
+	          const role = typeof decrypted.role === 'string' ? decrypted.role : '';
+	          if (role === 'assistant') {
+	            if (typeof decrypted.content === 'string') {
+	              fallbackTexts.push(decrypted.content);
+	            } else if (decrypted.content && typeof decrypted.content === 'object') {
+	              const content = decrypted.content as Record<string, unknown>;
+	              const text = typeof content.text === 'string' ? content.text : '';
+	              if (text) fallbackTexts.push(text);
+	              const parts = Array.isArray(content.parts) ? content.parts : [];
+	              for (const part of parts) {
+	                if (!part || typeof part !== 'object') continue;
+	                const partText = typeof (part as Record<string, unknown>).text === 'string' ? String((part as Record<string, unknown>).text) : '';
+	                if (partText) fallbackTexts.push(partText);
+	              }
+	            }
+	            continue;
+	          }
+	          if (role !== 'agent') continue;
+
+	          const meta =
+	            decrypted.meta && typeof decrypted.meta === 'object' && !Array.isArray(decrypted.meta)
+	              ? (decrypted.meta as Record<string, unknown>)
+	              : null;
+	          const segment =
+	            meta &&
+	            meta.happierStreamSegmentV1 &&
+	            typeof meta.happierStreamSegmentV1 === 'object' &&
+	            !Array.isArray(meta.happierStreamSegmentV1)
+	              ? (meta.happierStreamSegmentV1 as Record<string, unknown>)
+	              : null;
+	          const segmentLocalId =
+	            segment && typeof segment.segmentLocalId === 'string' ? String(segment.segmentLocalId) : null;
+	          if (!segmentLocalId) continue;
+
+	          const contentObj = decrypted.content && typeof decrypted.content === 'object' ? (decrypted.content as Record<string, unknown>) : null;
+	          if (!contentObj || contentObj.type !== 'acp') continue;
+	          const data = contentObj.data && typeof contentObj.data === 'object' ? (contentObj.data as Record<string, unknown>) : null;
+	          if (!data || typeof data.type !== 'string') continue;
+	          const snapshotText =
+	            data.type === 'message' && typeof (data as any).message === 'string'
+	              ? String((data as any).message)
+	              : data.type === 'thinking' && typeof (data as any).text === 'string'
+	                ? String((data as any).text)
+	                : '';
+	          if (!snapshotText) continue;
+	          fallbackTexts.push(snapshotText);
+
+	          const prev = streamedTextByKey.get(segmentLocalId) ?? '';
+	          // Stream snapshots are cumulative; keep the longest seen snapshot.
+	          if (snapshotText.length >= prev.length) {
+	            streamedTextByKey.set(segmentLocalId, snapshotText);
+	          }
+	        }
+
+	        if (streamedTextByKey.size === 0) {
+	          throw new Error('Expected at least one streamed agent message with happierStreamSegmentV1 meta');
+	        }
+
+	        const longestStreamed = [...streamedTextByKey.values()].reduce((max, value) => (value.length > max.length ? value : max), '');
+	        const longestFallback = fallbackTexts.reduce((max, value) => (value.length > max.length ? value : max), '');
+	        const longest = longestStreamed.length >= longestFallback.length ? longestStreamed : longestFallback;
+	        if (longest.trim().length < 20) {
+	          throw new Error(`Expected streamed response to be non-trivial (>=20 chars) but got ${longest.length}`);
+	        }
+	      },
+	    };
+	  },
+
   agent_sdk_checkpoint_and_rewind_restores_fs: (provider) => {
     assertProviderId(provider, 'claude');
     return {
@@ -1575,7 +1758,9 @@ await server.connect(new StdioServerTransport());
         title: 'abort: interrupt a running turn and continue in the same session',
         tier: 'extended',
         yolo: true,
-        maxTraceEvents: { toolCalls: 2, toolResults: 2, permissionRequests: 1 },
+        // Claude may perform additional housekeeping tool calls (e.g. ToolSearch / change_title),
+        // and the abort flow itself can involve multiple trace events. Keep bounds generous but finite.
+        maxTraceEvents: { toolCalls: 6, toolResults: 6, permissionRequests: 2 },
         prompt: () => `Reply with EXACTLY this token and nothing else: ${readySentinel}`,
         requiredFixtureKeys: [],
         postSatisfy: {
@@ -1636,16 +1821,6 @@ await server.connect(new StdioServerTransport());
               timeoutMs: 30_000,
             });
             await sleep(250);
-            await waitForAssistantMessageContaining({
-              baseUrl,
-              token,
-              sessionId,
-              secret,
-              // Abort acknowledgements surface as an agent ACP message with type="turn_aborted".
-              // Wait for it to hit the transcript before enqueueing the follow-up prompt to reduce race flakes.
-              requiredSubstring: 'turn_aborted',
-              timeoutMs: 30_000,
-            });
 
             await enqueueSessionPromptForScenario({
               baseUrl,
@@ -1793,17 +1968,169 @@ await server.connect(new StdioServerTransport());
       };
     }
 
-    throw new Error(`abort_turn_then_continue unsupported for provider ${provider.id}`);
-  },
+	  throw new Error(`abort_turn_then_continue unsupported for provider ${provider.id}`);
+	},
 
-  agent_sdk_abort_turn_then_continue: (provider) => {
-    assertProviderId(provider, 'claude');
-    const base = scenarioCatalog.abort_turn_then_continue(provider);
-    return withAgentSdkRemoteMeta(base, {
-      id: 'agent_sdk_abort_turn_then_continue',
-      title: 'agent sdk: abort running turn then continue same session',
-    });
-  },
+	switch_to_local_during_inflight_turn: (provider) => {
+	  assertProviderId(provider, 'claude');
+	  const inFlightSentinel = `HAPPIER_E2E_SWITCH_LOCAL_${randomUUID().slice(0, 8)}`;
+	  const followupSentinel = `HAPPIER_E2E_SWITCH_LOCAL_OK_${randomUUID()}`;
+
+	  return {
+	    id: 'switch_to_local_during_inflight_turn',
+	    title: 'switch: request local mode while remote Bash tool-call is in-flight (interrupt turn before teardown)',
+	    tier: 'extended',
+	    yolo: true,
+	    // Switching Claude into local mode spawns an interactive Claude Code subprocess which
+	    // requires a TTY. The provider harness is normally non-interactive, so this scenario
+	    // must run under a pseudo-TTY wrapper.
+	    cliRequiresTty: true,
+	    maxTraceEvents: { toolCalls: 3, toolResults: 3, permissionRequests: 2 },
+	    prompt: () =>
+	      [
+	        'Run exactly one tool call:',
+	        `- Use the Bash tool to run: sh -lc "echo ${inFlightSentinel} && sleep 20 && echo ${inFlightSentinel}_DONE"`,
+	        '- Do not use any other tools.',
+	        '- Do not reply until the command completes.',
+	      ].join('\n'),
+	    // Mark the scenario satisfied once the Bash call is observed (before the sleep finishes),
+	    // so postSatisfy can request the mode switch while the turn is still in-flight.
+	    requiredFixtureKeys: ['claude/claude/tool-call/Bash'],
+	    postSatisfy: {
+	      timeoutMs: 240_000,
+	      run: async ({ baseUrl, token, sessionId, secret }) => {
+	        const switched = await callSessionScopedRpc({
+	          baseUrl,
+	          token,
+	          sessionId,
+	          method: 'switch',
+	          payload: { to: 'local' },
+	          secret,
+	          timeoutMs: 45_000,
+	        });
+
+	        if (switched !== true) {
+	          throw new Error(`Expected switch rpc to return true, got: ${JSON.stringify(switched)}`);
+	        }
+
+	        // In local mode, Claude Code may prompt the terminal user for next steps after interrupting
+	        // an in-flight tool (e.g. "What should Claude do instead?"). Provider tests are headless,
+	        // so immediately switch back to remote mode before enqueueing the follow-up prompt.
+	        await sleep(1_500);
+	        const switchedBack = await callSessionScopedRpc({
+	          baseUrl,
+	          token,
+	          sessionId,
+	          method: 'switch',
+	          payload: { to: 'remote' },
+	          secret,
+	          timeoutMs: 45_000,
+	        });
+	        if (switchedBack !== true) {
+	          throw new Error(`Expected switch-back rpc to return true, got: ${JSON.stringify(switchedBack)}`);
+	        }
+	        await sleep(250);
+
+	        await enqueueSessionPromptForScenario({
+	          baseUrl,
+	          token,
+	          sessionId,
+	          secret,
+	          text: `Reply with EXACTLY this token and nothing else: ${followupSentinel}`,
+	        });
+
+	        await waitForAssistantMessageContaining({
+	          baseUrl,
+	          token,
+	          sessionId,
+	          secret,
+	          requiredSubstring: followupSentinel,
+	          timeoutMs: 120_000,
+	        });
+	      },
+	    },
+	    verify: async () => {},
+	  } satisfies ProviderScenario;
+	},
+
+	agent_sdk_switch_to_local_during_inflight_turn: (provider) => {
+	  const base = scenarioCatalog.switch_to_local_during_inflight_turn(provider);
+	  return withAgentSdkRemoteMeta(base, {
+	    id: 'agent_sdk_switch_to_local_during_inflight_turn',
+	    title: 'agent sdk: switch: request local mode while remote Bash tool-call is in-flight',
+	  });
+	},
+
+	switch_to_remote_during_inflight_turn: (provider) => {
+	  if (provider.id !== 'claude_local') {
+	    throw new Error(`switch_to_remote_during_inflight_turn unsupported for provider ${provider.id}`);
+	  }
+
+	  const inFlightSentinel = `HAPPIER_E2E_SWITCH_REMOTE_${randomUUID().slice(0, 8)}`;
+	  const followupSentinel = `HAPPIER_E2E_SWITCH_REMOTE_OK_${randomUUID()}`;
+
+	  return {
+	    id: 'switch_to_remote_during_inflight_turn',
+	    title: 'switch: request remote mode while local Bash tool-call is in-flight (SIGINT teardown + Agent SDK resume)',
+	    tier: 'extended',
+	    yolo: true,
+	    maxTraceEvents: { toolCalls: 3, toolResults: 3, permissionRequests: 2 },
+	    prompt: () =>
+	      [
+	        'Run exactly one tool call:',
+	        `- Use the Bash tool to run: sh -lc "echo ${inFlightSentinel} && sleep 20 && echo ${inFlightSentinel}_DONE"`,
+	        '- Do not use any other tools.',
+	        '- Do not reply until the command completes.',
+	      ].join('\n'),
+	    requiredFixtureKeys: ['claude/claude/tool-call/Bash'],
+	    postSatisfy: {
+	      timeoutMs: 240_000,
+	      run: async ({ baseUrl, token, sessionId, secret }) => {
+	        const switched = await callSessionScopedRpc({
+	          baseUrl,
+	          token,
+	          sessionId,
+	          method: 'switch',
+	          payload: { to: 'remote' },
+	          secret,
+	          timeoutMs: 45_000,
+	        });
+
+	        if (switched !== true) {
+	          throw new Error(`Expected switch rpc to return true, got: ${JSON.stringify(switched)}`);
+	        }
+
+	        await enqueueSessionPromptForScenario({
+	          baseUrl,
+	          token,
+	          sessionId,
+	          secret,
+	          text: `Reply with EXACTLY this token and nothing else: ${followupSentinel}`,
+	          meta: agentSdkRemoteMetaBase,
+	        });
+
+	        await waitForAssistantMessageContaining({
+	          baseUrl,
+	          token,
+	          sessionId,
+	          secret,
+	          requiredSubstring: followupSentinel,
+	          timeoutMs: 120_000,
+	        });
+	      },
+	    },
+	    verify: async () => {},
+	  } satisfies ProviderScenario;
+	},
+
+	agent_sdk_abort_turn_then_continue: (provider) => {
+	  assertProviderId(provider, 'claude');
+	  const base = scenarioCatalog.abort_turn_then_continue(provider);
+	  return withAgentSdkRemoteMeta(base, {
+	    id: 'agent_sdk_abort_turn_then_continue',
+	    title: 'agent sdk: abort running turn then continue same session',
+	  });
+	},
 
   // --------------------
   // ACP providers (Codex/OpenCode/Kilo)

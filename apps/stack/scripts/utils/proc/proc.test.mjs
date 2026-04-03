@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runCaptureResult, spawnProc } from './proc.mjs';
+import { resolveDefaultShellForCommand } from './proc.mjs';
 
 async function withTempRoot(t) {
   const root = await mkdtemp(join(tmpdir(), 'happy-proc-test-'));
@@ -97,4 +98,11 @@ test('spawnProc can tee output to an env-scoped tee dir when no explicit teeFile
   const raw = await readFile(join(teeDir, 'server.log'), 'utf-8');
   assert.match(raw, /\[server\] hello/);
   assert.match(raw, /\[server\] oops/);
+});
+
+test('resolveDefaultShellForCommand enables a shell for Yarn shims on Windows', () => {
+  assert.equal(resolveDefaultShellForCommand('yarn', { platform: 'win32' }), true);
+  assert.equal(resolveDefaultShellForCommand('yarn.cmd', { platform: 'win32' }), true);
+  assert.equal(resolveDefaultShellForCommand('git', { platform: 'win32' }), false);
+  assert.equal(resolveDefaultShellForCommand('yarn', { platform: 'linux' }), false);
 });

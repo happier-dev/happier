@@ -14,8 +14,10 @@ describe('AcpBackend session/update max updates guard', () => {
     try {
       const emitted: any[] = [];
       const fakeBackend: any = {
+        options: { agentName: 'test' },
         transport: defaultTransport,
         replayCapture: null,
+        sessionUpdateShapeLogger: { log: () => {} },
         activeToolCalls: new Set<string>(),
         finalizedToolCalls: new Set<string>(),
         toolCallLifecycleStates: new Map<string, string>(),

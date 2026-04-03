@@ -212,7 +212,7 @@ export default function InvertedListTest() {
     );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     container: {
         flex: 1,
         backgroundColor: 'white',
@@ -298,4 +298,4 @@ const styles = StyleSheet.create({
         color: 'white',
         fontWeight: '600',
     },
-});
+}));

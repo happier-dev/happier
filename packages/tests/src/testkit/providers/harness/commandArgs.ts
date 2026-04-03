@@ -25,9 +25,9 @@ export function buildProviderDevCommandArgs(params: Readonly<{
     ...params.yoloCliArgs,
     ...params.permissionCliArgs,
     ...params.modelCliArgs,
-    ...params.extraCliArgs,
-    ...params.scenarioCliArgs,
     ...params.providerCliExtraArgs,
+    ...params.scenarioCliArgs,
+    ...params.extraCliArgs,
   ];
 }
 

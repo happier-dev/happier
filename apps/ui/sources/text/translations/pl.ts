@@ -2897,6 +2897,40 @@ export const pl: TranslationStructure = {
                         title: "Użyj Agent SDK (zdalnie)",
                         subtitle: "Używa oficjalnego @anthropic-ai/claude-agent-sdk w trybie zdalnym."
                     },
+                    claudeRemoteDebugEnabled: {
+                        title: "Tryb debug",
+                        subtitle: "Włącza logi debug Claude Code (odpowiednik --debug)."
+                    },
+                    claudeRemoteVerboseEnabled: {
+                        title: "Verbose",
+                        subtitle: "Włącza szczegółowe logowanie (odpowiednik --verbose)."
+                    },
+                    claudeRemoteDebugCategories: {
+                        title: "Kategorie debug",
+                        subtitle: "Opcjonalny filtr kategorii. Gdy pusty, Claude loguje wszystkie kategorie debug.",
+                        options: {
+                            api: {
+                                title: "API",
+                                subtitle: "Żądania i odpowiedzi HTTP/API."
+                            },
+                            mcp: {
+                                title: "MCP",
+                                subtitle: "Połączenia serwerów MCP i ruch narzędzi."
+                            },
+                            hooks: {
+                                title: "Hooks",
+                                subtitle: "Cykl życia hooków i uruchamianie poleceń."
+                            },
+                            file: {
+                                title: "Pliki",
+                                subtitle: "Operacje systemu plików i helpery plików."
+                            },
+                            '1p': {
+                                title: "1p",
+                                subtitle: "Wewnętrzna kategoria first-party."
+                            }
+                        }
+                    },
                     claudeRemoteSettingSourcesV2: {
                         title: "Źródła ustawień",
                         subtitle: "Kontroluje, które ustawienia Claude są ładowane.",

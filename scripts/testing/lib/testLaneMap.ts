@@ -139,6 +139,10 @@ export function classifyTestFile(relativePath: string): LaneId | null {
     return UNIT_TEST_RE.test(relativePath) ? 'test' : null;
   }
 
+  if (relativePath.startsWith('apps/bootstrap/')) {
+    return UNIT_TEST_RE.test(relativePath) ? 'test' : null;
+  }
+
   if (relativePath.startsWith('packages/tests/')) {
     if (relativePath.startsWith('packages/tests/scripts/') && /\.test\.mjs$/.test(relativePath)) {
       return 'test:e2e:ui:wsrepl:lima:self';

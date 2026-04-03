@@ -110,7 +110,7 @@ export const ShimmerView = React.memo<ShimmerViewProps>(({
     );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     maskContainer: {
         flex: 1,
         backgroundColor: 'transparent',
@@ -118,4 +118,4 @@ const styles = StyleSheet.create({
     hiddenChildren: {
         opacity: 0,
     },
-});
+}));

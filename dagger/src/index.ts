@@ -75,8 +75,9 @@ export class HappierPipeline {
     artifactName: string,
     outJsonName: string,
     expoToken: Secret,
-    sentryAuthToken: Secret = dag.setSecret("SENTRY_AUTH_TOKEN", ""),
+    sentryAuthToken: Secret,
     easCliVersion: string = "18.0.1",
+    nodeOptions: string = "--max-old-space-size=3072",
     nodeVersion: string = "22.14.0",
     expoAppSlug: string = "",
     expoAppScheme: string = "",
@@ -92,12 +93,18 @@ export class HappierPipeline {
     const internalArtifact = `${artifactDir}/happier-ui-mobile-android${ext}`
     const internalOutJson = `${artifactDir}/eas_build_android.json`
 
+    const easWorkdirRoot = "/tmp/eas-workdir"
+    // EAS local build requires the working dir itself to be empty. Because we mount a persistent
+    // cache volume at `easWorkdirRoot`, use a per-invocation subdir so residues from prior runs
+    // cannot block subsequent builds even if Dagger caches intermediate exec steps.
+    const easWorkdir = `${easWorkdirRoot}/run-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
     let container = dag.container({ platform: containerPlatform })
       .from("ghcr.io/cirruslabs/android-sdk:34")
       // EAS local builds generate a large working directory. Mount it as a cache volume so:
       // - we avoid tmpfs ENOSPC failures
       // - we avoid exploding the container snapshot/engine cache
-      .withMountedCache("/tmp/eas-workdir", dag.cacheVolume("happier-expo-eas-workdir"))
+      .withMountedCache(easWorkdirRoot, dag.cacheVolume("happier-expo-eas-workdir"))
       .withExec([
         "bash",
         "-lc",
@@ -130,19 +137,19 @@ export class HappierPipeline {
       .withSecretVariable("EXPO_TOKEN", expoToken)
       .withSecretVariable("SENTRY_AUTH_TOKEN", sentryAuthToken)
       .withEnvVariable("EAS_CLI_VERSION", easCliVersion)
+      .withEnvVariable("NODE_OPTIONS", nodeOptions)
       .withEnvVariable("HAPPIER_INSTALL_SCOPE", "ui,protocol,agents")
       .withEnvVariable("HAPPIER_UI_VENDOR_WEB_ASSETS", "0")
-      // Hint to EAS local builds to keep their working dir under /tmp (temp-mounted above).
-      // If ignored by EAS, it's harmless.
-      .withEnvVariable("EAS_LOCAL_BUILD_WORKINGDIR", "/tmp/eas-workdir")
+
+    container = container
       .withEnvVariable("npm_config_registry", "https://registry.npmjs.org")
       .withEnvVariable("NPM_CONFIG_REGISTRY", "https://registry.npmjs.org")
       .withMountedCache("/root/.cache/yarn", dag.cacheVolume("happier-yarn-cache"))
       .withMountedCache("/root/.gradle", dag.cacheVolume("happier-gradle-cache"))
       .withExec(["yarn", "config", "set", "registry", "https://registry.npmjs.org/"])
       .withExec([
-        "yarn",
-        "install",
+        "sh",
+        "docker/scripts/yarn-install-with-retry.sh",
         "--frozen-lockfile",
         "--ignore-engines",
         "--network-timeout",
@@ -165,6 +172,10 @@ export class HappierPipeline {
     }
 
     container = container
+      // EAS local build plugin requires an empty working directory. Create a fresh directory
+      // inside the mounted cache volume for each run.
+      .withExec(["bash", "-lc", `set -euo pipefail && rm -rf "${easWorkdir}" && mkdir -p "${easWorkdir}"`])
+      .withEnvVariable("EAS_LOCAL_BUILD_WORKINGDIR", easWorkdir)
       .withExec([
         "node",
         "scripts/pipeline/expo/native-build.mjs",

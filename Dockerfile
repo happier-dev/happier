@@ -13,7 +13,7 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
  COPY apps/ui/package.json apps/ui/
  COPY apps/server/package.json apps/server/
  COPY apps/cli/package.json apps/cli/
@@ -27,6 +27,7 @@ RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents
  COPY packages/transfers/package.json packages/transfers/
  COPY packages/audio-stream-native/package.json packages/audio-stream-native/
  COPY packages/sherpa-native/package.json packages/sherpa-native/
+COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
 COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
@@ -45,7 +46,7 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
  COPY apps/ui/package.json apps/ui/
  COPY apps/server/package.json apps/server/
  COPY apps/cli/package.json apps/cli/
@@ -59,6 +60,7 @@ RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents
  COPY packages/transfers/package.json packages/transfers/
  COPY packages/audio-stream-native/package.json packages/audio-stream-native/
  COPY packages/sherpa-native/package.json packages/sherpa-native/
+COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
 COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
@@ -75,7 +77,7 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
  COPY apps/ui/package.json apps/ui/
  COPY apps/server/package.json apps/server/
  COPY apps/cli/package.json apps/cli/
@@ -89,6 +91,7 @@ RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents
  COPY packages/transfers/package.json packages/transfers/
  COPY packages/audio-stream-native/package.json packages/audio-stream-native/
  COPY packages/sherpa-native/package.json packages/sherpa-native/
+COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
 COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
@@ -168,9 +171,11 @@ COPY apps/ui ./apps/ui
 COPY packages/agents ./packages/agents
 COPY packages/connection-supervisor ./packages/connection-supervisor
 COPY packages/protocol ./packages/protocol
+COPY packages/release-runtime ./packages/release-runtime
 COPY packages/transfers ./packages/transfers
 
 RUN yarn workspace @happier-dev/protocol postinstall:real \
+    && yarn workspace @happier-dev/release-runtime postinstall:real \
     && yarn workspace @happier-dev/agents postinstall:real \
     && yarn workspace @happier-dev/connection-supervisor postinstall:real \
     && yarn workspace @happier-dev/transfers postinstall:real
@@ -264,20 +269,27 @@ ENV HAPPIER_EMBEDDED_POLICY_ENV=$HAPPIER_EMBEDDED_POLICY_ENV
 COPY .github/feature-policy ./.github/feature-policy
 COPY apps/server ./apps/server
 COPY packages/agents ./packages/agents
+COPY packages/cli-common ./packages/cli-common
 COPY packages/protocol ./packages/protocol
+COPY packages/release-runtime ./packages/release-runtime
 RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @happier-dev/agents postinstall:real
+RUN yarn workspace @happier-dev/release-runtime postinstall:real
 RUN yarn workspace @happier-dev/server postinstall:real
 RUN yarn workspace @happier-dev/server build
 
 FROM node:${NODE_VERSION} AS server
 WORKDIR /repo
-RUN apt-get update && apt-get install -y python3 ffmpeg curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends -o APT::Keep-Downloaded-Packages=false python3 ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV PORT=3005
 ENV RUN_MIGRATIONS=1
 COPY --from=server-builder --chown=node:node /repo/node_modules /repo/node_modules
 COPY --from=server-builder --chown=node:node /repo/packages/agents /repo/packages/agents
+COPY --from=server-builder --chown=node:node /repo/packages/cli-common /repo/packages/cli-common
 COPY --from=server-builder --chown=node:node /repo/packages/protocol /repo/packages/protocol
+COPY --from=server-builder --chown=node:node /repo/packages/release-runtime /repo/packages/release-runtime
 COPY --from=server-builder --chown=node:node /repo/apps/server /repo/apps/server
 COPY --from=server-builder /repo/apps/server/scripts/run-server.sh /usr/local/bin/run-server
 RUN chmod +x /usr/local/bin/run-server

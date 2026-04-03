@@ -608,6 +608,13 @@ test('ensureDepsInstalled refreshes monorepo dependencies when root yarn.lock ch
 
   // Root yarn.lock is newer than the integrity file -> should trigger `yarn install`.
   await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+  // Some filesystems (and CI runners) can create both files within the same timestamp quantum.
+  // Make the "lock newer than integrity" ordering explicit to keep this test deterministic.
+  const base = Date.now();
+  const older = new Date(base - 10_000);
+  const newer = new Date(base);
+  await utimes(join(root, 'node_modules', '.yarn-integrity'), older, older);
+  await utimes(join(root, 'yarn.lock'), newer, newer);
 
   const binDir = join(root, 'bin');
   const outputPath = join(root, 'argv.txt');

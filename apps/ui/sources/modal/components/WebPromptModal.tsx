@@ -17,8 +17,68 @@ interface WebPromptModalProps {
     zIndexBase?: number;
 }
 
+const stylesheet = StyleSheet.create((theme) => ({
+    content: {
+        paddingHorizontal: 16,
+        paddingTop: 20,
+        paddingBottom: 16,
+        alignItems: 'center'
+    },
+    title: {
+        fontSize: 17,
+        textAlign: 'center',
+        color: theme.colors.text,
+        marginBottom: 4
+    },
+    message: {
+        fontSize: 13,
+        textAlign: 'center',
+        color: theme.colors.text,
+        marginTop: 4,
+        lineHeight: 18
+    },
+    input: {
+        width: '100%',
+        height: 36,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        marginTop: 16,
+        fontSize: 14,
+        color: theme.colors.text,
+        backgroundColor: theme.colors.input.background
+    },
+    buttonContainer: {
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.divider,
+        flexDirection: 'row'
+    },
+    button: {
+        flex: 1,
+        paddingVertical: 11,
+        alignItems: 'center',
+        justifyContent: 'center'
+    },
+    buttonPressed: {
+        backgroundColor: theme.colors.divider
+    },
+    buttonSeparator: {
+        width: 1,
+        backgroundColor: theme.colors.divider
+    },
+    buttonText: {
+        fontSize: 17,
+        color: theme.colors.textLink
+    },
+    cancelText: {
+        fontWeight: '400'
+    }
+}));
+
 export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true, zIndexBase }: WebPromptModalProps) {
     const { theme } = useUnistyles();
+    const styles = stylesheet;
     const [inputValue, setInputValue] = useState(config.defaultValue || '');
     const inputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
     const didResolveRef = useRef(false);
@@ -59,65 +119,6 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                 return 'default';
         }
     };
-
-    const styles = StyleSheet.create({
-        content: {
-            paddingHorizontal: 16,
-            paddingTop: 20,
-            paddingBottom: 16,
-            alignItems: 'center'
-        },
-        title: {
-            fontSize: 17,
-            textAlign: 'center',
-            color: theme.colors.text,
-            marginBottom: 4
-        },
-        message: {
-            fontSize: 13,
-            textAlign: 'center',
-            color: theme.colors.text,
-            marginTop: 4,
-            lineHeight: 18
-        },
-        input: {
-            width: '100%',
-            height: 36,
-            borderWidth: 1,
-            borderColor: theme.colors.divider,
-            borderRadius: 8,
-            paddingHorizontal: 10,
-            marginTop: 16,
-            fontSize: 14,
-            color: theme.colors.text,
-            backgroundColor: theme.colors.input.background
-        },
-        buttonContainer: {
-            borderTopWidth: 1,
-            borderTopColor: theme.colors.divider,
-            flexDirection: 'row'
-        },
-        button: {
-            flex: 1,
-            paddingVertical: 11,
-            alignItems: 'center',
-            justifyContent: 'center'
-        },
-        buttonPressed: {
-            backgroundColor: theme.colors.divider
-        },
-        buttonSeparator: {
-            width: 1,
-            backgroundColor: theme.colors.divider
-        },
-        buttonText: {
-            fontSize: 17,
-            color: theme.colors.textLink
-        },
-        cancelText: {
-            fontWeight: '400'
-        }
-    });
 
     return (
         <BaseModal

@@ -2,9 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { resolveTauriPaneSpawnConfig } from './tauri_mode.mjs';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const repoRootDir = resolve(join(__dirname, '../../../../..'));
+const stackRootDir = join(repoRootDir, 'apps', 'stack');
 
 function splitPathEntries(pathValue) {
   return String(pathValue ?? '')
@@ -14,8 +19,6 @@ function splitPathEntries(pathValue) {
 }
 
 test('resolveTauriPaneSpawnConfig builds a Tauri env with cargo available even when HOME is stack-isolated', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
-
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-pane-realhome-${Date.now()}`, { recursive: true });
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-pane-isolatedhome-${Date.now()}`, { recursive: true });
   const cargoBinDir = `${realHome}/.cargo/bin`;
@@ -35,8 +38,8 @@ test('resolveTauriPaneSpawnConfig builds a Tauri env with cargo available even w
   });
 
   assert.equal(invocation.command, process.execPath);
-  assert.ok(String(invocation.args?.[0] ?? '').endsWith('/apps/stack/scripts/tauri_dev.mjs'));
-  assert.match(String(invocation.cwd ?? ''), /happier\/dev$/);
+  assert.equal(invocation.args?.[0], join(repoRootDir, 'apps', 'stack', 'scripts', 'tauri_dev.mjs'));
+  assert.equal(invocation.cwd, repoRootDir);
 
   const escapedCargoBinDir = cargoBinDir.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
   assert.match(String(env?.PATH ?? ''), new RegExp(`^${escapedCargoBinDir}`));
@@ -48,7 +51,6 @@ test('resolveTauriPaneSpawnConfig builds a Tauri env with cargo available even w
 });
 
 test('resolveTauriPaneSpawnConfig exports rustup homes for the real user cargo toolchain', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-pane-rustup-home-${Date.now()}`, { recursive: true });
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-pane-rustup-isolated-${Date.now()}`, { recursive: true });
   const cargoBinDir = `${realHome}/.cargo/bin`;
@@ -74,7 +76,6 @@ test('resolveTauriPaneSpawnConfig exports rustup homes for the real user cargo t
 });
 
 test('resolveTauriPaneSpawnConfig preserves the host PATH while prepending cargo and keeping stack PATH entries', async () => {
-  const stackRootDir = '/Users/leeroy/Documents/Development/happier/dev/apps/stack';
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-pane-host-path-home-${Date.now()}`, { recursive: true });
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-pane-host-path-isolated-${Date.now()}`, { recursive: true });
   const cargoBinDir = `${realHome}/.cargo/bin`;

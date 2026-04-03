@@ -18,6 +18,11 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 
+type WebHoverablePressableState = Readonly<{
+    pressed: boolean;
+    hovered?: boolean;
+}>;
+
 export type OptionPickerOption = Readonly<{
     value: string;
     label: string;
@@ -315,12 +320,17 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                                     key={option.value}
                                                     testID={`${optionTestIDPrefix}:${option.value}`}
                                                     onPress={() => handleSelectOption(option.value)}
-                                                    style={({ pressed, hovered }) => [
-                                                        styles.optionCard,
-                                                        isSelected ? styles.optionCardSelected : null,
-                                                        !isSelected && hovered ? styles.optionCardHovered : null,
-                                                        pressed ? styles.optionCardPressed : null,
-                                                    ]}
+                                                    style={(state) => {
+                                                        const { pressed } = state;
+                                                        // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
+                                                        const hovered = (state as WebHoverablePressableState).hovered === true;
+                                                        return [
+                                                            styles.optionCard,
+                                                            isSelected ? styles.optionCardSelected : null,
+                                                            !isSelected && hovered ? styles.optionCardHovered : null,
+                                                            pressed ? styles.optionCardPressed : null,
+                                                        ];
+                                                    }}
                                                 >
                                                     <View style={styles.optionCardHeader}>
                                                         <Text style={[styles.optionCardTitle, isSelected ? styles.optionCardTitleSelected : null]}>
@@ -362,13 +372,18 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                     setCustomValue(selectedCustomValue);
                                 }
                             }}
-                            style={({ pressed, hovered }) => [
-                                styles.customEntryRow,
-                                styles.optionCard,
-                                customEditorVisible ? styles.optionCardSelected : null,
-                                !customEditorVisible && hovered ? styles.optionCardHovered : null,
-                                pressed && !customEditorVisible ? styles.optionCardPressed : null,
-                            ]}
+                            style={(state) => {
+                                const { pressed } = state;
+                                // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
+                                const hovered = (state as WebHoverablePressableState).hovered === true;
+                                return [
+                                    styles.customEntryRow,
+                                    styles.optionCard,
+                                    customEditorVisible ? styles.optionCardSelected : null,
+                                    !customEditorVisible && hovered ? styles.optionCardHovered : null,
+                                    pressed && !customEditorVisible ? styles.optionCardPressed : null,
+                                ];
+                            }}
                         >
                             <View style={styles.optionCardHeader}>
                                 <View style={styles.customEntryTextBlock}>

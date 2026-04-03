@@ -103,6 +103,10 @@ vi.mock('@/components/navigation/Header', () => ({
     createHeader: () => null,
 }));
 
+vi.mock('@/desktop/tray/DesktopTrayRuntime', () => ({
+    DesktopTrayRuntime: () => null,
+}));
+
 vi.mock('@/hooks/server/useFriendsAllowUsernameSupport', () => ({
     useFriendsAllowUsernameSupport: () => false,
 }));

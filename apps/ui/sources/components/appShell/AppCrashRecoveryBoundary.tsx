@@ -290,7 +290,7 @@ function TextBlock(props: { text: string; style: any; selectable?: boolean }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
   container: {
     flex: 1,
     minHeight: 0,
@@ -384,4 +384,4 @@ const styles = StyleSheet.create({
     ...Typography.default('semiBold'),
     fontSize: 14,
   },
-});
+}));

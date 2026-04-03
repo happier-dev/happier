@@ -11,9 +11,122 @@ import { t } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
 
+const stylesheet = StyleSheet.create((theme) => ({
+    container: {
+        gap: 16,
+    },
+    planContainer: {
+        paddingHorizontal: 8,
+        marginTop: -10,
+    },
+    actionsContainer: {
+        flexDirection: 'row',
+        gap: 12,
+        marginTop: 16,
+        paddingHorizontal: 8,
+        justifyContent: 'flex-end',
+    },
+    feedbackContainer: {
+        paddingHorizontal: 8,
+        gap: 10,
+    },
+    feedbackInput: {
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        minHeight: 88,
+        color: theme.colors.text,
+        textAlignVertical: 'top',
+    },
+    feedbackActions: {
+        flexDirection: 'row',
+        gap: 12,
+        justifyContent: 'flex-end',
+    },
+    approveButton: {
+        backgroundColor: theme.colors.button.primary.background,
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        minHeight: 44,
+        flexGrow: 1,
+    },
+    approveMenuButton: {
+        backgroundColor: theme.colors.button.primary.background,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 44,
+    },
+    rejectButton: {
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        minHeight: 44,
+    },
+    buttonDisabled: {
+        opacity: 0.5,
+    },
+    approveButtonText: {
+        color: theme.colors.button.primary.tint,
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    rejectButtonText: {
+        color: theme.colors.text,
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    requestChangesButton: {
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        minHeight: 44,
+    },
+    requestChangesButtonText: {
+        color: theme.colors.text,
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    respondedContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingHorizontal: 8,
+        marginTop: 12,
+    },
+    respondedText: {
+        fontSize: 14,
+        color: theme.colors.textSecondary,
+    },
+}));
 
 export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, interaction }) => {
     const { theme } = useUnistyles();
+    const styles = stylesheet;
     const [isApproving, setIsApproving] = React.useState(false);
     const [isRejecting, setIsRejecting] = React.useState(false);
     const [isResponded, setIsResponded] = React.useState(false);
@@ -189,119 +302,6 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
             setIsRejecting(false);
         }
     }, [sessionId, tool.permission?.id, canInteract, isApproving, isRejecting, changeRequestText]);
-
-    const styles = StyleSheet.create({
-        container: {
-            gap: 16,
-        },
-        planContainer: {
-            paddingHorizontal: 8,
-            marginTop: -10,
-        },
-        actionsContainer: {
-            flexDirection: 'row',
-            gap: 12,
-            marginTop: 16,
-            paddingHorizontal: 8,
-            justifyContent: 'flex-end',
-        },
-        feedbackContainer: {
-            paddingHorizontal: 8,
-            gap: 10,
-        },
-        feedbackInput: {
-            borderWidth: 1,
-            borderColor: theme.colors.divider,
-            borderRadius: 10,
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-            minHeight: 88,
-            color: theme.colors.text,
-            textAlignVertical: 'top',
-        },
-        feedbackActions: {
-            flexDirection: 'row',
-            gap: 12,
-            justifyContent: 'flex-end',
-        },
-        approveButton: {
-            backgroundColor: theme.colors.button.primary.background,
-            paddingHorizontal: 20,
-            paddingVertical: 12,
-            borderRadius: 8,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            minHeight: 44,
-            flexGrow: 1,
-        },
-        approveMenuButton: {
-            backgroundColor: theme.colors.button.primary.background,
-            paddingHorizontal: 12,
-            paddingVertical: 12,
-            borderRadius: 8,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minHeight: 44,
-        },
-        rejectButton: {
-            backgroundColor: 'transparent',
-            borderWidth: 1,
-            borderColor: theme.colors.divider,
-            paddingHorizontal: 20,
-            paddingVertical: 12,
-            borderRadius: 8,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            minHeight: 44,
-        },
-        buttonDisabled: {
-            opacity: 0.5,
-        },
-        approveButtonText: {
-            color: theme.colors.button.primary.tint,
-            fontSize: 14,
-            fontWeight: '600',
-        },
-        rejectButtonText: {
-            color: theme.colors.text,
-            fontSize: 14,
-            fontWeight: '600',
-        },
-        requestChangesButton: {
-            backgroundColor: 'transparent',
-            borderWidth: 1,
-            borderColor: theme.colors.divider,
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            borderRadius: 8,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            minHeight: 44,
-        },
-        requestChangesButtonText: {
-            color: theme.colors.text,
-            fontSize: 14,
-            fontWeight: '600',
-        },
-        respondedContainer: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingHorizontal: 8,
-            marginTop: 12,
-        },
-        respondedText: {
-            fontSize: 14,
-            color: theme.colors.textSecondary,
-        },
-    });
 
     return (
         <ToolSectionView>

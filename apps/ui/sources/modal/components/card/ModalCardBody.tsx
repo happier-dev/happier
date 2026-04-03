@@ -9,12 +9,14 @@ type ModalCardBodyProps = Readonly<{
     style?: StyleProp<ViewStyle>;
 }>;
 
-const stylesheet = StyleSheet.create({
+const stylesheet = StyleSheet.create(() => ({
     fill: {
-        flex: 1,
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 'auto',
         minHeight: 0,
     },
-});
+}));
 
 export function ModalCardBody(props: ModalCardBodyProps) {
     useUnistyles();

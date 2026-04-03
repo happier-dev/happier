@@ -1,4 +1,9 @@
-const { getReleaseRingCatalogEntry, normalizeReleaseRingId } = require('@happier-dev/release-runtime/releaseRings');
+const path = require('node:path');
+
+// Keep this module dependency-free so it can run in GitHub Actions before `yarn install`.
+// We load the canonical release ring catalog from the checked-in CJS entrypoint.
+const releaseRings = require(path.resolve(__dirname, '..', '..', 'packages', 'release-runtime', 'releaseRings.cjs'));
+const { getReleaseRingCatalogEntry, normalizeReleaseRingId } = releaseRings;
 
 function resolveLogicalVariantFromRing(ring) {
     if (ring.expoAppEnv === 'production') return 'production';
@@ -39,7 +44,7 @@ function buildProductionConfig(overrides) {
 const APP_ENVIRONMENT_CONFIGS = {
     internaldev: buildRingBackedConfig('internaldev', {
         name: 'Happier (internal dev)',
-        iosBundleId: 'dev.happier.app.internaldev',
+        iosBundleId: 'dev.happier.app.dev.internal',
         androidPackage: 'dev.happier.app.internaldev',
         scheme: 'happier-internaldev',
         enableAssociatedDomains: false,
@@ -96,4 +101,3 @@ module.exports = {
     getAppEnvironmentConfig,
     normalizeAppEnvironmentId,
 };
-

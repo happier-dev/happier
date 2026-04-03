@@ -6,16 +6,72 @@ use std::path::PathBuf;
 mod build_support;
 
 use build_support::{resolve_sidecar_update_action, SidecarSnapshot, SidecarUpdateAction};
+use flate2;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+
+fn is_truthy_env(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=TARGET");
     println!("cargo:rerun-if-env-changed=HAPPIER_HSETUP_SIDECAR_SOURCE");
+    println!("cargo:rerun-if-env-changed=HAPPIER_SKIP_HSETUP_SIDECAR_BUILD");
 
-    build_hsetup_sidecar().expect("failed to build bundled hsetup sidecar");
+    if is_truthy_env("HAPPIER_SKIP_HSETUP_SIDECAR_BUILD") {
+        // `tauri-build` validates that sidecar/resource paths exist even when running `cargo test`.
+        // Provide a tiny stub so local test runs don't require the real bootstrap binary to be built.
+        // Real builds must not use this flag.
+        if let Err(error) = ensure_hsetup_sidecar_stub() {
+            panic!("failed to create bundled hsetup sidecar stub: {error}");
+        }
+        println!(
+            "cargo:warning=Skipping hsetup sidecar bundling (HAPPIER_SKIP_HSETUP_SIDECAR_BUILD=1)."
+        );
+    } else {
+        build_hsetup_sidecar().expect("failed to build bundled hsetup sidecar");
+    }
     tauri_build::build()
+}
+
+fn ensure_hsetup_sidecar_stub() -> Result<(), String> {
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").map_err(|error| error.to_string())?);
+    let target = env::var("TARGET").map_err(|error| error.to_string())?;
+    let filename = if target.contains("windows") {
+        format!("hsetup-{target}.exe")
+    } else {
+        format!("hsetup-{target}")
+    };
+
+    let binaries_dir = manifest_dir.join("binaries");
+    fs::create_dir_all(&binaries_dir).map_err(|error| error.to_string())?;
+
+    let output_path = binaries_dir.join(&filename);
+    if !output_path.is_file() {
+        #[cfg(windows)]
+        let bytes = b"@echo off\r\nexit /b 1\r\n".to_vec();
+        #[cfg(not(windows))]
+        let bytes = b"#!/bin/sh\nexit 1\n".to_vec();
+        fs::write(&output_path, bytes).map_err(|error| error.to_string())?;
+
+        #[cfg(unix)]
+        {
+            fs::set_permissions(&output_path, fs::Permissions::from_mode(0o755))
+                .map_err(|error| error.to_string())?;
+        }
+    }
+
+    // Keep the runtime lookup contract stable.
+    println!("cargo:rustc-env=HAPPIER_HSETUP_SIDECAR_FILENAME={filename}");
+    Ok(())
 }
 
 fn build_hsetup_sidecar() -> Result<(), String> {
@@ -97,5 +153,26 @@ fn build_hsetup_sidecar() -> Result<(), String> {
     }
 
     println!("cargo:rustc-env=HAPPIER_HSETUP_SIDECAR_FILENAME={filename}");
+
+    // Linux AppImage bundling can abort when linuxdeploy runs `ldd` on our sidecar binary.
+    // Build a gzip archive so we can ship the archive as a resource and materialize it at runtime.
+    if target.contains("linux") && !target.contains("android") {
+        if let Err(error) = write_linux_hsetup_gzip(&output_path) {
+            return Err(format!("failed to gzip hsetup sidecar: {error}"));
+        }
+    }
+    Ok(())
+}
+
+fn write_linux_hsetup_gzip(source_path: &PathBuf) -> Result<(), String> {
+    let bytes = fs::read(source_path).map_err(|error| error.to_string())?;
+    let gzip_path = PathBuf::from(format!("{}.gz", source_path.display()));
+
+    let mut encoder =
+        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    use std::io::Write;
+    encoder.write_all(&bytes).map_err(|error| error.to_string())?;
+    let gz = encoder.finish().map_err(|error| error.to_string())?;
+    fs::write(&gzip_path, gz).map_err(|error| error.to_string())?;
     Ok(())
 }

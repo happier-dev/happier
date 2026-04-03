@@ -80,7 +80,7 @@ test('prepareTauriSidecar builds app workspace dependencies before compiling hse
   assert.match(String(calls[1][1]), /apps[/\\]bootstrap$/);
   assert.equal(calls[2][0], 'mcp-dev');
   assert.equal(calls[3][0], 'spawn');
-  assert.equal(calls[3][1], process.platform === 'win32' ? 'yarn.cmd' : 'yarn');
+  assert.equal(calls[3][1], 'yarn');
   assert.deepEqual(calls[3][2], ['-s', 'workspace', '@happier-dev/bootstrap', 'build:binary']);
   assert.equal(calls[3][3].env.HAPPIER_BUN_TARGET, 'bun-darwin-arm64');
   assert.equal(calls[4][0], 'runtime');
@@ -107,6 +107,34 @@ test('ensureTauriMcpDevCapability is idempotent when run multiple times', async 
 
   const capability = JSON.parse(await readFile(join(srcTauriDir, 'capabilities', 'mcp-dev.json'), 'utf8'));
   assert.equal(capability.identifier, 'mcp-dev');
+});
+
+test('prepareTauriSidecar invokes Yarn via a Windows-safe shell so yarn.cmd can be resolved', async () => {
+  const calls = [];
+  const ensureWorkspacePackagesBuiltForComponent = async () => {};
+  const ensureTauriSidecarRuntimeFilesImpl = async () => [];
+  const ensureTauriSidecarEntrypointFileImpl = async (options) => join(options.srcTauriDir, 'binaries', 'hsetup.js');
+  const spawnSyncImpl = (command, args, options) => {
+    calls.push(['spawn', command, args, options]);
+    return { status: 0 };
+  };
+
+  const { prepareTauriSidecar } = await import('./prepareTauriSidecar.mjs');
+
+  await prepareTauriSidecar({
+    env: {},
+    platform: 'win32',
+    ensureWorkspacePackagesBuiltForComponent,
+    ensureTauriSidecarRuntimeFilesImpl,
+    ensureTauriSidecarEntrypointFileImpl,
+    spawnSyncImpl,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'spawn');
+  assert.equal(calls[0][1], 'yarn');
+  assert.deepEqual(calls[0][2], ['-s', 'workspace', '@happier-dev/bootstrap', 'build:binary']);
+  assert.equal(calls[0][3].shell, true);
 });
 
 test('ensureTauriSidecarEntrypointFile copies the compiled hsetup JS companion next to the native wrapper', async () => {

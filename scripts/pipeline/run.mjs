@@ -14,6 +14,7 @@ import { assertCleanWorktree } from './git/ensure-clean-worktree.mjs';
 import { computeReleaseExecutionPlan } from './release/lib/release-orchestrator.mjs';
 import { createAnsiStyle } from './cli/ansi-style.mjs';
 import { renderCommandHelp, renderPipelineHelp } from './cli/help.mjs';
+import { isDockerChannel } from './docker/docker-channels.mjs';
 import {
   allowsBestEffortSubmit,
   formatMobileReleaseEnvironment,
@@ -102,14 +103,6 @@ function isDeployComponent(v) {
  */
 function isReleaseTarget(v) {
   return isDeployComponent(v) || v === 'cli' || v === 'stack' || v === 'server_runner';
-}
-
-/**
- * @param {string} v
- * @returns {v is 'stable' | 'preview'}
- */
-function isDockerChannel(v) {
-  return v === 'stable' || v === 'preview';
 }
 
 /**
@@ -1866,12 +1859,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                             ? 'compute-deploy-plan.mjs'
                             : 'build-ui-web-bundle.mjs';
 
+        const scriptArgs =
+          subcommand === 'release-compute-deploy-plan' ? ['--deploy-environment', deployEnvironment, ...passthrough] : passthrough;
+
         if (dryRun) {
           runReleaseWrappedScript({
             repoRoot,
             env: process.env,
             scriptFile,
-            args: passthrough,
+            args: scriptArgs,
             dryRun: true,
             skipExecOnDryRun: true,
           });
@@ -1897,7 +1893,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           repoRoot,
           env: mergedEnv,
           scriptFile,
-          args: passthrough,
+          args: scriptArgs,
           dryRun: false,
         });
         return;
@@ -1989,6 +1985,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           interactive: { type: 'string', default: 'auto' },
           'eas-cli-version': { type: 'string', default: '' },
           'dump-view': { type: 'string', default: 'true' },
+          'fingerprint-mode': { type: 'string', default: 'always' },
+          wait: { type: 'string', default: '' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
           'keychain-service': { type: 'string', default: 'happier/pipeline' },
@@ -2032,6 +2030,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
       const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
       const dumpView = String(values['dump-view'] ?? '').trim();
+      const fingerprintModeRaw = String(values['fingerprint-mode'] ?? '').trim().toLowerCase() || 'always';
+      if (fingerprintModeRaw !== 'always' && fingerprintModeRaw !== 'if-changed') {
+        fail(`--fingerprint-mode must be 'always' or 'if-changed' (got: ${values['fingerprint-mode']})`);
+      }
+      const fingerprintMode = fingerprintModeRaw;
+      const waitRaw = String(values.wait ?? '').trim().toLowerCase();
+      if (waitRaw && waitRaw !== 'true' && waitRaw !== 'false') {
+        fail(`--wait must be 'true' or 'false' (got: ${values.wait})`);
+      }
       const buildMode = String(values['build-mode'] ?? '').trim();
       const localRuntime = String(values['local-runtime'] ?? '').trim();
       const artifactOut = String(values['artifact-out'] ?? '').trim();
@@ -2055,6 +2062,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           ...(interactive ? ['--interactive', interactive] : []),
           ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
           ...(dumpView ? ['--dump-view', dumpView] : []),
+          ...(fingerprintMode !== 'always' ? ['--fingerprint-mode', fingerprintMode] : []),
+          ...(waitRaw ? ['--wait', waitRaw] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
       });
@@ -2068,10 +2077,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         options: {
           environment: { type: 'string' },
           platform: { type: 'string' },
+          id: { type: 'string', default: '' },
           path: { type: 'string', default: '' },
           profile: { type: 'string', default: '' },
           interactive: { type: 'string', default: 'auto' },
           'eas-cli-version': { type: 'string', default: '' },
+          wait: { type: 'string', default: 'true' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
           'keychain-service': { type: 'string', default: 'happier/pipeline' },
@@ -2123,7 +2134,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const rawProfile = String(values.profile ?? '').trim();
       const profile = normalizeMobileReleaseProfile(rawProfile) || rawProfile;
       const submitPath = String(values.path ?? '').trim();
+      const submitId = String(values.id ?? '').trim();
       const interactive = String(values.interactive ?? '').trim();
+      const wait = String(values.wait ?? '').trim();
       const dryRun = values['dry-run'] === true;
 
       runExpoSubmit({
@@ -2135,10 +2148,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           environmentArg,
           '--platform',
           platform,
+          ...(submitId ? ['--id', submitId] : []),
           ...(submitPath ? ['--path', submitPath] : []),
           ...(profile ? ['--profile', profile] : []),
           ...(interactive ? ['--interactive', interactive] : []),
           ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
+          ...(wait ? ['--wait', wait] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
       });
@@ -2379,6 +2394,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         interactive: { type: 'string', default: 'auto' },
         'eas-cli-version': { type: 'string', default: '' },
         'dump-view': { type: 'string', default: 'true' },
+        'fingerprint-mode': { type: 'string', default: 'always' },
         'release-message': { type: 'string', default: '' },
         'ui-version-bump': { type: 'string', default: '' },
         'ui-version': { type: 'string', default: '' },
@@ -2435,6 +2451,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const interactive = String(values.interactive ?? '').trim();
     const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
     const dumpView = String(values['dump-view'] ?? '').trim();
+    const fingerprintModeRaw = String(values['fingerprint-mode'] ?? '').trim().toLowerCase() || 'always';
+    if (fingerprintModeRaw !== 'always' && fingerprintModeRaw !== 'if-changed') {
+      fail(`--fingerprint-mode must be 'always' or 'if-changed' (got: ${values['fingerprint-mode']})`);
+    }
+    /** @type {'always' | 'if-changed'} */
+    const fingerprintMode = fingerprintModeRaw;
     const releaseMessage = String(values['release-message'] ?? '').trim();
 
     const uiVersionBump = String(values['ui-version-bump'] ?? '').trim().toLowerCase();
@@ -2611,11 +2633,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               ...(interactive ? ['--interactive', interactive] : []),
               ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
               ...(dumpView ? ['--dump-view', dumpView] : []),
+              ...(fingerprintMode !== 'always' ? ['--fingerprint-mode', fingerprintMode] : []),
               ...(dryRun ? ['--dry-run'] : []),
             ],
           });
         }
       } else {
+        const waitForCloudBuild = action !== 'native_submit';
         runExpoNativeBuild({
           repoRoot,
           env: mergedEnv,
@@ -2627,16 +2651,56 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             profile,
             '--out',
             buildJson,
+            '--wait',
+            waitForCloudBuild ? 'true' : 'false',
             ...(interactive ? ['--interactive', interactive] : []),
             ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
             ...(dumpView ? ['--dump-view', dumpView] : []),
+            ...(fingerprintMode !== 'always' ? ['--fingerprint-mode', fingerprintMode] : []),
             ...(dryRun ? ['--dry-run'] : []),
           ],
         });
       }
 
+      /** @type {{ android: boolean; ios: boolean; skipped: boolean }} */
+      const cloudBuildPresence = { android: false, ios: false, skipped: false };
+      if (nativeBuildMode === 'cloud' && !dryRun) {
+        const abs = path.isAbsolute(buildJson) ? buildJson : path.join(repoRoot, buildJson);
+        try {
+          if (abs && fs.existsSync(abs)) {
+            const parsed = JSON.parse(fs.readFileSync(abs, 'utf8'));
+            if (parsed && typeof parsed === 'object' && parsed.skipped === true) {
+              cloudBuildPresence.skipped = true;
+            } else {
+              const list = Array.isArray(parsed) ? parsed : [parsed];
+              for (const item of list) {
+                const platRaw = item?.platform ? String(item.platform).trim() : '';
+                const plat = platRaw.toLowerCase() === 'ios' || platRaw.toUpperCase() === 'IOS'
+                  ? 'ios'
+                  : platRaw.toLowerCase() === 'android' || platRaw.toUpperCase() === 'ANDROID'
+                    ? 'android'
+                    : platRaw.toLowerCase();
+                const id = item?.id ? String(item.id).trim() : '';
+                if (!id) continue;
+                if (plat === 'ios') cloudBuildPresence.ios = true;
+                if (plat === 'android') cloudBuildPresence.android = true;
+              }
+            }
+          }
+        } catch {
+          // If buildJson cannot be parsed, downstream steps will fail naturally.
+        }
+      }
+      if (!dryRun && cloudBuildPresence.skipped) {
+        console.log('[pipeline] ui-mobile release: skipped native build (fingerprint unchanged).');
+        return;
+      }
+
       let apkPath = '';
       if (shouldDownloadAndroidApk) {
+        if (!dryRun && nativeBuildMode === 'cloud' && !cloudBuildPresence.android) {
+          console.log('[pipeline] ui-mobile release: skipping APK download (no Android build was scheduled).');
+        } else {
         if (nativeBuildMode === 'local') {
           apkPath = localArtifactOutForPlatform('android', appVersion || '0.0.0');
           if (!apkPath.endsWith('.apk')) {
@@ -2670,9 +2734,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               profile,
             });
         }
+        }
       }
 
       if (shouldPublishApkRelease) {
+        if (!dryRun && nativeBuildMode === 'cloud' && !cloudBuildPresence.android) {
+          console.log('[pipeline] ui-mobile release: skipping APK GitHub release publish (no Android build was scheduled).');
+        } else {
         if (!apkPath.endsWith('.apk')) {
           fail('Android APK release publishing requires a downloaded or locally-built APK artifact.');
         }
@@ -2702,6 +2770,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           ],
         });
       }
+      }
 
       if (action === 'native_submit') {
         if (nativeBuildMode === 'local') {
@@ -2719,25 +2788,74 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 p,
                 '--path',
                 rel,
+                '--wait',
+                'false',
                 ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
                 ...(dryRun ? ['--dry-run'] : []),
               ],
             });
           }
         } else {
-          runExpoSubmit({
-            repoRoot,
-            env: mergedEnv,
-            dryRun,
-            args: [
-              '--environment',
-              environment,
-              '--platform',
-              platform,
-              ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
-              ...(dryRun ? ['--dry-run'] : []),
-            ],
-          });
+          /**
+           * When we just scheduled a cloud build, `eas submit --latest` can pick up an unrelated older build.
+           * Prefer submitting the explicit build ids written by `expo native-build --out <build-json>`.
+           *
+           * @returns {{ ios?: string; android?: string }}
+           */
+          function tryResolveCloudBuildIds() {
+            if (!buildJson) return {};
+            const abs = path.isAbsolute(buildJson) ? buildJson : path.join(repoRoot, buildJson);
+            try {
+              if (!fs.existsSync(abs)) return {};
+              const parsed = JSON.parse(fs.readFileSync(abs, 'utf8'));
+              const list = Array.isArray(parsed) ? parsed : [parsed];
+              /** @type {{ ios?: string; android?: string }} */
+              const out = {};
+              for (const item of list) {
+                const id = item?.id ? String(item.id) : '';
+                const platRaw = item?.platform ? String(item.platform).trim() : '';
+                const platUpper = platRaw.toUpperCase();
+                const plat =
+                  platUpper === 'IOS'
+                    ? 'ios'
+                    : platUpper === 'ANDROID'
+                      ? 'android'
+                      : platRaw.toLowerCase();
+                if (!id) continue;
+                if (plat === 'ios' && !out.ios) out.ios = id;
+                if (plat === 'android' && !out.android) out.android = id;
+              }
+              return out;
+            } catch {
+              return {};
+            }
+          }
+
+          const buildIds = tryResolveCloudBuildIds();
+          const toSubmit = platform === 'all' ? ['android', 'ios'] : [platform];
+          for (const p of toSubmit) {
+            const explicitId = p === 'ios' ? buildIds.ios : p === 'android' ? buildIds.android : '';
+            if (!explicitId) {
+              console.log(`[pipeline] ui-mobile release: skipping ${p} submit (no build id in build-json).`);
+              continue;
+            }
+            runExpoSubmit({
+              repoRoot,
+              env: mergedEnv,
+              dryRun,
+              args: [
+                '--environment',
+                environmentArg,
+                '--platform',
+                p,
+                ...(explicitId ? ['--id', explicitId] : []),
+                '--wait',
+                'false',
+                ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
+                ...(dryRun ? ['--dry-run'] : []),
+              ],
+            });
+          }
         }
       }
 
@@ -3263,7 +3381,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
     const channel = String(values.channel ?? '').trim();
     if (!isDockerChannel(channel)) {
-      fail(`--channel must be 'stable' or 'preview' (got: ${channel || '<empty>'})`);
+      fail(`--channel must be 'stable', 'preview', or 'dev' (got: ${channel || '<empty>'})`);
     }
 
     const { env, sources } = loadPipelineEnv({ repoRoot });
@@ -3845,16 +3963,18 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const releaseMessage = String(values['release-message'] ?? '').trim();
           console.log(`[pipeline] release: environment=${deployEnvironment} confirm=${action}`);
 
-          // Ensure all preview release steps compute the same preview.<run>.<attempt> suffix when running locally.
-          if (deployEnvironment === 'preview' && !String(releaseEnv.GITHUB_RUN_NUMBER ?? '').trim()) {
-            const runNumber = String(Math.floor(Date.now() / 1000));
-            releaseEnv.GITHUB_RUN_NUMBER = runNumber;
-            if (!String(releaseEnv.GITHUB_RUN_ATTEMPT ?? '').trim()) {
-              releaseEnv.GITHUB_RUN_ATTEMPT = '1';
-            }
-            console.log(
-              `[pipeline] preview version suffix: preview.${releaseEnv.GITHUB_RUN_NUMBER}.${releaseEnv.GITHUB_RUN_ATTEMPT}`,
-            );
+          if (deployEnvironment === 'preview') {
+            // Ensure all preview release steps compute the same preview.<run>.<attempt> suffix.
+            // Locally we synthesize the missing run vars; in GitHub Actions we rely on the provided ones.
+            const runNumberRaw = String(releaseEnv.GITHUB_RUN_NUMBER ?? '').trim();
+            const runNumber = runNumberRaw || String(Math.floor(Date.now() / 1000));
+            if (!runNumberRaw) releaseEnv.GITHUB_RUN_NUMBER = runNumber;
+
+            const attemptRaw = String(releaseEnv.GITHUB_RUN_ATTEMPT ?? '').trim();
+            const attempt = attemptRaw || '1';
+            if (!attemptRaw) releaseEnv.GITHUB_RUN_ATTEMPT = attempt;
+
+            console.log(`[pipeline] preview version suffix: preview.${runNumber}.${attempt}`);
           }
 
             // Plan: compute changed components (main..dev) and resolve bump/publish plan.

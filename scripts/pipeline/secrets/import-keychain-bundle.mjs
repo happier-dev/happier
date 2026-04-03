@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { parseDotenv } from '../env/parse-dotenv.mjs';
 import { readKeychainBundle } from './read-keychain-bundle.mjs';
+import { assertSecurityCliAvailable } from './security-cli.mjs';
 import { writeKeychainBundle } from './write-keychain-bundle.mjs';
 
 /**
@@ -79,9 +80,7 @@ function readEnvFile(opts) {
  * }}
  */
 export function importDotenvIntoKeychainBundle(opts) {
-  if (process.platform !== 'darwin') {
-    throw new Error('[pipeline] Keychain import is only supported on macOS (darwin).');
-  }
+  assertSecurityCliAvailable();
 
   const repoRoot = path.resolve(String(opts.repoRoot ?? ''));
   const service = String(opts.keychainService ?? '').trim();
@@ -166,4 +165,3 @@ export function importDotenvIntoKeychainBundle(opts) {
     wrote,
   };
 }
-

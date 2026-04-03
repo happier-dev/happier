@@ -52,6 +52,51 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
                     subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteAgentSdkEnabled.subtitle' },
                 },
                 {
+                    key: 'claudeRemoteDebugEnabled',
+                    kind: 'boolean',
+                    title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugEnabled.title' },
+                    subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugEnabled.subtitle' },
+                },
+                {
+                    key: 'claudeRemoteVerboseEnabled',
+                    kind: 'boolean',
+                    title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteVerboseEnabled.title' },
+                    subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteVerboseEnabled.subtitle' },
+                },
+                {
+                    key: 'claudeRemoteDebugCategories',
+                    kind: 'multiEnum',
+                    title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.title' },
+                    subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.subtitle' },
+                    enumOptions: [
+                        {
+                            id: 'api',
+                            title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.api.title' },
+                            subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.api.subtitle' },
+                        },
+                        {
+                            id: 'mcp',
+                            title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.mcp.title' },
+                            subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.mcp.subtitle' },
+                        },
+                        {
+                            id: 'hooks',
+                            title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.hooks.title' },
+                            subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.hooks.subtitle' },
+                        },
+                        {
+                            id: 'file',
+                            title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.file.title' },
+                            subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.file.subtitle' },
+                        },
+                        {
+                            id: '1p',
+                            title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.title' },
+                            subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.subtitle' },
+                        },
+                    ],
+                },
+                {
                     key: 'claudeRemoteSettingSourcesV2',
                     kind: 'multiEnum',
                     title: { key: 'settingsProviders.plugins.claude.fields.claudeRemoteSettingSourcesV2.title' },

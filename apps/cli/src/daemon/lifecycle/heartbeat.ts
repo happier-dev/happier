@@ -75,6 +75,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   fileState: DaemonLocallyPersistedState;
   currentCliVersion: string;
   requestShutdown: (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
+  isShuttingDown?: () => boolean;
 }>): NodeJS.Timeout {
   const {
     pidToTrackedSession,
@@ -86,6 +87,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     fileState,
     currentCliVersion,
     requestShutdown,
+    isShuttingDown,
   } = params;
 
   const onChildExitedForPrune =
@@ -164,6 +166,11 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   void ensureSessionHandoffPrepareTargetRecovery();
 
   const intervalHandle = setInterval(async () => {
+    // During shutdown we must not mutate local daemon state (especially daemon.state.json),
+    // otherwise "stop via HTTP" can race and recreate state files after cleanup.
+    if (isShuttingDown?.() === true) {
+      return;
+    }
     if (heartbeatRunning) {
       return;
     }
@@ -292,6 +299,9 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
 
       // Heartbeat
       try {
+        if (isShuttingDown?.() === true) {
+          return;
+        }
         const updatedState: DaemonLocallyPersistedState = {
           pid: process.pid,
           httpPort: controlPort,

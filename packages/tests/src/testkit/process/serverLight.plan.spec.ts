@@ -99,18 +99,22 @@ describe("startServerLight planning helpers", () => {
     expect(secondEntered).toBe(true);
   });
 
-  it("detects when shared server dependency outputs already exist", () => {
-    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-shared-deps-"));
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
+	  it("detects when shared server dependency outputs already exist", () => {
+	    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-shared-deps-"));
+	    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
 
-    mkdirSync(resolve(rootDir, "packages", "agents", "dist"), { recursive: true });
-    writeFileSync(resolve(rootDir, "packages", "agents", "dist", "index.js"), "export {};\n", "utf8");
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
+	    mkdirSync(resolve(rootDir, "packages", "agents", "dist"), { recursive: true });
+	    writeFileSync(resolve(rootDir, "packages", "agents", "dist", "index.js"), "export {};\n", "utf8");
+	    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
 
-    mkdirSync(resolve(rootDir, "packages", "protocol", "dist"), { recursive: true });
-    writeFileSync(resolve(rootDir, "packages", "protocol", "dist", "index.js"), "export {};\n", "utf8");
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(true);
-  });
+	    mkdirSync(resolve(rootDir, "packages", "protocol", "dist"), { recursive: true });
+	    writeFileSync(resolve(rootDir, "packages", "protocol", "dist", "index.js"), "export {};\n", "utf8");
+	    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
+
+	    mkdirSync(resolve(rootDir, "packages", "cli-common", "dist", "tailscale"), { recursive: true });
+	    writeFileSync(resolve(rootDir, "packages", "cli-common", "dist", "tailscale", "index.js"), "export {};\n", "utf8");
+	    expect(hasServerSharedDepsOutputs(rootDir)).toBe(true);
+	  });
 
   it("detects when generated provider outputs are current", () => {
     const rootDir = mkdtempSync(join(tmpdir(), "happier-server-generated-"));

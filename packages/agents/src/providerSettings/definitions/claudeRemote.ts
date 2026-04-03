@@ -8,12 +8,31 @@ export const MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS = 16_384;
 const CLAUDE_SETTING_SOURCES_V2 = ['user', 'project', 'local'] as const;
 export type ClaudeSettingSourceV2 = (typeof CLAUDE_SETTING_SOURCES_V2)[number];
 
+const CLAUDE_REMOTE_DEBUG_CATEGORIES = ['api', 'mcp', 'hooks', 'file', '1p'] as const;
+export type ClaudeRemoteDebugCategory = (typeof CLAUDE_REMOTE_DEBUG_CATEGORIES)[number];
+
 function normalizeClaudeSettingSourcesV2(raw: unknown): ClaudeSettingSourceV2[] | null {
   if (!Array.isArray(raw)) return null;
   const input = raw as unknown[];
   const inputSet = new Set(input.filter((v): v is ClaudeSettingSourceV2 => typeof v === 'string' && (CLAUDE_SETTING_SOURCES_V2 as readonly string[]).includes(v)));
   const out: ClaudeSettingSourceV2[] = [];
   for (const key of CLAUDE_SETTING_SOURCES_V2) {
+    if (inputSet.has(key)) out.push(key);
+  }
+  return out;
+}
+
+function normalizeClaudeRemoteDebugCategories(raw: unknown): ClaudeRemoteDebugCategory[] | null {
+  if (!Array.isArray(raw)) return null;
+  const input = raw as unknown[];
+  const inputSet = new Set(
+    input.filter(
+      (v): v is ClaudeRemoteDebugCategory =>
+        typeof v === 'string' && (CLAUDE_REMOTE_DEBUG_CATEGORIES as readonly string[]).includes(v),
+    ),
+  );
+  const out: ClaudeRemoteDebugCategory[] = [];
+  for (const key of CLAUDE_REMOTE_DEBUG_CATEGORIES) {
     if (inputSet.has(key)) out.push(key);
   }
   return out;
@@ -57,6 +76,12 @@ export function normalizeClaudeRemoteAdvancedOptionsJson(raw: unknown): string {
 
 function serializeClaudeSettingSourcesV2(raw: unknown): string {
   const normalized = normalizeClaudeSettingSourcesV2(raw);
+  if (!normalized || normalized.length === 0) return 'none';
+  return normalized.join('+');
+}
+
+function serializeClaudeRemoteDebugCategories(raw: unknown): string {
+  const normalized = normalizeClaudeRemoteDebugCategories(raw);
   if (!normalized || normalized.length === 0) return 'none';
   return normalized.join('+');
 }
@@ -143,6 +168,34 @@ export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
     storageScope: 'account',
     analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
   },
+  claudeRemoteDebugEnabled: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Enable Claude Code debug mode (remote)',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeRemoteVerboseEnabled: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Enable Claude Code verbose logging (remote)',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeRemoteDebugCategories: {
+    schema: z.array(z.enum(['api', 'mcp', 'hooks', 'file', '1p'])).max(5),
+    default: [] as readonly ClaudeRemoteDebugCategory[],
+    description: 'Claude Code debug categories filter (remote)',
+    storageScope: 'account',
+    analytics: {
+      trackCurrentState: true,
+      trackChanges: true,
+      valueKind: 'enum',
+      privacy: 'safe',
+      identityScope: 'person',
+      serializeCurrent: (value) => serializeClaudeRemoteDebugCategories(value),
+    },
+  },
   claudeRemoteAdvancedOptionsJson: {
     schema: z.string().refine(isValidClaudeRemoteAdvancedOptionsJson, {
       message: 'Must be empty or a valid JSON object string',
@@ -194,6 +247,10 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
         : CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as readonly ClaudeSettingSourceV2[];
   const legacyFromV2 = tryMapSettingSourcesV2ToLegacy(effectiveV2);
 
+  const debugCategories =
+    normalizeClaudeRemoteDebugCategories(settings.claudeRemoteDebugCategories)
+    ?? (CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteDebugCategories as readonly ClaudeRemoteDebugCategory[]);
+
   return {
     claudeRemoteAgentSdkEnabled: readBoolean('claudeRemoteAgentSdkEnabled'),
     claudeRemoteSettingSourcesV2: effectiveV2,
@@ -206,6 +263,9 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
     claudeRemoteMaxThinkingTokens: typeof settings.claudeRemoteMaxThinkingTokens === 'number' ? settings.claudeRemoteMaxThinkingTokens : null,
     claudeRemoteDisableTodos: readBoolean('claudeRemoteDisableTodos'),
     claudeRemoteStrictMcpServerConfig: readBoolean('claudeRemoteStrictMcpServerConfig'),
+    claudeRemoteDebugEnabled: readBoolean('claudeRemoteDebugEnabled'),
+    claudeRemoteVerboseEnabled: readBoolean('claudeRemoteVerboseEnabled'),
+    claudeRemoteDebugCategories: debugCategories,
     claudeRemoteAdvancedOptionsJson: normalizeClaudeRemoteAdvancedOptionsJson(settings.claudeRemoteAdvancedOptionsJson),
   };
 }

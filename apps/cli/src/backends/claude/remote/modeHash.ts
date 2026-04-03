@@ -28,6 +28,22 @@ function resolveClaudeRemoteSettingSourcesOverrideForAgentSdk(mode: EnhancedMode
     return null;
 }
 
+const DEBUG_CATEGORIES_ORDER = ['api', 'mcp', 'hooks', 'file', '1p'] as const;
+
+function normalizeClaudeRemoteDebugCategories(mode: EnhancedMode): readonly string[] {
+    const raw = mode.claudeRemoteDebugCategories;
+    if (!Array.isArray(raw)) return [];
+    const set = new Set<string>();
+    for (const value of raw) {
+        set.add(value);
+    }
+    const out: string[] = [];
+    for (const key of DEBUG_CATEGORIES_ORDER) {
+        if (set.has(key)) out.push(key);
+    }
+    return out;
+}
+
 export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
     const agentSdkEnabled = mode.claudeRemoteAgentSdkEnabled === true;
     const effectiveAgentModeId = (() => {
@@ -49,6 +65,8 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
         effort: mode.reasoningEffort,
     });
 
+    const debugCategories = normalizeClaudeRemoteDebugCategories(mode);
+
     if (!agentSdkEnabled) {
         return hashObject({
             claudeSdkPermissionMode,
@@ -60,6 +78,9 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
             customSystemPrompt: mode.customSystemPrompt,
             appendSystemPrompt: mode.appendSystemPrompt,
             claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,
+            claudeRemoteDebugEnabled: mode.claudeRemoteDebugEnabled === true,
+            claudeRemoteVerboseEnabled: mode.claudeRemoteVerboseEnabled === true,
+            claudeRemoteDebugCategories: debugCategories,
         });
     }
 
@@ -74,6 +95,9 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
         claudeRemoteEnableFileCheckpointing: mode.claudeRemoteEnableFileCheckpointing,
         claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,
         claudeRemoteStrictMcpServerConfig: mode.claudeRemoteStrictMcpServerConfig,
+        claudeRemoteDebugEnabled: mode.claudeRemoteDebugEnabled === true,
+        claudeRemoteVerboseEnabled: mode.claudeRemoteVerboseEnabled === true,
+        claudeRemoteDebugCategories: debugCategories,
         claudeRemoteAdvancedOptionsJson: mode.claudeRemoteAdvancedOptionsJson,
         effort: resolvedEffort,
         // Restart-required (SDK has no dynamic setter)

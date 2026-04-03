@@ -48,7 +48,9 @@ describe('ModalCardFrame', () => {
         expect(body.props.style).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
-                    flex: 1,
+                    flexGrow: 1,
+                    flexShrink: 1,
+                    flexBasis: 'auto',
                     minHeight: 0,
                 }),
             ]),
@@ -172,7 +174,9 @@ describe('ModalCardFrame', () => {
         expect(body.props.style).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
-                    flex: 1,
+                    flexGrow: 1,
+                    flexShrink: 1,
+                    flexBasis: 'auto',
                     minHeight: 0,
                 }),
             ]),

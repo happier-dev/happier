@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": ["bash_echo_trace_ok"],
+    "extended": ["switch_to_remote_during_inflight_turn"]
+  }
+}

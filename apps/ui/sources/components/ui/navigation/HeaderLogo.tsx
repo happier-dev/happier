@@ -9,7 +9,10 @@ import { useUnistyles } from 'react-native-unistyles';
  * had its own HeaderLeft, the component would unmount/remount.
  */
 export const HeaderLogo = React.memo(() => {
-    const { theme } = useUnistyles();
+    const { rt } = useUnistyles();
+    const source = rt.themeName === 'dark'
+        ? require('@/assets/images/logo-white.png')
+        : require('@/assets/images/logo-black.png');
     return (
         <View style={{
             width: 32,
@@ -18,10 +21,9 @@ export const HeaderLogo = React.memo(() => {
             justifyContent: 'center',
         }}>
             <Image
-                source={require('@/assets/images/logo-black.png')}
+                source={source}
                 contentFit="contain"
                 style={{ width: 24, height: 24 }}
-                tintColor={theme.colors.header.tint}
             />
         </View>
     );

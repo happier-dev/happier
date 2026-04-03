@@ -4,20 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Release channel (preview or stable)"
+        description: "Release channel"
         required: true
         default: "preview"
         type: choice
         options:
+          - dev
           - preview
           - stable
       source_ref:
-        description: "Source ref to build from (auto => preview:preview, stable:main)"
+        description: "Source ref to build from (auto => dev:dev, preview:preview, stable:main)"
         required: true
         default: auto
         type: string
       push_latest:
-        description: "Also push the floating channel tag (preview or latest)"
+        description: "Also push the floating channel tag (dev, preview, or latest)"
         required: true
         default: true
         type: boolean
@@ -88,37 +89,45 @@ jobs:
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
-      - name: Resolve source ref
-        id: resolve_source
-        shell: bash
-        run: |
-          set -euo pipefail
-          channel="${{ inputs.channel }}"
-          src="${{ inputs.source_ref }}"
-          if [ "$src" = "auto" ]; then
-            if [ "$channel" = "preview" ]; then
-              src="preview"
-            else
-              src="main"
-            fi
-          fi
-          echo "ref=$src" >> "$GITHUB_OUTPUT"
-
-      - name: Guard stable channel
-        if: ${{ inputs.channel == 'stable' && steps.resolve_source.outputs.ref != 'main' }}
-        run: |
-          echo "Stable Docker publishing must build from main (resolved ref: '${{ steps.resolve_source.outputs.ref }}')." >&2
-          exit 1
-
-      - name: Checkout
+      - name: Checkout workflow repo
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.resolve_source.outputs.ref }}
+          fetch-depth: 1
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
+
+      - name: Resolve channel metadata
+        id: channel_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/resolve-public-release-channel-meta.mjs \
+            --channel "${{ inputs.channel }}" \
+            --source-ref "${{ inputs.source_ref }}" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Guard stable channel
+        if: ${{ inputs.channel == 'stable' && steps.channel_meta.outputs.source_ref != 'main' }}
+        run: |
+          echo "Stable Docker publishing must build from main (resolved ref: '${{ steps.channel_meta.outputs.source_ref }}')." >&2
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.channel_meta.outputs.source_ref }}
+          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -136,16 +145,18 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # Prefer a long-lived PAT when org/package settings prevent GitHub Actions tokens from publishing to GHCR.
+          # Fall back to the workflow's GITHUB_TOKEN (packages:write is requested at the workflow level).
+          username: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
+          password: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || github.token }}
 
       - name: Build & push images (pipeline)
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GHCR_NAMESPACE: ghcr.io/happier-dev
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || github.token }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs docker-publish \
@@ -156,7 +167,8 @@ jobs:
             --build-dev-box "${{ inputs.build_dev_box }}"
 
       - name: Update Docker Hub README (relay-server)
-        if: ${{ inputs.build_relay }}
+        if: ${{ inputs.build_relay && inputs.channel != 'dev' }}
+        continue-on-error: true
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -166,7 +178,8 @@ jobs:
           short-description: Self-host the Happier Server (Docker image)
 
       - name: Update Docker Hub README (dev-box)
-        if: ${{ inputs.build_dev_box }}
+        if: ${{ inputs.build_dev_box && inputs.channel != 'dev' }}
+        continue-on-error: true
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}

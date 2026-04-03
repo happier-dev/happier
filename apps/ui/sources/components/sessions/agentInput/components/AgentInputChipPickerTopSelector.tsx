@@ -103,11 +103,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-const iconStyles = StyleSheet.create({
+const iconStyles = StyleSheet.create(() => ({
     iconWrapper: {
         width: PICKER_ICON_SIZE,
         height: PICKER_ICON_SIZE,
         alignItems: 'center',
         justifyContent: 'center',
     },
-});
+}));

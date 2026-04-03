@@ -567,6 +567,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     env:
+      # Some CLI tests fetch/inspect GitHub Release assets. Prefer the built-in
+      # GitHub Actions token rather than requiring extra secrets.
+      GH_TOKEN: ${{ github.token }}
+      HAPPIER_GITHUB_TOKEN: ${{ github.token }}
       HAPPIER_CLI_TMUX_INTEGRATION: "1"
       HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION: "1"
       HAPPIER_NO_BROWSER_OPEN: "1"

@@ -110,7 +110,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # AppImage tooling (linuxdeploy/AppImageKit) is significantly more reliable on 22.04 than on ubuntu-latest.
+          - os: ubuntu-22.04
             platform_key: linux-x86_64
             tauri_target: ""
           - os: windows-latest
@@ -128,6 +129,12 @@ jobs:
         with:
           ref: ${{ needs.resolve_source.outputs.source_sha }}
           fetch-depth: 1
+
+      - name: Setup Xcode (pin) (macOS only)
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode_version: "26.2"
 
       - name: Enforce trusted refs for manual dispatch
         run: |
@@ -150,6 +157,11 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
       - name: Validate updater public key (production)
         if: inputs.environment == 'production'
         run: |
@@ -165,7 +177,13 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile --ignore-engines
+          # Desktop builds should not require installing backend/CLI workspaces (which can pull native deps
+          # that are flaky on Windows runners). Keep installs focused on UI + shared packages.
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
+          # Prefer the npm registry over the Yarn registry to avoid transient 5xx fetch failures
+          # that can break long cross-platform build workflows.
+          npm_config_registry: https://registry.npmjs.org
+        run: yarn install --frozen-lockfile --ignore-engines --network-timeout 600000
 
       - name: Build internal packages (protocol, agents)
         run: yarn -s build:packages
@@ -236,7 +254,35 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
+            desktop-file-utils \
+            gstreamer1.0-tools \
+            gstreamer1.0-plugins-base \
+            squashfs-tools \
             patchelf
+
+          # linuxdeploy is distributed as an AppImage. On newer runners, missing FUSE libraries can break
+          # AppImage execution (even when APPIMAGE_EXTRACT_AND_RUN is set for some tools).
+          fuse_pkg=""
+          if apt-cache show libfuse2 >/dev/null 2>&1; then
+            fuse_pkg="libfuse2"
+          elif apt-cache show libfuse2t64 >/dev/null 2>&1; then
+            fuse_pkg="libfuse2t64"
+          fi
+          if [ -n "${fuse_pkg}" ]; then
+            sudo apt-get install -y --no-install-recommends "${fuse_pkg}"
+          fi
+
+          # Some linuxdeploy AppImage runtimes still rely on fusermount being present. Install fuse utilities
+          # opportunistically (distro-dependent).
+          fuse_utils=""
+          if apt-cache show fuse >/dev/null 2>&1; then
+            fuse_utils="fuse"
+          elif apt-cache show fuse3 >/dev/null 2>&1; then
+            fuse_utils="fuse3"
+          fi
+          if [ -n "${fuse_utils}" ]; then
+            sudo apt-get install -y --no-install-recommends "${fuse_utils}"
+          fi
 
       - name: Compute build version
         id: ver

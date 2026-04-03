@@ -195,10 +195,16 @@ export async function waitForAssistantMessageContaining(params: {
 
         const candidateTexts: string[] = [];
         const meta = decrypted.meta && typeof decrypted.meta === 'object' ? (decrypted.meta as Record<string, unknown>) : null;
+        const streamSegmentV1 =
+          meta && typeof meta.happierStreamSegmentV1 === 'object' && meta.happierStreamSegmentV1 && !Array.isArray(meta.happierStreamSegmentV1)
+            ? (meta.happierStreamSegmentV1 as Record<string, unknown>)
+            : null;
+        const streamSegmentLocalId =
+          streamSegmentV1 && typeof streamSegmentV1.segmentLocalId === 'string' ? String(streamSegmentV1.segmentLocalId) : null;
         const streamKey = meta && typeof meta.happierStreamKey === 'string' ? String(meta.happierStreamKey) : null;
         const sidechainStreamKey =
           meta && typeof meta.happierSidechainStreamKey === 'string' ? String(meta.happierSidechainStreamKey) : null;
-        const anyStreamKey = streamKey ?? sidechainStreamKey;
+        const anyStreamKey = streamSegmentLocalId ?? streamKey ?? sidechainStreamKey;
 
         if (role === 'assistant') {
           if (typeof decrypted.content === 'string') {
@@ -227,10 +233,19 @@ export async function waitForAssistantMessageContaining(params: {
             if (data?.type === 'message' && typeof data.message === 'string') {
               candidateTexts.push(data.message);
               if (anyStreamKey) {
-                const prev = streamedTextByKey.get(anyStreamKey) ?? '';
-                const next = prev + data.message;
-                streamedTextByKey.set(anyStreamKey, next);
-                candidateTexts.push(next);
+                if (streamSegmentLocalId) {
+                  // `StreamedTranscriptWriter` commits cumulative snapshots (not deltas).
+                  // Prefer the longest snapshot we observe for the segment key.
+                  const prev = streamedTextByKey.get(anyStreamKey) ?? '';
+                  const next = data.message.length >= prev.length ? data.message : prev;
+                  streamedTextByKey.set(anyStreamKey, next);
+                  candidateTexts.push(next);
+                } else {
+                  const prev = streamedTextByKey.get(anyStreamKey) ?? '';
+                  const next = prev + data.message;
+                  streamedTextByKey.set(anyStreamKey, next);
+                  candidateTexts.push(next);
+                }
               }
             }
           }

@@ -2672,6 +2672,40 @@ export const en = {
                         title: "Use Agent SDK (remote)",
                         subtitle: "Use the official @anthropic-ai/claude-agent-sdk for remote mode."
                     },
+                    claudeRemoteDebugEnabled: {
+                        title: "Debug mode",
+                        subtitle: "Enables Claude Code debug logs (same as passing --debug)."
+                    },
+                    claudeRemoteVerboseEnabled: {
+                        title: "Verbose",
+                        subtitle: "Enables verbose logging (same as passing --verbose)."
+                    },
+                    claudeRemoteDebugCategories: {
+                        title: "Debug categories",
+                        subtitle: "Optional debug category filter. When empty, Claude logs all debug categories.",
+                        options: {
+                            api: {
+                                title: "API",
+                                subtitle: "HTTP/API requests and responses."
+                            },
+                            mcp: {
+                                title: "MCP",
+                                subtitle: "MCP server connections and tool traffic."
+                            },
+                            hooks: {
+                                title: "Hooks",
+                                subtitle: "Hook lifecycle and hook command execution."
+                            },
+                            file: {
+                                title: "Files",
+                                subtitle: "Filesystem operations and file helpers."
+                            },
+                            '1p': {
+                                title: "1p",
+                                subtitle: "First-party internal debug category."
+                            }
+                        }
+                    },
                     claudeRemoteSettingSourcesV2: {
                         title: "Setting sources",
                         subtitle: "Controls which Claude settings are loaded.",

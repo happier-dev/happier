@@ -26,13 +26,39 @@ on:
       eas_builder:
         description: "Runner — EAS build runner"
         required: true
-        default: eas_cloud
+        default: eas_local
         type: choice
         options:
           - eas_cloud
           - eas_local
       release_message:
         description: "Release message — Optional message for OTA + GitHub APK rolling release notes"
+        required: false
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      source_ref:
+        required: false
+        default: dev
+        type: string
+      publish_ota:
+        required: false
+        default: true
+        type: boolean
+      publish_android_apk:
+        required: false
+        default: true
+        type: boolean
+      submit_ios_testflight:
+        required: false
+        default: true
+        type: boolean
+      eas_builder:
+        required: false
+        default: eas_local
+        type: string
+      release_message:
         required: false
         default: ""
         type: string
@@ -100,6 +126,8 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+          # Keep builds mobile-focused (desktop/web builds happen elsewhere).
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           # Dev lane uses preview-like embedded policy and does not need web-asset vendoring.
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
@@ -122,7 +150,9 @@ jobs:
         if: inputs.publish_android_apk && inputs.eas_builder == 'eas_cloud'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          # GitHub App tokens are short-lived and can expire during long native builds.
+          # Use the job-scoped GITHUB_TOKEN for release publishing so the lane stays idempotent.
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -132,29 +162,39 @@ jobs:
             --platform android \
             --profile dev-apk \
             --native-build-mode cloud \
+            --fingerprint-mode if-changed \
             --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
             --release-message "${{ inputs.release_message }}" \
             --secrets-source env
 
-      - name: iOS TestFlight submit (dev lane) (best-effort)
-        if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_cloud'
-        continue-on-error: true
+      - name: Install Dagger (local Android builds)
+        if: inputs.publish_android_apk && inputs.eas_builder == 'eas_local'
+        uses: dagger/dagger-for-github@v8.3.0
+        with:
+          version: "0.20.3"
+
+      - name: Android APK (dev lane) (local via Dagger) + rolling GitHub release
+        if: inputs.publish_android_apk && inputs.eas_builder == 'eas_local'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          # GitHub App tokens are short-lived and can expire during long native builds.
+          # Use the job-scoped GITHUB_TOKEN for release publishing so the lane stays idempotent.
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs ui-mobile-release \
             --environment dev \
-            --action native_submit \
-            --platform ios \
-            --profile dev \
-            --native-build-mode cloud \
-            --build-json "/tmp/eas_build.ios.json" \
+            --action native \
+            --platform android \
+            --profile dev-apk \
+            --native-build-mode local \
+            --native-local-runtime dagger \
+            --fingerprint-mode if-changed \
+            --build-json "/tmp/eas_build.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
             --release-message "${{ inputs.release_message }}" \
@@ -165,3 +205,140 @@ jobs:
           set -euo pipefail
           echo "Triggered UI mobile dev lane: OTA + Android APK rolling release + optional TestFlight submit." >> "$GITHUB_STEP_SUMMARY"
 
+  ios_cloud:
+    name: iOS TestFlight submit (dev lane) (cloud, best-effort)
+    needs: [release_actor_guard]
+    if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_cloud'
+    runs-on: ubuntu-latest
+    environment: release-shared
+    continue-on-error: true
+    steps:
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: iOS TestFlight submit (dev lane) (best-effort)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          # Prefer the job-scoped GITHUB_TOKEN over the short-lived GitHub App token.
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment dev \
+            --action native_submit \
+            --platform ios \
+            --profile dev \
+            --native-build-mode cloud \
+            --fingerprint-mode if-changed \
+            --build-json "/tmp/eas_build.ios.json" \
+            --out-dir "dist/ui-mobile" \
+            --eas-cli-version "${EAS_CLI_VERSION}" \
+            --release-message "${{ inputs.release_message }}" \
+            --secrets-source env
+
+  ios_local:
+    name: iOS TestFlight submit (dev lane) (local, best-effort)
+    needs: [release_actor_guard]
+    if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_local'
+    runs-on: macos-26
+    environment: release-shared
+    continue-on-error: true
+    steps:
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Setup Xcode (pin)
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode_version: "26.2"
+
+      - name: iOS TestFlight submit (dev lane) (best-effort)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          # Prefer the job-scoped GITHUB_TOKEN over the short-lived GitHub App token.
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment dev \
+            --action native_submit \
+            --platform ios \
+            --profile dev \
+            --native-build-mode local \
+            --native-local-runtime host \
+            --fingerprint-mode if-changed \
+            --build-json "/tmp/eas_build.ios.json" \
+            --out-dir "dist/ui-mobile" \
+            --eas-cli-version "${EAS_CLI_VERSION}" \
+            --release-message "${{ inputs.release_message }}" \
+            --secrets-source env

@@ -346,7 +346,12 @@ function readPackageJsonField(packageJsonPath: string, field: string): unknown {
 function hasCliBundledWorkspaceManifestParity(rootDir: string, packageName: CliSharedDepPackageName): boolean {
   const workspacePackageJsonPath = resolve(resolveCliWorkspacePackageDir(rootDir, packageName), 'package.json');
   const bundledPackageJsonPath = resolve(resolveCliBundledWorkspacePackageDir(rootDir, packageName), 'package.json');
-  if (!existsSync(workspacePackageJsonPath) || !existsSync(bundledPackageJsonPath)) return false;
+  if (!existsSync(bundledPackageJsonPath)) return false;
+
+  // Some harnesses build a minimal scratch "repo root" that only contains `packages/<name>/dist/**`.
+  // In that case, we can't enforce exports parity, and a rebuild can't create the missing manifest.
+  // Fail open so bundled outputs can still be treated as healthy.
+  if (!existsSync(workspacePackageJsonPath)) return true;
 
   const workspaceExports = readPackageJsonField(workspacePackageJsonPath, 'exports');
   const bundledExports = readPackageJsonField(bundledPackageJsonPath, 'exports');
@@ -656,6 +661,10 @@ export async function ensureCliSharedDepsBuilt(
   params: { testDir: string; env: NodeJS.ProcessEnv },
   options: EnsureCliSharedDepsBuiltOptions = {},
 ): Promise<void> {
+  // Many provider/E2E harnesses pass a fresh temporary directory; make sure we can always
+  // write build logs without requiring callers to pre-create the folder.
+  mkdirSync(params.testDir, { recursive: true });
+
   const rootDir = options.repoRoot ?? repoRootDir();
   const skipSourceFreshnessCheck = options.skipSourceFreshnessCheck ?? false;
   const maxBuildAttempts = Math.max(1, options.maxBuildAttempts ?? 2);
@@ -683,12 +692,12 @@ export async function ensureCliSharedDepsBuilt(
         timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
       });
 
-      if (hasCliSharedDepsOutputs(rootDir)) {
+      if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
         return;
       }
     }
 
-    if (!hasCliSharedDepsOutputs(rootDir)) {
+    if (!hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
       throw new Error(`Shared workspace deps output missing after build: ${resolve(rootDir, 'packages')}`);
     }
   })();

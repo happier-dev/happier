@@ -51,10 +51,9 @@ function main() {
     const args = parseArgs(process.argv.slice(2));
 
     const requestedChannel = String(args.get('--channel') ?? '').trim().toLowerCase();
-    const channel =
-        requestedChannel === 'dev' || requestedChannel === 'publicdev'
-            ? 'publicdev'
-            : requestedChannel;
+    // `publicdev` is kept as a backward-compatible alias for `dev` (older workflows/pipeline
+    // scripts used it as an internal id while showing "dev" publicly).
+    const channel = requestedChannel === 'publicdev' ? 'dev' : requestedChannel;
     const version = String(args.get('--version') ?? '').trim();
     const pubDate = String(args.get('--pub-date') ?? '').trim();
     const notes = String(args.get('--notes') ?? '').trim();
@@ -65,7 +64,7 @@ function main() {
 
     // NOTE: `latest.json` uses the Tauri updater schema and doesn't include the channel; we still validate
     // it so CI can fail fast if a workflow is misconfigured.
-    if (!channel || !['preview', 'publicdev', 'production', 'stable'].includes(channel)) {
+    if (!channel || !['preview', 'dev', 'production', 'stable'].includes(channel)) {
         fail('--channel must be one of: preview, dev, production, stable');
     }
     if (!version) fail('--version is required');
@@ -82,13 +81,13 @@ function main() {
 
     const wantedPlatforms = ['linux-x86_64', 'windows-x86_64', 'darwin-x86_64', 'darwin-aarch64'];
     const allFiles = listFilesRecursive(artifactsDir);
-    const sigFiles = allFiles.filter((p) => p.endsWith('.sig'));
+    const sigFiles = allFiles.filter((p) => p.endsWith('.sig')).sort((a, b) => a.localeCompare(b));
 
     /** @type {Record<string, { url: string; signature: string }>} */
     const platforms = {};
 
     for (const platformKey of wantedPlatforms) {
-        const sigPath = sigFiles.find((p) => normalizeSegments(p).includes(platformKey));
+        const sigPath = sigFiles.find((p) => normalizeSegments(p).some((segment) => segment.includes(platformKey)));
         if (!sigPath) {
             fail(`Missing signature file for platform "${platformKey}" under ${artifactsDir}`);
         }

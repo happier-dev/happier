@@ -1,10 +1,21 @@
 // @ts-check
 
-import {
-  getReleaseRingCatalogEntry,
-  listPublicReleaseRingLabels,
-  normalizePublicReleaseRingId,
-} from '@happier-dev/release-runtime/releaseRings';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// Keep this module dependency-free so it can run in GitHub Actions before `yarn install`.
+// We load the canonical release ring catalog from the checked-in CJS entrypoint.
+const require = createRequire(import.meta.url);
+const here = path.dirname(fileURLToPath(import.meta.url));
+const releaseRings = require(path.resolve(here, '..', '..', '..', '..', 'packages', 'release-runtime', 'releaseRings.cjs'));
+
+/** @type {(id: any) => any} */
+const getReleaseRingCatalogEntry = releaseRings.getReleaseRingCatalogEntry;
+/** @type {() => readonly any[]} */
+const listPublicReleaseRingLabels = releaseRings.listPublicReleaseRingLabels;
+/** @type {(raw: any) => any} */
+const normalizePublicReleaseRingId = releaseRings.normalizePublicReleaseRingId;
 
 /**
  * @param {unknown} raw

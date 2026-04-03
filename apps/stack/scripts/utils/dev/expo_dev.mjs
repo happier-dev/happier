@@ -457,7 +457,9 @@ export async function ensureDevExpoServer({
 
   const forcedPortRaw = (baseEnv?.HAPPIER_STACK_EXPO_DEV_PORT ?? '').toString().trim();
   const forcedPortNum = Number(forcedPortRaw);
-  if (stablePortMode && forcedPortRaw && Number.isFinite(forcedPortNum) && forcedPortNum > 0) {
+  const hasForcedPort = forcedPortRaw && Number.isFinite(forcedPortNum) && forcedPortNum > 0;
+
+  if (stablePortMode && hasForcedPort) {
     if (reservedMetroPorts.has(forcedPortNum)) {
       throw new Error(
         `[expo] stable expo port ${forcedPortNum} is reserved due to an existing process; refusing to bump the expo port.`
@@ -490,25 +492,16 @@ export async function ensureDevExpoServer({
     }
   }
 
-  const metroPort = await pickExpoDevMetroPort({
-    env: baseEnv,
-    stackMode,
-    stackName,
-    reservedPorts: reservedMetroPorts,
-  });
-  if (
-    stackMode &&
-    envPath &&
-    forcedPortRaw &&
-    Number.isFinite(forcedPortNum) &&
-    forcedPortNum > 0 &&
-    forcedPortNum !== metroPort
-  ) {
-    if (stablePortMode) {
-      throw new Error(
-        `[expo] stable expo port requested ${forcedPortNum} but selected ${metroPort}; refusing to bump the expo port.`
-      );
-    }
+  const metroPort = stablePortMode && hasForcedPort
+    ? forcedPortNum
+    : await pickExpoDevMetroPort({
+        env: baseEnv,
+        stackMode,
+        stackName,
+        reservedPorts: reservedMetroPorts,
+      });
+
+  if (stackMode && envPath && hasForcedPort && forcedPortNum !== metroPort) {
     if (!quiet) {
       // eslint-disable-next-line no-console
       console.warn(

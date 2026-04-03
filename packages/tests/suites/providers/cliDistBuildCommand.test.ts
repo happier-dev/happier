@@ -9,6 +9,29 @@ import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpe
 import { sleep } from '../../src/testkit/timing';
 import { yarnCommand } from '../../src/testkit/process/commands';
 
+function writeSharedDepWorkspacePackageManifest(repoRoot: string, packageName: 'agents' | 'cli-common' | 'protocol' | 'release-runtime') {
+  const packageDir = resolve(repoRoot, 'packages', packageName);
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(
+    resolve(packageDir, 'package.json'),
+    JSON.stringify(
+      {
+        name: `@happier-dev/${packageName}`,
+        type: 'module',
+        exports: {
+          '.': {
+            default: './dist/index.js',
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+  writeFileSync(resolve(packageDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {} }, null, 2), 'utf8');
+}
+
 function writeSharedDepsOutputs(repoRoot: string) {
   const outputs = [
     resolve(repoRoot, 'packages', 'agents', 'dist', 'index.js'),
@@ -16,6 +39,10 @@ function writeSharedDepsOutputs(repoRoot: string) {
     resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js'),
     resolve(repoRoot, 'packages', 'release-runtime', 'dist', 'index.js'),
   ];
+
+  for (const packageName of ['agents', 'cli-common', 'protocol', 'release-runtime'] as const) {
+    writeSharedDepWorkspacePackageManifest(repoRoot, packageName);
+  }
 
   for (const output of outputs) {
     mkdirSync(dirname(output), { recursive: true });
@@ -50,24 +77,11 @@ function writeCliBundledWorkspacePackage(repoRoot: string, packageName: 'agents'
 }
 
 function writeSharedDepsSources(repoRoot: string) {
-  const sourceFiles = [
-    resolve(repoRoot, 'packages', 'agents', 'src', 'index.ts'),
-    resolve(repoRoot, 'packages', 'agents', 'package.json'),
-    resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'),
-    resolve(repoRoot, 'packages', 'cli-common', 'src', 'index.ts'),
-    resolve(repoRoot, 'packages', 'cli-common', 'package.json'),
-    resolve(repoRoot, 'packages', 'cli-common', 'tsconfig.json'),
-    resolve(repoRoot, 'packages', 'protocol', 'src', 'index.ts'),
-    resolve(repoRoot, 'packages', 'protocol', 'package.json'),
-    resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'),
-    resolve(repoRoot, 'packages', 'release-runtime', 'src', 'index.ts'),
-    resolve(repoRoot, 'packages', 'release-runtime', 'package.json'),
-    resolve(repoRoot, 'packages', 'release-runtime', 'tsconfig.json'),
-  ];
-
-  for (const filePath of sourceFiles) {
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, 'export {};\n', 'utf8');
+  for (const packageName of ['agents', 'cli-common', 'protocol', 'release-runtime'] as const) {
+    writeSharedDepWorkspacePackageManifest(repoRoot, packageName);
+    const sourcePath = resolve(repoRoot, 'packages', packageName, 'src', 'index.ts');
+    mkdirSync(dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'export {};\n', 'utf8');
   }
 }
 
@@ -80,6 +94,14 @@ function writeCliSources(repoRoot: string) {
 
   for (const filePath of sourceFiles) {
     mkdirSync(dirname(filePath), { recursive: true });
+    if (filePath.endsWith('package.json')) {
+      writeFileSync(filePath, JSON.stringify({ name: '@happier-dev/cli', type: 'module' }, null, 2), 'utf8');
+      continue;
+    }
+    if (filePath.endsWith('tsconfig.json')) {
+      writeFileSync(filePath, JSON.stringify({ compilerOptions: {} }, null, 2), 'utf8');
+      continue;
+    }
     writeFileSync(filePath, 'export {};\n', 'utf8');
   }
 }

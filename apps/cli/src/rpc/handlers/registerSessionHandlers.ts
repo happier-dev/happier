@@ -18,7 +18,6 @@ export { resolveCanonicalCodexBackendMode } from './codexBackendMode';
 import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';
-import { registerSessionLogTailHandler } from './sessionLogTail';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { resolveSessionRpcTransferMaxBytes } from '@/transfers/policy/sessionRpcTransferPolicy';
 import { registerSessionTransferRpcHandlers } from '@/transfers/rpc/registerSessionTransferRpcHandlers';
@@ -195,7 +194,6 @@ export function registerSessionHandlers(
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager);
     registerPreviewEnvHandler(rpcHandlerManager);
-    registerSessionLogTailHandler(rpcHandlerManager, { getSessionMetadata: opts?.getSessionMetadata });
     registerSessionTransferRpcHandlers(rpcHandlerManager, {
         workingDirectory,
         store: transferStore,

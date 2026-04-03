@@ -162,7 +162,7 @@ export default function ModalDemoScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     container: {
         flex: 1,
         backgroundColor: '#F2F2F7'
@@ -209,4 +209,4 @@ const styles = StyleSheet.create({
     customModalButtons: {
         width: '100%'
     }
-});
+}));

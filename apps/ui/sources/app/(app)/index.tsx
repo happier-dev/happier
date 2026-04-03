@@ -32,8 +32,9 @@ import { resolveAppUrlScheme } from "@/utils/url/appScheme";
 import { readConfiguredServerUrlEnv } from "@/sync/domains/server/readConfiguredServerUrlEnv";
 import { getPendingSetupIntent, setPendingSetupIntent } from "@/sync/domains/pending/pendingSetupIntent";
 import { isTauriDesktop } from "@/utils/platform/tauri";
+import { isAuthenticatedRootDeepLinkRedirectAllowed } from "@/auth/routing/isAuthenticatedRootDeepLinkRedirectAllowed";
 
-import { shouldAutoRedirectToSetupOnFirstLaunch } from "./_firstLaunchSetupRedirectPolicy";
+import { shouldAutoRedirectToSetupOnFirstLaunch } from "@/utils/navigation/firstLaunchSetupRedirectPolicy";
 
 const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
 const DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = 1_000;
@@ -62,12 +63,6 @@ export default function Home() {
     return (
         <Authenticated />
     )
-}
-
-function isAuthenticatedRootDeepLinkRedirectAllowed(): boolean {
-    if (typeof window === 'undefined') return true;
-    const pathname = String(window.location.pathname ?? '').trim();
-    return pathname === '' || pathname === '/' || pathname === '/index.html';
 }
 
 function Authenticated() {

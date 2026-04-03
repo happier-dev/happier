@@ -107,7 +107,11 @@ describe('createOpenCodeTuiSupervisor', () => {
   it('detaches the running process and clears attachment state', async () => {
     const proc = createSpawnedProcessHarness();
     const spawnProcess = vi.fn(() => proc.child as any);
-    const supervisor = createOpenCodeTuiSupervisor({ spawnProcess });
+    const commandPath = await createFakeExecutable('opencode');
+    const supervisor = createOpenCodeTuiSupervisor({
+      spawnProcess,
+      env: { HAPPIER_OPENCODE_PATH: commandPath } as NodeJS.ProcessEnv,
+    });
 
     await supervisor.attach({
       baseUrl: 'http://127.0.0.1:4096',
@@ -126,7 +130,11 @@ describe('createOpenCodeTuiSupervisor', () => {
   it('fails closed when the attach process errors before startup completes', async () => {
     const proc = createSpawnedProcessHarness();
     const spawnProcess = vi.fn(() => proc.child as any);
-    const supervisor = createOpenCodeTuiSupervisor({ spawnProcess });
+    const commandPath = await createFakeExecutable('opencode');
+    const supervisor = createOpenCodeTuiSupervisor({
+      spawnProcess,
+      env: { HAPPIER_OPENCODE_PATH: commandPath } as NodeJS.ProcessEnv,
+    });
 
     const attachPromise = supervisor.attach({
       baseUrl: 'http://127.0.0.1:4096',
@@ -143,7 +151,12 @@ describe('createOpenCodeTuiSupervisor', () => {
     const proc = createSpawnedProcessHarness();
     const onExit = vi.fn();
     const spawnProcess = vi.fn(() => proc.child as any);
-    const supervisor = createOpenCodeTuiSupervisor({ spawnProcess, onExit });
+    const commandPath = await createFakeExecutable('opencode');
+    const supervisor = createOpenCodeTuiSupervisor({
+      spawnProcess,
+      onExit,
+      env: { HAPPIER_OPENCODE_PATH: commandPath } as NodeJS.ProcessEnv,
+    });
 
     await expect(supervisor.attach({
       baseUrl: 'http://127.0.0.1:4096',

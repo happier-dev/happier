@@ -240,7 +240,7 @@ export function BaseModal({
                               onTouchStart={stopPropagation}
                           />
                       ) : null}
-                      <DismissableLayerBranch asChild>
+                      <DismissableLayerBranch style={{ display: 'contents' }}>
                           <Dialog.Content
                               aria-describedby={undefined}
                               style={contentStyle}
@@ -362,7 +362,7 @@ export function BaseModal({
     );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     portalRoot: {
         ...StyleSheet.absoluteFillObject,
         zIndex: 100000,
@@ -385,4 +385,4 @@ const styles = StyleSheet.create({
         width: '100%',
         alignItems: 'center',
     }
-});
+}));

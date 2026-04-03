@@ -27,7 +27,9 @@ export function scenarioSatisfiedByMessages(
   const assistantStreamedTextByKey = new Map<string, string>();
   for (const msg of assistantLikeMessages) {
     const meta = asRecord(msg.meta);
-    const streamKey = typeof meta?.happierStreamKey === 'string' ? meta.happierStreamKey : '';
+    const streamSegmentV1 = asRecord(meta?.happierStreamSegmentV1);
+    const segmentLocalId = typeof streamSegmentV1?.segmentLocalId === 'string' ? streamSegmentV1.segmentLocalId : '';
+    const streamKey = segmentLocalId || (typeof meta?.happierStreamKey === 'string' ? meta.happierStreamKey : '');
     if (!streamKey) continue;
 
     const content = asRecord(msg.content);
@@ -37,7 +39,15 @@ export function scenarioSatisfiedByMessages(
     const chunk = typeof data.message === 'string' ? data.message : '';
     if (!chunk) continue;
 
-    assistantStreamedTextByKey.set(streamKey, (assistantStreamedTextByKey.get(streamKey) ?? '') + chunk);
+    if (segmentLocalId) {
+      // `StreamedTranscriptWriter` persists cumulative snapshots for a stable segmentLocalId.
+      // Prefer the longest snapshot we observe for the segment key.
+      const prev = assistantStreamedTextByKey.get(streamKey) ?? '';
+      const next = chunk.length >= prev.length ? chunk : prev;
+      assistantStreamedTextByKey.set(streamKey, next);
+    } else {
+      assistantStreamedTextByKey.set(streamKey, (assistantStreamedTextByKey.get(streamKey) ?? '') + chunk);
+    }
   }
 
   for (const needle of required) {

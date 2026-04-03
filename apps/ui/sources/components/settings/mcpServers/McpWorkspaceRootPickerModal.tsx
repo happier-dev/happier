@@ -17,13 +17,13 @@ export type McpWorkspaceRootPickerModalProps = CustomModalInjectedProps & Readon
     onChangeFavoriteDirectories: (next: string[]) => void;
 }>;
 
-const stylesheet = StyleSheet.create({
+const stylesheet = StyleSheet.create(() => ({
     contentWrapper: {
         width: '100%',
         maxWidth: layout.maxWidth,
         alignSelf: 'center',
     },
-});
+}));
 
 export function McpWorkspaceRootPickerModal(props: McpWorkspaceRootPickerModalProps) {
     const styles = stylesheet;

@@ -33,7 +33,7 @@ export const SettingsActionFooter = React.memo(function SettingsActionFooter(pro
     );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(() => ({
     wrapper: {
         alignItems: 'center',
     },
@@ -44,4 +44,4 @@ const styles = StyleSheet.create({
         paddingTop: 12,
         paddingBottom: 16,
     },
-});
+}));

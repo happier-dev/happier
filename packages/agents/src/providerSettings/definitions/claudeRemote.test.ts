@@ -24,6 +24,9 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
     expect(extras.claudeRemoteDisableTodos).toBe(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteDisableTodos);
     expect(extras.claudeRemoteStrictMcpServerConfig).toBe(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteStrictMcpServerConfig);
     expect(extras.claudeRemoteAdvancedOptionsJson).toBe(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteAdvancedOptionsJson);
+    expect(extras.claudeRemoteDebugEnabled).toBe(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteDebugEnabled);
+    expect(extras.claudeRemoteVerboseEnabled).toBe(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteVerboseEnabled);
+    expect(extras.claudeRemoteDebugCategories).toEqual(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteDebugCategories);
 
     // Setting sources already have explicit defaulting logic (and legacy mapping).
     expect(extras.claudeRemoteSettingSourcesV2).toEqual(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2);
@@ -37,11 +40,18 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
       claudeLocalPermissionBridgeEnabled: false,
       claudeLocalPermissionBridgeWaitIndefinitely: false,
       claudeLocalPermissionBridgeTimeoutSeconds: 42,
+      claudeRemoteDebugEnabled: true,
+      claudeRemoteVerboseEnabled: true,
+      claudeRemoteDebugCategories: ['mcp', 'api', 'api', 'bogus', 'file'],
     });
 
     expect(extras.claudeRemoteAgentSdkEnabled).toBe(false);
     expect(extras.claudeLocalPermissionBridgeEnabled).toBe(false);
     expect(extras.claudeLocalPermissionBridgeWaitIndefinitely).toBe(false);
     expect(extras.claudeLocalPermissionBridgeTimeoutSeconds).toBe(42);
+    expect(extras.claudeRemoteDebugEnabled).toBe(true);
+    expect(extras.claudeRemoteVerboseEnabled).toBe(true);
+    // Normalized, stable order, invalid dropped.
+    expect(extras.claudeRemoteDebugCategories).toEqual(['api', 'mcp', 'file']);
   });
 });

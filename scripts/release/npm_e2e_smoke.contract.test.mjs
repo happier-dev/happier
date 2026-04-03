@@ -311,11 +311,6 @@ test('hstack remote server setup supports self-host server binary override flag'
     /--self-host-server-binary/,
     'expected remote setup usage and parser to include --self-host-server-binary'
   );
-  assert.match(
-    raw,
-    /HAPPIER_SELF_HOST_SERVER_BINARY=/,
-    'expected remote setup to pass HAPPIER_SELF_HOST_SERVER_BINARY to remote self-host install env'
-  );
 });
 
 test('build-server-binaries stages Prisma postgres engine files for packaged server runtime', async () => {

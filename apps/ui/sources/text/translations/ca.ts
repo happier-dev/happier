@@ -2715,6 +2715,40 @@ export const ca: TranslationStructure = {
                         title: "Usa Agent SDK (remot)",
                         subtitle: "Fes servir l’@anthropic-ai/claude-agent-sdk oficial per al mode remot."
                     },
+                    claudeRemoteDebugEnabled: {
+                        title: "Mode de depuració",
+                        subtitle: "Activa els logs de depuració de Claude Code (equivalent a --debug)."
+                    },
+                    claudeRemoteVerboseEnabled: {
+                        title: "Verbós",
+                        subtitle: "Activa el registre verbós (equivalent a --verbose)."
+                    },
+                    claudeRemoteDebugCategories: {
+                        title: "Categories de depuració",
+                        subtitle: "Filtre opcional de categories. Si és buit, Claude registra totes les categories de depuració.",
+                        options: {
+                            api: {
+                                title: "API",
+                                subtitle: "Peticions i respostes HTTP/API."
+                            },
+                            mcp: {
+                                title: "MCP",
+                                subtitle: "Connexions de servidors MCP i trànsit d’eines."
+                            },
+                            hooks: {
+                                title: "Hooks",
+                                subtitle: "Cicle de vida dels hooks i execució de comandes."
+                            },
+                            file: {
+                                title: "Fitxers",
+                                subtitle: "Operacions del sistema de fitxers i helpers."
+                            },
+                            '1p': {
+                                title: "1p",
+                                subtitle: "Categoria interna de depuració (first-party)."
+                            }
+                        }
+                    },
                     claudeRemoteSettingSourcesV2: {
                         title: "Fonts de configuració",
                         subtitle: "Controla quines configuracions de Claude es carreguen.",

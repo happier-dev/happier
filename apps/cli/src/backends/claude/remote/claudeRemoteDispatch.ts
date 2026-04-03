@@ -2,6 +2,8 @@ import { claudeRemote } from '../claudeRemote';
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 
 import type { EnhancedMode } from '../loop';
+import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
+import { repairClaudeTranscriptAfterInterrupt } from './agentSdk/repairClaudeTranscriptAfterInterrupt';
 
 type NextMessage = () => Promise<{ message: string; mode: EnhancedMode } | null>;
 
@@ -29,6 +31,15 @@ function isClaudeAgentSdkAuthenticationError(error: unknown): boolean {
     return false;
 }
 
+function isClaudeAgentSdkEarlyExitError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const message = (error as { message?: unknown }).message;
+    if (typeof message !== 'string') return false;
+    if (message.includes('process exited with code 1')) return true;
+    if (message.includes('exited with code 1')) return true;
+    return false;
+}
+
 export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage }>(
     opts: T & { onRunnerSelected?: ((runner: ClaudeRemoteRunnerKind) => void) | null },
     deps?: Partial<ClaudeRemoteDispatchDependencies>,
@@ -38,6 +49,7 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
 
     let consumedBeyondFirst = false;
     let didStartSession = false;
+    let didEmitMessage = false;
 
     const originalOnSessionFound = (opts as any).onSessionFound as unknown;
     const onSessionFound = (...args: any[]) => {
@@ -47,7 +59,15 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
         }
     };
 
-    const baseOpts = { ...opts, onSessionFound };
+    const originalOnMessage = (opts as any).onMessage as unknown;
+    const onMessage = (...args: any[]) => {
+        didEmitMessage = true;
+        if (typeof originalOnMessage === 'function') {
+            originalOnMessage(...args);
+        }
+    };
+
+    const baseOpts = { ...opts, onSessionFound, onMessage };
     const createNextMessage = (): NextMessage => {
         let usedFirst = false;
         return async () => {
@@ -63,13 +83,22 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     const resolvedLegacy = deps?.claudeRemote ?? claudeRemote;
     const resolvedAgentSdk = deps?.claudeRemoteAgentSdk ?? claudeRemoteAgentSdk;
 
-    if (first.mode.claudeRemoteAgentSdkEnabled === true) {
+    // Back-compat: older clients/daemons may not include this provider-scoped flag on the queued prompt.
+    // Default is enabled (see provider settings defaults + DEFAULT_CLAUDE_REMOTE_META_STATE).
+    if (first.mode.claudeRemoteAgentSdkEnabled !== false) {
         try {
             baseOpts.onRunnerSelected?.('agentSdk');
+            await repairClaudeTranscriptAfterInterrupt({
+                sessionId: (baseOpts as any).sessionId ?? null,
+                transcriptPath: (baseOpts as any).transcriptPath ?? null,
+                workDir: String((baseOpts as any).path ?? '').trim(),
+                claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
+            }).catch(() => {});
             await resolvedAgentSdk({ ...baseOpts, nextMessage: createNextMessage() } as any);
             return;
         } catch (error) {
-            if (!consumedBeyondFirst && !didStartSession && isClaudeAgentSdkAuthenticationError(error)) {
+            const canFallback = !consumedBeyondFirst && !didStartSession && !didEmitMessage;
+            if (canFallback && (isClaudeAgentSdkAuthenticationError(error) || isClaudeAgentSdkEarlyExitError(error))) {
                 baseOpts.onRunnerSelected?.('legacy');
                 await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
                 return;

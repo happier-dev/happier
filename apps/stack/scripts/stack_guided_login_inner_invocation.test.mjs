@@ -14,7 +14,7 @@ test('guided stack auth login invokes core happier auth login directly', async (
   const inv = await buildStackAuthLoginInvocation({ rootDir, stackName: 'main', webappUrl });
   assert.ok(Array.isArray(inv?.args));
   assert.equal(inv.command, process.execPath);
-  assert.match(String(inv.args[0] ?? ''), /apps\/cli\/package-dist\/index\.mjs$/);
+  assert.match(String(inv.args[0] ?? ''), /apps\/cli\/(package-dist\/index\.mjs|bin\/happier\.mjs)$/);
   assert.equal(inv.args[1], 'auth');
   assert.equal(inv.args[2], 'login');
   assert.equal(inv?.env?.HAPPIER_WEBAPP_URL, webappUrl);

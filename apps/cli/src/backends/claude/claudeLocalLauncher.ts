@@ -8,6 +8,7 @@ import type { Metadata, PermissionMode } from "@/api/types";
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
 import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
 import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
+import { discardPendingBeforeSwitchToLocal } from '@/agent/localControl/discardPendingBeforeSwitchToLocal';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import { resolvePermissionIntentFromMetadataSnapshot, resolveSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
@@ -108,10 +109,10 @@ export async function claudeLocalLauncher(
     // Handle abort
     let exitReason: LauncherResult | null = null;
     let abortingForModeSwitch = false;
-    const processAbortController = new AbortController();
-    let exitFuture = new Future<void>();
-    let syncLastPermissionModeFromMetadata: (() => void) | null = null;
-    try {
+	    const processAbortController = new AbortController();
+	    let exitFuture = new Future<void>();
+	    let syncLastPermissionModeFromMetadata: (() => void) | null = null;
+	    try {
         const clientEmitter = session.client as unknown as {
             getMetadataSnapshot?: () => Metadata | null | undefined;
             on?: (event: string, listener: () => void) => void;
@@ -198,6 +199,8 @@ export async function claudeLocalLauncher(
         }); // When any message is received, abort current process, clean queue and switch to remote mode
 
         if (entry === 'switch') {
+            const autoConfirmDiscardForE2e =
+                process.env.HAPPIER_E2E_PROVIDERS === '1' || process.env.HAPPY_E2E_PROVIDERS === '1';
             const pendingGateStartMs = configuration.startupTimingEnabled ? Date.now() : null;
             const discardResult = await discardQueuedAndPendingForLocalSwitch({
                 queue: session.queue,
@@ -210,6 +213,15 @@ export async function claudeLocalLauncher(
                     session.client.sendSessionEvent({ type: 'message', message });
                 },
                 formatError: formatErrorForUi,
+                ...(autoConfirmDiscardForE2e
+                    ? {
+                        discardController: (args) =>
+                            discardPendingBeforeSwitchToLocal({
+                                ...args,
+                                confirmDiscard: async () => true,
+                            }),
+                    }
+                    : {}),
             });
             if (pendingGateStartMs !== null) {
                 logger.debug(`[claude-startup] claude_pending_queue_switch_gate=${Math.max(0, Date.now() - pendingGateStartMs)}ms`);
@@ -344,11 +356,11 @@ export async function claudeLocalLauncher(
                 }
             }
             logger.debug('[local]: launch done');
-        }
-    } finally {
-        const clientEmitter = session.client as unknown as {
-            off?: (event: string, listener: () => void) => void;
-        };
+	        }
+	    } finally {
+	        const clientEmitter = session.client as unknown as {
+	            off?: (event: string, listener: () => void) => void;
+	        };
         if (clientEmitter && typeof clientEmitter.off === 'function' && syncLastPermissionModeFromMetadata) {
             // Best-effort: some test stubs don't implement EventEmitter.
             clientEmitter.off('metadata-updated', syncLastPermissionModeFromMetadata);

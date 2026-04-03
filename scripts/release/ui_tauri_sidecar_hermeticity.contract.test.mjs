@@ -37,12 +37,12 @@ test('ui tauri workflows build the bootstrap sidecar before dev/build and cargo 
     );
     assert.match(
         String(uiPackageJson?.scripts?.['tauri:prepare:dev'] ?? ''),
-        /tauri:prepare:sidecar/,
+        /prepareTauriSidecar\.mjs/,
         'tauri dev preparation should run sidecar preparation before starting Expo'
     );
     assert.match(
         String(uiPackageJson?.scripts?.['tauri:prepare:build'] ?? ''),
-        /tauri:prepare:sidecar/,
+        /prepareTauriSidecar\.mjs/,
         'tauri build preparation should run sidecar preparation before exporting the web frontend'
     );
     assert.match(

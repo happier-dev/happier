@@ -1349,6 +1349,8 @@ export class ApiSessionClient extends EventEmitter {
             recordClaudeToolTraceEvents({ sessionId: this.sessionId, body });
         }
 
+        this.outboundShapeLogger.log('claude:raw-jsonl', body);
+
         const sidechainId = (() => {
             const raw = (body as any)?.sidechainId;
             if (typeof raw !== 'string') return null;
@@ -1382,6 +1384,7 @@ export class ApiSessionClient extends EventEmitter {
             };
         }
 
+        this.outboundShapeLogger.log('claude:session-content', content);
         logger.debugLargeJson('[SOCKET] Sending message through socket:', content)
 
         this.logSendWhileDisconnected('Claude session message', { type: body.type });

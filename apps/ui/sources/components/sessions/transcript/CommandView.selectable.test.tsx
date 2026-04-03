@@ -8,7 +8,27 @@ import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockStat
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-installTranscriptCommonModuleMocks();
+installTranscriptCommonModuleMocks({
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        const base = await createUnistylesMock();
+        const error = () => new Error('StyleSheet.create expected to be called with one argument.');
+        return {
+            ...base,
+            StyleSheet: {
+                ...base.StyleSheet,
+                create: (...args: [unknown]) => {
+                    const [input] = args;
+                    if (args.length !== 1 || typeof input !== 'function') {
+                        throw error();
+                    }
+                    const { theme, rt } = base.useUnistyles();
+                    return (input as (theme: unknown, runtime: unknown) => unknown)(theme, rt);
+                },
+            },
+        };
+    },
+});
 
 vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text']));
 
