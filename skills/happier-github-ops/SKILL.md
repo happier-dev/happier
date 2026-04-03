@@ -10,11 +10,13 @@ This repo provides `yarn ghops` as a thin wrapper around the GitHub CLI (`gh`) t
 ## Prerequisites
 
 - `gh` is installed on the host and reachable on `PATH`.
-- Environment variable `HAPPIER_GITHUB_BOT_TOKEN` is set to the bot's fine-grained PAT.
+- Either:
+  - Environment variable `HAPPIER_GITHUB_BOT_TOKEN` is set to the bot's fine-grained PAT, or
+  - (macOS) the token is stored in Keychain via `yarn ghops set-token --prompt`.
 
 ## Contract / Safety
 
-- `yarn ghops ...` refuses to run if `HAPPIER_GITHUB_BOT_TOKEN` is missing.
+- `yarn ghops ...` refuses to run if no token is available via `HAPPIER_GITHUB_BOT_TOKEN` or (macOS) Keychain.
 - Runs non-interactively (`GH_PROMPT_DISABLED=1`).
 - Uses an isolated repo-local `GH_CONFIG_DIR` by default.
 
