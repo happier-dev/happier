@@ -17,6 +17,13 @@ function fail(message) {
   process.exit(1);
 }
 
+function shouldRunLinuxHsetupLddPreflight() {
+  const raw = String(process.env.HAPPIER_TAURI_LINUX_HSETUP_LDD_PREFLIGHT ?? '').trim().toLowerCase();
+  if (raw === 'false' || raw === '0' || raw === 'no') return false;
+  if (raw === 'true' || raw === '1' || raw === 'yes') return true;
+  return process.env.GITHUB_ACTIONS === 'true' || process.env.CI === 'true';
+}
+
 /**
  * @param {unknown} value
  * @param {string} name
@@ -111,6 +118,28 @@ function run(opts, cmd, args, extra) {
     env: { ...process.env, ...(extra.env ?? {}) },
     stdio: extra.stdio ?? 'inherit',
     timeout: extra.timeoutMs ?? 30 * 60_000,
+  });
+}
+
+/**
+ * @param {{ dryRun: boolean }} opts
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ cwd: string; env?: Record<string, string> }} extra
+ * @returns {string}
+ */
+function runCapture(opts, cmd, args, extra) {
+  const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')}`;
+  if (opts.dryRun) {
+    console.log(`[dry-run] (cwd: ${extra.cwd}) ${printable}`);
+    return '';
+  }
+
+  return execFileSyncPortable(cmd, args, {
+    cwd: extra.cwd,
+    env: { ...process.env, ...(extra.env ?? {}) },
+    stdio: 'pipe',
+    timeout: 2 * 60_000,
   });
 }
 
@@ -279,6 +308,21 @@ function main() {
     run(opts, npm.cmd, npm.args, { cwd: absUiDir, env: baseTauriEnv });
   } else {
     run(opts, yarn.cmd, [...yarn.prefixArgs, '-s', 'tauri:prepare:build'], { cwd: absUiDir, env: baseTauriEnv });
+  }
+
+  if (platform === 'linux' && shouldRunLinuxHsetupLddPreflight()) {
+    const hsetupPath = path.join(repoRoot, 'apps', 'bootstrap', 'dist', 'bin', 'hsetup');
+    try {
+      console.log(`[pipeline] tauri linux preflight: file ${hsetupPath}`);
+      const fileOut = runCapture(opts, 'file', [hsetupPath], { cwd: repoRoot });
+      if (fileOut) process.stdout.write(fileOut);
+      console.log(`[pipeline] tauri linux preflight: ldd ${hsetupPath}`);
+      const lddOut = runCapture(opts, 'ldd', [hsetupPath], { cwd: repoRoot });
+      if (lddOut) process.stdout.write(lddOut);
+    } catch (error) {
+      console.error('[pipeline] tauri linux preflight failed: hsetup ldd did not succeed.');
+      throw error;
+    }
   }
 
   if (environment !== 'production') {
