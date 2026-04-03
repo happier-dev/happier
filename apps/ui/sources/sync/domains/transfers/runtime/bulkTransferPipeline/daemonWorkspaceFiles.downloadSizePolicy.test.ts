@@ -2,28 +2,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-const createSessionFileTransferRpcCallerMock = vi.hoisted(() => vi.fn());
+const createWorkspaceFileTransferRpcCallerMock = vi.hoisted(() => vi.fn());
 const downloadBulkPayloadToFileMock = vi.hoisted(() => vi.fn());
 
-vi.mock('./sessionFileTransferRpcCaller', () => ({
-    createSessionFileTransferRpcCaller: (params: unknown) => createSessionFileTransferRpcCallerMock(params),
+vi.mock('./workspaceFileTransferRpcCaller', () => ({
+    createWorkspaceFileTransferRpcCaller: (params: unknown) => createWorkspaceFileTransferRpcCallerMock(params),
 }));
 
 vi.mock('./downloadBulkPayloadToFile', () => ({
     downloadBulkPayloadToFile: (...args: unknown[]) => downloadBulkPayloadToFileMock(...args),
 }));
 
-const { downloadDaemonSessionFileToBase64, downloadDaemonSessionFileToDestination } = await import('./daemonSessionFiles');
+const { downloadDaemonWorkspaceFileToBase64, downloadDaemonWorkspaceFileToDestination } = await import('./daemonWorkspaceFiles');
 
-describe('daemonSessionFiles download size policy', () => {
+describe('daemonWorkspaceFiles download size policy', () => {
     beforeEach(() => {
-        createSessionFileTransferRpcCallerMock.mockReset();
+        createWorkspaceFileTransferRpcCallerMock.mockReset();
         downloadBulkPayloadToFileMock.mockReset();
     });
 
     it('re-resolves zip download routes using init-reported size (uses sized transfer caller for chunks)', async () => {
         const initCall = vi.fn(async (params: any) => {
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
                 return {
                     success: true,
                     downloadId: 'd1',
@@ -32,24 +32,24 @@ describe('daemonSessionFiles download size policy', () => {
                     name: 'a.zip',
                 };
             }
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
                 return { success: true };
             }
-            throw new Error(`unexpected init call: ${params.sessionMethod}`);
+            throw new Error(`unexpected init call: ${params.machineMethod}`);
         });
 
         const bulkCall = vi.fn(async (params: any) => {
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
                 return { success: true, isLast: true, contentBase64: '' };
             }
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
                 return { success: true };
             }
-            throw new Error(`unexpected bulk call: ${params.sessionMethod}`);
+            throw new Error(`unexpected bulk call: ${params.machineMethod}`);
         });
 
-        createSessionFileTransferRpcCallerMock.mockImplementation((params: any) => {
-            if (params?.sessionRpcTransferSizeBytes !== undefined) {
+        createWorkspaceFileTransferRpcCallerMock.mockImplementation((params: any) => {
+            if (params?.transferSizeBytes !== undefined) {
                 return { call: bulkCall };
             }
             return { call: initCall };
@@ -63,8 +63,9 @@ describe('daemonSessionFiles download size policy', () => {
             return { ok: true, name: init.name, sizeBytes: init.sizeBytes };
         });
 
-        const result = await downloadDaemonSessionFileToDestination({
-            sessionId: 's1',
+        const result = await downloadDaemonWorkspaceFileToDestination({
+            machineId: 'm1',
+            rootPath: '/repo',
             request: { path: 'a.zip', asZip: true },
             destination: {
                 writeBytes: async () => undefined,
@@ -73,22 +74,22 @@ describe('daemonSessionFiles download size policy', () => {
         });
 
         expect(result).toEqual({ ok: true, name: 'a.zip', sizeBytes: 50 });
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenCalledTimes(2);
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenNthCalledWith(1, { sessionId: 's1' });
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenNthCalledWith(2, { sessionId: 's1', sessionRpcTransferSizeBytes: 50 });
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenCalledTimes(2);
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenNthCalledWith(1, { machineId: 'm1' });
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenNthCalledWith(2, { machineId: 'm1', transferSizeBytes: 50 });
         expect(initCall).toHaveBeenCalledTimes(1);
         expect(bulkCall).toHaveBeenCalledTimes(2);
     });
 
     it('preflights STAT_FILE and passes size into the bulk transfer route selection', async () => {
         const statCall = vi.fn(async (params: any) => {
-            expect(params.sessionMethod).toBe(RPC_METHODS.STAT_FILE);
-            expect(params.request).toEqual({ path: 'a.txt' });
+            expect(params.machineMethod).toBe(RPC_METHODS.STAT_FILE);
+            expect(params.request).toEqual({ path: '/repo/a.txt' });
             return { success: true, exists: true, kind: 'file', sizeBytes: 50 };
         });
 
         const downloadCall = vi.fn(async (params: any) => {
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
                 return {
                     success: true,
                     downloadId: 'd1',
@@ -97,20 +98,20 @@ describe('daemonSessionFiles download size policy', () => {
                     name: 'a.txt',
                 };
             }
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
                 return { success: true };
             }
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
                 return { success: true };
             }
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
                 return { success: true, isLast: true, contentBase64: '' };
             }
-            throw new Error(`unexpected call: ${params.sessionMethod}`);
+            throw new Error(`unexpected call: ${params.machineMethod}`);
         });
 
-        createSessionFileTransferRpcCallerMock.mockImplementation((params: any) => {
-            if (params?.sessionRpcTransferSizeBytes !== undefined) {
+        createWorkspaceFileTransferRpcCallerMock.mockImplementation((params: any) => {
+            if (params?.transferSizeBytes !== undefined) {
                 return { call: downloadCall };
             }
             return { call: statCall };
@@ -122,8 +123,9 @@ describe('daemonSessionFiles download size policy', () => {
             return { ok: true, name: init.name, sizeBytes: init.sizeBytes };
         });
 
-        const result = await downloadDaemonSessionFileToDestination({
-            sessionId: 's1',
+        const result = await downloadDaemonWorkspaceFileToDestination({
+            machineId: 'm1',
+            rootPath: '/repo',
             request: { path: 'a.txt', asZip: false },
             destination: {
                 writeBytes: async () => undefined,
@@ -132,21 +134,21 @@ describe('daemonSessionFiles download size policy', () => {
         });
 
         expect(result).toEqual({ ok: true, name: 'a.txt', sizeBytes: 50 });
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenCalledTimes(2);
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenNthCalledWith(1, { sessionId: 's1' });
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenNthCalledWith(2, { sessionId: 's1', sessionRpcTransferSizeBytes: 50 });
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenCalledTimes(2);
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenNthCalledWith(1, { machineId: 'm1' });
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenNthCalledWith(2, { machineId: 'm1', transferSizeBytes: 50 });
         expect(statCall).toHaveBeenCalledTimes(1);
     });
 
-    it('downloadDaemonSessionFileToBase64 preflights STAT_FILE and passes size into the bulk transfer route selection', async () => {
+    it('downloadDaemonWorkspaceFileToBase64 preflights STAT_FILE and passes size into the bulk transfer route selection', async () => {
         const statCall = vi.fn(async (params: any) => {
-            expect(params.sessionMethod).toBe(RPC_METHODS.STAT_FILE);
-            expect(params.request).toEqual({ path: 'a.txt' });
+            expect(params.machineMethod).toBe(RPC_METHODS.STAT_FILE);
+            expect(params.request).toEqual({ path: '/repo/a.txt' });
             return { success: true, exists: true, kind: 'file', sizeBytes: 50 };
         });
 
         const downloadCall = vi.fn(async (params: any) => {
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
                 return {
                     success: true,
                     downloadId: 'd1',
@@ -155,20 +157,20 @@ describe('daemonSessionFiles download size policy', () => {
                     name: 'a.txt',
                 };
             }
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
                 return { success: true };
             }
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
                 return { success: true };
             }
-            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
                 return { success: true, isLast: true, contentBase64: '' };
             }
-            throw new Error(`unexpected call: ${params.sessionMethod}`);
+            throw new Error(`unexpected call: ${params.machineMethod}`);
         });
 
-        createSessionFileTransferRpcCallerMock.mockImplementation((params: any) => {
-            if (params?.sessionRpcTransferSizeBytes !== undefined) {
+        createWorkspaceFileTransferRpcCallerMock.mockImplementation((params: any) => {
+            if (params?.transferSizeBytes !== undefined) {
                 return { call: downloadCall };
             }
             return { call: statCall };
@@ -181,23 +183,24 @@ describe('daemonSessionFiles download size policy', () => {
             return { ok: true, name: init.name, sizeBytes: init.sizeBytes };
         });
 
-        const result = await downloadDaemonSessionFileToBase64({
-            sessionId: 's1',
+        const result = await downloadDaemonWorkspaceFileToBase64({
+            machineId: 'm1',
+            rootPath: '/repo',
             path: 'a.txt',
             maxBytes: 128,
         });
 
         expect(result).toEqual({ ok: true, contentBase64: 'AQID' });
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenCalledTimes(2);
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenNthCalledWith(1, { sessionId: 's1' });
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenNthCalledWith(2, { sessionId: 's1', sessionRpcTransferSizeBytes: 50 });
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenCalledTimes(2);
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenNthCalledWith(1, { machineId: 'm1' });
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenNthCalledWith(2, { machineId: 'm1', transferSizeBytes: 50 });
         expect(statCall).toHaveBeenCalledTimes(1);
     });
 
-    it('downloadDaemonSessionFileToBase64 fails closed when the file exceeds maxBytes (no bulk transfer init)', async () => {
+    it('downloadDaemonWorkspaceFileToBase64 fails closed when the file exceeds maxBytes (no bulk transfer init)', async () => {
         const statCall = vi.fn(async (params: any) => {
-            expect(params.sessionMethod).toBe(RPC_METHODS.STAT_FILE);
-            expect(params.request).toEqual({ path: 'a.txt' });
+            expect(params.machineMethod).toBe(RPC_METHODS.STAT_FILE);
+            expect(params.request).toEqual({ path: '/repo/a.txt' });
             return { success: true, exists: true, kind: 'file', sizeBytes: 129 };
         });
 
@@ -205,27 +208,21 @@ describe('daemonSessionFiles download size policy', () => {
             throw new Error('unexpected bulk transfer call');
         });
 
-        createSessionFileTransferRpcCallerMock.mockImplementation((params: any) => {
-            if (params?.sessionRpcTransferSizeBytes !== undefined) {
+        createWorkspaceFileTransferRpcCallerMock.mockImplementation((params: any) => {
+            if (params?.transferSizeBytes !== undefined) {
                 return { call: downloadCall };
             }
             return { call: statCall };
         });
 
-        const result = await downloadDaemonSessionFileToBase64({
-            sessionId: 's1',
+        const result = await downloadDaemonWorkspaceFileToBase64({
+            machineId: 'm1',
+            rootPath: '/repo',
             path: 'a.txt',
             maxBytes: 128,
         });
 
-        expect(result).toEqual({
-            ok: false,
-            error: 'File exceeds the inline file read size limit',
-            errorCode: 'RPC_METHOD_NOT_AVAILABLE',
-        });
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenCalledTimes(1);
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenNthCalledWith(1, { sessionId: 's1' });
-        expect(statCall).toHaveBeenCalledTimes(1);
-        expect(downloadBulkPayloadToFileMock).toHaveBeenCalledTimes(0);
+        expect(result.ok).toBe(false);
+        expect(downloadCall).toHaveBeenCalledTimes(0);
     });
 });

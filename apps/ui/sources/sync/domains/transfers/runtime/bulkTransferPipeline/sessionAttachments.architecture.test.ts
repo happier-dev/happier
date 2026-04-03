@@ -7,8 +7,7 @@ const FORBIDDEN_SESSION_ATTACHMENT_TRANSFER_TOKENS = [
     'uploadBulkPayloadFromFile',
     'resolveBulkTransferPolicyAndRoute',
     'daemon.bulkTransfer.upload.',
-    // Attachment feature code must not own fallback routing.
-    'sessionMachineRpcFallback',
+    // Attachment feature code must not own transfer routing.
     'bulkTransferPipeline/daemonSessionAttachments',
 ] as const;
 

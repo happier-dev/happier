@@ -5,15 +5,16 @@ import * as bulkTransferPipeline from './index';
 describe('bulkTransferPipeline (public API)', () => {
     it('freezes the bulkTransferPipeline index runtime exports', () => {
         expect(Object.keys(bulkTransferPipeline).sort()).toEqual([
-            'callDaemonSessionWriteFileRpc',
+            'callDaemonWorkspaceStatFileRpc',
+            'callDaemonWorkspaceWriteFileRpc',
             'deleteDaemonPromptAsset',
             'discoverDaemonPromptAssets',
             'downloadBulkJsonPayload',
             'downloadBulkPayloadToFile',
             'downloadDaemonPromptAsset',
             'downloadDaemonPromptRegistryItem',
-            'downloadDaemonSessionFileToBase64',
-            'downloadDaemonSessionFileToDestination',
+            'downloadDaemonWorkspaceFileToBase64',
+            'downloadDaemonWorkspaceFileToDestination',
             'installDaemonPromptRegistryItem',
             'listDaemonPromptAssetTypes',
             'listDaemonPromptRegistryAdapters',
@@ -24,7 +25,7 @@ describe('bulkTransferPipeline (public API)', () => {
             'uploadBulkPayloadFromFile',
             'uploadDaemonPromptAsset',
             'uploadDaemonSessionAttachmentFromReader',
-            'uploadDaemonSessionFileFromReader',
+            'uploadDaemonWorkspaceFileFromReader',
         ]);
     });
 });

@@ -1,11 +1,9 @@
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { encodeBase64 } from '@/encryption/base64';
-import {
-    rebasePathRequestToMachineTarget,
-    rebaseTransferRequestPathToMachineTarget,
-} from '@/sync/runtime/sessionMachineRpcFallback';
-import { createSessionFileTransferRpcCaller } from './sessionFileTransferRpcCaller';
+import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
+
+import { createWorkspaceFileTransferRpcCaller } from './workspaceFileTransferRpcCaller';
 import { mergeTransferChunks } from './mergeTransferChunks';
 
 import {
@@ -18,20 +16,20 @@ import {
     uploadBulkPayloadFromFile,
 } from './uploadBulkPayloadFromFile';
 
-type SessionRpcFailure = Readonly<{ success: false; error: string; errorCode?: string }>;
+type WorkspaceRpcFailure = Readonly<{ success: false; error: string; errorCode?: string }>;
 
-type SessionStatFileRequest = Readonly<{ path: string }>;
+type WorkspaceStatFileRequest = Readonly<{ path: string }>;
 
-type SessionStatFileResponse =
+type WorkspaceStatFileResponse =
     | Readonly<{
         success: true;
         exists: boolean;
         kind?: 'file' | 'directory' | 'other';
         sizeBytes?: number;
       }>
-    | SessionRpcFailure;
+    | WorkspaceRpcFailure;
 
-type SessionFileDownloadInitResponse =
+type WorkspaceFileDownloadInitResponse =
     | Readonly<{
         success: true;
         downloadId: string;
@@ -39,9 +37,9 @@ type SessionFileDownloadInitResponse =
         sizeBytes: number;
         name: string;
     }>
-    | SessionRpcFailure;
+    | WorkspaceRpcFailure;
 
-type SessionFileDownloadChunkResponse =
+type WorkspaceFileDownloadChunkResponse =
     | Readonly<{
         success: true;
         payloadBase64?: string;
@@ -49,113 +47,147 @@ type SessionFileDownloadChunkResponse =
         contentBase64?: string;
         isLast: boolean;
     }>
-    | SessionRpcFailure;
+    | WorkspaceRpcFailure;
 
-type SessionFileDownloadFinalizeResponse =
+type WorkspaceFileDownloadFinalizeResponse =
     | Readonly<{ success: true }>
-    | SessionRpcFailure;
+    | WorkspaceRpcFailure;
 
-type SessionFileUploadInitRequest = Readonly<{
+type WorkspaceFileUploadInitRequest = Readonly<{
     path: string;
     sizeBytes: number;
     overwrite?: boolean;
     sha256?: string;
 }>;
 
-type SessionFileUploadInitResponse =
+type WorkspaceFileUploadInitResponse =
     | Readonly<{
         success: true;
         uploadId: string;
         chunkSizeBytes: number;
         recipientPublicKeyBase64: string;
     }>
-    | SessionRpcFailure;
+    | WorkspaceRpcFailure;
 
-type SessionFileUploadChunkResponse =
+type WorkspaceFileUploadChunkResponse =
     | Readonly<{ success: true }>
-    | SessionRpcFailure;
+    | WorkspaceRpcFailure;
 
-type SessionFileUploadFinalizeResponse =
+type WorkspaceFileUploadFinalizeResponse =
     | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string }>
-    | SessionRpcFailure;
+    | WorkspaceRpcFailure;
 
-type SessionFileUploadAbortResponse =
+type WorkspaceFileUploadAbortResponse =
     | Readonly<{ success: true }>
-    | SessionRpcFailure;
+    | WorkspaceRpcFailure;
 
-export type SessionWriteFileRpcRequest = Readonly<{
+export type WorkspaceWriteFileRpcRequest = Readonly<{
     path: string;
     content: string;
     expectedHash?: string | null;
 }>;
 
-export type SessionWriteFileRpcResponse =
+export type WorkspaceWriteFileRpcResponse =
     | Readonly<{ success: true; hash: string }>
-    | SessionRpcFailure;
+    | WorkspaceRpcFailure;
 
-export async function callDaemonSessionWriteFileRpc(params: Readonly<{
-    sessionId: string;
-    request: SessionWriteFileRpcRequest;
-    contentSizeBytes: number;
-}>): Promise<SessionWriteFileRpcResponse> {
-    const transferClient = createSessionFileTransferRpcCaller({
-        sessionId: params.sessionId,
-        sessionRpcTransferSizeBytes: params.contentSizeBytes,
-    });
-
-    return await transferClient.call<SessionWriteFileRpcResponse, SessionWriteFileRpcRequest>({
-        request: params.request,
-        machineMethod: RPC_METHODS.WRITE_FILE,
-        sessionMethod: RPC_METHODS.WRITE_FILE,
-        toMachineRequest: rebasePathRequestToMachineTarget,
+function resolveAbsoluteWorkspacePath(params: Readonly<{
+    rootPath: string;
+    requestPath: string;
+}>): string {
+    return resolveMachineAbsolutePath({
+        rootPath: params.rootPath,
+        requestPath: params.requestPath,
     });
 }
 
-export async function uploadDaemonSessionFileFromReader(params: Readonly<{
-    sessionId: string;
+export async function callDaemonWorkspaceStatFileRpc(params: Readonly<{
+    machineId: string;
+    serverId?: string | null;
+    rootPath: string;
+    request: Readonly<{ path: string }>;
+    timeoutMs?: number | null;
+}>): Promise<WorkspaceStatFileResponse> {
+    const transferClient = createWorkspaceFileTransferRpcCaller({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+    });
+
+    return await transferClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
+        request: {
+            path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.request.path }),
+        },
+        machineMethod: RPC_METHODS.STAT_FILE,
+        timeoutMs: params.timeoutMs ?? null,
+    });
+}
+
+export async function callDaemonWorkspaceWriteFileRpc(params: Readonly<{
+    machineId: string;
+    serverId?: string | null;
+    rootPath: string;
+    request: WorkspaceWriteFileRpcRequest;
+    contentSizeBytes: number;
+}>): Promise<WorkspaceWriteFileRpcResponse> {
+    const transferClient = createWorkspaceFileTransferRpcCaller({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+        transferSizeBytes: params.contentSizeBytes,
+    });
+
+    return await transferClient.call<WorkspaceWriteFileRpcResponse, WorkspaceWriteFileRpcRequest>({
+        request: {
+            ...params.request,
+            path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.request.path }),
+        },
+        machineMethod: RPC_METHODS.WRITE_FILE,
+    });
+}
+
+export async function uploadDaemonWorkspaceFileFromReader(params: Readonly<{
+    machineId: string;
+    serverId?: string | null;
+    rootPath: string;
     fileReader: BulkTransferFileReader;
-    request: SessionFileUploadInitRequest;
+    request: WorkspaceFileUploadInitRequest;
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ uploadedBytes: number; totalBytes: number }>) => void) | null;
-}>): Promise<SessionFileUploadFinalizeResponse | BulkTransferFailureResponse> {
-    const transferClient = createSessionFileTransferRpcCaller({
-        sessionId: params.sessionId,
-        sessionRpcTransferSizeBytes: params.fileReader.sizeBytes,
+}>): Promise<WorkspaceFileUploadFinalizeResponse | BulkTransferFailureResponse> {
+    const transferClient = createWorkspaceFileTransferRpcCaller({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+        transferSizeBytes: params.fileReader.sizeBytes,
     });
 
     let previousUploadedBytes = 0;
-    return await uploadBulkPayloadFromFile<SessionFileUploadFinalizeResponse>({
+    return await uploadBulkPayloadFromFile<WorkspaceFileUploadFinalizeResponse>({
         fileReader: params.fileReader,
         init: async () =>
             await transferClient.call<
-                SessionFileUploadInitResponse,
-                SessionFileUploadInitRequest & { t: 'session_file_upload_v1' }
+                WorkspaceFileUploadInitResponse,
+                WorkspaceFileUploadInitRequest & { t: 'session_file_upload_v1' }
             >({
                 request: {
                     ...params.request,
                     t: 'session_file_upload_v1',
+                    path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.request.path }),
                 },
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
-                toMachineRequest: rebaseTransferRequestPathToMachineTarget,
             }),
         sendChunk: async (request) =>
-            await transferClient.call<SessionFileUploadChunkResponse, typeof request>({
+            await transferClient.call<WorkspaceFileUploadChunkResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
             }),
         finalize: async (request) =>
-            await transferClient.call<SessionFileUploadFinalizeResponse, typeof request>({
+            await transferClient.call<WorkspaceFileUploadFinalizeResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
             }),
         abort: async (request) =>
-            await transferClient.call<SessionFileUploadAbortResponse, typeof request>({
+            await transferClient.call<WorkspaceFileUploadAbortResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT,
             }),
         onProgress: params.onProgress
             ? (progress) => {
@@ -172,27 +204,28 @@ export async function uploadDaemonSessionFileFromReader(params: Readonly<{
     });
 }
 
-export async function downloadDaemonSessionFileToDestination(params: Readonly<{
-    sessionId: string;
+export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<{
+    machineId: string;
+    serverId?: string | null;
+    rootPath: string;
     request: Readonly<{ path: string; asZip: boolean }>;
     destination: BulkTransferFileDestination;
     onInit?: ((init: Readonly<{ name: string; sizeBytes: number }>) => Promise<void | BulkTransferFailureResponse>) | null;
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => void) | null;
 }>): Promise<Readonly<{ ok: true; name: string; sizeBytes: number }> | Readonly<{ ok: false; error: string }>> {
-    let sessionRpcTransferSizeBytes: number | null = null;
-    // We intentionally keep an "unsized" transfer client around so abort/cleanup can still run
-    // even when the actual bulk payload is denied once the size becomes known.
-    const initTransferClient = createSessionFileTransferRpcCaller({
-        sessionId: params.sessionId,
+    let transferSizeBytes: number | null = null;
+    const initTransferClient = createWorkspaceFileTransferRpcCaller({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
     });
 
+    const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.request.path });
+
     if (!params.request.asZip) {
-        const stat = await initTransferClient.call<SessionStatFileResponse, SessionStatFileRequest>({
-            request: { path: params.request.path },
+        const stat = await initTransferClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
+            request: { path: absolutePath },
             machineMethod: RPC_METHODS.STAT_FILE,
-            sessionMethod: RPC_METHODS.STAT_FILE,
-            toMachineRequest: rebasePathRequestToMachineTarget,
         });
         if (stat.success !== true) {
             return { ok: false, error: stat.error };
@@ -206,14 +239,15 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
         if (typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0) {
             return { ok: false, error: 'Unable to resolve file size' };
         }
-        sessionRpcTransferSizeBytes = Math.floor(stat.sizeBytes);
+        transferSizeBytes = Math.floor(stat.sizeBytes);
     }
 
     let bulkTransferClient = initTransferClient;
-    if (sessionRpcTransferSizeBytes !== null) {
-        bulkTransferClient = createSessionFileTransferRpcCaller({
-            sessionId: params.sessionId,
-            sessionRpcTransferSizeBytes,
+    if (transferSizeBytes !== null) {
+        bulkTransferClient = createWorkspaceFileTransferRpcCaller({
+            machineId: params.machineId,
+            ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+            transferSizeBytes,
         });
     }
 
@@ -221,39 +255,34 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
         destination: params.destination,
         init: async (request) => {
             const init = await bulkTransferClient.call<
-                SessionFileDownloadInitResponse,
+                WorkspaceFileDownloadInitResponse,
                 Readonly<{ t: 'session_file_download_v1'; path: string; asZip: boolean; recipientPublicKeyBase64: string }>
             >({
                 request: {
                     t: 'session_file_download_v1',
-                    path: params.request.path,
+                    path: absolutePath,
                     asZip: params.request.asZip,
                     recipientPublicKeyBase64: request.recipientPublicKeyBase64,
                 },
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
-                toMachineRequest: rebaseTransferRequestPathToMachineTarget,
             });
 
-            // Zip downloads do not have a stable size before init. Once we learn the actual
-            // size, re-select the transfer route so size-based policy limits apply to the
-            // bulk chunk stream.
             if (init.success === true && params.request.asZip) {
-                bulkTransferClient = createSessionFileTransferRpcCaller({
-                    sessionId: params.sessionId,
-                    sessionRpcTransferSizeBytes: init.sizeBytes,
+                bulkTransferClient = createWorkspaceFileTransferRpcCaller({
+                    machineId: params.machineId,
+                    ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+                    transferSizeBytes: init.sizeBytes,
                 });
             }
 
             if (init.success === true && params.onInit) {
                 const sideEffect = await params.onInit({ name: init.name, sizeBytes: init.sizeBytes });
                 if (sideEffect && sideEffect.success === false) {
-                    await initTransferClient.call<SessionFileDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
+                    await initTransferClient.call<WorkspaceFileDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
                         request: {
                             downloadId: init.downloadId,
                         },
                         machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
-                        sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
                     });
                     return sideEffect;
                 }
@@ -261,22 +290,19 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
             return init;
         },
         readChunk: async (request) =>
-            await bulkTransferClient.call<SessionFileDownloadChunkResponse, typeof request>({
+            await bulkTransferClient.call<WorkspaceFileDownloadChunkResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
             }),
         finalize: async (request) =>
-            await bulkTransferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
+            await bulkTransferClient.call<WorkspaceFileDownloadFinalizeResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
             }),
         abort: async (request) =>
-            await initTransferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
+            await initTransferClient.call<WorkspaceFileDownloadFinalizeResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
             }),
         signal: params.signal ?? null,
         onProgress: params.onProgress
@@ -289,20 +315,22 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
     });
 }
 
-export async function downloadDaemonSessionFileToBase64(params: Readonly<{
-    sessionId: string;
+export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
+    machineId: string;
+    serverId?: string | null;
+    rootPath: string;
     path: string;
     maxBytes: number;
     signal?: AbortSignal | null;
 }>): Promise<Readonly<{ ok: true; contentBase64: string }> | Readonly<{ ok: false; error: string; errorCode?: string }>> {
-    const statClient = createSessionFileTransferRpcCaller({
-        sessionId: params.sessionId,
+    const statClient = createWorkspaceFileTransferRpcCaller({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
     });
-    const stat = await statClient.call<SessionStatFileResponse, SessionStatFileRequest>({
-        request: { path: params.path },
+    const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.path });
+    const stat = await statClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
+        request: { path: absolutePath },
         machineMethod: RPC_METHODS.STAT_FILE,
-        sessionMethod: RPC_METHODS.STAT_FILE,
-        toMachineRequest: rebasePathRequestToMachineTarget,
     });
     if (stat.success !== true) {
         return { ok: false, error: stat.error, ...(stat.errorCode ? { errorCode: stat.errorCode } : {}) };
@@ -329,9 +357,10 @@ export async function downloadDaemonSessionFileToBase64(params: Readonly<{
     const chunks: Uint8Array[] = [];
     let bufferedBytes = 0;
 
-    const transferClient = createSessionFileTransferRpcCaller({
-        sessionId: params.sessionId,
-        sessionRpcTransferSizeBytes: fileSizeBytes,
+    const transferClient = createWorkspaceFileTransferRpcCaller({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+        transferSizeBytes: fileSizeBytes,
     });
 
     try {
@@ -352,25 +381,22 @@ export async function downloadDaemonSessionFileToBase64(params: Readonly<{
             },
             init: async (request) => {
                 const init = await transferClient.call<
-                    SessionFileDownloadInitResponse,
+                    WorkspaceFileDownloadInitResponse,
                     Readonly<{ t: 'session_file_download_v1'; path: string; recipientPublicKeyBase64: string }>
                 >({
                     request: {
                         t: 'session_file_download_v1',
-                        path: params.path,
+                        path: absolutePath,
                         recipientPublicKeyBase64: request.recipientPublicKeyBase64,
                     },
                     machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
-                    sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
-                    toMachineRequest: rebaseTransferRequestPathToMachineTarget,
                 });
                 if (init.success === true && init.sizeBytes > params.maxBytes) {
-                    await transferClient.call<SessionFileDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
+                    await transferClient.call<WorkspaceFileDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
                         request: {
                             downloadId: init.downloadId,
                         },
                         machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
-                        sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
                     });
                     return {
                         success: false,
@@ -381,22 +407,19 @@ export async function downloadDaemonSessionFileToBase64(params: Readonly<{
                 return init;
             },
             readChunk: async (request) =>
-                await transferClient.call<SessionFileDownloadChunkResponse, typeof request>({
+                await transferClient.call<WorkspaceFileDownloadChunkResponse, typeof request>({
                     request,
                     machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
-                    sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
                 }),
             finalize: async (request) =>
-                await transferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
+                await transferClient.call<WorkspaceFileDownloadFinalizeResponse, typeof request>({
                     request,
                     machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
-                    sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
                 }),
             abort: async (request) =>
-                await transferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
+                await transferClient.call<WorkspaceFileDownloadFinalizeResponse, typeof request>({
                     request,
                     machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
-                    sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
                 }),
             signal: params.signal ?? null,
         });

@@ -1,6 +1,9 @@
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { createSessionFileTransferRpcCaller } from './sessionFileTransferRpcCaller';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+
+import { createWorkspaceFileTransferRpcCaller } from './workspaceFileTransferRpcCaller';
 
 import type { BulkTransferFailureResponse, BulkTransferFileReader } from './uploadBulkPayloadFromFile';
 import { uploadBulkPayloadFromFile } from './uploadBulkPayloadFromFile';
@@ -45,9 +48,20 @@ export async function uploadDaemonSessionAttachmentFromReader(params: Readonly<{
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ uploadedBytes: number; totalBytes: number }>) => void) | null;
 }>): Promise<SessionAttachmentsUploadFinalizeResponse | BulkTransferFailureResponse> {
-    const transferClient = createSessionFileTransferRpcCaller({
-        sessionId: params.sessionId,
-        sessionRpcTransferSizeBytes: params.fileReader.sizeBytes,
+    const machineTarget = readMachineTargetForSession(params.sessionId);
+    const serverId = resolvePreferredServerIdForSessionId(params.sessionId);
+    if (!machineTarget || !serverId) {
+        return {
+            success: false,
+            error: 'Machine target not available for session',
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        };
+    }
+
+    const transferClient = createWorkspaceFileTransferRpcCaller({
+        machineId: machineTarget.machineId,
+        serverId,
+        transferSizeBytes: params.fileReader.sizeBytes,
     });
 
     let previousUploadedBytes = 0;
@@ -64,25 +78,21 @@ export async function uploadDaemonSessionAttachmentFromReader(params: Readonly<{
                     t: 'session_attachment_upload_v1',
                 },
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
             }),
         sendChunk: async (request) =>
             await transferClient.call<SessionAttachmentsUploadChunkResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
             }),
         finalize: async (request) =>
             await transferClient.call<SessionAttachmentsUploadFinalizeResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
             }),
         abort: async (request) =>
             await transferClient.call<SessionAttachmentsUploadAbortResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT,
-                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT,
             }),
         onProgress: params.onProgress
             ? (progress) => {

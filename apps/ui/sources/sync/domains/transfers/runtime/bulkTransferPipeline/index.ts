@@ -10,7 +10,7 @@ export {
 export * from './uploadBulkJsonPayload';
 export * from './downloadBulkJsonPayload';
 export * from './shouldPreferScopedMachineRpcForBulkTransfer';
-export * from './daemonSessionFiles';
+export * from './daemonWorkspaceFiles';
 export * from './daemonSessionAttachments';
 export * from './daemonPromptAssets';
 export * from './daemonPromptRegistries';

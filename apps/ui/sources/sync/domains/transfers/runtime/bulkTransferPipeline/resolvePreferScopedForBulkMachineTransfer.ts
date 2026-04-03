@@ -9,18 +9,23 @@ export async function resolvePreferScopedForBulkMachineTransfer(params: Readonly
     serverId?: string | null;
     timeoutMs?: number | null;
 }>): Promise<boolean> {
-    // Consult shared feature gating before attempting any active-scope machine RPC.
-    const serverFeatures = await getReadyServerFeatures({
-        timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : 500,
-        serverId: typeof params.serverId === 'string' ? params.serverId : undefined,
-    });
+    try {
+        // Consult shared feature gating before attempting any active-scope machine RPC.
+        const serverFeatures = await getReadyServerFeatures({
+            timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : 500,
+            serverId: typeof params.serverId === 'string' ? params.serverId : undefined,
+        });
 
-    // Fail closed for direct machine RPC attempts when the policy snapshot is unavailable or disables transfers.
-    if (!serverFeatures) return true;
-    if (readServerEnabledBit(serverFeatures, 'machines.transfer') !== true) return true;
+        // Fail closed for direct machine RPC attempts when the policy snapshot is unavailable or disables transfers.
+        if (!serverFeatures) return true;
+        if (readServerEnabledBit(serverFeatures, 'machines.transfer') !== true) return true;
 
-    return shouldPreferScopedMachineRpcForBulkTransfer({
-        serverId: params.serverId,
-        machineId: params.machineId,
-    });
+        return shouldPreferScopedMachineRpcForBulkTransfer({
+            serverId: params.serverId,
+            machineId: params.machineId,
+        });
+    } catch {
+        // Fail closed: if we cannot evaluate transfer policy, do not attempt `machine_rpc_direct`.
+        return true;
+    }
 }

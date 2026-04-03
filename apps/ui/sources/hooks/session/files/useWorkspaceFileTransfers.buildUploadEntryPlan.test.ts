@@ -1,15 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/sync/ops', () => ({
-    sessionStatFile: vi.fn(async () => ({ success: true, exists: false })),
+const callDaemonWorkspaceStatFileRpcMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonWorkspaceFiles', () => ({
+    callDaemonWorkspaceStatFileRpc: (...args: unknown[]) => callDaemonWorkspaceStatFileRpcMock(...args),
 }));
 
 describe('buildUploadEntryPlan', () => {
     it('detects duplicate target paths within a single upload batch', async () => {
-        const { buildUploadEntryPlan } = await import('./useWorkspaceFileTransfers');
+        callDaemonWorkspaceStatFileRpcMock.mockResolvedValue({ success: true, exists: false });
+
+        const { buildUploadEntryPlan } = await import('@/hooks/workspaces/transfers/useWorkspaceFileTransfers');
 
         const result = await buildUploadEntryPlan({
-            sessionId: 's1',
+            workspaceScope: {
+                serverId: 'server-1',
+                machineId: 'm1',
+                rootPath: '/repo',
+            },
             destinationDir: '',
             entries: [
                 {

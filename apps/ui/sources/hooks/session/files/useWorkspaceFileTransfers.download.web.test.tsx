@@ -6,22 +6,18 @@ import { installSessionFilesHookCommonModuleMocks } from './sessionFilesHookTest
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const downloadDaemonSessionFileToDestinationMock = vi.hoisted(() => vi.fn());
+const downloadDaemonWorkspaceFileToDestinationMock = vi.hoisted(() => vi.fn());
 
 installSessionFilesHookCommonModuleMocks();
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionFiles', () => ({
-    downloadDaemonSessionFileToDestination: (...args: unknown[]) => downloadDaemonSessionFileToDestinationMock(...args),
-}));
-
-vi.mock('@/sync/ops', () => ({
-    sessionStatFile: vi.fn(),
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonWorkspaceFiles', () => ({
+    downloadDaemonWorkspaceFileToDestination: (...args: unknown[]) => downloadDaemonWorkspaceFileToDestinationMock(...args),
 }));
 
 describe('useWorkspaceFileTransfers web download cleanup', () => {
     beforeEach(() => {
         vi.useFakeTimers();
-        downloadDaemonSessionFileToDestinationMock.mockReset();
+        downloadDaemonWorkspaceFileToDestinationMock.mockReset();
     });
 
     afterEach(() => {
@@ -46,8 +42,10 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
             constructor(_parts?: unknown[], _options?: Record<string, unknown>) {}
         });
 
-        downloadDaemonSessionFileToDestinationMock.mockImplementation(async (params: {
-            sessionId: string;
+        downloadDaemonWorkspaceFileToDestinationMock.mockImplementation(async (params: {
+            machineId: string;
+            serverId?: string | null;
+            rootPath: string;
             request: { path: string; asZip: boolean };
             destination: {
                 writeBytes: (bytes: Uint8Array) => Promise<void>;
@@ -58,7 +56,9 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
             signal?: AbortSignal | null;
             onProgress?: ((progress: { downloadedBytes: number; totalBytes: number }) => void) | null;
         }) => {
-            expect(params.sessionId).toBe('session-1');
+            expect(params.machineId).toBe('m1');
+            expect(params.serverId).toBe('server-1');
+            expect(params.rootPath).toBe('/repo');
             expect(params.request).toEqual({ path: 'report.txt', asZip: false });
             await params.onInit?.({ name: 'report.txt', sizeBytes: 4 });
             await params.destination.writeBytes(new Uint8Array([1, 2, 3, 4]));
@@ -67,11 +67,17 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
             return { ok: true, name: 'report.txt', sizeBytes: 4 };
         });
 
-        const { useWorkspaceFileTransfers } = await import('./useWorkspaceFileTransfers');
+        const { useWorkspaceFileTransfers } = await import('@/hooks/workspaces/transfers/useWorkspaceFileTransfers');
 
         let api: ReturnType<typeof useWorkspaceFileTransfers> | null = null;
         function Test() {
-            api = useWorkspaceFileTransfers({ sessionId: 'session-1' });
+            api = useWorkspaceFileTransfers({
+                workspaceScope: {
+                    serverId: 'server-1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                },
+            });
             return null;
         }
 
@@ -85,7 +91,7 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
 
         expect(click).toHaveBeenCalledTimes(1);
         expect(revokeObjectURL).not.toHaveBeenCalled();
-        expect(downloadDaemonSessionFileToDestinationMock).toHaveBeenCalledTimes(1);
+        expect(downloadDaemonWorkspaceFileToDestinationMock).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             await vi.runAllTimersAsync();
@@ -114,8 +120,10 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
             constructor(_parts?: unknown[], _options?: Record<string, unknown>) {}
         });
 
-        downloadDaemonSessionFileToDestinationMock.mockImplementation(async (params: {
-            sessionId: string;
+        downloadDaemonWorkspaceFileToDestinationMock.mockImplementation(async (params: {
+            machineId: string;
+            serverId?: string | null;
+            rootPath: string;
             request: { path: string; asZip: boolean };
             destination: {
                 writeBytes: (bytes: Uint8Array) => Promise<void>;
@@ -135,11 +143,17 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
             return { ok: true, name: 'big.bin', sizeBytes: 4 };
         });
 
-        const { useWorkspaceFileTransfers } = await import('./useWorkspaceFileTransfers');
+        const { useWorkspaceFileTransfers } = await import('@/hooks/workspaces/transfers/useWorkspaceFileTransfers');
 
         let api: ReturnType<typeof useWorkspaceFileTransfers> | null = null;
         function Test() {
-            api = useWorkspaceFileTransfers({ sessionId: 'session-1' });
+            api = useWorkspaceFileTransfers({
+                workspaceScope: {
+                    serverId: 'server-1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                },
+            });
             return null;
         }
 

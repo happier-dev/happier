@@ -4,21 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionFilesHookCommonModuleMocks } from './sessionFilesHookTestHelpers';
 
-const uploadDaemonSessionFileFromReaderMock = vi.hoisted(() => vi.fn());
+const uploadDaemonWorkspaceFileFromReaderMock = vi.hoisted(() => vi.fn());
+const callDaemonWorkspaceStatFileRpcMock = vi.hoisted(() => vi.fn());
 
 installSessionFilesHookCommonModuleMocks();
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionFiles', () => ({
-    uploadDaemonSessionFileFromReader: (...args: unknown[]) => uploadDaemonSessionFileFromReaderMock(...args),
-}));
-
-vi.mock('@/sync/ops', () => ({
-    sessionStatFile: vi.fn(async () => ({ success: true, exists: false })),
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonWorkspaceFiles', () => ({
+    uploadDaemonWorkspaceFileFromReader: (...args: unknown[]) => uploadDaemonWorkspaceFileFromReaderMock(...args),
+    callDaemonWorkspaceStatFileRpc: (...args: unknown[]) => callDaemonWorkspaceStatFileRpcMock(...args),
 }));
 
 describe('useWorkspaceFileTransfers upload pipeline', () => {
     beforeEach(() => {
-        uploadDaemonSessionFileFromReaderMock.mockReset();
+        uploadDaemonWorkspaceFileFromReaderMock.mockReset();
+        callDaemonWorkspaceStatFileRpcMock.mockReset();
     });
 
     afterEach(() => {
@@ -26,8 +25,12 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
     });
 
     it('uploads files through the canonical bulk pipeline helper', async () => {
-        uploadDaemonSessionFileFromReaderMock.mockImplementation(async (params: {
-            sessionId: string;
+        callDaemonWorkspaceStatFileRpcMock.mockResolvedValue({ success: true, exists: false });
+
+        uploadDaemonWorkspaceFileFromReaderMock.mockImplementation(async (params: {
+            machineId: string;
+            serverId?: string | null;
+            rootPath: string;
             fileReader: {
                 sizeBytes: number;
                 readBytes: (offset: number, length: number) => Promise<Uint8Array>;
@@ -42,7 +45,9 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
             onProgress?: ((progress: { uploadedBytes: number; totalBytes: number }) => void) | null;
             signal?: AbortSignal | null;
         }) => {
-            expect(params.sessionId).toBe('session-1');
+            expect(params.machineId).toBe('m1');
+            expect(params.serverId).toBe('server-1');
+            expect(params.rootPath).toBe('/repo');
             expect(params.fileReader.sizeBytes).toBe(5);
             expect(params.request).toEqual({
                 path: 'workspace/files/hello.txt',
@@ -60,11 +65,17 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
             };
         });
 
-        const { useWorkspaceFileTransfers } = await import('./useWorkspaceFileTransfers');
+        const { useWorkspaceFileTransfers } = await import('@/hooks/workspaces/transfers/useWorkspaceFileTransfers');
 
         let api: ReturnType<typeof useWorkspaceFileTransfers> | null = null;
         function Test() {
-            api = useWorkspaceFileTransfers({ sessionId: 'session-1' });
+            api = useWorkspaceFileTransfers({
+                workspaceScope: {
+                    serverId: 'server-1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                },
+            });
             return null;
         }
 
@@ -87,6 +98,6 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
             });
         });
 
-        expect(uploadDaemonSessionFileFromReaderMock).toHaveBeenCalledTimes(1);
+        expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1);
     });
 });

@@ -1,13 +1,13 @@
 import type { FeaturesResponse as ServerFeatures, SessionHandoffTransportStrategy } from '@happier-dev/protocol';
 import { readServerEnabledBit } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMachineRpcFallback';
+import { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/ops/sessionMachineTarget';
 import {
     resolveAppSessionTransferAvailability,
     SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR as TRANSFERS_SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR,
     SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
 } from '@happier-dev/transfers';
-export { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMachineRpcFallback';
+export { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/ops/sessionMachineTarget';
 
 const SERVER_ROUTED_TRANSFER_DISABLED_ERROR = 'Server-routed transfer is disabled on the selected server';
 
