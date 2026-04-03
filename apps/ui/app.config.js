@@ -18,6 +18,14 @@ function normalizeVariantOverride(raw) {
     return '';
 }
 
+function readBoolEnv(name, defaultValue = false) {
+    const raw = String(process.env[name] ?? '').trim().toLowerCase();
+    if (!raw) return defaultValue;
+    if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
+    if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+    return defaultValue;
+}
+
 function resolveOptionalAppLocalConfigModule() {
     const explicitPath = (process.env.EXPO_APP_LOCAL_CONFIG_PATH || '').trim();
     const candidates = explicitPath ? [explicitPath] : ['./app.local.js'];
@@ -78,6 +86,25 @@ const packageJsonVersion = (() => {
 
 const rawAppEnvironment = process.env.APP_ENV || 'development';
 const appEnvironmentConfig = getAppEnvironmentConfig(rawAppEnvironment);
+
+// Android size tuning (primarily for direct-download APKs).
+// Prefer controlling these knobs from EAS build profile env so store builds (AAB) keep their defaults.
+const androidEnableMinifyInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_MINIFY', false);
+const androidEnableShrinkResourcesInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_SHRINK_RESOURCES', false);
+const shouldUseAndroidBuildProperties =
+    androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
+
+const androidBuildPropertiesPlugin = shouldUseAndroidBuildProperties
+    ? [
+        'expo-build-properties',
+        {
+            android: {
+                ...(androidEnableMinifyInReleaseBuilds ? { enableProguardInReleaseBuilds: true } : {}),
+                ...(androidEnableShrinkResourcesInReleaseBuilds ? { enableShrinkResourcesInReleaseBuilds: true } : {}),
+            },
+        },
+    ]
+    : null;
 const appVariant = appEnvironmentConfig.logicalVariant;
 const appIdentityVariant = appEnvironmentConfig.id;
 
@@ -283,6 +310,8 @@ const baseExpoConfig = {
         },
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
+            require("./plugins/withAndroidReactNativeArchitectures.js"),
+            ...(androidBuildPropertiesPlugin ? [androidBuildPropertiesPlugin] : []),
             [
                 "@sentry/react-native/expo",
                 {

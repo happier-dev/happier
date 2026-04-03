@@ -116,7 +116,10 @@
         "EXPO_UPDATES_CHANNEL": "dev",
         "EXPO_APP_NAME": "Happier (dev)",
         "EXPO_APP_BUNDLE_ID": "dev.happier.app.publicdev",
-        "EXPO_APP_SCHEME": "happier-dev"
+        "EXPO_APP_SCHEME": "happier-dev",
+        "HAPPIER_ANDROID_BUILD_ARCHS": "arm64-v8a",
+        "HAPPIER_ANDROID_ENABLE_MINIFY": "1",
+        "HAPPIER_ANDROID_ENABLE_SHRINK_RESOURCES": "1"
       }
     },
     "preview": {
