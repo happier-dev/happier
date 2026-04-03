@@ -9,6 +9,7 @@ const onboardingContext = {
     scanStepEnabled: false,
     canRunSystemTasks: false,
     relaySelection: { choiceId: null, serverUrl: null, locked: false },
+    relayAccessProviderId: null,
     relayLockConfirmationPending: false,
     relaySwitchConfirmationPending: false,
     authIntent: 'standard' as const,
@@ -22,6 +23,7 @@ const setupContext = {
     scanStepEnabled: false,
     canRunSystemTasks: true,
     relaySelection: { choiceId: null, serverUrl: null, locked: false },
+    relayAccessProviderId: null,
     relayLockConfirmationPending: false,
     relaySwitchConfirmationPending: false,
     authIntent: 'standard' as const,
@@ -150,6 +152,40 @@ describe('wizardSelectors', () => {
 
         expect(getVisibleWizardStepIds({
             ...setupContext,
+            setupAction: 'relayLocal',
+            relayAccessProviderId: 'lan',
+            relaySelection: {
+                ...setupContext.relaySelection,
+                serverUrl: 'https://local-relay.example.test',
+            },
+        })).toEqual([
+            'setup_chooser',
+            'host_relay_local',
+            'relay_access',
+            'relay_access_url',
+            'confirm_switch_relay',
+            'done',
+        ]);
+
+        expect(getVisibleWizardStepIds({
+            ...setupContext,
+            setupAction: 'relayLocal',
+            relayAccessProviderId: 'cloudflareNamed',
+            relaySelection: {
+                ...setupContext.relaySelection,
+                serverUrl: 'https://local-relay.example.test',
+            },
+        })).toEqual([
+            'setup_chooser',
+            'host_relay_local',
+            'relay_access',
+            'relay_access_cloudflare',
+            'confirm_switch_relay',
+            'done',
+        ]);
+
+        expect(getVisibleWizardStepIds({
+            ...setupContext,
             setupAction: 'remote',
         })).toEqual([
             'setup_chooser',
@@ -168,6 +204,24 @@ describe('wizardSelectors', () => {
         })).toEqual([
             'setup_chooser',
             'relay_access',
+            'remote_ssh_setup',
+            'confirm_switch_relay',
+            'providers_optional',
+            'done',
+        ]);
+
+        expect(getVisibleWizardStepIds({
+            ...setupContext,
+            setupAction: 'remote',
+            relayAccessProviderId: 'lan',
+            relaySelection: {
+                ...setupContext.relaySelection,
+                serverUrl: 'https://remote-relay.example.test',
+            },
+        })).toEqual([
+            'setup_chooser',
+            'relay_access',
+            'relay_access_url',
             'remote_ssh_setup',
             'confirm_switch_relay',
             'providers_optional',

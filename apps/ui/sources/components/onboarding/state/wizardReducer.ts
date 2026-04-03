@@ -70,6 +70,14 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
                     relaySelection: action.relaySelection,
                 },
             };
+        case 'wizard/setRelayAccessProviderId':
+            return {
+                ...state,
+                context: {
+                    ...state.context,
+                    relayAccessProviderId: action.providerId,
+                },
+            };
         case 'wizard/setRelayLockConfirmationPending':
             return {
                 ...state,

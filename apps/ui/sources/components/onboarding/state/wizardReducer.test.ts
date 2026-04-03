@@ -10,6 +10,7 @@ const onboardingContext = {
     scanStepEnabled: false,
     canRunSystemTasks: false,
     relaySelection: { choiceId: null, serverUrl: null, locked: false },
+    relayAccessProviderId: null,
     relayLockConfirmationPending: false,
     relaySwitchConfirmationPending: false,
     authIntent: 'standard' as const,

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 import { WebDesktopDownloadCta } from '../steps/webDesktop/WebDesktopDownloadCta';
 import { WizardTerminalHandoff, type WizardTerminalHandoffStep } from './WizardTerminalHandoff';
@@ -29,11 +30,33 @@ export type WizardGuidedHandoffNoteProps = Readonly<{
     subtitle: React.ReactNode;
 }>;
 
+export type WizardGuidedHandoffDividerProps = Readonly<{
+    testID: string;
+}>;
+
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         width: '100%',
         gap: 14,
         alignItems: 'center',
+    },
+    divider: {
+        width: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingTop: 12,
+        paddingBottom: 4,
+    },
+    dividerLine: {
+        flex: 1,
+        height: 1,
+        backgroundColor: theme.colors.divider,
+        opacity: 0.8,
+    },
+    dividerText: {
+        color: theme.colors.textSecondary,
+        fontSize: 12,
     },
     noteBlock: {
         width: '100%',
@@ -76,6 +99,19 @@ export function WizardGuidedHandoffTerminal(props: WizardGuidedHandoffTerminalPr
 
 export function WizardGuidedHandoffDownloadCta(props: WizardGuidedHandoffDownloadCtaProps) {
     return <WebDesktopDownloadCta testIDPrefix={props.testIDPrefix} showSubtitle={props.showSubtitle} />;
+}
+
+export function WizardGuidedHandoffDivider(props: WizardGuidedHandoffDividerProps) {
+    useUnistyles();
+    const styles = stylesheet;
+
+    return (
+        <View testID={props.testID} style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>{t('setupOnboarding.orDividerLabel')}</Text>
+            <View style={styles.dividerLine} />
+        </View>
+    );
 }
 
 export function WizardGuidedHandoffNote(props: WizardGuidedHandoffNoteProps) {

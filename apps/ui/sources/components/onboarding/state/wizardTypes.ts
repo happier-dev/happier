@@ -1,4 +1,5 @@
 import type { TranslationKey } from '@/text';
+import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 
 export type WizardMode = 'onboarding' | 'setup';
 
@@ -15,6 +16,8 @@ export type WizardStepId =
     | 'host_relay_local'
     | 'host_relay_remote'
     | 'relay_access'
+    | 'relay_access_url'
+    | 'relay_access_cloudflare'
     | 'auth'
     | 'auth_restore'
     | 'auth_secret_key'
@@ -45,6 +48,7 @@ export type WizardContext = Readonly<{
     scanStepEnabled: boolean;
     canRunSystemTasks: boolean;
     relaySelection: WizardRelaySelection;
+    relayAccessProviderId: RelayAccessProviderId | null;
     relayLockConfirmationPending: boolean;
     relaySwitchConfirmationPending: boolean;
     authIntent: WizardAuthIntent;
@@ -85,6 +89,7 @@ export type WizardAction =
     | Readonly<{ type: 'wizard/setResumeState'; resumeState: WizardResumeState | null }>
     | Readonly<{ type: 'wizard/setParsedScanPayload'; parsedScanPayload: unknown | null }>
     | Readonly<{ type: 'wizard/setRelaySelection'; relaySelection: WizardRelaySelection }>
+    | Readonly<{ type: 'wizard/setRelayAccessProviderId'; providerId: RelayAccessProviderId | null }>
     | Readonly<{ type: 'wizard/setRelayLockConfirmationPending'; pending: boolean }>
     | Readonly<{ type: 'wizard/setRelaySwitchConfirmationPending'; pending: boolean }>
     | Readonly<{ type: 'wizard/setAuthIntent'; authIntent: WizardAuthIntent }>

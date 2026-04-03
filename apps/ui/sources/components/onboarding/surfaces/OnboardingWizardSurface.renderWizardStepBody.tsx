@@ -13,6 +13,9 @@ import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
 import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
+import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import { RelayAccessLanUrlStep } from '@/components/onboarding/steps/relayAccess/RelayAccessLanUrlStep';
+import { RelayAccessCloudflareNamedTunnelStep } from '@/components/onboarding/steps/relayAccess/RelayAccessCloudflareNamedTunnelStep';
 
 import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreIndexEmbedded';
 import { LostAccessEmbedded } from '@/components/onboarding/restore/LostAccessEmbedded';
@@ -78,6 +81,10 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onWizardPrimaryChange: (next: WizardPrimaryOverride | null) => void;
     onWizardBackChange: (next: WizardBackOverride | null) => void;
     onWizardSkipChange: (next: WizardSkipOverride | null) => void;
+
+    relayAccessProviderId: RelayAccessProviderId | null;
+    onRelayAccessProviderIdChange: (next: RelayAccessProviderId | null) => void;
+    onRelayAccessProviderDetailsRequested: (providerId: RelayAccessProviderId) => void;
 
     onCreateAccount: () => Promise<void> | void;
     onCreateAccountViaProvider: (providerId: string) => Promise<void> | void;
@@ -242,6 +249,33 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
             <LocalRelayAccessControlSection
                 upstreamUrl={upstreamUrl}
                 presentation="wizard"
+                onWizardPrimaryChange={params.onWizardPrimaryChange}
+                onRequestAdvance={params.onRelayAccessAdvance}
+                onWizardSelectedProviderIdChange={(providerId) => params.onRelayAccessProviderIdChange(providerId)}
+                onWizardRequestProviderDetails={(providerId) => params.onRelayAccessProviderDetailsRequested(providerId)}
+                wizardSelectedProviderId={params.relayAccessProviderId}
+            />
+        );
+    }
+
+    if (params.stepId === 'relay_access_url') {
+        const upstreamUrl = params.relaySelectionServerUrl ? normalizeServerUrl(params.relaySelectionServerUrl.trim()) : null;
+        return (
+            <RelayAccessLanUrlStep
+                testID={`${params.testIDPrefix}-relay-access-url`}
+                upstreamUrl={upstreamUrl}
+                onWizardPrimaryChange={params.onWizardPrimaryChange}
+                onRequestAdvance={params.onRelayAccessAdvance}
+            />
+        );
+    }
+
+    if (params.stepId === 'relay_access_cloudflare') {
+        const upstreamUrl = params.relaySelectionServerUrl ? normalizeServerUrl(params.relaySelectionServerUrl.trim()) : null;
+        return (
+            <RelayAccessCloudflareNamedTunnelStep
+                testID={`${params.testIDPrefix}-relay-access-cloudflare`}
+                upstreamUrl={upstreamUrl}
                 onWizardPrimaryChange={params.onWizardPrimaryChange}
                 onRequestAdvance={params.onRelayAccessAdvance}
             />

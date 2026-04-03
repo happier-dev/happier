@@ -14,6 +14,7 @@ import { t, tLoose } from '@/text';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { getProviderCliSetupSupportedIds, type AgentId } from '@happier-dev/agents';
+import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 
 import { createWizardState, wizardReducer } from '../state/wizardReducer';
 import { canSkipWizardStep, getWizardProgress } from '../state/wizardSelectors';
@@ -151,6 +152,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                     scanStepEnabled: false,
                     canRunSystemTasks: props.isDesktopShell,
                     relaySelection: { choiceId: null, serverUrl: null, locked: false },
+                    relayAccessProviderId: null,
                     relayLockConfirmationPending: false,
                     relaySwitchConfirmationPending: false,
                     authIntent: 'standard',
@@ -423,6 +425,18 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         exitWizard();
     }, [action, exitWizard, pendingRelayRuntime?.machineId, props.onExit, relayCandidateUrl, relaySwitchDecision, remoteSetupIntent, setupPolicy.providers.allowProviderSetup, stepId]);
 
+    const handleRelayAccessProviderIdChange = React.useCallback((providerId: RelayAccessProviderId | null) => {
+        dispatch({ type: 'wizard/setRelayAccessProviderId', providerId });
+    }, [dispatch]);
+
+    const handleRelayAccessProviderDetailsRequested = React.useCallback((providerId: RelayAccessProviderId) => {
+        dispatch({ type: 'wizard/setRelayAccessProviderId', providerId });
+        dispatch({
+            type: 'wizard/goToStep',
+            stepId: providerId === 'cloudflareNamed' ? 'relay_access_cloudflare' : 'relay_access_url',
+        });
+    }, [dispatch]);
+
     const handleLocalRelayStatusChange = React.useCallback((status: unknown) => {
         const relayUrl = (status as { relayUrl?: unknown } | null | undefined)?.relayUrl;
         setRelayRuntimeCandidate(typeof relayUrl === 'string' ? relayUrl : null, null);
@@ -566,6 +580,9 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
                 onRemoteRelayRuntimeCompletedChange: handleRemoteRelayRuntimeCompletedChange,
                 onRelayUrlPasteChange: handleRelayUrlPasteChange,
                 onRelayShareUrlPasteChange: handleRelayShareUrlPasteChange,
+                relayAccessProviderId: state.context.relayAccessProviderId,
+                onRelayAccessProviderIdChange: handleRelayAccessProviderIdChange,
+                onRelayAccessProviderDetailsRequested: handleRelayAccessProviderDetailsRequested,
                 onWizardPrimaryChange: handleWizardPrimaryChange,
                 onWizardBackChange: handleWizardBackChange,
                 onWizardSkipChange: handleWizardSkipChange,

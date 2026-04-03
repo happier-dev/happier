@@ -85,7 +85,8 @@ describe('WizardTerminalHandoff', () => {
             />,
         );
 
-        expect(screen.findByTestId('handoff-cli-platform:posix')).toBeTruthy();
+        expect(screen.findByTestId('handoff-cli-platform:macos')).toBeTruthy();
+        expect(screen.findByTestId('handoff-cli-platform:linux')).toBeTruthy();
         expect(screen.findByTestId('handoff-cli-platform:windows')).toBeTruthy();
 
         const initialCodeBlock = screen.findByType('CodeBlockView' as never) as unknown as { props: { code: string } };

@@ -17,6 +17,7 @@ describe('wizardStepRegistry', () => {
                 relayProfileId: null,
                 locked: false,
             },
+            relayAccessProviderId: null,
             relayLockConfirmationPending: false,
             relaySwitchConfirmationPending: false,
             authIntent: 'standard',

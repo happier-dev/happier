@@ -10,6 +10,26 @@ import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { WizardModalShell } from '../ui/WizardModalShell';
 import { WizardChoiceRow } from '../ui/WizardChoiceRow';
 
+const relayAccessWizardMockState = vi.hoisted(() => ({
+    providerId: 'lan' as 'lan' | 'cloudflareNamed',
+    latestProps: null as Record<string, unknown> | null,
+    renderedDetailsStep: null as null | 'lan' | 'cloudflareNamed',
+}));
+
+vi.mock('@/components/onboarding/steps/relayAccess/RelayAccessLanUrlStep', () => ({
+    RelayAccessLanUrlStep: (_props: Record<string, unknown>) => {
+        relayAccessWizardMockState.renderedDetailsStep = 'lan';
+        return null;
+    },
+}));
+
+vi.mock('@/components/onboarding/steps/relayAccess/RelayAccessCloudflareNamedTunnelStep', () => ({
+    RelayAccessCloudflareNamedTunnelStep: (_props: Record<string, unknown>) => {
+        relayAccessWizardMockState.renderedDetailsStep = 'cloudflareNamed';
+        return null;
+    },
+}));
+
 const expoRouterMock = vi.hoisted(() => {
     const push = vi.fn();
     const replace = vi.fn();
@@ -256,7 +276,10 @@ vi.mock('../checklists/relayHostLocal/RelayHostLocalChecklistStep', () => ({
     },
 }));
 vi.mock('@/components/settings/server/localControl/LocalRelayAccessControlSection', () => ({
-    LocalRelayAccessControlSection: (props: Record<string, unknown>) => React.createElement('LocalRelayAccessControlSection', props),
+    LocalRelayAccessControlSection: (props: Record<string, unknown>) => {
+        relayAccessWizardMockState.latestProps = props;
+        return React.createElement('LocalRelayAccessControlSection', props);
+    },
 }));
 vi.mock('@/components/ui/lists/SelectableRow', () => ({
     SelectableRow: (props: Record<string, unknown>) => React.createElement('SelectableRow', props),
@@ -372,6 +395,98 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.next');
+    });
+
+    it('routes relay access LAN choice to the dedicated relay access URL step', async () => {
+        relayAccessWizardMockState.providerId = 'lan';
+        relayAccessWizardMockState.renderedDetailsStep = null;
+        relayAccessWizardMockState.latestProps = null;
+
+        const relaySelectionHelpers = await import('./relaySelection/relaySelectionHelpers');
+        const selectionSpy = vi.spyOn(relaySelectionHelpers, 'buildDefaultRelaySelection').mockReturnValue({
+            choiceId: 'thisComputer',
+            serverUrl: 'http://127.0.0.1:3005',
+            relayProfileId: null,
+            locked: false,
+        });
+
+        try {
+            const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+            const screen = await renderScreen(
+                React.createElement(OnboardingWizardSurface, {
+                    layout: 'portrait',
+                    isDesktopShell: true,
+                    initialStepId: 'relay_access',
+                    authEntryOptions: baseAuthOptions,
+                    onCreateAccount: vi.fn(),
+                    onCreateAccountViaProvider: vi.fn(),
+                    onLoginWithKeylessProvider: vi.fn(),
+                    onLoginWithMtls: vi.fn(),
+                    onChangeRelayViaServerConfig: vi.fn(),
+                }),
+            );
+
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessWizardTitle');
+            expect(relayAccessWizardMockState.latestProps).toBeTruthy();
+            expect(typeof (relayAccessWizardMockState.latestProps as any)?.onWizardRequestProviderDetails).toBe('function');
+
+            await act(async () => {
+                (relayAccessWizardMockState.latestProps as any)?.onWizardRequestProviderDetails?.('lan');
+            });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+
+            expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessUrlTitle');
+            expect(relayAccessWizardMockState.renderedDetailsStep).toBe('lan');
+        } finally {
+            selectionSpy.mockRestore();
+        }
+    });
+
+    it('routes relay access Cloudflare choice to the dedicated Cloudflare tunnel step', async () => {
+        relayAccessWizardMockState.providerId = 'cloudflareNamed';
+        relayAccessWizardMockState.renderedDetailsStep = null;
+        relayAccessWizardMockState.latestProps = null;
+
+        const relaySelectionHelpers = await import('./relaySelection/relaySelectionHelpers');
+        const selectionSpy = vi.spyOn(relaySelectionHelpers, 'buildDefaultRelaySelection').mockReturnValue({
+            choiceId: 'thisComputer',
+            serverUrl: 'http://127.0.0.1:3005',
+            relayProfileId: null,
+            locked: false,
+        });
+
+        try {
+            const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+            const screen = await renderScreen(
+                React.createElement(OnboardingWizardSurface, {
+                    layout: 'portrait',
+                    isDesktopShell: true,
+                    initialStepId: 'relay_access',
+                    authEntryOptions: baseAuthOptions,
+                    onCreateAccount: vi.fn(),
+                    onCreateAccountViaProvider: vi.fn(),
+                    onLoginWithKeylessProvider: vi.fn(),
+                    onLoginWithMtls: vi.fn(),
+                    onChangeRelayViaServerConfig: vi.fn(),
+                }),
+            );
+
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessWizardTitle');
+            expect(relayAccessWizardMockState.latestProps).toBeTruthy();
+            expect(typeof (relayAccessWizardMockState.latestProps as any)?.onWizardRequestProviderDetails).toBe('function');
+
+            await act(async () => {
+                (relayAccessWizardMockState.latestProps as any)?.onWizardRequestProviderDetails?.('cloudflareNamed');
+            });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+
+            expect(screen.findByType(WizardModalShell as never).props.title).toBe('setupOnboarding.relayAccessCloudflareTitle');
+            expect(relayAccessWizardMockState.renderedDetailsStep).toBe('cloudflareNamed');
+        } finally {
+            selectionSpy.mockRestore();
+        }
     });
 
     it('only marks Happier Cloud as recommended in the relay selection list', async () => {

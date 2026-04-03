@@ -1,14 +1,12 @@
 import * as React from 'react';
 
-import { t } from '@/text';
-
 import { buildCliInstallAndRunCommandForCurrentApp } from '../../commands/wizardCliCommands';
 import { buildCliInstallAndRunPowershellCommandForCurrentApp } from '../../commands/wizardCliCommands';
 import { buildWebDesktopBackgroundServiceHandoffSteps } from '../../commands/webDesktopHandoffSteps';
 import {
     WizardGuidedHandoff,
+    WizardGuidedHandoffDivider,
     WizardGuidedHandoffDownloadCta,
-    WizardGuidedHandoffNote,
     WizardGuidedHandoffTerminal,
 } from '@/components/onboarding';
 
@@ -38,12 +36,8 @@ export function WebDesktopBackgroundServiceHandoffContent(props: WebDesktopBackg
                 testID={`${props.testID}-terminal`}
                 steps={steps}
             />
+            <WizardGuidedHandoffDivider testID={`${props.testID}-divider`} />
             <WizardGuidedHandoffDownloadCta testIDPrefix={props.testID} />
-            <WizardGuidedHandoffNote
-                testID={`${props.testID}-optional`}
-                title={t('setupOnboarding.webDesktopOnlyOptionalNextTitle')}
-                subtitle={t('setupOnboarding.webDesktopOnlyOptionalNextBody')}
-            />
         </WizardGuidedHandoff>
     );
 }

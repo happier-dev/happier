@@ -23,6 +23,7 @@ import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHostLocal/types';
+import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 
 import { WizardLogotype } from '../ui/WizardLogotype';
 import { WizardChoiceRow } from '../ui/WizardChoiceRow';
@@ -122,6 +123,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
                 scanStepEnabled: false,
                     canRunSystemTasks: props.isDesktopShell,
                     relaySelection: buildDefaultRelaySelection(),
+                    relayAccessProviderId: null,
                     relayLockConfirmationPending: false,
                     relaySwitchConfirmationPending: false,
                     authIntent: 'standard',
@@ -892,6 +894,18 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' });
     }, [dispatch]);
 
+    const handleRelayAccessProviderIdChange = React.useCallback((providerId: RelayAccessProviderId | null) => {
+        dispatch({ type: 'wizard/setRelayAccessProviderId', providerId });
+    }, [dispatch]);
+
+    const handleRelayAccessProviderDetailsRequested = React.useCallback((providerId: RelayAccessProviderId) => {
+        dispatch({ type: 'wizard/setRelayAccessProviderId', providerId });
+        dispatch({
+            type: 'wizard/goToStep',
+            stepId: providerId === 'cloudflareNamed' ? 'relay_access_cloudflare' : 'relay_access_url',
+        });
+    }, [dispatch]);
+
     const skipLabel = React.useMemo(() => {
         if (stepId === 'welcome') return welcomeHasAuthActions ? t('common.login') : t('common.start');
         if (stepId === 'relay_select') return t('common.next');
@@ -1075,6 +1089,9 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         onWizardPrimaryChange: handleWizardPrimaryChange,
         onWizardBackChange: handleWizardBackChange,
         onWizardSkipChange: handleWizardSkipChange,
+        relayAccessProviderId: state.context.relayAccessProviderId,
+        onRelayAccessProviderIdChange: handleRelayAccessProviderIdChange,
+        onRelayAccessProviderDetailsRequested: handleRelayAccessProviderDetailsRequested,
         onCreateAccount: async () => {
             await ensureActiveServerForAuth();
             await props.onCreateAccount();

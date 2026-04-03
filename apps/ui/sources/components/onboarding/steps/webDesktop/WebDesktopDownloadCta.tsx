@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { HANDOFF_TEXT_MAX_WIDTH } from '@/components/onboarding/ui/handoffLayout';
 
 export type WebDesktopDownloadCtaProps = Readonly<{
     testIDPrefix: string;
@@ -19,9 +20,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 10,
         alignItems: 'center',
     },
+    heading: {
+        width: '100%',
+        gap: 4,
+        alignItems: 'center',
+    },
     button: {
         width: '100%',
-        maxWidth: 220,
+        maxWidth: HANDOFF_TEXT_MAX_WIDTH,
     },
     title: {
         textAlign: 'center',
@@ -34,6 +40,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         fontSize: 13,
         lineHeight: 18,
+        maxWidth: HANDOFF_TEXT_MAX_WIDTH,
     },
 }));
 
@@ -48,10 +55,12 @@ export function WebDesktopDownloadCta(props: WebDesktopDownloadCtaProps) {
 
     return (
         <View testID={`${props.testIDPrefix}-download-cta`} style={styles.root}>
-            <Text style={styles.title}>{props.title ?? t('setupOnboarding.webDesktopOnlyDesktopAppTitle')}</Text>
-            {showSubtitle ? (
-                <Text style={styles.subtitle}>{props.subtitle ?? t('setupOnboarding.webDesktopOnlyDesktopAppSubtitle')}</Text>
-            ) : null}
+            <View style={styles.heading}>
+                <Text style={styles.title}>{props.title ?? t('setupOnboarding.webDesktopOnlyDesktopAppTitle')}</Text>
+                {showSubtitle ? (
+                    <Text style={styles.subtitle}>{props.subtitle ?? t('setupOnboarding.webDesktopOnlyDesktopAppSubtitle')}</Text>
+                ) : null}
+            </View>
             <RoundButton
                 title={t('setupOnboarding.webDesktopOnlyDesktopAppButton')}
                 size="small"

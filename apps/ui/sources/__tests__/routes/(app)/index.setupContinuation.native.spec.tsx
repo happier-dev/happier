@@ -37,8 +37,10 @@ const expoRouterMock = createExpoRouterMock({
 vi.mock('expo-router', () => expoRouterMock.module);
 
 const tauriDesktopState = vi.hoisted(() => ({ value: true }));
+const invokeTauriSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriDesktopState.value,
+    invokeTauri: (...args: any[]) => invokeTauriSpy(...args),
 }));
 
 let isAuthenticated = true;
@@ -90,6 +92,7 @@ describe('/ (welcome) setup continuation on native', () => {
     beforeEach(() => {
         isAuthenticated = true;
         tauriDesktopState.value = true;
+        invokeTauriSpy.mockReset();
         getPendingSetupIntentMock.mockReset();
         getPendingSetupIntentMock.mockReturnValue({
             branch: 'thisComputer',
