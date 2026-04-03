@@ -2,6 +2,7 @@
   "name": "monorepo",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/pipeline/expo/eas-postinstall.mjs",
     "build:packages": "yarn workspace @happier-dev/protocol build && yarn workspace @happier-dev/transfers build && yarn workspace @happier-dev/agents build && yarn workspace @happier-dev/connection-supervisor build",
     "dev": "node ./apps/stack/scripts/repo_local.mjs dev",
     "stop": "node ./apps/stack/scripts/repo_local.mjs stop",
