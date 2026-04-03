@@ -25,6 +25,7 @@ type FilesToolbarProps = {
     onToggleScmPanel: () => void;
     onRefresh?: () => void;
     showScmToggle?: boolean;
+    showAttributionReliabilityNotice?: boolean;
 };
 
 export function FilesToolbar(props: FilesToolbarProps) {
@@ -46,6 +47,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
         onToggleScmPanel,
         onRefresh,
         showScmToggle = true,
+        showAttributionReliabilityNotice = true,
     } = props;
 
     const chipStyle = (active: boolean) => ({
@@ -208,7 +210,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
                 ) : null}
             </View>
 
-            {!showAllRepositoryFiles && changedFilesCount > 0 && !showTurnViewToggle && !showSessionViewToggle && (
+            {showAttributionReliabilityNotice && !showAllRepositoryFiles && changedFilesCount > 0 && !showTurnViewToggle && !showSessionViewToggle && (
                 <View
                     style={{
                         marginTop: 10,

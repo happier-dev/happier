@@ -89,4 +89,29 @@ describe('FilesToolbar', () => {
         expect(textContent).not.toContain('files.toolbar.sessionView');
         expect(textContent).toContain('files.attributionReliabilityLimited');
     });
+
+    it('allows hiding the attribution notice when used outside sessions', async () => {
+        const { FilesToolbar } = await import('./FilesToolbar');
+
+        const screen = await renderScreen(<FilesToolbar
+            theme={theme}
+            searchQuery=""
+            onSearchQueryChange={vi.fn()}
+            showAllRepositoryFiles={false}
+            onShowChangedFiles={vi.fn()}
+            onShowAllRepositoryFiles={vi.fn()}
+            changedFilesCount={2}
+            changedFilesViewMode="repository"
+            changedFilesPresentation="list"
+            showTurnViewToggle={false}
+            showSessionViewToggle={false}
+            onChangedFilesViewMode={vi.fn()}
+            onChangedFilesPresentationChange={vi.fn()}
+            scmPanelExpanded={false}
+            onToggleScmPanel={vi.fn()}
+            showAttributionReliabilityNotice={false}
+        />);
+
+        expect(screen.getTextContent()).not.toContain('files.attributionReliabilityLimited');
+    });
 });

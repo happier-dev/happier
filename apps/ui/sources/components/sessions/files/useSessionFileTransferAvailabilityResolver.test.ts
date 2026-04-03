@@ -62,12 +62,38 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
 }));
 
 describe('useSessionFileTransferAvailabilityResolver', () => {
-    it('fails closed for oversized transfers based on the server transfer policy snapshot', async () => {
+    it('does not gate bulk file transfers by the total transfer size (chunked transfers)', async () => {
         const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
 
         expect(hook.getCurrent()(64)).toBe(true);
-        expect(hook.getCurrent()(512)).toBe(false);
+        expect(hook.getCurrent()(512)).toBe(true);
+    });
+
+    it('fails closed when machine transfers are disabled on the server', async () => {
+        state.session = { active: true } as any;
+        state.machineReachability = { machineRpcTargetAvailable: true } as any;
+        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
+        state.cachedMachineRpcDirectRoute = { status: 'viable' as const } as any;
+        state.serverSnapshot = {
+            status: 'ready' as const,
+            features: {
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: false,
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        } as any;
+
+        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
+
+        expect(hook.getCurrent()(64)).toBe(false);
     });
 
     it('fails closed when the session record is missing (no speculative transfer availability)', async () => {

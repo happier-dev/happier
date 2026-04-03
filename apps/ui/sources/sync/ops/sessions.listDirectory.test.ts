@@ -27,6 +27,18 @@ const machineRPCSpy = vi.fn(
         };
     },
 );
+
+const machineRpcWithServerScopeSpy = vi.fn(
+    async (_params: unknown): Promise<SessionListDirectoryRpcResponse> => {
+        if (enforcePolicyConsultedBeforeMachineRpc) {
+            expect(policyConsulted).toBe(true);
+        }
+        return {
+            success: true,
+            entries: [{ name: 'a.ts', type: 'file' }],
+        };
+    },
+);
 const getStateSpy = vi.fn();
 const getReadyServerFeaturesSpy = vi.fn(async (_params: unknown): Promise<FeaturesResponse | null> => {
     policyConsulted = true;
@@ -68,6 +80,10 @@ vi.mock('../runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () =>
     sessionRpcWithServerScope: (params: unknown) => sessionRpcWithServerScopeSpy(params),
 }));
 
+vi.mock('../runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeSpy(params),
+}));
+
 vi.mock('../runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
     resolvePreferredServerIdForSessionId: () => 'server-1',
 }));
@@ -97,12 +113,18 @@ describe('sessionListDirectory', () => {
 
         sessionRPCSpy.mockClear();
         machineRPCSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
         getReadyServerFeaturesSpy.mockClear();
 
         const res = await sessionListDirectory('s1', 'src');
         expect(res.success).toBe(true);
         expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', 'listDirectory', { path: '~/repo/src' });
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            method: 'listDirectory',
+            payload: { path: '~/repo/src' },
+        }));
         expect(sessionRPCSpy).not.toHaveBeenCalled();
     });
 
@@ -121,7 +143,7 @@ describe('sessionListDirectory', () => {
             },
         });
 
-        machineRPCSpy.mockRejectedValueOnce(
+        machineRpcWithServerScopeSpy.mockRejectedValueOnce(
             createRpcCallError({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }),
         );
         sessionRPCSpy.mockResolvedValueOnce({
@@ -160,10 +182,16 @@ describe('sessionListDirectory', () => {
 
         sessionRPCSpy.mockClear();
         machineRPCSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
 
         const res = await sessionListDirectory('s1', 'src');
         expect(res.success).toBe(true);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', 'listDirectory', { path: '~/repo/src' });
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            method: 'listDirectory',
+            payload: { path: '~/repo/src' },
+        }));
         expect(sessionRPCSpy).not.toHaveBeenCalled();
     });
 

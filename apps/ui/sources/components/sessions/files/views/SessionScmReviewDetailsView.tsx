@@ -78,7 +78,7 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     const project = useProjectForSession(props.sessionId);
     const sessionPath = resolveSessionWorkspacePath({
         sessionPath: session?.metadata?.path ?? null,
-        projectPath: project?.key?.path ?? null,
+        projectPath: project?.key?.rootPath ?? null,
     });
     const snapshot = useSessionProjectScmSnapshot(props.sessionId);
     const lastGoodSnapshot = useLastNonNullValue(snapshot, { resetKey: props.sessionId });

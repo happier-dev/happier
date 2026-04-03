@@ -39,10 +39,9 @@ import type {
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { assertScmResponse, runMachineScmRpc, scmFallbackError, withScmBackendPreference } from './scm/machineScm';
-import { canUseSessionRpc, readMachineTargetForSession, resolveMachinePathFromSessionBase, shouldFallbackToSessionRpc } from './sessionMachineTarget';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
+import { runMachineScmRpc, scmFallbackError } from './scm/machineScm';
+import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
+import { readMachineTargetForSession } from './sessionMachineTarget';
 
 async function callScmPreferMachine<
     T extends { success: boolean; error?: string; errorCode?: string },
@@ -54,22 +53,7 @@ async function callScmPreferMachine<
 ): Promise<T> {
     const machineTarget = readMachineTargetForSession(sessionId);
 
-    if (machineTarget) {
-        const cwd = resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: request.cwd });
-        try {
-            return await runMachineScmRpc<T, R>(
-                machineTarget.machineId,
-                method,
-                { ...request, cwd } as R,
-            );
-        } catch (error) {
-            if (!shouldFallbackToSessionRpc(sessionId, error)) {
-                return scmFallbackError<T>(error);
-            }
-        }
-    }
-
-    if (!canUseSessionRpc(sessionId)) {
+    if (!machineTarget) {
         return {
             success: false,
             error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
@@ -77,14 +61,13 @@ async function callScmPreferMachine<
         } as T;
     }
 
+    const cwd = resolveMachineAbsolutePath({ rootPath: machineTarget.basePath, requestPath: request.cwd });
     try {
-        const response = await sessionRpcWithServerScope<T, R>({
-            sessionId,
-            serverId: resolvePreferredServerIdForSessionId(sessionId),
+        return await runMachineScmRpc<T, R>(
+            machineTarget.machineId,
             method,
-            payload: withScmBackendPreference(request),
-        });
-        return assertScmResponse<T>(response);
+            { ...request, cwd } as R,
+        );
     } catch (error) {
         return scmFallbackError<T>(error);
     }

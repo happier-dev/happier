@@ -841,7 +841,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         if (interaction !== 'confirm') return;
         if (!selectedPath) return;
         props.onPickPath(selectedPath);
-    }, [interaction, props, selectedPath]);
+    }, [interaction, props.onPickPath, selectedPath]);
 
     const selectedDirectoryPath = React.useMemo(() => {
         if (!selectedPath) return null;
@@ -1320,6 +1320,16 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 }
 
 export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): React.ReactElement {
+    const handlePickPath = React.useCallback((path: string) => {
+        props.onResolve(path);
+        props.onClose();
+    }, [props.onClose, props.onResolve]);
+
+    const handleRequestClose = React.useCallback(() => {
+        props.onResolve(null);
+        props.onClose();
+    }, [props.onClose, props.onResolve]);
+
     return (
         <MachinePathBrowserView
             machineId={props.machineId}
@@ -1331,14 +1341,8 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             variant="modal"
             interaction="confirm"
             setChrome={props.setChrome}
-            onPickPath={(path) => {
-                props.onResolve(path);
-                props.onClose();
-            }}
-            onRequestClose={() => {
-                props.onResolve(null);
-                props.onClose();
-            }}
+            onPickPath={handlePickPath}
+            onRequestClose={handleRequestClose}
         />
     );
 }

@@ -23,7 +23,7 @@ installSessionFilesViewCommonModuleMocks({
         return createPartialStorageModuleMock(importOriginal, {
             storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
             useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1', host: 'mbp', path: sessionPath } }) as any,
-            useProjectForSession: () => ({ key: { machineId: 'm1', path: projectPath } }) as any,
+            useProjectForSession: () => ({ key: { serverId: 'server', machineId: 'm1', rootPath: projectPath } }) as any,
             useAllMachines: () => (
                 machineReachable
                     ? [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
@@ -74,6 +74,16 @@ vi.mock('@/sync/domains/input/suggestionFile', () => ({
     fileSearchCache: { clearCache: vi.fn() },
 }));
 
+const searchWorkspaceFilesSpy = vi.fn();
+vi.mock('@/sync/domains/workspaces/files/workspaceFileSearch', () => ({
+    searchWorkspaceFiles: (...args: any[]) => searchWorkspaceFilesSpy(...args),
+    workspaceFileSearchCache: { clearCache: vi.fn() },
+}));
+
+vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
+    WorkspaceRepositoryTreeList: (props: any) => React.createElement('View', { ...props, testID: 'workspace-repository-tree-list' }),
+}));
+
 vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
     SearchResultsList: (props: any) => {
         const first = props.searchResults?.[0];
@@ -102,6 +112,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     SourceControlSessionInactiveState: () =>
         React.createElement('View', { testID: 'source-control-session-inactive-state' }),
+    SourceControlUnavailableState: (props: any) => React.createElement('View', { ...props, testID: 'source-control-unavailable-state' }),
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -167,6 +178,7 @@ async function waitForTestId(screen: Awaited<ReturnType<typeof renderRepositoryT
 describe('SessionRepositoryTreeBrowserView', () => {
     beforeEach(() => {
         searchFilesSpy.mockReset();
+        searchWorkspaceFilesSpy.mockReset();
         latestWorkspaceTransferParams = null;
         sessionActive = true;
         machineReachable = true;
@@ -184,7 +196,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
     it('shows RepositoryTreeList when query is empty', async () => {
         const { screen } = await renderRepositoryTreeBrowserView();
 
-        expect(screen.findAllByTestId('repository-tree-list')).toHaveLength(1);
+        expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
     });
 
     it('can hide the internal search bar', async () => {
@@ -196,7 +208,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
     });
 
     it('searches via searchFiles and calls onOpenFile from results', async () => {
-        searchFilesSpy.mockResolvedValueOnce([
+        searchWorkspaceFilesSpy.mockResolvedValueOnce([
             { fileName: 'api.ts', filePath: 'src/', fullPath: 'src/api.ts', fileType: 'file' },
         ]);
 
@@ -209,12 +221,12 @@ describe('SessionRepositoryTreeBrowserView', () => {
 
         await screen.pressByTestIdAsync('search-results:src/api.ts');
 
-        expect(searchFilesSpy).toHaveBeenCalled();
+        expect(searchWorkspaceFilesSpy).toHaveBeenCalled();
         expect(onOpenFile).toHaveBeenCalledWith('src/api.ts');
     });
 
     it('reruns file search after upload success when the query stays the same', async () => {
-        searchFilesSpy
+        searchWorkspaceFilesSpy
             .mockResolvedValueOnce([
                 { fileName: 'before.txt', filePath: '', fullPath: 'before.txt', fileType: 'file' },
             ])
@@ -228,14 +240,14 @@ describe('SessionRepositoryTreeBrowserView', () => {
         await waitForTestId(screen, 'search-results:before.txt');
 
         expect(screen.findByTestId('search-results:before.txt')).toBeTruthy();
-        expect(searchFilesSpy).toHaveBeenCalledTimes(1);
+        expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             await latestWorkspaceTransferParams.onAfterUploadSuccess();
         });
         await waitForTestId(screen, 'search-results:after.txt');
 
-        expect(searchFilesSpy).toHaveBeenCalledTimes(2);
+        expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(2);
         expect(screen.findByTestId('search-results:after.txt')).toBeTruthy();
     });
 
@@ -245,7 +257,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
         const { screen } = await renderRepositoryTreeBrowserView();
 
         expect(screen.findByTestId('source-control-session-inactive-state')).toBeNull();
-        expect(screen.findAllByTestId('repository-tree-list')).toHaveLength(1);
+        expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
     });
 
     it('renders repository tree when session is inactive and machine is offline but target is resolvable', async () => {
@@ -256,7 +268,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
         const { screen } = await renderRepositoryTreeBrowserView();
 
         expect(screen.findByTestId('source-control-session-inactive-state')).toBeNull();
-        expect(screen.findAllByTestId('repository-tree-list')).toHaveLength(1);
+        expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
     });
 
     it('still renders the repository tree when the session is inactive and no machine target is available', async () => {

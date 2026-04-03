@@ -17,7 +17,7 @@ import { useSessionFileUploadAvailability } from '@/components/sessions/files/us
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import { fileSearchCache, searchFiles } from '@/sync/domains/input/suggestionFile';
 import { clearCachedRepositoryDirectoryEntries } from '@/sync/domains/input/repositoryDirectory';
-import { storage, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
+import { storage, useProjectForSession, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { sessionCreateDirectory, sessionWriteFile } from '@/sync/ops';
@@ -38,6 +38,13 @@ import { createRepositoryTreeUploadMenuConfig } from '@/components/sessions/file
 import { useRepositoryTreeWebDropState } from '@/components/sessions/files/repositoryTree/useRepositoryTreeWebDropState';
 import { promptRepositoryUploadDestination } from '@/components/sessions/files/views/promptRepositoryUploadDestination';
 import { RepositoryTreeChangedFilesPane } from '@/components/sessions/files/views/repositoryTreeBrowser/RepositoryTreeChangedFilesPane';
+import { WorkspaceRepositoryTreeList } from '@/components/projects/files/WorkspaceRepositoryTreeList';
+import { clearCachedWorkspaceRepositoryDirectoryEntries } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
+import { searchWorkspaceFiles, workspaceFileSearchCache } from '@/sync/domains/workspaces/files/workspaceFileSearch';
+import { RepositoryTreeRowActionsMenu } from '@/components/sessions/files/repositoryTree/RepositoryTreeRowActionsMenu';
+import { useRepositoryTreeRowActions } from '@/components/sessions/files/repositoryTree/useRepositoryTreeRowActions';
+import { useSessionFileTransferAvailabilityResolver } from '@/components/sessions/files/useSessionFileTransferAvailability';
+import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 
 export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     sessionId: string;
@@ -66,6 +73,18 @@ type ToolbarActionConfig = FilesystemBrowserToolbarAction;
 export const SessionRepositoryTreeBrowserView = React.memo((props: SessionRepositoryTreeBrowserViewProps) => {
     const { theme } = useUnistyles();
     const { machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId);
+    const project = useProjectForSession(props.sessionId);
+    const workspaceScopeHint = React.useMemo(() => {
+        const serverId = String((project as any)?.key?.serverId ?? '').trim();
+        const machineId = String((project as any)?.key?.machineId ?? '').trim();
+        const rootPath = String((project as any)?.key?.rootPath ?? '').trim();
+        if (!serverId || !machineId || !rootPath) return null;
+        return { serverId, machineId, rootPath };
+    }, [project]);
+    const workspaceCacheKey = workspaceScopeHint ? (tryBuildWorkspaceCacheKey(workspaceScopeHint) ?? '') : '';
+    const workspaceMachineId = workspaceScopeHint?.machineId ?? null;
+    const workspaceRootPath = workspaceScopeHint?.rootPath ?? null;
+    const workspaceServerId = workspaceScopeHint?.serverId ?? null;
 
     const expandedPaths = useSessionRepositoryTreeExpandedPaths(props.sessionId);
     const scmSnapshot = useSessionProjectScmSnapshot(props.sessionId);
@@ -130,7 +149,15 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         const handle = setTimeout(() => {
             void (async () => {
                 try {
-                    const results = await searchFiles(props.sessionId, q, { limit: 200 });
+                    const results = workspaceCacheKey
+                        ? await searchWorkspaceFiles({
+                            workspaceCacheKey,
+                            machineId: workspaceMachineId ?? '',
+                            rootPath: workspaceRootPath ?? '',
+                            query: q,
+                            limit: 200,
+                        })
+                        : await searchFiles(props.sessionId, q, { limit: 200 });
                     if (cancelled) return;
                     setSearchResults(results);
                 } finally {
@@ -144,21 +171,36 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             cancelled = true;
             clearTimeout(handle);
         };
-    }, [props.sessionId, searchQuery, showChangedOnly, treeReloadNonce]);
+    }, [props.sessionId, searchQuery, showChangedOnly, treeReloadNonce, workspaceCacheKey, workspaceMachineId, workspaceRootPath]);
 
     const shouldShowSearchResults = !showChangedOnly && searchQuery.trim().length > 0;
     const canClearSearch = searchQuery.length > 0;
     const refresh = React.useCallback(() => {
-        fileSearchCache.clearCache(props.sessionId);
-        clearCachedRepositoryDirectoryEntries({ sessionId: props.sessionId });
+        if (workspaceCacheKey) {
+            workspaceFileSearchCache.clearCache(workspaceCacheKey);
+            clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey });
+        } else {
+            fileSearchCache.clearCache(props.sessionId);
+            clearCachedRepositoryDirectoryEntries({ sessionId: props.sessionId });
+        }
         scmStatusSync.invalidateFromUser(props.sessionId);
         setTreeReloadNonce((n) => n + 1);
-    }, [props.sessionId]);
+    }, [props.sessionId, workspaceCacheKey]);
 
     const transfers = useWorkspaceFileTransfers({
         sessionId: props.sessionId,
         onResolveUploadConflicts: showUploadConflictResolutionDialog,
         onAfterUploadSuccess: refresh,
+    });
+
+    const canDownload = useSessionFileTransferAvailabilityResolver(props.sessionId);
+    const rowActions = useRepositoryTreeRowActions({
+        sessionId: props.sessionId,
+        writeActionsEnabled: allowCreateActions,
+        expandedPaths,
+        onExpandedPathsChange: (paths) => storage.getState().setSessionRepositoryTreeExpandedPaths(props.sessionId, paths),
+        onRequestRefresh: refresh,
+        onRequestDownload: (params) => transfers.startDownload(params),
     });
 
     const dropZoneHandlers = useWebFileDropZone({
@@ -607,6 +649,43 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                             onScroll={scrollFades.onScroll}
                             scrollEventThrottle={16}
                         />
+                    ) : workspaceCacheKey && workspaceMachineId && workspaceRootPath ? (
+                        <WorkspaceRepositoryTreeList
+                            theme={theme}
+                            workspaceCacheKey={workspaceCacheKey}
+                            machineId={workspaceMachineId}
+                            rootPath={workspaceRootPath}
+                            serverId={workspaceServerId}
+                            reloadToken={treeReloadNonce}
+                            detailsMode={detailsMode}
+                            onWebDropTargetChange={webDropState.onDropTargetChange}
+                            webDropHoverPath={webDropState.dropHoverPath}
+                            expandedPaths={expandedPaths}
+                            onExpandedPathsChange={(paths) => storage.getState().setSessionRepositoryTreeExpandedPaths(props.sessionId, paths)}
+                            onOpenFile={props.onOpenFile}
+                            onOpenFilePinned={props.onOpenFilePinned}
+                            scmSnapshot={scmSnapshot}
+                            onLayout={scrollFades.onViewportLayout}
+                            onContentSizeChange={scrollFades.onContentSizeChange}
+                            onScroll={scrollFades.onScroll}
+                            scrollEventThrottle={16}
+	                            renderRowActions={(node) => {
+	                                if (node.type !== 'file' && node.type !== 'directory') return null;
+	                                const nodeKind: 'file' | 'directory' = node.type === 'file' ? 'file' : 'directory';
+	                                const transferSizeBytes = node.type === 'file' && typeof node.sizeBytes === 'number'
+	                                    ? node.sizeBytes
+	                                    : null;
+	                                return (
+	                                    <RepositoryTreeRowActionsMenu
+	                                        path={node.path}
+	                                        kind={nodeKind}
+	                                        disableWriteActions={!allowCreateActions}
+	                                        downloadActionsEnabled={canDownload(transferSizeBytes)}
+	                                        onSelect={(itemId) => rowActions.onSelectRowMenuItem({ path: node.path, type: nodeKind }, itemId)}
+	                                    />
+	                                );
+	                            }}
+	                        />
                     ) : (
                         <RepositoryTreeList
                             theme={theme}

@@ -49,7 +49,7 @@ describe('sessionMachineTarget', () => {
                     ? {
                         key: {
                             machineId: 'm-project',
-                            path: '/workspace/repo',
+                            rootPath: '/workspace/repo',
                         },
                     }
                     : null,
@@ -93,7 +93,7 @@ describe('sessionMachineTarget', () => {
                     ? {
                         key: {
                             machineId: 'host:mbp-host',
-                            path: '/workspace/repo',
+                            rootPath: '/workspace/repo',
                         },
                     }
                     : null,
@@ -131,7 +131,7 @@ describe('sessionMachineTarget', () => {
                     ? {
                         key: {
                             machineId: 'm-project',
-                            path: '/workspace/repo',
+                            rootPath: '/workspace/repo',
                         },
                     }
                     : null,
@@ -207,7 +207,7 @@ describe('sessionMachineTarget', () => {
                     ? {
                         key: {
                             machineId: 'm-project',
-                            path: '/workspace/repo',
+                            rootPath: '/workspace/repo',
                         },
                     }
                     : null,
@@ -273,7 +273,7 @@ describe('sessionMachineTarget', () => {
                     ? {
                         key: {
                             machineId: 'm-project',
-                            path: '/Volumes/target/workspace/live',
+                            rootPath: '/Volumes/target/workspace/live',
                         },
                     }
                     : null,
@@ -285,8 +285,8 @@ describe('sessionMachineTarget', () => {
         });
     });
 
-    it('disallows session-rpc fallback when session is inactive', async () => {
-        const { canUseSessionRpc, shouldFallbackToSessionRpc } = await import('./sessionMachineTarget');
+    it('treats inactive sessions as session-rpc unavailable', async () => {
+        const { canUseSessionRpc } = await import('./sessionMachineTarget');
         getStateSpy.mockReturnValue({
             sessions: {
                 s1: {
@@ -295,11 +295,6 @@ describe('sessionMachineTarget', () => {
             },
         });
 
-        const error = {
-            rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-            message: 'Method not available',
-        };
         expect(canUseSessionRpc('s1')).toBe(false);
-        expect(shouldFallbackToSessionRpc('s1', error)).toBe(false);
     });
 });

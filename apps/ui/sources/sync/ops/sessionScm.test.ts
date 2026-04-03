@@ -41,20 +41,19 @@ describe('sessionScm', () => {
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
     });
 
-    it('returns unsupported fallback when status snapshot rpc payload is null', async () => {
+    it('fails closed when machine target is unavailable', async () => {
         getStateMock.mockReturnValue({
             settings: {
                 scmGitRepoPreferredBackend: 'git',
             },
         });
-        sessionRpcMock.mockResolvedValue(null);
 
         const { sessionScmStatusSnapshot } = await import('./sessionScm');
         const response = await sessionScmStatusSnapshot('session-1', {});
 
         expect(response.success).toBe(false);
-        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
-        expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
+        expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE);
     });
 
     it('prefers machine RPC when a session has an attached machine', async () => {
@@ -136,7 +135,7 @@ describe('sessionScm', () => {
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
 
-    it('falls back to session RPC when machine RPC reports method not found', async () => {
+    it('does not fall back to session RPC when machine RPC reports method not found', async () => {
         getStateMock.mockReturnValue({
             settings: {
                 scmGitRepoPreferredBackend: 'git',
@@ -157,26 +156,17 @@ describe('sessionScm', () => {
                 rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
             }),
         );
-        sessionRpcMock.mockResolvedValue({
-            success: true,
-            snapshot: undefined,
-        });
 
         const { sessionScmStatusSnapshot } = await import('./sessionScm');
         const response = await sessionScmStatusSnapshot('session-1', {});
 
-        expect(response.success).toBe(true);
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
         expect(machineRpcMock).toHaveBeenCalledTimes(1);
-        expect(sessionRpcMock).toHaveBeenCalledTimes(1);
-        expect(sessionRpcMock).toHaveBeenCalledWith({
-            sessionId: 'session-1',
-            serverId: 'server-owned',
-            method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
-            payload: {},
-        });
+        expect(sessionRpcMock).not.toHaveBeenCalled();
     });
 
-    it('does not fall back to session RPC for inactive sessions when machine RPC reports method not found', async () => {
+    it('returns unsupported when machine RPC reports method not found for inactive sessions', async () => {
         getStateMock.mockReturnValue({
             settings: {
                 scmGitRepoPreferredBackend: 'git',
@@ -197,10 +187,6 @@ describe('sessionScm', () => {
                 rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
             }),
         );
-        sessionRpcMock.mockResolvedValue({
-            success: true,
-            snapshot: undefined,
-        });
 
         const { sessionScmStatusSnapshot } = await import('./sessionScm');
         const response = await sessionScmStatusSnapshot('session-1', {});
@@ -230,7 +216,7 @@ describe('sessionScm', () => {
                     ? {
                         key: {
                             machineId: 'machine-1',
-                            path: '~/repo',
+                            rootPath: '~/repo',
                         },
                     }
                     : null,

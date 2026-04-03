@@ -30,11 +30,24 @@ installSessionFilesViewCommonModuleMocks({
             useSessionProjectScmCommitSelectionPatches: () => [],
             useSessionProjectScmInFlightOperation: () => null,
             useSessionProjectScmSnapshot: () => previewSnapshot,
+            useWorkspaceScmCommitSelectionPaths: () => [],
+            useWorkspaceScmCommitSelectionPatches: () => [],
+            useWorkspaceScmInFlightOperation: () => null,
+            useWorkspaceScmSnapshot: () => previewSnapshot,
             useSetting: () => null,
+            useWorkspaceReviewCommentsDrafts: () => [],
             importOriginal,
         });
     },
 });
+
+vi.mock('@/sync/ops/sessionMachineTarget', () => ({
+  readMachineTargetForSession: () => ({ machineId: 'm1', basePath: '/workspace' }),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+  resolvePreferredServerIdForSessionId: () => 'srv1',
+}));
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
@@ -108,7 +121,7 @@ const previewSession: Session = createSessionFixture({
 });
 const previewProject: Project = {
     id: 'project-1',
-    key: { machineId: 'm1', path: '/workspace' },
+    key: { serverId: 'srv1', machineId: 'm1', rootPath: '/workspace' },
     sessionIds: ['s1'],
     createdAt: 1,
     updatedAt: 1,
@@ -179,8 +192,8 @@ const refreshSpy = vi.fn(async (..._args: any[]) => ({
   fileWriteSupported: false,
 }));
 
-vi.mock('./sessionFileDetails/refreshSessionFileDetails', () => ({
-  refreshSessionFileDetails: (input: any) => refreshSpy(input),
+vi.mock('@/components/workspaces/files/details/workspaceFileDetails/refreshWorkspaceFileDetails', () => ({
+  refreshWorkspaceFileDetails: (input: any) => refreshSpy(input),
 }));
 
 vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
@@ -192,8 +205,8 @@ vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
   }),
 }));
 
-vi.mock('./sessionFileDetails/useSessionFileEditorState', () => ({
-  useSessionFileEditorState: () => ({
+vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileEditorState', () => ({
+  useWorkspaceFileEditorState: () => ({
     editorSurfaceEnabled: false,
     editorSeedText: '',
     editorHandleRef: { current: null },
@@ -212,8 +225,8 @@ vi.mock('./sessionFileDetails/useSessionFileEditorState', () => ({
   }),
 }));
 
-vi.mock('@/components/sessions/reviews/comments/useSessionReviewCommentDraftHandlers', () => ({
-  useSessionReviewCommentDraftHandlers: () => ({
+vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers', () => ({
+  useWorkspaceReviewCommentDraftHandlers: () => ({
     onUpsertReviewCommentDraft: vi.fn(),
     onDeleteReviewCommentDraft: vi.fn(),
     onReviewCommentError: vi.fn(),

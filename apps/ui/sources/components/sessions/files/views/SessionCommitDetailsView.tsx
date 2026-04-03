@@ -111,7 +111,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
     const project = useProjectForSession(sessionId);
     const sessionPath = resolveSessionWorkspacePath({
         sessionPath: session?.metadata?.path ?? null,
-        projectPath: project?.key?.path ?? null,
+        projectPath: project?.key?.rootPath ?? null,
     });
 
     const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);

@@ -11,7 +11,7 @@ const changedFilesDataSpy = vi.fn();
 const derivedSessionChangeSetSpy = vi.fn();
 const repositoryProject: Project = {
     id: 'p1',
-    key: { machineId: 'machine-1', path: '/workspace' },
+    key: { serverId: 'server-a', machineId: 'machine-1', rootPath: '/workspace' },
     sessionIds: ['s1'],
     createdAt: 1,
     updatedAt: 1,

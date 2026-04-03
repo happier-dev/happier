@@ -4,7 +4,7 @@ type SessionWorkspaceContextState = Readonly<{
             path?: string | null;
         } | null;
     }>;
-    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; path?: string | null } } | null;
+    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; rootPath?: string | null } } | null;
 }>;
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -24,7 +24,7 @@ export function readSessionWorkspaceContext(
     const metadata = state.sessions?.[sessionId]?.metadata;
     const sessionPath = normalizeNonEmptyString(metadata?.path);
     const project = typeof state.getProjectForSession === 'function' ? state.getProjectForSession(sessionId) : null;
-    const projectPath = normalizeNonEmptyString(project?.key?.path);
+    const projectPath = normalizeNonEmptyString(project?.key?.rootPath);
     const projectMachineId = normalizeNonEmptyString(project?.key?.machineId);
     return {
         workspacePath: sessionPath ?? projectPath,

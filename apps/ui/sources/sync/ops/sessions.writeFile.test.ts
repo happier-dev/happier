@@ -226,6 +226,6 @@ describe('sessionWriteFile', () => {
         expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         expect(machineRPCSpy).not.toHaveBeenCalled();
         expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
-        expect(getReadyServerFeaturesSpy).toHaveBeenCalled();
+        expect(getReadyServerFeaturesSpy).not.toHaveBeenCalled();
     });
 });

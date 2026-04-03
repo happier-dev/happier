@@ -15,17 +15,19 @@ const sessionRPCSpy = vi.fn(
     }),
 );
 
-const machineRPCSpy = vi.fn(
+const apiSocketMachineRPCSpy = vi.fn(
     async (_machineId: string, _method: string, _payload: unknown): Promise<SessionCreateDirectoryRpcResponse> => {
-        if (enforcePolicyConsultedBeforeMachineRpc) {
-            expect(policyConsulted).toBe(true);
-        }
         return { success: true };
     },
 );
 
 const machineRpcWithServerScopeSpy = vi.fn(
-    async (_params: unknown): Promise<SessionCreateDirectoryRpcResponse> => ({ success: true }),
+    async (_params: unknown): Promise<SessionCreateDirectoryRpcResponse> => {
+        if (enforcePolicyConsultedBeforeMachineRpc) {
+            expect(policyConsulted).toBe(true);
+        }
+        return { success: true };
+    },
 );
 
 const sessionRpcWithServerScopeSpy = vi.fn(
@@ -58,7 +60,7 @@ const getStateSpy = vi.fn();
 vi.mock('../api/session/apiSocket', () => ({
     apiSocket: {
         sessionRPC: (sessionId: string, method: string, payload: any) => sessionRPCSpy(sessionId, method, payload),
-        machineRPC: (machineId: string, method: string, payload: any) => machineRPCSpy(machineId, method, payload),
+        machineRPC: (machineId: string, method: string, payload: any) => apiSocketMachineRPCSpy(machineId, method, payload),
     },
 }));
 
@@ -108,13 +110,19 @@ describe('sessionCreateDirectory', () => {
         });
 
         sessionRPCSpy.mockClear();
-        machineRPCSpy.mockClear();
+        apiSocketMachineRPCSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
         getReadyServerFeaturesSpy.mockClear();
 
         const res = await sessionCreateDirectory('s1', 'tmp/new-folder');
         expect(res.success).toBe(true);
         expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.CREATE_DIRECTORY, { path: '~/repo/tmp/new-folder' });
+        expect(apiSocketMachineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            method: RPC_METHODS.CREATE_DIRECTORY,
+            payload: { path: '~/repo/tmp/new-folder' },
+        }));
         expect(sessionRPCSpy).not.toHaveBeenCalled();
     }, 60_000);
 
@@ -135,7 +143,7 @@ describe('sessionCreateDirectory', () => {
             },
         });
 
-        machineRPCSpy.mockRejectedValueOnce(
+        machineRpcWithServerScopeSpy.mockRejectedValueOnce(
             createRpcCallError({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }),
         );
 
@@ -165,7 +173,7 @@ describe('sessionCreateDirectory', () => {
             },
         });
 
-        machineRPCSpy.mockResolvedValueOnce(null);
+        machineRpcWithServerScopeSpy.mockResolvedValueOnce(null);
 
         const res = await sessionCreateDirectory('s1', 'tmp/new-folder');
         expect(res.success).toBe(false);

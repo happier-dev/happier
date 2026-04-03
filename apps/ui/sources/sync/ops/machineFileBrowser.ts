@@ -9,7 +9,7 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
-import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
 
 type MachineFileBrowserOpts = Readonly<{
     serverId?: string | null;
@@ -41,7 +41,7 @@ export async function machineFilesystemListRoots(
     opts?: MachineFileBrowserOpts,
 ): Promise<DaemonFilesystemListRootsResponse> {
     try {
-        const response = await machineRpcWithServerScope<unknown, undefined>({
+        const response = await callGuardedMachineRpcWithPolicy<unknown, undefined>({
             machineId,
             serverId: opts?.serverId,
             timeoutMs: opts?.timeoutMs ?? undefined,
@@ -65,7 +65,7 @@ export async function machineFilesystemListDirectory(
 ): Promise<DaemonFilesystemListDirectoryResponse> {
     const payload = DaemonFilesystemListDirectoryRequestSchema.parse(input);
     try {
-        const response = await machineRpcWithServerScope<unknown, DaemonFilesystemListDirectoryRequest>({
+        const response = await callGuardedMachineRpcWithPolicy<unknown, DaemonFilesystemListDirectoryRequest>({
             machineId,
             serverId: opts?.serverId,
             timeoutMs: opts?.timeoutMs ?? undefined,

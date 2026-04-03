@@ -29,7 +29,7 @@ const mockState = vi.hoisted(() => ({
     machineTargetSessionsState: {} as Record<string, unknown>,
     multiTextInputSpy: vi.fn(),
     openMachinePathBrowserModalMock: vi.fn<(params: unknown) => Promise<string | null>>(async () => '/Users/test/project'),
-    projectForSession: {} as Record<string, { key?: { machineId?: string; path?: string } } | null>,
+    projectForSession: {} as Record<string, { key?: { machineId?: string; rootPath?: string } } | null>,
     sessionsState: [] as Array<unknown>,
 }));
 
@@ -165,7 +165,7 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
             ? null
             : {
                 machineId: project.key.machineId ?? null,
-                path: project.key.path ?? null,
+                basePath: project.key.rootPath ?? null,
             };
     },
 }));
@@ -254,7 +254,7 @@ describe('MachineDetailScreen path browser', () => {
             'session-1': {
                 key: {
                     machineId: 'machine-1',
-                    path: '/Users/test/workspace/rebound',
+                    rootPath: '/Users/test/workspace/rebound',
                 },
             },
         };

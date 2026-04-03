@@ -15,10 +15,12 @@ type MachineTargetLikeState = Readonly<{
     } | null;
   }>;
   machines?: Record<string, { id?: string; active?: boolean; activeAt?: number; metadata?: { host?: string | null } | null }>;
-  getProjectForSession?: (sessionId: string) => { key?: { machineId?: string; path?: string } } | null;
+  getProjectForSession?: (sessionId: string) => { key?: { machineId?: string; rootPath?: string } } | null;
 }>;
 
 export type SessionMachineTargetState = MachineTargetLikeState;
+
+export const INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR = 'Session RPC unavailable for inactive session';
 
 type SessionTargetMetadataLike = Readonly<{
   machineId?: string | null;
@@ -63,22 +65,22 @@ export function resolveMachineTargetForSessionFromState(
       machineId: normalizeNonEmptyString(candidateMetadata?.machineId),
       hostHint: normalizeNonEmptyString(candidateMetadata?.host),
       path: normalizeNonEmptyString(candidateMetadata?.path),
-      homeDir: normalizeNonEmptyString(candidateMetadata?.homeDir),
-      projectMachineId: candidateProject?.key?.machineId ?? null,
-      projectPath: normalizeNonEmptyString(candidateProject?.key?.path),
-    };
-  });
+	      homeDir: normalizeNonEmptyString(candidateMetadata?.homeDir),
+	      projectMachineId: candidateProject?.key?.machineId ?? null,
+	      projectPath: normalizeNonEmptyString(candidateProject?.key?.rootPath),
+	    };
+	  });
   return resolveSessionMachineRpcTarget({
     sessionId,
     sessionMachineId: normalizeNonEmptyString(metadata?.machineId),
     sessionHostHint: normalizeNonEmptyString(metadata?.host),
     sessionPath: normalizeNonEmptyString(metadata?.path),
-    sessionHomeDir: normalizeNonEmptyString(metadata?.homeDir),
-    projectMachineId: project?.key?.machineId ?? null,
-    projectPath: normalizeNonEmptyString(project?.key?.path),
-    machines,
-    peerSessions,
-  });
+	    sessionHomeDir: normalizeNonEmptyString(metadata?.homeDir),
+	    projectMachineId: project?.key?.machineId ?? null,
+	    projectPath: normalizeNonEmptyString(project?.key?.rootPath),
+	    machines,
+	    peerSessions,
+	  });
 }
 
 export function readMachineTargetForSession(
@@ -143,21 +145,6 @@ export function readDisplayPathForSession(input: Readonly<{
   });
 }
 
-export function resolveMachinePathFromSessionBase(input: { basePath: string; requestPath?: string }): string {
-  const requestPath = input.requestPath;
-  if (!requestPath || requestPath === '.') return input.basePath;
-  if (requestPath.startsWith('~')) return requestPath;
-
-  const isAbsolutePosix = requestPath.startsWith('/');
-  const isAbsoluteWindows = /^[a-zA-Z]:[\\/]/.test(requestPath) || requestPath.startsWith('\\\\');
-  if (isAbsolutePosix || isAbsoluteWindows) return requestPath;
-
-  const separator = input.basePath.includes('\\') ? '\\' : '/';
-  const base = input.basePath.endsWith(separator) ? input.basePath.slice(0, -1) : input.basePath;
-  const rel = requestPath.startsWith(separator) ? requestPath.slice(1) : requestPath;
-  return `${base}${separator}${rel}`;
-}
-
 export function shouldFallbackFromMachineRpc(error: unknown): boolean {
   if (error instanceof Error && typeof error.message === 'string') {
     if (error.message.includes('Machine encryption not found')) return true;
@@ -181,11 +168,6 @@ export function shouldFallbackFromMachineRpc(error: unknown): boolean {
   }
 
   return false;
-}
-
-export function shouldFallbackToSessionRpc(sessionId: string, error: unknown): boolean {
-  if (!shouldFallbackFromMachineRpc(error)) return false;
-  return canUseSessionRpc(sessionId);
 }
 
 export function canUseSessionRpc(sessionId: string): boolean {

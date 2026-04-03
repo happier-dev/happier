@@ -135,8 +135,6 @@ interface SessionKillResponse {
     errorCode?: string;
 }
 
-const INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR = 'Session RPC unavailable for inactive session';
-
 // Response types for spawn session
 export type ResumeSessionResult = SpawnSessionResult;
 
@@ -658,6 +656,32 @@ export async function sessionBash(sessionId: string, request: SessionBashRequest
             stderr: error instanceof Error ? error.message : 'Unknown error',
             exitCode: -1,
             error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
+/**
+ * Read the tail of a session log file from the running CLI session process.
+ */
+export async function sessionReadLogTail(
+    sessionId: string,
+    options?: SessionReadLogTailRequest,
+): Promise<SessionReadLogTailResponse> {
+    try {
+        const request: SessionReadLogTailRequest = {};
+        if (typeof options?.maxBytes === 'number' && Number.isFinite(options.maxBytes)) {
+            request.maxBytes = options.maxBytes;
+        }
+        const response = await sessionRpcWithPreferredSessionScope<SessionReadLogTailResponse, SessionReadLogTailRequest>({
+            sessionId,
+            method: RPC_METHODS.SESSION_LOG_TAIL,
+            payload: request,
+        });
+        return assertRpcResponseWithSuccess<SessionReadLogTailResponse>(response);
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
         };
     }
 }

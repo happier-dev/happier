@@ -1,33 +1,52 @@
-import { sessionListDirectory } from '@/sync/ops';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { normalizeWorkspaceRootPath, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import {
+    clearCachedWorkspaceRepositoryDirectoryEntries,
+    getCachedWorkspaceRepositoryDirectoryEntries,
+    listWorkspaceRepositoryDirectoryEntries,
+    setCachedWorkspaceRepositoryDirectoryEntries,
+    warmWorkspaceRepositoryDirectoryCache,
+} from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
 
-import { sortDirectoryEntries } from './sortDirectoryEntries';
-import { warmInFlight } from './warmInFlight';
+import type { ListRepositoryDirectoryEntriesResult, RepositoryDirectoryEntry } from './repositoryDirectoryEntries';
+import { sortRepositoryDirectoryEntries } from './repositoryDirectoryEntries';
 
-export type RepositoryDirectoryEntry = {
-    name: string;
-    type: 'file' | 'directory';
-    sizeBytes?: number;
-    modifiedMs?: number;
-};
+function resolveWorkspaceTargetForSession(sessionId: string): Readonly<{
+    workspaceCacheKey: string;
+    machineId: string;
+    rootPath: string;
+    serverId?: string | null;
+}> | null {
+    const machineTarget = readMachineTargetForSession(sessionId);
+    if (!machineTarget) return null;
+    const machineId = String(machineTarget.machineId ?? '').trim();
+    const rootPath = normalizeWorkspaceRootPath(machineTarget.basePath) ?? String(machineTarget.basePath ?? '').trim();
+    if (!machineId || !rootPath) return null;
+    const serverId = resolvePreferredServerIdForSessionId(sessionId);
 
-export type ListRepositoryDirectoryEntriesResult =
-    | { ok: true; entries: RepositoryDirectoryEntry[] }
-    | { ok: false; error: string };
+    const workspaceCacheKey =
+        tryBuildWorkspaceCacheKey({ serverId: String(serverId ?? ''), machineId, rootPath })
+        ?? `${machineId}:${rootPath}`;
 
-const repositoryDirectoryCache = new Map<string, RepositoryDirectoryEntry[]>();
-const repositoryDirectoryWarmInFlight = new Map<string, Promise<ListRepositoryDirectoryEntriesResult>>();
-
-function getCacheKey(sessionId: string, directoryPath: string): string {
-    return `${sessionId}:${directoryPath}`;
+    return {
+        workspaceCacheKey,
+        machineId,
+        rootPath,
+        serverId,
+    };
 }
 
 export function getCachedRepositoryDirectoryEntries(input: {
     sessionId: string;
     directoryPath: string;
 }): RepositoryDirectoryEntry[] | null {
-    const key = getCacheKey(input.sessionId, input.directoryPath);
-    const cached = repositoryDirectoryCache.get(key);
-    return cached ? cached.slice() : null;
+    const target = resolveWorkspaceTargetForSession(input.sessionId);
+    if (!target) return null;
+    return getCachedWorkspaceRepositoryDirectoryEntries({
+        workspaceCacheKey: target.workspaceCacheKey,
+        directoryPath: input.directoryPath,
+    });
 }
 
 export function setCachedRepositoryDirectoryEntries(input: {
@@ -35,99 +54,60 @@ export function setCachedRepositoryDirectoryEntries(input: {
     directoryPath: string;
     entries: RepositoryDirectoryEntry[];
 }): void {
-    const key = getCacheKey(input.sessionId, input.directoryPath);
-    repositoryDirectoryCache.set(key, input.entries.slice());
+    const target = resolveWorkspaceTargetForSession(input.sessionId);
+    if (!target) return;
+    setCachedWorkspaceRepositoryDirectoryEntries({
+        workspaceCacheKey: target.workspaceCacheKey,
+        directoryPath: input.directoryPath,
+        entries: input.entries,
+    });
 }
 
 export function clearCachedRepositoryDirectoryEntries(input: {
     sessionId: string;
     directoryPath?: string | null;
 }): void {
-    const sessionPrefix = `${input.sessionId}:`;
-    const directoryPath = typeof input.directoryPath === 'string' ? input.directoryPath : null;
-    if (directoryPath != null) {
-        const key = getCacheKey(input.sessionId, directoryPath);
-        repositoryDirectoryCache.delete(key);
-        repositoryDirectoryWarmInFlight.delete(key);
-        return;
-    }
-
-    for (const key of repositoryDirectoryCache.keys()) {
-        if (key.startsWith(sessionPrefix)) {
-            repositoryDirectoryCache.delete(key);
-        }
-    }
-    for (const key of repositoryDirectoryWarmInFlight.keys()) {
-        if (key.startsWith(sessionPrefix)) {
-            repositoryDirectoryWarmInFlight.delete(key);
-        }
-    }
+    const target = resolveWorkspaceTargetForSession(input.sessionId);
+    if (!target) return;
+    clearCachedWorkspaceRepositoryDirectoryEntries({
+        workspaceCacheKey: target.workspaceCacheKey,
+        directoryPath: input.directoryPath,
+    });
 }
 
 export async function warmRepositoryDirectoryCache(input: {
     sessionId: string;
     directoryPath: string;
 }): Promise<ListRepositoryDirectoryEntriesResult> {
-    const cached = getCachedRepositoryDirectoryEntries(input);
-    if (cached) {
-        return { ok: true, entries: cached };
+    const target = resolveWorkspaceTargetForSession(input.sessionId);
+    if (!target) {
+        return { ok: false, error: 'unknown_error' };
     }
-
-    const key = getCacheKey(input.sessionId, input.directoryPath);
-    return await warmInFlight(repositoryDirectoryWarmInFlight, key, async () => await listRepositoryDirectoryEntries(input));
-}
-
-type SessionListDirectoryLikeResponse = {
-    success?: boolean;
-    error?: string | null;
-    entries?: Array<{
-        name?: string;
-        type?: 'file' | 'directory' | 'other';
-        size?: number;
-        modified?: number;
-    }>;
-};
-
-export function sortRepositoryDirectoryEntries(entries: RepositoryDirectoryEntry[]): RepositoryDirectoryEntry[] {
-    return sortDirectoryEntries(entries);
+    return await warmWorkspaceRepositoryDirectoryCache({
+        workspaceCacheKey: target.workspaceCacheKey,
+        machineId: target.machineId,
+        rootPath: target.rootPath,
+        directoryPath: input.directoryPath,
+        serverId: target.serverId,
+    });
 }
 
 export async function listRepositoryDirectoryEntries(input: {
     sessionId: string;
     directoryPath: string;
 }): Promise<ListRepositoryDirectoryEntriesResult> {
-    const response = await sessionListDirectory(input.sessionId, input.directoryPath) as unknown as SessionListDirectoryLikeResponse | null;
-    if (!response) {
+    const target = resolveWorkspaceTargetForSession(input.sessionId);
+    if (!target) {
         return { ok: false, error: 'unknown_error' };
     }
-    if (response.success !== true) {
-        const err = typeof response.error === 'string' ? response.error.trim() : '';
-        return { ok: false, error: err || 'unknown_error' };
-    }
-    if (!Array.isArray(response.entries)) {
-        return { ok: false, error: 'unknown_error' };
-    }
-
-    const entries: RepositoryDirectoryEntry[] = [];
-    for (const entry of response.entries) {
-        if (!entry || typeof entry.name !== 'string') continue;
-        const raw = entry.name.trim();
-        if (!raw) continue;
-        if (entry.type !== 'file' && entry.type !== 'directory') continue;
-        const sizeBytes = typeof entry.size === 'number' && Number.isFinite(entry.size) && entry.size >= 0
-            ? Math.floor(entry.size)
-            : undefined;
-        const modifiedMs = typeof entry.modified === 'number' && Number.isFinite(entry.modified) && entry.modified >= 0
-            ? Math.floor(entry.modified)
-            : undefined;
-        entries.push({ name: raw, type: entry.type, sizeBytes, modifiedMs });
-    }
-
-    const sorted = sortRepositoryDirectoryEntries(entries);
-    setCachedRepositoryDirectoryEntries({
-        sessionId: input.sessionId,
+    return await listWorkspaceRepositoryDirectoryEntries({
+        workspaceCacheKey: target.workspaceCacheKey,
+        machineId: target.machineId,
+        rootPath: target.rootPath,
         directoryPath: input.directoryPath,
-        entries: sorted,
+        serverId: target.serverId,
     });
-    return { ok: true, entries: sorted };
 }
+
+export type { ListRepositoryDirectoryEntriesResult, RepositoryDirectoryEntry };
+export { sortRepositoryDirectoryEntries };

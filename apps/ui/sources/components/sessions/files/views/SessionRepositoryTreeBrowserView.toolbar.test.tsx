@@ -11,6 +11,8 @@ import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTes
 
 const clearCacheSpy = vi.fn();
 const clearRepositoryDirectoryCacheSpy = vi.fn();
+const clearWorkspaceFileSearchCacheSpy = vi.fn();
+const clearWorkspaceRepositoryDirectoryCacheSpy = vi.fn();
 let latestTransferOptions: any = null;
 
 installSessionFilesViewCommonModuleMocks({
@@ -25,7 +27,7 @@ installSessionFilesViewCommonModuleMocks({
         return createPartialStorageModuleMock(importOriginal, {
             storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
             useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
-            useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }) as any,
+            useProjectForSession: () => ({ key: { serverId: 'server', machineId: 'm1', rootPath: '/repo' } }) as any,
             useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }] as any,
             useMachine: () => ({ id: 'm1' }) as any,
             useSessionRepositoryTreeExpandedPaths: () => [],
@@ -103,6 +105,15 @@ vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
     clearCachedRepositoryDirectoryEntries: (input: { sessionId: string }) => clearRepositoryDirectoryCacheSpy(input),
 }));
 
+vi.mock('@/sync/domains/workspaces/files/workspaceFileSearch', () => ({
+    workspaceFileSearchCache: { clearCache: (workspaceCacheKey: string) => clearWorkspaceFileSearchCacheSpy(workspaceCacheKey) },
+    searchWorkspaceFiles: vi.fn(async () => []),
+}));
+
+vi.mock('@/sync/domains/workspaces/files/workspaceRepositoryDirectory', () => ({
+    clearCachedWorkspaceRepositoryDirectoryEntries: (input: { workspaceCacheKey: string }) => clearWorkspaceRepositoryDirectoryCacheSpy(input),
+}));
+
 const mountCount = { current: 0 };
 const reloadCount = { current: 0 };
 vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
@@ -114,6 +125,18 @@ vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
             reloadCount.current += 1;
         }, [props?.reloadToken]);
         return React.createElement('View', { testID: 'repository-tree-list' });
+    },
+}));
+
+vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
+    WorkspaceRepositoryTreeList: (props: any) => {
+        React.useEffect(() => {
+            mountCount.current += 1;
+        }, []);
+        React.useEffect(() => {
+            reloadCount.current += 1;
+        }, [props?.reloadToken]);
+        return React.createElement('View', { testID: 'workspace-repository-tree-list' });
     },
 }));
 
@@ -178,8 +201,10 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
         );
     });
 
-    it('shows clear button when search is non-empty and refresh clears search cache + remounts tree', async () => {
+    it('shows clear button when search is non-empty and refresh clears search cache + reloads tree', async () => {
         clearCacheSpy.mockClear();
+        clearWorkspaceFileSearchCacheSpy.mockClear();
+        clearWorkspaceRepositoryDirectoryCacheSpy.mockClear();
         mountCount.current = 0;
         reloadCount.current = 0;
 
@@ -208,8 +233,9 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
             screen.pressByTestId('repository-tree-refresh');
         });
 
-        expect(clearCacheSpy).toHaveBeenCalledWith('s1');
-        expect(clearRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ sessionId: 's1' });
+        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith('server:m1:/repo');
+        expect(clearWorkspaceRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ workspaceCacheKey: 'server:m1:/repo' });
+        // Tree list remounts when switching between search-results and tree view.
         expect(mountCount.current).toBe(2);
         expect(reloadCount.current).toBe(3);
     });
@@ -217,6 +243,8 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
     it('refreshes the repository tree when uploads succeed', async () => {
         clearCacheSpy.mockClear();
         clearRepositoryDirectoryCacheSpy.mockClear();
+        clearWorkspaceFileSearchCacheSpy.mockClear();
+        clearWorkspaceRepositoryDirectoryCacheSpy.mockClear();
         latestTransferOptions = null;
         reloadCount.current = 0;
 
@@ -228,9 +256,9 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
             latestTransferOptions.onAfterUploadSuccess();
         });
 
-        expect(clearCacheSpy).toHaveBeenCalledWith('s1');
-        expect(clearRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ sessionId: 's1' });
-        expect(screen.findAllByTestId('repository-tree-list')).toHaveLength(1);
+        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith('server:m1:/repo');
+        expect(clearWorkspaceRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ workspaceCacheKey: 'server:m1:/repo' });
+        expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
         expect(reloadCount.current).toBe(2);
     });
 });
