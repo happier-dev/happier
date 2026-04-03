@@ -144,6 +144,85 @@ function runCapture(opts, cmd, args, extra) {
 }
 
 /**
+ * Best-effort diagnostics for Linux AppImage bundling failures.
+ * The linuxdeploy plugin stack can swallow ldd output; dump actionable details when bundling fails.
+ *
+ * @param {{ repoRoot: string; absUiDir: string; environment: string }} opts
+ */
+function dumpLinuxAppImageDiagnostics(opts) {
+  if (process.platform !== 'linux') return;
+
+  const repoRoot = String(opts.repoRoot ?? '').trim();
+  const absUiDir = String(opts.absUiDir ?? '').trim();
+  const environment = String(opts.environment ?? '').trim();
+
+  const productName = resolveLinuxProductNameOverride({ environment }) ?? 'Happier';
+  const appDirPath = path.join(absUiDir, 'src-tauri', 'target', 'release', 'bundle', 'appimage', `${productName}.AppDir`);
+  const hsetupPath = path.join(appDirPath, 'usr', 'bin', 'hsetup');
+
+  console.log('::group::[pipeline] tauri linux diagnostics');
+  try {
+    if (!fs.existsSync(appDirPath)) {
+      console.log(`[pipeline] AppDir not found: ${appDirPath}`);
+      return;
+    }
+
+    try {
+      const entries = fs.readdirSync(path.join(appDirPath, 'usr', 'bin'));
+      console.log(`[pipeline] AppDir usr/bin entries: ${entries.join(', ')}`);
+    } catch {
+      // ignore
+    }
+
+    if (!fs.existsSync(hsetupPath)) {
+      console.log(`[pipeline] AppDir missing expected hsetup path: ${hsetupPath}`);
+      return;
+    }
+
+    try {
+      const out = execFileSyncPortable('file', [hsetupPath], {
+        cwd: repoRoot || process.cwd(),
+        env: process.env,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 10_000,
+      });
+      process.stdout.write(`[pipeline] file ${hsetupPath}\n${out}`);
+    } catch (error) {
+      console.log(`[pipeline] file failed for ${hsetupPath}: ${String(error)}`);
+    }
+
+    try {
+      const out = execFileSyncPortable('ldd', [hsetupPath], {
+        cwd: repoRoot || process.cwd(),
+        env: process.env,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 10_000,
+      });
+      process.stdout.write(`[pipeline] ldd ${hsetupPath}\n${out}`);
+    } catch (error) {
+      console.log(`[pipeline] ldd failed for ${hsetupPath}: ${String(error)}`);
+    }
+
+    try {
+      for (const rel of ['usr/lib', 'usr/lib64']) {
+        const dir = path.join(appDirPath, rel);
+        if (!fs.existsSync(dir)) continue;
+        const entries = fs.readdirSync(dir).filter((name) => name.includes('libc') || name.includes('ld-linux'));
+        if (entries.length > 0) {
+          console.log(`[pipeline] ${rel} glibc-ish entries: ${entries.join(', ')}`);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  } finally {
+    console.log('::endgroup::');
+  }
+}
+
+/**
  * @param {string} dir
  * @param {string} filename
  */
@@ -345,15 +424,20 @@ function main() {
         env: baseTauriEnv,
       });
     } else {
-      run(
-        opts,
-        yarn.cmd,
-        [...yarn.prefixArgs, 'tauri', 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
-        {
-          cwd: absUiDir,
-          env: baseTauriEnv,
-        },
-      );
+      try {
+        run(
+          opts,
+          yarn.cmd,
+          [...yarn.prefixArgs, 'tauri', 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
+          {
+            cwd: absUiDir,
+            env: baseTauriEnv,
+          },
+        );
+      } catch (error) {
+        dumpLinuxAppImageDiagnostics({ repoRoot, absUiDir, environment });
+        throw error;
+      }
     }
     return;
   }

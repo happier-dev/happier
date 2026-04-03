@@ -148,7 +148,9 @@ jobs:
         if: inputs.publish_android_apk && inputs.eas_builder == 'eas_cloud'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          # GitHub App tokens are short-lived and can expire during long native builds.
+          # Use the job-scoped GITHUB_TOKEN for release publishing so the lane stays idempotent.
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -176,7 +178,9 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          # GitHub App tokens are short-lived and can expire during long native builds.
+          # Use the job-scoped GITHUB_TOKEN for release publishing so the lane stays idempotent.
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -246,7 +250,8 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          # Prefer the job-scoped GITHUB_TOKEN over the short-lived GitHub App token.
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -310,7 +315,8 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          # Prefer the job-scoped GITHUB_TOKEN over the short-lived GitHub App token.
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
