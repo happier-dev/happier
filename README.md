@@ -120,19 +120,73 @@ Happier is designed with privacy as a foundation, not an afterthought.
 - **Built with love from Switzerland**  
   Developed in Switzerland, with a strong focus on data protection and developer transparency.
 
-
 ## How It Works
 
-### Step 1: Download App
+### Releases lanes
+
+Happier is under heavy development and in alpha-preview stage. A lot of features/fixes/improvements are added almost daily and commited to the `dev` branch. That branch is **not stable** and can break, but due to popular demand we have setuped nightly builds from it.
+
+The currently supported releases lanes are:
+- dev -> nightly builds from dev branch
+- preview -> stable releases
+
+### How to try the latest features (nightly dev builds)
+
+If you want to run the latest dev versions, you **must** run everything from the dev releases (CLI, app, daemon, server). You can use the hosted Happier Cloud server (app.happier.dev / api.happier.dev), but not all the features will be available from it, as it is running the preview server version.
+
+Happier CLI (macOS/Linux) - nightly dev builds:
+```
+curl -fsSL https://happier.dev/install-dev | bash
+```
+
+Happier CLI (Windows) - nightly dev builds:
+```
+iwr https://happier.dev/install-dev.ps1 -useb | iex
+```
+
+**Important! Then you need to run `hdev` instead of `happier`!**
+This allows installing the different releases alongside eachother.
+
+If you want `happier` to map to `hdev`, add this to your `.bashrc`/`.zshrc`:
+```
+alias happier='hdev'
+```
+
+Mobile apps - nightly dev builds:
+- [iOS TestFlight](https://testflight.apple.com/join/PyRCsaS3)
+- [Android APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-dev/happier-dev-android.apk)
+
+Server - nightly dev builds:
+- [happierdev/relay-server:dev Docker dev-box image](https://hub.docker.com/repository/docker/happierdev/relay-server/tags/dev)
+
+Dev box (happier CLI + daemon + Claude/Codex/OpenCode/etc) - nightly dev builds
+- [happierdev/dev-box:dev Docker dev-box image](https://hub.docker.com/repository/docker/happierdev/dev-box/tags/dev)
+
+Another solution, run directly from source:
+```
+npm i -g yarn
+git clone https://github.com/happier-dev/happier.git
+cd happier
+yarn
+yarn build
+yarn cli:activate
+yarn tui
+
+# Then you run directly `happier` (not `hdev`) and access the web UI at the URL printed in the console
+happier claude
+```
+
+### Preview release
+
+A new preview release will be pushed soon with all the latest changes/features/fixes. In the meantime it is recommended to run from `dev`, but if you prefer, you can still install the current preview release:
+
+#### Step 1: Download App
 
 <a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/apps/testing/dev.happier.app"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
 
-#### Android APK
+##### Android
 
-Public APK releases are published on the `preview` and `dev` lanes:
-
-- `preview`: [Download the preview APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview-android.apk)
-- `dev`: [Download the dev APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-dev/happier-dev-android.apk)
+[Download the preview APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview-android.apk)
 
 ### Step 2: Install the CLI on your computer
 
@@ -156,12 +210,6 @@ Preview / dev installers:
 ```bash
 curl -fsSL https://happier.dev/install-preview | bash
 curl -fsSL https://happier.dev/install-dev | bash
-```
-
-If you specifically want the npm package instead of the installer-managed lanes:
-
-```bash
-npm install -g @happier-dev/cli@latest
 ```
 
 ### Step 3: Authenticate (recommended: mobile-first)
