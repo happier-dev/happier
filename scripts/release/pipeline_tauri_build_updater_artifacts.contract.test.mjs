@@ -31,7 +31,7 @@ test('tauri build-updater-artifacts script supports preview dry-run', async () =
   // Corepack/Yarn resolution issues on Windows runners.
   assert.match(out, /\btauri:prepare:build\b/);
   assert.match(out, /tauri\.beforeBuild\.override\.json/);
-  assert.match(out, /\byarn tauri build\b/);
+  assert.match(out, /\byarn tauri build -v\b/);
   assert.match(out, /tauri\.preview\.conf\.json/);
   assert.match(out, /tauri\.version\.override\.json/);
 });
@@ -58,7 +58,7 @@ test('tauri build-updater-artifacts script supports dev dry-run', async () => {
 
   assert.match(out, /\btauri:prepare:build\b/);
   assert.match(out, /tauri\.beforeBuild\.override\.json/);
-  assert.match(out, /\byarn tauri build\b/);
+  assert.match(out, /\byarn tauri build -v\b/);
   assert.match(out, /tauri\.publicdev\.conf\.json/);
   assert.match(out, /tauri\.version\.override\.json/);
 });
@@ -83,6 +83,6 @@ test('tauri build-updater-artifacts script supports production dry-run', async (
 
   assert.match(out, /\btauri:prepare:build\b/);
   assert.match(out, /tauri\.beforeBuild\.override\.json/);
-  assert.match(out, /\byarn tauri build\b/);
+  assert.match(out, /\byarn tauri build -v\b/);
   assert.doesNotMatch(out, /tauri\.preview\.conf\.json/);
 });
