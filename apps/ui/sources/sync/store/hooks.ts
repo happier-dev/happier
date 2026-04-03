@@ -366,8 +366,11 @@ export function useMachineRecordValues(): Machine[] {
   );
 }
 
+const EMPTY_MACHINE_LIST_BY_SERVER_ID: Record<string, Machine[] | null> = {};
+
 export function useMachineListByServerId(): Record<string, Machine[] | null> {
-  const machineListByServerId = getStorage()(useShallow((state) => state.machineListByServerId));
+  const machineListByServerIdRaw = getStorage()(useShallow((state) => state.machineListByServerId));
+  const machineListByServerId = machineListByServerIdRaw ?? EMPTY_MACHINE_LIST_BY_SERVER_ID;
   return React.useMemo(() => {
     let hasChanges = false;
     const nextByServerId: Record<string, Machine[] | null> = {};
