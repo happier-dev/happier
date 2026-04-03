@@ -272,7 +272,7 @@ jobs:
     name: iOS TestFlight submit (dev lane) (local, best-effort)
     needs: [release_actor_guard]
     if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_local'
-    runs-on: macos-latest
+    runs-on: macos-26
     environment: release-shared
     continue-on-error: true
     steps:

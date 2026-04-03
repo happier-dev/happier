@@ -237,7 +237,7 @@ jobs:
     name: Build (ios)
     if: ${{ inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token]
-    runs-on: macos-latest
+    runs-on: macos-26
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
@@ -457,7 +457,7 @@ jobs:
     name: Submit (ios)
     if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token, validate_apple_api_private_key, build_ios]
-    runs-on: macos-latest
+    runs-on: macos-26
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
