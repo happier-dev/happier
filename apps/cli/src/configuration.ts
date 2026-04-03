@@ -158,12 +158,18 @@ class Configuration {
   // Claude local transcript scanner (UI-facing missing-transcript warning delay).
   public readonly claudeTranscriptMissingWarningMs: number
 
-  // Claude JSONL transcript repair (missing tool_result injection for interrupted tool calls).
-  public readonly claudeTranscriptRepairWaitForToolUseIdsTimeoutMs: number
-  public readonly claudeTranscriptRepairWaitForToolUseIdsPollIntervalMs: number
+	  // Claude JSONL transcript repair (missing tool_result injection for interrupted tool calls).
+	  public readonly claudeTranscriptRepairWaitForToolUseIdsTimeoutMs: number
+	  public readonly claudeTranscriptRepairWaitForToolUseIdsPollIntervalMs: number
+	
+	  // Claude remote launcher: grace window between requesting a turn interrupt and force-aborting
+	  // the underlying Claude Code subprocess during teardown (switch/exit).
+  public readonly claudeRemoteInterruptThenTeardownGraceMs: number
+  public readonly claudeLocalAbortEscalateAfterMs: number
+  public readonly claudeLocalAbortKillAfterMs: number
 
-  // Claude Task tool policy (remote mode).
-  public readonly claudeTaskAllowRunInBackground: boolean
+	  // Claude Task tool policy (remote mode).
+	  public readonly claudeTaskAllowRunInBackground: boolean
   /**
    * When a user aborts a Claude session, the vendor SDK may surface a cancellation as a process-level
    * unhandledRejection (known "Operation aborted" error). Within this short window after a user abort,
@@ -552,8 +558,8 @@ class Configuration {
       { min: 0, max: 2 * 60_000, default: 15_000 },
     );
 
-    // Default: 250ms. This is a best-effort grace window for tool_use blocks to flush to disk
-    // before we attempt to patch missing tool_result entries after an interrupt.
+    // Default: 250ms. Best-effort grace window for the transcript to settle and for tool_use/tool_result
+    // blocks to flush to disk before we attempt to patch missing tool_result entries after an interrupt.
     this.claudeTranscriptRepairWaitForToolUseIdsTimeoutMs = resolveIntEnvWithBounds(
       'HAPPIER_CLAUDE_TRANSCRIPT_REPAIR_WAIT_TOOL_USE_IDS_TIMEOUT_MS',
       { min: 0, max: 60_000, default: 250 },
@@ -563,7 +569,28 @@ class Configuration {
       { min: 10, max: 5_000, default: 25 },
     );
 
-    const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '').trim().toLowerCase();
+    // Default: 5000ms. On switch/exit we prefer to request a turn interrupt first, then allow a brief
+    // window for Claude to cleanly settle before we force-abort the subprocess.
+    this.claudeRemoteInterruptThenTeardownGraceMs = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS',
+      { min: 0, max: 30_000, default: 5_000 },
+    );
+
+    // Default: 3000ms. On local mode switching we send SIGINT first, then give Claude Code some time
+    // to close cleanly before escalating signals.
+    this.claudeLocalAbortEscalateAfterMs = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_LOCAL_ABORT_ESCALATE_AFTER_MS',
+      { min: 0, max: 60_000, default: 3_000 },
+    );
+    // Default: 15000ms. Hard kill is a last resort; allow generous time for shutdown.
+    this.claudeLocalAbortKillAfterMs = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_LOCAL_ABORT_KILL_AFTER_MS',
+      { min: 0, max: 5 * 60_000, default: 15_000 },
+    );
+
+    const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '')
+      .trim()
+      .toLowerCase();
     this.claudeTaskAllowRunInBackground = ['1', 'true', 'yes', 'on'].includes(allowTaskBackgroundRaw);
 
     // Default: 10s. Set to 0 to disable suppression.

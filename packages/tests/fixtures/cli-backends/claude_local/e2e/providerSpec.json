@@ -1,0 +1,26 @@
+{
+  "v": 1,
+  "id": "claude_local",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_CLAUDE_LOCAL",
+  "protocol": "claude",
+  "traceProvider": "claude",
+  "requiredBinaries": ["claude"],
+  "auth": {
+    "mode": "auto",
+    "env": {
+      "requiredAnyOf": [["ANTHROPIC_API_KEY"]]
+    },
+    "host": {
+      "envUnset": []
+    }
+  },
+  "cli": {
+    "subcommand": "claude",
+    "extraArgs": ["--happy-starting-mode", "local", "--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev",
+      "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+    }
+  }
+}

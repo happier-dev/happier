@@ -18,6 +18,7 @@ import { isEmbeddedBunBundlePath } from "@/runtime/js/isEmbeddedBunBundlePath";
 import { resolveWindowsCommandInvocation, type CommandInvocation } from '@happier-dev/cli-common/process';
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
 import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from '@happier-dev/protocol';
+import { configuration } from '@/configuration';
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -360,9 +361,16 @@ export async function claudeLocal(opts: {
             const abortFirstSignal: NodeJS.Signals = process.platform === 'win32' ? 'SIGTERM' : 'SIGINT';
             const abortSecondSignal: NodeJS.Signals = 'SIGTERM';
             const abortThirdSignal: NodeJS.Signals = 'SIGKILL';
-            const abortEscalateAfterMs = 2000;
-            const abortKillAfterMs = 6000;
+            const abortEscalateAfterMsRaw = configuration.claudeLocalAbortEscalateAfterMs;
+            const abortKillAfterMsRaw = configuration.claudeLocalAbortKillAfterMs;
+            const abortEscalateAfterMs =
+                Number.isFinite(abortEscalateAfterMsRaw) && abortEscalateAfterMsRaw > 0 ? abortEscalateAfterMsRaw : 0;
+            const abortKillAfterMs =
+                Number.isFinite(abortKillAfterMsRaw) && abortKillAfterMsRaw > 0 ? abortKillAfterMsRaw : 0;
+            const effectiveAbortKillAfterMs =
+                abortKillAfterMs > 0 && abortEscalateAfterMs > 0 ? Math.max(abortKillAfterMs, abortEscalateAfterMs + 1) : abortKillAfterMs;
 
+            let abortTeardownRequested = false;
             let abortEscalateTimer: NodeJS.Timeout | null = null;
             let abortKillTimer: NodeJS.Timeout | null = null;
             const clearAbortTimers = () => {
@@ -378,6 +386,7 @@ export async function claudeLocal(opts: {
 
             let abortListenerAttached = false;
             const abortListener = () => {
+                abortTeardownRequested = true;
                 if (!child.pid || child.killed) return;
                 try {
                     child.kill(abortFirstSignal);
@@ -387,25 +396,29 @@ export async function claudeLocal(opts: {
 
                 clearAbortTimers();
 
-                abortEscalateTimer = setTimeout(() => {
-                    if (!child.pid || child.killed) return;
-                    try {
-                        child.kill(abortSecondSignal);
-                    } catch {
-                        // ignore
-                    }
-                }, abortEscalateAfterMs);
-                abortEscalateTimer.unref?.();
+                if (abortEscalateAfterMs > 0) {
+                    abortEscalateTimer = setTimeout(() => {
+                        if (!child.pid || child.killed) return;
+                        try {
+                            child.kill(abortSecondSignal);
+                        } catch {
+                            // ignore
+                        }
+                    }, abortEscalateAfterMs);
+                    abortEscalateTimer.unref?.();
+                }
 
-                abortKillTimer = setTimeout(() => {
-                    if (!child.pid || child.killed) return;
-                    try {
-                        child.kill(abortThirdSignal);
-                    } catch {
-                        // ignore
-                    }
-                }, abortKillAfterMs);
-                abortKillTimer.unref?.();
+                if (effectiveAbortKillAfterMs > 0) {
+                    abortKillTimer = setTimeout(() => {
+                        if (!child.pid || child.killed) return;
+                        try {
+                            child.kill(abortThirdSignal);
+                        } catch {
+                            // ignore
+                        }
+                    }, effectiveAbortKillAfterMs);
+                    abortKillTimer.unref?.();
+                }
             };
 
             if (opts.abort.aborted) {
@@ -501,12 +514,10 @@ export async function claudeLocal(opts: {
                 }
                 clearAbortTimers();
 
-                if (
-                    opts.abort.aborted &&
-                    (signal === 'SIGTERM' || signal === 'SIGINT' || code === 143 || code === 130)
-                ) {
-                    // Normal termination due to abort signal.
-                    // Some runtimes surface SIGTERM as exit code 143 instead of `signal`, and SIGINT as 130.
+                if (abortTeardownRequested) {
+                    // Normal termination due to programmatic abort teardown (switching modes / UI takeover).
+                    // Do not treat exit codes as fatal while aborting: vendor CLIs sometimes exit with non-zero
+                    // after SIGINT/SIGTERM even when shutdown is intentional.
                     r();
                 } else if (signal) {
                     reject(new Error(`Process terminated with signal: ${signal}`));

@@ -8,10 +8,10 @@ import type { Metadata, PermissionMode } from "@/api/types";
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
 import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
 import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
+import { discardPendingBeforeSwitchToLocal } from '@/agent/localControl/discardPendingBeforeSwitchToLocal';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import { resolvePermissionIntentFromMetadataSnapshot, resolveSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
-import { repairClaudeSessionJsonlToolResults } from '@/backends/claude/utils/repairClaudeSessionJsonlToolResults';
 import { configuration } from '@/configuration';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { resolveClaudeCodeExperimentalEnvOverlay } from './spawn/resolveClaudeCodeExperimentalEnvOverlay';
@@ -109,11 +109,10 @@ export async function claudeLocalLauncher(
     // Handle abort
     let exitReason: LauncherResult | null = null;
     let abortingForModeSwitch = false;
-    const processAbortController = new AbortController();
-    let exitFuture = new Future<void>();
-    let syncLastPermissionModeFromMetadata: (() => void) | null = null;
-    const pendingQueueTakeoverAbortController = new AbortController();
-    try {
+	    const processAbortController = new AbortController();
+	    let exitFuture = new Future<void>();
+	    let syncLastPermissionModeFromMetadata: (() => void) | null = null;
+	    try {
         const clientEmitter = session.client as unknown as {
             getMetadataSnapshot?: () => Metadata | null | undefined;
             on?: (event: string, listener: () => void) => void;
@@ -167,11 +166,6 @@ export async function claudeLocalLauncher(
             // Abort
             await ensureSessionInfoBeforeSwitch({ session });
             await abort();
-            await repairClaudeSessionJsonlToolResults({
-                transcriptPath: session.transcriptPath,
-                cwd: session.path,
-                sessionId: session.sessionId,
-            });
         }
 
         async function doSwitch() {
@@ -186,11 +180,6 @@ export async function claudeLocalLauncher(
             // Abort
             await ensureSessionInfoBeforeSwitch({ session });
             await abort();
-            await repairClaudeSessionJsonlToolResults({
-                transcriptPath: session.transcriptPath,
-                cwd: session.path,
-                sessionId: session.sessionId,
-            });
         }
 
         // When to abort
@@ -209,30 +198,9 @@ export async function claudeLocalLauncher(
             void doSwitch();
         }); // When any message is received, abort current process, clean queue and switch to remote mode
 
-        // Local sessions started from the terminal can become “stuck” in local mode when remote/UI prompts
-        // are queued server-side but not delivered to this runner (for example, when socket wakeups are missed).
-        // Poll the pending queue v2 in the background and switch to remote when prompts are waiting.
-        if (entry === 'initial' && configuration.pendingQueueIdleWakePollIntervalMs > 0) {
-            const pollIntervalMs = configuration.pendingQueueIdleWakePollIntervalMs;
-            void (async () => {
-                while (!pendingQueueTakeoverAbortController.signal.aborted) {
-                    if (exitReason) return;
-                    try {
-                        const pendingCount = await session.client.peekPendingMessageQueueV2Count();
-                        if (pendingCount > 0) {
-                            logger.debug('[local]: pending queue v2 non-empty during local mode; switching to remote', { pendingCount });
-                            void doSwitch();
-                            return;
-                        }
-                    } catch {
-                        // best-effort only
-                    }
-                    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-                }
-            })();
-        }
-
         if (entry === 'switch') {
+            const autoConfirmDiscardForE2e =
+                process.env.HAPPIER_E2E_PROVIDERS === '1' || process.env.HAPPY_E2E_PROVIDERS === '1';
             const pendingGateStartMs = configuration.startupTimingEnabled ? Date.now() : null;
             const discardResult = await discardQueuedAndPendingForLocalSwitch({
                 queue: session.queue,
@@ -245,6 +213,15 @@ export async function claudeLocalLauncher(
                     session.client.sendSessionEvent({ type: 'message', message });
                 },
                 formatError: formatErrorForUi,
+                ...(autoConfirmDiscardForE2e
+                    ? {
+                        discardController: (args) =>
+                            discardPendingBeforeSwitchToLocal({
+                                ...args,
+                                confirmDiscard: async () => true,
+                            }),
+                    }
+                    : {}),
             });
             if (pendingGateStartMs !== null) {
                 logger.debug(`[claude-startup] claude_pending_queue_switch_gate=${Math.max(0, Date.now() - pendingGateStartMs)}ms`);
@@ -371,12 +348,11 @@ export async function claudeLocalLauncher(
                 }
             }
             logger.debug('[local]: launch done');
-        }
-    } finally {
-        pendingQueueTakeoverAbortController.abort();
-        const clientEmitter = session.client as unknown as {
-            off?: (event: string, listener: () => void) => void;
-        };
+	        }
+	    } finally {
+	        const clientEmitter = session.client as unknown as {
+	            off?: (event: string, listener: () => void) => void;
+	        };
         if (clientEmitter && typeof clientEmitter.off === 'function' && syncLastPermissionModeFromMetadata) {
             // Best-effort: some test stubs don't implement EventEmitter.
             clientEmitter.off('metadata-updated', syncLastPermissionModeFromMetadata);

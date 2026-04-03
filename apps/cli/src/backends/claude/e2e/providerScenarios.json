@@ -6,7 +6,8 @@
       "read_known_file",
       "permission_surface_outside_workspace",
       "permission_deny_outside_workspace",
-      "agent_sdk_local_start_then_takeover_remote",
+      "abort_turn_then_continue",
+      "agent_sdk_switch_to_local_during_inflight_turn",
       "agent_sdk_agent_teams_participant_routing_broadcast",
       "agent_sdk_agent_teams_participant_routing_member"
     ]
@@ -24,8 +25,9 @@
         "agent_sdk_permission_surface_outside_workspace",
         "permission_deny_outside_workspace",
         "agent_sdk_permission_deny_outside_workspace",
+        "abort_turn_then_continue",
         "agent_sdk_abort_turn_then_continue",
-        "agent_sdk_local_start_then_takeover_remote",
+        "agent_sdk_switch_to_local_during_inflight_turn",
         "agent_sdk_transcript_path_published",
         "agent_sdk_partial_messages_smoke",
         "agent_sdk_checkpoint_and_rewind_restores_fs"
@@ -43,8 +45,9 @@
         "agent_sdk_permission_surface_outside_workspace",
         "permission_deny_outside_workspace",
         "agent_sdk_permission_deny_outside_workspace",
+        "abort_turn_then_continue",
         "agent_sdk_abort_turn_then_continue",
-        "agent_sdk_local_start_then_takeover_remote",
+        "agent_sdk_switch_to_local_during_inflight_turn",
         "agent_sdk_transcript_path_published",
         "agent_sdk_partial_messages_smoke",
         "agent_sdk_checkpoint_and_rewind_restores_fs"

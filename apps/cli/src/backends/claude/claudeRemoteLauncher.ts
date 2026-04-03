@@ -35,6 +35,7 @@ import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { configuration } from '@/configuration';
 import { getProjectPath } from './utils/path';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
@@ -205,26 +206,28 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         stdinIsTTY: process.stdin.isTTY,
         startedBy: session.startedBy,
     });
+    const shouldRenderInkUi = hasTTY && session.startedBy !== 'daemon';
     logger.debug(`[claudeRemoteLauncher] TTY available: ${hasTTY}`);
 
     // Configure terminal
     let messageBuffer = new MessageBuffer();
     let inkInstance: any = null;
 
-    if (hasTTY) {
+    if (shouldRenderInkUi) {
         console.clear();
         const inkStdout = createNonBlockingStdout(process.stdout as any);
         inkInstance = render(React.createElement(RemoteModeDisplay, {
             messageBuffer,
             logPath: process.env.DEBUG ? session.logPath : undefined,
-            onExit: async () => {
-                // Exit the entire client
-                logger.debug('[remote]: Exiting client via Ctrl-C');
-                if (!exitReason) {
-                    exitReason = 'exit';
-                }
-                await abort();
-            },
+	            onExit: async () => {
+	                // Exit the entire client
+	                logger.debug('[remote]: Exiting client via Ctrl-C');
+                    session.noteUserAbortRequested();
+	                if (!exitReason) {
+	                    exitReason = 'exit';
+	                }
+                    await interruptThenTeardown('exit');
+	            },
             onSwitchToLocal: () => {
                 // Switch to local mode
                 logger.debug('[remote]: Switching to local mode via double space');
@@ -246,14 +249,15 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         }
     }
 
-    // Handle abort
-    let exitReason: 'switch' | 'exit' | null = null;
-    let abortController: AbortController | null = null;
-    let abortFuture: Future<void> | null = null;
-    let turnInterrupt: (() => Promise<void>) | null = null;
-    let didSendChangeTitleInstructionForSession = false;
-    const turnChangeTracker = new ClaudeTurnChangeTracker();
-    const suppressedExplicitDiffCallIds = new Set<string>();
+	    // Handle abort
+	    let exitReason: 'switch' | 'exit' | null = null;
+	    let abortController: AbortController | null = null;
+	    let abortFuture: Future<void> | null = null;
+	    let turnInterrupt: (() => Promise<void>) | null = null;
+        let didUserAbortThisLaunch = false;
+	    let didSendChangeTitleInstructionForSession = false;
+	    const turnChangeTracker = new ClaudeTurnChangeTracker();
+	    const suppressedExplicitDiffCallIds = new Set<string>();
 
     async function abort() {
         if (abortController && !abortController.signal.aborted) {
@@ -262,12 +266,14 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         await abortFuture?.promise;
     }
 
-    async function doAbort() {
-        logger.debug('[remote]: doAbort');
-        if (turnInterrupt) {
-            try {
-                await turnInterrupt();
-            } catch (error) {
+	    async function doAbort() {
+	        logger.debug('[remote]: doAbort');
+            session.noteUserAbortRequested();
+            didUserAbortThisLaunch = true;
+	        if (turnInterrupt) {
+	            try {
+	                await turnInterrupt();
+	            } catch (error) {
                 logger.debug('[remote]: turn interrupt failed; falling back to process abort', { error });
                 session.noteUserAbortRequested();
                 session.client.sendAgentMessage('claude', { type: 'turn_aborted', id: randomUUID() });
@@ -278,26 +284,53 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
             return;
         }
-        session.noteUserAbortRequested();
-        session.client.sendAgentMessage('claude', { type: 'turn_aborted', id: randomUUID() });
-        await abort();
-    }
+	        session.noteUserAbortRequested();
+	        session.client.sendAgentMessage('claude', { type: 'turn_aborted', id: randomUUID() });
+	        await abort();
+	    }
 
-    async function doSwitch() {
-        logger.debug('[remote]: doSwitch');
-        if (!exitReason) {
-            exitReason = 'switch';
-        }
-        await ensureSessionInfoBeforeSwitch({ session });
-        if (turnInterrupt) {
-            try {
-                await turnInterrupt();
-            } catch (error) {
-                logger.debug('[remote]: turn interrupt failed during switch (non-fatal); continuing with abort', { error });
+        async function interruptThenTeardown(label: string): Promise<void> {
+            if (turnInterrupt) {
+                try {
+                    await turnInterrupt();
+                } catch (error) {
+                    logger.debug(`[remote]: turn interrupt failed during ${label}; falling back to process abort`, { error });
+                }
+            }
+
+            if (!abortFuture) {
+                await abort();
+                return;
+            }
+
+            const graceMs = configuration.claudeRemoteInterruptThenTeardownGraceMs;
+            if (!Number.isFinite(graceMs) || graceMs <= 0) {
+                await abort();
+                return;
+            }
+
+            const settled = await Promise.race([
+                abortFuture.promise.then(() => true),
+                new Promise<boolean>((resolve) => {
+                    const timer = setTimeout(() => resolve(false), graceMs);
+                    timer.unref?.();
+                }),
+            ]);
+
+            if (!settled) {
+                await abort();
             }
         }
-        await abort();
-    }
+
+	    async function doSwitch() {
+	        logger.debug('[remote]: doSwitch');
+            session.noteUserAbortRequested();
+	        if (!exitReason) {
+	            exitReason = 'switch';
+	        }
+	        await ensureSessionInfoBeforeSwitch({ session });
+            await interruptThenTeardown('switch');
+	    }
 
     // When to abort
     session.client.rpcHandlerManager.registerHandler('abort', doAbort); // When abort clicked
@@ -319,15 +352,20 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         (logMessage, meta) => session.client.sendClaudeSessionMessage(logMessage, meta)
     );
 
-    const streamedTranscriptWriter: StreamedTranscriptWriter | null = (() => {
+    const streamedTranscriptWriter: StreamedTranscriptWriter = (() => {
         const client: any = session.client as any;
-        if (typeof client?.sendAgentMessageCommitted !== 'function') return null;
+        const sendAgentMessageCommitted =
+            typeof client?.sendAgentMessageCommitted === 'function'
+                ? (provider: any, body: any, opts: any) => client.sendAgentMessageCommitted(provider, body, opts)
+                : async () => {
+                      throw new Error('sendAgentMessageCommitted is unavailable');
+                  };
 
         return createStreamedTranscriptWriter({
             provider: 'claude' as any,
             session: {
                 sendAgentMessage: (provider, body, opts) => session.client.sendAgentMessage(provider, body, opts),
-                sendAgentMessageCommitted: (provider, body, opts) => client.sendAgentMessageCommitted(provider, body, opts),
+                sendAgentMessageCommitted,
             },
         });
     })();
@@ -756,15 +794,16 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 logger.debug(`[remote]: Continuing existing session: ${session.sessionId}`);
             }
 
-            previousSessionId = session.sessionId;
-            const sessionIdAtLaunchStart = session.sessionId;
-            const controller = new AbortController();
-            abortController = controller;
-            abortFuture = new Future<void>();
-            let modeHash: string | null = null;
-            let mode: EnhancedMode | null = null;
-            let didReplaySeedBootstrap = false;
-            try {
+	            previousSessionId = session.sessionId;
+	            const sessionIdAtLaunchStart = session.sessionId;
+	            const controller = new AbortController();
+	            abortController = controller;
+	            abortFuture = new Future<void>();
+                didUserAbortThisLaunch = false;
+	            let modeHash: string | null = null;
+	            let mode: EnhancedMode | null = null;
+	            let didReplaySeedBootstrap = false;
+	            try {
                 const waitForNextBatch = async (): Promise<MessageBatch<EnhancedMode, string> | null> => {
                     return await waitForMessagesOrPending({
                         messageQueue: session.queue,
@@ -979,14 +1018,14 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     // Claude Code sometimes exits in a non-resumable state after a force-abort. If this abort was
                     // explicitly user-initiated (not a mode switch), clear the stored session ID so the next launch
                     // doesn't get stuck trying to resume a dead session.
-                    if (
-                        controller.signal.aborted
-                        && session.wasUserAbortRequestedRecently(15_000)
-                        && !exitReason
-                    ) {
-                        forceNewSession = true;
-                        session.clearSessionId();
-                    }
+	                    if (
+	                        controller.signal.aborted
+	                        && didUserAbortThisLaunch
+	                        && !exitReason
+	                    ) {
+	                        forceNewSession = true;
+	                        session.clearSessionId();
+	                    }
                     continue;
                 } else {
                     const exitCode = resolveClaudeCodeExitCode(e);
@@ -998,13 +1037,13 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             ? `${base}\n\n${tailText}`
                             : base;
                         session.client.sendSessionEvent({ type: 'message', message });
-                        if (
-                            controller.signal.aborted
-                            && session.wasUserAbortRequestedRecently(15_000)
-                            && !exitReason
-                        ) {
-                            forceNewSession = true;
-                            session.clearSessionId();
+	                        if (
+	                            controller.signal.aborted
+	                            && didUserAbortThisLaunch
+	                            && !exitReason
+	                        ) {
+	                            forceNewSession = true;
+	                            session.clearSessionId();
                         } else if (
                             // If we attempted to resume an existing Claude Code session and it immediately exited with
                             // code 1 (common for non-resumable sessions after interrupts/crashes), avoid getting stuck

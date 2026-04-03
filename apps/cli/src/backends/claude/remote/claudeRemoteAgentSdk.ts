@@ -17,7 +17,6 @@ import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/se
 import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
 import { resolveClaudeCodeExperimentalEnvOverlay } from '@/backends/claude/spawn/resolveClaudeCodeExperimentalEnvOverlay';
 import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
-import { repairClaudeSessionJsonlToolResults } from '@/backends/claude/utils/repairClaudeSessionJsonlToolResults';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import { resolveClaudeEffortForModel } from '@/backends/claude/utils/claudeEffort';
@@ -32,6 +31,7 @@ import { join } from 'node:path';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import { readTailTextFile } from '@/utils/fs/readTailTextFile';
 import { buildClaudeAgentSdkHooks } from './agentSdk/buildClaudeAgentSdkHooks';
+import { repairClaudeTranscriptAfterInterrupt } from './agentSdk/repairClaudeTranscriptAfterInterrupt';
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
 import { parseExplicitSpawnEnvKeysFromProcessEnv } from './agentSdk/explicitSpawnEnvKeysMarker';
 import {
@@ -125,26 +125,27 @@ export async function claudeRemoteAgentSdk(opts: {
     // Test seam
     createQuery?: AgentSdkQueryFactory;
 }) {
-    const recordTraceMarker = (params: { kind: string; payload: Record<string, unknown> }) => {
-        recordToolTraceEvent({
-            direction: 'outbound',
-            sessionId: opts.sessionId ?? 'unknown',
-            protocol: 'claude',
-            provider: 'claude',
-            kind: params.kind,
-            payload: params.payload,
-        });
-    };
+	    const recordTraceMarker = (params: { kind: string; payload: Record<string, unknown> }) => {
+	        recordToolTraceEvent({
+	            direction: 'outbound',
+	            sessionId: opts.sessionId ?? 'unknown',
+	            protocol: 'claude',
+	            provider: 'claude',
+	            kind: params.kind,
+	            payload: params.payload,
+	        });
+	    };
 
-        const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
-            sessionId: opts.sessionId,
-            transcriptPath: opts.transcriptPath,
-            path: opts.path,
-            claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
-            claudeArgs: opts.claudeArgs,
-        }, {
-            logPrefix: 'claudeRemoteAgentSdk',
-        });
+	    const claudeConfigDir = resolveClaudeConfigDirOverride(process.env);
+	    const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
+	        sessionId: opts.sessionId,
+	        transcriptPath: opts.transcriptPath,
+	        path: opts.path,
+	        claudeConfigDir,
+	        claudeArgs: opts.claudeArgs,
+	    }, {
+	        logPrefix: 'claudeRemoteAgentSdk',
+	    });
 
     const initial = await opts.nextMessage();
     if (!initial) return;
@@ -165,10 +166,32 @@ export async function claudeRemoteAgentSdk(opts: {
 
 	    let mode = initial.mode;
 	    let response: any;
-	    let latestClaudeSessionId: string | null =
-	        typeof opts.sessionId === 'string' && opts.sessionId.trim().length > 0 ? opts.sessionId.trim() : startFrom ?? null;
-	    let latestTranscriptPath: string | null =
-	        typeof opts.transcriptPath === 'string' && opts.transcriptPath.trim().length > 0 ? opts.transcriptPath.trim() : null;
+		    let latestClaudeSessionId: string | null =
+		        typeof opts.sessionId === 'string' && opts.sessionId.trim().length > 0 ? opts.sessionId.trim() : startFrom ?? null;
+		    let latestTranscriptPath: string | null =
+		        typeof opts.transcriptPath === 'string' && opts.transcriptPath.trim().length > 0 ? opts.transcriptPath.trim() : null;
+		    const recordSessionFound = (sessionId: string, data?: SessionHookData) => {
+		        const normalized = typeof sessionId === 'string' ? sessionId.trim() : '';
+		        if (normalized.length > 0) {
+		            latestClaudeSessionId = normalized;
+		            const explicitTranscriptPath = (() => {
+		                if (!data || typeof data !== 'object') return '';
+		                const obj: any = data;
+		                const raw = typeof obj.transcriptPath === 'string'
+		                    ? obj.transcriptPath
+		                    : typeof obj.transcript_path === 'string'
+		                        ? obj.transcript_path
+		                        : '';
+		                return typeof raw === 'string' ? raw.trim() : '';
+		            })();
+		            if (explicitTranscriptPath.length > 0) {
+		                latestTranscriptPath = explicitTranscriptPath;
+		            } else if (!latestTranscriptPath) {
+		                latestTranscriptPath = join(getProjectPath(opts.path, claudeConfigDir), `${normalized}.jsonl`);
+		            }
+		        }
+		        opts.onSessionFound(normalized, data as any);
+		    };
 
     const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
         baseMcpServers: (opts.happierMcpServers ?? Object.create(null)) as Record<string, unknown>,
@@ -367,15 +390,15 @@ export async function claudeRemoteAgentSdk(opts: {
         return result;
     };
 
-    const builtHooks = buildClaudeAgentSdkHooks({
-        cwd: opts.path,
-        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
-        getMode: () => mode,
-        onSessionFound: (sessionId, data) => opts.onSessionFound(sessionId, data as any),
-        canCallTool: (toolName, input, resolvedMode, options) =>
-            canCallToolWithModeTransitions(toolName, input, resolvedMode, {
-                signal: options.signal,
-                toolUseId: options.toolUseId ?? null,
+	    const builtHooks = buildClaudeAgentSdkHooks({
+	        cwd: opts.path,
+	        claudeConfigDir,
+	        getMode: () => mode,
+	        onSessionFound: (sessionId, data) => recordSessionFound(sessionId, data as any),
+	        canCallTool: (toolName, input, resolvedMode, options) =>
+	            canCallToolWithModeTransitions(toolName, input, resolvedMode, {
+	                signal: options.signal,
+	                toolUseId: options.toolUseId ?? null,
                 agentId: options.agentId ?? null,
                 suggestions: options.suggestions,
                 blockedPath: options.blockedPath ?? null,
@@ -531,14 +554,14 @@ export async function claudeRemoteAgentSdk(opts: {
             if (verboseEnabled) out.verbose = null;
             return Object.keys(out).length > 0 ? out : undefined;
         })();
-            const queryOptions: Record<string, unknown> = {
-                abortController,
-                cwd: opts.path,
-                // Claude Agent SDK: required so we receive `stream_event` deltas.
-                // Without these, the remote launcher may select the Agent SDK runner (and strip
-                // assistant {text,thinking} blocks), but we would never materialize output through
-                // the streamed transcript writer (resulting in "thinking → online" with no reply).
-                includePartialMessages: true,
+        const queryOptions: Record<string, unknown> = {
+            abortController,
+            cwd: opts.path,
+            // Claude Agent SDK: required so we receive `stream_event` deltas.
+            // Without these, the remote launcher may select the Agent SDK runner (and strip
+            // assistant {text,thinking} blocks), but we would never materialize output through
+            // the streamed transcript writer (resulting in "thinking → online" with no reply).
+            includePartialMessages: true,
             continue: shouldContinue || undefined,
             resume: startFrom ?? undefined,
             ...(startFrom && resumeSessionAt ? { resumeSessionAt } : {}),
@@ -549,27 +572,28 @@ export async function claudeRemoteAgentSdk(opts: {
             model: argOverrides.model ?? mode.model,
             fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,
             maxTurns: argOverrides.maxTurns,
-        systemPrompt: buildSystemPrompt(),
+            systemPrompt: buildSystemPrompt(),
             strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
-        canUseTool,
-        ...(opts.happierMcpServers ? { mcpServers: opts.happierMcpServers } : {}),
+            canUseTool,
+            ...(opts.happierMcpServers ? { mcpServers: opts.happierMcpServers } : {}),
             env: { ...xdgIsolationEnv, ...buildClaudeSubprocessEnv(), ...experimentalEnvOverlay },
             executable: runtimeExecutable,
             pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
-        enableFileCheckpointing: enableFileCheckpointing || undefined,
-        extraArgs,
-        maxThinkingTokens: typeof mode.claudeRemoteMaxThinkingTokens === 'number' ? mode.claudeRemoteMaxThinkingTokens : undefined,
+            enableFileCheckpointing: enableFileCheckpointing || undefined,
+            extraArgs,
+            maxThinkingTokens:
+                typeof mode.claudeRemoteMaxThinkingTokens === 'number' ? mode.claudeRemoteMaxThinkingTokens : undefined,
             hooks,
         };
 
         if (debugFilePath) {
             queryOptions.debugFile = debugFilePath;
         }
-    if (stderrAppender) {
-        queryOptions.stderr = (data: string) => {
-            stderrAppender.append(data);
-        };
-    }
+        if (stderrAppender) {
+            queryOptions.stderr = (data: string) => {
+                stderrAppender.append(data);
+            };
+        }
 
     if (advancedOptions) {
         const allowlistedKeys = [
@@ -654,12 +678,15 @@ export async function claudeRemoteAgentSdk(opts: {
 	        }
 	    };
 
+	    let didRequestTurnInterrupt = false;
 	    const repairTranscriptAfterAbort = async () => {
+	        if (!didRequestTurnInterrupt && !abortSignal.aborted) return;
 	        try {
-	            await repairClaudeSessionJsonlToolResults({
-	                transcriptPath: latestTranscriptPath,
-	                cwd: opts.path,
+	            await repairClaudeTranscriptAfterInterrupt({
 	                sessionId: latestClaudeSessionId,
+	                transcriptPath: latestTranscriptPath,
+	                workDir: opts.path,
+	                claudeConfigDir,
 	            });
 	        } catch {
 	            // Best-effort: transcript repair should never crash the runner.
@@ -742,21 +769,28 @@ export async function claudeRemoteAgentSdk(opts: {
         let deferredInterruptedReason: string | null = null;
 
 	        const interruptTurn = async (): Promise<void> => {
-                let usedStopTask = false;
+                let stopTaskSucceeded = false;
 	            try {
                     const stopTask = (response as any)?.stopTask;
                     if (typeof stopTask === 'function') {
                         const taskId = activeTaskId;
                         if (typeof taskId === 'string' && taskId.trim().length > 0) {
-                            usedStopTask = true;
+                            didRequestTurnInterrupt = true;
                             deferredInterruptedReason = deferredInterruptedReason ?? 'turn-interrupt';
-                            await stopTask.call(response, taskId);
-                            return;
+                            try {
+                                await stopTask.call(response, taskId);
+                                stopTaskSucceeded = true;
+                                return;
+                            } catch {
+                                // Best-effort: if stopTask fails, fall back to interrupt().
+                            }
                         }
                     }
 
 	                const interrupt = (response as any)?.interrupt;
 	                if (typeof interrupt === 'function') {
+	                    didRequestTurnInterrupt = true;
+                        deferredInterruptedReason = deferredInterruptedReason ?? 'turn-interrupt';
 	                    await interrupt.call(response);
 	                }
 	            } catch {
@@ -764,14 +798,13 @@ export async function claudeRemoteAgentSdk(opts: {
 	            } finally {
 	                // Ensure UI thinking state is released even if Claude does not emit a clean result.
 	                updateThinking(false);
-                    if (!usedStopTask) {
+                    if (!stopTaskSucceeded) {
                         try {
                             cleanupBufferedAssistantMessages?.(null);
                         } catch {
                             // ignore
                         }
 	                    await flushStreamedTranscriptWriter('abort', 'turn-interrupt');
-	                    await repairTranscriptAfterAbort();
                     }
 	            }
 	        };
@@ -1504,24 +1537,22 @@ export async function claudeRemoteAgentSdk(opts: {
                         }
                     }
 
-                    if (subtype === 'init') {
-                        if (system.session_id) {
-                            const transcriptPath = join(
-                                getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
-                                `${system.session_id}.jsonl`,
-                            );
-                            latestClaudeSessionId = system.session_id;
-                            latestTranscriptPath = transcriptPath;
-                            logger.debug('[claudeRemoteAgentSdk] Session initialized', {
-                                claudeSessionId: system.session_id,
-                                transcriptPath,
-                            });
-                            opts.onSessionFound(system.session_id, { transcript_path: transcriptPath, transcriptPath });
-                            if (isCompactCommand) {
-                                opts.onCompletionEvent?.('Compaction completed');
-                                isCompactCommand = false;
-                                await finalizeCurrentTurn();
-                            }
+	                    if (subtype === 'init') {
+	                        if (system.session_id) {
+	                            const transcriptPath = join(
+	                                getProjectPath(opts.path, claudeConfigDir),
+	                                `${system.session_id}.jsonl`,
+	                            );
+	                            logger.debug('[claudeRemoteAgentSdk] Session initialized', {
+	                                claudeSessionId: system.session_id,
+	                                transcriptPath,
+	                            });
+	                            recordSessionFound(system.session_id, { transcript_path: transcriptPath, transcriptPath });
+	                            if (isCompactCommand) {
+	                                opts.onCompletionEvent?.('Compaction completed');
+	                                isCompactCommand = false;
+	                                await finalizeCurrentTurn();
+	                            }
                         }
                     }
                 }
@@ -1579,8 +1610,6 @@ export async function claudeRemoteAgentSdk(opts: {
 	    } catch (e) {
 	        if (e instanceof AgentSdkAbortError) {
 	            logger.debug('[claudeRemoteAgentSdk] Aborted');
-	            await flushStreamedTranscriptWriter('abort', 'agent-sdk-abort');
-	            await repairTranscriptAfterAbort();
 	            return;
 	        }
         if (e && typeof e === 'object') {
@@ -1611,20 +1640,25 @@ export async function claudeRemoteAgentSdk(opts: {
             err.happierClaudeCodeArtifacts = artifacts;
         }
         throw e;
-	    } finally {
-	        opts.setUserMessageSender?.(null);
-	        opts.setTurnInterrupt?.(null);
-	        updateThinking(false);
-	        cleanupBufferedAssistantMessages?.(null);
-	        await flushStreamedTranscriptWriter('abort', 'runner-finalize');
-	        await repairTranscriptAfterAbort();
-	        abortController.abort();
-	        await swallowOptionalPromise(nextMessagePump);
-	        try {
-	            response?.close();
+    } finally {
+        opts.setUserMessageSender?.(null);
+        opts.setTurnInterrupt?.(null);
+        updateThinking(false);
+        cleanupBufferedAssistantMessages?.(null);
+
+        await flushStreamedTranscriptWriter('abort', 'runner-finalize');
+
+        abortController.abort();
+        await swallowOptionalPromise(nextMessagePump);
+
+        try {
+            const maybe = (response as any)?.close?.();
+            await Promise.resolve(maybe);
         } catch {
             // ignore
         }
+
+        await repairTranscriptAfterAbort();
         await stderrAppender?.close().catch(() => {});
     }
 }

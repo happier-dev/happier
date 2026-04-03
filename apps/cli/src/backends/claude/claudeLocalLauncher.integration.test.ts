@@ -5,9 +5,6 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { Session } from './session';
 import { EventEmitter } from 'node:events';
 import type { EnhancedMode } from './loop';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
   createHappierMcpBridge: vi.fn(async () => ({
@@ -208,30 +205,6 @@ describe('claudeLocalLauncher', () => {
     );
   });
 
-  it('repairs the Claude transcript tail after a local abort before switching to remote', async () => {
-    const { session, switchHandlerReady } = createLocalHarness();
-
-    const baseDir = await mkdtemp(join(tmpdir(), 'happier-claude-local-switch-repair-'));
-    const transcriptPath = join(baseDir, 'sess_1.jsonl');
-
-    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
-      await writeFile(transcriptPath, `{\"type\":\"assistant\",\"uuid\":\"asst_1\"}\n{\"type\":\"assistant\",`, 'utf8');
-      session.onSessionFound('sess_1', hookWithTranscript(transcriptPath));
-      await waitForAbort(opts.abort);
-    });
-
-    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
-    const promise = claudeLocalLauncher(session);
-
-    const switchHandler = await switchHandlerReady;
-    await switchHandler({ to: 'remote' });
-    await expect(promise).resolves.toEqual({ type: 'switch' });
-
-    const repaired = await readFile(transcriptPath, 'utf8');
-    expect(repaired.endsWith('\n')).toBe(true);
-    expect(repaired.trimEnd().split('\n')).toHaveLength(1);
-  });
-
   it('seeds the local Claude spawn permission mode from session metadata before the first launch', async () => {
     const { session } = createLocalHarness({
       metadataSnapshot: {
@@ -266,47 +239,18 @@ describe('claudeLocalLauncher', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
-  it('does not block initial local startup while a pending-queue probe is in-flight', async () => {
+  it('does not block initial local startup on pending-queue inspection', async () => {
     const { session, client } = createLocalHarness();
 
-    const peekDeferred = createDeferred<number>();
-    client.peekPendingMessageQueueV2Count = vi.fn(async () => await peekDeferred.promise);
-
-    const localStarted = createDeferred<void>();
-    mockClaudeLocal.mockImplementationOnce(async () => {
-      localStarted.resolve(undefined);
+    client.peekPendingMessageQueueV2Count = vi.fn(async () => {
+      throw new Error('pending queue inspection should not run for initial local startup');
     });
 
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
-    const launcherPromise = claudeLocalLauncher(session);
+    mockClaudeLocal.mockImplementationOnce(async () => {});
 
-    await localStarted.promise;
-    peekDeferred.resolve(0);
-
-    await expect(launcherPromise).resolves.toEqual({ type: 'exit', code: 0 });
-  });
-
-  it('switches to remote when pending-queue v2 is non-empty during initial local mode (remote takeover)', async () => {
-    const { session, client } = createLocalHarness();
-
-    client.peekPendingMessageQueueV2Count = vi.fn(async () => 1);
-
-    const baseDir = await mkdtemp(join(tmpdir(), 'happier-claude-local-takeover-pending-'));
-    const transcriptPath = join(baseDir, 'sess_takeover.jsonl');
-    await writeFile(transcriptPath, `{\"type\":\"assistant\",\"uuid\":\"asst_1\"}\n`, 'utf8');
-
-    const localStarted = createDeferred<void>();
-    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
-      session.onSessionFound('sess_takeover', hookWithTranscript(transcriptPath));
-      localStarted.resolve(undefined);
-      await waitForAbort(opts.abort);
-    });
-
-    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
-    const launcherPromise = claudeLocalLauncher(session);
-
-    await localStarted.promise;
-    await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
+    const result = await claudeLocalLauncher(session);
+    expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
   it('does not pass a strict allowedTools allowlist to local Claude spawns by default', async () => {
@@ -727,5 +671,30 @@ describe('claudeLocalLauncher', () => {
         message: expect.any(String),
       }),
     );
+  });
+
+  it('auto-discards queued messages in provider/e2e mode without prompting, then continues into local mode', async () => {
+    const { session } = createLocalHarness();
+
+    const prev = process.env.HAPPIER_E2E_PROVIDERS;
+    process.env.HAPPIER_E2E_PROVIDERS = '1';
+    try {
+      Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+      Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+
+      // Default readlineAnswer is 'n' in this suite; if we still prompt, we'd decline and not start.
+      session.queue.push('hello from app', defaultMode);
+
+      mockClaudeLocal.mockImplementationOnce(async () => {});
+
+      const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+      const result = await claudeLocalLauncher(session, { entry: 'switch' });
+
+      expect(result).toEqual({ type: 'exit', code: 0 });
+      expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+      expect(session.queue.size()).toBe(0);
+    } finally {
+      process.env.HAPPIER_E2E_PROVIDERS = prev;
+    }
   });
 });

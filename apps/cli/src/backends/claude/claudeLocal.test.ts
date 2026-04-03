@@ -673,6 +673,39 @@ describe('claudeLocal --continue handling', () => {
         })).resolves.toBeTruthy();
     });
 
+    it('treats non-zero exit codes as expected termination when abort teardown is requested', async () => {
+        const controller = new AbortController();
+        controller.abort();
+
+        mockSpawn.mockReturnValueOnce({
+            pid: 4242,
+            killed: false,
+            stdio: [null, null, null, null],
+            on: vi.fn((event, callback) => {
+                if (event === 'exit') {
+                    process.nextTick(() => callback(1, null));
+                }
+            }),
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            kill: vi.fn(),
+            stdout: { on: vi.fn() },
+            stderr: { on: vi.fn() },
+            stdin: {
+                on: vi.fn(),
+                end: vi.fn()
+            }
+        });
+
+        await expect(claudeLocal({
+            abort: controller.signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+        })).resolves.toBeTruthy();
+    });
+
     it(
         'sends SIGINT to the Claude process when abort is requested after spawn (best-effort graceful shutdown)',
         async () => {
