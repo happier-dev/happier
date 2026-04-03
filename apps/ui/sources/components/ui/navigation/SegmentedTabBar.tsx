@@ -22,12 +22,18 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
+        width: '100%',
+        flexGrow: 1,
+        minWidth: 0,
     },
     inner: {
         flexDirection: 'row',
         backgroundColor: theme.colors.surfaceHighest,
         borderRadius: 9,
         padding: 2,
+        width: '100%',
+        flexGrow: 1,
+        minWidth: 0,
     },
     innerCompact: {
         borderRadius: 7,
@@ -38,6 +44,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: 7,
+        overflow: 'hidden',
     },
     tabCompact: {
         paddingVertical: 4,
@@ -82,7 +89,17 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                             accessibilityRole="tab"
                             accessibilityState={{ selected: active }}
                         >
-                            <Text style={[styles.tabLabel, compact ? styles.tabLabelCompact : null, active ? styles.tabLabelActive : null]}>{tab.label}</Text>
+                            <Text
+                                numberOfLines={1}
+                                ellipsizeMode="tail"
+                                style={[
+                                    styles.tabLabel,
+                                    compact ? styles.tabLabelCompact : null,
+                                    active ? styles.tabLabelActive : null,
+                                ]}
+                            >
+                                {tab.label}
+                            </Text>
                         </Pressable>
                     );
                 })}

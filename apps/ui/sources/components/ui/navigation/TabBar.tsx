@@ -100,6 +100,8 @@ export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
             switch (key) {
                 case 'inbox':
                     return { key, icon: require('@/assets/images/brutalist/Brutalism 27.png'), label: t('tabs.inbox') };
+                case 'projects':
+                    return { key, icon: require('@/assets/images/brutalist/Brutalism 16.png'), label: t('tabs.projects') };
                 case 'friends':
                     return { key, icon: require('@/assets/images/brutalist/Brutalism 28.png'), label: t('tabs.friends') };
                 case 'settings':

@@ -64,7 +64,9 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
 
     const shouldRenderHeaderRow = showHeaderRow && (Boolean(language) || Boolean(headerLeft) || Boolean(headerRight));
     const shouldOverlayCopyButton = showCopyButton && !shouldRenderHeaderRow;
-    const contentPaddingStyle = shouldOverlayCopyButton ? [styles.codePadding] : styles.codePadding;
+    const contentPaddingStyle = shouldOverlayCopyButton
+        ? [styles.codePadding]
+        : (shouldRenderHeaderRow ? styles.codePaddingWithHeader : styles.codePadding);
 
     const copyButton = showCopyButton ? (
         <Pressable
@@ -90,15 +92,17 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
 
     const header = shouldRenderHeaderRow ? (
         <View style={styles.headerRow}>
-            {headerLeft ? (
-                headerLeft
-            ) : language ? (
-                <Text selectable={selectable} style={[styles.headerText, { color: theme.colors.textSecondary }]}>
-                    {language}
-                </Text>
-            ) : (
-                <View />
-            )}
+            <View style={styles.headerLeft}>
+                {headerLeft ? (
+                    headerLeft
+                ) : language ? (
+                    <Text selectable={selectable} style={[styles.headerText, { color: theme.colors.textSecondary }]}>
+                        {language}
+                    </Text>
+                ) : (
+                    <View />
+                )}
+            </View>
             <View style={styles.headerRight}>
                 {headerRight}
                 {copyButton}
@@ -153,7 +157,12 @@ const styles = StyleSheet.create(() => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 12,
-        paddingVertical: 10,
+        paddingVertical: 4,
+    },
+    headerLeft: {
+        flex: 1,
+        minWidth: 0,
+        paddingRight: 8,
     },
     headerText: {
         fontFamily: resolveCodeMonoFontFamily(),
@@ -184,5 +193,10 @@ const styles = StyleSheet.create(() => ({
     codePadding: {
         paddingHorizontal: 12,
         paddingVertical: 12,
+    },
+    codePaddingWithHeader: {
+        paddingHorizontal: 12,
+        paddingTop: 4,
+        paddingBottom: 12,
     },
 }));

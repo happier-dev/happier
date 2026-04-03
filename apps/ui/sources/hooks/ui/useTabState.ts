@@ -13,7 +13,7 @@ type TabState = Readonly<{
 }>;
 
 function normalizeStoredTab(value: unknown): TabType | null {
-  if (value === 'sessions' || value === 'inbox' || value === 'friends' || value === 'settings') return value;
+  if (value === 'sessions' || value === 'projects' || value === 'inbox' || value === 'friends' || value === 'settings') return value;
   // Zen is a legacy value; it is no longer rendered in the tab bar.
   if (value === 'zen') return 'sessions';
   return null;

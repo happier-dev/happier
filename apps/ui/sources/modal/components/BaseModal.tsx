@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import {
     View,
     TouchableWithoutFeedback,
@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
-import { requireRadixDialog, requireRadixDismissableLayer } from '@/utils/web/radixCjs';
+import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { t } from '@/text';
@@ -146,9 +146,20 @@ export function BaseModal({
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const baseZ = zIndexBase ?? 100000;
     const [modalPortalTarget, setModalPortalTarget] = React.useState<HTMLElement | null>(null);
-    const setModalPortalHostRef = React.useCallback((node: HTMLElement | null) => {
-        setModalPortalTarget((prev) => (prev === node ? prev : node));
-    }, []);
+    const modalPortalHostRef = React.useRef<HTMLDivElement | null>(null);
+    const radixDismissableLayer = React.useMemo(() => (isWeb ? requireRadixDismissableLayer() : null), []);
+    const webContentShellRef = React.useRef<HTMLDivElement | null>(null);
+    const webPreviousActiveElementRef = React.useRef<HTMLElement | null>(null);
+
+    // On web, avoid setting React state inside a callback ref. In some browser/portal scenarios,
+    // ref attach/detach churn can lead to nested update loops ("Maximum update depth exceeded").
+    useLayoutEffect(() => {
+        if (!isWeb) return;
+        if (!visible) return;
+        const node = modalPortalHostRef.current;
+        if (!node) return;
+        setModalPortalTarget((prev) => prev ?? node);
+    }, [visible]);
 
     useEffect(() => {
         const useNativeDriver = !isWeb;
@@ -174,6 +185,47 @@ export function BaseModal({
         return installWebModalBodyPointerEventsBypass();
     }, [visible]);
 
+    useEffect(() => {
+        if (!isWeb) return;
+        if (!visible) return;
+        if (typeof document === 'undefined') return;
+
+        webPreviousActiveElementRef.current = (document.activeElement as HTMLElement | null) ?? null;
+
+        // Move focus into the modal shell so Escape/Tab interactions behave predictably.
+        // Avoid forcing focus if the shell ref isn't ready yet.
+        const shell = webContentShellRef.current;
+        if (shell) {
+            try {
+                shell.focus();
+            } catch {
+                // ignore
+            }
+        }
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            if (!onClose) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+        };
+
+        document.addEventListener('keydown', handleKeyDown, true);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown, true);
+            const previous = webPreviousActiveElementRef.current;
+            webPreviousActiveElementRef.current = null;
+            if (previous && typeof previous.focus === 'function') {
+                try {
+                    previous.focus();
+                } catch {
+                    // ignore
+                }
+            }
+        };
+    }, [onClose, visible]);
+
     const handleBackdropPress = () => {
         if (closeOnBackdrop && onClose) {
             onClose();
@@ -183,12 +235,7 @@ export function BaseModal({
     if (isWeb) {
         if (!visible) return null;
 
-        // IMPORTANT:
-        // Use the CJS entrypoints (`require`) so Radix singletons (DismissableLayer / FocusScope stacks)
-        // are shared with Vaul / expo-router on web. With Metro, mixing ESM+CJS builds can lead to
-        // duplicate Radix modules and broken stacking/focus behavior.
-        const Dialog = requireRadixDialog();
-        const { Branch: DismissableLayerBranch } = requireRadixDismissableLayer();
+        const { Branch: DismissableLayerBranch } = radixDismissableLayer!;
 
         const overlayStyle: React.CSSProperties = {
             position: 'fixed',
@@ -210,6 +257,8 @@ export function BaseModal({
             zIndex: baseZ + 1,
             overflowY: 'auto',
         };
+
+        const title = t('common.dialog');
 
         const visuallyHiddenStyle: React.CSSProperties = {
             position: 'absolute',
@@ -252,81 +301,75 @@ export function BaseModal({
         } as unknown as ViewStyle;
 
         return (
-            <Dialog.Root
-                open={visible}
-                onOpenChange={(open) => {
-                    if (!open && onClose) onClose();
-                }}
-              >
-                  <Dialog.Portal>
-                      {showBackdrop ? (
-                          <Dialog.Overlay
-                              style={overlayStyle}
-                              onClick={stopPropagation}
-                              onPointerDown={stopPropagation}
-                              onTouchStart={stopPropagation}
-                          />
-                      ) : null}
-                      <DismissableLayerBranch style={{ display: 'contents' }}>
-                          <Dialog.Content
-                              aria-describedby={undefined}
-                              style={contentStyle}
-                              onPointerDown={stopPropagation}
-                              onTouchStart={stopPropagation}
-                              onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (!closeOnBackdrop || !onClose) return;
-                                  // Close when the click lands outside the modal card boundary.
-                                  // The dialog content spans the viewport, so clicks on that shell are treated as backdrop clicks.
-                                  if (isInsideWebModalCardBoundary(e.target)) return;
+            <>
+                {showBackdrop ? (
+                    <div
+                        style={overlayStyle}
+                        onClick={stopPropagation}
+                        onPointerDown={stopPropagation}
+                        onTouchStart={stopPropagation}
+                    />
+                ) : null}
+                <DismissableLayerBranch style={{ display: 'contents' }}>
+                    <div
+                        ref={webContentShellRef}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={title}
+                        tabIndex={-1}
+                        style={contentStyle}
+                        onPointerDown={stopPropagation}
+                        onTouchStart={stopPropagation}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (!closeOnBackdrop || !onClose) return;
+                            // Close when the click lands outside the modal card boundary.
+                            // The dialog content spans the viewport, so clicks on that shell are treated as backdrop clicks.
+                            if (isInsideWebModalCardBoundary(e.target)) return;
 
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  onClose();
-                              }}
-                            onPointerDownOutside={
-                                closeOnBackdrop ? undefined : (e) => e.preventDefault()
-                            }
-                        >
-                              <Dialog.Title style={visuallyHiddenStyle}>{t('common.dialog')}</Dialog.Title>
-                            {/* Host for web portals (e.g. popovers) that must live inside the dialog subtree. */}
-                            <div
-                                data-happy-modal-portal-host=""
-                                data-happy-modal-card-boundary=""
-                                ref={setModalPortalHostRef}
-                                style={portalHostStyle}
-                            />
-                            <ModalPortalTargetProvider target={modalPortalTarget}>
-                                <ModalBoundaryProvider>
-                                    <KeyboardAvoidingView
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onClose();
+                        }}
+                    >
+                        <div style={visuallyHiddenStyle}>{title}</div>
+                        {/* Host for web portals (e.g. popovers) that must live inside the dialog subtree. */}
+                        <div
+                            data-happy-modal-portal-host=""
+                            data-happy-modal-card-boundary=""
+                            ref={modalPortalHostRef}
+                            style={portalHostStyle}
+                        />
+                        <ModalPortalTargetProvider target={modalPortalTarget}>
+                            <ModalBoundaryProvider>
+                                <KeyboardAvoidingView
+                                    pointerEvents="auto"
+                                    style={[styles.container, autoPlacementContainerStyle]}
+                                    behavior={undefined}
+                                >
+                                    <Animated.View
                                         pointerEvents="auto"
-                                        style={[styles.container, autoPlacementContainerStyle]}
-                                        behavior={undefined}
+                                        style={[
+                                            styles.content,
+                                            {
+                                                opacity: fadeAnim,
+                                            }
+                                        ]}
                                     >
-                                        <Animated.View
+                                        <View
                                             pointerEvents="auto"
-                                            style={[
-                                                styles.content,
-                                                {
-                                                    opacity: fadeAnim,
-                                                }
-                                            ]}
+                                            {...({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)}
+                                            style={webModalCardBoundaryStyle as unknown as any}
                                         >
-                                            <View
-                                                pointerEvents="auto"
-                                                {...({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)}
-                                                style={webModalCardBoundaryStyle as unknown as any}
-                                            >
-                                                {children}
-                                            </View>
-                                        </Animated.View>
-                                    </KeyboardAvoidingView>
-                                </ModalBoundaryProvider>
-                            </ModalPortalTargetProvider>
-                        </Dialog.Content>
-                    </DismissableLayerBranch>
-                </Dialog.Portal>
-            </Dialog.Root>
+                                            {children}
+                                        </View>
+                                    </Animated.View>
+                                </KeyboardAvoidingView>
+                            </ModalBoundaryProvider>
+                        </ModalPortalTargetProvider>
+                    </div>
+                </DismissableLayerBranch>
+            </>
         );
     }
 

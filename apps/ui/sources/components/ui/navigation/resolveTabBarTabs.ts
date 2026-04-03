@@ -10,9 +10,9 @@ export function resolveTabBarTabs(input: ResolveTabBarTabsInput): TabType[] {
 
   if (input.inboxEnabled) tabs.push('inbox');
   tabs.push('sessions');
+  tabs.push('projects');
   if (input.friendsEnabled) tabs.push('friends');
   tabs.push('settings');
 
   return tabs;
 }
-

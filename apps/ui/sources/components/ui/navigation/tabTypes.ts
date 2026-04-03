@@ -1,2 +1,1 @@
-export type TabType = 'inbox' | 'sessions' | 'friends' | 'settings';
-
+export type TabType = 'inbox' | 'sessions' | 'projects' | 'friends' | 'settings';
