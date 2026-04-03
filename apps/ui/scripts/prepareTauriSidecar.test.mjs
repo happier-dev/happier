@@ -114,6 +114,7 @@ test('prepareTauriSidecar invokes Yarn via a Windows-safe shell so yarn.cmd can 
   const ensureWorkspacePackagesBuiltForComponent = async () => {};
   const ensureTauriSidecarRuntimeFilesImpl = async () => [];
   const ensureTauriSidecarEntrypointFileImpl = async (options) => join(options.srcTauriDir, 'binaries', 'hsetup.js');
+  const ensureTauriMcpDevCapabilityImpl = async () => {};
   const spawnSyncImpl = (command, args, options) => {
     calls.push(['spawn', command, args, options]);
     return { status: 0 };
@@ -127,6 +128,7 @@ test('prepareTauriSidecar invokes Yarn via a Windows-safe shell so yarn.cmd can 
     ensureWorkspacePackagesBuiltForComponent,
     ensureTauriSidecarRuntimeFilesImpl,
     ensureTauriSidecarEntrypointFileImpl,
+    ensureTauriMcpDevCapabilityImpl,
     spawnSyncImpl,
   });
 
@@ -196,6 +198,7 @@ test('prepareTauriSidecar propagates spawn errors', async () => {
   await assert.rejects(() => prepareTauriSidecar({
     env: {},
     ensureWorkspacePackagesBuiltForComponent: async () => {},
+    ensureTauriMcpDevCapabilityImpl: async () => {},
     spawnSyncImpl: () => ({ error: boom }),
   }), /spawn failed/);
 });
