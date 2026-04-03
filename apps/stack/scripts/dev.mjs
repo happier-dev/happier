@@ -39,6 +39,7 @@ import { expandHome } from './utils/paths/canonical_home.mjs';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog.mjs';
 import { resolveTauriPaneInvocation } from './utils/tui/tauri_mode.mjs';
+import { resolveReactNativeDevtoolsUrl } from './utils/dev/react_native_devtools.mjs';
 
  /**
   * Dev mode stack:
@@ -70,6 +71,8 @@ async function main() {
           '--no-watch',
           '--no-browser',
           '--mobile',
+          '--rn-devtools',
+          '--react-native-devtools',
           '--tauri',
           '--expo-tailscale',
           '--bind=loopback|lan',
@@ -82,9 +85,10 @@ async function main() {
 		        '[dev] usage:',
 		        '  hstack dev [--server=happier-server|happier-server-light] [--server-flavor=light|full] [--server-url=<http(s)://...>] [--no-server] [--restart] [--json]',
 		        '  hstack dev --watch         # rebuild/restart happier-cli daemon on file changes (TTY default)',
-		        '  hstack dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
-		        '  hstack dev --no-browser    # do not open the UI in your browser automatically',
-		        '  hstack dev --mobile        # also start Expo dev-client Metro for mobile',
+	        '  hstack dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
+	        '  hstack dev --no-browser    # do not open the UI in your browser automatically',
+	        '  hstack dev --mobile        # also start Expo dev-client Metro for mobile',
+	        '  hstack dev --rn-devtools   # open React Native DevTools (Metro debugger UI) in your browser',
 	        '  hstack dev --tauri         # start the desktop Tauri shell against this stack',
 	        '  hstack dev --expo-tailscale # forward Expo to Tailscale interface for remote access',
 	        '  hstack dev --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
@@ -145,6 +149,7 @@ async function main() {
   const startUi = !flags.has('--no-ui');
   const startDaemon = !flags.has('--no-daemon');
   const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
+  const openReactNativeDevtools = flags.has('--rn-devtools') || flags.has('--react-native-devtools');
   const noBrowser = startTauri || flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
 
@@ -222,6 +227,7 @@ async function main() {
         startMobile,
         startTauri,
         startDaemon,
+        openReactNativeDevtools,
         cliHomeDir,
       },
     });
@@ -553,6 +559,24 @@ async function main() {
       const res = await openUrlInBrowser(uiOpenUrl || uiUrl);
       if (!res.ok) {
         console.warn(`[local] ui: failed to open browser automatically (${res.error}).`);
+      }
+    }
+  }
+
+  if (openReactNativeDevtools && expoRes?.port) {
+    const metroOriginRaw = `http://localhost:${expoRes.port}`;
+    const metroOrigin = await preferStackLocalhostUrl(metroOriginRaw, { stackName });
+    const devtoolsUrl = resolveReactNativeDevtoolsUrl({ metroUrl: metroOrigin, env: baseEnv });
+    if (devtoolsUrl) {
+      console.log(`[local] rn-devtools: open ${devtoolsUrl}`);
+      const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+      const shouldOpen = isInteractive && !noBrowser;
+      if (shouldOpen) {
+        await waitForHttpOk(devtoolsUrl, { timeoutMs: 30_000 }).catch(() => {});
+        const res = await openUrlInBrowser(devtoolsUrl);
+        if (!res.ok) {
+          console.warn(`[local] rn-devtools: failed to open browser automatically (${res.error}).`);
+        }
       }
     }
   }

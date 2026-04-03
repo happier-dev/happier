@@ -158,10 +158,10 @@ export function killProcessTree(child, signal) {
 }
 
 export async function run(cmd, args, options = {}) {
-  const { timeoutMs, input, shell: shellOverride, ...spawnOptions } = options ?? {};
+  const { timeoutMs, input, shell: shellOverride, stdio: stdioOverride, ...spawnOptions } = options ?? {};
   const shell = typeof shellOverride === 'boolean' ? shellOverride : resolveDefaultShellForCommand(cmd);
   await new Promise((resolvePromise, rejectPromise) => {
-    const baseStdio = spawnOptions.stdio ?? 'inherit';
+    const baseStdio = stdioOverride ?? 'inherit';
     const stdio =
       input != null
         ? Array.isArray(baseStdio)
@@ -169,7 +169,7 @@ export async function run(cmd, args, options = {}) {
           : ['pipe', baseStdio, baseStdio]
         : baseStdio;
 
-    const proc = spawn(cmd, args, { stdio, shell, ...spawnOptions });
+    const proc = spawn(cmd, args, { shell, ...spawnOptions, stdio });
     if (input != null && proc.stdin) {
       try {
         proc.stdin.write(String(input));
@@ -200,10 +200,10 @@ export async function run(cmd, args, options = {}) {
 }
 
 export async function runCapture(cmd, args, options = {}) {
-  const { timeoutMs, shell: shellOverride, ...spawnOptions } = options ?? {};
+  const { timeoutMs, shell: shellOverride, stdio: _stdioOverride, ...spawnOptions } = options ?? {};
   const shell = typeof shellOverride === 'boolean' ? shellOverride : resolveDefaultShellForCommand(cmd);
   return await new Promise((resolvePromise, rejectPromise) => {
-    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], shell, ...spawnOptions });
+    const proc = spawn(cmd, args, { shell, ...spawnOptions, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     const t =

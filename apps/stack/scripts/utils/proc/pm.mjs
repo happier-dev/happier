@@ -301,14 +301,13 @@ async function ensureYarnReady({ dir, env, quiet = false }) {
   const key = `${resolve(dir)}|${String(e.HOME ?? '')}|${String(e.XDG_CACHE_HOME ?? '')}`;
   if (_yarnReadyKeys.has(key)) return;
 
-  // If stdin isn't a TTY (e.g. `hstack tui ...` uses stdio:ignore for child stdin),
-  // Corepack prompts can deadlock. Provide a single "yes" to unblock initial downloads.
-  const isTui = (e.HAPPIER_STACK_TUI ?? '').toString().trim() === '1';
-  // Also auto-yes in quiet mode so guided flows don't get stuck on:
-  //   "Corepack is about to download ... Do you want to continue? [Y/n]"
-  const autoYes = isTui || !process.stdin.isTTY || quiet;
   const stdio = quiet ? 'ignore' : 'inherit';
-  await run('yarn', ['--version'], { cwd: dir, env: e, stdio, ...(autoYes ? { input: 'y\n' } : {}) });
+  // Corepack sometimes prompts on first use:
+  //   "Corepack is about to download ... Do you want to continue? [Y/n]"
+  //
+  // In TUI mode, the terminal is interactive but keyboard input is consumed by the TUI itself,
+  // so Corepack's prompt can deadlock. Always provide a single "yes" to unblock the download.
+  await run('yarn', ['--version'], { cwd: dir, env: e, stdio, input: 'y\n' });
   _yarnReadyKeys.add(key);
 }
 
