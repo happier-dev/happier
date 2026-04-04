@@ -2941,6 +2941,53 @@ export const it: TranslationStructure = {
   },
 
   settingsNotifications: {
+    activitySurfaces: {
+      title: "Superfici attività",
+      footer:
+        "Controlla Live Activities, Dynamic Island e widget su questo dispositivo.",
+      enabledSubtitle:
+        "Abilita le superfici di sessione visibili su questo dispositivo",
+      shared: {
+        title: "Comportamento condiviso",
+        footer:
+          "Scegli come devono comportarsi i tocchi e il contenuto di anteprima su tutte le superfici attività.",
+      },
+      tapTargetTitle: "Destinazione del tocco",
+      tapTargetOpenSessionTitle: "Apri la sessione corrente",
+      tapTargetOpenSessionsTitle: "Apri le sessioni attive",
+      privacyTitle: "Privacy",
+      privacyStatusOnlyTitle: "Solo stato",
+      privacyTitleOnlyTitle: "Solo titolo",
+      privacyIncludePreviewTitle: "Includi testo di anteprima",
+      liveActivities: {
+        title: "Live Activities",
+        footer:
+          "Controlla la presentazione sulla schermata di blocco e su Dynamic Island su iPhone.",
+        enabledSubtitle: "Abilita le Live Activities su questo dispositivo",
+        focusedTitle: "Sessione focalizzata",
+        attentionTitle: "Attenzione",
+        runningTitle: "Sessioni in corso",
+        maxConcurrentTitle: "Massimo di attività simultanee",
+        maxConcurrentOneTitle: "1 attività",
+        maxConcurrentTwoTitle: "2 attività",
+        maxConcurrentFourTitle: "4 attività",
+        previewTextTitle: "Testo di anteprima",
+        actionButtonsTitle: "Pulsanti azione",
+        includeReadyTitle: "Includi sessioni pronte",
+        includeThinkingTitle: "Includi sessioni in pensiero",
+      },
+      widgets: {
+        title: "Widget della schermata Home",
+        footer:
+          "Controlla la panoramica dei widget mostrata nella schermata Home del dispositivo.",
+        enabledSubtitle: "Abilita i widget su questo dispositivo",
+        summaryTitle: "Riepilogo",
+        attentionTitle: "Attenzione",
+        runningTitle: "Sessioni in corso",
+        previewTextTitle: "Testo di anteprima",
+        machinePathTitle: "Macchina e percorso",
+      },
+    },
     badges: {
       title: "Badge su questo dispositivo",
       footer:
@@ -3690,6 +3737,12 @@ export const it: TranslationStructure = {
       expVoiceAuthFlow: "Flusso di autenticazione voce",
       expVoiceAuthFlowSubtitle:
         "Usa flusso token voce autenticato (consapevole del paywall)",
+      expLiveActivities: "Live Activities",
+      expLiveActivitiesSubtitle:
+        "Abilita le superfici Live Activities e Dynamic Island di iOS",
+      expHomeScreenWidgets: "Widget della schermata Home",
+      expHomeScreenWidgetsSubtitle:
+        "Abilita le superfici widget della schermata Home di iOS",
     voice: "Voce",
     voiceSubtitle: "Abilita le funzioni vocali",
       expVoiceAgent: "Agente vocale",

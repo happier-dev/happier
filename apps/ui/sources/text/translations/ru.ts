@@ -2643,6 +2643,48 @@ export const ru: TranslationStructure = {
   },
 
   settingsNotifications: {
+    activitySurfaces: {
+      title: 'Поверхности активности',
+      footer: 'Управляет Live Activities, Dynamic Island и виджетами на этом устройстве.',
+      enabledSubtitle: 'Включить видимые поверхности сессий на этом устройстве',
+      shared: {
+        title: 'Общее поведение',
+        footer: 'Выберите, как должны работать нажатия и превью во всех поверхностях активности.',
+      },
+      tapTargetTitle: 'Действие при нажатии',
+      tapTargetOpenSessionTitle: 'Открыть текущую сессию',
+      tapTargetOpenSessionsTitle: 'Открыть активные сессии',
+      privacyTitle: 'Конфиденциальность',
+      privacyStatusOnlyTitle: 'Только статус',
+      privacyTitleOnlyTitle: 'Только заголовок',
+      privacyIncludePreviewTitle: 'Включать текст превью',
+      liveActivities: {
+        title: 'Live Activities',
+        footer: 'Управляет отображением на экране блокировки и в Dynamic Island на iPhone.',
+        enabledSubtitle: 'Включить Live Activities на этом устройстве',
+        focusedTitle: 'Фокусная сессия',
+        attentionTitle: 'Внимание',
+        runningTitle: 'Активные сессии',
+        maxConcurrentTitle: 'Максимум одновременных активностей',
+        maxConcurrentOneTitle: '1 активность',
+        maxConcurrentTwoTitle: '2 активности',
+        maxConcurrentFourTitle: '4 активности',
+        previewTextTitle: 'Текст превью',
+        actionButtonsTitle: 'Кнопки действий',
+        includeReadyTitle: 'Включать готовые сессии',
+        includeThinkingTitle: 'Включать думающие сессии',
+      },
+      widgets: {
+        title: 'Виджеты домашнего экрана',
+        footer: 'Управляет обзором виджетов, показываемым на домашнем экране устройства.',
+        enabledSubtitle: 'Включить виджеты на этом устройстве',
+        summaryTitle: 'Сводка',
+        attentionTitle: 'Внимание',
+        runningTitle: 'Активные сессии',
+        previewTextTitle: 'Текст превью',
+        machinePathTitle: 'Машина и путь',
+      },
+    },
     push: {
       title: "Push-уведомления",
       footer:
@@ -3390,6 +3432,12 @@ export const ru: TranslationStructure = {
     expVoiceAuthFlow: "Авторизация голоса",
     expVoiceAuthFlowSubtitle:
       "Использовать авторизованный голосовой поток (с учётом подписки)",
+    expLiveActivities: "Live Activities",
+    expLiveActivitiesSubtitle:
+      "Включить поверхности Live Activities и Dynamic Island iOS",
+    expHomeScreenWidgets: "Виджеты домашнего экрана",
+    expHomeScreenWidgetsSubtitle:
+      "Включить поверхности виджетов домашнего экрана iOS",
     voice: "Голос",
     voiceSubtitle: "Включить голосовые функции",
     expVoiceAgent: "Голосовой агент",

@@ -2692,6 +2692,48 @@ export const pl: TranslationStructure = {
   },
 
   settingsNotifications: {
+    activitySurfaces: {
+      title: 'Powierzchnie aktywności',
+      footer: 'Steruje Live Activities, Dynamic Island i widgetami na tym urządzeniu.',
+      enabledSubtitle: 'Włącz widoczne powierzchnie sesji na tym urządzeniu',
+      shared: {
+        title: 'Wspólne zachowanie',
+        footer: 'Wybierz, jak mają działać dotknięcia i treści podglądu we wszystkich powierzchniach aktywności.',
+      },
+      tapTargetTitle: 'Cel dotknięcia',
+      tapTargetOpenSessionTitle: 'Otwórz bieżącą sesję',
+      tapTargetOpenSessionsTitle: 'Otwórz aktywne sesje',
+      privacyTitle: 'Prywatność',
+      privacyStatusOnlyTitle: 'Tylko stan',
+      privacyTitleOnlyTitle: 'Tylko tytuł',
+      privacyIncludePreviewTitle: 'Uwzględnij tekst podglądu',
+      liveActivities: {
+        title: 'Live Activities',
+        footer: 'Steruje prezentacją na ekranie blokady i w Dynamic Island na iPhonie.',
+        enabledSubtitle: 'Włącz Live Activities na tym urządzeniu',
+        focusedTitle: 'Skupiona sesja',
+        attentionTitle: 'Uwaga',
+        runningTitle: 'Sesje w trakcie',
+        maxConcurrentTitle: 'Maksymalna liczba równoczesnych aktywności',
+        maxConcurrentOneTitle: '1 aktywność',
+        maxConcurrentTwoTitle: '2 aktywności',
+        maxConcurrentFourTitle: '4 aktywności',
+        previewTextTitle: 'Tekst podglądu',
+        actionButtonsTitle: 'Przyciski akcji',
+        includeReadyTitle: 'Uwzględnij gotowe sesje',
+        includeThinkingTitle: 'Uwzględnij sesje myślące',
+      },
+      widgets: {
+        title: 'Widgety ekranu głównego',
+        footer: 'Steruje widokiem ogólnym widgetów wyświetlanym na ekranie głównym urządzenia.',
+        enabledSubtitle: 'Włącz widgety na tym urządzeniu',
+        summaryTitle: 'Podsumowanie',
+        attentionTitle: 'Uwaga',
+        runningTitle: 'Sesje w trakcie',
+        previewTextTitle: 'Tekst podglądu',
+        machinePathTitle: 'Maszyna i ścieżka',
+      },
+    },
     badges: {
       title: 'Odznaki na tym urządzeniu',
       footer: 'Wybierz, które działania mają wpływać na odznakę ikony aplikacji na tym urządzeniu.',
@@ -3440,6 +3482,12 @@ export const pl: TranslationStructure = {
       expVoiceAuthFlow: "Przepływ uwierzytelniania głosu",
       expVoiceAuthFlowSubtitle:
         "Użyj uwierzytelnionego przepływu tokenu głosu (z paywallem)",
+    expLiveActivities: "Live Activities",
+    expLiveActivitiesSubtitle:
+      "Włącz powierzchnie Live Activities i Dynamic Island iOS",
+    expHomeScreenWidgets: "Widgety ekranu głównego",
+    expHomeScreenWidgetsSubtitle:
+      "Włącz powierzchnie widgetów ekranu głównego iOS",
     voice: "Głos",
     voiceSubtitle: "Włącz funkcje głosowe",
       expVoiceAgent: "Agent głosowy",

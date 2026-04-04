@@ -2727,6 +2727,48 @@ export const pt: TranslationStructure = {
   },
 
   settingsNotifications: {
+    activitySurfaces: {
+      title: 'Superfícies de atividade',
+      footer: 'Controla Live Activities, Dynamic Island e widgets neste dispositivo.',
+      enabledSubtitle: 'Ative superfícies de sessão visíveis neste dispositivo',
+      shared: {
+        title: 'Comportamento compartilhado',
+        footer: 'Escolha como toques e conteúdo de prévia devem se comportar em todas as superfícies de atividade.',
+      },
+      tapTargetTitle: 'Destino do toque',
+      tapTargetOpenSessionTitle: 'Abrir a sessão atual',
+      tapTargetOpenSessionsTitle: 'Abrir sessões ativas',
+      privacyTitle: 'Privacidade',
+      privacyStatusOnlyTitle: 'Somente status',
+      privacyTitleOnlyTitle: 'Somente título',
+      privacyIncludePreviewTitle: 'Incluir texto de prévia',
+      liveActivities: {
+        title: 'Live Activities',
+        footer: 'Controla a apresentação na tela de bloqueio e na Dynamic Island no iPhone.',
+        enabledSubtitle: 'Ative Live Activities neste dispositivo',
+        focusedTitle: 'Sessão focada',
+        attentionTitle: 'Atenção',
+        runningTitle: 'Sessões em andamento',
+        maxConcurrentTitle: 'Máximo de atividades simultâneas',
+        maxConcurrentOneTitle: '1 atividade',
+        maxConcurrentTwoTitle: '2 atividades',
+        maxConcurrentFourTitle: '4 atividades',
+        previewTextTitle: 'Texto de prévia',
+        actionButtonsTitle: 'Botões de ação',
+        includeReadyTitle: 'Incluir sessões prontas',
+        includeThinkingTitle: 'Incluir sessões pensando',
+      },
+      widgets: {
+        title: 'Widgets da tela inicial',
+        footer: 'Controla a visão geral de widgets exibida na tela inicial do dispositivo.',
+        enabledSubtitle: 'Ative widgets neste dispositivo',
+        summaryTitle: 'Resumo',
+        attentionTitle: 'Atenção',
+        runningTitle: 'Sessões em andamento',
+        previewTextTitle: 'Texto de prévia',
+        machinePathTitle: 'Máquina e caminho',
+      },
+    },
     badges: {
       title: 'Badges neste dispositivo',
       footer: 'Escolha quais atividades contribuem para o badge do ícone do app neste dispositivo.',
@@ -3475,6 +3517,12 @@ export const pt: TranslationStructure = {
       expVoiceAuthFlow: "Fluxo de autenticação por voz",
       expVoiceAuthFlowSubtitle:
         "Usar fluxo de token de voz autenticado (com paywall)",
+    expLiveActivities: "Live Activities",
+    expLiveActivitiesSubtitle:
+      "Ativar as superfícies de Live Activities e Dynamic Island do iOS",
+    expHomeScreenWidgets: "Widgets da tela inicial",
+    expHomeScreenWidgetsSubtitle:
+      "Ativar as superfícies de widgets da tela inicial do iOS",
     voice: "Voz",
     voiceSubtitle: "Ativar recursos de voz",
       expVoiceAgent: "Agente de voz",

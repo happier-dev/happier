@@ -2662,6 +2662,48 @@ export const es: TranslationStructure = {
   },
 
   settingsNotifications: {
+    activitySurfaces: {
+      title: 'Superficies de actividad',
+      footer: 'Controla Live Activities, Dynamic Island y widgets en este dispositivo.',
+      enabledSubtitle: 'Activa las superficies de sesión visibles en este dispositivo',
+      shared: {
+        title: 'Comportamiento compartido',
+        footer: 'Elige cómo deben comportarse los toques y el contenido de vista previa en todas las superficies de actividad.',
+      },
+      tapTargetTitle: 'Destino del toque',
+      tapTargetOpenSessionTitle: 'Abrir la sesión actual',
+      tapTargetOpenSessionsTitle: 'Abrir sesiones activas',
+      privacyTitle: 'Privacidad',
+      privacyStatusOnlyTitle: 'Solo estado',
+      privacyTitleOnlyTitle: 'Solo título',
+      privacyIncludePreviewTitle: 'Incluir texto de vista previa',
+      liveActivities: {
+        title: 'Live Activities',
+        footer: 'Controla la presentación en la pantalla bloqueada y en Dynamic Island en iPhone.',
+        enabledSubtitle: 'Activa las Live Activities en este dispositivo',
+        focusedTitle: 'Sesión enfocada',
+        attentionTitle: 'Atención',
+        runningTitle: 'Sesiones en curso',
+        maxConcurrentTitle: 'Máximo de actividades simultáneas',
+        maxConcurrentOneTitle: '1 actividad',
+        maxConcurrentTwoTitle: '2 actividades',
+        maxConcurrentFourTitle: '4 actividades',
+        previewTextTitle: 'Texto de vista previa',
+        actionButtonsTitle: 'Botones de acción',
+        includeReadyTitle: 'Incluir sesiones listas',
+        includeThinkingTitle: 'Incluir sesiones pensando',
+      },
+      widgets: {
+        title: 'Widgets de la pantalla de inicio',
+        footer: 'Controla la vista general de widgets que se muestra en la pantalla de inicio de tu dispositivo.',
+        enabledSubtitle: 'Activa los widgets en este dispositivo',
+        summaryTitle: 'Resumen',
+        attentionTitle: 'Atención',
+        runningTitle: 'Sesiones en curso',
+        previewTextTitle: 'Texto de vista previa',
+        machinePathTitle: 'Máquina y ruta',
+      },
+    },
     badges: {
       title: 'Insignias en este dispositivo',
       footer: 'Elige qué actividad contribuye a la insignia del icono de la app en este dispositivo.',
@@ -3401,14 +3443,20 @@ export const es: TranslationStructure = {
       expEmbeddedTerminal: "Terminal integrado",
       expEmbeddedTerminalSubtitle:
         "Abre un terminal real dentro de las sesiones.",
-      expSessionType: "Selector de tipo de sesión",
+    expSessionType: "Selector de tipo de sesión",
     expSessionTypeSubtitle:
       "Mostrar el selector de tipo de sesión (simple vs worktree)",
-      expZen: "Modo Zen",
+    expZen: "Modo Zen",
     expZenSubtitle: "Habilitar la entrada de navegación Zen",
-      expVoiceAuthFlow: "Flujo de autenticación de voz",
+    expVoiceAuthFlow: "Flujo de autenticación de voz",
     expVoiceAuthFlowSubtitle:
       "Usar flujo autenticado de token de voz (con paywall)",
+    expLiveActivities: "Live Activities",
+    expLiveActivitiesSubtitle:
+      "Activa las superficies de Live Activities y Dynamic Island de iOS",
+    expHomeScreenWidgets: "Widgets de la pantalla de inicio",
+    expHomeScreenWidgetsSubtitle:
+      "Activa las superficies de widgets de la pantalla de inicio de iOS",
     voice: "Voz",
     voiceSubtitle: "Activar funciones de voz",
       expVoiceAgent: "Agente de voz",
