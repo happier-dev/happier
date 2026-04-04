@@ -12,6 +12,7 @@ import { pingHandler } from "./socket/pingHandler";
 import { sessionUpdateHandler } from "./socket/sessionUpdateHandler";
 import { machineUpdateHandler } from "./socket/machineUpdateHandler";
 import { machineTransferHandler } from "./socket/machineTransferHandler";
+import { transferRelayV2Handler } from "./socket/transferRelayV2Handler";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
@@ -312,6 +313,12 @@ export function startSocket(app: Fastify) {
             serverRoutedTransferEnabled,
             serverRoutedTransferMaxBytes: machineTransferFeatureEnv.serverRoutedMaxBytes,
             serverRoutedTransferMaxActiveTransfersPerSocket: machineTransferFeatureEnv.serverRoutedMaxActiveTransfersPerSocket,
+        });
+        transferRelayV2Handler(userId, socket, {
+            io,
+            serverRelayTransferEnabled: serverRoutedTransferEnabled,
+            serverRelayTransferMaxBytes: machineTransferFeatureEnv.serverRoutedMaxBytes,
+            serverRelayTransferMaxActiveTransfersPerSocket: machineTransferFeatureEnv.serverRoutedMaxActiveTransfersPerSocket,
         });
         artifactUpdateHandler(userId, socket);
         accessKeyHandler(userId, socket);
