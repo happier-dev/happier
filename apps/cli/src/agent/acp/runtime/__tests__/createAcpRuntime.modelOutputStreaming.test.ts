@@ -11,6 +11,9 @@ import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessio
 
 describe('createAcpRuntime (transcript streaming vNext)', () => {
   it('writes durable streaming checkpoints with a stable segment localId reused by the final commit', async () => {
+    const previousInitialCheckpointMs = process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS;
+    process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS = '0';
+
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
     const session = createBasicSessionClientWithOverrides({
@@ -19,38 +22,46 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       },
     });
 
-    const runtime = createAcpRuntime({
-      provider: 'claude',
-      directory: '/tmp',
-      session,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
-    });
+    try {
+      const runtime = createAcpRuntime({
+        provider: 'claude',
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {},
+        ensureBackend: async () => backend,
+      });
 
-    await runtime.startOrLoad({});
-    runtime.beginTurn();
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
 
-    backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
-    backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
+      backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
+      backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
 
-    await runtime.flushTurn();
+      await runtime.flushTurn();
 
-    expect(durableCalls.length).toBeGreaterThanOrEqual(2);
-    expect(typeof durableCalls[0]?.localId).toBe('string');
-    expect(durableCalls[0]!.localId).toBe(durableCalls[durableCalls.length - 1]!.localId);
-    expect((durableCalls[0]!.meta as any)?.happierStreamSegmentV1?.segmentState).toBe('streaming');
+      expect(durableCalls.length).toBeGreaterThanOrEqual(2);
+      expect(typeof durableCalls[0]?.localId).toBe('string');
+      expect(durableCalls[0]!.localId).toBe(durableCalls[durableCalls.length - 1]!.localId);
+      expect((durableCalls[0]!.meta as any)?.happierStreamSegmentV1?.segmentState).toBe('streaming');
 
-    const last = durableCalls[durableCalls.length - 1]!;
-    expect(last.body).toMatchObject({ type: 'message', message: 'Hello world' });
-    expect(last.meta).toMatchObject({
-      happierStreamSegmentV1: expect.objectContaining({
-        segmentLocalId: durableCalls[0]!.localId,
-        segmentState: 'complete',
-      }),
-    });
+      const last = durableCalls[durableCalls.length - 1]!;
+      expect(last.body).toMatchObject({ type: 'message', message: 'Hello world' });
+      expect(last.meta).toMatchObject({
+        happierStreamSegmentV1: expect.objectContaining({
+          segmentLocalId: durableCalls[0]!.localId,
+          segmentState: 'complete',
+        }),
+      });
+    } finally {
+      if (previousInitialCheckpointMs === undefined) {
+        delete process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS;
+      } else {
+        process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS = previousInitialCheckpointMs;
+      }
+    }
   });
 
   it('emits live snapshots through the explicit transcript session port', async () => {
@@ -100,8 +111,10 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
   });
 
   it('can emit each durable checkpoint immediately when stream checkpoint buffering is disabled', async () => {
+    const previousInitialCheckpointMs = process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS;
     const previousCheckpointMs = process.env.HAPPIER_STREAM_CHECKPOINT_MS;
     const previousCheckpointMinChars = process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS;
+    process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS = '0';
     process.env.HAPPIER_STREAM_CHECKPOINT_MS = '0';
     process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = '1';
 
@@ -144,6 +157,11 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
         'streaming',
       ]);
     } finally {
+      if (previousInitialCheckpointMs === undefined) {
+        delete process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS;
+      } else {
+        process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS = previousInitialCheckpointMs;
+      }
       if (previousCheckpointMs === undefined) {
         delete process.env.HAPPIER_STREAM_CHECKPOINT_MS;
       } else {
@@ -203,7 +221,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     await flushPromise;
 
     expect(didResolveFlushTurn).toBe(true);
-    expect(durableCommitCount).toBe(2);
+    expect(durableCommitCount).toBe(1);
   });
 
   it('flushes the active assistant segment before forwarding a permission request', async () => {
@@ -241,7 +259,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(durableCalls.length).toBeGreaterThanOrEqual(2);
+    expect(durableCalls.length).toBeGreaterThanOrEqual(1);
     expect(durableCalls[durableCalls.length - 1]).toMatchObject({
       body: { type: 'message', message: 'The directory is empty.' },
       meta: {

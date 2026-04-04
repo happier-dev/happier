@@ -42,6 +42,7 @@ describe('createOpenCodeTranscriptStreamBridge', () => {
     const bridge = createOpenCodeTranscriptStreamBridge({
       provider: 'opencode' as any,
       session: session as any,
+      initialCheckpointDelayMs: 0,
     });
 
     bridge.appendAssistantDelta({

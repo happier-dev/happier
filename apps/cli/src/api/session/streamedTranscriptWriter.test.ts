@@ -87,8 +87,7 @@ describe('createStreamedTranscriptWriter', () => {
     expect(durableCalls).toHaveLength(1);
     expect(liveCalls).toHaveLength(1);
 
-    vi.advanceTimersByTime(30);
-    await vi.runOnlyPendingTimersAsync();
+    await vi.advanceTimersByTimeAsync(30);
     await settleCommittedSnapshot();
 
     expect(durableCalls).toHaveLength(1);
@@ -205,19 +204,32 @@ describe('createStreamedTranscriptWriter', () => {
     await settleCommittedSnapshot();
     expect(durableCalls).toHaveLength(1);
 
-    vi.advanceTimersByTime(49);
+    await vi.advanceTimersByTimeAsync(49);
     await settleCommittedSnapshot();
     writer.appendAssistantDelta('!');
     await settleCommittedSnapshot();
+
     expect(durableCalls).toHaveLength(1);
 
-    vi.advanceTimersByTime(1);
-    await settleCommittedSnapshot();
-    writer.appendAssistantDelta('?');
+    await vi.advanceTimersByTimeAsync(1);
     await settleCommittedSnapshot();
 
     expect(durableCalls).toHaveLength(2);
     expect(durableCalls[1]).toMatchObject({
+      provider: 'codex',
+      localId: 'l1',
+      body: { type: 'message', message: 'Hello world!' },
+    });
+
+    writer.appendAssistantDelta('?');
+    await settleCommittedSnapshot();
+    expect(durableCalls).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(3);
+    expect(durableCalls[2]).toMatchObject({
       provider: 'codex',
       localId: 'l1',
       body: { type: 'message', message: 'Hello world!?' },
@@ -240,8 +252,7 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     writer.appendAssistantDelta('Hello');
-    vi.advanceTimersByTime(10);
-    await vi.runOnlyPendingTimersAsync();
+    await vi.advanceTimersByTimeAsync(10);
     await settleCommittedSnapshot();
 
     expect(durableCalls).toHaveLength(1);
@@ -250,12 +261,11 @@ describe('createStreamedTranscriptWriter', () => {
     await settleCommittedSnapshot();
     expect(durableCalls).toHaveLength(1);
 
-    vi.advanceTimersByTime(49);
+    await vi.advanceTimersByTimeAsync(49);
     await settleCommittedSnapshot();
     expect(durableCalls).toHaveLength(1);
 
-    vi.advanceTimersByTime(1);
-    await vi.runOnlyPendingTimersAsync();
+    await vi.advanceTimersByTimeAsync(1);
     await settleCommittedSnapshot();
 
     expect(durableCalls).toHaveLength(2);

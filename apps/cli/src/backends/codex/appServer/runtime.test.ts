@@ -744,6 +744,8 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('does not append the full final assistant text into streaming drafts when the final text diverges from earlier deltas', async () => {
+        const previousInitialCheckpointMs = process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS;
+        process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS = '0';
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-divergent-final-');
 
         const session = {
@@ -751,25 +753,33 @@ describe('createCodexAppServerRuntime', () => {
             sendAgentMessageCommitted: vi.fn(async () => {}),
             sendCodexMessage: vi.fn(),
         };
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            onThinkingChange: vi.fn(),
-            session: session as any,
-        });
+        try {
+            const runtime = createCodexAppServerRuntime({
+                directory: root,
+                onThinkingChange: vi.fn(),
+                session: session as any,
+            });
 
-        await runtime.startOrLoad({});
-        await runtime.sendPrompt('bridge-streams-divergent-final');
+            await runtime.startOrLoad({});
+            await runtime.sendPrompt('bridge-streams-divergent-final');
 
-        const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
-            [string, { type?: string; message?: string; text?: string }, { localId: string; meta?: Record<string, any> }]
-        >;
-        const assistantMessages = committedCalls
-            .map(([, body, opts]) => ({ body: body as CommittedSnapshotBody, opts }))
-            .filter((call) => call.body.type === 'message' && !call.body.sidechainId)
-            .map((call) => String(call.body?.message ?? ''));
-        expect(assistantMessages.some((msg) => msg === 'READY ')).toBe(true);
-        expect(assistantMessages.some((msg) => msg === 'READY_FOR_FOLLOWUP')).toBe(true);
-        expect(assistantMessages.some((msg) => msg.includes('READY_FOR_FOLLOWUP') && msg !== 'READY_FOR_FOLLOWUP')).toBe(false);
+            const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+                [string, { type?: string; message?: string; text?: string }, { localId: string; meta?: Record<string, any> }]
+            >;
+            const assistantMessages = committedCalls
+                .map(([, body, opts]) => ({ body: body as CommittedSnapshotBody, opts }))
+                .filter((call) => call.body.type === 'message' && !call.body.sidechainId)
+                .map((call) => String(call.body?.message ?? ''));
+            expect(assistantMessages.some((msg) => msg === 'READY ')).toBe(true);
+            expect(assistantMessages.some((msg) => msg === 'READY_FOR_FOLLOWUP')).toBe(true);
+            expect(assistantMessages.some((msg) => msg.includes('READY_FOR_FOLLOWUP') && msg !== 'READY_FOR_FOLLOWUP')).toBe(false);
+        } finally {
+            if (previousInitialCheckpointMs === undefined) {
+                delete process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS;
+            } else {
+                process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS = previousInitialCheckpointMs;
+            }
+        }
     });
 
     it('keeps multiple assistant and reasoning item streams isolated within one turn', async () => {

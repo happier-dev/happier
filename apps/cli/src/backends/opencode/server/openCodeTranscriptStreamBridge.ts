@@ -32,6 +32,7 @@ function buildSidechainMeta(params: {
 export function createOpenCodeTranscriptStreamBridge(params: {
   provider: ACPProvider;
   session: TranscriptSessionPort;
+  initialCheckpointDelayMs?: number | null;
   checkpointIntervalMs?: number | null;
   checkpointMinChars?: number | null;
 }) {
@@ -42,6 +43,7 @@ export function createOpenCodeTranscriptStreamBridge(params: {
     sidechainId: string | null;
   }>({
     provider: params.provider,
+    initialCheckpointDelayMs: params.initialCheckpointDelayMs,
     checkpointIntervalMs: params.checkpointIntervalMs,
     checkpointMinChars: params.checkpointMinChars,
     createSessionForStream: (args) => {
