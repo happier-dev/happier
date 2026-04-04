@@ -44,16 +44,19 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
     const sidebarWidthBasisPx = useLocalSetting('settingsNavSidebarWidthBasisPx') ?? windowWidth;
     const [, setSidebarWidthPx] = useLocalSettingMutable('settingsNavSidebarWidthPx');
     const [, setSidebarWidthBasisPx] = useLocalSettingMutable('settingsNavSidebarWidthBasisPx');
+    const preferredSidebarWidthPx = typeof sidebarWidthPx === 'number' ? sidebarWidthPx : SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX;
+    const basisSidebarWidthPx = typeof sidebarWidthBasisPx === 'number' ? sidebarWidthBasisPx : windowWidth;
 
     const effectiveSidebarWidthPx = React.useMemo(() => {
         return resolveScaledPaneWidthPx({
-            preferredWidthPx: typeof sidebarWidthPx === 'number' ? sidebarWidthPx : SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX,
-            basisContainerWidthPx: typeof sidebarWidthBasisPx === 'number' ? sidebarWidthBasisPx : windowWidth,
+            preferredWidthPx: preferredSidebarWidthPx,
+            basisContainerWidthPx: basisSidebarWidthPx,
             containerWidthPx: windowWidth,
             minPx: SETTINGS_NAV_SIDEBAR_MIN_WIDTH_PX,
             maxPx: SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX,
+            skipScalingWhenPreferredWidthPxMatches: SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX,
         });
-    }, [sidebarWidthBasisPx, sidebarWidthPx, windowWidth]);
+    }, [basisSidebarWidthPx, preferredSidebarWidthPx, windowWidth]);
 
     if (!enabled) {
         return <View style={styles.root}>{props.children}</View>;

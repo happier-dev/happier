@@ -18,6 +18,9 @@ const {
     setFilesDiffRendererMode,
     setFilesDiffPresentationStyle,
     setFilesChangedFilesRowDensity,
+    setShowLineNumbers,
+    setShowLineNumbersInToolViews,
+    setWrapLinesInDiffs,
     setScmCommitMessageGeneratorEnabled,
     setScmCommitMessageGeneratorBackendId,
     setScmCommitMessageGeneratorInstructions,
@@ -31,6 +34,9 @@ const {
     setFilesDiffRendererMode: vi.fn(),
     setFilesDiffPresentationStyle: vi.fn(),
     setFilesChangedFilesRowDensity: vi.fn(),
+    setShowLineNumbers: vi.fn(),
+    setShowLineNumbersInToolViews: vi.fn(),
+    setWrapLinesInDiffs: vi.fn(),
     setScmCommitMessageGeneratorEnabled: vi.fn(),
     setScmCommitMessageGeneratorBackendId: vi.fn(),
     setScmCommitMessageGeneratorInstructions: vi.fn(),
@@ -56,6 +62,9 @@ installSettingsViewCommonModuleMocks({
                     if (name === 'filesDiffRendererMode') return ['pierre', setFilesDiffRendererMode];
                     if (name === 'filesDiffPresentationStyle') return [filesDiffPresentationStyleValue, setFilesDiffPresentationStyle];
                     if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
+                    if (name === 'showLineNumbers') return [true, setShowLineNumbers];
+                    if (name === 'showLineNumbersInToolViews') return [false, setShowLineNumbersInToolViews];
+                    if (name === 'wrapLinesInDiffs') return [false, setWrapLinesInDiffs];
                     if (name === 'scmCommitMessageGeneratorEnabled') return [true, setScmCommitMessageGeneratorEnabled];
                     if (name === 'scmCommitMessageGeneratorBackendId') return [DEFAULT_AGENT_ID, setScmCommitMessageGeneratorBackendId];
                     if (name === 'scmCommitMessageGeneratorInstructions') return ['', setScmCommitMessageGeneratorInstructions];
@@ -171,6 +180,27 @@ describe('SourceControlSettingsView', () => {
         screen.pressRowByTitle('settingsSourceControl.filesDisplay.changedFilesDensity.options.compact.title');
 
         expect(setFilesChangedFilesRowDensity).toHaveBeenCalledWith('compact');
+    });
+
+    it('renders code view toggles and updates their settings', async () => {
+        setShowLineNumbers.mockClear();
+        setShowLineNumbersInToolViews.mockClear();
+        setWrapLinesInDiffs.mockClear();
+
+        const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+
+        expect(screen.findRowByTitle('settingsAppearance.showLineNumbersInDiffs')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsAppearance.showLineNumbersInToolViews')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsAppearance.wrapLinesInDiffs')).toBeTruthy();
+
+        screen.pressRowByTitle('settingsAppearance.showLineNumbersInDiffs');
+        screen.pressRowByTitle('settingsAppearance.showLineNumbersInToolViews');
+        screen.pressRowByTitle('settingsAppearance.wrapLinesInDiffs');
+
+        expect(setShowLineNumbers).toHaveBeenCalledWith(false);
+        expect(setShowLineNumbersInToolViews).toHaveBeenCalledWith(true);
+        expect(setWrapLinesInDiffs).toHaveBeenCalledWith(true);
     });
 
     it('renders commit message generator settings and allows disabling', async () => {

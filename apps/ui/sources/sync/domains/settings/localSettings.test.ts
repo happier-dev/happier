@@ -8,6 +8,7 @@ describe('localSettingsParse', () => {
         expect(parsed.uiMultiPanePanelsEnabled).toBe(true);
         expect(parsed.uiItemDensity).toBe('cozy');
         expect(parsed.detailsPaneTabsBehavior).toBe('preview');
+        expect(parsed.settingsNavSidebarWidthPx).toBe(230);
         expect(parsed.sessionsListStorageTab).toBe('persisted');
         expect(parsed.activityBadgesEnabled).toBe(true);
         expect(parsed.activityBadgeShowUnread).toBe(true);
@@ -33,6 +34,14 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse(null)).toEqual(localSettingsDefaults);
         expect(localSettingsParse(undefined)).toEqual(localSettingsDefaults);
         expect(localSettingsParse('nope')).toEqual(localSettingsDefaults);
+    });
+
+    it('migrates legacy settings sidebar width defaults to the new fixed default', () => {
+        const parsed = localSettingsParse({
+            settingsNavSidebarWidthPx: 280,
+            settingsNavSidebarWidthBasisPx: 1200,
+        });
+        expect(parsed.settingsNavSidebarWidthPx).toBe(230);
     });
 
     it('migrates legacy uiFontSize to uiFontScale when uiFontScale is missing', () => {

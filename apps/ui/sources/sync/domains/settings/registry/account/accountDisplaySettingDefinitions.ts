@@ -38,7 +38,7 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
     showLineNumbers: {
         schema: z.boolean(),
         default: true,
-        description: 'Whether to show line numbers in diffs',
+        description: 'Whether to show line numbers in diff, file preview, and editor views',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
@@ -52,7 +52,7 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
     wrapLinesInDiffs: {
         schema: z.boolean(),
         default: false,
-        description: 'Whether to wrap long lines in diff views',
+        description: 'Whether to wrap long lines in diff, file preview, and editor views',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },

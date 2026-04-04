@@ -13,9 +13,14 @@ import {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const updateSkillPromptBundleWithEntrySpy = vi.fn(async () => {});
+let wrapLinesInDiffsSetting = true;
 
 installSkillBundleCommonModuleMocks({
     storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
+        useSetting: (key: string) => {
+            if (key === 'wrapLinesInDiffs') return wrapLinesInDiffsSetting;
+            return null;
+        },
         storage: {
             getState: () => ({
                 artifacts: {
@@ -106,6 +111,7 @@ async function renderSkillSupportingFileEditor(path: string | null) {
 
 describe('SkillBundleSupportingFileEditorScreen', () => {
     beforeEach(() => {
+        wrapLinesInDiffsSetting = true;
         skillBundleRouterBackSpy.mockReset();
         skillBundleRouterReplaceSpy.mockReset();
         updateSkillPromptBundleWithEntrySpy.mockClear();
@@ -150,5 +156,12 @@ describe('SkillBundleSupportingFileEditorScreen', () => {
             path: 'docs/checklist.md',
             content: 'checklist body',
         });
+    });
+
+    it('passes the shared wrap setting through to the supporting file editor', async () => {
+        wrapLinesInDiffsSetting = false;
+        const screen = await renderSkillSupportingFileEditor(null);
+
+        expect(screen.findByTestId('skillSupportingFile.editor')?.props.wrapLines).toBe(false);
     });
 });

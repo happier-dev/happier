@@ -8,7 +8,7 @@ import { PromptDocBodyV1Schema } from '@happier-dev/protocol';
 import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { sync } from '@/sync/sync';
-import { storage, useSettingMutable } from '@/sync/domains/state/storage';
+import { storage, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -62,6 +62,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
   const router = useRouter();
   const navigation = useNavigation();
   const [promptFoldersV1, setPromptFoldersV1] = useSettingMutable('promptFoldersV1');
+  const wrapLinesInDiffs = useSetting('wrapLinesInDiffs');
   const [isLoading, setIsLoading] = React.useState<boolean>(Boolean(props.artifactId));
   const [title, setTitle] = React.useState('');
   const [markdown, setMarkdown] = React.useState('');
@@ -182,7 +183,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
                 language="markdown"
                 onChange={setMarkdown}
                 readOnly={isLoading}
-                wrapLines={true}
+                wrapLines={wrapLinesInDiffs !== false}
                 showLineNumbers={false}
               />
             </View>

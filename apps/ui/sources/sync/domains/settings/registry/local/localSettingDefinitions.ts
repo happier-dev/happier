@@ -130,7 +130,7 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
     },
     settingsNavSidebarWidthPx: {
         schema: z.number(),
-        default: 280,
+        default: 230,
         description: 'Preferred settings navigation sidebar width in px',
         storageScope: 'local',
         analytics: {

@@ -225,6 +225,9 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [filesDiffRendererMode, setFilesDiffRendererMode] = useSettingMutable('filesDiffRendererMode');
     const [filesDiffPresentationStyle, setFilesDiffPresentationStyle] = useSettingMutable('filesDiffPresentationStyle');
     const [filesChangedFilesRowDensity, setFilesChangedFilesRowDensity] = useSettingMutable('filesChangedFilesRowDensity');
+    const [showLineNumbers, setShowLineNumbers] = useSettingMutable('showLineNumbers');
+    const [showLineNumbersInToolViews, setShowLineNumbersInToolViews] = useSettingMutable('showLineNumbersInToolViews');
+    const [wrapLinesInDiffs, setWrapLinesInDiffs] = useSettingMutable('wrapLinesInDiffs');
     const [scmCommitMessageGeneratorEnabled, setScmCommitMessageGeneratorEnabled] = useSettingMutable('scmCommitMessageGeneratorEnabled');
     const [scmCommitMessageGeneratorBackendId, setScmCommitMessageGeneratorBackendId] = useSettingMutable('scmCommitMessageGeneratorBackendId');
     const [scmCommitMessageGeneratorInstructions, setScmCommitMessageGeneratorInstructions] = useSettingMutable('scmCommitMessageGeneratorInstructions');
@@ -442,6 +445,30 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         showChevron={false}
                     />
                 ))}
+                <Item
+                    title={t('settingsAppearance.showLineNumbersInDiffs')}
+                    subtitle={t('settingsAppearance.showLineNumbersInDiffsDescription')}
+                    icon={renderIcon('list-outline')}
+                    rightElement={<Switch value={showLineNumbers === true} onValueChange={setShowLineNumbers} />}
+                    showChevron={false}
+                    onPress={() => setShowLineNumbers(showLineNumbers !== true)}
+                />
+                <Item
+                    title={t('settingsAppearance.showLineNumbersInToolViews')}
+                    subtitle={t('settingsAppearance.showLineNumbersInToolViewsDescription')}
+                    icon={renderIcon('code-working-outline')}
+                    rightElement={<Switch value={showLineNumbersInToolViews === true} onValueChange={setShowLineNumbersInToolViews} />}
+                    showChevron={false}
+                    onPress={() => setShowLineNumbersInToolViews(showLineNumbersInToolViews !== true)}
+                />
+                <Item
+                    title={t('settingsAppearance.wrapLinesInDiffs')}
+                    subtitle={t('settingsAppearance.wrapLinesInDiffsDescription')}
+                    icon={renderIcon('return-down-forward-outline')}
+                    rightElement={<Switch value={wrapLinesInDiffs === true} onValueChange={setWrapLinesInDiffs} />}
+                    showChevron={false}
+                    onPress={() => setWrapLinesInDiffs(wrapLinesInDiffs !== true)}
+                />
             </ItemGroup>
 
             {backendPlugins.map((plugin) => (

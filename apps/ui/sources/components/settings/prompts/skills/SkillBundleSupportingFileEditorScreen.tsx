@@ -14,6 +14,7 @@ import { Modal } from '@/modal';
 import { updateSkillPromptBundleWithEntry, readPromptBundleUtf8Entry } from '@/sync/ops/promptLibrary/promptBundles';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { useSetting } from '@/sync/domains/state/storage';
 
 import { readSkillBundleArtifactState } from './readSkillBundleArtifactState';
 
@@ -59,6 +60,7 @@ export const SkillBundleSupportingFileEditorScreen = React.memo(function SkillBu
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
+    const wrapLinesInDiffs = useSetting('wrapLinesInDiffs');
     const artifactState = React.useMemo(() => readSkillBundleArtifactState(props.artifactId), [props.artifactId]);
     const [path, setPath] = React.useState(props.path ?? '');
     const [content, setContent] = React.useState('');
@@ -122,7 +124,7 @@ export const SkillBundleSupportingFileEditorScreen = React.memo(function SkillBu
                                 language="markdown"
                                 onChange={setContent}
                                 readOnly={false}
-                                wrapLines={true}
+                                wrapLines={wrapLinesInDiffs !== false}
                                 showLineNumbers={false}
                             />
                         </View>

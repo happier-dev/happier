@@ -7,7 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { sync } from '@/sync/sync';
-import { storage, useSettingMutable } from '@/sync/domains/state/storage';
+import { storage, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { Item } from '@/components/ui/lists/Item';
@@ -73,6 +73,7 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
   const router = useRouter();
   const navigation = useNavigation();
   const [promptFoldersV1, setPromptFoldersV1] = useSettingMutable('promptFoldersV1');
+  const wrapLinesInDiffs = useSetting('wrapLinesInDiffs');
   const savedArtifactId = props.artifactId;
   const [isLoading, setIsLoading] = React.useState<boolean>(Boolean(props.artifactId));
   const [title, setTitle] = React.useState('');
@@ -286,7 +287,7 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
                   isSkillMarkdownDirtyRef.current = true;
                 }}
                 readOnly={isLoading}
-                wrapLines={true}
+                wrapLines={wrapLinesInDiffs !== false}
                 showLineNumbers={false}
               />
             </View>

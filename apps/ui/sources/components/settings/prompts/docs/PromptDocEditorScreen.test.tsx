@@ -14,6 +14,7 @@ import {
 
 const updatePromptDocSpy = vi.fn(async () => {});
 const setPromptFoldersSpy = vi.fn();
+let wrapLinesInDiffsSetting = true;
 const promptExternalLinksState = vi.hoisted(() => ({
     value: {
         v: 1,
@@ -72,6 +73,7 @@ installPromptLibrarySettingsCommonModuleMocks({
             ],
             useSetting: (key: string) => {
                 if (key === 'promptExternalLinksV1') return promptExternalLinksState.value;
+                if (key === 'wrapLinesInDiffs') return wrapLinesInDiffsSetting;
                 return null;
             },
             useSettingMutable: (key: string) => {
@@ -156,6 +158,7 @@ vi.mock('@/sync/ops/promptLibrary/promptDocs', () => ({
 
 describe('PromptDocEditorScreen', () => {
     beforeEach(() => {
+        wrapLinesInDiffsSetting = true;
         promptLibrarySettingsRouterBackSpy.mockReset();
         promptLibrarySettingsRouterReplaceSpy.mockReset();
         promptLibrarySettingsRouterPushSpy.mockReset();
@@ -215,5 +218,13 @@ describe('PromptDocEditorScreen', () => {
         expect(screen.findByTestId('promptDoc.tags')).toBeTruthy();
         expect(footer.props.primaryTestID).toBe('promptDoc.save');
         expect(screen.findAllByTestId('promptDoc.manageExternalAssets')).toHaveLength(0);
+    });
+
+    it('passes the shared wrap setting through to the markdown editor', async () => {
+        wrapLinesInDiffsSetting = false;
+        const { PromptDocEditorScreen } = await import('./PromptDocEditorScreen');
+        const screen = await renderScreen(React.createElement(PromptDocEditorScreen, { artifactId: null }));
+
+        expect(screen.findByTestId('promptDoc.editor')?.props.wrapLines).toBe(false);
     });
 });

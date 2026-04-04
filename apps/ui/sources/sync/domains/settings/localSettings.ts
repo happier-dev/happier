@@ -60,7 +60,20 @@ export function localSettingsParse(settings: unknown): LocalSettings {
             ? clamp(nextUiFontScaleRaw, UI_FONT_SCALE_MIN, UI_FONT_SCALE_MAX)
             : localSettingsDefaults.uiFontScale;
 
-    return { ...localSettingsDefaults, ...parsed.data, uiFontScale: nextUiFontScale };
+    const next: LocalSettings = { ...localSettingsDefaults, ...parsed.data, uiFontScale: nextUiFontScale };
+
+    // Migration: older builds persisted the then-default settings sidebar width into storage.
+    // When a user never resized the sidebar, their storage can still contain that legacy default
+    // value. Treat it as "unset" so the newer default applies.
+    const LEGACY_SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX = 280;
+    if (
+        next.settingsNavSidebarWidthPx === LEGACY_SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX
+        && next.settingsNavSidebarWidthBasisPx === 1200
+    ) {
+        next.settingsNavSidebarWidthPx = localSettingsDefaults.settingsNavSidebarWidthPx;
+    }
+
+    return next;
 }
 
 //

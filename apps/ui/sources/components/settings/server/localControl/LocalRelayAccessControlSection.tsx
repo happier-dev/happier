@@ -434,7 +434,7 @@ export const LocalRelayAccessControlSection = React.memo(function LocalRelayAcce
                                     pointerEvents="none"
                                     style={[
                                         StyleSheet.absoluteFillObject,
-                                        (createBackdropWebStyle({ backgroundColor: overlayScrimColor, blurPx: 12 }) as unknown as Record<string, unknown>),
+                                        (createBackdropWebStyle({ backgroundColor: overlayScrimColor, blurPx: 2 }) as unknown as Record<string, unknown>),
                                     ]}
                                 />
                             )}

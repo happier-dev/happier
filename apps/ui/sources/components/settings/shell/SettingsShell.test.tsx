@@ -8,7 +8,7 @@ import { renderScreen } from '@/dev/testkit';
 const windowDimsState = vi.hoisted(() => ({ width: 1600, height: 900 }));
 const localSettingsState = vi.hoisted(() => ({
     values: new Map<string, unknown>([
-        ['settingsNavSidebarWidthPx', 220],
+        ['settingsNavSidebarWidthPx', 230],
         ['settingsNavSidebarWidthBasisPx', 1200],
         ['settingsNavSidebarEnabled', true],
     ]),
@@ -75,6 +75,8 @@ describe('SettingsShell', () => {
     afterEach(() => {
         windowDimsState.width = 1600;
         windowDimsState.height = 900;
+        localSettingsState.values.set('settingsNavSidebarWidthPx', 230);
+        localSettingsState.values.set('settingsNavSidebarWidthBasisPx', 1200);
         localSettingsState.values.set('settingsNavSidebarEnabled', true);
     });
 
@@ -98,6 +100,18 @@ describe('SettingsShell', () => {
 
         expect(screen.findByTestId('settings-sidebar')).toBeTruthy();
         expect(screen.findByTestId('child')).toBeTruthy();
+    });
+
+    it('uses the default sidebar width when the local width setting is missing', async () => {
+        localSettingsState.values.delete('settingsNavSidebarWidthPx');
+        windowDimsState.width = 1600;
+        const { SettingsShell } = await import('./SettingsShell');
+        const screen = await renderScreen(
+            React.createElement(SettingsShell, null, React.createElement('Child', { testID: 'child' }))
+        );
+
+        expect(screen.findByTestId('settings-sidebar')).toBeTruthy();
+        expect(screen.findByType('ResizableDockedPane').props.widthPx).toBe(230);
     });
 
     it('hides the settings sidebar when disabled by local settings', async () => {
