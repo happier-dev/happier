@@ -123,10 +123,13 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
         if (!isWebQrScannerSupported()) return false;
         return isWebMobileLikeQrScannerHost({ width, height });
     }, [height, width]);
+    const webPreviewMinHeight = React.useMemo(() => {
+        if (Platform.OS !== 'web') return null;
+        return Math.max(280, Math.min(Math.round(height * 0.6), 520));
+    }, [height]);
 
     React.useEffect(() => {
         if (!canUseCamera) return;
-        if (Platform.OS === 'web') return;
         if (permission?.granted) return;
         void requestPermission().catch(() => {});
     }, [canUseCamera, permission?.granted, requestPermission]);
@@ -231,7 +234,17 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     }
 
     return (
-        <View style={styles.root}>
+        <View
+            style={[
+                styles.root,
+                Platform.OS === 'web' && webPreviewMinHeight != null
+                    ? {
+                        width: '100%',
+                        minHeight: webPreviewMinHeight,
+                    }
+                    : null,
+            ]}
+        >
             <CameraView
                 style={styles.camera}
                 barcodeScannerSettings={{ barcodeTypes: ['qr'] }}

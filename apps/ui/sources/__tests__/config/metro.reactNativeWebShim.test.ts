@@ -38,6 +38,16 @@ function loadMetroConfig(uiDir: string, envOverrides: Record<string, string | nu
 }
 
 describe('metro.config.js (web)', () => {
+    it('keeps Expo default workspace watch folders in local development', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir);
+
+        expect(config.watchFolders).toContain(resolve(repoRoot, 'apps/website'));
+        expect(config.watchFolders).toContain(resolve(repoRoot, 'apps/docs'));
+        expect(config.watchFolders).toContain(resolve(repoRoot, 'packages/tests'));
+    });
+
     it('watches the monorepo root node_modules (SHA-1 hashing for hoisted deps)', () => {
         const uiDir = getUiDir();
         const repoRoot = resolve(uiDir, '..', '..');
@@ -64,28 +74,36 @@ describe('metro.config.js (web)', () => {
         }
     });
 
-    it('disables Watchman by default (reliability in large monorepos)', () => {
+    it('keeps Watchman enabled by default in local development', () => {
         const uiDir = getUiDir();
         const config = loadMetroConfig(uiDir);
 
-        expect(config.resolver.useWatchman).toBe(false);
-        expect(config.watcher?.useWatchman).toBe(false);
-    });
-
-    it('allows enabling Watchman via env var (fast incremental rebuilds on stable machines)', () => {
-        const uiDir = getUiDir();
-        const config = loadMetroConfig(uiDir, { HAPPIER_UI_METRO_USE_WATCHMAN: '1' });
-
         expect(config.resolver.useWatchman).toBe(true);
-        expect(config.watcher?.useWatchman).toBe(true);
+        expect(config.watcher).not.toHaveProperty('useWatchman');
     });
 
-    it('keeps Watchman disabled in CI even when HAPPIER_UI_METRO_USE_WATCHMAN=1 (deterministic runners)', () => {
+    it('allows disabling Watchman via env var for crawler-sensitive environments', () => {
         const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir, { HAPPIER_UI_METRO_USE_WATCHMAN: '0' });
+
+        expect(config.resolver.useWatchman).toBe(false);
+        expect(config.watcher).not.toHaveProperty('useWatchman');
+        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'apps/website'));
+        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'apps/docs'));
+        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'packages/tests'));
+    });
+
+    it('keeps Watchman disabled in CI even when HAPPIER_UI_METRO_USE_WATCHMAN=1', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
         const config = loadMetroConfig(uiDir, { CI: '1', HAPPIER_UI_METRO_USE_WATCHMAN: '1' });
 
         expect(config.resolver.useWatchman).toBe(false);
-        expect(config.watcher?.useWatchman).toBe(false);
+        expect(config.watcher).not.toHaveProperty('useWatchman');
+        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'apps/website'));
+        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'apps/docs'));
+        expect(config.watchFolders).not.toContain(resolve(repoRoot, 'packages/tests'));
     });
 
     it('shims react-native to provide unstable_batchedUpdates (LegendList compatibility)', () => {

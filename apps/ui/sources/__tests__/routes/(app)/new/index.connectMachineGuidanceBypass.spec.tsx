@@ -55,10 +55,12 @@ vi.mock('@/utils/sessions/tempDataStore', () => ({
 }));
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
-    useSessionGettingStartedGuidanceBaseModel: () => ({ kind: 'connect_machine' }),
     SessionGettingStartedGuidance: (props: { variant: string }) => (
         <View testID={`guidance:${props.variant}`} />
     ),
+}));
+vi.mock('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel', () => ({
+    useSessionGettingStartedGuidanceBaseModel: () => ({ kind: 'connect_machine' }),
 }));
 
 vi.mock('@/components/sessions/new/components/NewSessionSimplePanel', () => ({

@@ -60,9 +60,14 @@ describe('WizardCardLayout (narrow viewport)', () => {
 
         const flattenedRoot = flattenStyleProp(root.props?.style);
         expect(flattenedRoot.backgroundColor).toBeTruthy();
+        expect(flattenedRoot.flex).toBe(1);
+        expect(flattenedRoot.minHeight).toBe('100%');
 
         const flattenedCard = flattenStyleProp(card.props.style as unknown);
         expect(flattenedCard.borderRadius).toBe(0);
+        expect(flattenedCard.flex).toBe(1);
+        expect(flattenedCard.alignSelf).toBe('stretch');
+        expect(flattenedCard.minHeight).toBe('100%');
         expect(flattenedCard.maxWidth).toBe('100%');
     });
 });

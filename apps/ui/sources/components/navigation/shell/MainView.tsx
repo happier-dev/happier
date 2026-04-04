@@ -1,12 +1,9 @@
 import * as React from 'react';
-import { View, ActivityIndicator, Pressable } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useSocketStatus } from '@/sync/domains/state/storage';
-import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { useIsTablet } from '@/utils/platform/responsive';
-import { usePathname, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
-import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
 import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
 import { FABWide } from '@/components/ui/buttons/FABWide';
@@ -16,6 +13,7 @@ import { FriendsView } from '@/components/navigation/shell/FriendsView';
 import { SettingsViewWrapper } from '@/components/settings/shell/SettingsViewWrapper';
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
 import { ProjectsListView } from '@/components/projects/ProjectsListView';
+import { DirectSessionsEmptyState } from '@/components/sessions/shell/DirectSessionsEmptyState';
 import { Header } from '@/components/navigation/Header';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
@@ -35,6 +33,7 @@ import { useTabState } from '@/hooks/ui/useTabState';
 import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import type { FeatureId } from '@happier-dev/protocol';
+import { SessionsListPaneContent } from '@/components/sessions/shell/SessionsListPaneContent';
 
 
 interface MainViewProps {
@@ -53,60 +52,10 @@ const styles = StyleSheet.create((theme) => ({
     phoneContainer: {
         flex: 1,
     },
-	    sidebarContentContainer: {
-	        flex: 1,
-	        flexBasis: 0,
-	        flexGrow: 1,
-	    },
-	    loadingContainerWrapper: {
-	        flex: 1,
-	        flexBasis: 0,
-	        flexGrow: 1,
-        backgroundColor: theme.colors.groupped.background,
-    },
-    loadingContainer: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingBottom: 32,
-    },
-    tabletLoadingContainer: {
+    sidebarContentContainer: {
         flex: 1,
         flexBasis: 0,
         flexGrow: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    emptyStateContainer: {
-        flex: 1,
-        flexBasis: 0,
-        flexGrow: 1,
-        flexDirection: 'column',
-        backgroundColor: theme.colors.groupped.background,
-    },
-    emptyStateContentContainer: {
-        flex: 1,
-        flexBasis: 0,
-        flexGrow: 1,
-    },
-    sidebarEmptyHintContainer: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-        paddingHorizontal: 16,
-        paddingTop: 24,
-        gap: 8,
-    },
-    sidebarEmptyHintTitle: {
-        fontSize: 15,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
-    },
-    sidebarEmptyHintSubtitle: {
-        fontSize: 13,
-        color: theme.colors.textSecondary,
-        textAlign: 'center',
-        ...Typography.default(),
     },
     titleContainer: {
         flex: 1,
@@ -266,10 +215,8 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
 export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { theme } = useUnistyles();
     const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
-    const sessionListViewData = useVisibleSessionListViewData(variant === 'sidebar' ? storageKind : 'all');
     const isTablet = useIsTablet();
     const router = useRouter();
-    const pathname = usePathname();
     const friendsEnabled = useFriendsEnabled();
     const inboxEnabled = useInboxAvailable();
     const voiceEnabled = useFeatureEnabled('voice');
@@ -332,48 +279,11 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
             />
         );
 
-        // Loading state
-        if (sessionListViewData === null) {
-            return (
-                <View style={styles.sidebarContainer}>
-                    {storageChrome}
-                    <View style={styles.sidebarContentContainer}>
-                        <View style={styles.tabletLoadingContainer}>
-                            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                        </View>
-                    </View>
-                </View>
-            );
-        }
-
-        // Empty state
-        if (sessionListViewData.length === 0) {
-            const suppressSidebarGuidance = isTablet && pathname === '/';
-            return (
-                <View style={styles.sidebarContainer}>
-                    {storageChrome}
-                    <View style={styles.sidebarContentContainer}>
-                        <View style={styles.emptyStateContainer}>
-                            {suppressSidebarGuidance ? (
-                                <View style={styles.sidebarEmptyHintContainer}>
-                                    <Text style={styles.sidebarEmptyHintTitle}>{t('components.emptySessionsTablet.noActiveSessions')}</Text>
-                                    <Text style={styles.sidebarEmptyHintSubtitle}>{t('components.emptySessionsTablet.startNewSessionDescription')}</Text>
-                                </View>
-                            ) : (
-                                <SessionGettingStartedGuidance variant="sidebar" />
-                            )}
-                        </View>
-                    </View>
-                </View>
-            );
-        }
-
-        // Sessions list
         return (
             <View style={styles.sidebarContainer}>
                 {storageChrome}
                 <View style={styles.sidebarContentContainer}>
-                    <SessionsList storageKind={storageKind} />
+                    <SessionsListPaneContent storageKind={storageKind} fallbackGuidanceVariant="sidebar" />
                 </View>
             </View>
         );
@@ -384,6 +294,13 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     if (isTablet) {
         const buildPolicyDecision = getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID);
         if (buildPolicyDecision !== 'deny') {
+            if (directSessionsEnabled && storageKind === 'direct') {
+                return (
+                    <View style={styles.primaryPaneFallback}>
+                        <DirectSessionsEmptyState surface="primaryPane" />
+                    </View>
+                );
+            }
             return <SessionGettingStartedGuidance variant="primaryPane" />;
         }
         return (

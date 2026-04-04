@@ -16,6 +16,12 @@ const buildPolicyState = vi.hoisted(() => ({
 }));
 
 const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
+const localSettingsState = vi.hoisted(() => ({
+    sessionsListStorageTab: 'persisted' as 'persisted' | 'direct',
+}));
+const directSessionsFeatureState = vi.hoisted(() => ({
+    enabled: false,
+}));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -50,7 +56,7 @@ installNavigationShellCommonModuleMocks({
             useRealtimeStatus: () => ({ status: 'idle' }),
             useLocalSettingMutable: (name: string) => {
                 if (name === 'sessionsListStorageTab') {
-                    return ['persisted', setSessionsListStorageTabSpy] as const;
+                    return [localSettingsState.sessionsListStorageTab, setSessionsListStorageTabSpy] as const;
                 }
                 throw new Error(`Unexpected local setting: ${name}`);
             },
@@ -91,9 +97,9 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({
-        state: 'disabled',
-        blockerCode: 'feature_disabled',
-        blockedBy: 'local_policy',
+        state: directSessionsFeatureState.enabled ? 'enabled' : 'disabled',
+        blockerCode: directSessionsFeatureState.enabled ? 'none' : 'feature_disabled',
+        blockedBy: directSessionsFeatureState.enabled ? null : 'local_policy',
         diagnostics: [],
         evaluatedAt: 0,
         featureId: 'sessions.direct',
@@ -115,6 +121,9 @@ vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
+}));
+vi.mock('@/components/sessions/shell/DirectSessionsEmptyState', () => ({
+    DirectSessionsEmptyState: 'DirectSessionsEmptyState',
 }));
 
 vi.mock('@/components/sessions/shell/SessionsList', () => ({
@@ -174,6 +183,8 @@ describe('MainView (tablet primary pane)', () => {
         sessionListState.data = [];
         buildPolicyState.decision = 'neutral';
         setSessionsListStorageTabSpy.mockReset();
+        localSettingsState.sessionsListStorageTab = 'persisted';
+        directSessionsFeatureState.enabled = false;
     });
 
     it('shows getting started guidance instead of a blank view', async () => {
@@ -183,6 +194,18 @@ describe('MainView (tablet primary pane)', () => {
         tree = (await renderScreen(<MainView variant="phone" />)).tree;
 
         expect(() => tree!.findByType('SessionGettingStartedGuidance')).not.toThrow();
+    });
+
+    it('shows the direct sessions empty state in the primary pane when the direct tab is active', async () => {
+        const { MainView } = await import('./MainView');
+        directSessionsFeatureState.enabled = true;
+        localSettingsState.sessionsListStorageTab = 'direct';
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<MainView variant="phone" />)).tree;
+
+        expect(() => tree!.findByType('DirectSessionsEmptyState')).not.toThrow();
+        expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
     });
 
     it('shows a fallback view when getting started guidance is denied by build policy', async () => {

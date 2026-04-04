@@ -10,6 +10,11 @@ const deviceState = vi.hoisted(() => ({
     windowHeight: 800,
 }));
 
+const cameraState = vi.hoisted(() => ({
+    permission: { granted: true } as { granted: boolean } | null,
+    requestPermission: vi.fn(async () => ({ granted: true })),
+}));
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -80,15 +85,29 @@ vi.mock('expo-camera', () => ({
         lastCameraProps = props;
         return React.createElement('CameraView', props);
     },
-    useCameraPermissions: () => [{ granted: true }, vi.fn(async () => ({ granted: true }))],
+    useCameraPermissions: () => [cameraState.permission, cameraState.requestPermission],
 }));
 
 describe('QrCodeScannerView', () => {
+    function flattenStyle(style: unknown): Record<string, unknown> {
+        if (!style) return {};
+        if (Array.isArray(style)) {
+            return style.reduce<Record<string, unknown>>((acc, entry) => ({ ...acc, ...flattenStyle(entry) }), {});
+        }
+        if (typeof style === 'object') {
+            return style as Record<string, unknown>;
+        }
+        return {};
+    }
+
     beforeEach(() => {
         lastCameraProps = null;
         deviceState.platformOs = 'ios';
         deviceState.windowWidth = 360;
         deviceState.windowHeight = 800;
+        cameraState.permission = { granted: true };
+        cameraState.requestPermission.mockReset();
+        cameraState.requestPermission.mockResolvedValue({ granted: true });
         vi.unstubAllGlobals();
     });
 
@@ -150,6 +169,51 @@ describe('QrCodeScannerView', () => {
                     testIDPrefix="test"
                 />);
         expect(lastCameraProps).not.toBeNull();
+    });
+
+    it('auto-requests camera permission on phone-sized web instead of waiting for a manual retry tap', async () => {
+        deviceState.platformOs = 'web';
+        deviceState.windowWidth = 360;
+        deviceState.windowHeight = 800;
+        cameraState.permission = { granted: false };
+        vi.stubGlobal('navigator', { maxTouchPoints: 5, mediaDevices: { getUserMedia: async () => ({}) } } as any);
+
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        await renderScreen(<QrCodeScannerView
+                    title="t"
+                    permissionRequiredMessage="perm"
+                    onCancel={vi.fn()}
+                    onScan={vi.fn()}
+                    testIDPrefix="test"
+                />);
+
+        expect(cameraState.requestPermission).toHaveBeenCalledTimes(1);
+    });
+
+    it('guarantees a non-zero preview surface for embedded phone-sized web scanners', async () => {
+        deviceState.platformOs = 'web';
+        deviceState.windowWidth = 360;
+        deviceState.windowHeight = 800;
+        vi.stubGlobal('navigator', { maxTouchPoints: 5, mediaDevices: { getUserMedia: async () => ({}) } } as any);
+
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        const screen = await renderScreen(<QrCodeScannerView
+                    embedded
+                    title="t"
+                    permissionRequiredMessage="perm"
+                    onCancel={vi.fn()}
+                    onScan={vi.fn()}
+                    testIDPrefix="test"
+                />);
+
+        const matchingView = screen.findAllByType('View' as any).find((node) => {
+            const style = flattenStyle(node.props.style);
+            return typeof style.minHeight === 'number' && style.minHeight > 0;
+        });
+
+        expect(matchingView).toBeTruthy();
     });
 
     it('does not render a camera scanner on desktop web even when camera APIs exist', async () => {

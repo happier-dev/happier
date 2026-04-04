@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, Platform } from 'react-native';
+import { Linking, Platform, useWindowDimensions } from 'react-native';
 
 import { useRouter } from 'expo-router';
 
@@ -37,6 +37,7 @@ import {
     type WizardStepId,
 } from '@/components/onboarding';
 import { OnboardingWizardSurface } from '@/components/onboarding/surfaces/OnboardingWizardSurface';
+import { shouldUseWizardFullscreenPresentation } from '@/components/onboarding/ui/wizardPresentation';
 
 export type PreAuthOnboardingWizardEntryProps = Readonly<{
     testID?: string;
@@ -52,11 +53,13 @@ function resolveAuthReturnToRoute(): string {
 export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardingWizardEntry(props: PreAuthOnboardingWizardEntryProps) {
     const auth = useAuth();
     const router = useRouter();
+    const { width: windowWidth } = useWindowDimensions();
     const isLandscape = useIsLandscape();
     const isDesktopShell = React.useMemo(() => isTauriDesktop(), []);
     const authEntryOptions = useAuthEntryOptions();
     const autoRedirectAttemptedRef = React.useRef(false);
     const firstLaunchSetupRedirectedRef = React.useRef(false);
+    const shouldTopAlignWebModal = shouldUseWizardFullscreenPresentation(windowWidth);
 
     React.useEffect(() => {
         if (!props.clearPendingSetupIntentOnMount) {
@@ -340,6 +343,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
                 visible
                 showBackdrop
                 closeOnBackdrop={false}
+                webPlacement={shouldTopAlignWebModal ? 'top' : undefined}
             >
                 {wizard}
             </BaseModal>

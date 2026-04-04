@@ -12,6 +12,7 @@ import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 
 import { WizardCardLayout } from './WizardCardLayout';
 import { WizardStepDots } from './WizardStepDots';
+import { shouldUseWizardFullscreenPresentation } from './wizardPresentation';
 
 function isRelayFooterHint(node: React.ReactNode): node is React.ReactElement<{ testID?: string }> {
     if (!React.isValidElement(node)) return false;
@@ -73,6 +74,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'column',
         flexShrink: 1,
         minHeight: 0,
+    },
+    shellFullscreen: {
+        flex: 1,
+        minHeight: '100%',
     },
     header: {
         paddingHorizontal: 22,
@@ -192,7 +197,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
     const showSkip = props.showSkip ?? true;
     const showBack = props.showBack ?? true;
     const skipDisabled = props.skipDisabled ?? false;
-    const wantsFullscreen = Number.isFinite(windowWidth) && windowWidth > 0 && windowWidth <= 430;
+    const wantsFullscreen = shouldUseWizardFullscreenPresentation(windowWidth);
     const shouldDisableInternalScrim = isInsideModalBoundary;
     const shouldUseInternalScrollHost = props.scrollable ?? !isInsideModalBoundary;
     const headerPaddingTop = (wantsFullscreen ? 12 : 18) + insets.top;
@@ -218,7 +223,13 @@ export function WizardModalShell(props: WizardModalShellProps) {
                 scrollable={shouldUseInternalScrollHost}
                 showScrim={shouldDisableInternalScrim ? false : true}
             >
-                <View testID={props.testID} style={styles.shell}>
+                <View
+                    testID={props.testID}
+                    style={[
+                        styles.shell,
+                        wantsFullscreen ? styles.shellFullscreen : null,
+                    ]}
+                >
                 <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
                     <View style={styles.headerSide}>
                         <HeaderLogo />

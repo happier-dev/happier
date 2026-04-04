@@ -251,4 +251,78 @@ describe('InboxView session attention', () => {
         expect(text).toContain('~/repo');
         expect(text).not.toContain('status.permissionRequired');
     });
+
+    it('renders unread sessions in inbox and does not list shared sessions there', async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+
+        vi.doMock('@/sync/domains/state/storage', async () => {
+            return createStorageModuleStub({
+                useArtifacts: () => [],
+                useFriendRequests: () => [],
+                useRequestedFriends: () => [],
+                useFeedItems: () => [],
+                useFeedLoaded: () => true,
+                useFriendsLoaded: () => true,
+                useAllSessions: () => [
+                    {
+                        id: 'session-unread',
+                        seq: 5,
+                        lastViewedSessionSeq: 2,
+                        updatedAt: 50,
+                        createdAt: 10,
+                        active: false,
+                        activeAt: 10,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 10,
+                        metadata: {
+                            name: 'Unread session',
+                            path: '/Users/leeroy/unread',
+                            homeDir: '/Users/leeroy',
+                        },
+                        metadataVersion: 0,
+                        agentState: null,
+                        agentStateVersion: 0,
+                        owner: null,
+                    },
+                    {
+                        id: 'session-shared',
+                        seq: 0,
+                        lastViewedSessionSeq: 0,
+                        updatedAt: 40,
+                        createdAt: 9,
+                        active: false,
+                        activeAt: 9,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 9,
+                        metadata: {
+                            name: 'Shared session',
+                            path: '/Users/leeroy/shared',
+                            homeDir: '/Users/leeroy',
+                        },
+                        metadataVersion: 0,
+                        agentState: null,
+                        agentStateVersion: 0,
+                        owner: 'friend-1',
+                        ownerProfile: { username: 'friend', id: 'friend-1', firstName: null, lastName: null, avatar: null },
+                    },
+                ],
+                useMachine: () => null,
+                storage: {
+                    getState: () => storageState,
+                },
+            });
+        });
+
+        vi.resetModules();
+        const { InboxView } = await import('./InboxView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<InboxView />)).tree;
+
+        const items = tree!.findAllByType('Item');
+        expect(items.some((item) => item.props.title === 'Unread session')).toBe(true);
+        expect(items.some((item) => item.props.title === 'Shared session')).toBe(false);
+    });
 });

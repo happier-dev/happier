@@ -21,6 +21,9 @@ const directSessionsFeatureState = vi.hoisted(() => ({
 const localSettingsState = vi.hoisted(() => ({
     sessionsListStorageTab: 'persisted' as 'persisted' | 'direct',
 }));
+const gettingStartedState = vi.hoisted(() => ({
+    kind: 'create_session' as 'create_session' | 'connect_machine' | 'start_daemon' | 'select_session' | 'loading',
+}));
 
 installNavigationShellCommonModuleMocks({
     router: async () => {
@@ -102,6 +105,18 @@ vi.mock('@/hooks/ui/useTabState', () => ({
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
 }));
+vi.mock('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel', () => ({
+    useSessionGettingStartedGuidanceBaseModel: () => ({
+        kind: gettingStartedState.kind,
+        targetLabel: 'leeroy-mbp',
+        serverUrl: 'http://example.test',
+        serverName: 'server-1',
+        showServerSetup: false,
+    }),
+}));
+vi.mock('@/components/sessions/shell/SessionsListEmptyState', () => ({
+    SessionsListEmptyState: 'SessionsListEmptyState',
+}));
 
 vi.mock('@/components/sessions/shell/SessionsList', () => ({
     SessionsList: 'SessionsList',
@@ -172,6 +187,7 @@ describe('MainView sidebar actions', () => {
         sessionListState.data = [];
         directSessionsFeatureState.enabled = false;
         localSettingsState.sessionsListStorageTab = 'persisted';
+        gettingStartedState.kind = 'create_session';
     });
 
     beforeAll(async () => {
@@ -186,10 +202,21 @@ describe('MainView sidebar actions', () => {
         expect(() => findPressableByLabel(tree!, 'Open automations')).toThrow();
     });
 
-    it('does not duplicate getting started guidance when primary pane is visible (home route)', async () => {
+    it('renders the shared sessions empty state in the sidebar instead of the legacy guidance card', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
+        expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
+        expect(() => tree!.findByType('SessionsListEmptyState')).not.toThrow();
+    });
+
+    it('keeps using the shared sessions empty state for reconnect states in the sidebar', async () => {
+        gettingStartedState.kind = 'connect_machine';
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
+
+        expect(() => tree!.findByType('SessionsListEmptyState')).not.toThrow();
         expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
     });
 

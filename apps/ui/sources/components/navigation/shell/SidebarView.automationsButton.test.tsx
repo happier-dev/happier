@@ -394,6 +394,7 @@ describe('SidebarView header automations button', () => {
 
         expect(screen.findAllByTestId('sidebar-header-actions-overflow')).toHaveLength(0);
         expect(screen.findAllByTestId('sidebar-inbox-button').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('nav-projects').length).toBeGreaterThan(0);
         expect(screen.findAllByTestId('nav-settings').length).toBeGreaterThan(0);
         expect(screen.findAllByTestId('nav-new-session').length).toBeGreaterThan(0);
     });
@@ -406,6 +407,8 @@ describe('SidebarView header automations button', () => {
         expect(screen.findAllByTestId('sidebar-header-actions-overflow').length).toBeGreaterThan(0);
         // Compact layout hides inbox/friends into the overflow menu.
         expect(screen.findAllByTestId('sidebar-inbox-button')).toHaveLength(0);
+        // Projects stays pinned so it remains discoverable on desktop.
+        expect(screen.findAllByTestId('nav-projects').length).toBeGreaterThan(0);
         // Keep new-session pinned so it remains one-tap even when space is tight.
         expect(screen.findAllByTestId('nav-new-session').length).toBeGreaterThan(0);
     });
@@ -423,12 +426,17 @@ describe('SidebarView header automations button', () => {
             screen.findByTestId('nav-settings'),
             'settings button',
         );
+        const projects = requireTestInstance(
+            screen.findByTestId('nav-projects'),
+            'projects button',
+        );
         const newSession = requireTestInstance(
             screen.findByTestId('nav-new-session'),
             'new session button',
         );
 
         expect(overflow.parent).toBe(settings.parent);
+        expect(overflow.parent).toBe(projects.parent);
         expect(overflow.parent).toBe(newSession.parent);
 
         const parent = requireTestInstance(overflow.parent, 'header action parent');
@@ -438,6 +446,7 @@ describe('SidebarView header automations button', () => {
             .filter(Boolean) as string[];
 
         expect(order.indexOf('sidebar-header-actions-overflow')).toBeLessThan(order.indexOf('nav-settings'));
+        expect(order.indexOf('sidebar-header-actions-overflow')).toBeLessThan(order.indexOf('nav-projects'));
         expect(order.indexOf('sidebar-header-actions-overflow')).toBeLessThan(order.indexOf('nav-new-session'));
     });
 });

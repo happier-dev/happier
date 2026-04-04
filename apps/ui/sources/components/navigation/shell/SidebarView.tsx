@@ -348,6 +348,23 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
         }
 
         out.push({
+            id: 'projects',
+            title: t('tabs.projects'),
+            inlineTestID: 'nav-projects',
+            icon: (
+                <View style={styles.iconButton}>
+                    <Ionicons name="folder-outline" size={24} color={theme.colors.header.tint} />
+                </View>
+            ),
+            onPress: () => {
+                const result = runGuardedNavigation(() => router.push('/projects'));
+                if (result !== true) {
+                    fireAndForget(result, { tag: 'SidebarView.nav.projects' });
+                }
+            },
+        });
+
+        out.push({
             id: 'settings',
             title: t('settings.title'),
             inlineTestID: 'nav-settings',
@@ -451,8 +468,8 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                             actions={headerActions}
                             layoutWidthPx={props.sidebarWidthPx ?? null}
                             compactThreshold={SIDEBAR_DOCK_MIN_WIDTH_PX + 120}
-                            compactActionIds={['settings', 'newSession']}
-                            pinnedActionIds={['settings', 'newSession']}
+                            compactActionIds={['projects', 'settings', 'newSession']}
+                            pinnedActionIds={['projects', 'settings', 'newSession']}
                             overflowPosition="beforePinned"
                             overflowTriggerTestID="sidebar-header-actions-overflow"
                             popoverBoundaryRef={popoverBoundaryRef}

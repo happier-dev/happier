@@ -3,6 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
+const reactNativeState = vi.hoisted(() => ({
+    windowWidth: 390,
+    windowHeight: 844,
+}));
+
 const routerMocks = vi.hoisted(() => ({
     push: vi.fn(),
     replace: vi.fn(),
@@ -11,7 +16,14 @@ const routerMocks = vi.hoisted(() => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({
+            width: reactNativeState.windowWidth,
+            height: reactNativeState.windowHeight,
+            scale: 2,
+            fontScale: 1,
+        }),
+    });
 });
 
 vi.mock('expo-router', () => ({
@@ -103,6 +115,8 @@ describe('PreAuthOnboardingWizardEntry', () => {
 
     beforeEach(() => {
         process.env.EXPO_PUBLIC_DEBUG = '1';
+        reactNativeState.windowWidth = 390;
+        reactNativeState.windowHeight = 844;
         routerMocks.push.mockReset();
         routerMocks.replace.mockReset();
         routerMocks.back.mockReset();
@@ -128,11 +142,13 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(wizard.props.initialStepId).toBe('relay_select');
     });
 
-    it('wraps the onboarding wizard in a BaseModal on web so the backdrop covers the full viewport', async () => {
+    it('wraps the onboarding wizard in a top-aligned BaseModal on narrow web so the wizard can use fullscreen presentation', async () => {
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
 
-        expect(screen.findByType('BaseModal' as never)).toBeTruthy();
+        const modal = screen.findByType('BaseModal' as never);
+        expect(modal.props.showBackdrop).toBe(true);
+        expect(modal.props.webPlacement).toBe('top');
     });
 
     it('routes the change-relay action to the wizard relay selection step', async () => {

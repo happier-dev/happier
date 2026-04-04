@@ -9,6 +9,7 @@ import { useModalCardDimensions } from '@/modal/components/card/useModalCardDime
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { preloadReactDOM } from '@/utils/web/reactDomCjs';
+import { shouldUseWizardFullscreenPresentation } from './wizardPresentation';
 
 export type WizardCardLayoutProps = Readonly<{
     children: React.ReactNode;
@@ -50,6 +51,7 @@ const stylesheet = StyleSheet.create((theme, _runtime) => ({
     rootOuterScrollFullscreen: {
         flex: 1,
         backgroundColor: theme.colors.surface,
+        minHeight: '100%',
         width: '100%',
         alignSelf: 'stretch',
     },
@@ -106,6 +108,11 @@ const stylesheet = StyleSheet.create((theme, _runtime) => ({
         borderRadius: 0,
         backgroundColor: theme.colors.surface,
     },
+    cardFullscreenOuterScroll: {
+        flex: 1,
+        minHeight: '100%',
+        alignSelf: 'stretch',
+    },
 }));
 
 export function WizardCardLayout(props: WizardCardLayoutProps) {
@@ -121,7 +128,7 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
     const presentation = props.presentation ?? 'auto';
     const hasKnownWindowWidth = Number.isFinite(windowWidth) && windowWidth > 0;
     const wantsFullscreen = presentation === 'fullscreen'
-        || (presentation === 'auto' && hasKnownWindowWidth && windowWidth <= 430);
+        || (presentation === 'auto' && hasKnownWindowWidth && shouldUseWizardFullscreenPresentation(windowWidth));
     const cardWidth = wantsFullscreen ? windowWidth : Math.min(dimensions.width, layout.maxWidth);
     const shouldUseInternalScrollView = props.scrollable ?? true;
     const metrics: WizardCardLayoutMetrics = React.useMemo(() => ({
@@ -136,7 +143,7 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
     const webBackdropStyle = Platform.OS === 'web' && !wantsFullscreen && shouldUseWebFixedOverlay
         ? (createBackdropWebStyle({
             backgroundColor: theme.colors.overlay.scrimWizard,
-            blurPx: 12,
+            blurPx: 2,
         }) as unknown as ViewStyle)
         : null;
     const shouldRenderScrim = !wantsFullscreen && props.showScrim !== false;
@@ -172,6 +179,7 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
             style={[
                 styles.cardBase,
                 wantsFullscreen ? styles.cardFullscreen : styles.card,
+                wantsFullscreen && !shouldUseInternalScrollView ? styles.cardFullscreenOuterScroll : null,
                 wantsFullscreen ? { borderRadius: 0 } : null,
                 props.style,
                 wantsFullscreen

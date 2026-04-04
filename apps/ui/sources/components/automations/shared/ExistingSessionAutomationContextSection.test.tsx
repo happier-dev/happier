@@ -32,7 +32,7 @@ installAutomationComponentCommonModuleMocks({
                     'welcome.chooseEncryptionPlain': 'Continue without encryption',
                     'settingsSession.transcript.title': 'Transcript',
                     'sessionsList.storageDirectTab': 'Direct',
-                    'sessionsList.storagePersistedTab': 'Synced',
+                    'sessionsList.storagePersistedTab': 'Happier',
                     'settingsActions.targets.mcp.title': 'MCP',
                     'connectedServices.title': 'Connected services',
                     'settingsProviders.resumeSupportTitle': 'Resume support',

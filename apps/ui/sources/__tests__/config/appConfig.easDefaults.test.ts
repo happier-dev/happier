@@ -219,6 +219,11 @@ describe('app.config.js', () => {
         expect(exp.runtimeVersion).toBe('18');
     });
 
+    it('does not set newArchEnabled because SDK 55+ always enables the new architecture', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        expect(exp.newArchEnabled).toBeUndefined();
+    });
+
     it('uses EXPO_PUBLIC_EAS_PROJECT_ID with highest precedence for updates linkage', () => {
         const exp = withCleanEnv(() => {
             process.env.EXPO_PUBLIC_EAS_PROJECT_ID = 'public-project-id';

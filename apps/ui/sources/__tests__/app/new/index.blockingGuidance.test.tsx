@@ -34,6 +34,8 @@ vi.mock('react-native', async () => {
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
+}));
+vi.mock('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel', () => ({
     useSessionGettingStartedGuidanceBaseModel: () => {
         const serverId = React.useSyncExternalStore(
             (listener) => {
