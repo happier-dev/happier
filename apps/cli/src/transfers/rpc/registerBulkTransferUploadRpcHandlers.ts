@@ -7,39 +7,12 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { TransferSessionStore } from '../core/transferSessionStore';
 import type { TransferPathAllowanceRegistry } from '../targets/createTransferPathAllowanceRegistry';
-import { ensureAttachmentIgnoreRule } from '../targets/ensureAttachmentIgnoreRule';
 import {
-  DEFAULT_ATTACHMENT_TRANSFER_CONFIG,
-  normalizeAttachmentUploadLocation,
-  normalizeAttachmentVcsIgnoreStrategy,
-  normalizeAttachmentWorkspaceRelativeDir,
-  resolveConfiguredAttachmentTransferTarget,
-  type AttachmentTransferConfig,
-  type AttachmentUploadLocation,
-  type AttachmentVcsIgnoreStrategy,
-} from '../targets/resolveAttachmentTransferTarget';
-import { resolveWorkspaceFileUploadTarget } from '../targets/resolveWorkspaceFileUploadTarget';
+  resolveTransferUploadInitTarget,
+  type NonPromptTransferUploadInitRequest,
+  type TransferUploadInitRequest,
+} from '../targets/resolveTransferUploadInitTarget';
 import { registerUploadTransferLifecycleHandlers } from './registerUploadTransferLifecycleHandlers';
-
-type BulkTransferUploadInitRequest =
-  | Readonly<{
-      t: 'session_file_upload_v1';
-      path: string;
-      sizeBytes: number;
-      overwrite?: boolean;
-      sha256?: string;
-    }>
-  | Readonly<{
-      t: 'session_attachment_upload_v1';
-      messageLocalId: string;
-      fileName: string;
-      sizeBytes: number;
-      uploadLocation?: AttachmentUploadLocation;
-      workspaceRootPath?: string;
-      workspaceRelativeDir?: string;
-      vcsIgnoreStrategy?: AttachmentVcsIgnoreStrategy;
-      vcsIgnoreWritesEnabled?: boolean;
-    }>;
 
 type BulkTransferUploadInitResponse =
   | Readonly<{ success: true; uploadId: string; chunkSizeBytes: number; recipientPublicKeyBase64: string }>
@@ -48,79 +21,6 @@ type BulkTransferUploadInitResponse =
 type BulkTransferUploadFinalizeResponse =
   | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string }>
   | Readonly<{ success: false; error: string }>;
-
-function resolveAttachmentTransferConfig(request: Extract<BulkTransferUploadInitRequest, { t: 'session_attachment_upload_v1' }> | null): AttachmentTransferConfig | null {
-  const uploadLocation = normalizeAttachmentUploadLocation(request?.uploadLocation) ?? DEFAULT_ATTACHMENT_TRANSFER_CONFIG.uploadLocation;
-  const workspaceRelativeDir = request?.workspaceRelativeDir == null
-    ? DEFAULT_ATTACHMENT_TRANSFER_CONFIG.workspaceRelativeDir
-    : normalizeAttachmentWorkspaceRelativeDir(request.workspaceRelativeDir);
-  if (workspaceRelativeDir === null) {
-    return null;
-  }
-  const vcsIgnoreStrategy = normalizeAttachmentVcsIgnoreStrategy(request?.vcsIgnoreStrategy) ?? DEFAULT_ATTACHMENT_TRANSFER_CONFIG.vcsIgnoreStrategy;
-  const vcsIgnoreWritesEnabled =
-    typeof request?.vcsIgnoreWritesEnabled === 'boolean'
-      ? request.vcsIgnoreWritesEnabled
-      : DEFAULT_ATTACHMENT_TRANSFER_CONFIG.vcsIgnoreWritesEnabled;
-
-  return {
-    uploadLocation,
-    workspaceRelativeDir,
-    vcsIgnoreStrategy,
-    vcsIgnoreWritesEnabled,
-  };
-}
-
-function sanitizeAttachmentFileName(value: string): string {
-  const raw = String(value ?? '');
-  const base = raw.split(/[/\\]/g).pop() ?? '';
-  const trimmed = base.trim() || 'file';
-  const safe = trimmed.replace(/[^\w.\- ()]/g, '_');
-  const collapsed = safe.replace(/_+/g, '_');
-  const finalName = collapsed === '.' || collapsed === '..' ? 'file' : collapsed;
-  return finalName.length > 200 ? finalName.slice(-200) : finalName;
-}
-
-function normalizeMessageLocalIdSegment(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (trimmed === '.' || trimmed === '..') return null;
-  if (trimmed.includes('\0')) return null;
-  // Must be a single safe path segment.
-  if (trimmed.includes('/') || trimmed.includes('\\')) return null;
-  return trimmed;
-}
-
-function normalizeAttachmentWorkspaceRootPath(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (!trimmed.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.startsWith('\\\\')) {
-    return null;
-  }
-  return trimmed;
-}
-
-function joinAttachmentPath(...segments: readonly string[]): string {
-  return segments
-    .map((segment) => String(segment ?? '').replace(/[\\]+/g, '/'))
-    .filter((segment) => segment.length > 0)
-    .join('/');
-}
-
-function buildAttachmentUploadPath(input: Readonly<{
-  uploadBasePath: string;
-  messageLocalId: string;
-  fileName: string;
-}>): string {
-  const prefix = randomUUID().slice(0, 8);
-  return joinAttachmentPath(
-    input.uploadBasePath,
-    input.messageLocalId,
-    `${prefix}-${sanitizeAttachmentFileName(input.fileName)}`,
-  );
-}
 
 export function registerBulkTransferUploadRpcHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
@@ -146,135 +46,41 @@ export function registerBulkTransferUploadRpcHandlers(
       abort: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT,
     },
     resolveInit: async (data) => {
-      const request = data as BulkTransferUploadInitRequest | null;
+      const request = data as TransferUploadInitRequest | null;
       if (!request || typeof request !== 'object') {
         return { kind: 'rejected', response: { success: false, error: 'Invalid request' } };
       }
 
-      if (request.t === 'session_file_upload_v1') {
-        const target = resolveWorkspaceFileUploadTarget({
-          workingDirectory: deps.workingDirectory,
-          path: request.path,
-          sizeBytes: request.sizeBytes,
-          overwrite: request.overwrite,
-          additionalAllowedWriteDirs: deps.getAdditionalAllowedWriteDirs?.(),
-          sessionRpcTransferMaxBytes: deps.sessionRpcTransferMaxBytes ?? null,
-        });
-        if (!target.success) {
-          return { kind: 'rejected', response: target };
-        }
-        const sha256Expected = typeof request.sha256 === 'string' && request.sha256.trim() ? request.sha256.trim() : undefined;
-        return {
-          kind: 'accepted',
-          target: target.target,
-          sha256Expected,
-          logContext: {
-            path: request.path,
-          },
-        };
-      }
-
-      if (request.t !== 'session_attachment_upload_v1') {
+      const requestKind = request.t ?? 'session_file_upload_v1';
+      if (request.t === 'prompt_asset_upload_v1') {
         return { kind: 'rejected', response: { success: false, error: 'Unknown upload request type' } };
       }
-
-      if (!deps.attachmentUpload) {
+      if (requestKind === 'session_attachment_upload_v1' && !deps.attachmentUpload) {
         return { kind: 'rejected', response: { success: false, error: 'Attachment uploads are unavailable' } };
       }
 
-      const config = resolveAttachmentTransferConfig(request);
-      if (!config) {
-        return {
-          kind: 'rejected',
-          response: { success: false, error: 'Invalid workspaceRelativeDir' },
-        };
-      }
+      const uploadRequest: NonPromptTransferUploadInitRequest = request;
 
-      const attachmentWorkingDirectory = (() => {
-        if (config.uploadLocation !== 'workspace') return deps.workingDirectory;
-        if (request.workspaceRootPath == null) return deps.workingDirectory;
-        return normalizeAttachmentWorkspaceRootPath(request.workspaceRootPath);
-      })();
-      if (!attachmentWorkingDirectory) {
-        return {
-          kind: 'rejected',
-          response: { success: false, error: 'Invalid workspaceRootPath' },
-        };
-      }
-
-      const resolvedTarget = resolveConfiguredAttachmentTransferTarget({
-        config,
+      const resolved = await resolveTransferUploadInitTarget({
+        workingDirectory: deps.workingDirectory,
+        request: uploadRequest,
         tempUploadRoot,
-        workingDirectory: attachmentWorkingDirectory,
-      });
-
-      if (!resolvedTarget.success) {
-        return {
-          kind: 'rejected',
-          response: { success: false, error: resolvedTarget.error },
-        };
-      }
-
-      if (typeof request.messageLocalId !== 'string' || request.messageLocalId.trim().length === 0) {
-        return {
-          kind: 'rejected',
-          response: { success: false, error: 'Missing messageLocalId' },
-        };
-      }
-      const messageLocalId = normalizeMessageLocalIdSegment(request.messageLocalId);
-      if (!messageLocalId) {
-        return {
-          kind: 'rejected',
-          response: { success: false, error: 'Invalid messageLocalId' },
-        };
-      }
-      if (typeof request.fileName !== 'string' || request.fileName.trim().length === 0) {
-        return {
-          kind: 'rejected',
-          response: { success: false, error: 'Missing fileName' },
-        };
-      }
-
-      const path = buildAttachmentUploadPath({
-        uploadBasePath: resolvedTarget.uploadBasePath,
-        messageLocalId,
-        fileName: request.fileName,
-      });
-
-      const target = resolveWorkspaceFileUploadTarget({
-        workingDirectory: attachmentWorkingDirectory,
-        path,
-        sizeBytes: request.sizeBytes,
-        overwrite: false,
-        additionalAllowedWriteDirs: resolvedTarget.target.additionalAllowedWriteDirs,
+        additionalAllowedWriteDirs: deps.getAdditionalAllowedWriteDirs?.(),
         sessionRpcTransferMaxBytes: deps.sessionRpcTransferMaxBytes ?? null,
+        ...(deps.attachmentUpload ? { attachmentUpload: deps.attachmentUpload } : {}),
       });
-      if (!target.success) {
+      if (!resolved.success) {
         return {
           kind: 'rejected',
-          response: { success: false, error: target.error },
+          response: { success: false, error: resolved.error },
         };
-      }
-
-      deps.attachmentUpload.pathAllowanceRegistry.setAdditionalAllowedReadDirs(resolvedTarget.target.additionalAllowedReadDirs);
-      deps.attachmentUpload.pathAllowanceRegistry.setAdditionalAllowedWriteDirs(resolvedTarget.target.additionalAllowedWriteDirs);
-
-      try {
-        await ensureAttachmentIgnoreRule({
-          workingDirectory: attachmentWorkingDirectory,
-          config,
-        });
-      } catch {
-        // Best effort.
       }
 
       return {
         kind: 'accepted',
-        target: target.target,
-        logContext: {
-          path,
-          uploadLocation: config.uploadLocation,
-        },
+        target: resolved.target,
+        sha256Expected: resolved.sha256Expected,
+        logContext: resolved.logContext,
       };
     },
     buildInitSuccessResponse: ({ session }) => ({

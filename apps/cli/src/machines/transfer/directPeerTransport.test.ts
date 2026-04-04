@@ -51,6 +51,54 @@ describe('direct peer machine transfer', () => {
     delete process.env.HAPPIER_FILES_READ_MAX_BYTES;
   });
 
+  it('responds to browser preflight requests for published transfer routes with loopback-safe CORS headers', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const { createDirectPeerTransferApp, createDirectPeerTransferRegistry } = await import('./directPeerTransport');
+
+    const registry = createDirectPeerTransferRegistry({
+      advertisedPort: 46001,
+      now: () => 1_000,
+    });
+    const published = registry.publishTransfer({
+      transferId: 'transfer_preflight',
+      payload: Buffer.from('payload', 'utf8'),
+    });
+
+    const app = createDirectPeerTransferApp({
+      readPublishedTransfer: registry.readPublishedTransfer,
+    });
+
+    try {
+      await app.ready();
+
+      const response = await app.inject({
+        method: 'OPTIONS',
+        url: buildDirectPeerChunkUrl('transfer_preflight', 0),
+        headers: {
+          origin: 'https://app.happier.dev',
+          'access-control-request-method': 'GET',
+          'access-control-request-headers': 'authorization,x-happier-transfer-recipient-public-key',
+        },
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(response.headers['access-control-allow-origin']).toBe('https://app.happier.dev');
+      expect(response.headers['access-control-allow-methods']).toContain('GET');
+      expect(response.headers['access-control-allow-headers']).toContain('authorization');
+      expect(response.headers['access-control-allow-headers']).toContain('x-happier-transfer-recipient-public-key');
+      expect(response.headers.vary).toContain('Origin');
+
+      expect(published.endpointCandidates).toEqual([
+        expect.objectContaining({
+          kind: 'http',
+        }),
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('rejects publish when the published transfer registry max-entries cap is exceeded', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES = '1';
@@ -2568,7 +2616,7 @@ describe('direct peer machine transfer', () => {
     }
   });
 
-  it('includes IPv6 hosts discovered from network interfaces when no explicit advertised-host override exists', async () => {
+  it('defaults published direct peer candidates to loopback when no explicit advertised-host override exists', async () => {
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS;
 
     const { createDirectPeerTransferRegistry } = await import('./directPeerTransport');
@@ -2591,13 +2639,15 @@ describe('direct peer machine transfer', () => {
       payload: Buffer.from('hello', 'utf8'),
     });
     const urls = published.endpointCandidates.map((candidate) => candidate.url);
+    const transferKey = Buffer.from('transfer_ipv6_advertise', 'utf8').toString('base64url');
 
-    expect(urls).toContain(`http://10.0.0.2:46006/machine-transfers/direct/${Buffer.from('transfer_ipv6_advertise', 'utf8').toString('base64url')}`);
-    expect(urls).toContain(`http://[2001:db8::1]:46006/machine-transfers/direct/${Buffer.from('transfer_ipv6_advertise', 'utf8').toString('base64url')}`);
+    expect(urls).toEqual([
+      `http://127.0.0.1:46006/machine-transfers/direct/${transferKey}`,
+    ]);
     expect(urls.some((url) => url.includes('%'))).toBe(false);
   });
 
-  it('merges configured advertised hosts with discovered NIC addresses', async () => {
+  it('does not widen explicitly configured advertised hosts with discovered NIC addresses', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
     const { createDirectPeerTransferRegistry } = await import('./directPeerTransport');
@@ -2621,9 +2671,9 @@ describe('direct peer machine transfer', () => {
     const urls = published.endpointCandidates.map((candidate) => candidate.url);
     const transferKey = Buffer.from('transfer_configured_and_detected_advertise', 'utf8').toString('base64url');
 
-    expect(urls).toContain(`http://127.0.0.1:46007/machine-transfers/direct/${transferKey}`);
-    expect(urls).toContain(`http://10.0.0.2:46007/machine-transfers/direct/${transferKey}`);
-    expect(urls).toContain(`http://[2001:db8::1]:46007/machine-transfers/direct/${transferKey}`);
+    expect(urls).toEqual([
+      `http://127.0.0.1:46007/machine-transfers/direct/${transferKey}`,
+    ]);
     expect(urls.some((url) => url.includes('%'))).toBe(false);
   });
 

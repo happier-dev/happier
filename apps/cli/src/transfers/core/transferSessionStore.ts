@@ -117,6 +117,10 @@ export class TransferSessionStore {
     return this.uploads.get(uploadId) ?? null;
   }
 
+  countUploadSessions(): number {
+    return this.uploads.size;
+  }
+
   refreshUploadExpiry(uploadId: string): void {
     const session = this.uploads.get(uploadId);
     if (session) {

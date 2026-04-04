@@ -27,7 +27,7 @@ export function registerBulkTransferRpcHandlers(
       pathAllowanceRegistry: TransferPathAllowanceRegistry;
     }>;
   }>,
-): void {
+): TransferSessionStore {
   const store = deps.store ?? new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
 
   registerBulkTransferUploadRpcHandlers(rpcHandlerManager, {
@@ -44,4 +44,6 @@ export function registerBulkTransferRpcHandlers(
     getAdditionalAllowedReadDirs: () => normalizeTransferDirectories(deps.getAdditionalAllowedReadDirs),
     sessionRpcTransferMaxBytes: deps.sessionRpcTransferMaxBytes ?? null,
   });
+
+  return store;
 }

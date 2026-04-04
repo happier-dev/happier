@@ -14,9 +14,12 @@ const DEFAULT_DIRECT_PEER_MAX_TOTAL_CHUNKS = 1_000_000;
 const DIRECT_PEER_MAX_TOTAL_CHUNKS_HARD_MAX = 10_000_000;
 const DEFAULT_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES = 2048;
 const DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_HARD_MAX_ENTRIES = 100_000;
+const DEFAULT_DIRECT_PEER_IDLE_STOP_MS = 30_000;
+const DIRECT_PEER_IDLE_STOP_HARD_MAX_MS = 10 * 60_000;
 const DEFAULT_DIRECT_PEER_OPEN_BODY_MAX_BYTES = 64 * 1024;
 const DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES = 1024 * 1024;
-const DEFAULT_DIRECT_PEER_BIND_HOST = '0.0.0.0';
+const DEFAULT_DIRECT_PEER_BIND_HOST = '127.0.0.1';
+const DEFAULT_DIRECT_PEER_BIND_PORT = 46001;
 const DEFAULT_DIRECT_PEER_EXPIRY_SKEW_MS = 2_000;
 const DEFAULT_TRANSFER_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_TRANSFER_MAX_ACTIVE_TRANSFERS = 128;
@@ -56,7 +59,16 @@ export function resolveDirectPeerAdvertisedHosts(networkInterfacesFn: typeof net
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
 
-  const hosts = new Set<string>(configuredHosts);
+  if (configuredHosts.length > 0) {
+    return Array.from(new Set(configuredHosts));
+  }
+
+  const bindHost = resolveDirectPeerTransferBindHost();
+  if (bindHost === '127.0.0.1' || bindHost === '::1' || bindHost === 'localhost') {
+    return ['127.0.0.1'];
+  }
+
+  const hosts = new Set<string>();
   for (const entries of Object.values(networkInterfacesFn())) {
     for (const entry of entries ?? []) {
       if (!entry || entry.internal) continue;
@@ -93,7 +105,14 @@ export function resolveDirectPeerTransferRequestTimeoutOverrideMs(timeoutMs: num
 }
 
 export function resolveDirectPeerTransferBindPort(): number {
-  return readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT', 0) ?? 0;
+  return readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT', DEFAULT_DIRECT_PEER_BIND_PORT) ?? DEFAULT_DIRECT_PEER_BIND_PORT;
+}
+
+export function resolveDirectPeerTransferIdleStopMs(): number {
+  return Math.min(
+    readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_IDLE_STOP_MS', DEFAULT_DIRECT_PEER_IDLE_STOP_MS),
+    DIRECT_PEER_IDLE_STOP_HARD_MAX_MS,
+  );
 }
 
 export function resolveDirectPeerTransferChunkBytes(): number {
@@ -178,6 +197,7 @@ export function resolveMachineTransferRuntimeConfig(options?: Readonly<{
     ttlMs: number;
     requestTimeoutMs: number;
     bindPort: number;
+    idleStopMs: number;
     chunkBytes: number;
     expirySkewMs: number;
     openBodyMaxBytes: number;
@@ -201,6 +221,7 @@ export function resolveMachineTransferRuntimeConfig(options?: Readonly<{
       ttlMs: resolveDirectPeerTransferTtlMs(),
       requestTimeoutMs: resolveDirectPeerTransferRequestTimeoutMs(),
       bindPort: resolveDirectPeerTransferBindPort(),
+      idleStopMs: resolveDirectPeerTransferIdleStopMs(),
       chunkBytes: resolveDirectPeerTransferChunkBytes(),
       expirySkewMs: resolveDirectPeerTransferExpirySkewMs(),
       openBodyMaxBytes: resolveDirectPeerTransferOpenBodyMaxBytes(),

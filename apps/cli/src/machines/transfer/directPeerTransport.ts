@@ -5,7 +5,7 @@ import type { FileHandle } from 'node:fs/promises';
 
 import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
 
-import fastify, { type FastifyInstance } from 'fastify';
+import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
   TransferChunkEnvelopeSchema,
@@ -43,6 +43,12 @@ import {
 import { createTransferPayloadFileSink, type TransferPayloadFileResult } from './transferPayloadFileSink';
 import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR, resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
 import { clampTransferChunkBytes } from './transferChunkSizeLimit';
+import {
+  createDirectTransferImportSessionManager,
+  type DirectTransferImportOpenRequest,
+  type DirectTransferImportOpenResponse,
+  type DirectTransferImportSessionManager,
+} from './directTransferImportSession';
 
 // Direct-peer transfers are used for session handoff + workspace replication, which can take
 // significantly longer than 30s on large repos/slow disks/VMs (host <-> Lima). Keep the default
@@ -93,6 +99,12 @@ const ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES = 1024;
 const DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES = 1024 * 1024;
 // Above this threshold, stream the JSON body instead of materializing one request buffer.
 const DIRECT_PEER_OPEN_BODY_STREAMING_THRESHOLD_BYTES = 8 * 1024;
+const DIRECT_TRANSFER_CORS_ALLOW_METHODS = 'GET,POST,PUT,OPTIONS';
+const DIRECT_TRANSFER_CORS_ALLOW_HEADERS = [
+  'authorization',
+  'content-type',
+  DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER,
+].join(',');
 
 function encodeDirectPeerTransferPathKey(transferId: string): string {
   return Buffer.from(transferId, 'utf8').toString('base64url');
@@ -675,6 +687,56 @@ export type DirectPeerOnDemandTransferScope = Readonly<{
   maxResolvedTransfers?: number;
 }>;
 
+export function buildDirectTransferImportOpenEndpointCandidates(params: Readonly<{
+  advertisedPort: number;
+  authorizationToken: string;
+  expiresAt: number;
+  advertisedHosts?: readonly string[];
+}>): readonly TransferEndpointCandidate[] {
+  const resolvedHosts = params.advertisedHosts && params.advertisedHosts.length > 0
+    ? [...params.advertisedHosts]
+    : readAdvertisedHosts(networkInterfaces);
+
+  return resolvedHosts
+    .map((host) => ({
+      kind: 'http' as const,
+      url: `http://${formatCandidateHost(host)}:${params.advertisedPort}/machine-transfers/direct/imports/open`,
+      authorizationToken: params.authorizationToken,
+      expiresAt: params.expiresAt,
+    }))
+    .filter(
+      (candidate, index, all) =>
+        all.findIndex(
+          (entry) =>
+            entry.url === candidate.url
+            && entry.authorizationToken === candidate.authorizationToken,
+        ) === index,
+    );
+}
+
+export function buildDirectTransferImportSessionEndpointCandidates(params: Readonly<{
+  advertisedPort: number;
+  uploadId: string;
+  expiresAt: number;
+  advertisedHosts?: readonly string[];
+}>): readonly TransferEndpointCandidate[] {
+  const resolvedHosts = params.advertisedHosts && params.advertisedHosts.length > 0
+    ? [...params.advertisedHosts]
+    : readAdvertisedHosts(networkInterfaces);
+  const encodedUploadId = encodeURIComponent(params.uploadId);
+
+  return resolvedHosts
+    .map((host) => ({
+      kind: 'http' as const,
+      url: `http://${formatCandidateHost(host)}:${params.advertisedPort}/machine-transfers/direct/imports/${encodedUploadId}`,
+      expiresAt: params.expiresAt,
+    }))
+    .filter(
+      (candidate, index, all) =>
+        all.findIndex((entry) => entry.url === candidate.url) === index,
+    );
+}
+
 type StoredOnDemandScope = Readonly<{
   expiresAt: number;
   allowTransferId: (transferId: string) => boolean;
@@ -882,6 +944,8 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     readPublishedTransfer,
     resolveOnDemandTransferOnOpen,
     clearPublishedTransfer,
+    hasPublishedTransfers: () => publishedTransfers.size > 0,
+    countPublishedTransfers: () => publishedTransfers.size,
   };
 }
 
@@ -890,8 +954,87 @@ const DirectPeerTransferResponseSchema = z
     transferId: z.string().min(1),
     manifestHash: z.string().min(1),
     totalChunks: z.number().int().positive(),
+    sizeBytes: z.number().int().nonnegative().optional(),
+    name: z.string().min(1).optional(),
   })
   .strict();
+
+const DirectTransferImportOpenRequestSchema = z
+  .intersection(
+    z.object({
+      workingDirectory: z.string().min(1),
+      additionalAllowedWriteDirs: z.array(z.string().min(1)).optional(),
+      sessionRpcTransferMaxBytes: z.number().int().nonnegative().nullable().optional(),
+    }).strict(),
+    z.discriminatedUnion('t', [
+      z.object({
+        t: z.literal('session_file_upload_v1'),
+        path: z.unknown(),
+        sizeBytes: z.unknown(),
+        overwrite: z.unknown(),
+        sha256: z.unknown().optional(),
+      }).strict(),
+      z.object({
+        t: z.literal('session_attachment_upload_v1'),
+        messageLocalId: z.unknown(),
+        fileName: z.unknown(),
+        sizeBytes: z.unknown(),
+        uploadLocation: z.enum(['workspace', 'os_temp']).optional(),
+        workspaceRootPath: z.unknown().optional(),
+        workspaceRelativeDir: z.string().optional(),
+        vcsIgnoreStrategy: z.enum(['git_info_exclude', 'gitignore', 'none']).optional(),
+        vcsIgnoreWritesEnabled: z.boolean().optional(),
+      }).strict(),
+      z.object({
+        t: z.literal('prompt_asset_upload_v1'),
+        sizeBytes: z.unknown(),
+      }).strict(),
+    ]),
+  );
+
+const DirectTransferImportOpenResponseSchema = z
+  .object({
+    uploadId: z.string().min(1),
+    destDisplayPath: z.string().min(1),
+    expectedSizeBytes: z.number().int().nonnegative(),
+    chunkSizeBytes: z.number().int().positive(),
+    recipientPublicKeyBase64: z.string().min(1),
+    expiresAt: z.number().int().positive(),
+  })
+  .strict();
+
+const DirectTransferImportChunkRequestSchema = z
+  .object({
+    contentBase64: z.string().min(1).optional(),
+    payloadBase64: z.string().min(1).optional(),
+    encryptedDataKeyEnvelopeBase64: z.string().min(1).optional(),
+  })
+  .strict();
+
+const DirectTransferImportChunkResponseSchema = z
+  .object({
+    success: z.literal(true),
+  })
+  .strict()
+  .or(z.object({ success: z.literal(false), error: z.string() }).strict());
+
+const DirectTransferImportFinalizeResponseSchema = z
+  .object({
+    success: z.literal(true),
+    finalized: z.object({
+      success: z.literal(true),
+      path: z.string().min(1),
+      sizeBytes: z.number().int().nonnegative(),
+      result: z.unknown().optional(),
+    }).strict(),
+    sha256: z.string().min(1),
+  })
+  .strict()
+  .or(z.object({ success: z.literal(false), error: z.string(), keepSession: z.boolean().optional() }).strict());
+
+const DirectTransferImportAbortResponseSchema = z
+  .object({ success: z.literal(true) }).strict()
+  .or(z.object({ success: z.literal(false), error: z.string() }).strict());
 
 function createInvalidDirectPeerTransferResponseError(transferId: string): Error {
   return new Error(`Invalid direct peer transfer response for ${transferId}`);
@@ -938,6 +1081,25 @@ function isJsonContentType(contentType: string | null): boolean {
   return normalized.startsWith('application/json');
 }
 
+function isDirectTransferRoutePath(url: string | undefined): boolean {
+  const normalizedUrl = String(url ?? '').trim();
+  if (!normalizedUrl) {
+    return false;
+  }
+  return normalizedUrl === '/machine-transfers/direct'
+    || normalizedUrl.startsWith('/machine-transfers/direct/');
+}
+
+function applyDirectTransferCorsHeaders(params: Readonly<{
+  reply: FastifyReply;
+  origin: string;
+}>): void {
+  params.reply.header('access-control-allow-origin', params.origin);
+  params.reply.header('access-control-allow-methods', DIRECT_TRANSFER_CORS_ALLOW_METHODS);
+  params.reply.header('access-control-allow-headers', DIRECT_TRANSFER_CORS_ALLOW_HEADERS);
+  params.reply.header('vary', 'Origin');
+}
+
 export function createDirectPeerTransferApp(params: Readonly<{
   readPublishedTransfer: (input: Readonly<{
     transferId: string;
@@ -949,6 +1111,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
     transferToken: string;
     requestBody: unknown;
   }>) => Promise<TransferPayloadSource | null>;
+  importSessionManager?: DirectTransferImportSessionManager;
 }>): FastifyInstance {
   const OPEN_METADATA_CACHE_MAX_ENTRIES = 256;
   const OPEN_FILE_HANDLE_CACHE_MAX_ENTRIES = 64;
@@ -957,6 +1120,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
   const openManifestHashCache = new Map<string, Promise<string>>();
   const openFileHandleCache = new Map<string, Promise<FileHandle>>();
   const openTransferTokenDigestCache = new Map<string, Buffer>();
+  const importSessionManager = params.importSessionManager ?? createDirectTransferImportSessionManager();
 
   const readOpenCacheKeyFromDigest = (transferId: string, transferTokenDigest: Buffer): string =>
     `${transferId}:${transferTokenDigest.toString('base64url')}`;
@@ -1080,6 +1244,131 @@ export function createDirectPeerTransferApp(params: Readonly<{
     const handles = Array.from(openFileHandleCache.values());
     openFileHandleCache.clear();
     await Promise.all(handles.map(closeFileHandleBestEffort));
+    await importSessionManager.close();
+  });
+
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = typeof request.headers.origin === 'string' ? request.headers.origin.trim() : '';
+    if (!origin || !isDirectTransferRoutePath(request.url)) {
+      return;
+    }
+
+    applyDirectTransferCorsHeaders({ reply, origin });
+    if (request.method === 'OPTIONS') {
+      reply.code(204).send();
+    }
+  });
+
+  app.addHook('onSend', async (request, reply, payload) => {
+    const origin = typeof request.headers.origin === 'string' ? request.headers.origin.trim() : '';
+    if (origin && isDirectTransferRoutePath(request.url)) {
+      applyDirectTransferCorsHeaders({ reply, origin });
+    }
+    return payload;
+  });
+
+  typed.post('/machine-transfers/direct/imports/open', {
+    schema: {
+      body: DirectTransferImportOpenRequestSchema,
+      headers: z.object({
+        authorization: z.string().min(1).optional(),
+      }).passthrough(),
+      response: {
+        200: DirectTransferImportOpenResponseSchema,
+        400: z.object({ ok: z.literal(false), error: z.string() }).strict(),
+        401: z.object({ ok: z.literal(false), error: z.string() }).strict(),
+      },
+    },
+  }, async (request, reply) => {
+    const authorizationToken = (readDirectPeerAuthorizationToken(request.headers.authorization) ?? '').trim();
+    if (authorizationToken.length === 0 || authorizationToken.length > DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS) {
+      reply.code(401);
+      return { ok: false as const, error: 'Import session open authorization required' };
+    }
+    const opened = await importSessionManager.openImportSession({
+      ...request.body,
+      authorizationToken,
+    });
+    if (!opened.success) {
+      reply.code(opened.error === 'Import session open authorization required' ? 401 : 400);
+      return { ok: false as const, error: opened.error };
+    }
+    return opened.response;
+  });
+
+  typed.put('/machine-transfers/direct/imports/:uploadId/chunks/:sequence', {
+    schema: {
+      params: z.object({
+        uploadId: z.string().min(1),
+        sequence: z.coerce.number().int().nonnegative(),
+      }),
+      body: DirectTransferImportChunkRequestSchema,
+      response: {
+        200: DirectTransferImportChunkResponseSchema,
+        400: z.object({ success: z.literal(false), error: z.string() }).strict(),
+        404: z.object({ success: z.literal(false), error: z.string() }).strict(),
+      },
+    },
+  }, async (request, reply) => {
+    const result = await importSessionManager.writeImportTransferChunk({
+      uploadId: request.params.uploadId,
+      index: request.params.sequence,
+      contentBase64: request.body.contentBase64,
+      payloadBase64: request.body.payloadBase64,
+      encryptedDataKeyEnvelopeBase64: request.body.encryptedDataKeyEnvelopeBase64,
+    });
+    if (!result.success) {
+      reply.code(result.error === 'Upload session not found' ? 404 : 400);
+      return result;
+    }
+    return result;
+  });
+
+  typed.post('/machine-transfers/direct/imports/:uploadId/finalize', {
+    schema: {
+      params: z.object({ uploadId: z.string().min(1) }),
+      response: {
+        200: DirectTransferImportFinalizeResponseSchema,
+        400: z.object({ success: z.literal(false), error: z.string(), keepSession: z.boolean().optional() }).strict(),
+        404: z.object({ success: z.literal(false), error: z.string(), keepSession: z.boolean().optional() }).strict(),
+        409: z.object({ success: z.literal(false), error: z.string(), keepSession: z.boolean().optional() }).strict(),
+      },
+    },
+  }, async (request, reply) => {
+    const result = await importSessionManager.finalizeImportTransferSession({
+      uploadId: request.params.uploadId,
+    });
+    if (!result.success) {
+      const error = result.error;
+      if (error === 'Upload session not found') {
+        reply.code(404);
+      } else if (error === 'Upload is incomplete' || error === 'Upload hash mismatch') {
+        reply.code(409);
+      } else {
+        reply.code(400);
+      }
+      return result;
+    }
+    return result;
+  });
+
+  typed.post('/machine-transfers/direct/imports/:uploadId/abort', {
+    schema: {
+      params: z.object({ uploadId: z.string().min(1) }),
+      response: {
+        200: DirectTransferImportAbortResponseSchema,
+        400: z.object({ success: z.literal(false), error: z.string() }).strict(),
+      },
+    },
+  }, async (request, reply) => {
+    if (!request.params.uploadId) {
+      reply.code(400);
+      return { success: false as const, error: 'Missing uploadId' };
+    }
+    await importSessionManager.abortImportTransferSession({
+      uploadId: request.params.uploadId,
+    });
+    return { success: true as const };
   });
 
   typed.post('/machine-transfers/direct/:transferId/open', {
@@ -1168,6 +1457,10 @@ export function createDirectPeerTransferApp(params: Readonly<{
         async () => await resolveTransferPayloadManifestHash(payloadSource),
       ),
       totalChunks: Math.max(1, Math.ceil(sizeBytes / readDirectPeerChunkBytes())),
+      sizeBytes,
+      ...(typeof payloadSource.name === 'string' && payloadSource.name.length > 0
+        ? { name: payloadSource.name }
+        : {}),
     };
   });
 
@@ -1270,12 +1563,40 @@ export function createDirectPeerTransferApp(params: Readonly<{
 export async function startDirectPeerTransferServer(params: Readonly<{
   readPublishedTransfer: (input: Readonly<{ transferId: string; transferToken: string }>) => TransferPayloadSource | null;
   resolveOnDemandTransfer?: Parameters<typeof createDirectPeerTransferApp>[0]['resolveOnDemandTransfer'];
-}>): Promise<Readonly<{ port: number; stop: () => Promise<void> }>> {
-  const app = createDirectPeerTransferApp(params);
+  bindPort?: number;
+  bindHost?: string;
+  onImportSessionCountChanged?: (count: number) => void;
+  promptAssetUpload?: Parameters<typeof createDirectTransferImportSessionManager>[0] extends infer T
+    ? T extends Readonly<object>
+      ? T extends { promptAssetUpload?: infer P }
+        ? P
+        : never
+      : never
+    : never;
+}>): Promise<Readonly<{
+  port: number;
+  stop: () => Promise<void>;
+  issueImportOpenAuthorizationToken: (input: DirectTransferImportOpenRequest) => Readonly<{
+    authorizationToken: string;
+    expiresAt: number;
+  }>;
+  openTrustedImportSession: (input: DirectTransferImportOpenRequest) => Promise<
+    | Readonly<{ success: true; response: DirectTransferImportOpenResponse }>
+    | Readonly<{ success: false; error: string }>
+  >;
+}>> {
+  const importSessionManager = createDirectTransferImportSessionManager({
+    onActiveSessionCountChanged: params.onImportSessionCountChanged,
+    ...(params.promptAssetUpload ? { promptAssetUpload: params.promptAssetUpload } : {}),
+  });
+  const app = createDirectPeerTransferApp({
+    ...params,
+    importSessionManager,
+  });
   await app.ready();
   const address = await app.listen({
-    port: readDirectPeerBindPort(),
-    host: resolveDirectPeerTransferBindHost(),
+    port: typeof params.bindPort === 'number' && params.bindPort > 0 ? Math.floor(params.bindPort) : readDirectPeerBindPort(),
+    host: typeof params.bindHost === 'string' && params.bindHost.length > 0 ? params.bindHost : resolveDirectPeerTransferBindHost(),
   });
   const port = Number.parseInt(String(address).split(':').pop() ?? '', 10);
   if (!Number.isFinite(port) || port <= 0) {
@@ -1284,6 +1605,8 @@ export async function startDirectPeerTransferServer(params: Readonly<{
   }
   return {
     port,
+    issueImportOpenAuthorizationToken: (input) => importSessionManager.issueImportOpenAuthorizationToken(input),
+    openTrustedImportSession: async (input) => await importSessionManager.openTrustedImportSession(input),
     stop: async () => {
       await app.close();
     },

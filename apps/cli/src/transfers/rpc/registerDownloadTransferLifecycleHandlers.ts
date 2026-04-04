@@ -1,10 +1,16 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
-import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
 import { logger } from '@/ui/logger';
 
 import { TransferSessionStore } from '../core/transferSessionStore';
 import type { DownloadTransferSource } from '../targets/downloadTransferSource';
+import {
+  abortDownloadTransferSession,
+  createTransferSessionLifecycle,
+  finalizeDownloadTransferSession,
+  openDownloadTransferSession,
+  readDownloadTransferChunk,
+} from '../core/transferSessionLifecycle';
 
 type DownloadSessionHandle = NonNullable<ReturnType<TransferSessionStore['getDownloadSession']>>;
 
@@ -46,18 +52,21 @@ export function registerDownloadTransferLifecycleHandlers<TInitResponse>(params:
   }>) => TInitResponse;
   buildInitErrorResponse: (error: unknown) => TInitResponse;
 }>): void {
+  const lifecycle = createTransferSessionLifecycle({
+    store: params.store,
+    chunkSizeBytes: configuration.filesTransferChunkBytes,
+  });
+
   params.rpcHandlerManager.registerHandler(params.methods.init, async (data: unknown): Promise<TInitResponse> => {
-    params.store.cleanupExpiredBestEffort();
     try {
       const resolved = await params.resolveInit(data);
       if (resolved.kind === 'rejected') {
         return resolved.response;
       }
 
-      const session = await params.store.createDownloadSession({
-        filePath: resolved.source.filePath,
-        deleteFileOnClose: resolved.source.deleteFileOnClose,
-        chunkSizeBytes: configuration.filesTransferChunkBytes,
+      const session = await openDownloadTransferSession({
+        lifecycle,
+        source: resolved.source,
         recipientPublicKeyBase64: resolved.recipientPublicKeyBase64,
       });
 
@@ -81,69 +90,19 @@ export function registerDownloadTransferLifecycleHandlers<TInitResponse>(params:
   });
 
   params.rpcHandlerManager.registerHandler<DownloadChunkRequest, DownloadChunkResponse>(params.methods.chunk, async (data) => {
-    params.store.cleanupExpiredBestEffort();
-    const downloadId = typeof data?.downloadId === 'string' ? data.downloadId : '';
-    const index = typeof data?.index === 'number' ? data.index : Number(data?.index);
-    if (!downloadId) return { success: false, error: 'Missing downloadId' };
-    if (!Number.isFinite(index) || index < 0) return { success: false, error: 'Invalid index' };
-
-    const session = params.store.getDownloadSession(downloadId);
-    if (!session) return { success: false, error: 'Download session not found' };
-    if (index !== session.nextIndex) return { success: false, error: 'Unexpected chunk index' };
-
-    const remaining = session.sizeBytes - session.offset;
-    const readSize = Math.max(0, Math.min(session.chunkSizeBytes, remaining));
-    if (readSize === 0) {
-      if (!session.recipientPublicKeyBase64) {
-        return { success: true, contentBase64: '', isLast: true };
-      }
-      const encryptedChunk = createEncryptedTransferChunkEnvelope({
-        transferId: downloadId,
-        sequence: index,
-        payload: Buffer.alloc(0),
-        recipientPublicKeyBase64: session.recipientPublicKeyBase64,
-      });
-      return {
-        success: true,
-        payloadBase64: encryptedChunk.payloadBase64,
-        encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
-        isLast: true,
-      };
-    }
-
-    const buffer = Buffer.alloc(readSize);
-    const readResult = await session.file.read(buffer, 0, readSize, session.offset);
-    const bytesRead = readResult.bytesRead ?? 0;
-    const slice = bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead);
-
-    session.offset += bytesRead;
-    session.nextIndex += 1;
-    params.store.refreshDownloadExpiry(downloadId);
-    const isLast = session.offset >= session.sizeBytes;
-    if (!session.recipientPublicKeyBase64) {
-      return { success: true, contentBase64: slice.toString('base64'), isLast };
-    }
-    const encryptedChunk = createEncryptedTransferChunkEnvelope({
-      transferId: downloadId,
-      sequence: index,
-      payload: slice,
-      recipientPublicKeyBase64: session.recipientPublicKeyBase64,
+    return await readDownloadTransferChunk({
+      lifecycle,
+      downloadId: typeof data?.downloadId === 'string' ? data.downloadId : '',
+      index: typeof data?.index === 'number' ? data.index : Number(data?.index),
     });
-    return {
-      success: true,
-      payloadBase64: encryptedChunk.payloadBase64,
-      encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
-      isLast,
-    };
   });
 
   params.rpcHandlerManager.registerHandler<DownloadFinalizeRequest, DownloadFinalizeResponse>(
     params.methods.finalize,
     async (data) => {
-      params.store.cleanupExpiredBestEffort();
       const downloadId = typeof data?.downloadId === 'string' ? data.downloadId : '';
       if (!downloadId) return { success: false, error: 'Missing downloadId' };
-      await params.store.closeDownloadSession(downloadId);
+      await finalizeDownloadTransferSession({ lifecycle, downloadId });
       return { success: true };
     },
   );
@@ -151,10 +110,9 @@ export function registerDownloadTransferLifecycleHandlers<TInitResponse>(params:
   params.rpcHandlerManager.registerHandler<DownloadAbortRequest, DownloadAbortResponse>(
     params.methods.abort,
     async (data) => {
-      params.store.cleanupExpiredBestEffort();
       const downloadId = typeof data?.downloadId === 'string' ? data.downloadId : '';
       if (!downloadId) return { success: false, error: 'Missing downloadId' };
-      await params.store.closeDownloadSession(downloadId);
+      await abortDownloadTransferSession({ lifecycle, downloadId });
       return { success: true };
     },
   );

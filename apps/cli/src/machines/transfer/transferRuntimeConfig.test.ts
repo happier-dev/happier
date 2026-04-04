@@ -7,15 +7,18 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     delete process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS;
+    delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_HOST;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT;
+    delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_IDLE_STOP_MS;
     delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
   });
 
-  it('reads direct-peer and server-routed runtime env from one canonical resolver', () => {
+  it('reads direct-peer and server-routed runtime env from one canonical resolver without widening explicitly configured advertised hosts', () => {
     process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED = 'true';
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED = 'false';
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT = '46001';
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_IDLE_STOP_MS = '1234';
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '12345';
 
     const resolved = resolveMachineTransferRuntimeConfig({
@@ -30,8 +33,9 @@ describe('resolveMachineTransferRuntimeConfig', () => {
       featureEnabled: true,
       serverEnabled: false,
       bindPort: 46001,
+      idleStopMs: 1234,
     }));
-    expect(resolved.directPeer.advertisedHosts).toEqual(expect.arrayContaining(['127.0.0.1', '10.0.0.2']));
+    expect(resolved.directPeer.advertisedHosts).toEqual(['127.0.0.1']);
     expect(resolved.serverRouted).toEqual(expect.objectContaining({
       timeoutMs: 12345,
     }));
@@ -47,5 +51,20 @@ describe('resolveMachineTransferRuntimeConfig', () => {
 
     expect(resolved.directPeer.featureEnabled).toBe(false);
     expect(resolved.directPeer.serverEnabled).toBe(false);
+  });
+
+  it('defaults direct-peer runtime posture to loopback-only even when external NICs exist', () => {
+    const resolved = resolveMachineTransferRuntimeConfig({
+      networkInterfacesFn: () => ({
+        eth0: [
+          { address: '10.0.0.2', family: 'IPv4', internal: false } as never,
+          { address: '2001:db8::1', family: 'IPv6', internal: false } as never,
+        ],
+      }),
+    });
+
+    expect(resolved.directPeer.bindHost).toBe('127.0.0.1');
+    expect(resolved.directPeer.bindPort).toBe(46001);
+    expect(resolved.directPeer.advertisedHosts).toEqual(['127.0.0.1']);
   });
 });

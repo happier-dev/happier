@@ -229,6 +229,37 @@ export const MachineMetadataSchema = z.object({
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>
 
 /**
+ * Daemon transfer runtime capability state - dynamic listener and direct-transfer metadata
+ * published by the daemon into machine state.
+ */
+export const DaemonTransferListenerStateSchema = z.object({
+  enabled: z.boolean(),
+  configured: z.boolean(),
+  active: z.boolean(),
+  available: z.boolean().optional(),
+})
+
+export type DaemonTransferListenerState = z.infer<typeof DaemonTransferListenerStateSchema>
+
+export const DaemonTransferRuntimeStateSchema = z.object({
+  supported: z.object({
+    import: z.boolean(),
+    export: z.boolean(),
+  }),
+  listenerClasses: z.object({
+    loopback_http: DaemonTransferListenerStateSchema,
+    lan_http: DaemonTransferListenerStateSchema,
+    tailscale_serve_https: DaemonTransferListenerStateSchema,
+  }),
+  lifecycle: z.object({
+    mode: z.literal('lazy_idle_shutdown'),
+    version: z.literal(1),
+  }),
+})
+
+export type DaemonTransferRuntimeState = z.infer<typeof DaemonTransferRuntimeStateSchema>
+
+/**
  * Daemon state - dynamic runtime information (frequently updated)
  */
 export const DaemonStateSchema = z.object({
@@ -244,7 +275,8 @@ export const DaemonStateSchema = z.object({
     z.union([
       z.enum(['mobile-app', 'cli', 'os-signal', 'unknown']),
       z.string() // Forward compatibility
-    ]).optional()
+    ]).optional(),
+  transfer: DaemonTransferRuntimeStateSchema.optional(),
 })
 
 export type DaemonState = z.infer<typeof DaemonStateSchema>

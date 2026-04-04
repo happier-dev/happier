@@ -9,6 +9,7 @@ type TransferPayloadDispose = () => Promise<void> | void;
 type TransferPayloadSourceBase = Readonly<{
   sizeBytes?: number;
   manifestHash?: string;
+  name?: string;
   dispose?: TransferPayloadDispose;
 }>;
 
@@ -35,6 +36,7 @@ export function createFileTransferPayloadSource(input: Readonly<{
   filePath: string;
   sizeBytes?: number;
   manifestHash?: string;
+  name?: string;
   dispose?: TransferPayloadDispose;
 }>): TransferPayloadSource {
   const sizeBytes =
@@ -46,6 +48,7 @@ export function createFileTransferPayloadSource(input: Readonly<{
     filePath: input.filePath,
     ...(typeof sizeBytes === 'number' ? { sizeBytes } : {}),
     ...(typeof input.manifestHash === 'string' ? { manifestHash: input.manifestHash } : {}),
+    ...(typeof input.name === 'string' && input.name.length > 0 ? { name: input.name } : {}),
     ...(input.dispose ? { dispose: input.dispose } : {}),
   };
 }
