@@ -15,7 +15,7 @@ import {
     downloadDaemonPromptAsset,
     listDaemonPromptAssetTypes,
     uploadDaemonPromptAsset,
-} from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+} from '@/sync/domains/transfers/runtime/transferSubstrate';
 
 type MachinePromptAssetsOpts = Readonly<{
     serverId?: string | null;

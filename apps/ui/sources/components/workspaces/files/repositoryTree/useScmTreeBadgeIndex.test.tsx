@@ -75,14 +75,14 @@ describe('useScmTreeBadgeIndex', () => {
 
         const snapshot = makeSnapshot();
         let scheduledCompute: (() => void) | undefined;
-        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: TimerHandler) => {
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0]) => {
             scheduledCompute = () => {
                 if (typeof callback === 'function') {
                     callback();
                 }
             };
-            return 1 as ReturnType<typeof setTimeout>;
-        }) as typeof setTimeout);
+            return 1 as unknown as ReturnType<typeof setTimeout>;
+        });
 
         try {
             let tree!: renderer.ReactTestRenderer;

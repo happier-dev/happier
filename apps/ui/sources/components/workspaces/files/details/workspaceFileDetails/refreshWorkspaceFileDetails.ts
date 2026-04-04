@@ -1,6 +1,6 @@
 import { t } from '@/text';
 import { config } from '@/config';
-import { callDaemonWorkspaceStatFileRpc, downloadDaemonWorkspaceFileToBase64 } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+import { callDaemonWorkspaceStatFileRpc, downloadDaemonWorkspaceFileToBase64 } from '@/sync/domains/transfers/runtime/transferSubstrate';
 import { getImageMimeTypeFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
 import type { ScmDiffArea } from '@happier-dev/protocol';
 import type { FileDiffMode } from '@/components/workspaces/files/file/FileActionToolbar';

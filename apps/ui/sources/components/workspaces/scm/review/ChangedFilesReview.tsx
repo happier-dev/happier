@@ -458,10 +458,13 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
         let cancelled = false;
-        const raf: (cb: FrameRequestCallback) => number =
-            typeof globalThis.requestAnimationFrame === 'function'
-                ? globalThis.requestAnimationFrame.bind(globalThis)
-                : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+        const scheduleFrame = (cb: FrameRequestCallback) => {
+            if (typeof globalThis.requestAnimationFrame === 'function') {
+                globalThis.requestAnimationFrame(cb);
+                return;
+            }
+            globalThis.setTimeout(() => cb(Date.now()), 0);
+        };
 
         let attempts = 0;
         const maxAttempts = 12;
@@ -471,9 +474,9 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             resolveWebScrollRoot();
             attempts += 1;
             if (attempts >= maxAttempts) return;
-            raf(() => step());
+            scheduleFrame(() => step());
         };
-        raf(() => step());
+        scheduleFrame(() => step());
         return () => {
             cancelled = true;
             webScrollRootRef.current = null;

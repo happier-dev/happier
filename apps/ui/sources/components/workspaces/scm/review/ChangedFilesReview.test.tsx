@@ -681,7 +681,7 @@ vi.mock('@/components/workspaces/scm/review/useInitialScrollRestore', () => ({
         const maxAttempts = typeof input.maxAttempts === 'number' && Number.isFinite(input.maxAttempts) ? input.maxAttempts : 12;
         const hasScheduledRef = React.useRef(false);
         const cancelledRef = React.useRef(false);
-        const scheduledHandleRef = React.useRef<number | null>(null);
+        const scheduledHandleRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
         React.useEffect(() => {
             if (Platform.OS !== 'web') return;

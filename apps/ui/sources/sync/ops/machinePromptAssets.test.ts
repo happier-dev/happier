@@ -29,8 +29,9 @@ const getReadyServerFeaturesMock = vi.hoisted(() =>
 const readCachedMachineRpcDirectRouteMock = vi.hoisted(() =>
     vi.fn((_input: unknown): TransferRouteViabilityRecord => ({ status: 'unknown' })),
 );
-const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
+const relayJsonDownloadMock = vi.hoisted(() => vi.fn());
 const uploadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
+const directExportDownloadMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
@@ -50,13 +51,21 @@ vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
     recordCachedDirectPeerRouteViable: () => {},
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/downloadBulkJsonPayload', () => ({
-    downloadBulkJsonPayload: downloadBulkJsonPayloadMock,
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/downloadBulkJsonPayloadViaServerRelay', () => ({
+    downloadBulkJsonPayloadViaServerRelay: relayJsonDownloadMock,
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/uploadBulkJsonPayload', () => ({
-    uploadBulkJsonPayload: uploadBulkJsonPayloadMock,
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/directTransferExportDownload', () => ({
+    downloadBulkJsonPayloadViaDirectExport: (...args: unknown[]) => directExportDownloadMock(...args),
 }));
+
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/uploadBulkJsonPayload', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/transfers/runtime/bulkTransferPipeline/uploadBulkJsonPayload')>();
+    return {
+        ...actual,
+        uploadBulkJsonPayload: (...args: unknown[]) => uploadBulkJsonPayloadMock(...args),
+    };
+});
 
 describe('machine prompt assets ops (server-scoped routing)', () => {
     beforeEach(() => {
@@ -65,8 +74,13 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
         getReadyServerFeaturesMock.mockClear();
         readCachedMachineRpcDirectRouteMock.mockReset();
         readCachedMachineRpcDirectRouteMock.mockReturnValue({ status: 'unknown' });
-        downloadBulkJsonPayloadMock.mockReset();
+        relayJsonDownloadMock.mockReset();
         uploadBulkJsonPayloadMock.mockReset();
+        directExportDownloadMock.mockReset();
+        directExportDownloadMock.mockResolvedValue({
+            ok: false,
+            error: 'Direct export download unavailable',
+        });
     });
 
     it('routes prompt asset type listing through server-scoped machine rpc', async () => {
@@ -82,7 +96,7 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PROMPT_ASSETS_LIST_TYPES,
             payload: undefined,
-            preferScoped: false,
+            preferScoped: true,
         }));
     });
 
@@ -103,16 +117,20 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DISCOVER,
             payload: expect.objectContaining({ assetTypeId: 'agents.skill', scope: 'project', directory: '/tmp/project' }),
-            preferScoped: false,
+            preferScoped: true,
         }));
     });
 
-    it('downloads prompt asset payloads through the canonical bulk pipeline', async () => {
+    it('downloads prompt asset payloads through the canonical relay fallback after direct export', async () => {
         readCachedMachineRpcDirectRouteMock.mockReturnValueOnce({
             status: 'unavailable',
             checkedAt: 1,
             expiresAt: 2,
             failureReason: 'unavailable',
+        });
+        directExportDownloadMock.mockResolvedValueOnce({
+            ok: false,
+            error: 'Direct export unavailable',
         });
         const payload = {
             assetTypeId: 'agents.skill',
@@ -161,14 +179,12 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
                         return { success: false, error: 'unexpected method' };
                 }
             });
-        downloadBulkJsonPayloadMock.mockImplementationOnce(async (args: Readonly<{
+        relayJsonDownloadMock.mockImplementationOnce(async (args: Readonly<{
             init: (request: Readonly<{ recipientPublicKeyBase64: string }>) => Promise<unknown>;
-            readChunk: (request: Readonly<{ downloadId: string; index: number }>) => Promise<unknown>;
             finalize: (request: Readonly<{ downloadId: string }>) => Promise<unknown>;
             parsePayload: (value: unknown) => unknown | null;
         }>) => {
             await args.init({ recipientPublicKeyBase64: 'recipient-public-key' });
-            await args.readChunk({ downloadId: 'download-1', index: 0 });
             await args.finalize({ downloadId: 'download-1' });
             const parsedPayload = args.parsePayload(payload);
             if (parsedPayload === null) {
@@ -191,9 +207,21 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
         );
 
         expect(res).toEqual({ ok: true, item: payload });
-        expect(downloadBulkJsonPayloadMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(directExportDownloadMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            request: {
+                t: 'prompt_asset_download_v1',
+                assetTypeId: 'agents.skill',
+                scope: 'user',
+                externalRef: { name: 'skill-a' },
+            },
+            parsePayload: expect.any(Function),
+        }));
+        expect(relayJsonDownloadMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
             init: expect.any(Function),
-            readChunk: expect.any(Function),
             finalize: expect.any(Function),
             parsePayload: expect.any(Function),
         }));
@@ -316,7 +344,7 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
                 scope: 'user',
                 externalRef: { name: 'skill-a' },
             }),
-            preferScoped: false,
+            preferScoped: true,
         }));
     });
 });

@@ -16,7 +16,7 @@ import {
     listDaemonPromptRegistryAdapters,
     listDaemonPromptRegistrySources,
     scanDaemonPromptRegistrySource,
-} from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+} from '@/sync/domains/transfers/runtime/transferSubstrate';
 
 type MachinePromptRegistriesOpts = Readonly<{
     serverId?: string | null;

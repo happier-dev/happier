@@ -29,7 +29,8 @@ const getReadyServerFeaturesMock = vi.hoisted(() =>
 const readCachedMachineRpcDirectRouteMock = vi.hoisted(() =>
     vi.fn((_input: unknown): TransferRouteViabilityRecord => ({ status: 'unknown' })),
 );
-const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
+const relayJsonDownloadMock = vi.hoisted(() => vi.fn());
+const directExportDownloadMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
@@ -49,8 +50,12 @@ vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
     recordCachedDirectPeerRouteViable: () => {},
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/downloadBulkJsonPayload', () => ({
-    downloadBulkJsonPayload: downloadBulkJsonPayloadMock,
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/downloadBulkJsonPayloadViaServerRelay', () => ({
+    downloadBulkJsonPayloadViaServerRelay: relayJsonDownloadMock,
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/directTransferExportDownload', () => ({
+    downloadBulkJsonPayloadViaDirectExport: (...args: unknown[]) => directExportDownloadMock(...args),
 }));
 
 describe('machine prompt registries ops (server-scoped routing)', () => {
@@ -60,7 +65,12 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
         getReadyServerFeaturesMock.mockClear();
         readCachedMachineRpcDirectRouteMock.mockReset();
         readCachedMachineRpcDirectRouteMock.mockReturnValue({ status: 'unknown' });
-        downloadBulkJsonPayloadMock.mockReset();
+        relayJsonDownloadMock.mockReset();
+        directExportDownloadMock.mockReset();
+        directExportDownloadMock.mockResolvedValue({
+            ok: false,
+            error: 'Direct export download unavailable',
+        });
     });
 
     it('routes prompt registry adapter listing through server-scoped machine rpc', async () => {
@@ -76,7 +86,7 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_ADAPTERS,
             payload: undefined,
-            preferScoped: false,
+            preferScoped: true,
         }));
     });
 
@@ -97,7 +107,7 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_SOURCES,
             payload: expect.objectContaining({ configuredSources: [] }),
-            preferScoped: false,
+            preferScoped: true,
         }));
     });
 
@@ -118,7 +128,7 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_SCAN_SOURCE,
             payload: expect.objectContaining({ sourceId: 'skills_sh:featured', configuredSources: [] }),
-            preferScoped: false,
+            preferScoped: true,
         }));
     });
 
@@ -149,7 +159,7 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL,
             payload: expect.objectContaining({ sourceId: 'skills_sh:featured', itemId: 'skills_sh:featured:item-1' }),
-            preferScoped: false,
+            preferScoped: true,
         }));
     });
 
@@ -177,9 +187,8 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             },
         };
 
-        downloadBulkJsonPayloadMock.mockImplementationOnce(async (args: Readonly<{
+        relayJsonDownloadMock.mockImplementationOnce(async (args: Readonly<{
             init: (request: Readonly<{ recipientPublicKeyBase64: string }>) => Promise<unknown>;
-            readChunk: (request: Readonly<{ downloadId: string; index: number }>) => Promise<unknown>;
             finalize: (request: Readonly<{ downloadId: string }>) => Promise<unknown>;
             parsePayload: (value: unknown) => unknown | null;
         }>) => {
@@ -203,7 +212,7 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
         )).rejects.toThrow('RPC call returned an unsupported response');
     });
 
-    it('downloads fetched registry item payloads through the canonical bulk transfer pipeline', async () => {
+    it('downloads fetched registry item payloads through the canonical relay fallback after direct export', async () => {
         readCachedMachineRpcDirectRouteMock.mockReturnValueOnce({
             status: 'unavailable',
             checkedAt: 1,
@@ -247,14 +256,12 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
                     return { success: false, error: 'unexpected method' };
             }
         });
-        downloadBulkJsonPayloadMock.mockImplementationOnce(async (args: Readonly<{
+        relayJsonDownloadMock.mockImplementationOnce(async (args: Readonly<{
             init: (request: Readonly<{ recipientPublicKeyBase64: string }>) => Promise<unknown>;
-            readChunk: (request: Readonly<{ downloadId: string; index: number }>) => Promise<unknown>;
             finalize: (request: Readonly<{ downloadId: string }>) => Promise<unknown>;
             parsePayload: (value: unknown) => unknown | null;
         }>) => {
             await args.init({ recipientPublicKeyBase64: 'recipient-public-key' });
-            await args.readChunk({ downloadId: 'download-1', index: 0 });
             await args.finalize({ downloadId: 'download-1' });
             const parsedPayload = args.parsePayload(payload);
             if (parsedPayload === null) {
@@ -285,10 +292,23 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             ok: true,
             item: payload,
         });
-        expect(downloadBulkJsonPayloadMock).toHaveBeenCalledTimes(1);
-        expect(downloadBulkJsonPayloadMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(directExportDownloadMock).toHaveBeenCalledTimes(1);
+        expect(directExportDownloadMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            request: {
+                t: 'prompt_registry_download_v1',
+                sourceId: 'skills_sh:featured',
+                itemId: 'skills_sh:featured:item-1',
+                configuredSources: [],
+            },
+            parsePayload: expect.any(Function),
+        }));
+        expect(relayJsonDownloadMock).toHaveBeenCalledTimes(1);
+        expect(relayJsonDownloadMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
             init: expect.any(Function),
-            readChunk: expect.any(Function),
             finalize: expect.any(Function),
             parsePayload: expect.any(Function),
         }));
@@ -306,12 +326,6 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             }),
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK,
-            payload: { downloadId: 'download-1', index: 0 },
-        }));
-        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE,

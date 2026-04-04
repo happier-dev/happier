@@ -7,14 +7,14 @@ import {
     callDaemonWorkspaceWriteFileRpc,
     downloadDaemonWorkspaceFileToBase64,
     uploadDaemonWorkspaceFileFromReader,
-} from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+} from '@/sync/domains/transfers/runtime/transferSubstrate';
 
 import type { WorkspaceFileSystemTarget } from './directoryBrowsing';
 
 const WORKSPACE_FILE_INLINE_MAX_BYTES_ENV_KEY = 'EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES';
 const DEFAULT_WORKSPACE_FILE_INLINE_MAX_BYTES = 256 * 1024;
 // Inline base64 file read/write is intentionally small-only to avoid OOM and to keep the
-// bulk-byte substrate canonical (`bulkTransferPipeline/**` for large payloads).
+// canonical transfer substrate (`transferSubstrate/**` for large payloads).
 const WORKSPACE_FILE_INLINE_HARD_MAX_BYTES = 10_000_000;
 const WORKSPACE_READ_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file read size limit';
 const WORKSPACE_WRITE_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file write size limit';
