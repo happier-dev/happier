@@ -177,4 +177,75 @@ describe('daemonWorkspaceFiles direct export', () => {
             },
         }));
     });
+
+    it('re-resolves zip relay downloads using the init-reported size before finalize', async () => {
+        const initCall = vi.fn(async (params: any) => {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
+                return {
+                    success: true,
+                    downloadId: 'relay-download-zip',
+                    chunkSizeBytes: 8,
+                    sizeBytes: 77,
+                    name: 'repo.zip',
+                };
+            }
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
+                return { success: true };
+            }
+            throw new Error(`unexpected init call: ${params.machineMethod}`);
+        });
+
+        const sizedCall = vi.fn(async (params: any) => {
+            if (params.machineMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
+                return { success: true };
+            }
+            throw new Error(`unexpected sized call: ${params.machineMethod}`);
+        });
+
+        createWorkspaceFileTransferRpcCallerMock.mockImplementation((params: any) => {
+            if (params?.transferSizeBytes === 77) {
+                return { call: sizedCall };
+            }
+            return { call: initCall };
+        });
+
+        relayFileDownloadMock.mockImplementationOnce(async (params: any) => {
+            const init = await params.init({ recipientPublicKeyBase64: 'pk' });
+            expect(init).toMatchObject({
+                success: true,
+                downloadId: 'relay-download-zip',
+                sizeBytes: 77,
+                name: 'repo.zip',
+            });
+            await params.finalize({ downloadId: 'relay-download-zip' });
+            return { ok: true as const, name: init.name, sizeBytes: init.sizeBytes };
+        });
+
+        const { downloadDaemonWorkspaceFileToDestination } = await import('./daemonWorkspaceFiles');
+        const result = await downloadDaemonWorkspaceFileToDestination({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            rootPath: '/repo',
+            request: { path: 'repo', asZip: true },
+            destination: {
+                writeBytes: async () => {},
+                close: async () => {},
+                cleanup: async () => {},
+            },
+        });
+
+        expect(result).toEqual({ ok: true, name: 'repo.zip', sizeBytes: 77 });
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenCalledTimes(2);
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenNthCalledWith(1, {
+            machineId: 'machine-1',
+            serverId: 'server-a',
+        });
+        expect(createWorkspaceFileTransferRpcCallerMock).toHaveBeenNthCalledWith(2, {
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            transferSizeBytes: 77,
+        });
+        expect(initCall).toHaveBeenCalledTimes(1);
+        expect(sizedCall).toHaveBeenCalledTimes(1);
+    });
 });
