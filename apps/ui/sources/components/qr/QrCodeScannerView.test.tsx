@@ -153,7 +153,7 @@ describe('QrCodeScannerView', () => {
         expect(text).not.toContain('__qr_subtitle__');
     });
 
-    it('renders a camera scanner on phone-sized web when camera APIs exist', async () => {
+    it('renders a camera scanner on web when camera APIs exist', async () => {
         deviceState.platformOs = 'web';
         deviceState.windowWidth = 360;
         deviceState.windowHeight = 800;
@@ -171,7 +171,7 @@ describe('QrCodeScannerView', () => {
         expect(lastCameraProps).not.toBeNull();
     });
 
-    it('auto-requests camera permission on phone-sized web instead of waiting for a manual retry tap', async () => {
+    it('auto-requests camera permission on web instead of waiting for a manual retry tap', async () => {
         deviceState.platformOs = 'web';
         deviceState.windowWidth = 360;
         deviceState.windowHeight = 800;
@@ -191,7 +191,7 @@ describe('QrCodeScannerView', () => {
         expect(cameraState.requestPermission).toHaveBeenCalledTimes(1);
     });
 
-    it('guarantees a non-zero preview surface for embedded phone-sized web scanners', async () => {
+    it('guarantees a non-zero preview surface for embedded web scanners', async () => {
         deviceState.platformOs = 'web';
         deviceState.windowWidth = 360;
         deviceState.windowHeight = 800;
@@ -216,7 +216,7 @@ describe('QrCodeScannerView', () => {
         expect(matchingView).toBeTruthy();
     });
 
-    it('does not render a camera scanner on desktop web even when camera APIs exist', async () => {
+    it('renders a camera scanner on desktop web when camera APIs exist', async () => {
         deviceState.platformOs = 'web';
         deviceState.windowWidth = 1400;
         deviceState.windowHeight = 900;
@@ -225,8 +225,26 @@ describe('QrCodeScannerView', () => {
             userAgent: 'Mozilla/5.0 (X11; Linux x86_64)',
             mediaDevices: { getUserMedia: async () => ({}) },
         } as any);
-        vi.stubGlobal('window', {
-            matchMedia: () => ({ matches: false }),
+
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        await renderScreen(<QrCodeScannerView
+                    title="t"
+                    permissionRequiredMessage="perm"
+                    onCancel={vi.fn()}
+                    onScan={vi.fn()}
+                    testIDPrefix="test"
+                />);
+        expect(lastCameraProps).not.toBeNull();
+    });
+
+    it('does not render a camera scanner on web when camera APIs are unavailable', async () => {
+        deviceState.platformOs = 'web';
+        deviceState.windowWidth = 1400;
+        deviceState.windowHeight = 900;
+        vi.stubGlobal('navigator', {
+            maxTouchPoints: 0,
+            userAgent: 'Mozilla/5.0 (X11; Linux x86_64)',
         } as any);
 
         const { QrCodeScannerView } = await import('./QrCodeScannerView');

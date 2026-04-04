@@ -17,7 +17,7 @@ const sentryMobileReplayIntegrationMock = vi.fn(() => ({ name: 'mobileReplayInte
 const sentryWrapMock = vi.fn((Component: any) => Component);
 const routerPushMock = vi.fn();
 
-const { fromModuleMock, trackingState } = vi.hoisted(() => ({
+const { fromModuleMock, trackingState, fontAwesomeFontMock, ioniconsFontMock } = vi.hoisted(() => ({
     fromModuleMock: vi.fn(),
     trackingState: {
         client: null as null | {
@@ -26,6 +26,8 @@ const { fromModuleMock, trackingState } = vi.hoisted(() => ({
             capture?: ReturnType<typeof vi.fn>;
         },
     },
+    fontAwesomeFontMock: { FontAwesome: 101 },
+    ioniconsFontMock: { Ionicons: 202 },
 }));
 
 vi.mock('react-native-quick-base64', () => ({}));
@@ -73,7 +75,8 @@ vi.mock('expo-notifications', () => ({
 }));
 
 vi.mock('@expo/vector-icons', () => ({
-    FontAwesome: { font: {} },
+    FontAwesome: { font: fontAwesomeFontMock },
+    Ionicons: { font: ioniconsFontMock },
 }));
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
@@ -383,6 +386,18 @@ describe('app/_layout init resilience', () => {
         expect(syncRestoreMock).not.toHaveBeenCalled();
         expect(screen.findByTestId('app-crash-recovery-boundary')).not.toBeNull();
         consoleErrorSpy.mockRestore();
+    });
+
+    it('preloads both FontAwesome and Ionicons icon fonts on native', async () => {
+        mockedPlatformOS = 'ios';
+
+        await renderSettledRootLayout();
+
+        expect(loadAsyncMock).toHaveBeenCalledTimes(1);
+        expect(loadAsyncMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            ...fontAwesomeFontMock,
+            ...ioniconsFontMock,
+        }));
     });
 
     it('wraps the provider stack with AppCrashRecoveryBoundary', async () => {

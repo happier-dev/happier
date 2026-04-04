@@ -117,7 +117,11 @@ describe('useConnectAccount (scanner lifecycle)', () => {
   it('navigates to the in-app QR scanner on phone-sized web', async () => {
     screenState.platformOS = 'web';
     screenState.windowDimensions = { width: 360, height: 800 };
-    vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
+    vi.stubGlobal('navigator', {
+      maxTouchPoints: 5,
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)',
+      mediaDevices: { getUserMedia: async () => ({}) },
+    } as any);
 
     const { useConnectAccount } = await import('./useConnectAccount');
 
@@ -136,11 +140,14 @@ describe('useConnectAccount (scanner lifecycle)', () => {
     expect(routerPushSpy).toHaveBeenCalledWith('/scan/account');
   });
 
-  it('does not open the scanner on desktop web even when the viewport is narrow', async () => {
+  it('navigates to the in-app QR scanner on desktop web when camera APIs exist', async () => {
     screenState.platformOS = 'web';
     screenState.windowDimensions = { width: 480, height: 700 };
-    vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
-    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) } as any);
+    vi.stubGlobal('navigator', {
+      maxTouchPoints: 0,
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64)',
+      mediaDevices: { getUserMedia: async () => ({}) },
+    } as any);
 
     const { useConnectAccount } = await import('./useConnectAccount');
 
@@ -153,6 +160,32 @@ describe('useConnectAccount (scanner lifecycle)', () => {
     await renderScreen(<Probe />);
 
     modalAlertSpy.mockClear();
+
+    await act(async () => {
+      await hookApi!.connectAccount();
+    });
+
+    expect(routerPushSpy).toHaveBeenCalledWith('/scan/account');
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not open the scanner when web camera APIs are unavailable', async () => {
+    screenState.platformOS = 'web';
+    screenState.windowDimensions = { width: 480, height: 700 };
+    vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
+
+    const { useConnectAccount } = await import('./useConnectAccount');
+
+    let hookApi: ReturnType<typeof useConnectAccount> | null = null;
+    function Probe() {
+      hookApi = useConnectAccount();
+      return null;
+    }
+
+    await renderScreen(<Probe />);
+
+    modalAlertSpy.mockClear();
+    routerPushSpy.mockClear();
 
     await act(async () => {
       await hookApi!.connectAccount();

@@ -1,0 +1,139 @@
+import * as React from 'react';
+import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+type ReactActEnvironmentGlobal = typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native', () => ({
+    View: 'View',
+    ScrollView: 'ScrollView',
+    ActivityIndicator: 'ActivityIndicator',
+    Platform: {
+        OS: 'web',
+        select: (options: {
+            web?: unknown;
+            default?: unknown;
+            ios?: unknown;
+            android?: unknown;
+        }) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+    },
+}));
+
+vi.mock('expo-router', () => ({
+    useLocalSearchParams: () => ({}),
+    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+}));
+
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: () => ({ login: vi.fn(async () => {}) }),
+}));
+
+vi.mock('@/auth/flows/qrStart', () => ({
+    generateAuthKeyPair: () => ({ publicKey: new Uint8Array([1]), secretKey: new Uint8Array([2]) }),
+    authQRStart: vi.fn(async () => true),
+}));
+
+vi.mock('@/auth/flows/qrWait', () => ({
+    authQRWait: vi.fn(() => new Promise(() => {})),
+}));
+
+vi.mock('@/auth/pairing/accountConnectUrl', () => ({
+    buildAccountConnectDeepLink: () => 'happier:///account?v=1',
+}));
+
+vi.mock('@/encryption/base64', () => ({
+    encodeBase64: () => 'encoded',
+}));
+
+vi.mock('@/modal', () => ({
+    Modal: {
+        alert: vi.fn(),
+    },
+}));
+
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
+            colors: {
+                surface: '#fff',
+                text: '#000',
+                textSecondary: '#666',
+                divider: '#ddd',
+                input: {
+                    background: '#fff',
+                    text: '#000',
+                },
+            },
+        },
+    });
+});
+
+vi.mock('@/components/qr/QRCode', () => ({
+    QRCode: () => React.createElement('QRCode'),
+}));
+
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: vi.fn(async () => null),
+}));
+
+vi.mock('@/utils/system/fireAndForget', () => ({
+    fireAndForget: (promise: Promise<unknown>) => {
+        void promise;
+    },
+}));
+
+vi.mock('@/auth/providers/registry', () => ({
+    getAuthProvider: () => null,
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: 'Text',
+}));
+
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
+    RoundButton: 'RoundButton',
+}));
+
+vi.mock('@/utils/platform/qrScannerSupport', () => ({
+    canUseCurrentDeviceQrScanner: () => true,
+}));
+
+afterEach(() => {
+    vi.clearAllMocks();
+});
+
+describe('RestoreQrView (embedded navigation)', () => {
+    it('renders an explicit scan action when an embedded scanner callback is available', async () => {
+        vi.resetModules();
+        const onOpenScanQr = vi.fn();
+        const { RestoreQrView } = await import('./RestoreQrView');
+
+        let tree!: renderer.ReactTestRenderer;
+        try {
+            await act(async () => {
+                tree = renderer.create(<RestoreQrView embedded onOpenScanQr={onOpenScanQr} />);
+            });
+
+            const button = tree.root.findByProps({ testID: 'restore-open-scan-qr' });
+            expect(button).toBeTruthy();
+
+            await act(async () => {
+                button.props.onPress();
+            });
+
+            expect(onOpenScanQr).toHaveBeenCalledTimes(1);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+});

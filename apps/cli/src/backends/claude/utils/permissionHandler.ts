@@ -503,7 +503,6 @@ export class PermissionHandler {
 
     handleModeChange(mode: PermissionMode) {
         this.permissionMode = mode;
-        this.session.setLastPermissionMode(mode);
         this.tryAutoApprovePendingRequestsForPermissionMode(mode);
     }
 

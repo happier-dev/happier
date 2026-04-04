@@ -8,9 +8,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { isRunningOnMac } from '@/utils/platform/platform';
-import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
-import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -112,17 +110,12 @@ export interface QrCodeScannerViewProps {
 export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: QrCodeScannerViewProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const { width, height } = useWindowDimensions();
+    const { height } = useWindowDimensions();
 
     const [permission, requestPermission] = useCameraPermissions();
     const isProcessingRef = React.useRef(false);
 
-    const canUseCamera = React.useMemo(() => {
-        if (isRunningOnMac()) return false;
-        if (Platform.OS !== 'web') return true;
-        if (!isWebQrScannerSupported()) return false;
-        return isWebMobileLikeQrScannerHost({ width, height });
-    }, [height, width]);
+    const canUseCamera = canUseCurrentDeviceQrScanner();
     const webPreviewMinHeight = React.useMemo(() => {
         if (Platform.OS !== 'web') return null;
         return Math.max(280, Math.min(Math.round(height * 0.6), 520));

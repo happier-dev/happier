@@ -39,6 +39,7 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 
 vi.mock('@/utils/platform/qrScannerSupport', () => ({
     isWebQrScannerSupported: () => true,
+    canUseCurrentDeviceQrScanner: () => true,
 }));
 
 vi.mock('@/components/account/restore/RestoreQrView', () => ({
@@ -55,7 +56,7 @@ afterEach(() => {
     resetRestoreRouteTestState();
 });
 describe('/restore (web desktop)', () => {
-    it('defaults to the show-QR restore flow when the web environment is not mobile-like', async () => {
+    it('keeps the QR-first restore flow on desktop web even when camera APIs are available', async () => {
         vi.stubGlobal('navigator', {
             maxTouchPoints: 0,
             userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',

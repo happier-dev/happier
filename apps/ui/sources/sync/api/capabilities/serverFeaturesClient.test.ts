@@ -46,7 +46,7 @@ function setFrozenServerFeaturesClock(now: Date): void {
 describe('serverFeaturesClient', () => {
     const originalFetch = globalThis.fetch;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         activeServerSnapshot = {
             serverId: 'server-a',
             serverUrl: 'https://active.example.test',
@@ -63,13 +63,17 @@ describe('serverFeaturesClient', () => {
             }
             return await featuresFetchMock(...args);
         }) as unknown as typeof fetch;
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         vi.useRealTimers();
         globalThis.fetch = originalFetch;
         vi.restoreAllMocks();
         vi.resetModules();
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
     });
 
     it('deduplicates in-flight feature fetches per server', async () => {
@@ -104,7 +108,9 @@ describe('serverFeaturesClient', () => {
         const second = getServerFeaturesSnapshot({ force: true, timeoutMs: 2000 });
 
         // Reachability supervision performs an async health probe before starting the /v1/features request.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        for (let attempt = 0; attempt < 10 && featuresFetchMock.mock.calls.length === 0; attempt += 1) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
         expect(featuresFetchMock.mock.calls.length).toBe(1);
 
         const resolveFetch: (value: Response) => void =
@@ -469,6 +475,20 @@ describe('serverFeaturesClient', () => {
         expect(String(calls[0]?.[0] ?? '')).toContain('https://active.example.test');
         expect(String(calls[1]?.[0] ?? '')).toContain('https://other.example.test');
         expect(String(calls[2]?.[0] ?? '')).toContain('https://other.example.test');
+    });
+
+    it('returns error status when the relay is completely offline and even the health probe fails', async () => {
+        globalThis.fetch = vi.fn().mockRejectedValue(
+            new TypeError('Network request failed'),
+        ) as unknown as typeof fetch;
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        resetServerFeaturesClientForTests();
+        await resetServerReachabilitySupervisors();
+
+        const result = await getServerFeaturesSnapshot({ force: true, timeoutMs: 100 });
+        expect(result.status).toBe('error');
     });
 
     it('fetches features against the explicit serverId url (not the active server)', async () => {

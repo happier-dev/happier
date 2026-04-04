@@ -46,6 +46,7 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 
 vi.mock('@/utils/platform/qrScannerSupport', () => ({
     isWebQrScannerSupported: () => true,
+    canUseCurrentDeviceQrScanner: () => true,
 }));
 
 vi.mock('@/components/account/restore/RestoreQrView', () => ({

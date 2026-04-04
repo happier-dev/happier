@@ -18,6 +18,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { getAuthProvider } from '@/auth/providers/registry';
 import type { RestoreRedirectReason, RestoreRedirectNotice } from '@/auth/providers/types';
 import { Text } from '@/components/ui/text/Text';
+import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -127,6 +128,7 @@ export type RestoreQrViewProps = Readonly<{
     embedded?: boolean;
     onBack?: () => void;
     onOpenSecretKeyLogin?: () => void;
+    onOpenScanQr?: () => void;
 }>;
 
 export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrViewProps) {
@@ -147,6 +149,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     }, [props.onBack, router]);
 
     const embedded = props.embedded === true;
+    const canOpenScanner = typeof props.onOpenScanQr === 'function' && canUseCurrentDeviceQrScanner();
     const qrSize = embedded ? 220 : 260;
     const scrollViewStyle: StyleProp<ViewStyle> = embedded
         ? [styles.scrollView, { backgroundColor: 'transparent' }]
@@ -250,6 +253,20 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                 </View>
 
                 <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
+                    {canOpenScanner ? (
+                        <>
+                            <View style={styles.footerButton}>
+                                <RoundButton
+                                    testID="restore-open-scan-qr"
+                                    size="small"
+                                    title={t('connect.scanQrCodeOnDevice')}
+                                    display="inverted"
+                                    onPress={props.onOpenScanQr}
+                                />
+                            </View>
+                            <View style={styles.footerButtonSpacer} />
+                        </>
+                    ) : null}
                     <View style={styles.footerButton}>
                         <RoundButton
                             testID="restore-open-manual"

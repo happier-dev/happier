@@ -253,6 +253,28 @@ describe('claudeLocalLauncher', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
+  it('keeps the sticky metadata intent when remote runtime mode falls back to default without a newer metadata update', async () => {
+    const { session } = createLocalHarness({
+      metadataSnapshot: {
+        permissionMode: 'yolo',
+        permissionModeUpdatedAt: 123,
+      },
+    });
+
+    const { PermissionHandler } = await import('./utils/permissionHandler');
+    const handler = new PermissionHandler(session);
+    handler.handleModeChange('default');
+
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      expect(opts.claudeArgs).toEqual(['--permission-mode', 'bypassPermissions']);
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session);
+
+    expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
   it('does not pass a strict allowedTools allowlist to local Claude spawns by default', async () => {
     const { session } = createLocalHarness();
 

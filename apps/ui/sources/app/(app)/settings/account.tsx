@@ -43,6 +43,7 @@ import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { buildAccountEncryptionMigrateToE2eeRequest } from '@/sync/ops/account/buildAccountEncryptionMigrateToE2eeRequest';
 import { getConnectedServiceCredentialPlain } from '@/sync/api/account/apiConnectedServicesV3';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { AccountEncryptionMigrateInvalidParamsReasonSchema } from '@happier-dev/protocol';
 
 
@@ -188,7 +189,7 @@ export default React.memo(() => {
 
     const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
     const showAddYourPhone = isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb);
-    const showLinkNewDevice = !isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb);
+    const showLinkNewDevice = canUseCurrentDeviceQrScanner();
     const showAccountAccessGroup = showAddYourPhone || showLinkNewDevice;
 
     return (
@@ -230,6 +231,7 @@ export default React.memo(() => {
                         ) : null}
                         {showLinkNewDevice ? (
                             <Item
+                                testID="settings-account-link-new-device"
                                 title={t('settingsAccount.linkNewDevice')}
                                 subtitle={isConnecting ? t('common.scanning') : t('settingsAccount.linkNewDeviceSubtitle')}
                                 icon={<Ionicons name="qr-code-outline" size={29} color={theme.colors.accent.blue} />}

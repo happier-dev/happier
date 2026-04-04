@@ -56,6 +56,8 @@ import {
     saveWorkspaceReviewCommentsDrafts,
     loadSessionActionDrafts,
     saveSessionActionDrafts,
+    loadSessionPermissionModes,
+    saveSessionPermissionModes,
 } from './persistence';
 
 describe('persistence', () => {
@@ -91,6 +93,30 @@ describe('persistence', () => {
                 JSON.stringify({ abc: 'gemini-2.5-pro', custom: 'claude-3-5-sonnet-latest', bad: '   ' }),
             );
             expect(loadSessionModelModes()).toEqual({ abc: 'gemini-2.5-pro', custom: 'claude-3-5-sonnet-latest' });
+        });
+    });
+
+    describe('session permission modes', () => {
+        it('returns an empty object when nothing is persisted', () => {
+            expect(loadSessionPermissionModes()).toEqual({});
+        });
+
+        it('roundtrips valid persisted permission modes', () => {
+            saveSessionPermissionModes({ abc: 'yolo', def: 'default' });
+            expect(loadSessionPermissionModes()).toEqual({ abc: 'yolo', def: 'default' });
+        });
+
+        it('filters out invalid persisted permission modes', () => {
+            store.set(
+                'session-permission-modes',
+                JSON.stringify({ ok: 'yolo', bad: 'not-a-mode', num: 12 }),
+            );
+            expect(loadSessionPermissionModes()).toEqual({ ok: 'yolo' });
+        });
+
+        it('returns an empty object when persisted permission modes are not an object', () => {
+            store.set('session-permission-modes', JSON.stringify(['yolo']));
+            expect(loadSessionPermissionModes()).toEqual({});
         });
     });
 

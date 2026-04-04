@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Platform, useWindowDimensions } from 'react-native';
 import { router } from 'expo-router';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -15,8 +14,7 @@ import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/ser
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 import { storage } from '@/sync/domains/state/storageStore';
-import { isRunningOnMac } from '@/utils/platform/platform';
-import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 
 interface UseConnectTerminalOptions {
     onSuccess?: () => void;
@@ -41,7 +39,6 @@ function resolveTerminalProvisioningContentPrivateKey(credentials: AuthCredentia
 
 export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     const auth = useAuth();
-    const { width, height } = useWindowDimensions();
     const [isLoading, setIsLoading] = React.useState(false);
 
     const processAuthUrl = React.useCallback(async (url: string) => {
@@ -154,14 +151,13 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     }, [auth.credentials, options]);
 
     const connectTerminal = React.useCallback(async () => {
-        const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
-        const canUseScanner = !isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb);
+        const canUseScanner = canUseCurrentDeviceQrScanner();
         if (!canUseScanner) {
             await Modal.alertAsync(t('common.error'), t('modals.qrScannerUnavailable'), [{ text: t('common.ok') }]);
             return;
         }
         router.push('/scan/terminal');
-    }, [height, width]);
+    }, []);
 
     const connectWithUrl = React.useCallback(async (url: string) => {
         return await processAuthUrl(url);

@@ -8,12 +8,16 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
-    useWindowDimensions: () => ({ width: 390, height: 844 }),
+    Platform: { OS: 'web' },
+    useWindowDimensions: () => ({ width: 1400, height: 900 }),
 }));
 
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
+}));
+
+vi.mock('@/utils/platform/webMobileHeuristics', () => ({
+    isWebMobileLikeQrScannerHost: () => false,
 }));
 
 vi.mock('@/utils/platform/qrScannerSupport', () => ({
@@ -21,24 +25,24 @@ vi.mock('@/utils/platform/qrScannerSupport', () => ({
     canUseCurrentDeviceQrScanner: () => true,
 }));
 
-let lastScanProps: any = null;
+let lastScanProps: unknown = null;
 vi.mock('@/components/account/restore/RestoreScanComputerQrView', () => ({
-    RestoreScanComputerQrView: (props: any) => {
+    RestoreScanComputerQrView: (props: unknown) => {
         lastScanProps = props;
         return React.createElement('scan');
     },
 }));
 
-let lastQrProps: any = null;
+let lastQrProps: unknown = null;
 vi.mock('@/components/account/restore/RestoreQrView', () => ({
-    RestoreQrView: (props: any) => {
+    RestoreQrView: (props: unknown) => {
         lastQrProps = props;
         return React.createElement('qr');
     },
 }));
 
-describe('RestoreIndexEmbedded', () => {
-    it('switches from scanner-first to the QR view via an embedded callback (no route push)', async () => {
+describe('RestoreIndexEmbedded (web desktop)', () => {
+    it('defaults to the QR view and lets the user explicitly switch into the scanner', async () => {
         vi.resetModules();
         lastScanProps = null;
         lastQrProps = null;
@@ -55,18 +59,25 @@ describe('RestoreIndexEmbedded', () => {
                 );
             });
 
-            expect(tree.root.findByType('scan')).toBeTruthy();
-            expect(lastScanProps?.embedded).toBe(true);
-            expect(lastScanProps?.onShowQrInstead).toBeInstanceOf(Function);
+            expect(tree.root.findByType('qr')).toBeTruthy();
+            expect((lastQrProps as { embedded?: boolean } | null)?.embedded).toBe(true);
+            expect((lastQrProps as { onOpenScanQr?: () => void } | null)?.onOpenScanQr).toBeInstanceOf(Function);
 
             await act(async () => {
-                lastScanProps.onShowQrInstead();
+                (lastQrProps as { onOpenScanQr: () => void }).onOpenScanQr();
+            });
+
+            expect(tree.root.findByType('scan')).toBeTruthy();
+            expect((lastScanProps as { embedded?: boolean } | null)?.embedded).toBe(true);
+            expect((lastScanProps as { onShowQrInstead?: () => void } | null)?.onShowQrInstead).toBeInstanceOf(Function);
+
+            await act(async () => {
+                (lastScanProps as { onShowQrInstead: () => void }).onShowQrInstead();
             });
 
             expect(tree.root.findByType('qr')).toBeTruthy();
-            expect(lastQrProps?.embedded).toBe(true);
-            expect(lastQrProps?.onBack).toBe(onBack);
-            expect(lastQrProps?.onOpenSecretKeyLogin).toBe(onOpenSecretKeyLogin);
+            expect((lastQrProps as { onBack?: () => void } | null)?.onBack).toBe(onBack);
+            expect((lastQrProps as { onOpenSecretKeyLogin?: () => void } | null)?.onOpenSecretKeyLogin).toBe(onOpenSecretKeyLogin);
         } finally {
             act(() => {
                 tree?.unmount();

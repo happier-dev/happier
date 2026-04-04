@@ -639,10 +639,21 @@ export function clearNewSessionDraft() {
 
 export function loadSessionPermissionModes(): Record<string, PermissionMode> {
     const mmkv = getPersistenceStorage();
-    const modes = mmkv.getString('session-permission-modes');
-    if (modes) {
+    const raw = mmkv.getString('session-permission-modes');
+    if (raw) {
         try {
-            return JSON.parse(modes);
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return {};
+            }
+
+            const result: Record<string, PermissionMode> = {};
+            for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
+                if (isPermissionMode(value)) {
+                    result[sessionId] = value;
+                }
+            }
+            return result;
         } catch (e) {
             console.error('Failed to parse session permission modes', e);
             return {};

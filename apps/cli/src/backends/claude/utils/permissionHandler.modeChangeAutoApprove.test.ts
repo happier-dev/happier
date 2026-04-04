@@ -19,6 +19,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 describe('Claude PermissionHandler - mode change auto-approve', () => {
+  it('does not persist transient runtime mode changes as sticky session intent', async () => {
+    const { session } = createPermissionHandlerSessionStub('mode-change-runtime-only');
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+
+    handler.handleModeChange('yolo');
+
+    expect(session.setLastPermissionMode).not.toHaveBeenCalled();
+  });
+
   it('auto-approves a pending non-interactive request when switching to yolo', async () => {
     const { session, client } = createPermissionHandlerSessionStub('mode-change-yolo-auto-approve');
     const { PermissionHandler } = await import('./permissionHandler');

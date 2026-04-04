@@ -111,12 +111,18 @@ describe('Settings → Account (grouping)', () => {
         standardCleanup();
     });
 
-    it('shows one stable add-phone entry and routes to the phone-link flow on desktop web', async () => {
+    it('shows add-phone and link-new-device actions on desktop web when camera APIs are available', async () => {
         windowDimensions = { width: 1200, height: 800 };
+        vi.stubGlobal('navigator', {
+            maxTouchPoints: 0,
+            userAgent: 'Mozilla/5.0 (X11; Linux x86_64)',
+            mediaDevices: { getUserMedia: async () => ({}) },
+        } as any);
         vi.resetModules();
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
         const screen = await renderScreen(<AccountScreen />);
         expect(screen.findByTestId('settings-account-add-your-phone')).toBeTruthy();
+        expect(screen.findByTestId('settings-account-link-new-device')).toBeTruthy();
 
         screen.pressByTestId('settings-account-add-your-phone');
 
