@@ -30,6 +30,7 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
         'EXPO_PUBLIC_IOS_BACKGROUND_AUDIO',
         'EXPO_IOS_BACKGROUND_AUDIO',
+        'HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC',
         'HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE',
         'HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH',
         'HAPPIER_EXPO_USE_NATIVE_DEBUG',
@@ -98,6 +99,19 @@ describe('app.config.js', () => {
         expect(exp.scheme).toBe('happier-dev');
         expect(featurePolicyEnv).toBe('preview');
         expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('dev');
+    });
+
+    it('enables Android cleartext traffic by default so LAN/local HTTP relays work in native builds', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        expect(exp.android).toEqual(expect.objectContaining({ usesCleartextTraffic: true }));
+    });
+
+    it('allows disabling Android cleartext traffic explicitly via env override', () => {
+        const exp = withCleanEnv(() => {
+            process.env.HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC = 'false';
+            return getPublicConfig();
+        });
+        expect(exp.android).toEqual(expect.objectContaining({ usesCleartextTraffic: false }));
     });
 
     it('maps the internalpreview environment to the internal preview identity', () => {

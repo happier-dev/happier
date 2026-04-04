@@ -92,6 +92,7 @@ const appEnvironmentConfig = getAppEnvironmentConfig(rawAppEnvironment);
 const androidEnableMinifyInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_MINIFY', false);
 const androidEnableShrinkResourcesInReleaseBuilds = readBoolEnv('HAPPIER_ANDROID_ENABLE_SHRINK_RESOURCES', false);
 const androidGradleJvmArgsOverride = String(process.env.HAPPIER_ANDROID_GRADLE_JVMARGS ?? '').trim();
+const androidUsesCleartextTraffic = readBoolEnv('HAPPIER_ANDROID_USES_CLEARTEXT_TRAFFIC', true);
 const shouldUseAndroidBuildProperties =
     androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
 
@@ -285,6 +286,7 @@ const baseExpoConfig = {
             blockedPermissions: [
                 "android.permission.ACTIVITY_RECOGNITION"
             ],
+            usesCleartextTraffic: androidUsesCleartextTraffic,
             edgeToEdgeEnabled: true,
             package: androidPackage,
             googleServicesFile: "./google-services.json",
