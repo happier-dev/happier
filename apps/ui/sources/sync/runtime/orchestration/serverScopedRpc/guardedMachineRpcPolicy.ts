@@ -10,6 +10,9 @@ const GUARDED_MACHINE_RPC_METHOD_PREFIXES = [
 const GUARDED_MACHINE_RPC_METHODS = new Set<string>([
     // Workspace file writes (inline base64) still count as uploads.
     RPC_METHODS.WRITE_FILE,
+    // Direct import/export prepare methods negotiate transfer endpoints and should follow transfer policy.
+    RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
+    RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
     // Prompt assets bulk transfers.
     RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT,
     RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_CHUNK,

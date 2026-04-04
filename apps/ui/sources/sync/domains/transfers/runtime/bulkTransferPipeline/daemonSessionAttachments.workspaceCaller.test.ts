@@ -50,7 +50,7 @@ vi.mock('./uploadBulkPayloadFromFile', () => ({
 }));
 
 describe('daemonSessionAttachments', () => {
-    it('uses workspace transfer RPC (not session transfer fallback) for daemon bulk transfer calls', async () => {
+    it('routes workspace attachments through the shared workspace transfer caller', async () => {
         state.createdCallerParams = null;
         state.calledMethods = [];
         state.initRequest = null;
@@ -75,13 +75,50 @@ describe('daemonSessionAttachments', () => {
         });
 
         expect(result.success).toBe(true);
-        expect(state.createdCallerParams).toEqual({ machineId: 'machine-1', serverId: 'server-1', transferSizeBytes: 2 });
+        expect(state.createdCallerParams).toEqual({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            transferSizeBytes: 2,
+            workingDirectory: '/repo',
+        });
         expect(state.calledMethods).toEqual([
             RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
             RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
             RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
         ]);
         expect(state.calledMethods).not.toContain('session-rpc');
+    });
+
+    it('routes os_temp attachments through the shared workspace transfer caller without forcing a workspace root', async () => {
+        state.createdCallerParams = null;
+        state.calledMethods = [];
+        state.initRequest = null;
+
+        const { uploadDaemonSessionAttachmentFromReader } = await import('./daemonSessionAttachments');
+        const result = await uploadDaemonSessionAttachmentFromReader({
+            sessionId: 's1',
+            fileReader: {
+                sizeBytes: 3,
+                readBytes: async () => new Uint8Array(),
+                close: async () => {},
+            },
+            request: {
+                messageLocalId: 'm2',
+                fileName: 'b.txt',
+                sizeBytes: 3,
+                uploadLocation: 'os_temp',
+                workspaceRelativeDir: '.happier/uploads',
+                vcsIgnoreStrategy: 'none',
+                vcsIgnoreWritesEnabled: false,
+            },
+        });
+
+        expect(result.success).toBe(true);
+        expect(state.calledMethods).toEqual([
+            RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
+            RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
+            RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
+        ]);
     });
 
     it('passes the session workspace root to the attachment upload init request', async () => {

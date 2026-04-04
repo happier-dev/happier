@@ -4,8 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 
-const machineRpcTargetAvailableState = { value: true };
-const cachedDirectRouteStatusState = { value: 'unknown' as 'unknown' | 'viable' | 'unavailable' };
+const state = vi.hoisted(() => ({
+    machineRpcTargetAvailableState: { value: true },
+    machineState: { value: null as any },
+    cachedDirectRouteStatusState: { value: 'unknown' as 'unknown' | 'viable' | 'unavailable' },
+}));
 
 function createServerFeaturesResponse(partial?: Readonly<{
     features?: unknown;
@@ -36,6 +39,7 @@ function createServerFeaturesResponse(partial?: Readonly<{
 vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
     createPartialStorageModuleMock(importOriginal, {
         useSession: () => ({ active: true }),
+        useMachine: () => state.machineState.value,
     }),
 );
 
@@ -43,7 +47,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({
         machineReachable: true,
         machineOnline: true,
-        machineRpcTargetAvailable: machineRpcTargetAvailableState.value,
+        machineRpcTargetAvailable: state.machineRpcTargetAvailableState.value,
     }),
 }));
 
@@ -77,17 +81,18 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 
 vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
     readCachedMachineRpcDirectRoute: () => ({
-        status: cachedDirectRouteStatusState.value,
+        status: state.cachedDirectRouteStatusState.value,
         checkedAt: 0,
         expiresAt: 0,
-        failureReason: cachedDirectRouteStatusState.value === 'unavailable' ? 'nope' : undefined,
+        failureReason: state.cachedDirectRouteStatusState.value === 'unavailable' ? 'nope' : undefined,
     }),
+    subscribeCachedMachineRpcDirectRoute: () => () => {},
 }));
 
 describe('useSessionFileDownloadAvailability', () => {
     it('fails closed when server-routed is disabled and machine-rpc-direct viability is unknown', async () => {
-        cachedDirectRouteStatusState.value = 'unknown';
-        machineRpcTargetAvailableState.value = true;
+        state.cachedDirectRouteStatusState.value = 'unknown';
+        state.machineRpcTargetAvailableState.value = true;
 
         const { useSessionFileDownloadAvailability } = await import('./useSessionFileDownloadAvailability');
         const hook = await renderHook(() => useSessionFileDownloadAvailability('session-1'));
@@ -97,8 +102,8 @@ describe('useSessionFileDownloadAvailability', () => {
     });
 
     it('returns true when server-routed is disabled and machine-rpc-direct is confirmed viable', async () => {
-        cachedDirectRouteStatusState.value = 'viable';
-        machineRpcTargetAvailableState.value = true;
+        state.cachedDirectRouteStatusState.value = 'viable';
+        state.machineRpcTargetAvailableState.value = true;
 
         const { useSessionFileDownloadAvailability } = await import('./useSessionFileDownloadAvailability');
         const hook = await renderHook(() => useSessionFileDownloadAvailability('session-1'));
@@ -108,8 +113,8 @@ describe('useSessionFileDownloadAvailability', () => {
     });
 
     it('upload fails closed when server-routed is disabled and machine-rpc-direct viability is unknown', async () => {
-        cachedDirectRouteStatusState.value = 'unknown';
-        machineRpcTargetAvailableState.value = true;
+        state.cachedDirectRouteStatusState.value = 'unknown';
+        state.machineRpcTargetAvailableState.value = true;
 
         const { useSessionFileUploadAvailability } = await import('./useSessionFileUploadAvailability');
         const hook = await renderHook(() => useSessionFileUploadAvailability('session-1'));
@@ -119,8 +124,8 @@ describe('useSessionFileDownloadAvailability', () => {
     });
 
     it('upload returns true when server-routed is disabled and machine-rpc-direct is confirmed viable', async () => {
-        cachedDirectRouteStatusState.value = 'viable';
-        machineRpcTargetAvailableState.value = true;
+        state.cachedDirectRouteStatusState.value = 'viable';
+        state.machineRpcTargetAvailableState.value = true;
 
         const { useSessionFileUploadAvailability } = await import('./useSessionFileUploadAvailability');
         const hook = await renderHook(() => useSessionFileUploadAvailability('session-1'));

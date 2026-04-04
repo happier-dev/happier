@@ -62,9 +62,9 @@ export async function uploadDaemonSessionAttachmentFromReader(params: Readonly<{
         machineId: machineTarget.machineId,
         serverId,
         transferSizeBytes: params.fileReader.sizeBytes,
+        workingDirectory: machineTarget.basePath,
     });
     let previousUploadedBytes = 0;
-
     return await uploadBulkPayloadFromFile<SessionAttachmentsUploadFinalizeResponse>({
         fileReader: params.fileReader,
         init: async () =>

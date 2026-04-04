@@ -1,0 +1,326 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const prepareImportSessionMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
+    callGuardedMachineRpcWithPolicy: (...args: unknown[]) => prepareImportSessionMock(...args),
+}));
+
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { uploadBulkPayloadFromFileViaDirectImport } from './directTransferImportUpload';
+
+describe('uploadBulkPayloadFromFileViaDirectImport', () => {
+    afterEach(() => {
+        prepareImportSessionMock.mockReset();
+        resetRuntimeFetch();
+    });
+
+    it('prepares a direct import session and uploads encrypted chunks through the HTTP transfer endpoints', async () => {
+        const requests: Array<Readonly<{ method: string; url: string }>> = [];
+
+        prepareImportSessionMock.mockResolvedValue({
+            success: true,
+            uploadId: 'upload-1',
+            destDisplayPath: '/repo/payload.bin',
+            expectedSizeBytes: 5,
+            chunkSizeBytes: 2,
+            recipientPublicKeyBase64: Buffer.alloc(32, 7).toString('base64'),
+            expiresAt: 5_000,
+            endpointCandidates: [
+                {
+                    kind: 'http',
+                    url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1',
+                    expiresAt: 5_000,
+                },
+            ],
+        });
+
+        setRuntimeFetch(async (input, init) => {
+            const url = input instanceof URL ? input.toString() : String(input);
+            const method = String(init?.method ?? 'GET');
+            requests.push({ method, url });
+
+            if (url.includes('/chunks/') && method === 'PUT') {
+                return new Response(JSON.stringify({ success: true }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+
+            if (url.endsWith('/finalize') && method === 'POST') {
+                return new Response(JSON.stringify({
+                    success: true,
+                    finalized: {
+                        success: true,
+                        path: '/repo/payload.bin',
+                        sizeBytes: 5,
+                    },
+                    sha256: 'sha256:test',
+                }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+
+            throw new Error(`unexpected request: ${method} ${url}`);
+        });
+
+        const result = await uploadBulkPayloadFromFileViaDirectImport({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            fileReader: {
+                sizeBytes: 5,
+                readBytes: async (offset, length) => new TextEncoder().encode('hello').subarray(offset, offset + length),
+                close: async () => {},
+            },
+            request: {
+                t: 'session_file_upload_v1',
+                workingDirectory: '/repo',
+                path: '/repo/payload.bin',
+                sizeBytes: 5,
+                overwrite: true,
+            },
+        });
+
+        expect(result).toEqual({
+            success: true,
+            path: '/repo/payload.bin',
+            sizeBytes: 5,
+            sha256: 'sha256:test',
+        });
+        expect(prepareImportSessionMock).toHaveBeenCalledTimes(1);
+        expect(requests).toEqual([
+            { method: 'PUT', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/chunks/0' },
+            { method: 'PUT', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/chunks/1' },
+            { method: 'PUT', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/chunks/2' },
+            { method: 'POST', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1/finalize' },
+        ]);
+    });
+
+    it('can parse a non-file finalize response from direct import', async () => {
+        prepareImportSessionMock.mockResolvedValue({
+            success: true,
+            uploadId: 'upload-1',
+            destDisplayPath: 'prompt-asset-upload.json',
+            expectedSizeBytes: 5,
+            chunkSizeBytes: 5,
+            recipientPublicKeyBase64: Buffer.alloc(32, 7).toString('base64'),
+            expiresAt: 5_000,
+            endpointCandidates: [
+                {
+                    kind: 'http',
+                    url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-1',
+                    expiresAt: 5_000,
+                },
+            ],
+        });
+
+        setRuntimeFetch(async (input, init) => {
+            const url = input instanceof URL ? input.toString() : String(input);
+            const method = String(init?.method ?? 'GET');
+
+            if (url.includes('/chunks/') && method === 'PUT') {
+                return new Response(JSON.stringify({ success: true }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+
+            if (url.endsWith('/finalize') && method === 'POST') {
+                return new Response(JSON.stringify({
+                    success: true,
+                    finalized: {
+                        success: true,
+                        path: 'prompt-asset-upload.json',
+                        sizeBytes: 5,
+                        result: {
+                            ok: true,
+                            externalRef: { skillName: 'writer' },
+                            digest: 'digest-a',
+                        },
+                    },
+                    sha256: 'sha256:test',
+                }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+
+            throw new Error(`unexpected request: ${method} ${url}`);
+        });
+
+        const result = await uploadBulkPayloadFromFileViaDirectImport({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            fileReader: {
+                sizeBytes: 5,
+                readBytes: async (offset, length) => new TextEncoder().encode('hello').subarray(offset, offset + length),
+                close: async () => {},
+            },
+            request: {
+                t: 'prompt_asset_upload_v1',
+                workingDirectory: '/repo',
+                sizeBytes: 5,
+            } as any,
+            parseFinalizeResponse: (response) => {
+                const result = response.finalized.result as Record<string, unknown> | undefined;
+                if (!result || result.ok !== true) {
+                    return null;
+                }
+                return {
+                    ok: true,
+                    externalRef: result.externalRef,
+                    digest: result.digest,
+                };
+            },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            externalRef: { skillName: 'writer' },
+            digest: 'digest-a',
+        });
+    });
+
+    it('falls through to the next endpoint candidate when an earlier direct import endpoint returns a handled failure', async () => {
+        const requests: Array<Readonly<{ method: string; url: string }>> = [];
+
+        prepareImportSessionMock.mockResolvedValue({
+            success: true,
+            uploadId: 'upload-2',
+            destDisplayPath: '/repo/payload.bin',
+            expectedSizeBytes: 5,
+            chunkSizeBytes: 5,
+            recipientPublicKeyBase64: Buffer.alloc(32, 7).toString('base64'),
+            expiresAt: 5_000,
+            endpointCandidates: [
+                {
+                    kind: 'http',
+                    url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2',
+                    expiresAt: 5_000,
+                },
+                {
+                    kind: 'http',
+                    url: 'http://127.0.0.1:46002/machine-transfers/direct/imports/upload-2',
+                    expiresAt: 5_000,
+                },
+            ],
+        });
+
+        setRuntimeFetch(async (input, init) => {
+            const url = input instanceof URL ? input.toString() : String(input);
+            const method = String(init?.method ?? 'GET');
+            requests.push({ method, url });
+
+            if (url.startsWith('http://127.0.0.1:46001/') && url.includes('/chunks/') && method === 'PUT') {
+                return new Response(JSON.stringify({ success: false, error: 'first-candidate-failed' }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+            if (url.startsWith('http://127.0.0.1:46001/') && url.endsWith('/abort') && method === 'POST') {
+                return new Response('', { status: 204 });
+            }
+            if (url.startsWith('http://127.0.0.1:46002/') && url.includes('/chunks/') && method === 'PUT') {
+                return new Response(JSON.stringify({ success: true }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+            if (url.startsWith('http://127.0.0.1:46002/') && url.endsWith('/finalize') && method === 'POST') {
+                return new Response(JSON.stringify({
+                    success: true,
+                    finalized: {
+                        success: true,
+                        path: '/repo/payload.bin',
+                        sizeBytes: 5,
+                    },
+                    sha256: 'sha256:test',
+                }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+            if (url.startsWith('http://127.0.0.1:46002/') && url.endsWith('/abort') && method === 'POST') {
+                return new Response('', { status: 204 });
+            }
+
+            throw new Error(`unexpected request: ${method} ${url}`);
+        });
+
+        const result = await uploadBulkPayloadFromFileViaDirectImport({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            fileReader: {
+                sizeBytes: 5,
+                readBytes: async () => new TextEncoder().encode('hello'),
+                close: async () => {},
+            },
+            request: {
+                t: 'session_file_upload_v1',
+                workingDirectory: '/repo',
+                path: '/repo/payload.bin',
+                sizeBytes: 5,
+                overwrite: true,
+            },
+        });
+
+        expect(result).toEqual({
+            success: true,
+            path: '/repo/payload.bin',
+            sizeBytes: 5,
+            sha256: 'sha256:test',
+        });
+        expect(requests).toEqual(expect.arrayContaining([
+            { method: 'PUT', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/chunks/0' },
+            { method: 'POST', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/abort' },
+            { method: 'PUT', url: 'http://127.0.0.1:46002/machine-transfers/direct/imports/upload-2/chunks/0' },
+            { method: 'POST', url: 'http://127.0.0.1:46002/machine-transfers/direct/imports/upload-2/finalize' },
+        ]));
+    });
+
+    it('rejects invalid direct import endpoint candidates before issuing HTTP requests', async () => {
+        prepareImportSessionMock.mockResolvedValue({
+            success: true,
+            uploadId: 'upload-3',
+            destDisplayPath: '/repo/payload.bin',
+            expectedSizeBytes: 5,
+            chunkSizeBytes: 5,
+            recipientPublicKeyBase64: Buffer.alloc(32, 7).toString('base64'),
+            expiresAt: 5_000,
+            endpointCandidates: [
+                {
+                    kind: 'http',
+                    url: 'javascript:alert(1)',
+                    expiresAt: 5_000,
+                },
+            ],
+        });
+
+        setRuntimeFetch(async () => {
+            throw new Error('runtimeFetch should not be called for invalid candidates');
+        });
+
+        const result = await uploadBulkPayloadFromFileViaDirectImport({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            fileReader: {
+                sizeBytes: 5,
+                readBytes: async () => new TextEncoder().encode('hello'),
+                close: async () => {},
+            },
+            request: {
+                t: 'session_file_upload_v1',
+                workingDirectory: '/repo',
+                path: '/repo/payload.bin',
+                sizeBytes: 5,
+                overwrite: true,
+            },
+        });
+
+        expect(result).toEqual({
+            success: false,
+            error: 'Direct import upload unavailable',
+        });
+    });
+});

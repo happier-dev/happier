@@ -323,6 +323,8 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         return {
             timeout: (ms: number) => entry.socket.timeout(ms),
             emit: (event: string, payload: any) => entry.socket.emit(event, payload),
+            on: (event: string, listener: (...args: any[]) => void) => entry.socket.on(event, listener),
+            off: (event: string, listener: (...args: any[]) => void) => entry.socket.off(event, listener),
             disconnect: () => releaseOnce(),
         };
     };

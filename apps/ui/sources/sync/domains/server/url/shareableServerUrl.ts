@@ -3,6 +3,11 @@ import { isLoopbackServerUrl } from './serverUrlClassification';
 
 const SAFE_SERVER_PROTOCOLS = new Set(['http:', 'https:']);
 
+export function normalizeShareableServerUrlValidationTarget(raw: string | null | undefined): string | null {
+    const canonical = canonicalizeServerUrl(String(raw ?? ''));
+    return canonical || null;
+}
+
 export function sanitizeServerUrlForShareableLink(raw: string | null | undefined): string | null {
     const canonical = canonicalizeServerUrl(String(raw ?? ''));
     if (!canonical) return null;
@@ -32,4 +37,24 @@ export function resolvePreferredShareableServerUrl(params: Readonly<{
     const canonical = sanitizeServerUrlForShareableLink(params.canonicalServerUrl);
     if (canonical) return canonical;
     return sanitizeServerUrlForShareableLink(params.activeServerUrl);
+}
+
+export function resolveValidatedShareableServerUrl(params: Readonly<{
+    shareableServerUrl?: string | null | undefined;
+    validatedAgainstServerUrl?: string | null | undefined;
+    currentServerUrl?: string | null | undefined;
+}>): string | null {
+    const shareableServerUrl = sanitizeServerUrlForShareableLink(params.shareableServerUrl);
+    if (!shareableServerUrl) {
+        return null;
+    }
+
+    const validatedAgainstServerUrl = normalizeShareableServerUrlValidationTarget(params.validatedAgainstServerUrl);
+    const currentServerUrl = normalizeShareableServerUrlValidationTarget(params.currentServerUrl);
+    if (!validatedAgainstServerUrl || !currentServerUrl) {
+        return null;
+    }
+    return validatedAgainstServerUrl === currentServerUrl
+        ? shareableServerUrl
+        : null;
 }

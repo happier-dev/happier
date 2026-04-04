@@ -1,9 +1,14 @@
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { useSession } from '@/sync/domains/state/storage';
+import { useServerScopedMachine } from '@/sync/domains/state/storage';
+import {
+    readCachedMachineRpcDirectRoute,
+} from '@/sync/domains/transfers/runtime/transferRouteCache';
+import { resolveSessionFileTransferAvailability } from '@/sync/domains/transfers/runtime/transferSubstrate';
+import { resolveMachineDaemonTransferDirectPeerRoute } from '@/sync/domains/transfers/runtime/transferSubstrate/machineDaemonTransferState';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { readServerEnabledBit } from '@happier-dev/protocol';
 
 export function useSessionFileTransferAvailabilityResolver(sessionId: string): (transferSizeBytes?: number | null) => boolean {
     const session = useSession(sessionId);
@@ -12,6 +17,17 @@ export function useSessionFileTransferAvailabilityResolver(sessionId: string): (
     const serverSnapshot = useServerFeaturesSnapshotForServerId(serverId, {
         enabled: Boolean(serverId) && machineRpcTargetAvailable,
     });
+    const machineTarget = readMachineTargetForSession(sessionId);
+    const machine = useServerScopedMachine(serverId, machineTarget?.machineId ?? '');
+    const machineDirectPeerRoute = resolveMachineDaemonTransferDirectPeerRoute({
+        daemonState: machine?.daemonState ?? null,
+    });
+    const machineRpcRouteInput = machineTarget && serverId
+        ? {
+            serverId,
+            remoteMachineId: machineTarget.machineId,
+        }
+        : null;
 
     return (transferSizeBytes?: number | null) => {
         void transferSizeBytes;
@@ -24,18 +40,25 @@ export function useSessionFileTransferAvailabilityResolver(sessionId: string): (
         if (serverSnapshot.status !== 'ready') {
             return false;
         }
-        if (readServerEnabledBit(serverSnapshot.features, 'machines.transfer') !== true) {
-            return false;
-        }
-
-        const machineTarget = readMachineTargetForSession(sessionId);
         if (!machineTarget) {
             return false;
         }
         if (!machineRpcTargetAvailable) {
             return false;
         }
-        return true;
+
+        const { available } = resolveSessionFileTransferAvailability({
+            sessionAvailable: true,
+            machineTargetAvailable: true,
+            serverFeatures: serverSnapshot.features,
+            machineDaemonState: machine?.daemonState ?? null,
+            directPeerRoute: machineDirectPeerRoute,
+            machineRpcDirectRoute: machineRpcRouteInput
+                ? readCachedMachineRpcDirectRoute(machineRpcRouteInput)
+                : { status: 'unknown' },
+        });
+
+        return available;
     };
 }
 

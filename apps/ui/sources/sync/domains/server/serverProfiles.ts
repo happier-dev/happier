@@ -15,6 +15,7 @@ export type ServerProfile = Readonly<{
     name: string;
     serverUrl: string;
     shareableServerUrl?: string | null;
+    shareableServerUrlValidatedAgainstServerUrl?: string | null;
     createdAt: number;
     updatedAt: number;
     lastUsedAt: number;
@@ -25,6 +26,7 @@ export type ActiveServerSnapshot = Readonly<{
     serverId: string;
     serverUrl: string;
     activeShareableServerUrl?: string | null;
+    activeShareableServerUrlValidatedAgainstServerUrl?: string | null;
     activeLocalRelayUrl?: string | null;
     isSelectionExplicit?: boolean;
     generation: number;
@@ -340,6 +342,9 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
         ...(typeof record.shareableServerUrl === 'string'
             ? { shareableServerUrl: sanitizeServerUrlForShareableLink(record.shareableServerUrl) }
             : {}),
+        ...(typeof record.shareableServerUrlValidatedAgainstServerUrl === 'string'
+            ? { shareableServerUrlValidatedAgainstServerUrl: normalizeUrl(String(record.shareableServerUrlValidatedAgainstServerUrl)) }
+            : {}),
         createdAt: Number(record.createdAt ?? 0) || 0,
         updatedAt: Number(record.updatedAt ?? 0) || 0,
         lastUsedAt: Number(record.lastUsedAt ?? 0) || 0,
@@ -434,6 +439,14 @@ function dedupeEquivalentProfiles(params: Readonly<{
                 lastUsedAt: Math.max(acc.lastUsedAt, current.lastUsedAt),
                 ...(acc.shareableServerUrl ?? current.shareableServerUrl
                     ? { shareableServerUrl: acc.shareableServerUrl ?? current.shareableServerUrl ?? null }
+                    : {}),
+                ...(acc.shareableServerUrlValidatedAgainstServerUrl ?? current.shareableServerUrlValidatedAgainstServerUrl
+                    ? {
+                        shareableServerUrlValidatedAgainstServerUrl:
+                            acc.shareableServerUrlValidatedAgainstServerUrl
+                            ?? current.shareableServerUrlValidatedAgainstServerUrl
+                            ?? null,
+                    }
                     : {}),
             };
         }, preferred);
@@ -576,6 +589,7 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
             serverId: selected.id,
             serverUrl: selected.serverUrl,
             activeShareableServerUrl: selected.shareableServerUrl ?? null,
+            activeShareableServerUrlValidatedAgainstServerUrl: selected.shareableServerUrlValidatedAgainstServerUrl ?? null,
             activeLocalRelayUrl: sameOriginUrl && comparableUrlKey(sameOriginUrl) !== comparableUrlKey(selected.serverUrl)
                 ? sameOriginUrl
                 : null,
@@ -588,6 +602,7 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
         serverId: selectedId || '',
         serverUrl: sameOriginUrl ?? '',
         activeShareableServerUrl: null,
+        activeShareableServerUrlValidatedAgainstServerUrl: null,
         activeLocalRelayUrl: sameOriginUrl,
         isSelectionExplicit,
         generation: activeServerGeneration,
@@ -601,6 +616,7 @@ function getStableActiveServerSnapshot(next: ActiveServerSnapshot): ActiveServer
         && cached.serverId === next.serverId
         && cached.serverUrl === next.serverUrl
         && (cached.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
+        && (cached.activeShareableServerUrlValidatedAgainstServerUrl ?? null) === (next.activeShareableServerUrlValidatedAgainstServerUrl ?? null)
         && (cached.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
         && (cached.isSelectionExplicit ?? null) === (next.isSelectionExplicit ?? null)
         && cached.generation === next.generation
@@ -618,6 +634,7 @@ function emitActiveServerChanged(previous: ActiveServerSnapshot | null): void {
         && previous.serverId === next.serverId
         && previous.serverUrl === next.serverUrl
         && (previous.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
+        && (previous.activeShareableServerUrlValidatedAgainstServerUrl ?? null) === (next.activeShareableServerUrlValidatedAgainstServerUrl ?? null)
         && (previous.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
         && (previous.isSelectionExplicit ?? null) === (next.isSelectionExplicit ?? null)
     ) return;
@@ -682,6 +699,11 @@ export function upsertServerProfile(
             ? { shareableServerUrl: existingEquivalent.shareableServerUrl }
             : existing?.shareableServerUrl
                 ? { shareableServerUrl: existing.shareableServerUrl }
+                : {}),
+        ...(existingEquivalent?.shareableServerUrlValidatedAgainstServerUrl
+            ? { shareableServerUrlValidatedAgainstServerUrl: existingEquivalent.shareableServerUrlValidatedAgainstServerUrl }
+            : existing?.shareableServerUrlValidatedAgainstServerUrl
+                ? { shareableServerUrlValidatedAgainstServerUrl: existing.shareableServerUrlValidatedAgainstServerUrl }
                 : {}),
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
@@ -866,15 +888,25 @@ export function renameServerProfile(idRaw: string, nameRaw: string): void {
     emitActiveServerChanged(previousSnapshot);
 }
 
-export function setServerProfileShareableUrl(idRaw: string, shareableServerUrl: string | null | undefined): void {
+export function setServerProfileShareableUrl(
+    idRaw: string,
+    shareableServerUrl: string | null | undefined,
+    options: Readonly<{ validatedAgainstServerUrl?: string | null | undefined }> = {},
+): void {
     const id = normalizeServerId(idRaw);
     if (!id) return;
 
     const normalized = sanitizeServerUrlForShareableLink(shareableServerUrl ?? null);
+    const validatedAgainstServerUrl = normalized
+        ? normalizeUrl(String(options.validatedAgainstServerUrl ?? '')) || null
+        : null;
     const state = readPersistedState();
     const existing = state.servers[id];
     if (!existing) return;
-    if ((existing.shareableServerUrl ?? null) === normalized) return;
+    if (
+        (existing.shareableServerUrl ?? null) === normalized
+        && (existing.shareableServerUrlValidatedAgainstServerUrl ?? null) === validatedAgainstServerUrl
+    ) return;
 
     const previousSnapshot = getActiveServerSnapshot();
     writePersistedState({
@@ -884,6 +916,7 @@ export function setServerProfileShareableUrl(idRaw: string, shareableServerUrl: 
             [id]: {
                 ...existing,
                 shareableServerUrl: normalized,
+                shareableServerUrlValidatedAgainstServerUrl: validatedAgainstServerUrl,
                 updatedAt: nowMs(),
             },
         },

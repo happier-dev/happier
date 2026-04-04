@@ -11,7 +11,7 @@ const FORBIDDEN_SESSION_FILE_TRANSFER_TOKENS = [
 ] as const;
 
 const REQUIRED_WORKSPACE_FILE_TRANSFER_TOKENS = [
-    "@/sync/domains/transfers/runtime/bulkTransferPipeline",
+    "@/sync/domains/transfers/runtime/transferSubstrate",
 ] as const;
 
 const REQUIRED_SESSION_FILE_TRANSFER_TOKENS = [

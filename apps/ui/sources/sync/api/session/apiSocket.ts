@@ -3,6 +3,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { observeServerTimestamp } from '@/sync/runtime/time';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { TRANSFER_RELAY_V2_SOCKET_EVENT, type TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { serverFetch, StaleServerGenerationError } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -154,7 +155,7 @@ class ApiSocket {
     private socketTransportKey: string | null = null;
     private config: SyncSocketConfig | null = null;
     private encryption: Encryption | null = null;
-    private messageHandlers: Map<string, (data: any) => void> = new Map();
+    private messageHandlers: Map<string, Set<(data: any) => void>> = new Map();
     private reconnectedListeners: Set<() => void> = new Set();
     private statusListeners: Set<(status: 'disconnected' | 'connecting' | 'connected' | 'error') => void> = new Set();
     private connectionStateListeners: Set<(state: ManagedConnectionState) => void> = new Set();
@@ -274,12 +275,29 @@ class ApiSocket {
     //
 
     onMessage(event: string, handler: (data: any) => void) {
-        this.messageHandlers.set(event, handler);
-        return () => this.messageHandlers.delete(event);
+        const handlers = this.messageHandlers.get(event) ?? new Set<(data: any) => void>();
+        handlers.add(handler);
+        this.messageHandlers.set(event, handlers);
+        return () => this.offMessage(event, handler);
     }
 
     offMessage(event: string, handler: (data: any) => void) {
-        this.messageHandlers.delete(event);
+        const handlers = this.messageHandlers.get(event);
+        if (!handlers) {
+            return;
+        }
+        handlers.delete(handler);
+        if (handlers.size === 0) {
+            this.messageHandlers.delete(event);
+        }
+    }
+
+    onTransferRelayV2Envelope(handler: (payload: TransferRelayV2SendEnvelope) => void) {
+        return this.onMessage(TRANSFER_RELAY_V2_SOCKET_EVENT, handler);
+    }
+
+    sendTransferRelayV2Envelope(payload: TransferRelayV2SendEnvelope) {
+        this.send(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
     }
 
     /**
@@ -604,13 +622,12 @@ class ApiSocket {
 
     private installSocketEventHandlers(socket: Socket) {
         socket.onAny((event, data) => {
-            // console.log(`📥 SyncSocket: Received event '${event}':`, JSON.stringify(data).substring(0, 200));
-            const handler = this.messageHandlers.get(event);
-            if (handler) {
-                // console.log(`📥 SyncSocket: Calling handler for '${event}'`);
+            const handlers = this.messageHandlers.get(event);
+            if (!handlers || handlers.size === 0) {
+                return;
+            }
+            for (const handler of Array.from(handlers)) {
                 handler(data);
-            } else {
-                // console.log(`📥 SyncSocket: No handler registered for '${event}'`);
             }
         });
     }

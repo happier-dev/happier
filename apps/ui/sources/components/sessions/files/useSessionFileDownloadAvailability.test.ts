@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
     session: { active: true } as any,
     machineReachability: { machineRpcTargetAvailable: true } as any,
     machineTarget: { machineId: 'machine-1', basePath: '/repo' } as any,
+    machine: null as any,
     cachedMachineRpcDirectRoute: { status: 'unknown' as const },
     serverSnapshot: {
         status: 'ready' as const,
@@ -18,7 +19,7 @@ const state = vi.hoisted(() => ({
                     enabled: true,
                     transfer: {
                         enabled: true,
-                        serverRouted: { enabled: true },
+                        serverRouted: { enabled: false },
                     },
                 },
             },
@@ -30,6 +31,7 @@ const state = vi.hoisted(() => ({
 vi.mock('@/sync/domains/state/storage', () =>
     createStorageModuleStub({
         useSession: () => state.session,
+        useMachine: () => state.machine,
     }),
 );
 
@@ -43,6 +45,7 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 
 vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
     readCachedMachineRpcDirectRoute: () => state.cachedMachineRpcDirectRoute,
+    subscribeCachedMachineRpcDirectRoute: () => () => {},
 }));
 
 vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
@@ -67,7 +70,7 @@ describe('useSessionFileDownloadAvailability', () => {
                         enabled: true,
                         transfer: {
                             enabled: true,
-                            serverRouted: { enabled: true },
+                            serverRouted: { enabled: false },
                         },
                     },
                 },
@@ -77,11 +80,11 @@ describe('useSessionFileDownloadAvailability', () => {
 
         const { useSessionFileDownloadAvailability } = await import('./useSessionFileDownloadAvailability');
         const hook = await renderHook(() => useSessionFileDownloadAvailability('s1'));
-        expect(hook.getCurrent()).toBe(true);
-
-        state.cachedMachineRpcDirectRoute = { status: 'unavailable' as const, failureReason: 'machine_rpc_direct_unavailable' } as any;
-        await hook.rerender();
         expect(hook.getCurrent()).toBe(false);
+
+        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 1, expiresAt: 2 } as any;
+        await hook.rerender();
+        expect(hook.getCurrent()).toBe(true);
     });
 
     it('fails closed when server feature snapshot is not ready (even if a machine target exists)', async () => {
@@ -108,7 +111,7 @@ describe('useSessionFileDownloadAvailability', () => {
                         enabled: true,
                         transfer: {
                             enabled: true,
-                            serverRouted: { enabled: true },
+                            serverRouted: { enabled: false },
                         },
                     },
                 },

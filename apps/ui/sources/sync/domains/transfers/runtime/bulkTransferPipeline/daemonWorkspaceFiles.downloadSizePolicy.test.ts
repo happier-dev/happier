@@ -4,6 +4,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const createWorkspaceFileTransferRpcCallerMock = vi.hoisted(() => vi.fn());
 const downloadBulkPayloadToFileMock = vi.hoisted(() => vi.fn());
+const callGuardedMachineRpcWithPolicyMock = vi.hoisted(() => vi.fn());
+const relayFileDownloadMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./workspaceFileTransferRpcCaller', () => ({
     createWorkspaceFileTransferRpcCaller: (params: unknown) => createWorkspaceFileTransferRpcCallerMock(params),
@@ -13,12 +15,30 @@ vi.mock('./downloadBulkPayloadToFile', () => ({
     downloadBulkPayloadToFile: (...args: unknown[]) => downloadBulkPayloadToFileMock(...args),
 }));
 
+vi.mock('./downloadBulkPayloadViaServerRelayToDestination', () => ({
+    downloadBulkPayloadViaServerRelayToDestination: (...args: unknown[]) => relayFileDownloadMock(...args),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
+    callGuardedMachineRpcWithPolicy: (...args: unknown[]) => callGuardedMachineRpcWithPolicyMock(...args),
+}));
+
 const { downloadDaemonWorkspaceFileToBase64, downloadDaemonWorkspaceFileToDestination } = await import('./daemonWorkspaceFiles');
 
 describe('daemonWorkspaceFiles download size policy', () => {
     beforeEach(() => {
         createWorkspaceFileTransferRpcCallerMock.mockReset();
         downloadBulkPayloadToFileMock.mockReset();
+        callGuardedMachineRpcWithPolicyMock.mockReset();
+        relayFileDownloadMock.mockReset();
+        callGuardedMachineRpcWithPolicyMock.mockResolvedValue({
+            success: false,
+            error: 'Direct export unavailable',
+        });
+        relayFileDownloadMock.mockResolvedValue({
+            ok: false,
+            error: 'Relay download unavailable',
+        });
     });
 
     it('re-resolves zip download routes using init-reported size (uses sized transfer caller for chunks)', async () => {

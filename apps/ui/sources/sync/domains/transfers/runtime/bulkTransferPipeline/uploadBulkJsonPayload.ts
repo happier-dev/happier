@@ -115,21 +115,12 @@ export async function uploadBulkJsonPayload<TFinalize extends { success: boolean
     | Readonly<{ ok: true; response: TResponse }>
     | Readonly<{ ok: false; error: string }>
 > {
-    const jsonMaxBytes = resolveBulkTransferJsonMaxBytes(null);
-    if (wouldJsonStringifyExceedMaxBytes(params.payload, jsonMaxBytes)) {
-        return {
-            ok: false,
-            error: `Uploaded JSON payload exceeds max allowed bytes (${jsonMaxBytes})`,
-        };
+    const preparedPayload = prepareBulkJsonPayloadForUpload(params.payload);
+    if (!preparedPayload.ok) {
+        return preparedPayload;
     }
 
-    const encodedPayload = new TextEncoder().encode(JSON.stringify(params.payload));
-    if (encodedPayload.byteLength > jsonMaxBytes) {
-        return {
-            ok: false,
-            error: `Uploaded JSON payload exceeds max allowed bytes (${jsonMaxBytes})`,
-        };
-    }
+    const { encodedPayload } = preparedPayload;
     const upload = await uploadBulkPayloadFromFile<TFinalize>({
         fileReader: {
             sizeBytes: encodedPayload.byteLength,
@@ -162,5 +153,31 @@ export async function uploadBulkJsonPayload<TFinalize extends { success: boolean
     return {
         ok: true,
         response: parsedResponse,
+    };
+}
+
+export function prepareBulkJsonPayloadForUpload(payload: unknown): Readonly<
+    | { ok: true; encodedPayload: Uint8Array }
+    | { ok: false; error: string }
+> {
+    const jsonMaxBytes = resolveBulkTransferJsonMaxBytes(null);
+    if (wouldJsonStringifyExceedMaxBytes(payload, jsonMaxBytes)) {
+        return {
+            ok: false,
+            error: `Uploaded JSON payload exceeds max allowed bytes (${jsonMaxBytes})`,
+        };
+    }
+
+    const encodedPayload = new TextEncoder().encode(JSON.stringify(payload));
+    if (encodedPayload.byteLength > jsonMaxBytes) {
+        return {
+            ok: false,
+            error: `Uploaded JSON payload exceeds max allowed bytes (${jsonMaxBytes})`,
+        };
+    }
+
+    return {
+        ok: true,
+        encodedPayload,
     };
 }

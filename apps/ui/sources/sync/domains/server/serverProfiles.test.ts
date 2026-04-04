@@ -158,10 +158,13 @@ describe('serverProfiles', () => {
             name: 'Relay',
         });
         profiles.setActiveServerId(created.id, { scope: 'device' });
-        profiles.setServerProfileShareableUrl(created.id, 'https://relay.example.ts.net/path?token=abc#frag');
+        profiles.setServerProfileShareableUrl(created.id, 'https://relay.example.ts.net/path?token=abc#frag', {
+            validatedAgainstServerUrl: 'http://127.0.0.1:3005/',
+        });
 
         const snapshot = profiles.getActiveServerSnapshot();
         expect(snapshot.activeShareableServerUrl).toBe('https://relay.example.ts.net/path');
+        expect(snapshot.activeShareableServerUrlValidatedAgainstServerUrl).toBe('http://127.0.0.1:3005');
         expect(profiles.getActiveServerUrl()).toBe('https://relay.example.test');
     });
 

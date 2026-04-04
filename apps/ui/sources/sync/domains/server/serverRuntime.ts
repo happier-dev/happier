@@ -46,9 +46,12 @@ export function upsertAndActivateServer(
     return profile;
 }
 
-export function setActiveShareableServerUrl(serverUrl: string | null | undefined): void {
+export function setActiveShareableServerUrl(
+    serverUrl: string | null | undefined,
+    options: Readonly<{ validatedAgainstServerUrl?: string | null | undefined }> = {},
+): void {
     const snapshot = getSnapshotFromProfiles();
     const serverId = String(snapshot.serverId ?? '').trim();
     if (!serverId) return;
-    setServerProfileShareableUrl(serverId, serverUrl);
+    setServerProfileShareableUrl(serverId, serverUrl, options);
 }

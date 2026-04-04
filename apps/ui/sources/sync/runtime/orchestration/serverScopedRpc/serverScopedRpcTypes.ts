@@ -61,5 +61,7 @@ export type ScopedSocketConnectParams = Readonly<{
 export type ScopedSocketClient = Readonly<{
     timeout: (ms: number) => { emitWithAck: (event: string, payload: any) => Promise<unknown> };
     emit: (event: string, payload: any) => void;
+    on: (event: string, listener: (...args: any[]) => void) => void;
+    off: (event: string, listener: (...args: any[]) => void) => void;
     disconnect: () => void;
 }>;

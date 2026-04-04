@@ -21,8 +21,11 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
+import { uploadBulkPayloadFromFileViaDirectImport } from './directTransferImportUpload';
+import { downloadBulkJsonPayloadViaDirectExport } from './directTransferExportDownload';
+import { downloadBulkJsonPayloadViaServerRelay } from './downloadBulkJsonPayloadViaServerRelay';
 import { downloadBulkJsonPayload } from './downloadBulkJsonPayload';
-import { uploadBulkJsonPayload } from './uploadBulkJsonPayload';
+import { prepareBulkJsonPayloadForUpload, uploadBulkJsonPayload } from './uploadBulkJsonPayload';
 import { resolvePreferScopedForBulkMachineTransfer } from './resolvePreferScopedForBulkMachineTransfer';
 
 type MachinePromptAssetsTransferOpts = Readonly<{
@@ -210,6 +213,73 @@ export async function downloadDaemonPromptAsset(
         timeoutMs: opts?.timeoutMs ?? null,
     });
 
+    const directExportResult = await downloadBulkJsonPayloadViaDirectExport({
+        machineId,
+        serverId: opts?.serverId,
+        request: {
+            t: 'prompt_asset_download_v1',
+            assetTypeId: payload.assetTypeId,
+            scope: payload.scope,
+            externalRef: payload.externalRef,
+        },
+        parsePayload: parsePromptAssetTransferPayload,
+    });
+    if (directExportResult.ok) {
+        return {
+            ok: true,
+            item: directExportResult.payload,
+        };
+    }
+
+    const relayResult = await downloadBulkJsonPayloadViaServerRelay({
+        machineId,
+        serverId: opts?.serverId,
+        timeoutMs: opts?.timeoutMs ?? undefined,
+        init: async (request): Promise<PromptAssetDownloadInitResponse> => await assertRpcResponseWithSuccess<PromptAssetDownloadInitResponse>(
+            await machineRpcWithServerScope<
+                PromptAssetDownloadInitResponse,
+                PromptAssetReadRequest & Readonly<{ recipientPublicKeyBase64: string }>
+            >({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+                preferScoped,
+                payload: {
+                    ...payload,
+                    recipientPublicKeyBase64: request.recipientPublicKeyBase64,
+                },
+            }),
+        ),
+        finalize: async (request): Promise<PromptAssetDownloadFinalizeResponse> => await assertRpcResponseWithSuccess<PromptAssetDownloadFinalizeResponse>(
+            await machineRpcWithServerScope<PromptAssetDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_FINALIZE,
+                preferScoped,
+                payload: request,
+            }),
+        ),
+        abort: async (request): Promise<PromptAssetDownloadFinalizeResponse> => await assertRpcResponseWithSuccess<PromptAssetDownloadFinalizeResponse>(
+            await machineRpcWithServerScope<PromptAssetDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_ABORT,
+                preferScoped,
+                payload: request,
+            }),
+        ),
+        parsePayload: parsePromptAssetTransferPayload,
+    });
+    if (relayResult.ok) {
+        return {
+            ok: true,
+            item: relayResult.payload,
+        };
+    }
+
     const result = await downloadBulkJsonPayload({
         init: async (request): Promise<PromptAssetDownloadInitResponse> => await assertRpcResponseWithSuccess<PromptAssetDownloadInitResponse>(
             await machineRpcWithServerScope<
@@ -271,6 +341,32 @@ export async function uploadDaemonPromptAsset(
         serverId: opts?.serverId,
         timeoutMs: opts?.timeoutMs ?? null,
     });
+    const preparedPayload = prepareBulkJsonPayloadForUpload(payload);
+
+    if (preparedPayload.ok) {
+        const directImportResult = await uploadBulkPayloadFromFileViaDirectImport<PromptAssetMutationResponseV1>({
+            machineId,
+            serverId: opts?.serverId,
+            fileReader: {
+                sizeBytes: preparedPayload.encodedPayload.byteLength,
+                readBytes: async (offset, length) => preparedPayload.encodedPayload.subarray(offset, offset + length),
+                close: async () => {},
+            },
+            request: {
+                t: 'prompt_asset_upload_v1',
+                workingDirectory: '/',
+                sizeBytes: preparedPayload.encodedPayload.byteLength,
+            } as const,
+            parseFinalizeResponse: (response) => {
+                const parsed = PromptAssetMutationResponseV1Schema.safeParse(response.finalized.result);
+                return parsed.success ? parsed.data : null;
+            },
+        });
+
+        if ('ok' in directImportResult) {
+            return directImportResult;
+        }
+    }
 
     const result = await uploadBulkJsonPayload<PromptAssetUploadFinalizeResponse, PromptAssetMutationResponseV1>({
         payload,

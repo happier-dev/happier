@@ -17,7 +17,7 @@ const FORBIDDEN_PROMPT_REGISTRY_TRANSFER_TOKENS = [
 ] as const;
 
 const REQUIRED_PROMPT_REGISTRY_TRANSFER_TOKENS = [
-    "@/sync/domains/transfers/runtime/bulkTransferPipeline",
+    "@/sync/domains/transfers/runtime/transferSubstrate",
 ] as const;
 
 describe('bulkTransferPipeline (architecture)', () => {

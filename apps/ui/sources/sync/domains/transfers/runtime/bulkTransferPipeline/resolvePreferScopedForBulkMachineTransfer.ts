@@ -1,8 +1,8 @@
 import { readServerEnabledBit } from '@happier-dev/protocol';
 
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
-
-import { shouldPreferScopedMachineRpcForBulkTransfer } from './shouldPreferScopedMachineRpcForBulkTransfer';
+import { readCachedMachineRpcDirectRoute } from '@/sync/domains/transfers/runtime/transferRouteCache';
+import { resolveTransferRouteDecision } from '@/sync/domains/transfers/runtime/transferSubstrate/resolveTransferRouteDecision';
 
 export async function resolvePreferScopedForBulkMachineTransfer(params: Readonly<{
     machineId: string;
@@ -20,10 +20,16 @@ export async function resolvePreferScopedForBulkMachineTransfer(params: Readonly
         if (!serverFeatures) return true;
         if (readServerEnabledBit(serverFeatures, 'machines.transfer') !== true) return true;
 
-        return shouldPreferScopedMachineRpcForBulkTransfer({
-            serverId: params.serverId,
-            machineId: params.machineId,
+        const decision = resolveTransferRouteDecision({
+            serverFeatures,
+            directPeerRoute: { status: 'unknown' },
+            machineRpcDirectRoute: readCachedMachineRpcDirectRoute({
+                serverId: params.serverId,
+                remoteMachineId: params.machineId,
+            }),
         });
+
+        return decision.preferScopedMachineRpc;
     } catch {
         // Fail closed: if we cannot evaluate transfer policy, do not attempt `machine_rpc_direct`.
         return true;

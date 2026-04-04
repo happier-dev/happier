@@ -23,6 +23,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
+import { downloadBulkJsonPayloadViaDirectExport } from './directTransferExportDownload';
+import { downloadBulkJsonPayloadViaServerRelay } from './downloadBulkJsonPayloadViaServerRelay';
 import { downloadBulkJsonPayload } from './downloadBulkJsonPayload';
 import { resolvePreferScopedForBulkMachineTransfer } from './resolvePreferScopedForBulkMachineTransfer';
 
@@ -185,6 +187,13 @@ export type DaemonPromptRegistryDownloadItemResponse =
         error: string;
     }>;
 
+function parsePromptRegistryTransferPayload(
+    value: unknown,
+): PromptRegistryFetchedItemV1 | null {
+    const parsed = PromptRegistryFetchedItemV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+}
+
 export async function downloadDaemonPromptRegistryItem(
     machineId: string,
     input: PromptRegistryFetchItemRequestV1,
@@ -196,6 +205,73 @@ export async function downloadDaemonPromptRegistryItem(
         serverId: opts?.serverId,
         timeoutMs: opts?.timeoutMs ?? null,
     });
+
+    const directExportResult = await downloadBulkJsonPayloadViaDirectExport({
+        machineId,
+        serverId: opts?.serverId,
+        request: {
+            t: 'prompt_registry_download_v1',
+            sourceId: payload.sourceId,
+            itemId: payload.itemId,
+            configuredSources: payload.configuredSources,
+        },
+        parsePayload: parsePromptRegistryTransferPayload,
+    });
+    if (directExportResult.ok) {
+        return {
+            ok: true,
+            item: directExportResult.payload,
+        };
+    }
+
+    const relayResult = await downloadBulkJsonPayloadViaServerRelay<PromptRegistryFetchedItemV1>({
+        machineId,
+        serverId: opts?.serverId,
+        timeoutMs: opts?.timeoutMs ?? undefined,
+        init: async (request): Promise<PromptRegistryDownloadInitResponse> => await assertRpcResponseWithSuccess<PromptRegistryDownloadInitResponse>(
+            await machineRpcWithServerScope<
+                PromptRegistryDownloadInitResponse,
+                PromptRegistryFetchItemRequestV1 & Readonly<{ recipientPublicKeyBase64: string }>
+            >({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
+                preferScoped,
+                payload: {
+                    ...payload,
+                    recipientPublicKeyBase64: request.recipientPublicKeyBase64,
+                },
+            }),
+        ),
+        finalize: async (request): Promise<PromptRegistryDownloadFinalizeResponse> => await assertRpcResponseWithSuccess<PromptRegistryDownloadFinalizeResponse>(
+            await machineRpcWithServerScope<PromptRegistryDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE,
+                preferScoped,
+                payload: request,
+            }),
+        ),
+        abort: async (request): Promise<PromptRegistryDownloadFinalizeResponse> => await assertRpcResponseWithSuccess<PromptRegistryDownloadFinalizeResponse>(
+            await machineRpcWithServerScope<PromptRegistryDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_ABORT,
+                preferScoped,
+                payload: request,
+            }),
+        ),
+        parsePayload: parsePromptRegistryTransferPayload,
+    });
+    if (relayResult.ok) {
+        return {
+            ok: true,
+            item: relayResult.payload,
+        };
+    }
 
     const result = await downloadBulkJsonPayload<PromptRegistryFetchedItemV1>({
         init: async (request): Promise<PromptRegistryDownloadInitResponse> => await assertRpcResponseWithSuccess<PromptRegistryDownloadInitResponse>(
@@ -234,10 +310,7 @@ export async function downloadDaemonPromptRegistryItem(
                 payload: request,
             }),
         ),
-        parsePayload: (value) => {
-            const parsed = PromptRegistryFetchedItemV1Schema.safeParse(value);
-            return parsed.success ? parsed.data : null;
-        },
+        parsePayload: parsePromptRegistryTransferPayload,
     });
 
     if (!result.ok) {

@@ -54,7 +54,9 @@ function createFakeSocket(options: Readonly<{ disconnectEventDelayMs?: number }>
         timeout: (_ms: number) => ({
             emitWithAck: async () => ({ ok: true }),
         }),
-        emit: vi.fn(),
+        emit: vi.fn((event: string, ...args: any[]) => {
+            emit(event, ...args);
+        }),
     };
 
     return { socket, connectSpy, disconnectSpy };
@@ -205,6 +207,39 @@ describe('serverScopedRpcSocketPool', () => {
         await vi.runAllTimersAsync();
         expect(reportUnreachableSpy).not.toHaveBeenCalled();
 
+        pool.resetForTests();
+    });
+
+    it('exposes raw socket event subscription on acquired scoped clients', async () => {
+        const { socket } = createFakeSocket();
+        const pool = createServerScopedRpcSocketPool({
+            createSocket: () => socket,
+            reachability: {
+                waitForReachable: async () => {},
+                startReachability: async () => {},
+                reportUnreachable: () => {},
+                subscribeNetworkAllowed: () => () => {},
+            },
+            readIdleDisconnectMs: () => 5_000,
+        });
+
+        const client: ScopedSocketClient = await pool.acquire({
+            serverUrl: 'https://server.example.test',
+            token: 'token-a',
+            timeoutMs: 1_000,
+        });
+        const listener = vi.fn();
+
+        client.on('custom-event', listener);
+        socket.emit('custom-event', { ok: true });
+        expect(listener).toHaveBeenCalledWith({ ok: true });
+
+        client.off('custom-event', listener);
+        socket.emit('custom-event', { ok: false });
+        expect(listener).toHaveBeenCalledTimes(1);
+
+        client.disconnect();
+        await pool.stopAll();
         pool.resetForTests();
     });
 });

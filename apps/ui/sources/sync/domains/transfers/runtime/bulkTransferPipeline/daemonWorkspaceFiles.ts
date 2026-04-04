@@ -15,6 +15,8 @@ import {
     type BulkTransferFileReader,
     uploadBulkPayloadFromFile,
 } from './uploadBulkPayloadFromFile';
+import { downloadBulkPayloadViaDirectExportToDestination } from './directTransferExportDownload';
+import { downloadBulkPayloadViaServerRelayToDestination } from './downloadBulkPayloadViaServerRelayToDestination';
 
 type WorkspaceRpcFailure = Readonly<{ success: false; error: string; errorCode?: string }>;
 
@@ -157,6 +159,7 @@ export async function uploadDaemonWorkspaceFileFromReader(params: Readonly<{
         machineId: params.machineId,
         ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
         transferSizeBytes: params.fileReader.sizeBytes,
+        workingDirectory: params.rootPath,
     });
 
     let previousUploadedBytes = 0;
@@ -249,6 +252,76 @@ export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<
             ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
             transferSizeBytes,
         });
+    }
+
+    const directExportResult = await downloadBulkPayloadViaDirectExportToDestination({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+        request: {
+            t: 'workspace_file_download_v1',
+            workingDirectory: params.rootPath,
+            path: absolutePath,
+            asZip: params.request.asZip,
+        },
+        destination: params.destination,
+        onInit: params.onInit ?? null,
+        signal: params.signal ?? null,
+        onProgress: params.onProgress ?? null,
+    });
+    if (directExportResult.ok) {
+        return directExportResult;
+    }
+
+    const relayResult = await downloadBulkPayloadViaServerRelayToDestination({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+        destination: params.destination,
+        init: async (request) => {
+            const init = await bulkTransferClient.call<
+                WorkspaceFileDownloadInitResponse,
+                Readonly<{ t: 'session_file_download_v1'; path: string; asZip: boolean; recipientPublicKeyBase64: string }>
+            >({
+                request: {
+                    t: 'session_file_download_v1',
+                    path: absolutePath,
+                    asZip: params.request.asZip,
+                    recipientPublicKeyBase64: request.recipientPublicKeyBase64,
+                },
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
+            });
+
+            if (init.success === true && params.request.asZip) {
+                bulkTransferClient = createWorkspaceFileTransferRpcCaller({
+                    machineId: params.machineId,
+                    ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+                    transferSizeBytes: init.sizeBytes,
+                });
+            }
+
+            return init;
+        },
+        finalize: async (request) =>
+            await bulkTransferClient.call<WorkspaceFileDownloadFinalizeResponse, typeof request>({
+                request,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
+            }),
+        abort: async (request) =>
+            await initTransferClient.call<WorkspaceFileDownloadFinalizeResponse, typeof request>({
+                request,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
+            }),
+        onInit: params.onInit ?? null,
+        signal: params.signal ?? null,
+        onProgress: params.onProgress
+            ? (progress) =>
+                params.onProgress?.({
+                    downloadedBytes: progress.downloadedBytes,
+                    totalBytes: progress.totalBytes,
+                })
+            : null,
+    });
+    if (relayResult.ok) {
+        return relayResult;
     }
 
     return await downloadBulkPayloadToFile({
@@ -357,11 +430,107 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
     const chunks: Uint8Array[] = [];
     let bufferedBytes = 0;
 
+    const directExportResult = await downloadBulkPayloadViaDirectExportToDestination({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+        request: {
+            t: 'workspace_file_download_v1',
+            workingDirectory: params.rootPath,
+            path: absolutePath,
+            asZip: false,
+        },
+        destination: {
+            writeBytes: async (bytes) => {
+                bufferedBytes += bytes.byteLength;
+                if (bufferedBytes > params.maxBytes) {
+                    throw new Error('File exceeds the inline file read size limit');
+                }
+                chunks.push(new Uint8Array(bytes));
+            },
+            close: async () => {},
+            cleanup: async () => {
+                bufferedBytes = 0;
+                chunks.length = 0;
+            },
+        },
+        onInit: async (init) => {
+            if (init.sizeBytes > params.maxBytes) {
+                return {
+                    success: false as const,
+                    error: 'File exceeds the inline file read size limit',
+                };
+            }
+        },
+        signal: params.signal ?? null,
+    });
+    if (directExportResult.ok) {
+        return {
+            ok: true,
+            contentBase64: encodeBase64(mergeTransferChunks(chunks), 'base64'),
+        };
+    }
+
     const transferClient = createWorkspaceFileTransferRpcCaller({
         machineId: params.machineId,
         ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
         transferSizeBytes: fileSizeBytes,
     });
+
+    const relayResult = await downloadBulkPayloadViaServerRelayToDestination({
+        machineId: params.machineId,
+        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+        destination: {
+            writeBytes: async (bytes) => {
+                bufferedBytes += bytes.byteLength;
+                if (bufferedBytes > params.maxBytes) {
+                    throw new Error('File exceeds the inline file read size limit');
+                }
+                chunks.push(new Uint8Array(bytes));
+            },
+            close: async () => {},
+            cleanup: async () => {
+                bufferedBytes = 0;
+                chunks.length = 0;
+            },
+        },
+        init: async (request) =>
+            await transferClient.call<
+                WorkspaceFileDownloadInitResponse,
+                Readonly<{ t: 'session_file_download_v1'; path: string; recipientPublicKeyBase64: string }>
+            >({
+                request: {
+                    t: 'session_file_download_v1',
+                    path: absolutePath,
+                    recipientPublicKeyBase64: request.recipientPublicKeyBase64,
+                },
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
+            }),
+        finalize: async (request) =>
+            await transferClient.call<WorkspaceFileDownloadFinalizeResponse, typeof request>({
+                request,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
+            }),
+        abort: async (request) =>
+            await transferClient.call<WorkspaceFileDownloadFinalizeResponse, typeof request>({
+                request,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
+            }),
+        onInit: async (init) => {
+            if (init.sizeBytes > params.maxBytes) {
+                return {
+                    success: false as const,
+                    error: 'File exceeds the inline file read size limit',
+                };
+            }
+        },
+        signal: params.signal ?? null,
+    });
+    if (relayResult.ok) {
+        return {
+            ok: true,
+            contentBase64: encodeBase64(mergeTransferChunks(chunks), 'base64'),
+        };
+    }
 
     try {
         const download = await downloadBulkPayloadToFile({

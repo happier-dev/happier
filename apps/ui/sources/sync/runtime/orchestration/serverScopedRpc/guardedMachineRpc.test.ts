@@ -37,6 +37,8 @@ describe('guardedMachineRpc', () => {
     it('recognizes guarded methods', () => {
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT)).toBe(true);
+        expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE)).toBe(true);
+        expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.LIST_DIRECTORY)).toBe(false);
         expect(isGuardedMachineRpcMethod('ripgrep')).toBe(false);
         expect(isGuardedMachineRpcMethod('daemon.bulkTransfer.start')).toBe(true);
