@@ -12,6 +12,7 @@ import { useLocalSetting } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { resolveProjectRightTabId } from './detail/resolveProjectRightTabId';
 
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
 import { useWorkspaceRefById } from './detail/useWorkspaceRefById';
@@ -33,7 +34,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{ workspaceRefId:
         const right = pane.scopeState?.right ?? null;
         if (!right) return;
         if (right.isOpen === true) return;
-        const preferredTab = right.activeTabId === 'files' || right.activeTabId === 'git' ? right.activeTabId : 'git';
+        const preferredTab = resolveProjectRightTabId(right.activeTabId);
         pane.openRight({ tabId: preferredTab });
         pane.setRightTab(preferredTab);
     }, [deviceType, multiPaneEnabled, pane, workspaceRef]);

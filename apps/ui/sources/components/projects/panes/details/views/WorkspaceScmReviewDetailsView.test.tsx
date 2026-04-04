@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,30 +42,28 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     };
 });
 
-const machineScmStatusSnapshotSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({
-    success: true,
-    snapshot: {
-        repo: { isRepo: true },
-        entries: [
-            {
-                path: 'src/a.ts',
-                kind: 'modified',
-                previousPath: null,
-                hasIncludedDelta: false,
-                hasPendingDelta: true,
-                stats: {
-                    includedAdded: 0,
-                    includedRemoved: 0,
-                    pendingAdded: 1,
-                    pendingRemoved: 1,
-                    isBinary: false,
-                },
+const useWorkspaceScmSnapshotControllerSpy = vi.fn();
+const workspaceSnapshotMock = {
+    repo: { isRepo: true },
+    entries: [
+        {
+            path: 'src/a.ts',
+            kind: 'modified',
+            previousPath: null,
+            hasIncludedDelta: false,
+            hasPendingDelta: true,
+            stats: {
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 1,
+                pendingRemoved: 1,
+                isBinary: false,
             },
-        ],
-        branch: { head: null, upstream: null, ahead: 0, behind: 0, detached: false },
-        capabilities: {},
-    },
-}));
+        },
+    ],
+    branch: { head: null, upstream: null, ahead: 0, behind: 0, detached: false },
+    capabilities: {},
+};
 const machineScmDiffFileSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({
     success: true,
     diff: [
@@ -79,24 +78,35 @@ const machineScmDiffFileSpy = vi.fn<(machineId: string, request: any) => Promise
     ].join('\n'),
 }));
 
+vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
+    useWorkspaceScmSnapshotController: (scope: any) => {
+        useWorkspaceScmSnapshotControllerSpy(scope);
+        return {
+            snapshot: workspaceSnapshotMock,
+            loading: false,
+            error: null,
+            refresh: vi.fn(async () => {}),
+        };
+    },
+}));
+
 vi.mock('@/sync/ops/scm/machineScm', () => ({
-    machineScmStatusSnapshot: (machineId: string, request: any) => machineScmStatusSnapshotSpy(machineId, request),
     machineScmDiffFile: (machineId: string, request: any) => machineScmDiffFileSpy(machineId, request),
 }));
 
-const diffFilesListSpy = vi.fn();
-vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
-    DiffFilesListView: (props: any) => {
-        diffFilesListSpy(props);
-        return React.createElement('DiffFilesListView', props);
+const changedFilesReviewSpy = vi.fn();
+vi.mock('@/components/workspaces/scm/review/ChangedFilesReview', () => ({
+    ChangedFilesReview: (props: any) => {
+        changedFilesReviewSpy(props);
+        return React.createElement('ChangedFilesReview', props);
     },
 }));
 
 describe('WorkspaceScmReviewDetailsView', () => {
     beforeEach(() => {
-        machineScmStatusSnapshotSpy.mockClear();
+        useWorkspaceScmSnapshotControllerSpy.mockClear();
         machineScmDiffFileSpy.mockClear();
-        diffFilesListSpy.mockClear();
+        changedFilesReviewSpy.mockClear();
     });
 
     afterEach(() => {
@@ -105,10 +115,13 @@ describe('WorkspaceScmReviewDetailsView', () => {
     });
 
     async function settle(): Promise<void> {
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
     }
 
-    it('loads the workspace SCM snapshot and renders a review diff', async () => {
+    it('loads the workspace SCM snapshot and renders the shared review surface', async () => {
         const { WorkspaceScmReviewDetailsView } = await import('./WorkspaceScmReviewDetailsView');
         await renderScreen(
             <WorkspaceScmReviewDetailsView
@@ -123,8 +136,38 @@ describe('WorkspaceScmReviewDetailsView', () => {
 
         await settle();
 
-        expect(machineScmStatusSnapshotSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo' }));
-        expect(machineScmDiffFileSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', path: 'src/a.ts' }));
-        expect(diffFilesListSpy).toHaveBeenCalled();
+        expect(useWorkspaceScmSnapshotControllerSpy).toHaveBeenCalledWith({
+            serverId: 's1',
+            machineId: 'm1',
+            rootPath: '/repo',
+        });
+        expect(changedFilesReviewSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'project:wr_1',
+            changedFilesViewMode: 'repository',
+            allRepositoryChangedFiles: [expect.objectContaining({ fullPath: 'src/a.ts' })],
+            repositoryOnlyFiles: [expect.objectContaining({ fullPath: 'src/a.ts' })],
+            sessionAttributedFiles: [],
+            turnAttributedFiles: [],
+            workspaceScope: {
+                serverId: 's1',
+                machineId: 'm1',
+                rootPath: '/repo',
+            },
+            fetchUnifiedDiffForPath: expect.any(Function),
+        }));
+
+        const reviewProps = changedFilesReviewSpy.mock.calls[0]?.[0];
+        expect(reviewProps).toBeTruthy();
+
+        const result = await reviewProps.fetchUnifiedDiffForPath({
+            path: 'src/a.ts',
+            diffArea: 'both',
+            file: reviewProps.allRepositoryChangedFiles[0],
+            normalizeError: (value: unknown) => String(value),
+            fallbackError: 'failed',
+        });
+
+        expect(machineScmDiffFileSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', path: 'src/a.ts', area: 'both' }));
+        expect(result).toEqual(expect.objectContaining({ success: true }));
     });
 });

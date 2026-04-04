@@ -16,7 +16,6 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { useAllMachines, useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import { resolveWorkspaceDisplayLabel } from '@/sync/domains/workspaces/workspaceLabel';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { WorkspaceFileDetailsView, type WorkspaceFileDeepLinkAnchor } from '@/components/workspaces/files/details/WorkspaceFileDetailsView';
@@ -26,17 +25,7 @@ import { WorkspaceScmReviewDetailsView } from '@/components/projects/panes/detai
 import { WorkspaceScmStashDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmStashDetailsView';
 import { WorkspaceEmbeddedTerminalPane } from '@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane';
 import type { DetailsTabState } from '@/components/appShell/panes/model/appPaneReducer';
-
-function resolvePathBasename(rawPath: string): string | null {
-    const trimmed = String(rawPath ?? '').trim().replace(/[\\/]+$/, '');
-    if (!trimmed) return null;
-    const parts = trimmed.split(/[/\\]/g).filter(Boolean);
-    return parts.length > 0 ? (parts[parts.length - 1] ?? null) : null;
-}
-
-function resolveWorkspaceFallbackPathLabel(workspaceRef: WorkspaceRefV1): string {
-    return resolvePathBasename(workspaceRef.rootPath) ?? workspaceRef.rootPath;
-}
+import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 
 export type WorkspaceDetailsPanelHeaderActionRenderParams = Readonly<{
     iconButtonStyle: Readonly<Record<string, unknown>>;
@@ -118,11 +107,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         return getMachineDisplayName(machine) ?? props.workspaceRef.machineId;
     }, [allMachines, props.workspaceRef.machineId]);
 
-    const displayName = React.useMemo(() => resolveWorkspaceDisplayLabel({
-        scope: { serverId: props.workspaceRef.serverId, machineId: props.workspaceRef.machineId, rootPath: props.workspaceRef.rootPath },
-        workspaceRef: props.workspaceRef,
-        fallbackPathLabel: resolveWorkspaceFallbackPathLabel(props.workspaceRef),
-    }), [props.workspaceRef]);
+    const displayName = React.useMemo(() => resolveWorkspaceRefDisplayName(props.workspaceRef), [props.workspaceRef]);
 
     const iconButtonStyle = React.useMemo(() => ({
         width: 34,
@@ -360,7 +345,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         />
                     </Pressable>
                 ) : null}
-                {props.onRequestClose ? (
+                {props.onRequestClose && deviceType !== 'phone' ? (
                     <Pressable
                         onPress={requestClose}
                         style={iconButtonStyle}

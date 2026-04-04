@@ -1,7 +1,10 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createModalModuleMock, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -30,19 +33,24 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
+vi.mock('@/modal', () => createModalModuleMock({ confirmResult: true }).module);
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => true,
+}));
+
 const machineScmStashListSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({
     success: true,
-    managedCount: 1,
-    managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
+    stashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
     totalCount: 1,
 }));
-const machineScmStashShowSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({
+const machineScmStashShowSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async (_machineId, request) => ({
     success: true,
     diff: [
-        'diff --git a/src/a.ts b/src/a.ts',
+        `diff --git a/${request.stashRef}.ts b/${request.stashRef}.ts`,
         'index 0000000..1111111 100644',
-        '--- a/src/a.ts',
-        '+++ b/src/a.ts',
+        `--- a/${request.stashRef}.ts`,
+        `+++ b/${request.stashRef}.ts`,
         '@@ -1,1 +1,1 @@',
         '-export const a = 1;',
         '+export const a = 2;',
@@ -50,10 +58,14 @@ const machineScmStashShowSpy = vi.fn<(machineId: string, request: any) => Promis
     ].join('\n'),
     truncated: false,
 }));
+const machineScmStashPopSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({ success: true }));
+const machineScmStashDropSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({ success: true }));
 
 vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmStashList: (machineId: string, request: any) => machineScmStashListSpy(machineId, request),
     machineScmStashShow: (machineId: string, request: any) => machineScmStashShowSpy(machineId, request),
+    machineScmStashPop: (machineId: string, request: any) => machineScmStashPopSpy(machineId, request),
+    machineScmStashDrop: (machineId: string, request: any) => machineScmStashDropSpy(machineId, request),
 }));
 
 const diffFilesListSpy = vi.fn();
@@ -68,6 +80,8 @@ describe('WorkspaceScmStashDetailsView', () => {
     beforeEach(() => {
         machineScmStashListSpy.mockClear();
         machineScmStashShowSpy.mockClear();
+        machineScmStashPopSpy.mockClear();
+        machineScmStashDropSpy.mockClear();
         diffFilesListSpy.mockClear();
     });
 
@@ -78,6 +92,66 @@ describe('WorkspaceScmStashDetailsView', () => {
 
     async function settle(): Promise<void> {
         await flushHookEffects({ cycles: 2, turns: 2 });
+    }
+
+    type PendingRetryTimer = Readonly<{
+        id: number;
+        delayMs: number;
+        run: () => void;
+    }>;
+
+    async function withControlledRetryTimers(body: (controls: Readonly<{
+        advanceTimersByCount: (count: number) => Promise<void>;
+    }>) => Promise<void>): Promise<void> {
+        const pendingTimers: PendingRetryTimer[] = [];
+        let nextTimerId = 1;
+        let nowMs = 0;
+
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, timeout?: number) => {
+            const timerId = nextTimerId++;
+            const delayMs = typeof timeout === 'number' && Number.isFinite(timeout) ? timeout : 0;
+            pendingTimers.push({
+                id: timerId,
+                delayMs,
+                run: () => {
+                    if (typeof handler === 'function') {
+                        handler();
+                        return;
+                    }
+                    throw new Error('Expected a function timer handler in workspace stash retry tests');
+                },
+            });
+            return timerId as unknown as ReturnType<typeof setTimeout>;
+        }) as typeof setTimeout);
+        const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(((timerId: ReturnType<typeof setTimeout>) => {
+            const pendingIndex = pendingTimers.findIndex((timer) => timer.id === timerId);
+            if (pendingIndex >= 0) {
+                pendingTimers.splice(pendingIndex, 1);
+            }
+        }) as typeof clearTimeout);
+        const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+        try {
+            await body({
+                advanceTimersByCount: async (count: number) => {
+                    for (let i = 0; i < count; i += 1) {
+                        const nextTimer = pendingTimers.shift();
+                        if (!nextTimer) {
+                            throw new Error(`Expected at least ${count} pending retry timers, but only found ${i}`);
+                        }
+                        await act(async () => {
+                            nowMs += nextTimer.delayMs;
+                            nextTimer.run();
+                        });
+                        await settle();
+                    }
+                },
+            });
+        } finally {
+            setTimeoutSpy.mockRestore();
+            clearTimeoutSpy.mockRestore();
+            dateNowSpy.mockRestore();
+        }
     }
 
     it('loads stashes and renders the diff for the first stash', async () => {
@@ -98,5 +172,152 @@ describe('WorkspaceScmStashDetailsView', () => {
         expect(machineScmStashListSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo' }));
         expect(machineScmStashShowSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }));
         expect(diffFilesListSpy).toHaveBeenCalled();
+    });
+
+    it('restores and discards the selected stash via machine RPC', async () => {
+        const { WorkspaceScmStashDetailsView } = await import('./WorkspaceScmStashDetailsView');
+        const screen = await renderScreen(
+            <WorkspaceScmStashDetailsView
+                scopeId="project:wr_1"
+                workspaceRefId="wr_1"
+                workspaceCacheKey="wk_1"
+                machineId="m1"
+                rootPath="/repo"
+                serverId="s1"
+            />,
+        );
+
+        await settle();
+
+        const restoreButton = screen.tree.findByProps({ accessibilityLabel: 'files.stash.restore' });
+        await act(async () => {
+            restoreButton.props.onPress?.();
+            await settle();
+        });
+        expect(machineScmStashPopSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }));
+
+        const discardButton = screen.tree.findByProps({ accessibilityLabel: 'files.stash.discard' });
+        await act(async () => {
+            discardButton.props.onPress?.();
+            await settle();
+        });
+        expect(machineScmStashDropSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{0}' }));
+    });
+
+    it('loads the clicked stash when switching between all stash pills including unmanaged entries', async () => {
+        machineScmStashListSpy.mockResolvedValueOnce({
+            success: true,
+            stashes: [
+                { stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() },
+                { stashRef: 'stash@{1}', kind: 'unmanaged', message: 'WIP on feature: unmanaged', createdAt: Date.now() - 60_000 },
+            ],
+            totalCount: 2,
+        });
+
+        const { WorkspaceScmStashDetailsView } = await import('./WorkspaceScmStashDetailsView');
+        const screen = await renderScreen(
+            <WorkspaceScmStashDetailsView
+                scopeId="project:wr_1"
+                workspaceRefId="wr_1"
+                workspaceCacheKey="wk_1"
+                machineId="m1"
+                rootPath="/repo"
+                serverId="s1"
+            />,
+        );
+
+        await settle();
+        machineScmStashShowSpy.mockClear();
+
+        const unmanagedPill = screen.tree.findByProps({ testID: `workspace-stash-pill-${toTestIdSafeValue('stash@{1}')}` });
+        await act(async () => {
+            unmanagedPill.props.onPress?.();
+            await settle();
+        });
+
+        expect(machineScmStashShowSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', stashRef: 'stash@{1}' }));
+    });
+
+    it('retries the stash list when the backend is transiently unavailable', async () => {
+        await withControlledRetryTimers(async ({ advanceTimersByCount }) => {
+            machineScmStashListSpy
+                .mockResolvedValueOnce({
+                    success: false,
+                    error: 'RPC method not available',
+                    errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+                })
+                .mockResolvedValueOnce({
+                    success: true,
+                    stashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
+                    totalCount: 1,
+                });
+
+            const { WorkspaceScmStashDetailsView } = await import('./WorkspaceScmStashDetailsView');
+            await renderScreen(
+                <WorkspaceScmStashDetailsView
+                    scopeId="project:wr_1"
+                    workspaceRefId="wr_1"
+                    workspaceCacheKey="wk_1"
+                    machineId="m1"
+                    rootPath="/repo"
+                    serverId="s1"
+                />,
+            );
+
+            await settle();
+            expect(machineScmStashListSpy).toHaveBeenCalledTimes(1);
+
+            await advanceTimersByCount(1);
+            expect(machineScmStashListSpy).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    it('retries the selected stash diff when the backend is transiently unavailable', async () => {
+        await withControlledRetryTimers(async ({ advanceTimersByCount }) => {
+            machineScmStashListSpy.mockResolvedValue({
+                success: true,
+                stashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
+                totalCount: 1,
+            });
+            machineScmStashShowSpy
+                .mockResolvedValueOnce({
+                    success: false,
+                    error: 'RPC method not available',
+                    errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+                })
+                .mockResolvedValueOnce({
+                    success: true,
+                    diff: [
+                        'diff --git a/src/retry.ts b/src/retry.ts',
+                        'index 0000000..1111111 100644',
+                        '--- a/src/retry.ts',
+                        '+++ b/src/retry.ts',
+                        '@@ -1,1 +1,1 @@',
+                        '-export const retry = 1;',
+                        '+export const retry = 2;',
+                        '',
+                    ].join('\n'),
+                    truncated: false,
+                });
+
+            const { WorkspaceScmStashDetailsView } = await import('./WorkspaceScmStashDetailsView');
+            await renderScreen(
+                <WorkspaceScmStashDetailsView
+                    scopeId="project:wr_1"
+                    workspaceRefId="wr_1"
+                    workspaceCacheKey="wk_1"
+                    machineId="m1"
+                    rootPath="/repo"
+                    serverId="s1"
+                />,
+            );
+
+            await settle();
+            expect(machineScmStashShowSpy).toHaveBeenCalledTimes(1);
+
+            await advanceTimersByCount(1);
+            expect(machineScmStashShowSpy).toHaveBeenCalledTimes(2);
+            expect(diffFilesListSpy).toHaveBeenCalled();
+        });
     });
 });

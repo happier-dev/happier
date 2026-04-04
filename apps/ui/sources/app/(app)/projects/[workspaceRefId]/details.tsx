@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { ProjectDetailScreen } from '@/components/projects/ProjectDetailScreen';
+import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { ProjectDetailsMainPanel } from '@/components/projects/detail/ProjectDetailsMainPanel';
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
@@ -28,6 +30,12 @@ export default function ProjectDetailsScreenRoute() {
         return <ProjectDetailScreen workspaceRefId={workspaceRefId} />;
     }
 
+    const screenOptions = React.useMemo(() => ({
+        headerShown: true,
+        headerTitle: resolveWorkspaceRefDisplayName(workspaceRef),
+        headerBackTitle: t('common.back'),
+    }), [workspaceRef]);
+
     const scopeId = buildProjectPaneScopeId(workspaceRef.id);
     const pane = useAppPaneScope(scopeId);
     const detailsTabs = pane.scopeState?.details?.tabs ?? [];
@@ -44,8 +52,9 @@ export default function ProjectDetailsScreenRoute() {
         hasMountedRef.current = true;
         return () => {
             hasMountedRef.current = false;
+            pane.closeDetails();
         };
-    }, []);
+    }, [pane]);
 
     React.useEffect(() => {
         if (!isFocused) return;
@@ -71,6 +80,7 @@ export default function ProjectDetailsScreenRoute() {
 
     return (
         <View testID="project-details-screen" style={{ flex: 1 }}>
+            <Stack.Screen options={screenOptions} />
             <React.Suspense fallback={(
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <ActivityIndicator />

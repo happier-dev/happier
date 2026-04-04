@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -10,19 +11,23 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { t } from '@/text';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import { WorkspaceRepositoryTreeBrowserView } from '@/components/projects/files/WorkspaceRepositoryTreeBrowserView';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { WorkspaceSourceControlView } from '@/components/projects/scm/WorkspaceSourceControlView';
+import { useSettingMutable } from '@/sync/domains/state/storage';
+import { findWorkspaceRefByScope, upsertWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
+import { WorkspaceRightPanelGitView } from '@/components/projects/scm/WorkspaceRightPanelGitView';
+import { resolveProjectRightTabId, type ProjectRightTabId } from './resolveProjectRightTabId';
+import { storage } from '@/sync/domains/state/storage';
+import { computeExpandedPathsForReveal } from '@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal';
 
 export type ProjectRightPanelProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
     scopeId: string;
     onRequestClose?: () => void;
 }>;
-
-type RightTabId = 'git' | 'files';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -67,18 +72,24 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const router = useRouter();
     const insets = useChromeSafeAreaInsets();
+    const deviceType = useDeviceType();
     const pane = useAppPaneScope(props.scopeId);
     const scopeState = pane.scopeState;
+    const [workspaceRefsV1, setWorkspaceRefsV1] = useSettingMutable('workspaceRefsV1');
     const headerPaddingTop = 10;
 
-    const rawActiveTab = (scopeState?.right.activeTabId as RightTabId | null) ?? 'git';
-    const activeTab: RightTabId = rawActiveTab === 'files' ? 'files' : 'git';
+    const activeTab: ProjectRightTabId = resolveProjectRightTabId(scopeState?.right.activeTabId);
+    const workspaceRouteBase = React.useMemo(() => `/projects/${encodeURIComponent(props.workspaceRef.id)}`, [props.workspaceRef.id]);
 
-    const setActiveTab = React.useCallback((tabId: RightTabId) => {
+    const setActiveTab = React.useCallback((tabId: ProjectRightTabId) => {
         pane.openRight({ tabId });
         pane.setRightTab(tabId);
-    }, [pane]);
+        if (deviceType !== 'phone') return;
+        if (activeTab === tabId) return;
+        router.replace(`${workspaceRouteBase}/${tabId}`);
+    }, [activeTab, deviceType, pane, router, workspaceRouteBase]);
 
     React.useEffect(() => {
         if (!scopeState?.right.isOpen) return;
@@ -114,7 +125,98 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
         });
     }, [pane]);
 
-    const rightPanelTabs = React.useMemo((): ReadonlyArray<SegmentedTab<RightTabId>> => ([
+    const openWorkspacePath = React.useCallback((rootPath: string) => {
+        const scope = {
+            serverId: props.workspaceRef.serverId,
+            machineId: props.workspaceRef.machineId,
+            rootPath,
+        };
+        const nowMs = Date.now();
+        const nextRefs = upsertWorkspaceRefByScope(Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [], {
+            scope,
+            nowMs,
+            patch: { lastOpenedAtMs: nowMs },
+        });
+        setWorkspaceRefsV1(nextRefs);
+        const targetRef = findWorkspaceRefByScope(nextRefs, scope);
+        if (!targetRef) return;
+        router.push(`/projects/${encodeURIComponent(targetRef.id)}`);
+    }, [
+        props.workspaceRef.machineId,
+        props.workspaceRef.serverId,
+        router,
+        setWorkspaceRefsV1,
+        workspaceRefsV1,
+    ]);
+
+    const openReviewAllChanges = React.useCallback(() => {
+        deferOnWeb(() => {
+            pane.openDetailsTab(
+                {
+                    key: 'scmReview:working',
+                    kind: 'scmReview',
+                    title: t('files.toolbar.review'),
+                    resource: { kind: 'scmReview', scope: 'working' },
+                },
+                { intent: 'pinned' },
+            );
+        });
+    }, [pane]);
+
+    const openStashDetails = React.useCallback(() => {
+        deferOnWeb(() => {
+            pane.openDetailsTab(
+                {
+                    key: 'scmStash',
+                    kind: 'scmStash',
+                    title: t('files.stash.detailsTitle'),
+                    resource: { kind: 'scmStash' },
+                },
+                { intent: 'pinned' },
+            );
+        });
+    }, [pane]);
+
+    const openCreateWorktreeFlow = React.useCallback(() => {
+        router.push({
+            pathname: '/new',
+            params: {
+                machineId: props.workspaceRef.machineId,
+                directory: props.workspaceRef.rootPath,
+                worktree: 'new',
+            },
+        });
+    }, [props.workspaceRef.machineId, props.workspaceRef.rootPath, router]);
+
+    const openCommitInDetails = React.useCallback((sha: string) => {
+        const safeSha = sha.trim().split(/\s+/)[0] ?? '';
+        if (!safeSha) return;
+        deferOnWeb(() => {
+            pane.openDetailsTab({
+                key: `commit:${safeSha}`,
+                kind: 'commit',
+                title: safeSha.slice(0, 7),
+                resource: { kind: 'commit', sha: safeSha },
+            });
+        });
+    }, [pane]);
+
+    const revealInFilesTree = React.useCallback((fullPath: string) => {
+        setActiveTab('files');
+        const scope = {
+            serverId: props.workspaceRef.serverId,
+            machineId: props.workspaceRef.machineId,
+            rootPath: props.workspaceRef.rootPath,
+        };
+        const currentExpandedPaths = storage.getState().getWorkspaceRepositoryTreeExpandedPaths(scope);
+        const nextExpandedPaths = computeExpandedPathsForReveal({
+            expandedPaths: currentExpandedPaths,
+            fullPath,
+        });
+        storage.getState().setWorkspaceRepositoryTreeExpandedPaths(scope, nextExpandedPaths);
+    }, [props.workspaceRef.machineId, props.workspaceRef.rootPath, props.workspaceRef.serverId, setActiveTab]);
+
+    const rightPanelTabs = React.useMemo((): ReadonlyArray<SegmentedTab<ProjectRightTabId>> => ([
         { id: 'git', label: t('settings.sourceControl') },
         { id: 'files', label: t('common.files') },
     ]), []);
@@ -136,26 +238,34 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
                         testIDPrefix="project-rightpanel-tab"
                     />
                 </View>
-                <Pressable
-                    testID="project-rightpanel-close"
-                    onPress={props.onRequestClose ?? pane.closeRight}
-                    style={styles.closeButton}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.close')}
-                >
-                    <Octicons name="x" size={18} color={theme.colors.textSecondary} />
-                </Pressable>
+                {props.onRequestClose && deviceType !== 'phone' ? (
+                    <Pressable
+                        testID="project-rightpanel-close"
+                        onPress={props.onRequestClose}
+                        style={styles.closeButton}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common.close')}
+                    >
+                        <Octicons name="x" size={18} color={theme.colors.textSecondary} />
+                    </Pressable>
+                ) : null}
             </View>
             <View style={styles.body}>
                 <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
                     <RightTabSurface isActive={activeTab === 'git'} testID="project-rightpanel-surface-git">
                         <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.textSecondary} />}>
-                            <WorkspaceSourceControlView
+                            <WorkspaceRightPanelGitView
                                 serverId={props.workspaceRef.serverId}
                                 machineId={props.workspaceRef.machineId}
                                 rootPath={props.workspaceRef.rootPath}
                                 onOpenFile={openFileInDetails}
                                 onOpenFilePinned={openFileInDetailsPinned}
+                                onOpenReviewAllChanges={openReviewAllChanges}
+                                onOpenStashDetails={openStashDetails}
+                                onOpenCommit={openCommitInDetails}
+                                onOpenWorkspacePath={openWorkspacePath}
+                                onRequestCreateWorktreeFromAnotherBranch={openCreateWorktreeFlow}
+                                onRevealInFilesTree={revealInFilesTree}
                             />
                         </React.Suspense>
                     </RightTabSurface>

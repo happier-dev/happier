@@ -5,37 +5,27 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import { t } from '@/text';
-import { Typography } from '@/constants/Typography';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupTitleWithAction } from '@/components/ui/lists/ItemGroupTitleWithAction';
 import { Item } from '@/components/ui/lists/Item';
-import { Text } from '@/components/ui/text/Text';
+import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { resolveWorkspaceDisplayLabel } from '@/sync/domains/workspaces/workspaceLabel';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { Modal } from '@/modal';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { findWorkspaceRefByScope, upsertWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
+import { workspaceListDirectory } from '@/sync/ops/workspaceFileSystem';
+import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
 
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 import { buildProjectsListGroups } from './projectsListGrouping';
+import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
 
 type AppTheme = ReturnType<typeof useUnistyles>['theme'];
-
-function resolvePathBasename(rawPath: string): string | null {
-    const trimmed = String(rawPath ?? '').trim().replace(/[\\/]+$/, '');
-    if (!trimmed) return null;
-    const parts = trimmed.split(/[/\\]/g).filter(Boolean);
-    return parts.length > 0 ? (parts[parts.length - 1] ?? null) : null;
-}
-
-function resolveWorkspaceFallbackPathLabel(workspaceRef: WorkspaceRefV1): string {
-    return resolvePathBasename(workspaceRef.rootPath) ?? workspaceRef.rootPath;
-}
 
 type ProjectsListItemMenuProps = Readonly<{
     theme: AppTheme;
@@ -93,6 +83,7 @@ export const ProjectsListView = React.memo(() => {
     const router = useRouter();
     const activeServer = useActiveServerSnapshot();
     const allMachines = useAllMachines();
+    const addFirstMachines = React.useMemo(() => resolveMachineActionCandidates(allMachines), [allMachines]);
 
     const [workspaceRefsV1, setWorkspaceRefsV1] = useSettingMutable('workspaceRefsV1');
     const [pinnedWorkspaceRefIdsV1, setPinnedWorkspaceRefIdsV1] = useSettingMutable('pinnedWorkspaceRefIdsV1');
@@ -123,16 +114,24 @@ export const ProjectsListView = React.memo(() => {
             selectionMode: 'directory',
         });
         if (!selected) return;
+        const selectedRootPath = selected.trim();
+        if (!selectedRootPath) return;
+
+        const preflight = await workspaceListDirectory({ serverId, machineId, rootPath: selectedRootPath }, '');
+        if (!preflight.success) {
+            Modal.alert(t('common.error'), preflight.error);
+            return;
+        }
 
         const nowMs = Date.now();
         const nextRefs = upsertWorkspaceRefByScope(Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [], {
-            scope: { serverId, machineId, rootPath: selected },
+            scope: { serverId, machineId, rootPath: selectedRootPath },
             nowMs,
             patch: { lastOpenedAtMs: nowMs },
         });
         setWorkspaceRefsV1(nextRefs);
 
-        const added = findWorkspaceRefByScope(nextRefs, { serverId, machineId, rootPath: selected });
+        const added = findWorkspaceRefByScope(nextRefs, { serverId, machineId, rootPath: selectedRootPath });
         if (added) {
             router.push(`/projects/${encodeURIComponent(added.id)}`);
         }
@@ -156,11 +155,7 @@ export const ProjectsListView = React.memo(() => {
     const handleRenameProject = React.useCallback(async (workspaceRef: WorkspaceRefV1) => {
         const serverId = String(activeServer.serverId ?? '').trim();
         if (!serverId) return;
-        const currentLabel = resolveWorkspaceDisplayLabel({
-            scope: { serverId: workspaceRef.serverId, machineId: workspaceRef.machineId, rootPath: workspaceRef.rootPath },
-            workspaceRef,
-            fallbackPathLabel: resolveWorkspaceFallbackPathLabel(workspaceRef),
-        });
+        const currentLabel = resolveWorkspaceRefDisplayName(workspaceRef);
         const newName = await Modal.prompt(
             t('sessionsList.renameWorkspacePromptTitle'),
             undefined,
@@ -226,34 +221,18 @@ export const ProjectsListView = React.memo(() => {
         >
             {!hasAnyProjects ? (
                 <ItemGroup>
-                    <View style={{ alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16 }}>
-                        <Ionicons
-                            name="folder-open-outline"
-                            size={48}
-                            color={theme.colors.textSecondary}
-                            style={{ marginBottom: 12 }}
-                        />
-                        <View style={{ maxWidth: 520 }}>
-                            <Text style={{
-                                fontSize: 18,
-                                ...Typography.default('semiBold'),
-                                color: theme.colors.text,
-                                textAlign: 'center',
-                                marginBottom: 6,
-                            }}>
-                                {t('projects.emptyTitle')}
-                            </Text>
-                            <Text style={{
-                                fontSize: 14,
-                                ...Typography.default(),
-                                color: theme.colors.textSecondary,
-                                textAlign: 'center',
-                                lineHeight: 20,
-                            }}>
-                                {t('projects.emptyDescription')}
-                            </Text>
-                        </View>
-                    </View>
+                    <CenteredInfoTile
+                        icon={(
+                            <Ionicons
+                                name="folder-open-outline"
+                                size={48}
+                                color={theme.colors.textSecondary}
+                                style={{ marginBottom: 12 }}
+                            />
+                        )}
+                        title={t('projects.emptyTitle')}
+                        description={t('projects.emptyDescription')}
+                    />
                 </ItemGroup>
             ) : null}
 
@@ -263,11 +242,7 @@ export const ProjectsListView = React.memo(() => {
                         <Item
                             key={workspaceRef.id}
                             testID={`projects-list-item-${workspaceRef.id}`}
-                            title={resolveWorkspaceDisplayLabel({
-                                scope: { serverId: workspaceRef.serverId, machineId: workspaceRef.machineId, rootPath: workspaceRef.rootPath },
-                                workspaceRef,
-                                fallbackPathLabel: resolveWorkspaceFallbackPathLabel(workspaceRef),
-                            })}
+                            title={resolveWorkspaceRefDisplayName(workspaceRef)}
                             subtitle={workspaceRef.rootPath}
                             subtitleLines={1}
                             icon={<Ionicons name="folder-outline" size={22} color={theme.colors.textSecondary} />}
@@ -333,11 +308,7 @@ export const ProjectsListView = React.memo(() => {
                             <Item
                                 key={workspaceRef.id}
                                 testID={`projects-list-item-${workspaceRef.id}`}
-                                title={resolveWorkspaceDisplayLabel({
-                                    scope: { serverId: workspaceRef.serverId, machineId: workspaceRef.machineId, rootPath: workspaceRef.rootPath },
-                                    workspaceRef,
-                                    fallbackPathLabel: resolveWorkspaceFallbackPathLabel(workspaceRef),
-                                })}
+                                title={resolveWorkspaceRefDisplayName(workspaceRef)}
                                 subtitle={workspaceRef.rootPath}
                                 subtitleLines={1}
                                 icon={<Ionicons name="folder-outline" size={22} color={theme.colors.textSecondary} />}
@@ -383,12 +354,14 @@ export const ProjectsListView = React.memo(() => {
 
             {allMachines.length > 0 && !hasAnyProjects ? (
                 <ItemGroup title={t('projects.groups.addFirst')}>
-                    {allMachines.map((machine) => (
+                    {addFirstMachines.map((machine) => (
                         <Item
                             key={machine.id}
                             testID={`projects-add-first-machine:${machine.id}`}
-                            title={getMachineDisplayName(machine) ?? machine.metadata?.host ?? machine.id}
-                            subtitle={t('projects.actions.addProject')}
+                            title={t('projects.actions.chooseProjectFolderOnMachine', {
+                                machine: getMachineDisplayName(machine) ?? machine.metadata?.host ?? machine.id,
+                            })}
+                            subtitle={t('projects.actions.chooseProjectFolderSubtitle')}
                             icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.textSecondary} />}
                             onPress={() => { void handleAddProjectToMachine(machine.id); }}
                         />
