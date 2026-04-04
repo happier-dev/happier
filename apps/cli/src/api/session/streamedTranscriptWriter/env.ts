@@ -1,5 +1,6 @@
-const DEFAULT_CHECKPOINT_INTERVAL_MS = 1_000;
-const DEFAULT_CHECKPOINT_MIN_CHARS = 128;
+const DEFAULT_INITIAL_CHECKPOINT_DELAY_MS = 500;
+const DEFAULT_CHECKPOINT_INTERVAL_MS = 2_000;
+const DEFAULT_CHECKPOINT_MIN_CHARS = 256;
 const DEFAULT_LIVE_SNAPSHOT_INTERVAL_MS = 40;
 const DEFAULT_LIVE_SNAPSHOT_MIN_CHARS = 1;
 
@@ -10,6 +11,13 @@ function resolveNonNegativeIntEnv(input: unknown, fallback: number): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.trunc(parsed);
+}
+
+export function resolveInitialCheckpointDelayMs(input: unknown): number {
+  return resolveNonNegativeIntEnv(
+    input ?? process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS,
+    DEFAULT_INITIAL_CHECKPOINT_DELAY_MS,
+  );
 }
 
 export function resolveCheckpointIntervalMs(input: unknown): number {
