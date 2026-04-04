@@ -218,6 +218,7 @@ export {
 } from './activity/agentRequestNotificationContent.js';
 export {
   buildAgentRequestSemanticSummary,
+  isAskUserQuestionToolName,
   extractFirstUserActionQuestion,
   formatPermissionRequestSummary,
   summarizeToolInputForNotification,

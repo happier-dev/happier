@@ -49,7 +49,7 @@ function normalizeToolLabel(toolName: string): string {
   return raw;
 }
 
-function isAskUserQuestionToolName(toolName: string): boolean {
+export function isAskUserQuestionToolName(toolName: string): boolean {
   const normalized = toolName.trim().toLowerCase();
   return normalized === 'askuserquestion' || normalized === 'ask_user_question';
 }
