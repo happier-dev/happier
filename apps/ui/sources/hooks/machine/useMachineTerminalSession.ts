@@ -11,7 +11,7 @@ import {
 } from '@/components/sessions/terminal/terminalRpcRecovery';
 import { useEmbeddedTerminalTransportHandlers } from '@/components/sessions/terminal/useEmbeddedTerminalTransportHandlers';
 import { useTerminalSurfaceState } from '@/components/sessions/terminal/useTerminalSurfaceState';
-import type { EmbeddedTerminalRendererHandle } from '@/components/sessions/terminal/embeddedTerminalRendererHandle';
+import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import {
     machineTerminalClose,
     machineTerminalEnsure,

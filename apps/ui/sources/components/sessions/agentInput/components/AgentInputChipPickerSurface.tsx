@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { AgentInputPopoverSurface } from '@/components/sessions/agentInput/components/AgentInputPopoverSurface';
+import { PopoverScope } from '@/components/ui/popover';
 
 import {
     AgentInputChipPickerPanel,
@@ -24,18 +25,20 @@ export type AgentInputChipPickerSurfaceProps = Readonly<{
 
 export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfaceProps) {
     const panel = (
-        <AgentInputChipPickerPanel
-            title={props.title}
-            showCloseButton={props.showCloseButton}
-            options={props.options}
-            selectedOptionId={props.selectedOptionId}
-            onSelect={props.onSelect}
-            onRequestClose={props.onRequestClose}
-            applyLabel={props.applyLabel}
-            railWidth={props.railWidth}
-            railMaxWidth={props.railMaxWidth}
-            detailPaneHeaderAccessory={props.detailPaneHeaderAccessory}
-        />
+        <PopoverScope>
+            <AgentInputChipPickerPanel
+                title={props.title}
+                showCloseButton={props.showCloseButton}
+                options={props.options}
+                selectedOptionId={props.selectedOptionId}
+                onSelect={props.onSelect}
+                onRequestClose={props.onRequestClose}
+                applyLabel={props.applyLabel}
+                railWidth={props.railWidth}
+                railMaxWidth={props.railMaxWidth}
+                detailPaneHeaderAccessory={props.detailPaneHeaderAccessory}
+            />
+        </PopoverScope>
     );
 
     if (typeof props.maxHeight !== 'number') {

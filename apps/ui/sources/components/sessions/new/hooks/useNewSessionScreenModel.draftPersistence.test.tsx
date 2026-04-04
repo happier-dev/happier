@@ -7,6 +7,7 @@ import { renderScreen } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -148,6 +149,7 @@ const platformOsState = vi.hoisted(() => ({
 }));
 const modalShowMock = vi.hoisted(() => vi.fn());
 const modalAlertMock = vi.hoisted(() => vi.fn());
+const openDirectSessionsResumeIdPickerModalMock = vi.hoisted(() => vi.fn<(args: unknown) => Promise<string | null>>(async () => 'session-picked'));
 const fireAndForgetState = vi.hoisted(() => ({
     promises: [] as Promise<unknown>[],
 }));
@@ -449,6 +451,10 @@ installNewSessionScreenModelCommonModuleMocks({
         }).module;
     },
 });
+
+vi.mock('@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal', () => ({
+    openDirectSessionsResumeIdPickerModal: (args: unknown) => openDirectSessionsResumeIdPickerModalMock(args),
+}));
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -842,6 +848,8 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         platformOsState.value = 'web';
         modalShowMock.mockReset();
         modalAlertMock.mockReset();
+        openDirectSessionsResumeIdPickerModalMock.mockReset();
+        openDirectSessionsResumeIdPickerModalMock.mockResolvedValue('session-picked');
         fireAndForgetState.promises = [];
         tryShowDaemonUnavailableAlertForRpcErrorMock.mockReset();
         tryShowDaemonUnavailableAlertForRpcErrorMock.mockReturnValue(false);
@@ -1637,6 +1645,47 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(typeof model?.simpleProps?.resumePopover?.renderContent).toBe('function');
         expect(routerSetParamsMock).not.toHaveBeenCalled();
         expect(routerPushMock).not.toHaveBeenCalled();
+    });
+
+    it('opens the shared direct-sessions resume browser modal from the resume popover without navigating away', async () => {
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+        const portalTarget = { tag: 'new-session-parent-modal-target' } as unknown as Element;
+
+        let model: any = null;
+        function Probe() {
+            model = useNewSessionScreenModel();
+            return null;
+        }
+
+        await renderScreen(
+            <ModalPortalTargetProvider target={portalTarget}>
+                <Probe />
+            </ModalPortalTargetProvider>,
+        );
+
+        const requestClose = vi.fn();
+        const rendered = model?.simpleProps?.resumePopover?.renderContent?.({ requestClose });
+        expect(rendered).toBeTruthy();
+        if (!rendered) {
+            throw new Error('expected resume popover content');
+        }
+
+        const popoverScreen = await renderScreen(rendered);
+        await popoverScreen.pressByTestIdAsync('resume-id-browse-trigger');
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(requestClose).toHaveBeenCalledTimes(1);
+        expect(openDirectSessionsResumeIdPickerModalMock).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'directSessions.browseTitle',
+            webPortalTarget: portalTarget,
+            lockScope: expect.objectContaining({
+                machineId: 'machine-2',
+                providerId: 'claude',
+                source: expect.anything(),
+            }),
+        }));
+        expect(routerPushMock).not.toHaveBeenCalled();
+        expect(model?.simpleProps?.resumeSessionId).toBe('session-picked');
     });
 
     it('keeps the profile picker on the current route and exposes a shared profile popover in the simple panel', async () => {

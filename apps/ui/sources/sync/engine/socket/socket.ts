@@ -23,6 +23,7 @@ import {
     handleMessageUpdatedSocketUpdate,
     handleNewMessageSocketUpdate,
 } from '@/sync/engine/sessions/syncSessions';
+import { handleTranscriptStreamSegmentEphemeralUpdate } from '@/sync/engine/sessions/handleTranscriptStreamSegmentEphemeralUpdate';
 import {
     buildMachineFromMachineActivityEphemeralUpdate,
     buildUpdatedMachineFromSocketUpdate,
@@ -654,11 +655,14 @@ export function handleEphemeralSocketUpdate(params: {
     update: unknown;
     addActivityUpdate: (update: ApiEphemeralActivityUpdate) => void;
     addMachineActivityUpdate: (update: MachineActivityUpdate) => void;
-}): void {
-    const { update, addActivityUpdate, addMachineActivityUpdate } = params;
+    getSessionEncryption: Encryption['getSessionEncryption'];
+    getSession: (sessionId: string) => Session | undefined;
+    applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+}): Promise<void> {
+    const { update, addActivityUpdate, addMachineActivityUpdate, getSessionEncryption, getSession, applyMessages } = params;
 
     const updateData = parseEphemeralUpdate(update);
-    if (!updateData) return;
+    if (!updateData) return Promise.resolve();
 
     // Process activity updates through smart debounce accumulator
     if (updateData.type === 'activity') {
@@ -668,7 +672,15 @@ export function handleEphemeralSocketUpdate(params: {
         addMachineActivityUpdate({ id: updateData.id, active: updateData.active, activeAt: updateData.activeAt });
     } else if (updateData.type === 'execution-run-updated') {
         notifyExecutionRunActivity(updateData.sessionId);
+    } else if (updateData.type === 'transcript-stream-segment') {
+        return handleTranscriptStreamSegmentEphemeralUpdate({
+            update: updateData,
+            getSessionEncryption,
+            getSession,
+            applyMessages,
+        });
     }
 
     // daemon-status ephemeral updates are deprecated, machine status is handled via machine-activity
+    return Promise.resolve();
 }

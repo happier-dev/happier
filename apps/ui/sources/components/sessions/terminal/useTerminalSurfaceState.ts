@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol';
 
-import type { EmbeddedTerminalRendererHandle } from './embeddedTerminalRendererHandle';
+import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import {
     createEmptyTerminalSurfaceState,
     readTerminalSurfaceState,

@@ -3443,7 +3443,7 @@ class Sync {
     }
 
     private handleEphemeralUpdate = (update: unknown) => {
-        handleEphemeralSocketUpdate({
+        fireAndForget(handleEphemeralSocketUpdate({
             update,
             addActivityUpdate: (ephemeralUpdate) => {
                 this.activityAccumulator.addUpdate(ephemeralUpdate);
@@ -3451,7 +3451,10 @@ class Sync {
             addMachineActivityUpdate: (machineUpdate) => {
                 this.machineActivityAccumulator.addUpdate(machineUpdate);
             },
-        });
+            getSessionEncryption: this.encryption.getSessionEncryption,
+            getSession: (sessionId) => storage.getState().sessions[sessionId],
+            applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages, { notifyVoice: false }),
+        }), { tag: 'Sync.handleEphemeralUpdate' });
     }
 
     //

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPassThroughComponent, createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
@@ -9,6 +9,11 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const mockState = vi.hoisted(() => ({
+    platformOS: 'ios' as 'ios' | 'web',
+    focusSpy: vi.fn(),
+}));
 
 installNewSessionComponentsCommonModuleMocks({
     icons: () => ({
@@ -20,8 +25,11 @@ installNewSessionComponentsCommonModuleMocks({
             View: createPassThroughComponent('View'),
             Pressable: createPassThroughComponent('Pressable'),
             Platform: {
-                OS: 'ios',
-                select: <T,>(values: { ios?: T; default?: T }) => values.ios ?? values.default,
+                get OS() {
+                    return mockState.platformOS;
+                },
+                select: <T,>(values: { ios?: T; web?: T; default?: T }) =>
+                    values[mockState.platformOS] ?? values.default,
             },
             InteractionManager: {
                 runAfterInteractions: (cb: () => void) => {
@@ -63,7 +71,15 @@ vi.mock('@react-navigation/native', () => ({
 
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
 vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
-vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: createPassThroughComponent('Text'),
+    TextInput: React.forwardRef((props: Record<string, unknown>, ref) => {
+        React.useImperativeHandle(ref, () => ({
+            focus: mockState.focusSpy,
+        }));
+        return React.createElement('TextInput', props, null);
+    }),
+}));
 
 vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'claude',
@@ -78,6 +94,17 @@ vi.mock('@/utils/ui/clipboard', () => ({
 }));
 
 describe('NewSessionResumeSelectionContent', () => {
+    beforeEach(() => {
+        mockState.platformOS = 'ios';
+        mockState.focusSpy.mockClear();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
     it('does not auto-focus the resume id input on native', async () => {
         const { NewSessionResumeSelectionContent } = await import('./NewSessionResumeSelectionContent');
 
@@ -97,6 +124,50 @@ describe('NewSessionResumeSelectionContent', () => {
         }
 
         expect(input.props?.autoFocus).not.toBe(true);
+        expect(mockState.focusSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not auto-focus the resume id input on web when opened from the popover', async () => {
+        mockState.platformOS = 'web';
+
+        const { NewSessionResumeSelectionContent } = await import('./NewSessionResumeSelectionContent');
+
+        const screen = await renderScreen(<NewSessionResumeSelectionContent
+                    value=""
+                    onChangeValue={() => {}}
+                    onSave={() => {}}
+                    onClear={() => {}}
+                    onClose={() => {}}
+                    agentType="claude"
+                />);
+
+        const input = screen.findByTestId('resume-id-input');
+        expect(input).toBeTruthy();
+        if (!input) {
+            throw new Error('expected resume-id-input');
+        }
+
+        expect(input.props?.autoFocus).not.toBe(true);
+        expect(mockState.focusSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not schedule delayed focus retries on web when opened', async () => {
+        mockState.platformOS = 'web';
+
+        const { NewSessionResumeSelectionContent } = await import('./NewSessionResumeSelectionContent');
+
+        await renderScreen(<NewSessionResumeSelectionContent
+                    value=""
+                    onChangeValue={() => {}}
+                    onSave={() => {}}
+                    onClear={() => {}}
+                    onClose={() => {}}
+                    agentType="claude"
+                />);
+
+        await vi.runAllTimersAsync();
+
+        expect(mockState.focusSpy).not.toHaveBeenCalled();
     });
 
     it('does not render inline modal-style header chrome inside the popover content', async () => {

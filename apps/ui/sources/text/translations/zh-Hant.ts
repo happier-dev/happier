@@ -446,8 +446,8 @@ const settingsSessionHandoffTranslationExtensions = {
       groupFooter: '僅在來源工作階段目前為直接模式時適用。',
       keepDirectTitle: '保持直接模式',
       keepDirectSubtitle: '當供應商支援時，將目標恢復為直接工作階段。',
-      convertToPersistedTitle: '轉換為已同步',
-      convertToPersistedSubtitle: '匯入逐字稿並以已同步的 Happier 工作階段繼續。',
+      convertToPersistedTitle: '轉換為 Happier',
+      convertToPersistedSubtitle: '匯入逐字稿並以由 Happier 管理的工作階段繼續。',
     },
   },
 } as const;
@@ -519,7 +519,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     projects: {
         emptyTitle: '尚無專案',
-        emptyDescription: '專案讓你在不建立工作階段的情況下瀏覽機器上的檔案與 Git。',
+        emptyDescription: '專案讓你在不建立工作階段的情況下瀏覽與編輯機器上的檔案，並使用 Git。',
         groups: {
             pinned: '已釘選',
             addFirst: '新增專案',
@@ -527,6 +527,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         actions: {
             addProjectToMachine: '將專案加入此機器',
             addProject: '新增專案',
+            addProjectOnMachine: ({ machine }: { machine: string }) => `在${machine}上新增專案`,
+            chooseProjectFolderOnMachine: ({ machine }: { machine: string }) => `選擇${machine}上的資料夾`,
+            chooseProjectFolderSubtitle: '將它加入為專案，以瀏覽與編輯檔案，並使用 Git。',
             pin: '釘選',
             unpin: '取消釘選',
             remove: '移除',
@@ -563,6 +566,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         // Inbox screen
         emptyTitle: '都處理完了',
         emptyDescription: '目前沒有待處理的請求或更新。',
+        unreadSessions: '未讀工作階段',
         updates: '動態',
     },
 
@@ -2920,12 +2924,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         inlineToolCallsDescription: '在聊天訊息中直接顯示工具呼叫',
         expandTodoLists: '展開待辦清單',
         expandTodoListsDescription: '顯示所有待辦事項而不僅僅是變更',
-        showLineNumbersInDiffs: '在差異中顯示行號',
-        showLineNumbersInDiffsDescription: '在程式碼差異中顯示行號',
+        showLineNumbersInDiffs: '在程式碼檢視中顯示行號',
+        showLineNumbersInDiffsDescription: '在差異、檔案預覽與編輯器中顯示行號',
         showLineNumbersInToolViews: '在工具檢視中顯示行號',
         showLineNumbersInToolViewsDescription: '在工具檢視差異中顯示行號',
-        wrapLinesInDiffs: '在差異中換行',
-        wrapLinesInDiffsDescription: '在差異檢視中換行顯示長行而不是水平捲動',
+        wrapLinesInDiffs: '在程式碼檢視中換行',
+        wrapLinesInDiffsDescription: '在差異、檔案預覽與編輯器中換行顯示長行而不是水平捲動',
         alwaysShowContextSize: '始終顯示上下文大小',
         alwaysShowContextSizeDescription: '即使未接近限制時也顯示上下文使用情況',
         avatarStyle: '頭像風格',
@@ -3548,8 +3552,19 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     sessionsList: {
         serverHeader: ({ server }: { server: string }) => `伺服器：${server}`,
-        storagePersistedTab: '已同步',
+        storagePersistedTab: 'Happier',
         storageDirectTab: '直接',
+        emptyState: {
+            title: '尚無工作階段',
+            description: '在你的任何線上機器上啟動工作階段。',
+            descriptionPrefix: '使用 ',
+            descriptionSuffix: ' 在終端機中啟動，或使用下方按鈕在你的其中一台機器上啟動工作階段。',
+            actionsTitle: '啟動工作階段',
+            startSessionOnMachine: ({ machine }: { machine: string }) => `在${machine}上啟動工作階段`,
+            startSessionOnMachineSubtitle: '選擇資料夾，並在這台機器上開啟新的工作階段。',
+            reconnectMachineActionSubtitle: '重新連線背景服務，讓這台機器可以再次啟動工作階段。',
+            startDaemonActionSubtitle: '安裝或重新啟動啟動工作階段所需的背景服務。',
+        },
         renameWorkspace: '重新命名工作區',
         renameWorkspacePromptTitle: '重新命名工作區',
         renameWorkspacePromptPlaceholder: '輸入名稱...',
@@ -3560,6 +3575,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     directSessions: {
         browseTitle: "瀏覽提供者工作階段",
         browseOpenExisting: "瀏覽提供者工作階段",
+        browseActionSubtitle: "選擇機器、提供者與工作階段，以便在這裡開啟。",
+        emptyStateTitle: "瀏覽現有工作階段",
+        emptyStateDescription: "從你已連線的機器開啟 Claude、Codex 與 OpenCode 工作階段。",
         browseFiltersTitle: "選擇來源",
         browseMachines: "機器",
         browseProviders: "提供者",

@@ -132,6 +132,15 @@ installSessionShellCommonModuleMocks({
       },
       useSessionPendingMessages: () => ({ messages: [] }),
       useSessionReviewCommentsDrafts: () => [],
+      useWorkspaceReviewCommentsDrafts: () => [{
+        id: 'workspace-draft',
+        filePath: 'src/a.ts',
+        source: 'diff',
+        anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 },
+        snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
+        body: 'workspace',
+        createdAt: 1,
+      }],
       useSessionUsage: () => null,
       useSetting: () => null,
       useSettings: () => ({ experiments: true, featureToggles: {} }),
@@ -360,6 +369,19 @@ describe('SessionView attachments gating', () => {
 
     const agentInput = tree.findByType('AgentInput' as any);
     expect(agentInput.props.onAttachmentsAdded).toBeUndefined();
+  });
+
+  it('treats workspace-scoped review comment drafts as sendable attachments', async () => {
+    featureEnabledState['files.reviewComments'] = true;
+    featureEnabledState['attachments.uploads'] = false;
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>)).tree;
+
+    const agentInput = tree.findByType('AgentInput' as any);
+    expect(agentInput.props.hasSendableAttachments).toBe(true);
   });
 
   it('fails closed when attachments.uploads is enabled but session file upload availability is false', async () => {

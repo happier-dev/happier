@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { ModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
+const windowWidthState = vi.hoisted(() => ({ value: 480 }));
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -10,6 +12,12 @@ vi.mock('react-native', async () => {
             OS: 'web',
             select: (value: any) => value.web ?? value.default ?? null,
         },
+        useWindowDimensions: () => ({
+            width: windowWidthState.value,
+            height: 800,
+            scale: 1,
+            fontScale: 1,
+        }),
     });
 });
 
@@ -28,6 +36,7 @@ type CapturedPopoverProps = Record<string, unknown> & {
         native?: boolean;
         matchAnchorWidth?: boolean;
         anchorAlign?: string;
+        topBottomLayout?: string;
     };
 };
 
@@ -70,7 +79,7 @@ describe('AgentInputSelectionPopover', () => {
         expect(capturedPopoverProps.current?.placement).toBe('top');
         expect(capturedPopoverProps.current?.maxHeightCap).toBe(480);
         expect(capturedPopoverProps.current?.maxWidthCap).toBe(512);
-        expect(capturedPopoverProps.current?.edgePadding).toEqual({ horizontal: 16 });
+        expect(capturedPopoverProps.current?.edgePadding).toEqual({ horizontal: 12 });
         expect(capturedPopoverProps.current?.portal).toEqual({
             web: true,
             native: true,
@@ -110,5 +119,41 @@ describe('AgentInputSelectionPopover', () => {
 
         expect(seenTargets.length).toBeGreaterThan(0);
         expect(seenTargets[seenTargets.length - 1]).toBe(externalTarget);
+    });
+
+    it('keeps the wider edge padding on desktop-sized web layouts', async () => {
+        windowWidthState.value = 1024;
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const anchorRef = { current: { nodeType: 'View' } } as any;
+
+        await renderScreen(
+            <AgentInputSelectionPopover open anchorRef={anchorRef} onRequestClose={() => {}}>
+                {() => <React.Fragment />}
+            </AgentInputSelectionPopover>,
+        );
+
+        expect(capturedPopoverProps.current?.edgePadding).toEqual({ horizontal: 16 });
+
+        windowWidthState.value = 480;
+    });
+
+    it('forwards an explicit top/bottom portal layout override to the shared popover', async () => {
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const anchorRef = { current: { nodeType: 'View' } } as any;
+
+        await renderScreen(
+            <AgentInputSelectionPopover
+                open
+                anchorRef={anchorRef}
+                onRequestClose={() => {}}
+                portalTopBottomLayout="boundary"
+            >
+                {() => <React.Fragment />}
+            </AgentInputSelectionPopover>,
+        );
+
+        expect(capturedPopoverProps.current?.portal).toMatchObject({
+            topBottomLayout: 'boundary',
+        });
     });
 });

@@ -249,6 +249,7 @@ installSessionShellCommonModuleMocks({
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
             useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
             useSessionReviewCommentsDrafts: () => [],
+            useWorkspaceReviewCommentsDrafts: () => [],
             useSessionUsage: () => null,
             useLocalSetting: (key: keyof LocalSettings) => (localSettingsFixture as any)[key],
             useLocalSettingMutable: (key: keyof LocalSettings) => [(localSettingsFixture as any)[key], vi.fn()],

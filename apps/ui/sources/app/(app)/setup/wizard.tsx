@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useWindowDimensions } from 'react-native';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { BaseModal } from '@/modal/components/BaseModal';
 import { SetupWizardSurface } from '@/components/onboarding/surfaces/SetupWizardSurface';
+import { shouldUseWizardFullscreenPresentation } from '@/components/onboarding/ui/wizardPresentation';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import type { WizardContext, WizardStepId } from '@/components/onboarding';
@@ -11,9 +13,11 @@ import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 
 export default function SetupWizardRoute() {
     const auth = useAuth();
+    const { width: windowWidth } = useWindowDimensions();
     const params = useLocalSearchParams<{ action?: string; step?: string; scope?: string }>();
     const [hydrationAttempted, setHydrationAttempted] = React.useState(false);
     const applyLocalSettings = useApplyLocalSettings();
+    const shouldTopAlignWebModal = shouldUseWizardFullscreenPresentation(windowWidth);
 
     const initialStepId: WizardStepId | undefined = React.useMemo(() => {
         const raw = typeof params.step === 'string' ? params.step.trim() : '';
@@ -103,6 +107,7 @@ export default function SetupWizardRoute() {
         <BaseModal
             visible={true}
             showBackdrop={true}
+            webPlacement={shouldTopAlignWebModal ? 'top' : undefined}
             onClose={() => {
                 applyLocalSettings({ sessionGettingStartedGuidanceDismissed: true });
                 router.replace('/');

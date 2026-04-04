@@ -15,14 +15,14 @@ describe('resolveAgentInputControlLines', () => {
         expect(lines.collapsed).toEqual([]);
     });
 
-    it('merges secondary controls into the primary scroll row while preserving registry order', () => {
+    it('keeps primary and secondary controls on separate lines in scroll layout', () => {
         const lines = resolveAgentInputControlLines({
             layout: 'scroll',
             controlIds: ['engine', 'permission', 'stop', 'files', 'reviewComments', 'machine', 'path', 'resume'],
         });
 
-        expect(lines.primary).toEqual(['engine', 'permission', 'stop', 'files', 'reviewComments', 'machine', 'path', 'resume']);
-        expect(lines.secondary).toEqual([]);
+        expect(lines.primary).toEqual(['engine', 'permission', 'stop', 'files', 'reviewComments']);
+        expect(lines.secondary).toEqual(['machine', 'path', 'resume']);
         expect(lines.collapsed).toEqual([]);
     });
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
-import type { EmbeddedTerminalRendererHandle } from '@/components/sessions/terminal/embeddedTerminalRendererHandle';
+import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { useMachineTerminalSession } from '@/hooks/machine/useMachineTerminalSession';
 import { useAllMachines, useAllSessions, useProjectForSession, useSession } from '@/sync/domains/state/storage';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';

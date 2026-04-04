@@ -1,6 +1,8 @@
 import React from 'react';
+import { Platform, useWindowDimensions } from 'react-native';
 
 import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 
 import { AgentInputChipPickerSurface } from './AgentInputChipPickerSurface';
 import type { AgentInputChipPickerOption } from './AgentInputChipPickerPanel';
@@ -23,12 +25,19 @@ export type AgentInputChipPickerPopoverProps = Readonly<{
 }>;
 
 export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverProps) {
+    const { width: windowWidth } = useWindowDimensions();
+    const portalTopBottomLayout =
+        Platform.OS === 'web' && isMobileLayoutWidth(windowWidth)
+            ? 'boundary'
+            : undefined;
+
     return (
         <AgentInputSelectionPopover
             open={props.open}
             anchorRef={props.anchorRef}
             maxHeightCap={props.maxHeightCap ?? 420}
             maxWidthCap={props.maxWidthCap ?? 720}
+            portalTopBottomLayout={portalTopBottomLayout}
             onRequestClose={props.onRequestClose}
         >
             {({ maxHeight }) => (

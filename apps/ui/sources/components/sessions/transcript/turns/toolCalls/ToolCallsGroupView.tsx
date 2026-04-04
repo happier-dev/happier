@@ -399,7 +399,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingLeft: 6,
     },
     preview: {
-        paddingBottom: 6,
+        paddingBottom: 3,
     },
     previewCards: {
         paddingHorizontal: 0,

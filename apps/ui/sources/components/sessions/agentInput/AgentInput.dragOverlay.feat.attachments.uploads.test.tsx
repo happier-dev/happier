@@ -1,15 +1,50 @@
-import React from 'react';
+/**
+ * @vitest-environment jsdom
+ */
+import * as React from 'react';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
-import { act } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let lastMultiTextInputProps: any = null;
+function flattenRnStyle(style: any): React.CSSProperties | undefined {
+    if (style == null) return undefined;
+    if (Array.isArray(style)) {
+        const merged: Record<string, unknown> = {};
+        for (const entry of style) {
+            const flattened = flattenRnStyle(entry);
+            if (!flattened) continue;
+            Object.assign(merged, flattened);
+        }
+        return merged as React.CSSProperties;
+    }
+    if (typeof style === 'object') {
+        return style as React.CSSProperties;
+    }
+    return undefined;
+}
+
+function createFileDragEvent(type: string, files: readonly File[] = []): Event {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+        configurable: true,
+        value: {
+            files,
+            items: files.map((file) => ({ kind: 'file', getAsFile: () => file })),
+            types: ['Files'],
+        },
+    });
+    return event;
+}
 
 installAgentInputCommonModuleMocks({
+    icons: async () => ({
+        Ionicons: (props: any) => React.createElement('span', props),
+        Octicons: (props: any) => React.createElement('span', props),
+    }),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -25,11 +60,87 @@ installAgentInputCommonModuleMocks({
             Dimensions: {
                 get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
             },
+            View: React.forwardRef<HTMLDivElement, any>(function View(props, ref) {
+                const {
+                    accessibilityHint: _accessibilityHint,
+                    accessibilityLabel: _accessibilityLabel,
+                    accessibilityRole: _accessibilityRole,
+                    accessibilityState: _accessibilityState,
+                    children,
+                    collapsable: _collapsable,
+                    onLayout: _onLayout,
+                    pointerEvents: _pointerEvents,
+                    style,
+                    testID,
+                    ...rest
+                } = props;
+                return React.createElement(
+                    'div',
+                    {
+                        ...rest,
+                        ref,
+                        style: flattenRnStyle(style),
+                        'data-testid': testID,
+                    },
+                    children,
+                );
+            }),
+            Text: React.forwardRef<HTMLSpanElement, any>(function Text(props, ref) {
+                const {
+                    accessibilityHint: _accessibilityHint,
+                    accessibilityLabel: _accessibilityLabel,
+                    accessibilityRole: _accessibilityRole,
+                    accessibilityState: _accessibilityState,
+                    children,
+                    selectable: _selectable,
+                    style,
+                    testID,
+                    ...rest
+                } = props;
+                return React.createElement(
+                    'span',
+                    {
+                        ...rest,
+                        ref,
+                        style: flattenRnStyle(style),
+                        'data-testid': testID,
+                    },
+                    children,
+                );
+            }),
+            Pressable: React.forwardRef<HTMLButtonElement, any>(function Pressable(props, ref) {
+                const {
+                    accessibilityHint: _accessibilityHint,
+                    accessibilityLabel,
+                    accessibilityRole,
+                    accessibilityState: _accessibilityState,
+                    children,
+                    hitSlop: _hitSlop,
+                    onPress,
+                    style,
+                    testID,
+                    ...rest
+                } = props;
+                return React.createElement(
+                    'button',
+                    {
+                        ...rest,
+                        ref,
+                        type: 'button',
+                        'aria-label': accessibilityLabel,
+                        role: accessibilityRole,
+                        onClick: onPress,
+                        style: flattenRnStyle(style),
+                        'data-testid': testID,
+                    },
+                    children,
+                );
+            }),
         });
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
+        return createTextModuleMock({ translate: (key: string) => key });
     },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -52,11 +163,24 @@ installAgentInputCommonModuleMocks({
 });
 
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
-    MultiTextInput: (props: Record<string, unknown>) => {
-        lastMultiTextInputProps = props;
-        return React.createElement('MultiTextInput', props, null);
-    },
+    MultiTextInput: React.forwardRef(function MultiTextInput(props: Record<string, unknown>, ref) {
+        React.useImperativeHandle(ref, () => ({
+            blur: () => { },
+            focus: () => { },
+            setTextAndSelection: () => { },
+        }), []);
+
+        return React.createElement('textarea', {
+            'data-testid': props.testID,
+            placeholder: props.placeholder,
+            readOnly: props.editable === false,
+            value: props.value,
+            onChange: () => { },
+        });
+    }),
 }));
+
+vi.mock('@/hooks/ui/useWebFileDropZone', async () => await import('@/hooks/ui/useWebFileDropZone.web'));
 
 vi.mock('@/components/ui/theme/haptics', () => ({
     hapticsLight: () => { },
@@ -86,7 +210,6 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
 }));
@@ -109,34 +232,79 @@ vi.mock('@/agents/catalog/catalog', () => ({
     }),
 }));
 
-describe('AgentInput (attachments drag overlay)', () => {
-    it('renders a drop overlay when files are dragged over the input', async () => {
-        const { AgentInput } = await import('./AgentInput');
+async function renderAgentInput(props: Readonly<{ onAttachmentsAdded: (files: readonly File[]) => void }>) {
+    const { AgentInput } = await import('./AgentInput');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
 
-        lastMultiTextInputProps = null;
-
-        const screen = await renderScreen(React.createElement(AgentInput, {
+    await act(async () => {
+        root.render(React.createElement(AgentInput, {
             value: '',
             placeholder: 'placeholder',
             onChangeText: () => { },
             onSend: () => { },
             autocompletePrefixes: [],
             autocompleteSuggestions: async () => [],
-            onAttachmentsAdded: () => { },
+            onAttachmentsAdded: props.onAttachmentsAdded,
             hasSendableAttachments: false,
         }));
+    });
 
-        expect(lastMultiTextInputProps).not.toBeNull();
+    const input = container.querySelector<HTMLTextAreaElement>('[data-testid="new-session-composer-input"]');
+    if (!input) {
+        throw new Error('expected new-session-composer-input to render');
+    }
 
-        await act(async () => {
-            lastMultiTextInputProps?.onFileDragActiveChange?.(true);
-        });
+    const dropSurface = input.parentElement?.parentElement;
+    if (!(dropSurface instanceof HTMLElement)) {
+        throw new Error('expected composer drop surface to render');
+    }
 
-        const overlay = screen.findByTestId('agent-input-drop-overlay');
-        if (!overlay) {
-            throw new Error('expected agent-input-drop-overlay to render');
+    return {
+        container,
+        dropSurface,
+        root,
+    };
+}
+
+describe('AgentInput (attachments drag overlay)', () => {
+    it('renders a drop overlay when files are dragged over the composer panel', async () => {
+        const rendered = await renderAgentInput({ onAttachmentsAdded: () => { } });
+
+        try {
+            await act(async () => {
+                rendered.dropSurface.dispatchEvent(createFileDragEvent('dragenter'));
+            });
+
+            const overlay = rendered.container.querySelector('[data-testid="agent-input-drop-overlay"]');
+            expect(overlay).not.toBeNull();
+        } finally {
+            await act(async () => {
+                rendered.root.unmount();
+            });
+            rendered.container.remove();
         }
-        expect(overlay.props.pointerEvents).toBe('none');
-        expect(overlay.props.style.backgroundColor).toBe('rgba(0, 0, 0, 0.45)');
-    }, 120_000);
+    });
+
+    it('adds attachments when files are dropped on the composer panel outside the textarea', async () => {
+        const onAttachmentsAdded = vi.fn();
+        const rendered = await renderAgentInput({ onAttachmentsAdded });
+        const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' });
+
+        try {
+            await act(async () => {
+                rendered.dropSurface.dispatchEvent(createFileDragEvent('dragenter', [file]));
+                rendered.dropSurface.dispatchEvent(createFileDragEvent('dragover', [file]));
+                rendered.dropSurface.dispatchEvent(createFileDragEvent('drop', [file]));
+            });
+
+            expect(onAttachmentsAdded).toHaveBeenCalledWith([file]);
+        } finally {
+            await act(async () => {
+                rendered.root.unmount();
+            });
+            rendered.container.remove();
+        }
+    });
 });

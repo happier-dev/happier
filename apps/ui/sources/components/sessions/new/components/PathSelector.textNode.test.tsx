@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
@@ -139,9 +140,12 @@ describe('PathSelector', () => {
         openMachinePathBrowserModalMock.mockReset();
         openMachinePathBrowserModalMock.mockResolvedValueOnce('/Users/leeroy/from-browser');
         const { PathSelector } = await import('./PathSelector');
+        const portalTarget = { nodeType: 1 } as any;
 
         let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<PathSelector
+        tree = (await renderScreen(
+            <ModalPortalTargetProvider target={portalTarget}>
+                <PathSelector
                     machineHomeDir="/Users/leeroy"
                     selectedPath="/Users/leeroy/project"
                     onChangeSelectedPath={() => {}}
@@ -154,7 +158,9 @@ describe('PathSelector', () => {
                         machineId: 'machine-1',
                         serverId: 'server-1',
                     }}
-                />)).tree;
+                />
+            </ModalPortalTargetProvider>,
+        )).tree;
 
         await act(async () => {
             await tree.pressByTestIdAsync('path-browser-trigger');
@@ -164,7 +170,54 @@ describe('PathSelector', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
             initialPath: '/Users/leeroy/project',
+            webPortalTarget: portalTarget,
         }));
+    });
+
+    it('uses the parent modal portal target and closes the current surface before opening the shared path browser modal', async () => {
+        vi.useFakeTimers();
+        openMachinePathBrowserModalMock.mockReset();
+        openMachinePathBrowserModalMock.mockResolvedValueOnce('/Users/leeroy/from-browser');
+        const { PathSelector } = await import('./PathSelector');
+        const popoverPortalTarget = { nodeType: 1, name: 'popover-portal-target' } as any;
+        const parentModalPortalTarget = { nodeType: 1, name: 'parent-modal-portal-target' } as any;
+        const onBeforeOpen = vi.fn();
+
+        const screen = await renderScreen(
+            <ModalPortalTargetProvider target={popoverPortalTarget}>
+                <PathSelector
+                    machineHomeDir="/Users/leeroy"
+                    selectedPath="/Users/leeroy/project"
+                    onChangeSelectedPath={() => {}}
+                    recentPaths={[]}
+                    usePickerSearch={false}
+                    favoriteDirectories={[]}
+                    onChangeFavoriteDirectories={() => {}}
+                    machineBrowse={{
+                        enabled: true,
+                        machineId: 'machine-1',
+                        onBeforeOpen,
+                        webPortalTarget: parentModalPortalTarget,
+                    }}
+                />
+            </ModalPortalTargetProvider>,
+        );
+
+        await act(async () => {
+            const pressPromise = screen.pressByTestIdAsync('path-browser-trigger');
+            await vi.runAllTimersAsync();
+            await pressPromise;
+        });
+
+        expect(onBeforeOpen).toHaveBeenCalledTimes(1);
+        expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            initialPath: '/Users/leeroy/project',
+            webPortalTarget: parentModalPortalTarget,
+        }));
+        expect(onBeforeOpen.mock.invocationCallOrder[0]).toBeLessThan(openMachinePathBrowserModalMock.mock.invocationCallOrder[0]);
+
+        vi.useRealTimers();
     });
 
     it('uses the current typed draft as the browse modal starting path', async () => {

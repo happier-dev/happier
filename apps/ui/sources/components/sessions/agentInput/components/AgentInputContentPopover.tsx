@@ -1,10 +1,14 @@
 import * as React from 'react';
+import { Platform, useWindowDimensions } from 'react-native';
 
 import type { FloatingOverlayEdgeFades } from '@/components/ui/overlays/FloatingOverlay';
 import type { ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 
 import { AgentInputPopoverSurface } from './AgentInputPopoverSurface';
+
+const MOBILE_WEB_AGENT_INPUT_POPOVER_VIEWPORT_MARGIN = 12;
 
 export type AgentInputContentPopoverRenderArgs = Readonly<{
     requestClose: () => void;
@@ -51,13 +55,28 @@ function renderPopoverContent(
 }
 
 export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
+    const { width: windowWidth } = useWindowDimensions();
+    const usesMobileWebBoundaryLayout = Platform.OS === 'web' && isMobileLayoutWidth(windowWidth);
+    const maxWidthCap = React.useMemo(() => {
+        const baseMaxWidthCap = props.maxWidthCap ?? 420;
+        if (!usesMobileWebBoundaryLayout) {
+            return baseMaxWidthCap;
+        }
+
+        return Math.max(
+            baseMaxWidthCap,
+            Math.max(0, Math.floor(windowWidth - MOBILE_WEB_AGENT_INPUT_POPOVER_VIEWPORT_MARGIN * 2)),
+        );
+    }, [props.maxWidthCap, usesMobileWebBoundaryLayout, windowWidth]);
+
     return (
         <AgentInputSelectionPopover
             open={props.open}
             anchorRef={props.anchorRef}
             boundaryRef={props.boundaryRef}
             maxHeightCap={props.maxHeightCap ?? 420}
-            maxWidthCap={props.maxWidthCap ?? 420}
+            maxWidthCap={maxWidthCap}
+            portalTopBottomLayout={usesMobileWebBoundaryLayout ? 'boundary' : undefined}
             onRequestClose={props.onRequestClose}
         >
             {({ maxHeight }) => (

@@ -18,6 +18,9 @@ const storageKindState = vi.hoisted(() => ({
     storageKind: 'persisted' as 'persisted' | 'direct',
     setStorageKind: vi.fn(),
 }));
+const gettingStartedState = vi.hoisted(() => ({
+    kind: 'create_session' as 'create_session' | 'connect_machine' | 'start_daemon' | 'select_session' | 'loading',
+}));
 
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
@@ -53,12 +56,37 @@ vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
 vi.mock('@/components/sessions/shell/SessionsListStorageChrome', () => ({
     SessionsListStorageChrome: (props: any) => React.createElement('SessionsListStorageChrome', props),
 }));
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+    useActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+}));
+vi.mock('./SessionsListEmptyState', () => ({
+    SessionsListEmptyState: 'SessionsListEmptyState',
+}));
+vi.mock('./DirectSessionsEmptyState', () => ({
+    DirectSessionsEmptyState: 'DirectSessionsEmptyState',
+}));
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
+}));
+vi.mock('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel', () => ({
+    useSessionGettingStartedGuidanceBaseModel: () => ({
+        kind: gettingStartedState.kind,
+        targetLabel: 'leeroy-mbp',
+        serverUrl: 'http://example.test',
+        serverName: 'server-1',
+        showServerSetup: false,
+    }),
 }));
 vi.mock('@/components/sessions/shell/SessionsList', () => ({
     SessionsList: (props: any) => React.createElement('SessionsList', props),
 }));
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: (props: any) => React.createElement('Text', props, props.children),
+}));
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
 
 describe('SessionsListWrapper (empty state)', () => {
     beforeEach(() => {
@@ -67,16 +95,40 @@ describe('SessionsListWrapper (empty state)', () => {
         featureDecisionState.enabled = false;
         storageKindState.storageKind = 'persisted';
         storageKindState.setStorageKind.mockReset();
+        gettingStartedState.kind = 'create_session';
     });
 
     afterEach(() => {
         standardCleanup();
     });
 
-    it('renders getting started guidance when there are no sessions', async () => {
+    it('renders the projects-style empty state when there are no sessions and session creation is available', async () => {
+        const screen = await renderScreen(<SessionsListWrapper />);
+
+        expect(() => screen.findByType('SessionsListEmptyState' as any)).not.toThrow();
+        expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).toThrow();
+
+        await screen.unmount();
+    });
+
+    it('keeps using the shared sessions empty state when this computer needs to reconnect', async () => {
+        gettingStartedState.kind = 'connect_machine';
+
+        const screen = await renderScreen(<SessionsListWrapper />);
+
+        expect(() => screen.findByType('SessionsListEmptyState' as any)).not.toThrow();
+        expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).toThrow();
+
+        await screen.unmount();
+    });
+
+    it('falls back to getting-started guidance only for unsupported empty-state kinds', async () => {
+        gettingStartedState.kind = 'select_session';
+
         const screen = await renderScreen(<SessionsListWrapper />);
 
         expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).not.toThrow();
+        expect(() => screen.findByType('SessionsListEmptyState' as any)).toThrow();
 
         await screen.unmount();
     });
@@ -113,6 +165,8 @@ describe('SessionsListWrapper (empty state)', () => {
 
         expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
         expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
+        expect(() => screen.findByType('DirectSessionsEmptyState' as any)).not.toThrow();
+        expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).toThrow();
 
         await screen.unmount();
     });

@@ -15,7 +15,7 @@ import {
     openEmbeddedTerminalInDockLocation,
     type EmbeddedTerminalDockLocation,
 } from './embeddedTerminalDocking';
-import type { EmbeddedTerminalRendererHandle } from './embeddedTerminalRendererHandle';
+import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { useSessionEmbeddedTerminalPty } from './useSessionEmbeddedTerminalPty';
 
 export type SessionEmbeddedTerminalPaneProps = Readonly<{

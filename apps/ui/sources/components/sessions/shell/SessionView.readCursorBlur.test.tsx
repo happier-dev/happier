@@ -204,6 +204,7 @@ installSessionShellCommonModuleMocks({
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
             useSessionPendingMessages: () => ({ messages: [] }),
             useSessionReviewCommentsDrafts: () => [],
+            useWorkspaceReviewCommentsDrafts: () => [],
             useSessionUsage: () => null,
             useSetting: () => null,
             useSettings: () => ({ experiments: true, featureToggles: {} }),

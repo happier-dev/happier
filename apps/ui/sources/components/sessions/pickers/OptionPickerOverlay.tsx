@@ -176,6 +176,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                             onSelectTab={(tabId) => props.onSelectOptionControlValue?.(option.id, tabId as SessionConfigOptionValueId)}
                             testIDPrefix={`model-picker-overlay-selected-option-control-option:${option.id}`}
                             compact
+                            activeLabelStyle={Typography.default('semiBold')}
                         />
                     </View>
                 );

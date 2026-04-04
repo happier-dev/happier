@@ -445,8 +445,8 @@ const settingsSessionHandoffTranslationExtensions = {
       groupFooter: '仅在源会话当前为直接会话时适用。',
       keepDirectTitle: '保持直接模式',
       keepDirectSubtitle: '当提供商支持时，将目标恢复为直接会话。',
-      convertToPersistedTitle: '转换为已同步',
-      convertToPersistedSubtitle: '导入转录内容，并作为已同步的 Happier 会话继续。',
+      convertToPersistedTitle: '转换为 Happier',
+      convertToPersistedSubtitle: '导入转录内容，并作为由 Happier 管理的会话继续。',
     },
   },
 } as const;
@@ -480,7 +480,7 @@ export const zhHans: TranslationStructure = {
 
   projects: {
     emptyTitle: "还没有项目",
-    emptyDescription: "项目让你在不创建会话的情况下浏览机器上的文件和 Git。",
+    emptyDescription: "项目让你在不创建会话的情况下浏览和编辑机器上的文件，并使用 Git。",
     groups: {
       pinned: "已置顶",
       addFirst: "添加项目",
@@ -488,6 +488,9 @@ export const zhHans: TranslationStructure = {
     actions: {
       addProjectToMachine: "将项目添加到此机器",
       addProject: "添加项目",
+      addProjectOnMachine: ({ machine }: { machine: string }) => `在${machine}上添加项目`,
+      chooseProjectFolderOnMachine: ({ machine }: { machine: string }) => `选择${machine}上的文件夹`,
+      chooseProjectFolderSubtitle: "将其添加为项目，以浏览和编辑文件，并使用 Git。",
       pin: "置顶",
       unpin: "取消置顶",
       remove: "移除",
@@ -528,6 +531,7 @@ export const zhHans: TranslationStructure = {
     emptyDescription: "目前没有待处理的请求或更新。",
     approvals: "审批",
     permissions: "权限",
+    unreadSessions: "未读会话",
     updates: "动态",
   },
 
@@ -3146,12 +3150,12 @@ export const zhHans: TranslationStructure = {
     inlineToolCallsDescription: "在聊天消息中直接显示工具调用",
     expandTodoLists: "展开待办列表",
     expandTodoListsDescription: "显示所有待办事项而不仅仅是变更",
-    showLineNumbersInDiffs: "在差异中显示行号",
-    showLineNumbersInDiffsDescription: "在代码差异中显示行号",
+    showLineNumbersInDiffs: "在代码视图中显示行号",
+    showLineNumbersInDiffsDescription: "在差异、文件预览和编辑器中显示行号",
     showLineNumbersInToolViews: "在工具视图中显示行号",
     showLineNumbersInToolViewsDescription: "在工具视图差异中显示行号",
-    wrapLinesInDiffs: "在差异中换行",
-    wrapLinesInDiffsDescription: "在差异视图中换行显示长行而不是水平滚动",
+    wrapLinesInDiffs: "在代码视图中换行",
+    wrapLinesInDiffsDescription: "在差异、文件预览和编辑器中换行显示长行而不是水平滚动",
     alwaysShowContextSize: "始终显示上下文大小",
     alwaysShowContextSizeDescription: "即使未接近限制时也显示上下文使用情况",
     agentInputActionBarLayout: "输入操作栏",
@@ -4243,8 +4247,19 @@ export const zhHans: TranslationStructure = {
 
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `服务器：${server}`,
-    storagePersistedTab: "已同步",
+    storagePersistedTab: "Happier",
     storageDirectTab: "直连",
+    emptyState: {
+      title: "还没有会话",
+      description: "在你的任一在线设备上启动会话。",
+      descriptionPrefix: "使用 ",
+      descriptionSuffix: " 在终端中启动，或使用下方按钮在你的某台机器上启动会话。",
+      actionsTitle: "启动会话",
+      startSessionOnMachine: ({ machine }: { machine: string }) => `在${machine}上启动会话`,
+      startSessionOnMachineSubtitle: "选择一个文件夹，并在这台机器上打开新的会话。",
+      reconnectMachineActionSubtitle: "重新连接后台服务，让这台机器可以再次启动会话。",
+      startDaemonActionSubtitle: "安装或重启启动会话所需的后台服务。",
+    },
     renameWorkspace: '重命名工作区',
     renameWorkspacePromptTitle: '重命名工作区',
     renameWorkspacePromptPlaceholder: '输入名称...',
@@ -4255,6 +4270,9 @@ export const zhHans: TranslationStructure = {
   directSessions: {
     browseTitle: "浏览提供方会话",
     browseOpenExisting: "浏览提供方会话",
+    browseActionSubtitle: "选择一台机器、一个提供方和一个会话，以便在这里打开。",
+    emptyStateTitle: "浏览现有会话",
+    emptyStateDescription: "从你已连接的机器中打开 Claude、Codex 和 OpenCode 会话。",
     browseFiltersTitle: "选择来源",
     browseMachines: "机器",
     browseProviders: "提供方",

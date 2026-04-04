@@ -11,6 +11,7 @@ import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import type { CreatedSessionFollowUpContext } from '../hooks/useCreateNewSession';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 
 export type NewSessionSimplePanelProps = Readonly<{
     popoverBoundaryRef: React.RefObject<View>;
@@ -75,6 +76,8 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
     const { width: windowWidth } = useWindowDimensions();
     const shouldBottomAnchor =
         props.shouldBottomAnchor ?? (Platform.OS !== 'web' || isMobileLayoutWidth(windowWidth));
+    const keyboardHeight = useKeyboardHeight();
+    const webKeyboardInset = Platform.OS === 'web' && shouldBottomAnchor ? keyboardHeight : 0;
 
     const {
         attachmentsUploadsEnabled,
@@ -95,26 +98,23 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
         baseActionChips: props.agentInputExtraActionChips,
     });
 
-    return (
-        <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? props.headerHeight + props.safeAreaBottom + 16 : 0}
-            style={[
-                props.containerStyle,
-                ...(shouldBottomAnchor
-                    ? [
-                        {
-                            justifyContent: 'flex-end' as const,
-                            paddingTop: 0,
-                        },
-                    ]
-                    : [
-                        {
-                            justifyContent: 'center' as const,
-                        },
-                    ]),
-            ]}
-        >
+    const shellStyle = [
+        props.containerStyle,
+        ...(shouldBottomAnchor
+            ? [
+                {
+                    justifyContent: 'flex-end' as const,
+                    paddingTop: 0,
+                },
+            ]
+            : [
+                {
+                    justifyContent: 'center' as const,
+                },
+            ]),
+    ];
+    const content = (
+        <>
             <View
                 ref={props.popoverBoundaryRef}
                 style={{
@@ -135,7 +135,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                             {/* AgentInput with inline chips - sticky at bottom */}
                             <View
                                 style={{
-                                    paddingBottom: props.newSessionBottomPadding,
+                                    paddingBottom: props.newSessionBottomPadding + webKeyboardInset,
                                 }}
                             >
                                 <View style={{ paddingHorizontal: props.newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
@@ -214,6 +214,20 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                         </View>
                     </PopoverBoundaryProvider>
             </View>
+        </>
+    );
+
+    if (Platform.OS === 'web') {
+        return <View style={shellStyle}>{content}</View>;
+    }
+
+    return (
+        <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? props.headerHeight + props.safeAreaBottom + 16 : 0}
+            style={shellStyle}
+        >
+            {content}
         </KeyboardAvoidingView>
     );
 }

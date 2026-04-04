@@ -1,0 +1,100 @@
+import * as React from 'react';
+import { ActivityIndicator, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import {
+    SessionGettingStartedGuidance,
+    type SessionGettingStartedGuidanceVariant,
+} from '@/components/sessions/guidance/SessionGettingStartedGuidance';
+import { DirectSessionsEmptyState } from '@/components/sessions/shell/DirectSessionsEmptyState';
+import { SessionsList } from '@/components/sessions/shell/SessionsList';
+import { SessionsListEmptyState } from '@/components/sessions/shell/SessionsListEmptyState';
+import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
+import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
+
+type SessionsListPaneContentProps = Readonly<{
+    storageKind: 'persisted' | 'direct';
+    fallbackGuidanceVariant: SessionGettingStartedGuidanceVariant;
+}>;
+
+const stylesheet = StyleSheet.create((theme) => ({
+    loadingContainerWrapper: {
+        flex: 1,
+        flexBasis: 0,
+        flexGrow: 1,
+        backgroundColor: theme.colors.groupped.background,
+    },
+    loadingContainer: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingBottom: 32,
+    },
+    emptyStateContainer: {
+        flex: 1,
+        flexBasis: 0,
+        flexGrow: 1,
+        flexDirection: 'column',
+        backgroundColor: theme.colors.groupped.background,
+    },
+    emptyStateContentContainer: {
+        flex: 1,
+        flexBasis: 0,
+        flexGrow: 1,
+    },
+}));
+
+export const SessionsListPaneContent = React.memo((props: SessionsListPaneContentProps) => {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const sessionListViewData = useVisibleSessionListViewData(props.storageKind);
+    const gettingStarted = useSessionGettingStartedGuidanceBaseModel();
+
+    if (sessionListViewData === null) {
+        return (
+            <View style={styles.loadingContainerWrapper}>
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                </View>
+            </View>
+        );
+    }
+
+    if (sessionListViewData.length === 0) {
+        if (props.storageKind === 'direct') {
+            return (
+                <View style={styles.emptyStateContainer}>
+                    <View style={styles.emptyStateContentContainer}>
+                        <DirectSessionsEmptyState surface={props.fallbackGuidanceVariant === 'sidebar' ? 'sidebar' : 'default'} />
+                    </View>
+                </View>
+            );
+        }
+
+        const emptyStateKind: React.ComponentProps<typeof SessionsListEmptyState>['kind'] | null = (
+            gettingStarted.kind === 'create_session'
+            || gettingStarted.kind === 'connect_machine'
+            || gettingStarted.kind === 'start_daemon'
+        )
+            ? gettingStarted.kind
+            : null;
+
+        return (
+            <View style={styles.emptyStateContainer}>
+                <View style={styles.emptyStateContentContainer}>
+                    {emptyStateKind
+                        ? (
+                            <SessionsListEmptyState
+                                kind={emptyStateKind}
+                                targetLabel={gettingStarted.targetLabel}
+                                surface={props.fallbackGuidanceVariant === 'sidebar' ? 'sidebar' : 'default'}
+                            />
+                        )
+                        : <SessionGettingStartedGuidance variant={props.fallbackGuidanceVariant} />}
+                </View>
+            </View>
+        );
+    }
+
+    return <SessionsList storageKind={props.storageKind} />;
+});

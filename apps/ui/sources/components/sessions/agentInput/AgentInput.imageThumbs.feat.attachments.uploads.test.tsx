@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { AgentInputAttachment } from './agentInputContracts';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
+import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -180,6 +181,45 @@ describe('AgentInput (image attachment thumbnails)', () => {
             ],
         }));
     }, 120_000);
+
+    it('reuses the current web modal portal target when opening an attachment preview from inside a modal surface', async () => {
+        const attachments = [
+            {
+                key: 'a1',
+                label: 'file.png',
+                status: 'pending',
+                preview: { kind: 'image', uri: 'blob:test' },
+                onRemove: () => { },
+            },
+        ] satisfies readonly AgentInputAttachment[];
+
+        modalShowSpy.mockClear();
+        const portalTarget = { tag: 'agent-input-parent-modal-target' } as unknown as Element;
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(
+            <ModalPortalTargetProvider target={portalTarget}>
+                <AgentInput
+                    value=""
+                    placeholder="placeholder"
+                    onChangeText={() => { }}
+                    onSend={() => { }}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    attachments={attachments}
+                    hasSendableAttachments={true}
+                />
+            </ModalPortalTargetProvider>,
+        );
+
+        await screen.pressByTestIdAsync('agent-input-attachment-image:a1');
+
+        expect(modalShowSpy).toHaveBeenCalledTimes(1);
+        const modalConfig = (modalShowSpy.mock.calls[0]?.[0] ?? null) as null | {
+            webPortalTarget?: unknown;
+        };
+        expect(modalConfig?.webPortalTarget).toBe(portalTarget);
+    });
 
     it('renders a thumbnail tile for image attachments', async () => {
         const attachments = [

@@ -104,6 +104,7 @@ installSessionShellCommonModuleMocks({
       useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
       useSessionPendingMessages: () => ({ messages: [] }),
       useSessionReviewCommentsDrafts: () => [],
+      useWorkspaceReviewCommentsDrafts: () => [],
       useSessionUsage: () => null,
       useLocalSetting: (key: string) => {
         if (key === 'acknowledgedCliVersions') return {};

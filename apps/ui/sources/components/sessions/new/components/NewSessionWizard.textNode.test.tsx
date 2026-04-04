@@ -9,6 +9,7 @@ import { installNewSessionComponentsCommonModuleMocks, resetNewSessionComponents
 
 const mockEnv = vi.hoisted(() => ({
     windowWidth: 800,
+    keyboardHeight: 0,
 }));
 
 const pathSelectorPropsRef: { current: Record<string, unknown> | null } = { current: null };
@@ -100,6 +101,10 @@ vi.mock('@/sync/sync', () => ({
     sync: { sendMessage: vi.fn() },
 }));
 
+vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
+    useKeyboardHeight: () => mockEnv.keyboardHeight,
+}));
+
 describe('NewSessionWizard', () => {
     beforeEach(() => {
         vi.useRealTimers();
@@ -117,6 +122,7 @@ describe('NewSessionWizard', () => {
             },
         });
         mockEnv.windowWidth = 800;
+        mockEnv.keyboardHeight = 0;
         pathSelectorPropsRef.current = null;
     });
 
@@ -252,12 +258,8 @@ describe('NewSessionWizard', () => {
                 } as any}
             />);
 
-            const keyboardView = screen.findByType('KeyboardAvoidingView');
-            expect(keyboardView.props.style).toEqual(expect.arrayContaining([
-                expect.objectContaining({
-                    flex: 0,
-                }),
-            ]));
+            expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
+            expect(screen.findAllByType('View').some((node) => flattenStyle(node.props.style).flex === 0)).toBe(true);
         } finally {
             mockEnv.windowWidth = 800;
         }
@@ -392,6 +394,7 @@ describe('NewSessionWizard', () => {
 
     it('anchors the wizard shell to the bottom on narrow mobile web layouts', async () => {
         mockEnv.windowWidth = 390;
+        mockEnv.keyboardHeight = 48;
         try {
             const { NewSessionWizard } = await import('./NewSessionWizard');
 
@@ -415,7 +418,7 @@ describe('NewSessionWizard', () => {
                                 safeAreaBottom: 0,
                                 headerHeight: 44,
                                 newSessionSidePadding: 0,
-                                newSessionBottomPadding: 0,
+                                newSessionBottomPadding: 8,
                             }}
                             profiles={{
                                 useProfiles: false,
@@ -514,12 +517,10 @@ describe('NewSessionWizard', () => {
                             } as any}
                         />);
 
-            const keyboardView = screen.findByType('KeyboardAvoidingView');
-            expect(keyboardView.props.style).toEqual(expect.arrayContaining([
-                expect.objectContaining({
-                    justifyContent: 'flex-end',
-                }),
-            ]));
+            const allViews = screen.findAllByType('View');
+            expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
+            expect(allViews.some((node) => flattenStyle(node.props.style).justifyContent === 'flex-end')).toBe(true);
+            expect(allViews.some((node) => flattenStyle(node.props.style).paddingTop === 12 && flattenStyle(node.props.style).paddingBottom === 56)).toBe(true);
         } finally {
             mockEnv.windowWidth = 800;
         }

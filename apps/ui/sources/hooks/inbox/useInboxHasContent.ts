@@ -1,7 +1,7 @@
 import { useUpdates } from './useUpdates';
 import { useAllSessions, useArtifacts, useFeedItems, useFriendRequests, useRequestedFriends } from '@/sync/domains/state/storage';
 import { useChangelog } from './useChangelog';
-import { listPendingPermissionRequests, listPendingUserActionRequests } from '@/utils/sessions/sessionUtils';
+import { buildInboxSessionState } from './buildInboxSessionState';
 
 // Hook to check if inbox has content to show
 export function useInboxHasContent(): boolean {
@@ -12,20 +12,17 @@ export function useInboxHasContent(): boolean {
     const changelog = useChangelog();
     const artifacts = useArtifacts();
     const sessions = useAllSessions();
+    const { unreadSessions, sessionsNeedingAttention } = buildInboxSessionState(sessions);
 
     const hasOpenApprovals = artifacts.some(
         (a) => a.header?.kind === 'approval_request.v1' && a.header?.approvalStatus === 'open'
     );
 
-    const hasOnlineSessionsWithPendingRequests = sessions.some((s) => {
-        if (s.presence !== 'online') return false;
-        return listPendingPermissionRequests(s).length > 0 || listPendingUserActionRequests(s).length > 0;
-    });
-
     // Show dot if there's any actionable content:
     // - App updates available
     // - Pending approvals
     // - Pending permission / user action requests
+    // - Unread sessions
     // - Incoming friend requests (also shown as badge)
     // - Outgoing friend requests pending
     // - Feed items (activity updates)
@@ -33,7 +30,8 @@ export function useInboxHasContent(): boolean {
     return (
         updateAvailable ||
         hasOpenApprovals ||
-        hasOnlineSessionsWithPendingRequests ||
+        sessionsNeedingAttention.length > 0 ||
+        unreadSessions.length > 0 ||
         friendRequests.length > 0 ||
         requestedFriends.length > 0 ||
         feedItems.length > 0 ||

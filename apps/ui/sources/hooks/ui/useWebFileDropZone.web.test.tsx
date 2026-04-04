@@ -37,4 +37,31 @@ describe('useWebFileDropZone.web', () => {
 
         expect(onFileDragActiveChange).toHaveBeenCalledWith(true);
     });
+
+    it('only notifies active-state transitions once for nested file drag events', async () => {
+        const onFilesDropped = vi.fn();
+        const onFileDragActiveChange = vi.fn();
+        let handlers!: ReturnType<typeof useWebFileDropZone>;
+
+        function Harness() {
+            handlers = useWebFileDropZone({
+                enabled: true,
+                onFilesDropped,
+                onFileDragActiveChange,
+            });
+            return null;
+        }
+
+        await renderScreen(<Harness />);
+
+        act(() => {
+            handlers.onDragEnter({ dataTransfer: { types: ['Files'] } });
+            handlers.onDragEnter({ dataTransfer: { types: ['Files'] } });
+            handlers.onDragOver({ dataTransfer: { types: ['Files'] }, preventDefault: () => {} });
+            handlers.onDragLeave({ dataTransfer: { types: ['Files'] } });
+            handlers.onDragLeave({ dataTransfer: { types: ['Files'] } });
+        });
+
+        expect(onFileDragActiveChange.mock.calls).toEqual([[true], [false]]);
+    });
 });

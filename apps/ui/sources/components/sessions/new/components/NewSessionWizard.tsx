@@ -38,6 +38,7 @@ import { NewSessionProfilesBrowserContent } from '@/components/sessions/new/comp
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 
 
 export interface NewSessionWizardLayoutProps {
@@ -171,6 +172,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     const { width: windowWidth } = useWindowDimensions();
     const shouldBottomAnchor =
         shouldBottomAnchorOverride ?? (Platform.OS !== 'web' || isMobileLayoutWidth(windowWidth));
+    const keyboardHeight = useKeyboardHeight();
+    const webKeyboardInset = Platform.OS === 'web' && shouldBottomAnchor ? keyboardHeight : 0;
 
     // Wizard-only scroll bookkeeping (keep it out of NewSessionScreen)
     const scrollViewRef = React.useRef<ScrollView>(null);
@@ -335,19 +338,16 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         });
     }, [machineDisplayName, props.popoverBoundaryRef, props.profiles, serverId]);
 
-    return (
-        <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight + safeAreaBottom + 16 : 0}
-            style={[
-                styles.container,
-                {
-                    backgroundColor: theme.colors.groupped.background,
-                    justifyContent: shouldBottomAnchor ? 'flex-end' : 'center',
-                    ...(shouldBottomAnchor ? { paddingTop: 0 } : {}),
-                },
-            ]}
-        >
+    const shellStyle = [
+        styles.container,
+        {
+            backgroundColor: theme.colors.groupped.background,
+            justifyContent: shouldBottomAnchor ? 'flex-end' : 'center',
+            ...(shouldBottomAnchor ? { paddingTop: 0 } : {}),
+        },
+    ];
+    const content = (
+        <>
             <View
                 ref={props.popoverBoundaryRef}
                 style={{
@@ -705,7 +705,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                 {/* AgentInput - Sticky at bottom */}
                 <View style={{
                     paddingTop: 12,
-                    paddingBottom: newSessionBottomPadding,
+                    paddingBottom: newSessionBottomPadding + webKeyboardInset,
                     position: 'relative',
                     overflow: 'visible',
                     ...Platform.select({
@@ -818,6 +818,20 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                 </View>
                 </PopoverBoundaryProvider>
             </View>
+        </>
+    );
+
+    if (Platform.OS === 'web') {
+        return <View style={shellStyle}>{content}</View>;
+    }
+
+    return (
+        <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight + safeAreaBottom + 16 : 0}
+            style={shellStyle}
+        >
+            {content}
         </KeyboardAvoidingView>
     );
 });

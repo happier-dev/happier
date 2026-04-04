@@ -11,10 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
-import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
-import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
-import { useLocalSetting, useMachineListByServerId, useMachineListStatusByServerId, useSetting } from '@/sync/domains/state/storage';
-import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { useLocalSetting } from '@/sync/domains/state/storage';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
@@ -24,12 +21,13 @@ import { resolveCliInvokerNameForCurrentApp, resolvePreferredPublicReleaseRingId
 import { buildMachineSetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 import type { SessionGettingStartedDecisionKind } from './gettingStartedModel';
-import type { SessionGettingStartedViewModel } from './gettingStartedModel';
-import { buildSessionGettingStartedViewModel } from './gettingStartedModel';
 import { Text } from '@/components/ui/text/Text';
 import { buildHappierCliInstallCommand } from './happierCliInstallCommand';
 import { listSessionGettingStartedCliCommands } from './listSessionGettingStartedCliCommands';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { getSessionGettingStartedSubtitle, getSessionGettingStartedTitle } from './sessionGettingStartedText';
+import { SessionGettingStartedSummary } from './SessionGettingStartedSummary';
+import { useSessionGettingStartedGuidanceBaseModel } from './useSessionGettingStartedGuidanceBaseModel';
 
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
@@ -61,6 +59,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 20,
         paddingTop: 32,
         paddingBottom: 20,
+    },
+    contentContainerCentered: {
+        justifyContent: 'center',
+        paddingTop: 20,
+        paddingBottom: 32,
     },
     logo: {
         height: 44,
@@ -167,38 +170,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 260,
     },
 }));
-
-function titleForKind(kind: SessionGettingStartedDecisionKind): string {
-    switch (kind) {
-        case 'connect_machine':
-            return t('sessionGettingStarted.title.connectMachine');
-        case 'start_daemon':
-            return t('sessionGettingStarted.title.startDaemon');
-        case 'create_session':
-            return t('sessionGettingStarted.title.createSession');
-        case 'select_session':
-            return t('sessionGettingStarted.title.selectSession');
-        case 'loading':
-        default:
-            return t('sessionGettingStarted.title.loading');
-    }
-}
-
-function subtitleForKind(kind: SessionGettingStartedDecisionKind, targetLabel: string): string {
-    switch (kind) {
-        case 'connect_machine':
-            return t('sessionGettingStarted.subtitle.connectMachine', { targetLabel });
-        case 'start_daemon':
-            return t('sessionGettingStarted.subtitle.startDaemon', { targetLabel });
-        case 'create_session':
-            return t('sessionGettingStarted.subtitle.createSession');
-        case 'select_session':
-            return t('sessionGettingStarted.subtitle.selectSession');
-        case 'loading':
-        default:
-            return t('sessionGettingStarted.subtitle.loading');
-    }
-}
 
 function resolveAppVariantForCliInstall(): AppVariant {
     return (
@@ -329,12 +300,13 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
     const router = useRouter();
     const { model } = props;
 
-    const title = titleForKind(model.kind);
-    const subtitle = subtitleForKind(model.kind, model.targetLabel);
+    const title = getSessionGettingStartedTitle(model.kind);
+    const subtitle = getSessionGettingStartedSubtitle(model.kind, model.targetLabel);
     const steps = buildSteps(model);
-    const showLogo = props.variant === 'primaryPane' || props.variant === 'newSessionBlocking';
+    const showCreateSessionSummaryOnly = model.kind === 'create_session';
+    const showLogo = (props.variant === 'primaryPane' || props.variant === 'newSessionBlocking') && model.kind !== 'create_session';
     const showSetupPrimaryCard = model.kind === 'connect_machine' || model.kind === 'start_daemon';
-    const showCliFollowUp = steps.length > 0 && !showSetupPrimaryCard;
+    const showCliFollowUp = steps.length > 0 && !showSetupPrimaryCard && !showCreateSessionSummaryOnly;
     const showCliFollowUpTitle = false;
     const handleOpenSetup = React.useCallback(() => {
         if (model.onOpenSetup) {
@@ -348,7 +320,10 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
         <ScrollView
             testID="session-getting-started-scroll"
             style={styles.scrollContainer}
-            contentContainerStyle={styles.contentContainer}
+            contentContainerStyle={[
+                styles.contentContainer,
+                props.variant === 'primaryPane' && showCreateSessionSummaryOnly ? styles.contentContainerCentered : null,
+            ]}
             keyboardShouldPersistTaps="handled"
         >
             <View testID={`session-getting-started-kind-${model.kind}`} style={{ width: 0, height: 0, overflow: 'hidden' }} />
@@ -376,10 +351,21 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                     </View>
                 </View>
             ) : (
-                <>
-                    <Text style={styles.title}>{title}</Text>
-                    <Text style={styles.subtitle}>{subtitle}</Text>
-                </>
+                showCreateSessionSummaryOnly ? (
+                    <SessionGettingStartedSummary
+                        testID="session-getting-started-summary"
+                        titleTestID="session-getting-started-summary-title"
+                        descriptionTestID="session-getting-started-summary-description"
+                        kind={model.kind}
+                        targetLabel={model.targetLabel}
+                        surface={props.variant === 'primaryPane' ? 'primaryPane' : 'default'}
+                    />
+                ) : (
+                    <>
+                        <Text style={styles.title}>{title}</Text>
+                        <Text style={styles.subtitle}>{subtitle}</Text>
+                    </>
+                )
             )}
 
             {showCliFollowUp ? (
@@ -453,25 +439,6 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
             </View>
         </ScrollView>
     );
-}
-
-export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStartedViewModel {
-    const sessions = useVisibleSessionListViewData();
-    const selection = useResolvedActiveServerSelection();
-    const serverSelectionGroups = useSetting('serverSelectionGroups');
-    const machineListByServerId = useMachineListByServerId();
-    const machineListStatusByServerId = useMachineListStatusByServerId();
-
-    return React.useMemo(() => {
-        return buildSessionGettingStartedViewModel({
-            sessions,
-            selection,
-            serverSelectionGroups,
-            serverProfiles: listServerProfiles().map((p) => ({ id: p.id, name: p.name, serverUrl: p.serverUrl })),
-            machineListByServerId,
-            machineListStatusByServerId,
-        });
-    }, [machineListByServerId, machineListStatusByServerId, selection, serverSelectionGroups, sessions]);
 }
 
 function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: SessionGettingStartedGuidanceVariant }>): React.ReactElement | null {

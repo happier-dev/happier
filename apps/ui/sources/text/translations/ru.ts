@@ -444,8 +444,8 @@ const settingsSessionHandoffTranslationExtensions = {
       groupFooter: 'Применяется только когда исходная сессия сейчас прямая.',
       keepDirectTitle: 'Оставить прямой',
       keepDirectSubtitle: 'Возобновить целевую сессию как прямую, если провайдер это поддерживает.',
-      convertToPersistedTitle: 'Преобразовать в синхронизированную',
-      convertToPersistedSubtitle: 'Импортировать стенограмму и продолжить как синхронизированную сессию Happier.',
+      convertToPersistedTitle: 'Преобразовать в Happier',
+      convertToPersistedSubtitle: 'Импортировать стенограмму и продолжить как сессию, управляемую Happier.',
     },
   },
 } as const;
@@ -497,7 +497,7 @@ export const ru: TranslationStructure = {
 
   projects: {
     emptyTitle: "Проектов пока нет",
-    emptyDescription: "Проекты позволяют просматривать файлы и Git на ваших машинах вне сессий.",
+    emptyDescription: "Проекты позволяют просматривать и редактировать файлы, а также использовать Git на ваших машинах вне сессий.",
     groups: {
       pinned: "Закреплённые",
       addFirst: "Добавить проект",
@@ -505,6 +505,9 @@ export const ru: TranslationStructure = {
     actions: {
       addProjectToMachine: "Добавить проект на эту машину",
       addProject: "Добавить проект",
+      addProjectOnMachine: ({ machine }: { machine: string }) => `Добавить проект на ${machine}`,
+      chooseProjectFolderOnMachine: ({ machine }: { machine: string }) => `Выберите папку на ${machine}`,
+      chooseProjectFolderSubtitle: "Добавьте её как проект, чтобы просматривать и редактировать файлы, а также использовать Git.",
       pin: "Закрепить",
       unpin: "Открепить",
       remove: "Удалить",
@@ -545,6 +548,7 @@ export const ru: TranslationStructure = {
     emptyDescription: "Сейчас нет ожидающих запросов или обновлений.",
     approvals: "Подтверждения",
     permissions: "Разрешения",
+    unreadSessions: "Непрочитанные сессии",
     updates: "Активность",
   },
 
@@ -3240,16 +3244,16 @@ export const ru: TranslationStructure = {
       "Отображать вызовы инструментов прямо в сообщениях чата",
     expandTodoLists: "Развернуть списки задач",
     expandTodoListsDescription: "Показывать все задачи вместо только изменений",
-    showLineNumbersInDiffs: "Показывать номера строк в различиях",
+    showLineNumbersInDiffs: "Показывать номера строк в представлениях кода",
     showLineNumbersInDiffsDescription:
-      "Отображать номера строк в различиях кода",
+      "Отображать номера строк в различиях, предпросмотрах файлов и редакторах",
     showLineNumbersInToolViews:
       "Показывать номера строк в представлениях инструментов",
     showLineNumbersInToolViewsDescription:
       "Отображать номера строк в различиях представлений инструментов",
-    wrapLinesInDiffs: "Перенос строк в различиях",
+    wrapLinesInDiffs: "Перенос строк в представлениях кода",
     wrapLinesInDiffsDescription:
-      "Переносить длинные строки вместо горизонтальной прокрутки в представлениях различий",
+      "Переносить длинные строки вместо горизонтальной прокрутки в различиях, предпросмотрах файлов и редакторах",
     alwaysShowContextSize: "Всегда показывать размер контекста",
     alwaysShowContextSizeDescription:
       "Отображать использование контекста даже когда не близко к лимиту",
@@ -3950,8 +3954,19 @@ export const ru: TranslationStructure = {
 
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `Сервер: ${server}`,
-    storagePersistedTab: "Синхронизированные",
+    storagePersistedTab: "Happier",
     storageDirectTab: "Прямые",
+    emptyState: {
+      title: "Сессий пока нет",
+      description: "Запустите сессию на одной из ваших машин в сети.",
+      descriptionPrefix: "Запустите сессию на одной из ваших машин с помощью ",
+      descriptionSuffix: " в терминале или с помощью кнопок ниже.",
+      actionsTitle: "Запустить сессию",
+      startSessionOnMachine: ({ machine }: { machine: string }) => `Запустить сессию на ${machine}`,
+      startSessionOnMachineSubtitle: "Выберите папку и откройте новую сессию на этой машине.",
+      reconnectMachineActionSubtitle: "Повторно подключите фоновую службу, чтобы эта машина снова могла запускать сессии.",
+      startDaemonActionSubtitle: "Установите или перезапустите фоновую службу, необходимую для запуска сессий.",
+    },
     renameWorkspace: 'Переименовать рабочую область',
     renameWorkspacePromptTitle: 'Переименовать рабочую область',
     renameWorkspacePromptPlaceholder: 'Введите название...',
@@ -3962,6 +3977,9 @@ export const ru: TranslationStructure = {
   directSessions: {
     browseTitle: "Просмотр сессий провайдера",
     browseOpenExisting: "Просмотр сессий провайдера",
+    browseActionSubtitle: "Выберите машину, провайдера и сессию, чтобы открыть её здесь.",
+    emptyStateTitle: "Откройте существующую сессию",
+    emptyStateDescription: "Открывайте сессии Claude, Codex и OpenCode с ваших подключённых машин.",
     browseFiltersTitle: "Выберите источник",
     browseMachines: "Машины",
     browseProviders: "Провайдеры",

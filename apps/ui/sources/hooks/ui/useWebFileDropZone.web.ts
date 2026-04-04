@@ -18,15 +18,26 @@ export function useWebFileDropZone(params: Readonly<{
     onDrop: (event: any) => void;
 }> {
     const dragDepthRef = React.useRef(0);
+    const activeRef = React.useRef(false);
     const setActive = React.useCallback((active: boolean) => {
+        if (activeRef.current === active) return;
+        activeRef.current = active;
         params.onFileDragActiveChange?.(active);
-    }, [params]);
+    }, [params.onFileDragActiveChange]);
+
+    React.useEffect(() => {
+        if (params.enabled) return;
+        dragDepthRef.current = 0;
+        setActive(false);
+    }, [params.enabled, setActive]);
 
     const onDragEnter = React.useCallback((event: any) => {
         if (!params.enabled) return;
         if (!isWebFileDragEvent(event as DragEventLike)) return;
         dragDepthRef.current += 1;
-        setActive(true);
+        if (dragDepthRef.current === 1) {
+            setActive(true);
+        }
     }, [params.enabled, setActive]);
 
     const onDragLeave = React.useCallback((event: any) => {

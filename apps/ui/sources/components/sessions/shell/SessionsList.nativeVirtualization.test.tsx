@@ -572,6 +572,23 @@ describe('SessionsList (native virtualization)', () => {
         expect(items.some((item) => item?.id === 'openProject')).toBe(true);
     });
 
+    it('does not expose project rename actions without a workspace scope hint', async () => {
+        mockVisibleSessionListViewData = [
+            {
+                type: 'header',
+                title: '/repo',
+                headerKind: 'project',
+                groupKey: 'server:server_a:active:project:abc',
+                workspaceKey: 'wl_abc',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+        ];
+
+        const screen = await renderSessionsList();
+        expect(findFirstDropdownMenuItems(screen)).toEqual([]);
+    });
+
     it('wires pin toggling via pinnedSessionKeysV1', async () => {
         setPinnedSessionKeysV1.mockClear();
 

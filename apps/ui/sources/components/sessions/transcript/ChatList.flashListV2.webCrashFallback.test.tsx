@@ -175,6 +175,67 @@ describe('ChatList (FlashList v2 web crash fallback)', () => {
     }
   });
 
+  it('falls back to FlatList on web when FlashList hits a recycler commit layout update loop', async () => {
+    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
+
+    const globalWindowContainer = globalThis as unknown as { window?: unknown };
+    const previousWindow = globalWindowContainer.window;
+    const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
+    try {
+      globalWindowContainer.window = {
+        addEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+          const entries = listeners.get(type) ?? [];
+          entries.push(fn);
+          listeners.set(type, entries);
+        },
+        removeEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+          const entries = listeners.get(type) ?? [];
+          listeners.set(
+            type,
+            entries.filter((entry) => entry !== fn),
+          );
+        },
+      };
+
+      const { ChatList } = await import('./ChatList');
+      const screen = await renderFlashListChatList(
+        <ChatList session={flashListChatListHarnessState.sessionState} />
+      );
+
+      expect(screen.requireCapturedFlashListProps()).toBeTruthy();
+      expect(listeners.get('error')?.length ?? 0).toBeGreaterThan(0);
+
+      const errorMessage = 'Maximum update depth exceeded. This can happen when a component repeatedly calls setState inside componentWillUpdate or componentDidUpdate. React limits the number of nested updates to prevent infinite loops.';
+      const handler = (listeners.get('error') ?? [])[0];
+      expect(typeof handler).toBe('function');
+
+      const fakeEvent = {
+        message: errorMessage,
+        error: {
+          message: errorMessage,
+          stack: [
+            'Error: Maximum update depth exceeded',
+            '    at getRootForUpdatedFiber (bundle:15941:169)',
+            '    at dispatchSetState (bundle:17871:7)',
+            '    at Object.commitLayout (bundle:594088:11)',
+            '    at commitHookLayoutEffects (bundle:19716:58)',
+          ].join('\n'),
+        },
+        preventDefault: vi.fn(),
+        stopImmediatePropagation: vi.fn(),
+      } as unknown as ErrorEvent;
+
+      await act(async () => {
+        (handler as EventListener)(fakeEvent);
+      });
+
+      expect(screen.requireCapturedFlashListProps()).toBeTruthy();
+      expect(screen.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
+    } finally {
+      globalWindowContainer.window = previousWindow;
+    }
+  });
+
   it('does not fall back for unrelated "index out of bounds" errors', async () => {
     flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
 

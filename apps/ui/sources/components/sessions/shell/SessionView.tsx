@@ -27,8 +27,9 @@ import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/fi
 import { Modal } from '@/modal';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
-import { storage, useAutomations, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
+import { storage, useAutomations, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { setActiveViewingSessionId, clearActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
+import { resolveWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
@@ -641,7 +642,8 @@ function SessionViewLoaded({
     const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads');
     const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(sessionId);
     const attachmentsUploadsEnabled = attachmentsUploadsFeatureEnabled && attachmentsUploadsTransferAvailable;
-    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
+    const reviewScope = React.useMemo(() => resolveWorkspaceScopeForSession(sessionId), [sessionId]);
+    const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
 
     const attachmentsUploadConfig = useAttachmentsUploadConfig();

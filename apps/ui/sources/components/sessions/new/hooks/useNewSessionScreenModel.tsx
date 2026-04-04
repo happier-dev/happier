@@ -9,6 +9,7 @@ import { t } from '@/text';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Modal } from '@/modal';
+import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { sync } from '@/sync/sync';
 import { getTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -102,6 +103,7 @@ import { NewSessionResumeSelectionContent } from '@/components/sessions/new/comp
 import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
+import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
 import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
 
 
@@ -825,6 +827,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     });
 
     const selectedServerId = targetServerId;
+    const modalPortalTarget = useModalPortalTarget();
     const machinePopoverServerIds = allowedTargetServerIds.length > 0
         ? allowedTargetServerIds
         : resolvedSettingsTarget.allowedServerIds;
@@ -857,6 +860,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                     enabled: true,
                     machineId: selectedMachine?.id ?? null,
                     serverId: targetServerId ?? null,
+                    onBeforeOpen: requestClose,
+                    webPortalTarget: modalPortalTarget,
                 }}
             />
         ),
@@ -875,6 +880,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedPath,
         setFavoriteDirectories,
         setSelectedPath,
+        modalPortalTarget,
         targetServerId,
         usePathPickerSearch,
     ]);
@@ -1182,7 +1188,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                     showInlineHeader={false}
                     resumeBrowse={browseEnabled ? {
                         enabled: true,
-                        onBrowse: () => {
+                        onBrowse: async () => {
                             if (!selectedMachineId) return null;
                             const source = resolveDirectBrowseLockedSource({
                                 providerId: agentType as any,
@@ -1191,17 +1197,23 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                                 settings,
                             });
                             if (!source) return null;
-                            // See ResumePickerScreen: avoid app-root modals inside the new-session sheet/drawer on native.
                             requestClose();
-                            router.push({
-                                pathname: '/new/pick/resume-browse',
-                                params: {
-                                    agentType,
+                            const nextResumeSessionId = await openDirectSessionsResumeIdPickerModal({
+                                title: t('directSessions.browseTitle'),
+                                webPortalTarget: modalPortalTarget,
+                                lockScope: {
                                     machineId: selectedMachineId,
-                                    spawnServerId: targetServerId ?? undefined,
-                                    dataId: dataId ?? undefined,
+                                    serverId: targetServerId ?? null,
+                                    providerId: agentType as any,
+                                    source,
                                 },
                             });
+                            if (typeof nextResumeSessionId === 'string') {
+                                const trimmedResumeSessionId = nextResumeSessionId.trim();
+                                if (trimmedResumeSessionId.length > 0) {
+                                    setResumeSessionId(trimmedResumeSessionId);
+                                }
+                            }
                             return null;
                         },
                     } : null}
@@ -1214,6 +1226,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         accountProfile,
         agentOptionState,
         agentType,
+        modalPortalTarget,
         resumeSessionId,
         selectedMachineId,
         settings,

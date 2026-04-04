@@ -200,6 +200,10 @@ describe('SessionGettingStartedGuidanceView', () => {
       />,
     );
 
+    expect(screen.findByTestId('session-getting-started-summary')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-summary-title')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-summary-description')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-cli-follow-up')).toBeNull();
     expect(screen.getTextContent()).toContain('hdev');
     mockAppConfig.variant = 'production';
   });

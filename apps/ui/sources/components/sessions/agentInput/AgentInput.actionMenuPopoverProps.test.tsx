@@ -532,9 +532,9 @@ describe('AgentInput (action menu popover props)', () => {
                         collapsedOptionsPopover: {
                             presentation: 'simple',
                             title: 'settingsSession.defaultStorage.title',
-                            label: 'Synced',
+                            label: 'Happier',
                             options: [
-                                { id: 'persisted', label: 'Synced', subtitle: 'Synced subtitle' },
+                                { id: 'persisted', label: 'Happier', subtitle: 'Happier subtitle' },
                                 { id: 'direct', label: 'Direct', subtitle: 'Direct subtitle' },
                             ],
                             selectedOptionId: 'persisted',

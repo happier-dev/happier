@@ -1,7 +1,8 @@
 import React from 'react';
 import { useLocalSearchParams } from 'expo-router';
 
-import { SessionGettingStartedGuidance, useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
+import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
+import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
 import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNewSessionScreenModel';

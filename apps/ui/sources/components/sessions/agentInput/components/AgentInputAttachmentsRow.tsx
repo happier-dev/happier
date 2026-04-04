@@ -12,6 +12,7 @@ import {
 } from '@/components/sessions/attachments/preview/AttachmentImagePreviewModal';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { t } from '@/text';
 
 import type { AgentInputAttachment, AgentInputAttachmentUploadProgress } from '../agentInputContracts';
@@ -121,6 +122,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const modalPortalTarget = useModalPortalTarget();
     const attachmentImagePreviewItems = React.useMemo(
         () => resolveAttachmentImagePreviewItems(props.attachments),
         [props.attachments],
@@ -155,6 +157,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                                     onPress={() => {
                                         Modal.show({
                                             component: AttachmentImagePreviewModal,
+                                            webPortalTarget: modalPortalTarget ?? null,
                                             props: {
                                                 images: attachmentImagePreviewItems,
                                                 initialIndex: imagePreviewIndex >= 0 ? imagePreviewIndex : 0,

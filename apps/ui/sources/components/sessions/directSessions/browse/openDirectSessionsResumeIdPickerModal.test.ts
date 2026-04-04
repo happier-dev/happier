@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const showMock = vi.hoisted(() => vi.fn<(config: unknown) => string>());
+const webPortalTarget = vi.hoisted(() => ({ tag: 'resume-browse-parent-modal-target' } as unknown as Element));
 
 type CapturedConfig = Readonly<{
+    webPortalTarget?: unknown;
     chrome: Readonly<{
         kind: 'card';
         title?: string;
@@ -13,6 +15,7 @@ type CapturedConfig = Readonly<{
             width: number;
             maxHeightRatio: number;
             size?: string;
+            viewportMargin?: number | Readonly<{ horizontal?: number; vertical?: number }>;
         }>;
     }>;
     onRequestClose?: () => void;
@@ -74,6 +77,7 @@ describe('openDirectSessionsResumeIdPickerModal', () => {
                 source: { kind: 'codexHome', home: 'user' },
             },
             title: 'Browse Codex sessions',
+            webPortalTarget,
         });
 
         await vi.waitFor(() => {
@@ -88,10 +92,12 @@ describe('openDirectSessionsResumeIdPickerModal', () => {
             title: 'Browse Codex sessions',
             testID: 'resume-id-browse-modal',
         }));
+        expect(config.webPortalTarget).toBe(webPortalTarget);
         expect(config.chrome.dimensions).toEqual({
-            width: 560,
-            maxHeightRatio: 0.92,
-            size: 'md',
+            width: 720,
+            maxHeightRatio: 0.96,
+            size: 'lg',
+            viewportMargin: { horizontal: 12, vertical: 12 },
         });
         expect(config.closeOnBackdrop).toBe(true);
         expect(config.props.lockScope).toEqual({

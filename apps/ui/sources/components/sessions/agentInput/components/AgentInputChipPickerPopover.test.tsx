@@ -8,8 +8,21 @@ import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 
 let capturedSelectionPopoverProps: any = null;
 let capturedPopoverSurfaceProps: any = null;
+let popoverScopeRenderCount = 0;
+const windowWidthState = vi.hoisted(() => ({ value: 1024 }));
 
 installAgentInputCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            useWindowDimensions: () => ({
+                width: windowWidthState.value,
+                height: 800,
+                scale: 1,
+                fontScale: 1,
+            }),
+        });
+    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key: string) => key });
@@ -59,6 +72,13 @@ installAgentInputCommonModuleMocks({
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+}));
+
+vi.mock('@/components/ui/popover', () => ({
+    PopoverScope: (props: any) => {
+        popoverScopeRenderCount += 1;
+        return React.createElement('PopoverScope', props, props.children);
+    },
 }));
 
 vi.mock('@/components/sessions/agentInput/selection/AgentInputSelectionPopover', () => ({
@@ -187,6 +207,7 @@ describe('AgentInputChipPickerPopover', () => {
         const onRequestClose = vi.fn();
         const anchorRef = { current: { nodeType: 'View' } } as any;
         capturedPopoverSurfaceProps = null;
+        popoverScopeRenderCount = 0;
 
         const screen = await renderScreen(<AgentInputChipPickerPopover
             open
@@ -203,7 +224,9 @@ describe('AgentInputChipPickerPopover', () => {
 
         expect(capturedSelectionPopoverProps?.anchorRef).toBe(anchorRef);
         expect(capturedSelectionPopoverProps?.maxWidthCap).toBe(720);
+        expect(capturedSelectionPopoverProps?.portalTopBottomLayout).toBeUndefined();
         expect(capturedPopoverSurfaceProps?.scrollEnabled).toBe(true);
+        expect(popoverScopeRenderCount).toBe(1);
 
         expect(screen.findByTestId('agent-input-chip-picker.icon:one')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.icon:two')).toBeTruthy();
@@ -458,6 +481,27 @@ describe('AgentInputChipPickerPopover', () => {
         expect(onDetailAction).toHaveBeenCalledTimes(1);
         expect(onSelect).not.toHaveBeenCalled();
         expect(onRequestClose).not.toHaveBeenCalled();
+    });
+
+    it('opts into boundary top/bottom layout on mobile web widths', async () => {
+        const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
+        windowWidthState.value = 480;
+
+        await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={{ current: { nodeType: 'View' } } as any}
+            title="Pick"
+            options={[
+                { id: 'engine:codex', label: 'Codex', detailDescription: 'Engine detail' } as any,
+            ]}
+            selectedOptionId="engine:codex"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+
+        expect(capturedSelectionPopoverProps?.portalTopBottomLayout).toBe('boundary');
+
+        windowWidthState.value = 1024;
     });
 
     it('retains explicit apply for editor-style detailed options', async () => {

@@ -444,8 +444,8 @@ const settingsSessionHandoffTranslationExtensions = {
       groupFooter: 'Solo se aplica cuando la sesion de origen es actualmente directa.',
       keepDirectTitle: 'Mantener directa',
       keepDirectSubtitle: 'Reanuda el destino como una sesion directa cuando el proveedor lo permita.',
-      convertToPersistedTitle: 'Convertir en sincronizada',
-      convertToPersistedSubtitle: 'Importa la transcripcion y continua como una sesion sincronizada de Happier.',
+      convertToPersistedTitle: 'Convertir en Happier',
+      convertToPersistedSubtitle: 'Importa la transcripcion y continua como una sesion gestionada por Happier.',
     },
   },
 } as const;
@@ -484,7 +484,7 @@ export const es: TranslationStructure = {
 
   projects: {
     emptyTitle: "Aún no hay proyectos",
-    emptyDescription: "Los proyectos te permiten explorar archivos y Git en tus máquinas fuera de las sesiones.",
+    emptyDescription: "Los proyectos te permiten explorar y editar archivos, y usar Git en tus máquinas fuera de las sesiones.",
     groups: {
       pinned: "Fijados",
       addFirst: "Añadir un proyecto",
@@ -492,6 +492,9 @@ export const es: TranslationStructure = {
     actions: {
       addProjectToMachine: "Añadir proyecto a esta máquina",
       addProject: "Añadir proyecto",
+      addProjectOnMachine: ({ machine }: { machine: string }) => `Añadir un proyecto en ${machine}`,
+      chooseProjectFolderOnMachine: ({ machine }: { machine: string }) => `Elige una carpeta en ${machine}`,
+      chooseProjectFolderSubtitle: "Añádela como proyecto para explorar y editar archivos, y usar Git.",
       pin: "Fijar",
       unpin: "Desfijar",
       remove: "Eliminar",
@@ -532,6 +535,7 @@ export const es: TranslationStructure = {
     emptyDescription: "No hay solicitudes ni actualizaciones pendientes ahora mismo.",
     approvals: "Aprobaciones",
     permissions: "Permisos",
+    unreadSessions: "Sesiones sin leer",
     updates: "Actividad",
   },
 
@@ -3259,16 +3263,16 @@ export const es: TranslationStructure = {
     expandTodoLists: "Expandir listas de tareas",
     expandTodoListsDescription:
       "Mostrar todas las tareas en lugar de solo cambios",
-    showLineNumbersInDiffs: "Mostrar números de línea en diferencias",
+    showLineNumbersInDiffs: "Mostrar números de línea en vistas de código",
     showLineNumbersInDiffsDescription:
-      "Mostrar números de línea en diferencias de código",
+      "Mostrar números de línea en diferencias, vistas previas de archivos y editores",
     showLineNumbersInToolViews:
       "Mostrar números de línea en vistas de herramientas",
     showLineNumbersInToolViewsDescription:
       "Mostrar números de línea en diferencias de vistas de herramientas",
-    wrapLinesInDiffs: "Ajustar líneas en diferencias",
+    wrapLinesInDiffs: "Ajustar líneas en vistas de código",
     wrapLinesInDiffsDescription:
-      "Ajustar líneas largas en lugar de desplazamiento horizontal en vistas de diferencias",
+      "Ajustar líneas largas en lugar de desplazamiento horizontal en diferencias, vistas previas de archivos y editores",
     alwaysShowContextSize: "Mostrar siempre tamaño del contexto",
     alwaysShowContextSizeDescription:
       "Mostrar uso del contexto incluso cuando no esté cerca del límite",
@@ -4434,8 +4438,19 @@ export const es: TranslationStructure = {
 
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `Servidor: ${server}`,
-    storagePersistedTab: "Sincronizadas",
+    storagePersistedTab: "Happier",
     storageDirectTab: "Directas",
+    emptyState: {
+      title: "Aún no hay sesiones",
+      description: "Inicia una sesión en una de tus máquinas en línea.",
+      descriptionPrefix: "Inicia una sesión en una de tus máquinas usando ",
+      descriptionSuffix: " en tu terminal, o usando los botones de abajo.",
+      actionsTitle: "Iniciar una sesión",
+      startSessionOnMachine: ({ machine }: { machine: string }) => `Iniciar una sesión en ${machine}`,
+      startSessionOnMachineSubtitle: "Elige una carpeta y abre una nueva sesión en esta máquina.",
+      reconnectMachineActionSubtitle: "Vuelve a conectar el servicio en segundo plano para que esta máquina pueda iniciar sesiones de nuevo.",
+      startDaemonActionSubtitle: "Instala o reinicia el servicio en segundo plano necesario para iniciar sesiones.",
+    },
     renameWorkspace: 'Renombrar espacio de trabajo',
     renameWorkspacePromptTitle: 'Renombrar espacio de trabajo',
     renameWorkspacePromptPlaceholder: 'Introduce un nombre...',
@@ -4446,6 +4461,9 @@ export const es: TranslationStructure = {
   directSessions: {
     browseTitle: "Explorar sesiones del proveedor",
     browseOpenExisting: "Explorar sesiones del proveedor",
+    browseActionSubtitle: "Elige una máquina, un proveedor y una sesión para abrirla aquí.",
+    emptyStateTitle: "Explora una sesión existente",
+    emptyStateDescription: "Abre sesiones de Claude, Codex y OpenCode desde tus máquinas conectadas.",
     browseFiltersTitle: "Seleccionar origen",
     browseMachines: "Máquinas",
     browseProviders: "Proveedores",

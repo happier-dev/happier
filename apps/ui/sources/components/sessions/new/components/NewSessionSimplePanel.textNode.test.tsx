@@ -9,6 +9,7 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 
 const mockEnv = vi.hoisted(() => ({
     windowWidth: 800,
+    keyboardHeight: 0,
 }));
 const agentInputPropsRef: { current: Record<string, unknown> | null } = { current: null };
 
@@ -82,6 +83,7 @@ afterEach(() => {
     standardCleanup();
     vi.unstubAllGlobals();
     agentInputPropsRef.current = null;
+    mockEnv.keyboardHeight = 0;
 });
 
 vi.mock('react-native-keyboard-controller', () => ({
@@ -197,7 +199,7 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
 }));
 
 vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
-    useKeyboardHeight: () => 0,
+    useKeyboardHeight: () => mockEnv.keyboardHeight,
 }));
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
@@ -339,12 +341,8 @@ describe('NewSessionSimplePanel', () => {
             />,
         );
 
-        const keyboardView = screen.findByType('KeyboardAvoidingView');
-        expect(keyboardView.props.style).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                flex: 0,
-            }),
-        ]));
+        expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
+        expect(screen.findAllByType('View').some((node) => flattenStyle(node.props.style).flex === 0)).toBe(true);
     });
 
     it('stretches the side-padding wrapper to full width on web (avoids shrink-to-fit collapse)', async () => {
@@ -399,6 +397,7 @@ describe('NewSessionSimplePanel', () => {
     it('anchors the composer to the bottom on narrow mobile web layouts', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         mockEnv.windowWidth = 390;
+        mockEnv.keyboardHeight = 48;
 
         const screen = await renderScreen(
             <NewSessionSimplePanel
@@ -437,15 +436,12 @@ describe('NewSessionSimplePanel', () => {
             />,
         );
 
-        const keyboardView = screen.findByType('KeyboardAvoidingView');
         const allViews = screen.findAllByType('View');
 
-        expect(keyboardView.props.style).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                justifyContent: 'flex-end',
-            }),
-        ]));
+        expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
+        expect(allViews.some((view) => flattenStyle(view.props.style).justifyContent === 'flex-end')).toBe(true);
         expect(allViews.some((view) => view.props.style?.marginTop === 'auto')).toBe(true);
+        expect(allViews.some((view) => flattenStyle(view.props.style).paddingBottom === 56)).toBe(true);
     });
 
     it('does not render the legacy visible session type selector even when the feature flag is enabled', async () => {

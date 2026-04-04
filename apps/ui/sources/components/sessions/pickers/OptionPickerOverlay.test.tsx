@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,6 +31,17 @@ vi.mock('@/text', async () => {
 });
 
 describe('OptionPickerOverlay', () => {
+    function flattenStyle(style: unknown): Record<string, unknown> {
+        if (!Array.isArray(style)) {
+            return (style ?? {}) as Record<string, unknown>;
+        }
+
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({
+            ...acc,
+            ...(entry ?? {}),
+        }), {});
+    }
+
     function flattenStyleFromCallback(
         styleProp: unknown,
         state: { pressed: boolean; hovered?: boolean },
@@ -368,6 +380,13 @@ describe('OptionPickerOverlay', () => {
         expect(
             selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:speed'),
         ).not.toHaveLength(0);
+
+        const selectedReasoningLabel = screen
+            .findByTestId('model-picker-overlay-selected-option-control-option:reasoning_effort:medium')
+            ?.findByType('Text' as never);
+
+        expect(selectedReasoningLabel).toBeTruthy();
+        expect(flattenStyle(selectedReasoningLabel?.props.style)).toMatchObject(Typography.default('semiBold'));
 
         await screen.pressByTestIdAsync('model-picker-overlay-selected-option-control-option:reasoning_effort:high');
 

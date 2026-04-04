@@ -19,6 +19,7 @@ function mockSessionPersistenceBoundaries(): void {
         loadSessionPermissionModes: vi.fn(() => ({})),
         loadSessionActionDrafts: vi.fn(() => ({})),
         loadSessionReviewCommentsDrafts: vi.fn(() => ({})),
+        loadWorkspaceReviewCommentsDrafts: vi.fn(() => ({})),
         saveSessionDrafts: vi.fn(),
         saveSessionLastViewed: vi.fn(),
         loadSettings: vi.fn(() => ({
@@ -35,6 +36,7 @@ function mockSessionPersistenceBoundaries(): void {
         saveSessionPermissionModes: vi.fn(),
         saveSessionActionDrafts: vi.fn(),
         saveSessionReviewCommentsDrafts: vi.fn(),
+        saveWorkspaceReviewCommentsDrafts: vi.fn(),
         saveLocalSettings: vi.fn(),
         savePurchases: vi.fn(),
         saveSettings: vi.fn(),

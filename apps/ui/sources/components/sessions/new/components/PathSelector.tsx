@@ -14,6 +14,7 @@ import { TextInput } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
+import { type ModalPortalTarget, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
 
 type PathSelectorBaseProps = {
@@ -37,6 +38,8 @@ type PathSelectorBaseProps = {
         machineId: string | null;
         serverId?: string | null;
         title?: string;
+        onBeforeOpen?: () => void | Promise<void>;
+        webPortalTarget?: ModalPortalTarget;
     }>;
 };
 
@@ -136,14 +139,22 @@ export function PathSelector({
     const { theme, rt } = useUnistyles();
     const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
     const styles = stylesheet;
+    const modalPortalTarget = useModalPortalTarget();
     const inputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
     const searchInputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
     const searchWasFocusedRef = useRef(false);
+    const isMountedRef = useRef(true);
     const [draftSelectedPath, setDraftSelectedPath] = useState(selectedPath);
 
     useEffect(() => {
         setDraftSelectedPath(selectedPath);
     }, [selectedPath]);
+
+    useEffect(() => {
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
 
     const [uncontrolledSearchQuery, setUncontrolledSearchQuery] = useState('');
     const isSearchQueryControlled = controlledSearchQuery !== undefined && onChangeSearchQueryProp !== undefined;
@@ -332,22 +343,34 @@ export function PathSelector({
     const handleBrowseMachinePath = React.useCallback(async () => {
         if (!machineBrowse?.enabled || !machineBrowse.machineId) return;
         const browseStartPath = draftSelectedPath.trim() || machineHomeDir;
+        const resolvedPortalTarget = machineBrowse.webPortalTarget ?? modalPortalTarget;
+        if (machineBrowse.onBeforeOpen) {
+            await machineBrowse.onBeforeOpen();
+            await new Promise((resolve) => {
+                setTimeout(resolve, 0);
+            });
+        }
         const selected = await openMachinePathBrowserModal({
             machineId: machineBrowse.machineId,
             serverId: machineBrowse.serverId,
             title: machineBrowse.title,
             initialPath: resolveAbsolutePath(browseStartPath, machineHomeDir),
+            webPortalTarget: resolvedPortalTarget,
         });
         if (selected) {
-            setDraftSelectedPath(selected);
+            if (isMountedRef.current) {
+                setDraftSelectedPath(selected);
+            }
             onChangeSelectedPath(selected);
             if (submitBehavior === 'confirm') {
                 onSubmitSelectedPath?.(selected);
                 return;
             }
-            setSubmittedCustomPath(null);
+            if (isMountedRef.current) {
+                setSubmittedCustomPath(null);
+            }
         }
-    }, [draftSelectedPath, machineBrowse, machineHomeDir, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
+    }, [draftSelectedPath, machineBrowse, machineHomeDir, modalPortalTarget, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
 
     const renderRightElement = React.useCallback((absolutePath: string, isSelected: boolean, isFavorite: boolean) => {
         return (

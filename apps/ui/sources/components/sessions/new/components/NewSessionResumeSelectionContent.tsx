@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { InteractionManager, Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
@@ -108,8 +107,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-type FocusMode = 'mount' | 'routeFocus';
-
 export type NewSessionResumeSelectionContentProps = Readonly<{
     value: string;
     onChangeValue: (next: string) => void;
@@ -123,87 +120,13 @@ export type NewSessionResumeSelectionContentProps = Readonly<{
     }> | null;
     maxHeight?: number;
     showInlineHeader?: boolean;
-    focusMode?: FocusMode;
 }>;
 
 export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectionContentProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const inputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
     const agentType = isAgentId(props.agentType) ? props.agentType : DEFAULT_AGENT_ID;
     const agentLabel = t(getAgentCore(agentType).displayNameKey);
-    const shouldAutoFocus = Platform.OS === 'web';
-
-    const focusInputWithRetries = React.useCallback(() => {
-        if (!shouldAutoFocus) {
-            return () => undefined;
-        }
-
-        let cancelled = false;
-        const focus = () => {
-            if (cancelled) return;
-            inputRef.current?.focus?.();
-        };
-
-        focus();
-
-        let rafAttempts = 0;
-        const raf =
-            typeof (globalThis as any).requestAnimationFrame === 'function'
-                ? ((globalThis as any).requestAnimationFrame as (cb: (ts: number) => void) => unknown).bind(globalThis)
-                : (cb: (ts: number) => void) => setTimeout(() => cb(Date.now()), 16);
-        const caf =
-            typeof (globalThis as any).cancelAnimationFrame === 'function'
-                ? ((globalThis as any).cancelAnimationFrame as (id: unknown) => void).bind(globalThis)
-                : (id: unknown) => clearTimeout(id as ReturnType<typeof setTimeout>);
-        let rafId: unknown = null;
-        const rafLoop = () => {
-            rafAttempts += 1;
-            focus();
-            if (rafAttempts < 8) {
-                rafId = raf(rafLoop);
-            }
-        };
-        rafId = raf(rafLoop);
-
-        const timer = setTimeout(focus, 300);
-
-        return () => {
-            cancelled = true;
-            clearTimeout(timer);
-            if (rafId !== null) {
-                caf(rafId);
-            }
-        };
-    }, [shouldAutoFocus]);
-
-    React.useEffect(() => {
-        if (!shouldAutoFocus) {
-            return undefined;
-        }
-        return focusInputWithRetries();
-    }, [focusInputWithRetries]);
-
-    useFocusEffect(React.useCallback(() => {
-        if (!shouldAutoFocus) {
-            return undefined;
-        }
-        if (props.focusMode !== 'routeFocus') {
-            return undefined;
-        }
-
-        const cleanup = focusInputWithRetries();
-        let interactionCleanup: (() => void) | undefined;
-        const task = InteractionManager.runAfterInteractions(() => {
-            interactionCleanup = focusInputWithRetries();
-        });
-
-        return () => {
-            task.cancel?.();
-            interactionCleanup?.();
-            cleanup();
-        };
-    }, [focusInputWithRetries, props.focusMode, shouldAutoFocus]));
 
     const handlePaste = React.useCallback(async () => {
         const text = await getClipboardStringTrimmedSafe();
@@ -235,12 +158,10 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
                     <View style={styles.inputContainer}>
                         <TextInput
                             testID="resume-id-input"
-                            ref={inputRef}
                             value={props.value}
                             onChangeText={props.onChangeValue}
                             placeholder={t('newSession.resume.placeholder', { agent: agentLabel })}
                             placeholderTextColor={theme.colors.input.placeholder}
-                            autoFocus={shouldAutoFocus}
                             style={styles.textInput}
                             autoCapitalize="none"
                             autoCorrect={false}

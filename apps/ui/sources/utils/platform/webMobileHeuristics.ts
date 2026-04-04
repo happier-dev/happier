@@ -51,8 +51,12 @@ export function isWebMobileLikeViewport(params: Readonly<{ width: number; height
     return minEdge > 0 && minEdge <= WEB_QR_SCANNER_MAX_VIEWPORT_MIN_EDGE_PX;
 }
 
-export function isWebMobileLikeQrScannerHost(params: Readonly<{ width: number; height: number }>): boolean {
+export function isWebMobileLikeHost(params: Readonly<{ width: number; height: number }>): boolean {
     if (!isWebMobileLikeViewport(params)) return false;
     const nav = readNavigator();
     return isMobileUserAgent(nav) || isTouchOrCoarsePointer(nav);
+}
+
+export function isWebMobileLikeQrScannerHost(params: Readonly<{ width: number; height: number }>): boolean {
+    return isWebMobileLikeHost(params);
 }

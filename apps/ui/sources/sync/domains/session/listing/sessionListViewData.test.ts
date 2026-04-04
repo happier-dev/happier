@@ -21,6 +21,10 @@ function makeSession(partial: Partial<Session> & Pick<Session, 'id'>): Session {
         thinking: partial.thinking ?? false,
         thinkingAt: partial.thinkingAt ?? 0,
         presence: active ? 'online' : activeAt,
+        owner: partial.owner,
+        ownerProfile: partial.ownerProfile,
+        accessLevel: partial.accessLevel,
+        canApprovePermissions: partial.canApprovePermissions,
         todos: partial.todos,
         draft: partial.draft,
         permissionMode: partial.permissionMode ?? null,
@@ -311,6 +315,75 @@ describe('buildSessionListViewData', () => {
                 'header:inactive:Inactive',
                 'header:date:Yesterday',
                 'session:in1:inactive:default',
+            ]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('places shared sessions into a dedicated subgroup inside active and inactive sections', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 1, 17, 12, 0, 0));
+
+        try {
+            const machine = makeMachine({
+                id: 'm1',
+                metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+            });
+
+            const sessions: Record<string, Session> = {
+                ownActive: makeSession({
+                    id: 'ownActive',
+                    active: true,
+                    createdAt: new Date(2026, 1, 17, 8, 0, 0).getTime(),
+                    updatedAt: new Date(2026, 1, 17, 8, 0, 0).getTime(),
+                    metadata: { machineId: 'm1', path: '/home/u/own-active', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+                sharedActive: makeSession({
+                    id: 'sharedActive',
+                    active: true,
+                    createdAt: new Date(2026, 1, 17, 9, 0, 0).getTime(),
+                    updatedAt: new Date(2026, 1, 17, 9, 0, 0).getTime(),
+                    metadata: { machineId: 'm1', path: '/home/u/shared-active', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                    owner: 'friend-1',
+                } as any),
+                ownInactive: makeSession({
+                    id: 'ownInactive',
+                    createdAt: new Date(2026, 1, 16, 7, 0, 0).getTime(),
+                    updatedAt: new Date(2026, 1, 16, 7, 0, 0).getTime(),
+                    metadata: { machineId: 'm1', path: '/home/u/own-inactive', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+                sharedInactive: makeSession({
+                    id: 'sharedInactive',
+                    createdAt: new Date(2026, 1, 16, 9, 0, 0).getTime(),
+                    updatedAt: new Date(2026, 1, 16, 9, 0, 0).getTime(),
+                    metadata: { machineId: 'm1', path: '/home/u/shared-inactive', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                    owner: 'friend-2',
+                } as any),
+            };
+
+            const data = buildSessionListViewData(sessions, { [machine.id]: machine }, { groupInactiveSessionsByProject: false });
+
+            const summary = data.map((item) => {
+                switch (item.type) {
+                    case 'header':
+                        return `header:${item.headerKind ?? 'unknown'}:${item.title}`;
+                    case 'session':
+                        return `session:${item.session.id}:${item.section ?? 'unknown'}:${item.groupKind ?? 'default'}`;
+                }
+            });
+
+            expect(summary).toEqual([
+                'header:active:Active',
+                'header:shared:Shared sessions',
+                'session:sharedActive:active:shared',
+                'header:project:~/own-active',
+                'session:ownActive:active:project',
+                'header:inactive:Inactive',
+                'header:shared:Shared sessions',
+                'session:sharedInactive:inactive:shared',
+                'header:date:Yesterday',
+                'session:ownInactive:inactive:date',
             ]);
         } finally {
             vi.useRealTimers();

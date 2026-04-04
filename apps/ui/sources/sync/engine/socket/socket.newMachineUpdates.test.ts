@@ -43,6 +43,18 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
     };
 }
 
+function buildEphemeralParams(overrides: Partial<Parameters<typeof handleEphemeralSocketUpdate>[0]> = {}): Parameters<typeof handleEphemeralSocketUpdate>[0] {
+    return {
+        update: null,
+        addActivityUpdate: () => {},
+        addMachineActivityUpdate: () => {},
+        getSessionEncryption: () => null,
+        getSession: () => undefined,
+        applyMessages: () => {},
+        ...overrides,
+    };
+}
+
 describe('socket update handling: new-machine', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
@@ -165,11 +177,11 @@ describe('socket update handling: machine-activity for unknown machine', () => {
         const addMachineActivityUpdate = vi.fn();
         expect(storage.getState().machines['m_unknown']).toBeUndefined();
 
-        handleEphemeralSocketUpdate({
+        handleEphemeralSocketUpdate(buildEphemeralParams({
             update: { type: 'machine-activity', id: 'm_unknown', active: true, activeAt: 999 },
             addActivityUpdate: () => {},
             addMachineActivityUpdate,
-        });
+        }));
 
         expect(addMachineActivityUpdate).toHaveBeenCalledWith({ id: 'm_unknown', active: true, activeAt: 999 });
         expect(storage.getState().machines['m_unknown']).toBeUndefined();
@@ -181,7 +193,7 @@ describe('socket update handling: execution-run-updated ephemerals', () => {
         const listener = vi.fn();
         const unsubscribe = executionRunActivityBus.subscribeExecutionRunActivity('s1', listener);
 
-        handleEphemeralSocketUpdate({
+        handleEphemeralSocketUpdate(buildEphemeralParams({
             update: {
                 type: 'execution-run-updated',
                 sessionId: 's1',
@@ -201,10 +213,64 @@ describe('socket update handling: execution-run-updated ephemerals', () => {
             },
             addActivityUpdate: () => {},
             addMachineActivityUpdate: () => {},
-        });
+        }));
 
         expect(listener).toHaveBeenCalledTimes(1);
         unsubscribe();
+    });
+});
+
+describe('socket update handling: transcript-stream-segment ephemerals', () => {
+    it('normalizes and applies live transcript stream snapshots', async () => {
+        const applyMessages = vi.fn();
+
+        await handleEphemeralSocketUpdate(buildEphemeralParams({
+            update: {
+                type: 'transcript-stream-segment',
+                sessionId: 's1',
+                message: {
+                    localId: 'segment-1',
+                    content: {
+                        t: 'plain',
+                        v: {
+                            role: 'agent',
+                            content: {
+                                type: 'acp',
+                                provider: 'codex',
+                                data: { type: 'message', message: 'Hello there' },
+                            },
+                            meta: {
+                                happierStreamSegmentV1: {
+                                    v: 1,
+                                    segmentKind: 'assistant',
+                                    segmentLocalId: 'segment-1',
+                                    segmentState: 'streaming',
+                                    startedAtMs: 1_000,
+                                    updatedAtMs: 1_025,
+                                },
+                            },
+                        },
+                    },
+                    createdAt: 1_000,
+                    updatedAt: 1_025,
+                },
+            },
+            getSession: () => ({ id: 's1', encryptionMode: 'plain' } as any),
+            applyMessages,
+        }));
+
+        expect(applyMessages).toHaveBeenCalledTimes(1);
+        expect(applyMessages).toHaveBeenCalledWith(
+            's1',
+            [
+                expect.objectContaining({
+                    id: 'segment-1',
+                    localId: 'segment-1',
+                    role: 'agent',
+                    content: [expect.objectContaining({ type: 'text', text: 'Hello there' })],
+                }),
+            ],
+        );
     });
 });
 

@@ -1,8 +1,12 @@
 import * as React from 'react';
 
-import { Platform } from 'react-native';
+import { Platform, useWindowDimensions } from 'react-native';
 import { Popover } from '@/components/ui/popover';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+
+const MOBILE_AGENT_INPUT_POPOVER_EDGE_PADDING = 12;
+const DEFAULT_AGENT_INPUT_POPOVER_EDGE_PADDING = 16;
 
 export type AgentInputSelectionPopoverProps = Readonly<{
     open: boolean;
@@ -11,17 +15,25 @@ export type AgentInputSelectionPopoverProps = Readonly<{
     onRequestClose: () => void;
     maxHeightCap?: number;
     maxWidthCap?: number;
+    portalTopBottomLayout?: 'anchored' | 'boundary';
     children: (args: Readonly<{ maxHeight: number }>) => React.ReactNode;
 }>;
 
 export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) {
     const keyboardHeight = useKeyboardHeight();
+    const { width: windowWidth } = useWindowDimensions();
     // On web, agent-input popovers should be constrained to the viewport (not to an in-modal boundary
     // provider), so they can extend outside sheet-like modal cards.
     const boundaryRef =
         Platform.OS === 'web' && props.boundaryRef === undefined
             ? null
             : props.boundaryRef;
+    const edgePadding = React.useMemo(() => ({
+        horizontal:
+            Platform.OS === 'web' && isMobileLayoutWidth(windowWidth)
+                ? MOBILE_AGENT_INPUT_POPOVER_EDGE_PADDING
+                : DEFAULT_AGENT_INPUT_POPOVER_EDGE_PADDING,
+    }), [windowWidth]);
 
     // AgentInput popovers default to appearing above the chips. When the keyboard is visible on native,
     // forcing `top` can push the popover off-screen (especially in sheet/drawer presentations). Let
@@ -46,7 +58,7 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
             gap={8}
             maxHeightCap={props.maxHeightCap}
             maxWidthCap={props.maxWidthCap}
-            edgePadding={{ horizontal: 16 }}
+            edgePadding={edgePadding}
             closeOnAnchorPress={false}
             portal={{
                 // IMPORTANT:
@@ -57,6 +69,7 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
                 native: true,
                 matchAnchorWidth: false,
                 anchorAlign: 'start',
+                topBottomLayout: props.portalTopBottomLayout,
             }}
             onRequestClose={props.onRequestClose}
             consumeOutsidePointerDown={false}

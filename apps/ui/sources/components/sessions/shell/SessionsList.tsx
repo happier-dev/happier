@@ -335,11 +335,11 @@ const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonl
     const [menuOpen, setMenuOpen] = React.useState(false);
     const isWeb = Platform.OS === 'web';
     const showActions = !isWeb || isRowHovered || isActionsHovered || menuOpen;
-    const workspaceKey = String(item.workspaceKey ?? '').trim();
-    const menuEnabled = Boolean(workspaceKey) || Boolean(item.workspaceScopeHint);
+    const menuEnabled = Boolean(item.workspaceScopeHint);
     const actionIconColor = theme.colors.textSecondary;
 
     const menuItems = React.useMemo((): DropdownMenuItem[] => {
+        if (!item.workspaceScopeHint) return [];
         const items: DropdownMenuItem[] = [
             ...(canOpenProject ? [{
                 id: 'openProject',
@@ -360,7 +360,7 @@ const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonl
             });
         }
         return items;
-    }, [canOpenProject, hasCustomLabel, actionIconColor]);
+    }, [canOpenProject, hasCustomLabel, actionIconColor, item.workspaceScopeHint]);
 
     const handleMenuSelect = React.useCallback((itemId: string) => {
         if (itemId === 'openProject') {
@@ -678,6 +678,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
         currentLabel: string;
     }>) => {
+        if (!params.scopeHint) return;
         const newName = await Modal.prompt(
             t('sessionsList.renameWorkspacePromptTitle'),
             undefined,
@@ -689,38 +690,25 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
             },
         );
         if (newName !== null && newName.trim()) {
-            if (params.scopeHint) {
-                setWorkspaceRefsV1(upsertWorkspaceRefByScope(workspaceRefsV1 ?? [], {
-                    scope: params.scopeHint,
-                    nowMs: Date.now(),
-                    patch: { label: newName.trim() },
-                }));
-                return;
-            }
-            const legacyKey = params.legacyWorkspaceKey;
-            if (!legacyKey) return;
-            setWorkspaceLabelsV1({ ...(workspaceLabelsV1 ?? {}), [legacyKey]: newName.trim() });
+            setWorkspaceRefsV1(upsertWorkspaceRefByScope(workspaceRefsV1 ?? [], {
+                scope: params.scopeHint,
+                nowMs: Date.now(),
+                patch: { label: newName.trim() },
+            }));
         }
-    }, [setWorkspaceLabelsV1, setWorkspaceRefsV1, workspaceLabelsV1, workspaceRefsV1]);
+    }, [setWorkspaceRefsV1, workspaceRefsV1]);
 
     const handleResetWorkspaceName = React.useCallback((params: Readonly<{
         legacyWorkspaceKey: string;
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
     }>) => {
-        if (params.scopeHint) {
-            setWorkspaceRefsV1(upsertWorkspaceRefByScope(workspaceRefsV1 ?? [], {
-                scope: params.scopeHint,
-                nowMs: Date.now(),
-                patch: { label: null },
-            }));
-            return;
-        }
-        const legacyKey = params.legacyWorkspaceKey;
-        if (!legacyKey) return;
-        const next = { ...(workspaceLabelsV1 ?? {}) };
-        delete next[legacyKey];
-        setWorkspaceLabelsV1(next);
-    }, [setWorkspaceLabelsV1, setWorkspaceRefsV1, workspaceLabelsV1, workspaceRefsV1]);
+        if (!params.scopeHint) return;
+        setWorkspaceRefsV1(upsertWorkspaceRefByScope(workspaceRefsV1 ?? [], {
+            scope: params.scopeHint,
+            nowMs: Date.now(),
+            patch: { label: null },
+        }));
+    }, [setWorkspaceRefsV1, workspaceRefsV1]);
 
     const handleToggleCollapse = React.useCallback((collapseKey: string) => {
         const current = collapsedGroupKeysV1 ?? {};

@@ -15,7 +15,7 @@ export type SessionListViewItem =
     | {
         type: 'header';
         title: string;
-        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned';
+        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared';
         groupKey?: string;
         workspaceKey?: string;
         workspaceScopeHint?: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
@@ -29,7 +29,7 @@ export type SessionListViewItem =
         session: SessionListRenderableSession;
         section?: 'active' | 'inactive';
         groupKey?: string;
-        groupKind?: 'active' | 'date' | 'project' | 'pinned';
+        groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared';
         pinned?: boolean;
         variant?: 'default' | 'no-path';
         serverId?: string;
@@ -311,6 +311,36 @@ function pushDateGroupsToList(params: Readonly<{
     flush();
 }
 
+function pushSharedGroupToList(params: Readonly<{
+    listData: SessionListViewItem[];
+    sessions: ReadonlyArray<SessionListRenderableSession>;
+    section: 'active' | 'inactive';
+    serverKey: string;
+    serverScopeMeta: ServerScopeMeta;
+}>): void {
+    if (params.sessions.length === 0) return;
+
+    const groupKey = `server:${params.serverKey}:${params.section}:shared`;
+    params.listData.push({
+        type: 'header',
+        title: t('friends.sharedSessions'),
+        headerKind: 'shared',
+        groupKey,
+        ...params.serverScopeMeta,
+    });
+
+    params.sessions.forEach((session) => {
+        params.listData.push({
+            type: 'session',
+            session,
+            section: params.section,
+            groupKey,
+            groupKind: 'shared',
+            ...params.serverScopeMeta,
+        });
+    });
+}
+
 export function buildSessionListViewData(
     sessions: Record<string, SessionListRenderableSession>,
     machines: Record<string, MachineDisplayRenderable>,
@@ -322,36 +352,48 @@ export function buildSessionListViewData(
             serverName: options.serverScope.serverName,
         }
         : {};
-    const activeSessions: SessionListRenderableSession[] = [];
-    const inactiveSessions: SessionListRenderableSession[] = [];
+    const activeOwnedSessions: SessionListRenderableSession[] = [];
+    const inactiveOwnedSessions: SessionListRenderableSession[] = [];
+    const activeSharedSessions: SessionListRenderableSession[] = [];
+    const inactiveSharedSessions: SessionListRenderableSession[] = [];
 
     Object.values(sessions).forEach((session) => {
         // Hide system sessions from user-facing lists by default.
         if (session.metadata?.hiddenSystemSession === true || isHiddenSystemSession({ metadata: session.metadata as never })) {
             return;
         }
-        if (isSessionActive(session)) {
-            activeSessions.push(session);
-        } else {
-            inactiveSessions.push(session);
-        }
+        const isSharedSession = typeof session.owner === 'string' && session.owner.trim().length > 0;
+        const targetList = isSharedSession
+            ? (isSessionActive(session) ? activeSharedSessions : inactiveSharedSessions)
+            : (isSessionActive(session) ? activeOwnedSessions : inactiveOwnedSessions);
+        targetList.push(session);
     });
 
-    activeSessions.sort(compareSessionsStableNewestFirst);
-    inactiveSessions.sort(compareSessionsStableNewestFirst);
+    activeOwnedSessions.sort(compareSessionsStableNewestFirst);
+    inactiveOwnedSessions.sort(compareSessionsStableNewestFirst);
+    activeSharedSessions.sort(compareSessionsStableNewestFirst);
+    inactiveSharedSessions.sort(compareSessionsStableNewestFirst);
 
     const listData: SessionListViewItem[] = [];
 
-    if (activeSessions.length > 0) {
+    if (activeOwnedSessions.length > 0 || activeSharedSessions.length > 0) {
         const serverKey = normalizeServerIdForKey(options.serverScope?.serverId);
         const grouping = resolveGroupingForSection('active', options);
         listData.push({ type: 'header', title: 'Active', headerKind: 'active', ...serverScopeMeta });
+
+        pushSharedGroupToList({
+            listData,
+            sessions: activeSharedSessions,
+            section: 'active',
+            serverKey,
+            serverScopeMeta,
+        });
 
         if (grouping === 'project') {
             pushProjectGroupsToList({
                 listData,
                 groups: groupSessionsByProject({
-                    sessions: activeSessions,
+                    sessions: activeOwnedSessions,
                     machines,
                     sessionTargetState: options.sessionTargetState,
                 }),
@@ -362,7 +404,7 @@ export function buildSessionListViewData(
         } else {
             pushDateGroupsToList({
                 listData,
-                sessions: activeSessions,
+                sessions: activeOwnedSessions,
                 section: 'active',
                 serverKey,
                 serverScopeMeta,
@@ -370,16 +412,24 @@ export function buildSessionListViewData(
         }
     }
 
-    if (inactiveSessions.length > 0) {
+    if (inactiveOwnedSessions.length > 0 || inactiveSharedSessions.length > 0) {
         const serverKey = normalizeServerIdForKey(options.serverScope?.serverId);
         const grouping = resolveGroupingForSection('inactive', options);
         listData.push({ type: 'header', title: 'Inactive', headerKind: 'inactive', ...serverScopeMeta });
+
+        pushSharedGroupToList({
+            listData,
+            sessions: inactiveSharedSessions,
+            section: 'inactive',
+            serverKey,
+            serverScopeMeta,
+        });
 
         if (grouping === 'project') {
             pushProjectGroupsToList({
                 listData,
                 groups: groupSessionsByProject({
-                    sessions: inactiveSessions,
+                    sessions: inactiveOwnedSessions,
                     machines,
                     sessionTargetState: options.sessionTargetState,
                 }),
@@ -390,7 +440,7 @@ export function buildSessionListViewData(
         } else {
             pushDateGroupsToList({
                 listData,
-                sessions: inactiveSessions,
+                sessions: inactiveOwnedSessions,
                 section: 'inactive',
                 serverKey,
                 serverScopeMeta,
